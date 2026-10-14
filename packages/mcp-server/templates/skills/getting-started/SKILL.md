@@ -40,9 +40,11 @@ with any MCP client.
 
    Don't ask how long your answers should be — detailed is the default (step 5).
 
-   Update their profile engram (`<user>-identity`, scope `user.<user>`) with
-   `eml_update`: replace the placeholder line "The agent learns more from
-   conversation…" with what you learned, written in English as plain facts.
+   Update their profile engram (`<user>-identity`, scope `user.<user>`): read
+   it with `eml_get`, replace the placeholder line "The agent learns more from
+   conversation…" with what you learned, written in English as plain facts,
+   and send the whole new text with `eml_update` — `content` replaces the
+   engram's content completely, so keep its first line.
 
 3. **The first project.** Ask what they'd like to start with — the thing they
    named in step 2 is the obvious candidate. Then:
@@ -68,13 +70,15 @@ with any MCP client.
      organisation (entity), the user, the agent, or global.
 
    *Cockpit:* then show where it lives in the app, in a few lines:
-   - **Sidebar:** the project is listed there. Its "+" starts a new session in
-     it ("New Claude Code session"), opens a "New brain view" or a "New note".
+   - **Sidebar:** the project is listed there. Its "+" starts a new agent
+     session in it (e.g. "New Claude Code session" — the label names the
+     agent CLI), opens a "New brain view" or a "New note".
      The project's folder button links it to a folder of their own, so its
      sessions start there.
-   - **Brain tab:** the first tab in the desk bar opens the brain dashboard —
-     search, open tasks, recent activity and all projects. A project's page
-     shows its status, open tasks, decisions and a graph.
+   - **Brain tab:** the first tab in the desk bar (it carries the space's
+     name — "Main" at first — and a brain icon) opens the brain dashboard:
+     search, open tasks, recent activity and all projects. Clicking a project
+     there opens its page: status, open tasks, decisions and a graph.
    - **Task runs:** clicking a task there opens it; "Advance task" starts a
      session that works it through stage by stage and stops for their go after
      each stage.
@@ -108,8 +112,13 @@ with any MCP client.
    - **Asking** works in plain language: "where do we stand on X?" or "what did
      we decide about Y?" — you look it up in the brain instead of guessing.
 
-7. **Close.** One or two sentences: the brain is set up, and this session can
-   simply continue with the first task.
+7. **Close.** One or two sentences: the brain is set up, and they can start on
+   the first task.
+
+   *Cockpit:* this session runs in a cockpit-made "Getting started" folder,
+   not in their project. For work on their own files: link the project to
+   their folder (the folder button in the sidebar), then start a new session
+   with the project's "+". Otherwise this session can simply continue.
 
 ## Guardrails
 - Keep it moving. If the user gives one-word answers, don't press for more.
