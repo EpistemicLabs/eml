@@ -140,6 +140,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     }
   }, []);
 
+  // A lost connection clears the screen, so a find bar has nothing left to
+  // search; closing it also keeps it from taking focus back after a reconnect.
+  const endSearch = useCallback(() => {
+    searchRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchResults(null);
+  }, []);
+
   /** Closes and forgets the socket, abandons any attempt, clears the screen. */
   const disconnect = useCallback(() => {
     attemptRef.current += 1;
@@ -155,7 +163,8 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     setConnecting(false);
     setSuperseded(false);
     setFailure(null);
-  }, [cancelConnectionTimer]);
+    endSearch();
+  }, [cancelConnectionTimer, endSearch]);
 
   /** Close or error of a socket; ignored unless it is still the current one. */
   const handleSocketEnd = useCallback(
@@ -169,8 +178,9 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
       setConnecting(false);
       setFailure(null);
       if (terminalRef.current) clearScreen(terminalRef.current);
+      endSearch();
     },
-    [cancelConnectionTimer],
+    [cancelConnectionTimer, endSearch],
   );
 
   const handleMessage = useCallback((payload: unknown) => {
@@ -447,11 +457,9 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   }, []);
 
   const closeSearch = useCallback(() => {
-    searchRef.current?.clearDecorations();
-    setSearchOpen(false);
-    setSearchResults(null);
+    endSearch();
     terminalRef.current?.focus();
-  }, []);
+  }, [endSearch]);
 
   // Any return to "neither connecting nor connected" starts a new attempt.
   useEffect(() => {

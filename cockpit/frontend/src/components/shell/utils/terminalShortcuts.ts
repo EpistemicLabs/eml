@@ -17,6 +17,7 @@ export function matchTerminalShortcut(event: KeyboardEvent): TerminalShortcut | 
   if (key === 'f' && event.shiftKey === !IS_MAC) return 'find';
   if (key === '=' || key === '+') return 'zoom-in';
   if (key === '-' && !event.shiftKey) return 'zoom-out';
-  if (key === '0' && !event.shiftKey) return 'zoom-reset';
+  // By physical key: on AZERTY the 0 key types "à" and needs Shift for "0".
+  if (event.code === 'Digit0' || event.code === 'Numpad0') return 'zoom-reset';
   return null;
 }

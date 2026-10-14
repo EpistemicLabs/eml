@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
 import type { ShellSearch } from '../../hooks/useShellRuntime';
+import { stepTerminalFontSize } from '../../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../../utils/terminalShortcuts';
 
 function resultLabel(term: string, results: ShellSearch['results']): string {
@@ -27,6 +28,7 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
   }, [focusRequest]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    const shortcut = matchTerminalShortcut(event.nativeEvent);
     if (event.key === 'Enter') {
       event.preventDefault();
       find(term, event.shiftKey ? 'previous' : 'next');
@@ -34,10 +36,14 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
       event.preventDefault();
       event.stopPropagation();
       close();
-    } else if (matchTerminalShortcut(event.nativeEvent) === 'find') {
+    } else if (shortcut === 'find') {
       // ⌘F again selects the term instead of opening the browser's find.
       event.preventDefault();
       inputRef.current?.select();
+    } else if (shortcut) {
+      // The zoom keys size the terminal here too, not the page.
+      event.preventDefault();
+      stepTerminalFontSize(shortcut === 'zoom-in' ? 1 : shortcut === 'zoom-out' ? -1 : 0);
     }
   };
 
