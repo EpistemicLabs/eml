@@ -1,6 +1,6 @@
 // The project page's graph lenses. Logic ported from
 // packages/web/components/graph/graph-panel.tsx: lens switch (timeline |
-// subjects | tags), per-type chips (click = hide/show, Shift/Cmd-click = solo),
+// subjects | tags), per-type chips (click = solo, Shift/Cmd-click = hide/show),
 // Active only, ⚑ Review N, Show without subject (subjects), Show untagged (tags),
 // All / None — over the project's engrams (limit 500, profiles excluded).
 // Rendered with the cockpit's chip and segmented-control idiom (./ui.tsx)
@@ -71,11 +71,11 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
     [allEngrams, activeTypes, showReviewOnly, activeOnly],
   );
 
-  // Plain click = toggle this type off/on (start with all shown; click to hide
-  // it — the chip fades — click again to bring it back). Shift/Cmd-click = solo
-  // (show only this type; click the soloed type again to restore all).
+  // Plain click = solo (show only this type; click the soloed type again to
+  // restore all). Shift/Cmd-click = add or remove this type from what is shown
+  // (a hidden chip fades).
   function pick(t: EngramType, additive: boolean) {
-    if (additive) {
+    if (!additive) {
       const isSolo = activeTypes.size === 1 && activeTypes.has(t);
       setSelected(isSolo ? new Set(presentTypes) : new Set([t]));
       return;
@@ -102,7 +102,7 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
               key={t}
               type="button"
               onClick={(e) => pick(t, e.metaKey || e.shiftKey)}
-              title="Click to hide/show this type · Shift/Cmd-click to show only this type"
+              title="Click: only this type (again: all) · Shift/Cmd-click: add/remove this type"
               className="h-6 rounded-full border px-2.5 text-caption font-medium capitalize transition-opacity"
               style={typeChipStyle(color, on)}
             >
