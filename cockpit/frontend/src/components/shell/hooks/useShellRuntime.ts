@@ -1,0 +1,400 @@
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
+
+import { useTheme } from '@/contexts/ThemeContext';
+import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
+import {
+  ERROR_NO_IDENTITY,
+  ERROR_NO_SIZE,
+  FOCUS_STYLE_ID,
+  HIDDEN_POLL_MS,
+  MAX_INIT_RETRIES,
+  NONCE_FAILURE_HOLD_MS,
+  NORMAL_CLOSURE,
+  RESIZE_DEBOUNCE_MS,
+  SETTLE_DELAY_MS,
+  SUPERSEDED_REASON,
+  TERMINAL_OPTIONS,
+} from '../constants';
+import {
+  decodeBinaryFrame,
+  parseTextFrame,
+  requestShellNonce,
+  sendFrame,
+  shellSocketUrl,
+} from '../utils/hostChannel';
+import { ensureFocusStyle, installAtlasRecovery, watchDevicePixelRatio } from '../utils/renderRecovery';
+import { installClipboardHandling } from '../utils/terminalClipboard';
+import {
+  clearScreen,
+  fitTerminal,
+  isContainerRendered,
+  proposeValidSize,
+  repaintAll,
+  type GridSize,
+} from '../utils/terminalFit';
+import { getXtermTheme } from '../utils/terminalTheme';
+
+export interface ShellRuntimeOptions {
+  paneId: string | null;
+  projectId: string | null;
+  sessionId: string | null;
+  initialCommand: string | null;
+  isActive: boolean;
+  autoConnect: boolean;
+}
+
+export type ShellOverlay =
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'connecting' }
+  | { kind: 'connect'; superseded: boolean };
+
+/**
+ * Owns one xterm terminal and its socket to the host PTY bridge: creation and
+ * teardown per session id, the nonce handshake, the `init` frame, streaming in
+ * both directions, resize, theme and focus.
+ */
+export function useShellRuntime(options: ShellRuntimeOptions) {
+  const { sessionId, isActive, autoConnect } = options;
+  const { isDarkMode } = useTheme();
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const [initialized, setInitialized] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [superseded, setSuperseded] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  // Synchronous guard against overlapping attempts; the rendered state lags.
+  const lockRef = useRef(false);
+  // Identity of the current attempt; bumped whenever an attempt is abandoned.
+  const attemptRef = useRef(0);
+  // The pending nonce-failure hold or init retry of the current attempt.
+  const connectionTimerRef = useRef<number | null>(null);
+  const lastSentSizeRef = useRef<GridSize | null>(null);
+
+  // Values read at init time rather than reacting to them.
+  const latestRef = useRef(options);
+  const isDarkRef = useRef(isDarkMode);
+  useLayoutEffect(() => {
+    latestRef.current = options;
+    isDarkRef.current = isDarkMode;
+  });
+
+  useEffect(() => {
+    ensureFocusStyle(FOCUS_STYLE_ID);
+  }, []);
+
+  const cancelConnectionTimer = useCallback(() => {
+    if (connectionTimerRef.current !== null) {
+      window.clearTimeout(connectionTimerRef.current);
+      connectionTimerRef.current = null;
+    }
+  }, []);
+
+  const startConnectionTimer = useCallback(
+    (fn: () => void, ms: number) => {
+      cancelConnectionTimer();
+      connectionTimerRef.current = window.setTimeout(() => {
+        connectionTimerRef.current = null;
+        fn();
+      }, ms);
+    },
+    [cancelConnectionTimer],
+  );
+
+  const sendResize = useCallback((size: GridSize) => {
+    const last = lastSentSizeRef.current;
+    if (last && last.cols === size.cols && last.rows === size.rows) return;
+    if (sendFrame(socketRef.current, { type: 'resize', cols: size.cols, rows: size.rows })) {
+      lastSentSizeRef.current = size;
+    }
+  }, []);
+
+  /** Closes and forgets the socket, abandons any attempt, clears the screen. */
+  const disconnect = useCallback(() => {
+    attemptRef.current += 1;
+    cancelConnectionTimer();
+    const socket = socketRef.current;
+    socketRef.current = null;
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      socket.close();
+    }
+    if (terminalRef.current) clearScreen(terminalRef.current);
+    lockRef.current = false;
+    setConnected(false);
+    setConnecting(false);
+    setSuperseded(false);
+    setFailure(null);
+  }, [cancelConnectionTimer]);
+
+  /** Close or error of a socket; ignored unless it is still the current one. */
+  const handleSocketEnd = useCallback(
+    (socket: WebSocket, wasSuperseded: boolean) => {
+      if (socketRef.current !== socket) return;
+      socketRef.current = null;
+      cancelConnectionTimer();
+      if (wasSuperseded) setSuperseded(true);
+      lockRef.current = false;
+      setConnected(false);
+      setConnecting(false);
+      setFailure(null);
+      if (terminalRef.current) clearScreen(terminalRef.current);
+    },
+    [cancelConnectionTimer],
+  );
+
+  const handleMessage = useCallback((payload: unknown) => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    if (payload instanceof ArrayBuffer) {
+      const text = decodeBinaryFrame(payload);
+      if (text !== null) terminal.write(text);
+      return;
+    }
+    if (typeof payload !== 'string') return;
+    try {
+      const msg = parseTextFrame(payload);
+      if (msg.kind === 'output') terminal.write(msg.data);
+      else if (msg.kind === 'error') terminal.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+    } catch (error) {
+      console.error('[Shell] Error handling WebSocket message:', payload, error);
+    }
+  }, []);
+
+  /**
+   * Sends `init` once the container has a real size, so the PTY is spawned
+   * (or reattached) with the geometry the user actually sees.
+   */
+  const scheduleInit = useCallback(
+    (socket: WebSocket) => {
+      const attempt = (retries: number) => {
+        if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+        const terminal = terminalRef.current;
+        const fit = fitRef.current;
+        const { paneId, projectId, sessionId: currentSessionId, initialCommand } = latestRef.current;
+        if (!terminal || !fit || !currentSessionId || !projectId) {
+          setFailure(ERROR_NO_IDENTITY);
+          return;
+        }
+        // A pane in a background desk waits until it is shown; this does not
+        // count against the retry budget.
+        if (!isContainerRendered(terminal)) {
+          startConnectionTimer(() => attempt(retries), HIDDEN_POLL_MS);
+          return;
+        }
+        if (!proposeValidSize(terminal, fit)) {
+          if (retries < MAX_INIT_RETRIES) {
+            startConnectionTimer(() => attempt(retries + 1), SETTLE_DELAY_MS);
+          } else {
+            console.warn('[Shell] Container never produced valid dimensions; init not sent');
+            setFailure(ERROR_NO_SIZE);
+          }
+          return;
+        }
+
+        const size = fitTerminal(terminal, fit);
+        const pane = paneId ? getPane(paneId) : undefined;
+        const desk = paneId ? getDeskOfPane(paneId) : undefined;
+        const sent = sendFrame(socket, {
+          type: 'init',
+          paneId,
+          projectId,
+          sessionId: currentSessionId,
+          cols: size.cols,
+          rows: size.rows,
+          initialCommand: initialCommand ?? null,
+          taskId: pane?.taskId ?? null,
+          provider: pane?.provider ?? null,
+          spaceId: desk?.spaceId ?? null,
+          isDarkMode: document.documentElement.classList.contains('dark'),
+        });
+        if (sent) lastSentSizeRef.current = size;
+      };
+      startConnectionTimer(() => attempt(0), SETTLE_DELAY_MS);
+    },
+    [startConnectionTimer],
+  );
+
+  const connect = useCallback(async () => {
+    if (!terminalRef.current || lockRef.current || socketRef.current) return;
+    attemptRef.current += 1;
+    const attempt = attemptRef.current;
+    lockRef.current = true;
+    setSuperseded(false);
+    setFailure(null);
+    setConnecting(true);
+
+    const nonce = await requestShellNonce();
+    if (attempt !== attemptRef.current) return;
+    if (!nonce.ok) {
+      // Hold "connecting" briefly so a down host is not hammered.
+      startConnectionTimer(() => {
+        if (attempt !== attemptRef.current) return;
+        lockRef.current = false;
+        setConnecting(false);
+      }, NONCE_FAILURE_HOLD_MS);
+      return;
+    }
+
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(shellSocketUrl(nonce.nonce));
+      socket.binaryType = 'arraybuffer';
+    } catch {
+      lockRef.current = false;
+      setConnected(false);
+      setConnecting(false);
+      return;
+    }
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      if (socketRef.current !== socket) return;
+      lockRef.current = false;
+      setConnected(true);
+      setConnecting(false);
+      scheduleInit(socket);
+    };
+    socket.onmessage = (event: MessageEvent) => {
+      if (socketRef.current !== socket) return;
+      handleMessage(event.data);
+    };
+    socket.onclose = (event: CloseEvent) => {
+      handleSocketEnd(socket, event.code === NORMAL_CLOSURE && event.reason === SUPERSEDED_REASON);
+    };
+    socket.onerror = () => {
+      handleSocketEnd(socket, false);
+    };
+  }, [handleMessage, handleSocketEnd, scheduleInit, startConnectionTimer]);
+
+  // One terminal per session id; torn down and rebuilt when it changes.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !sessionId) return;
+
+    let disposed = false;
+    const terminal = new Terminal({ ...TERMINAL_OPTIONS, theme: getXtermTheme(isDarkRef.current) });
+    const fit = new FitAddon();
+    terminal.loadAddon(fit);
+    terminal.loadAddon(new WebLinksAddon());
+    terminal.open(container);
+
+    // Loaded after open so a missing WebGL context surfaces here, not in open().
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        // xterm falls back to the DOM renderer; repaint so the pane is not blank.
+        webgl.dispose();
+        repaintAll(terminal);
+      });
+      terminal.loadAddon(webgl);
+    } catch {
+      console.warn('[Shell] WebGL renderer unavailable, using DOM fallback');
+    }
+
+    terminalRef.current = terminal;
+    fitRef.current = fit;
+
+    const disposeClipboard = installClipboardHandling({
+      terminal,
+      container,
+      bindInput: () => {
+        const socket = socketRef.current;
+        return (data: string) => {
+          sendFrame(socket, { type: 'input', data });
+        };
+      },
+    });
+
+    const dataSubscription = terminal.onData((data) => {
+      sendFrame(socketRef.current, { type: 'input', data });
+    });
+
+    // Pane animations fire many notifications; only the settled size is sent.
+    let resizeTimer: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null;
+        if (disposed || !proposeValidSize(terminal, fit)) return;
+        // Fitting mid-parse races the renderer; wait for pending writes first.
+        terminal.write('', () => {
+          if (disposed || !isContainerRendered(terminal)) return;
+          sendResize(fitTerminal(terminal, fit));
+        });
+      }, RESIZE_DEBOUNCE_MS);
+    });
+    observer.observe(container);
+
+    const atlas = installAtlasRecovery(terminal);
+    const stopDprWatch = watchDevicePixelRatio(() => {
+      if (disposed) return;
+      if (proposeValidSize(terminal, fit)) sendResize(fitTerminal(terminal, fit, false));
+      atlas.trigger();
+    });
+
+    const firstFitTimer = window.setTimeout(() => {
+      if (disposed || !proposeValidSize(terminal, fit)) return;
+      sendResize(fitTerminal(terminal, fit));
+    }, SETTLE_DELAY_MS);
+
+    setInitialized(true);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(firstFitTimer);
+      atlas.dispose();
+      stopDprWatch();
+      disposeClipboard();
+      observer.disconnect();
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      lastSentSizeRef.current = null;
+      dataSubscription.dispose();
+      disconnect();
+      terminal.dispose();
+      terminalRef.current = null;
+      fitRef.current = null;
+      setInitialized(false);
+    };
+  }, [sessionId, disconnect, sendResize]);
+
+  // Recolour in place; the WebGL atlas caches glyphs per colour.
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    terminal.options.theme = getXtermTheme(isDarkMode);
+    terminal.clearTextureAtlas();
+  }, [isDarkMode]);
+
+  // Any return to "neither connecting nor connected" starts a new attempt.
+  useEffect(() => {
+    if (autoConnect && initialized && !connecting && !connected && !superseded) void connect();
+  }, [autoConnect, initialized, connecting, connected, superseded, connect]);
+
+  useEffect(() => {
+    if (!isActive || !initialized || !connected) return;
+    const frame = window.requestAnimationFrame(() => terminalRef.current?.focus());
+    const timer = window.setTimeout(() => terminalRef.current?.focus(), 0);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [isActive, initialized, connected]);
+
+  let overlay: ShellOverlay | null = null;
+  if (!initialized) overlay = { kind: 'loading' };
+  else if (failure) overlay = { kind: 'error', message: failure };
+  else if (connecting) overlay = { kind: 'connecting' };
+  else if (!connected) overlay = { kind: 'connect', superseded };
+
+  return { containerRef, overlay, connect };
+}

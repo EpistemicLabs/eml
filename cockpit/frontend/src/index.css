@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/* Two palettes (herdr-style: monospace, coral/purple accents): light in @theme,
+   dark under html.dark. ThemeContext sets the class from the user's choice
+   (System / Light / Dark); the dark variant is class-based so dark: styles
+   resolve under <html class="dark">. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Light palette. Text tokens keep WCAG AA on background, card and muted;
+     coral and purple are deepened — the dark palette's accents are too pale
+     on a light ground (2.4:1). */
+  --color-background: #f6f7f9;
+  --color-foreground: #16191e;
+  --color-card: #ffffff;
+  --color-muted: #eceef2;
+  --color-muted-foreground: #5a6371;
+  --color-border: #d8dce3;
+  --color-primary: #c93a22;   /* coral */
+  --color-ring: #6d4ee6;      /* purple */
+  /* Status hues (review flags and the DEV badge, update banners). Text-safe
+     on both grounds; fills and borders use them at low alpha. */
+  --color-warning: #b45309;   /* amber */
+  --color-info: #0369a1;      /* sky */
+  --color-success: #047857;   /* emerald */
+  /* Flagged-for-review accent (amber, same hue as the decision type). */
+  --color-review: #7f590c;
+
+  /* Token names the components reference, mapped onto the
+     palette above so they resolve (an undefined --color-* utility renders
+     transparent). Not the theme port — that is a separate step; these are
+     aliases only. */
+  --color-card-foreground: var(--color-foreground);
+  --color-popover: var(--color-card);
+  --color-popover-foreground: var(--color-foreground);
+  --color-primary-foreground: var(--color-background);
+  --color-secondary: var(--color-muted);
+  --color-secondary-foreground: var(--color-foreground);
+  --color-accent: var(--color-muted);
+  --color-accent-foreground: var(--color-foreground);
+  --color-destructive: var(--color-primary);
+  --color-destructive-foreground: var(--color-background);
+  --color-input: var(--color-border);
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Typography scale (text-caption/-ui/-body/-heading utilities). */
+  --text-caption: 11px;
+  --text-ui: 12px;
+  --text-body: 13px;
+  --text-heading: 14px;
+
+  /* Dialog animations used by the ported Dialog primitive. */
+  --animate-dialog-overlay-show: dialog-overlay-show 150ms ease-out;
+  --animate-dialog-content-show: dialog-content-show 150ms ease-out;
+
+  @keyframes dialog-overlay-show {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes dialog-content-show {
+    from { opacity: 0; transform: translate(-50%, -49%) scale(0.98); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+}
+
+/* Dark palette. Declared on <html> itself, so the alias tokens above (which
+   reference these through var()) resolve against it. */
+/* Engram type colours — shared by badges, chips, timeline and graph
+   (TYPE_COLORS in components/ui/badge.tsx). Light: deep enough to read as text
+   on its own tint. Dark (below): desaturated and lifted so they sit in the
+   dark ground. --hash-lightness is the lightness of the hashed tag and
+   subject hues. */
+:root {
+  --type-status: #256d46;
+  --type-task: #2a62c0;
+  --type-decision: #7f590c;
+  --type-reference: #6548c7;
+  --type-note: #7a6250;
+  --type-rule: #b0332d;
+  --type-event: #166b79;
+  --type-profile: #ab3f75;
+  --type-log: #5a6371;
+  --subject-active: #186c53;
+  --hash-lightness: 38%;
+}
+
+html.dark {
+  --type-status: #5fb384;
+  --type-task: #6d9ee8;
+  --type-decision: #d9a441;
+  --type-reference: #a08ae0;
+  --type-note: #b59a86;
+  --type-rule: #e0706a;
+  --type-event: #5bb5c4;
+  --type-profile: #d67fa8;
+  --type-log: #8a94a3;
+  --subject-active: #4fb894;
+  --hash-lightness: 60%;
+  --color-review: #d9a441;
+  --color-background: #0b0d10;
+  --color-foreground: #e6e8ec;
+  --color-card: #14171c;
+  --color-muted: #1b1f26;
+  --color-muted-foreground: #8a94a3;
+  --color-border: #262b33;
+  --color-primary: #ff7a66;   /* coral */
+  --color-ring: #a78bfa;      /* purple */
+  --color-warning: #fbbf24;
+  --color-info: #7dd3fc;
+  --color-success: #6ee7b7;
+}
+
+html, body, #root { height: 100%; }
+
+/* color-scheme follows the palette, not the OS: without it the browser draws
+   native controls for the OS appearance — a dark cockpit under macOS light
+   mode (or with always-visible scrollbars) got a white track on every scroller. */
+html.dark { color-scheme: dark; }
+html {
+  color-scheme: light;
+  scrollbar-color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent) transparent;
+}
+/* scrollbar-width doesn't inherit, so it goes on every element. */
+* { scrollbar-width: thin; }
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* Structural utilities the sidebar uses; they resolve against the current
+   palette. */
+@utility frosted {
+  background-color: color-mix(in srgb, var(--color-card) 85%, transparent);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--color-border);
+}
+
+@utility nav-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border) 20%, var(--color-border) 80%, transparent);
+}
+
+/* Settings modal: content fades in on tab switch. */
+@utility settings-content-enter {
+  animation: settings-fade-in 150ms ease-out;
+}
+
+@keyframes settings-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}

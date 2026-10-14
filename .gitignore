@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.tsbuildinfo
+# eml-cockpit build artifacts (cockpit/host/scripts/build.mjs)
+cockpit/host/ui/
+cockpit/host/migrations/
+# packed tarballs (pnpm pack)
+*.tgz
+# local data — never commit a brain
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+.env
+.env.*
+!.env.example
+tmp/
+.DS_Store
+# .claude is local-only (settings, personal skills)
+.claude/
+# release assets (scripts/pack-release.sh)
+release/

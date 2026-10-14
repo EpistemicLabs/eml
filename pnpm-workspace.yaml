@@ -1,0 +1,4 @@
+packages:
+  - "packages/*"
+  - "cockpit/host"
+  - "cockpit/frontend"

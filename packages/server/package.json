@@ -1,0 +1,24 @@
+{
+  "name": "@engramprotocol/server",
+  "version": "0.17.11",
+  "private": true,
+  "description": "EML HTTP API server",
+  "license": "AGPL-3.0-only",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -b",
+    "prepublishOnly": "test -f dist/server.js || (echo '❌ dist/server.js missing — run: pnpm -F @engramprotocol/core build && pnpm -F @engramprotocol/server build' && exit 1)",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@engramprotocol/core": "workspace:*",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/uuid": "^9.0.8",
+    "better-sqlite3": "^13.0.3"
+  }
+}

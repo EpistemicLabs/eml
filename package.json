@@ -1,0 +1,33 @@
+{
+  "name": "eml",
+  "version": "0.17.11",
+  "private": true,
+  "description": "EML — a typed memory for AI agents, with the EML Cockpit (local web app for Claude Code sessions next to your brain)",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@10.33.3",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "pnpm -r test",
+    "test:watch": "pnpm -r --parallel test:watch",
+    "cockpit:build": "pnpm -F @engramprotocol/core -F @engramprotocol/server -F @engramprotocol/mcp-server -F @engramprotocol/cockpit-frontend build && pnpm -F eml-cockpit build",
+    "cockpit": "pnpm run cockpit:build && pnpm -F eml-cockpit start",
+    "cockpit:dev": "pnpm -F eml-cockpit dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "node-pty"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EpistemicLabs/eml.git"
+  }
+}

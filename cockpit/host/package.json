@@ -1,0 +1,51 @@
+{
+  "name": "eml-cockpit",
+  "version": "0.17.11",
+  "license": "AGPL-3.0-only",
+  "private": false,
+  "description": "EML Cockpit — a local web app that runs isolated Claude Code sessions next to your local brain. One process: brain server + session runtime + UI, all on loopback.",
+  "type": "module",
+  "bin": {
+    "eml-cockpit": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "ui",
+    "migrations",
+    "skills",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "EML_COCKPIT_DEV=1 EML_COCKPIT_HOME=${EML_COCKPIT_HOME:-$HOME/.eml-cockpit-dev} COCKPIT_PORT=${COCKPIT_PORT:-4318} COCKPIT_NO_OPEN=1 tsx watch src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@engramprotocol/mcp-server": "workspace:*",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "better-sqlite3": "^13.0.3",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@engramprotocol/cockpit-frontend": "workspace:*",
+    "@engramprotocol/core": "workspace:*",
+    "@engramprotocol/server": "workspace:*",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.0"
+  }
+}

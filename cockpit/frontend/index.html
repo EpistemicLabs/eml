@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EML Cockpit</title>
+    <script>
+      // Apply the saved theme before first paint (ThemeContext owns it afterwards):
+      // 'light' | 'dark' | 'system' in localStorage.themeMode, default system.
+      (function () {
+        var mode = null;
+        try { mode = localStorage.getItem('themeMode'); } catch (e) {}
+        var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

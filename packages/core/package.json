@@ -1,0 +1,22 @@
+{
+  "name": "@engramprotocol/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "EML core library — engrams, types, validation, database",
+  "license": "AGPL-3.0-only",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/uuid": "^9.0.8"
+  }
+}
