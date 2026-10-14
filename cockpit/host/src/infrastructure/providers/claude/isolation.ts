@@ -36,7 +36,7 @@ import { brainMcpServer, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry
  *   - settings.json (passed via --settings): skips the interactive "Bypass
  *     Permissions mode" acceptance dialog that --dangerously-skip-permissions
  *     otherwise shows on every TUI start; carries the session hooks — turn
- *     state to the host, and the EML hooks (boot + reminder) from the bundled
+ *     state to the host, and the EML hooks (boot, reminder, consolidate at stop) from the bundled
  *     @engramprotocol/mcp-server, reading the space's EML config.
  *   - <home>/eml/spaces/<id>/config (chmod 600): brain URL + token of the space
  *     for those EML hooks — the app's own EML client config, never the user's ~/.eml.
@@ -167,7 +167,8 @@ export function writeSpaceFiles(
       hooks: {
         SessionStart: [emlHookEntry('session-start', quote(emlConfig))],
         UserPromptSubmit: [hookEntry(hookUrl, curlConfig), emlHookEntry('user-prompt-submit', quote(emlConfig))],
-        Stop: [hookEntry(hookUrl, curlConfig)],
+        // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
+        Stop: [hookEntry(hookUrl, curlConfig), emlHookEntry('stop', quote(emlConfig))],
         // Every notification type reaches the host; turn-state.ts decides which
         // mean "waiting" and logs the others, so a new type shows up in host.log.
         Notification: [hookEntry(hookUrl, curlConfig)],

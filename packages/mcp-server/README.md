@@ -18,12 +18,13 @@ claude mcp add eml_brain \
 
 ## Hooks
 
-Two session hooks ship as CLI commands (node only, no bash/curl/jq). They fit any agent CLI with
+Three session hooks ship as CLI commands (node only, no bash/curl/jq). They fit any agent CLI with
 Claude Code-style hooks (Claude Code, Codex):
 
 ```
 eml-mcp-server hook session-start      [--config <path>] [--json]
 eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
+eml-mcp-server hook stop               [--config <path>]
 ```
 
 - **session-start** reads the client config, POSTs to `/boot` and prints the returned markdown to
@@ -35,13 +36,16 @@ eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
   unreachable server prints a warning and exits 0, so the session continues without the brain.
 - **user-prompt-submit** is local only (no HTTP): a short reminder on turn 1, every 5th turn and
   after a pause of more than an hour.
-- **Before a compaction** both hooks ask the agent for the `consolidate` skill's auto mode, because
-  a compaction summary is written to continue the task, not to keep what belongs in the brain.
-  `user-prompt-submit` reads the context size from the transcript named in the hook input and
-  hints each time the session has grown by 150,000 tokens since its last save point.
-  `session-start` after a compaction (`source: "compact"`) puts a hint with the transcript's path
-  before the boot and takes its length off the boot's budget. The transcript format is Claude
-  Code's; with another CLI or an unreadable file the size hint stays silent.
+- **stop** asks for the `consolidate` skill's auto mode before the context is compacted, because a
+  compaction summary is written to continue the task, not to keep what belongs in the brain. When
+  the agent ends a turn, the hook reads the context size from the transcript named in the hook
+  input (Claude Code's and Codex's formats). Has the session grown by 150,000 tokens since its last
+  save point, it blocks the stop once (`{"decision":"block","reason"}`), and the agent consolidates
+  in the same turn — before the session goes idle, where it can be compacted with nobody there to
+  give the agent a turn. A turn continued this way (`stop_hook_active`) is let through. With an
+  unreadable transcript the hook stays silent.
+- **After a compaction** `session-start` (`source: "compact"`) puts a hint with the transcript's
+  path before the boot and takes its length off the boot's budget.
 - **`--json`** prints the context in the hook JSON envelope
   (`{ "hookSpecificOutput": { "hookEventName", "additionalContext" } }`) instead of plain text. Codex
   needs it: it reads stdout that starts with `[` or `{` as JSON, and the reminder starts with

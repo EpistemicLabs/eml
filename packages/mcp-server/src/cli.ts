@@ -7,8 +7,9 @@ import { startMcpServer } from './server'
  *
  * Two modes, dispatched by first arg:
  *   - no args (or --url/--token/etc.) → MCP-server mode (stdio JSON-RPC for Claude Code)
- *   - `hook [session-start|user-prompt-submit] [--config <path>]` → Claude Code
- *     hooks (boot + reminder) without bash/jq, for apps that embed the client
+ *   - `hook [session-start|user-prompt-submit|stop] [--config <path>]` → Claude Code
+ *     hooks (boot, reminder, consolidate before a compaction) without bash/jq,
+ *     for apps that embed the client
  *
  * Server-mode usage:
  *   eml-mcp-server --url <api-url> --token <bearer> [--name <client-name>]

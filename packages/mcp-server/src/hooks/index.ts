@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { EML_CONFIG, HOME_DIR, readConfig, type EmlConfig } from '../config'
 import { notesUpdate } from './notes'
-import { compactionNote, growthNudge, type CompactionInput } from './compaction'
+import { compactionNote, stopHook, type CompactionInput } from './compaction'
 
 /**
  * Claude Code hooks as CLI commands (no bash/curl/jq needed, so they run
@@ -11,11 +11,13 @@ import { compactionNote, growthNudge, type CompactionInput } from './compaction'
  *
  *   eml-mcp-server hook session-start      [--config <path>] [--json]
  *   eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
+ *   eml-mcp-server hook stop               [--config <path>]
  *
  * --json prints the context as the hook JSON envelope
  * ({ hookSpecificOutput: { hookEventName, additionalContext } }) instead of
  * plain text. Codex needs it: it reads stdout that starts with "[" or "{" as
- * JSON, and the reminder starts with "[EML Reminder]".
+ * JSON, and the reminder starts with "[EML Reminder]". `stop` always prints
+ * JSON (a block decision, or nothing): both CLIs read that form for Stop.
  *
  * --config defaults to ~/.eml/config. Logs and the reminder turn counters live
  * next to the config file (<dir>/logs, <dir>/state), so one config dir = one
@@ -229,12 +231,15 @@ export async function runHook(argv: string[]): Promise<void> {
       const notes = await notesUpdate(readConfig(configPath), ctx.stateDir, input)
       logLine(ctx, name, notes.log)
       if (notes.output) result = { ...result, output: [result.output, notes.output].filter(Boolean).join('\n\n') }
-      // The session grew a lot since its last save point (hooks/compaction.ts).
-      const growth = growthNudge(ctx.stateDir, input)
-      logLine(ctx, name, growth.log)
-      if (growth.output) result = { ...result, output: [result.output, growth.output].filter(Boolean).join('\n\n') }
+    } else if (name === 'stop') {
+      // Consolidate before the session goes idle (hooks/compaction.ts). The
+      // output is the block decision as JSON, the same for Claude Code and Codex.
+      const stop = stopHook(ctx.stateDir, input)
+      if (stop.output) process.stdout.write(stop.output + '\n')
+      logLine(ctx, name, stop.log)
+      return
     } else {
-      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit [--config <path>] [--json]\n`)
+      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit | hook stop [--config <path>] [--json]\n`)
       return
     }
     if (result.output) process.stdout.write(formatHookOutput(name, result.output, argv.includes('--json')) + '\n')
