@@ -348,7 +348,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
 
     // The first-run setup server answers { needed: true } (setup.ts). Here:
     // signIn = right after the setup, before Claude is signed in — the page
-    // then opens Settings › Models (onboarding.ts).
+    // then shows its sign-in card (onboarding.ts).
     if (resource === 'setup' && !id && method === 'GET') {
       const pending = (await readCockpitConfig())?.onboarding === 'pending'
       json(res, 200, { needed: false, signIn: pending && !(await deps.providers.get('claude')?.auth.signedIn().catch(() => false)) })
