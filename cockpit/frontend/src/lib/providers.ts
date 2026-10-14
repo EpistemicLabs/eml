@@ -74,14 +74,14 @@ export function newSessionLabel(provider?: Pick<AgentProviderInfo, 'label'> | nu
 /**
  * The menu entries for new agent sessions: one per ready provider when there
  * are several, otherwise one entry (provider undefined → the cockpit's
- * default) named after the provider it will start.
+ * default) named after that default, the provider it will start.
  */
 export function newSessionEntries(
   providers: AgentProviderInfo[],
 ): Array<{ label: string; provider?: LLMProvider }> {
   const ready = providers.filter((provider) => provider.version !== null);
   if (ready.length > 1) return ready.map((provider) => ({ label: newSessionLabel(provider), provider: provider.id }));
-  return [{ label: newSessionLabel(ready[0] ?? providers.find((provider) => provider.isDefault)) }];
+  return [{ label: newSessionLabel(providers.find((provider) => provider.isDefault) ?? ready[0]) }];
 }
 
 /** Every change answers with the fresh provider list. */
