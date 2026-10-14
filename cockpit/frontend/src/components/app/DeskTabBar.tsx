@@ -164,11 +164,12 @@ export default function DeskTabBar() {
         const brainLabel = section.space?.name ?? 'Brain';
         return (
           // One section per brain: a faint band holds its Brain tab and desks,
-          // so the bands — not separator lines — tell the brains apart.
+          // so the bands — not separator lines — tell the brains apart. The band
+          // keeps a fixed height and sits centred in the taller header row.
           <div
             key={section.space?.id ?? 'all'}
             className={cn(
-              'my-1.5 flex items-stretch overflow-hidden rounded-md border',
+              'flex h-8 self-center items-stretch overflow-hidden rounded-md border',
               isActiveSpace ? 'border-foreground/15 bg-foreground/[0.05]' : 'border-foreground/[0.08] bg-foreground/[0.02]',
             )}
           >
