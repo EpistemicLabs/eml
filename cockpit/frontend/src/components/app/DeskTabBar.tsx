@@ -27,6 +27,7 @@ import { countNeedsYou, useTurnStore } from '@/stores/useTurnStateStore';
  *  • × (hover/active)   → delete it (guarded: never a space's last desk; warns
  *                         if the desk still holds a live session)
  *  • + (per section)    → create a new desk in that space, straight into rename
+ *  • drag a tab         → reorder it among the desks of its space
  *  • ⌘/Ctrl 1–9         → the Nth desk in bar order
  */
 export default function DeskTabBar() {
@@ -49,6 +50,10 @@ export default function DeskTabBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   // Distinguishes Escape (cancel) from Enter/blur (commit) on the rename input.
   const cancelRef = useRef(false);
+  // Drag to reorder: the desk being dragged (with its space, the only place it
+  // may land) and where it would land — before or after the desk under the pointer.
+  const [dragging, setDragging] = useState<{ id: string; spaceKey: string | null } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; place: 'before' | 'after' } | null>(null);
 
   // The header needs the space list on its own: the sidebar's space switch,
   // the other loader, is only mounted in the projects view.
@@ -157,6 +162,40 @@ export default function DeskTabBar() {
     paneStore.removeDesk(desk.id);
   };
 
+  const endDrag = () => {
+    setDragging(null);
+    setDropTarget(null);
+  };
+
+  /** Drag handlers for one desk tab; a drop is only accepted within the dragged desk's space. */
+  const dragProps = (desk: DeskState, spaceKey: string | null) => ({
+    draggable: editingId !== desk.id,
+    onDragStart: (event: React.DragEvent<HTMLDivElement>) => {
+      event.dataTransfer.effectAllowed = 'move';
+      // Firefox only starts a drag that carries data.
+      event.dataTransfer.setData('text/plain', desk.name);
+      setDragging({ id: desk.id, spaceKey });
+    },
+    onDragOver: (event: React.DragEvent<HTMLDivElement>) => {
+      if (!dragging || dragging.spaceKey !== spaceKey || dragging.id === desk.id) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      const rect = event.currentTarget.getBoundingClientRect();
+      const place = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+      if (dropTarget?.id !== desk.id || dropTarget.place !== place) setDropTarget({ id: desk.id, place });
+    },
+    onDragLeave: (event: React.DragEvent<HTMLDivElement>) => {
+      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+      if (dropTarget?.id === desk.id) setDropTarget(null);
+    },
+    onDrop: (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      if (dragging && dropTarget?.id === desk.id) paneStore.moveDesk(dragging.id, desk.id, dropTarget.place);
+      endDrag();
+    },
+    onDragEnd: endDrag,
+  });
+
   let position = 0;
 
   return (
@@ -216,9 +255,11 @@ export default function DeskTabBar() {
               const isActive = topView === 'desks' && desk.id === activeDeskId;
               const isEditing = editingId === desk.id;
               const shortcut = idx < 9 ? ` — ⌘${idx + 1}` : '';
+              const dropPlace = dropTarget?.id === desk.id ? dropTarget.place : null;
               return (
                 <div
                   key={desk.id}
+                  {...dragProps(desk, section.key)}
                   className={cn(
                     // The row holds the name and its unseen badge; the × sits in the
                     // tab's top-right corner above them, on hover only.
@@ -229,8 +270,16 @@ export default function DeskTabBar() {
                     // Active marker (Variante B): a 2px coral line on the header's
                     // bottom edge, flush with the pane headers underneath.
                     isActive && 'after:absolute after:inset-x-1.5 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary',
+                    dragging?.id === desk.id && 'opacity-50',
                   )}
                 >
+                  {/* Where the dragged desk would land: a line on this tab's left or right edge. */}
+                  {dropPlace && (
+                    <span
+                      aria-hidden
+                      className={cn('pointer-events-none absolute inset-y-1 w-[2px] rounded-full bg-primary', dropPlace === 'before' ? '-left-px' : '-right-px')}
+                    />
+                  )}
                   {isEditing ? (
                     <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
                   ) : (
@@ -241,7 +290,7 @@ export default function DeskTabBar() {
                         paneStore.activateDesk(desk.id);
                       }}
                       onDoubleClick={() => startEditing(desk.id, desk.name)}
-                      title={`${desk.name}${shortcut} · double-click to rename`}
+                      title={`${desk.name}${shortcut} · double-click to rename, drag to reorder`}
                       className="max-w-[10ch] cursor-pointer truncate font-medium whitespace-nowrap"
                     >
                       {desk.name}
