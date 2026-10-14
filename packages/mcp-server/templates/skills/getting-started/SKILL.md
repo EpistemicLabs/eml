@@ -1,6 +1,6 @@
 ---
 name: getting-started
-description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — where it shows up in the app, shows the agent's default rules and the skills. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
+description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — where it shows up in the app, shows the agent's default rules and the skills. In the cockpit it ends by consolidating and handing over to a new session in the project. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
@@ -40,9 +40,11 @@ with any MCP client.
 
    Don't ask how long your answers should be — detailed is the default (step 5).
 
-   Update their profile engram (`<user>-identity`, scope `user.<user>`) with
-   `eml_update`: replace the placeholder line "The agent learns more from
-   conversation…" with what you learned, written in English as plain facts.
+   Update their profile engram (`<user>-identity`, scope `user.<user>`): read
+   it with `eml_get`, replace the placeholder line "The agent learns more from
+   conversation…" with what you learned, written in English as plain facts,
+   and send the whole new text with `eml_update` — `content` replaces the
+   engram's content completely, so keep its first line.
 
 3. **The first project.** Ask what they'd like to start with — the thing they
    named in step 2 is the obvious candidate. Then:
@@ -68,13 +70,15 @@ with any MCP client.
      organisation (entity), the user, the agent, or global.
 
    *Cockpit:* then show where it lives in the app, in a few lines:
-   - **Sidebar:** the project is listed there. Its "+" starts a new session in
-     it ("New Claude Code session"), opens a "New brain view" or a "New note".
+   - **Sidebar:** the project is listed there. Its "+" starts a new agent
+     session in it (e.g. "New Claude Code session" — the label names the
+     agent CLI), opens a "New brain view" or a "New note".
      The project's folder button links it to a folder of their own, so its
      sessions start there.
-   - **Brain tab:** the first tab in the desk bar opens the brain dashboard —
-     search, open tasks, recent activity and all projects. A project's page
-     shows its status, open tasks, decisions and a graph.
+   - **Brain tab:** the first tab in the desk bar (it carries the space's
+     name — "Main" at first — and a brain icon) opens the brain dashboard:
+     search, open tasks, recent activity and all projects. Clicking a project
+     there opens its page: status, open tasks, decisions and a graph.
    - **Task runs:** clicking a task there opens it; "Advance task" starts a
      session that works it through stage by stage and stops for their go after
      each stage.
@@ -108,8 +112,24 @@ with any MCP client.
    - **Asking** works in plain language: "where do we stand on X?" or "what did
      we decide about Y?" — you look it up in the brain instead of guessing.
 
-7. **Close.** One or two sentences: the brain is set up, and this session can
-   simply continue with the first task.
+7. **Close.** One or two sentences: the brain is set up, and they can start on
+   the first task.
+
+   *Cockpit:* this session runs in a cockpit-made "Getting started" folder,
+   not in their project — the work goes on in a new session there:
+   1. **Consolidate.** Run the `consolidate` skill for this session (it
+      proposes what to store; the user approves).
+   2. **Folder.** Ask whether the project's work lives in a folder on this
+      computer. If yes, ask them to link it now with the project's folder
+      button in the sidebar, and wait until they say it's done. If not, the
+      cockpit makes a folder for it.
+   3. **Hand over.** With the `spawn-session` skill, open a session in the
+      project (`--project <id>`, the project's name as title) with this
+      prompt: "Load the brain for project <id> (eml_show project.<id>). Say in
+      a few lines where we stand and which tasks are open, then ask which one
+      to start with."
+   4. Tell them the new session opens next to this one and the work goes on
+      there; this one can be closed.
 
 ## Guardrails
 - Keep it moving. If the user gives one-word answers, don't press for more.
