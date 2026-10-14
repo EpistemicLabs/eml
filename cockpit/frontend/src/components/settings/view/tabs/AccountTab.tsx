@@ -1,18 +1,14 @@
 // Settings › Account: who you are in this brain (from GET /api/brain-info) and
-// your plan. Today everyone runs the free open-source build; Pro and Team are
-// announced, nothing more. Changing the name comes later — the name is also
-// in the identity engrams of every space's brain.
-import { useAboutInfo } from '@/hooks/useAboutInfo';
+// your plan. Today everyone runs the free open-source build from GitHub; Pro
+// and Team are announced, nothing more. Changing the name comes later — the
+// name is also in the identity engrams of every space's brain.
 import { mainUser, useBrainInfo } from '../../hooks/useBrainInfo';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
-const REPO_URL = 'https://github.com/EpistemicLabs/eml';
-
 export default function AccountTab() {
   const { info, failed } = useBrainInfo();
-  const { info: about } = useAboutInfo();
   const fallback = failed ? 'unavailable' : '…';
   const user = mainUser(info);
 
@@ -31,10 +27,7 @@ export default function AccountTab() {
 
       <SettingsSection title="Plan">
         <SettingsCard divided>
-          <SettingsRow
-            label="Free · Open Source"
-            description={`The open-source cockpit from GitHub${about ? `, v${about.version}` : ''}. Runs on this computer with your own Claude or Codex sign-in.`}
-          >
+          <SettingsRow label="Free" description="Open source, from GitHub.">
             <Pill active>current</Pill>
           </SettingsRow>
           <SettingsRow label="Pro">
@@ -43,12 +36,6 @@ export default function AccountTab() {
           <SettingsRow label="Team">
             <Pill>coming soon</Pill>
           </SettingsRow>
-          <div className="px-4 py-3 text-sm text-muted-foreground">
-            Source, issues and releases:{' '}
-            <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
-              github.com/EpistemicLabs/eml
-            </a>
-          </div>
         </SettingsCard>
       </SettingsSection>
     </div>
