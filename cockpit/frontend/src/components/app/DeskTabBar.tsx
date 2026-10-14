@@ -7,7 +7,7 @@ import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
 import * as paneStore from '@/stores/usePaneStore';
 import type { DeskState } from '@/stores/usePaneStore';
-import { paneSpaceKey, renameSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
+import { loadSpaces, paneSpaceKey, renameSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { setTopView, useTopView } from '@/stores/useTopViewStore';
 import { countNeedsYou, useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -49,6 +49,10 @@ export default function DeskTabBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   // Distinguishes Escape (cancel) from Enter/blur (commit) on the rename input.
   const cancelRef = useRef(false);
+
+  // The header needs the space list on its own: the sidebar's space switch,
+  // the other loader, is only mounted in the projects view.
+  useEffect(() => { void loadSpaces(); }, []);
 
   useEffect(() => {
     if (editingId) {
