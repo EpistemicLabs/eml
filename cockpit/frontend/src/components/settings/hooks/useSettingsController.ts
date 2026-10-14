@@ -14,8 +14,8 @@ type UseSettingsControllerArgs = {
 };
 
 const normalizeMainTab = (tab: string): SettingsMainTab => {
-  // Older callers say "appearance" or "theme" — both live in Preferences now.
-  if (tab === 'appearance' || tab === 'theme') return 'preferences';
+  // Older callers say "appearance", "theme" or "notifications" — all live in Preferences now.
+  if (tab === 'appearance' || tab === 'theme' || tab === 'notifications') return 'preferences';
   return KNOWN_MAIN_TABS.includes(tab as SettingsMainTab) ? (tab as SettingsMainTab) : DEFAULT_SETTINGS_TAB;
 };
 

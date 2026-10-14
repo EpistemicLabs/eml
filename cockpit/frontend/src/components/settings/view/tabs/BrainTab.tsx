@@ -1,6 +1,6 @@
-// Cockpit addition: Settings › Brain. Where this cockpit keeps its files, who
-// it writes as, and WAL-safe backups — all from the host (GET /api/brain-info,
-// /api/brain-backups). Read-only except "Back up now"; switching the source
+// Cockpit addition: Settings › Brain. Spaces, where this cockpit keeps its
+// files, and WAL-safe backups — all from the host (GET /api/brain-info,
+// /api/brain-backups). Who is in the brain shows in Account and Agent. Read-only except "Back up now"; switching the source
 // to a remote brain and restoring a backup are later steps.
 import { useCallback, useEffect, useState } from 'react';
 import { FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
@@ -11,21 +11,7 @@ import { Button } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-
-type BrainInfo = {
-  source: 'local';
-  home: string;
-  brainId: string | null;
-  brainName: string | null;
-  brainFile: string | null;
-  sizeBytes: number | null;
-  modifiedAt: string | null;
-  schemaVersion: number | null;
-  createdAt: string | null;
-  author: string | null;
-  agents: Array<{ id: string; name: string }>;
-  users: Array<{ id: string; name: string }>;
-};
+import { useBrainInfo } from '../../hooks/useBrainInfo';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
 
@@ -50,8 +36,7 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export default function BrainTab() {
-  const [info, setInfo] = useState<BrainInfo | null>(null);
-  const [infoFailed, setInfoFailed] = useState(false);
+  const { info, failed: infoFailed } = useBrainInfo();
   const [backups, setBackups] = useState<BrainBackup[]>([]);
   const [backingUp, setBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -93,7 +78,6 @@ export default function BrainTab() {
   }, []);
 
   useEffect(() => {
-    getJson<BrainInfo>('/api/brain-info').then(setInfo, () => setInfoFailed(true));
     void loadBackups();
   }, [loadBackups]);
 
@@ -115,8 +99,6 @@ export default function BrainTab() {
   };
 
   const fallback = infoFailed ? 'unavailable' : '…';
-  const names = (rows: Array<{ id: string; name: string }> | undefined) =>
-    rows && rows.length > 0 ? rows.map((r) => (r.name === r.id ? r.id : `${r.name} (${r.id})`)).join(', ') : '—';
 
   return (
     <div className="space-y-8">
@@ -230,23 +212,6 @@ export default function BrainTab() {
           </SettingsRow>
           <SettingsRow label="Created">
             <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="Identity">
-        <SettingsCard divided>
-          <SettingsRow
-            label="Writes as"
-            description="The author name stamped on every engram this cockpit's sessions write"
-          >
-            <Mono>{info ? info.author ?? '—' : fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Agents" description="Agent identities in this brain">
-            <Mono className="max-w-sm text-right">{info ? names(info.agents) : fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Users" description="People in this brain">
-            <Mono className="max-w-sm text-right">{info ? names(info.users) : fallback}</Mono>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>

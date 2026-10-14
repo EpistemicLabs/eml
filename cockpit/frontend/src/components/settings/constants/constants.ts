@@ -2,7 +2,6 @@
 // "Settings: …" entries; `blurb` is the one-liner a not-yet-built tab shows.
 import type { ComponentType } from 'react';
 import {
-  Bell,
   Bot,
   Brain,
   Cpu,
@@ -27,44 +26,37 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'account',
     label: 'Account',
-    keywords: 'account subscription eml login profile',
+    keywords: 'account plan free pro team subscription name profile user',
     icon: UserRound,
-    blurb: 'Your EML account: sign-in and subscription.',
+    blurb: 'You in this brain, and your plan.',
+  },
+  {
+    id: 'agents',
+    label: 'Agent',
+    keywords: 'agent agents identity persona profile rules always on',
+    icon: Bot,
+    blurb: 'Your agent: its name, profile and the rules it always follows.',
   },
   {
     id: 'models',
     label: 'Models',
-    keywords: 'models claude login subscription permissions model setup-token isolation',
+    keywords: 'models claude codex login sign in subscription permissions version update setup-token default',
     icon: Cpu,
-    blurb: 'Claude sign-in (Max subscription), permission mode, default model — and what the cockpit keeps separate from your local Claude setup.',
-  },
-  {
-    id: 'agents',
-    label: 'Agents',
-    keywords: 'agents agent identity persona setup',
-    icon: Bot,
-    blurb: 'Set up your own agent here: its name and identity, how it works with you and what it brings into every session. Not available yet — sessions currently run as the agent your brain was set up with.',
+    blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code and Codex (beta).',
   },
   {
     id: 'brain',
     label: 'Brain',
-    keywords: 'brain local hosted token backup stats paths home folder config directory',
+    keywords: 'brain spaces local token backup stats paths home folder config directory',
     icon: Brain,
-    blurb: 'The brain instance: its source (local or hosted), where the cockpit keeps its files, identity, backup and restore.',
+    blurb: 'The brain instance: spaces, source, where the cockpit keeps its files, backups.',
   },
   {
     id: 'preferences',
     label: 'Preferences',
-    keywords: 'preferences theme appearance dark light colors font sidebar sorting',
+    keywords: 'preferences theme appearance dark light colors font sidebar sorting notifications alerts done badge browser',
     icon: SlidersHorizontal,
-    blurb: 'Your personal setup: theme, sidebar ordering, and more to come.',
-  },
-  {
-    id: 'notifications',
-    label: 'Notifications',
-    keywords: 'notifications alerts done idle badge browser',
-    icon: Bell,
-    blurb: 'Finished-session badges and optional browser notifications.',
+    blurb: 'Your personal setup: theme, sidebar ordering, notifications.',
   },
   {
     id: 'plugins',
@@ -83,7 +75,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'about',
     label: 'About',
-    keywords: 'about version info updates',
+    keywords: 'about version info updates license',
     icon: Info,
     blurb: 'Versions and updates.',
   },
@@ -91,7 +83,6 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
 
 export const KNOWN_MAIN_TABS: SettingsMainTab[] = SETTINGS_MAIN_TABS.map((tab) => tab.id);
 
-// Until Account has content, the modal opens on the first tab that does.
-export const DEFAULT_SETTINGS_TAB: SettingsMainTab = 'preferences';
+export const DEFAULT_SETTINGS_TAB: SettingsMainTab = 'account';
 
 export const DEFAULT_PROJECT_SORT_ORDER: ProjectSortOrder = 'name';

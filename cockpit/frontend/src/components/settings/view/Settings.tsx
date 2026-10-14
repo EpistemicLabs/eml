@@ -1,8 +1,7 @@
 // Kept: backdrop + frosted window (90vh, max-w-4xl), header with title,
 // "saved" flash and close, sidebar + fading content, Escape to close.
 // Trimmed: provider login modal, web-push wiring, the tabs the cockpit
-// has no substrate for (see constants: Account/Brain/Data render a
-// placeholder until they do).
+// has no substrate for (Plugins/Data render a placeholder until they do).
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
@@ -10,15 +9,16 @@ import { Button } from '@/shared/view/ui';
 import SettingsSidebar from './SettingsSidebar';
 import SettingsPlaceholder from './SettingsPlaceholder';
 import PreferencesTab from './tabs/PreferencesTab';
-import NotificationsTab from './tabs/NotificationsTab';
 import AboutTab from './tabs/AboutTab';
+import AccountTab from './tabs/AccountTab';
+import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
 import BrainTab from './tabs/BrainTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
 import type { SettingsProps } from '../types/types';
 
-function Settings({ isOpen, onClose, initialTab = 'preferences' }: SettingsProps) {
+function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
   const {
     activeTab,
     setActiveTab,
@@ -90,26 +90,26 @@ function Settings({ isOpen, onClose, initialTab = 'preferences' }: SettingsProps
 
           <main className="flex-1 overflow-y-auto">
             <div key={activeTab} className="settings-content-enter space-y-8 p-6">
-              {activeTab === 'preferences' && (
-                <PreferencesTab
-                  projectSortOrder={projectSortOrder}
-                  onProjectSortOrderChange={setProjectSortOrder}
-                />
-              )}
+              {activeTab === 'account' && <AccountTab />}
 
-              {activeTab === 'notifications' && (
-                <NotificationsTab notifyOnDone={notifyOnDone} onNotifyOnDoneChange={setNotifyOnDone} />
-              )}
-
-              {activeTab === 'about' && <AboutTab />}
+              {activeTab === 'agents' && <AgentTab />}
 
               {activeTab === 'models' && <ModelsTab onCloseSettings={onClose} />}
 
               {activeTab === 'brain' && <BrainTab />}
 
-              {activeTab !== 'preferences' && activeTab !== 'about' && activeTab !== 'notifications' && activeTab !== 'models' && activeTab !== 'brain' && (
-                <SettingsPlaceholder tab={activeMeta} />
+              {activeTab === 'preferences' && (
+                <PreferencesTab
+                  projectSortOrder={projectSortOrder}
+                  onProjectSortOrderChange={setProjectSortOrder}
+                  notifyOnDone={notifyOnDone}
+                  onNotifyOnDoneChange={setNotifyOnDone}
+                />
               )}
+
+              {activeTab === 'about' && <AboutTab />}
+
+              {(activeTab === 'plugins' || activeTab === 'data') && <SettingsPlaceholder tab={activeMeta} />}
             </div>
           </main>
         </div>
