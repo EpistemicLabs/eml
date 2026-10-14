@@ -21,3 +21,14 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
 - Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.
 - Agent-facing texts (MCP tool descriptions, system rules, hook output) are product surface — review changes deliberately.
+
+## Releases (maintainers)
+
+1. Branch `vX.Y.Z` from `main`; `bash scripts/bump-version.sh X.Y.Z`.
+2. Test the release on the dev cockpit; `cockpit/scripts/dev-refresh-brain.sh` loads a copy of the
+   production brain into it first.
+3. PR `vX.Y.Z` → `main` with the release notes as description; CI green; merge with a merge commit.
+4. Tag the merge commit on `main`: `git tag vX.Y.Z && git push origin refs/tags/vX.Y.Z` (the branch
+   has the same name, so push the tag by its full ref).
+5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file <notes>`.
+   The cockpit updater installs exactly these three assets from the latest release.
