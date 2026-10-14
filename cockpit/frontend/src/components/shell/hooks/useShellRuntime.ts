@@ -421,10 +421,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     };
   }, [sessionId, disconnect, sendResize]);
 
-  // Recolour in place; the WebGL atlas caches glyphs per colour.
+  // Recolour in place; the WebGL atlas caches glyphs per colour. Only on a
+  // real switch: a new terminal is created with the current theme, and
+  // clearing the atlas then wipes the one every pane with the same font shares.
+  const appliedDarkRef = useRef(isDarkMode);
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal) return;
+    if (!terminal || appliedDarkRef.current === isDarkMode) return;
+    appliedDarkRef.current = isDarkMode;
     terminal.options.theme = getXtermTheme(isDarkMode);
     terminal.clearTextureAtlas();
   }, [isDarkMode]);
