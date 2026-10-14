@@ -554,6 +554,23 @@ export function removeDesk(id: string): void {
   setSnapshot({ ...snapshot, desks, activeDeskId });
 }
 
+/**
+ * Move desk `id` next to desk `targetId`, before or after it. Desks belong to
+ * a space, so a move only happens within one space; the bar order (and with
+ * it the ⌘1–9 shortcuts) follows the order of the desks array.
+ */
+export function moveDesk(id: string, targetId: string, place: 'before' | 'after'): void {
+  if (id === targetId) return;
+  const desk = snapshot.desks.find(s => s.id === id);
+  const target = snapshot.desks.find(s => s.id === targetId);
+  if (!desk || !target || desk.spaceId !== target.spaceId) return;
+  const desks = snapshot.desks.filter(s => s.id !== id);
+  const at = desks.indexOf(target) + (place === 'after' ? 1 : 0);
+  desks.splice(at, 0, desk);
+  if (desks.every((s, i) => s === snapshot.desks[i])) return;
+  setSnapshot({ ...snapshot, desks });
+}
+
 export function activateDesk(id: string): void {
   if (snapshot.activeDeskId === id) return;
   const desk = snapshot.desks.find(s => s.id === id);
