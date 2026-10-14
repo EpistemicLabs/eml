@@ -21,6 +21,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
 - Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.
 - Agent-facing texts (MCP tool descriptions, system rules, hook output) are product surface — review changes deliberately.
+- Branch work happens in its own git worktree, never by switching the main checkout. After the merge, GitHub
+  deletes the remote branch; remove the worktree (`git worktree remove <path>`) and the local branch
+  (`git branch -d <branch>`) once `git status` is clean and everything is pushed. No `--force` deletes.
 
 ## Releases (maintainers)
 
@@ -32,3 +35,4 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
    has the same name, so push the tag by its full ref).
 5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file <notes>`.
    The cockpit updater installs exactly these three assets from the latest release.
+6. Remove the release worktree and the local `vX.Y.Z` branch.
