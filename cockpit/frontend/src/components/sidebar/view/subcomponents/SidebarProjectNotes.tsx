@@ -1,5 +1,5 @@
 // A project's notes in the sidebar (decision cockpit-notes-pane): the "Notes"
-// group above the sessions. A click opens the note in a pane of its own next
+// group below the sessions. A click opens the note in a pane of its own next
 // to the active one (never over a running terminal); the dot marks an agent
 // edit not seen yet. Rows rename (rewrites the first line) and delete (archives
 // the engram) like session rows; old notes fold behind the History toggle.
@@ -7,17 +7,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Brain, Check, Edit2, NotebookPen, Plus, Terminal, Trash2, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { useProviders } from '@/lib/providers';
+import { newSessionEntries, useProviders } from '@/lib/providers';
 import { noteAge, parseBrainDate, useArchiveNote, useCreateNote, useRenameNote, useUnseenNotes, type Note } from '@/lib/notes';
 import { Button } from '@/shared/view/ui';
 import { forgetNoteInPanes, openInPane, openNote, useActivePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
 
-// The project's one "+" (0.15.1): a small menu — New terminal / note / brain —
+// The project's one "+" (0.15.1): a small menu — new session / note / brain —
 // like the pane toolbar's "+", because a terminal pane starts an agent
 // session the moment it mounts. ⌥-click skips the menu and starts a session.
 // With more than one agent CLI ready, the menu offers a session per CLI
-// instead of the one "New terminal" (which starts the default).
+// instead of the one entry for the default (newSessionEntries).
 export function NewPaneButton({ project, onNewSession }: { project: Project; onNewSession: (project: Project) => void }) {
   const create = useCreateNote();
   const inBrain = Boolean(project.brainProjectId);
@@ -37,15 +37,14 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
     };
   }, [open]);
 
-  const ready = (useProviders().data ?? []).filter((provider) => provider.version !== null);
   const terminals: Array<{ label: string; Icon: typeof Terminal; disabled?: string; run: () => void }> =
-    ready.length > 1
-      ? ready.map((provider) => ({
-          label: `New ${provider.label} session`,
-          Icon: Terminal,
-          run: () => openInPane({ surface: 'terminal', projectId: project.projectId, provider: provider.id }),
-        }))
-      : [{ label: 'New terminal', Icon: Terminal, run: () => onNewSession(project) }];
+    newSessionEntries(useProviders().data ?? []).map(({ label, provider }) => ({
+      label,
+      Icon: Terminal,
+      run: provider
+        ? () => openInPane({ surface: 'terminal', projectId: project.projectId, provider })
+        : () => onNewSession(project),
+    }));
   const items: Array<{ label: string; Icon: typeof Terminal; disabled?: string; run: () => void }> = [
     ...terminals,
     {
@@ -150,15 +149,19 @@ export function SidebarProjectNotes({
 
   return (
     <div className="space-y-0.5">
-      <div className="px-2 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Notes</div>
+      <SidebarGroupLabel>Notes</SidebarGroupLabel>
       {shown.map((note) => (
         <div key={note.id} className={cn(oldNoteIds.has(note.id) && 'opacity-60')}>
           <SidebarNoteItem project={project} note={note} currentTime={currentTime} />
         </div>
       ))}
-      <div className="px-2 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Sessions</div>
     </div>
   );
+}
+
+// The small caps label over a project's sessions and notes groups.
+export function SidebarGroupLabel({ children }: { children: string }) {
+  return <div className="px-2 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{children}</div>;
 }
 
 function SidebarNoteItem({ project, note, currentTime }: { project: Project; note: Note; currentTime: Date }) {
