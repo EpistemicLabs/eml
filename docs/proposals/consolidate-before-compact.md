@@ -70,12 +70,12 @@ expires. A hint in the context waits there until the next prompt — the agent h
 it. At the end of a turn the agent still has one.
 
 - **Step, not percentage:** a step works without knowing the window size and also covers an early
-  compaction. Proposed step: 150k tokens.
+  compaction. The step is 250k tokens (150k in the first version).
 - **State:** one small file per session next to the turn counter (`<config dir>/state`). A session
   the hook sees for the first time starts counting there, so an old session is not stopped at once.
   A context that shrank was compacted and starts a new count.
 - **Cost:** the hook reads only the last megabyte of the transcript file. For the user, a turn every
-  150k tokens takes longer and ends with the consolidation report.
+  250k tokens takes longer and ends with the consolidation report.
 - **Both CLIs:** the hook reads Claude Code's transcript (usage of the last main-conversation
   response) and Codex's session file (the last `token_count` event).
 - **Failure:** silent, like every EML hook. Neither CLI documents its transcript format as a
@@ -165,7 +165,7 @@ Codex asks once to trust the new hook). The texts are agent-facing product surfa
 
 ## Open questions
 
-1. **Step size.** Is 150k tokens right, and should the hook block at every step or once per
+1. **Step size.** Is 250k tokens right, and should the hook block at every step or once per
    session?
 2. **Knowing that a consolidation happened.** The proposal does not detect it; the agent sees its
    own consolidation in the context. Should a `/consolidate` the user ran move the save point?

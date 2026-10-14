@@ -74,7 +74,7 @@ describe('context size from the transcript', () => {
     it('blocks the stop once per step since the last save point', () => {
       expect(at(30_000).output).toBe('')
       expect(at(30_000 + GROWTH_STEP_TOKENS - 1).output).toBe('')
-      expect(reason(at(30_000 + GROWTH_STEP_TOKENS).output)).toMatch(/grown by about 150k tokens.*Before you stop, run the consolidate skill in auto mode/)
+      expect(reason(at(30_000 + GROWTH_STEP_TOKENS).output)).toMatch(/grown by about 250k tokens.*Before you stop, run the consolidate skill in auto mode/)
       expect(at(40_000 + GROWTH_STEP_TOKENS).output).toBe('')
       expect(reason(at(30_000 + 2 * GROWTH_STEP_TOKENS).output)).toMatch(/auto mode/)
     })
@@ -86,7 +86,7 @@ describe('context size from the transcript', () => {
 
     it('takes a compaction as the new save point', () => {
       at(30_000)
-      expect(reason(at(200_000).output)).toMatch(/auto mode/)
+      expect(reason(at(50_000 + GROWTH_STEP_TOKENS).output)).toMatch(/auto mode/)
       expect(at(60_000).output).toBe('')
       expect(at(60_000 + GROWTH_STEP_TOKENS - 1).output).toBe('')
       expect(reason(at(60_000 + GROWTH_STEP_TOKENS).output)).toMatch(/auto mode/)

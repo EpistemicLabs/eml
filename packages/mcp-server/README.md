@@ -39,7 +39,7 @@ eml-mcp-server hook stop               [--config <path>]
 - **stop** asks for the `consolidate` skill's auto mode before the context is compacted, because a
   compaction summary is written to continue the task, not to keep what belongs in the brain. When
   the agent ends a turn, the hook reads the context size from the transcript named in the hook
-  input (Claude Code's and Codex's formats). Has the session grown by 150,000 tokens since its last
+  input (Claude Code's and Codex's formats). Has the session grown by 250,000 tokens since its last
   save point, it blocks the stop once (`{"decision":"block","reason"}`), and the agent consolidates
   in the same turn — before the session goes idle, where it can be compacted with nobody there to
   give the agent a turn. A turn continued this way (`stop_hook_active`) is let through. With an

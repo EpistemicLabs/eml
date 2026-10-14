@@ -30,7 +30,7 @@ import * as path from 'path'
  * and a compaction has no fixed trigger point (one session was compacted at
  * about 307k and at about 595k tokens).
  */
-export const GROWTH_STEP_TOKENS = 150_000
+export const GROWTH_STEP_TOKENS = 250_000
 
 /** Enough for the last responses; a transcript grows to many megabytes. */
 const TAIL_BYTES = 1024 * 1024
