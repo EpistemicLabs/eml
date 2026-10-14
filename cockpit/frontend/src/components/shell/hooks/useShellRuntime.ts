@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon, type ISearchResultChangeEvent } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 
@@ -36,7 +37,9 @@ import {
   repaintAll,
   type GridSize,
 } from '../utils/terminalFit';
-import { getXtermTheme } from '../utils/terminalTheme';
+import { getSearchDecorations, getXtermTheme } from '../utils/terminalTheme';
+import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } from '../utils/terminalFontSize';
+import { matchTerminalShortcut } from '../utils/terminalShortcuts';
 
 export interface ShellRuntimeOptions {
   paneId: string | null;
@@ -52,6 +55,18 @@ export type ShellOverlay =
   | { kind: 'error'; message: string }
   | { kind: 'connecting' }
   | { kind: 'connect'; superseded: boolean };
+
+export type SearchDirection = 'next' | 'previous';
+
+/** Scrollback search of the pane: the find bar's state and actions. */
+export interface ShellSearch {
+  open: boolean;
+  /** Bumped on every ⌘F, so a find bar that is already open refocuses its input. */
+  focusRequest: number;
+  results: ISearchResultChangeEvent | null;
+  find: (term: string, direction: SearchDirection, incremental?: boolean) => void;
+  close: () => void;
+}
 
 /**
  * Owns one xterm terminal and its socket to the host PTY bridge: creation and
@@ -70,8 +85,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   const [superseded, setSuperseded] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
+  const [searchResults, setSearchResults] = useState<ISearchResultChangeEvent | null>(null);
+  const fontSize = useSyncExternalStore(subscribeTerminalFontSize, getTerminalFontSize);
+
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   // Synchronous guard against overlapping attempts; the rendered state lags.
   const lockRef = useRef(false);
@@ -282,10 +303,17 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     if (!container || !sessionId) return;
 
     let disposed = false;
-    const terminal = new Terminal({ ...TERMINAL_OPTIONS, theme: getXtermTheme(isDarkRef.current) });
+    const terminal = new Terminal({
+      ...TERMINAL_OPTIONS,
+      fontSize: getTerminalFontSize(),
+      theme: getXtermTheme(isDarkRef.current),
+    });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.loadAddon(new WebLinksAddon());
+    const search = new SearchAddon();
+    terminal.loadAddon(search);
+    const searchSubscription = search.onDidChangeResults((results) => setSearchResults(results));
     terminal.open(container);
 
     // Loaded after open so a missing WebGL context surfaces here, not in open().
@@ -303,6 +331,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
 
     terminalRef.current = terminal;
     fitRef.current = fit;
+    searchRef.current = search;
 
     const disposeClipboard = installClipboardHandling({
       terminal,
@@ -312,6 +341,17 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
         return (data: string) => {
           sendFrame(socket, { type: 'input', data });
         };
+      },
+      onShortcut: (event) => {
+        const shortcut = matchTerminalShortcut(event);
+        if (!shortcut) return false;
+        if (shortcut === 'find') {
+          setSearchOpen(true);
+          setSearchFocusRequest((n) => n + 1);
+        } else {
+          stepTerminalFontSize(shortcut === 'zoom-in' ? 1 : shortcut === 'zoom-out' ? -1 : 0);
+        }
+        return true;
       },
     });
 
@@ -359,10 +399,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
       if (resizeTimer !== null) window.clearTimeout(resizeTimer);
       lastSentSizeRef.current = null;
       dataSubscription.dispose();
+      searchSubscription.dispose();
       disconnect();
       terminal.dispose();
       terminalRef.current = null;
       fitRef.current = null;
+      searchRef.current = null;
+      setSearchOpen(false);
+      setSearchResults(null);
       setInitialized(false);
     };
   }, [sessionId, disconnect, sendResize]);
@@ -374,6 +418,40 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     terminal.options.theme = getXtermTheme(isDarkMode);
     terminal.clearTextureAtlas();
   }, [isDarkMode]);
+
+  // A new font size changes the grid but not the container, so no resize
+  // notification comes: refit here and tell the PTY.
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    const fit = fitRef.current;
+    if (!terminal || !fit || terminal.options.fontSize === fontSize) return;
+    terminal.options.fontSize = fontSize;
+    if (!proposeValidSize(terminal, fit)) return;
+    terminal.write('', () => {
+      if (terminalRef.current !== terminal || !isContainerRendered(terminal)) return;
+      sendResize(fitTerminal(terminal, fit));
+    });
+  }, [fontSize, sendResize]);
+
+  const findInScrollback = useCallback((term: string, direction: SearchDirection, incremental = false) => {
+    const search = searchRef.current;
+    if (!search) return;
+    if (!term) {
+      search.clearDecorations();
+      setSearchResults(null);
+      return;
+    }
+    const searchOptions = { incremental, decorations: getSearchDecorations(isDarkRef.current) };
+    if (direction === 'next') search.findNext(term, searchOptions);
+    else search.findPrevious(term, searchOptions);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    searchRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchResults(null);
+    terminalRef.current?.focus();
+  }, []);
 
   // Any return to "neither connecting nor connected" starts a new attempt.
   useEffect(() => {
@@ -396,5 +474,13 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   else if (connecting) overlay = { kind: 'connecting' };
   else if (!connected) overlay = { kind: 'connect', superseded };
 
-  return { containerRef, overlay, connect };
+  const search: ShellSearch = {
+    open: searchOpen,
+    focusRequest: searchFocusRequest,
+    results: searchResults,
+    find: findInScrollback,
+    close: closeSearch,
+  };
+
+  return { containerRef, overlay, connect, search };
 }

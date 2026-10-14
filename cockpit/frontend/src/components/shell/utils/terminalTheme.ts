@@ -1,4 +1,5 @@
 import type { ITheme } from '@xterm/xterm';
+import type { ISearchOptions } from '@xterm/addon-search';
 
 type AnsiSlot =
   | 'black'
@@ -106,5 +107,20 @@ export function getXtermTheme(isDarkMode: boolean): ITheme {
     selectionBackground: surface.selectionBackground,
     selectionForeground: surface.selectionForeground,
     ...(isDarkMode ? ANSI_DARK : ANSI_LIGHT),
+  };
+}
+
+/**
+ * Highlight colours for scrollback search: amber matches, a stronger amber for
+ * the current one. xterm takes them as #RRGGBB only (no alpha).
+ */
+export function getSearchDecorations(isDarkMode: boolean): ISearchOptions['decorations'] {
+  const match = isDarkMode ? '#5c4a12' : '#fde68a';
+  const active = isDarkMode ? '#b45309' : '#f59e0b';
+  return {
+    matchBackground: match,
+    matchOverviewRuler: match,
+    activeMatchBackground: active,
+    activeMatchColorOverviewRuler: active,
   };
 }

@@ -56,20 +56,25 @@ interface ClipboardOptions {
   container: HTMLElement;
   /** Returns a sender bound to the socket that is current at call time. */
   bindInput: () => (data: string) => void;
+  /** Other keys the terminal handles itself (find, font size); true = handled. */
+  onShortcut?: (event: KeyboardEvent) => boolean;
 }
 
 /**
  * Installs copy-on-select, the native copy event, and the custom key handler
- * (selection copy, paste, Cmd+Backspace). Returns a disposer.
+ * (selection copy, paste, Cmd+Backspace, plus `onShortcut` — xterm takes only
+ * one key handler). Returns a disposer.
  */
-export function installClipboardHandling({ terminal, container, bindInput }: ClipboardOptions): () => void {
+export function installClipboardHandling({ terminal, container, bindInput, onShortcut }: ClipboardOptions): () => void {
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
     const key = event.key.toLowerCase();
     const primary = event.ctrlKey || event.metaKey;
     let handled = false;
 
-    if (primary && key === 'c' && terminal.hasSelection()) {
+    if (onShortcut?.(event)) {
+      handled = true;
+    } else if (primary && key === 'c' && terminal.hasSelection()) {
       void copyKeepingFocus(terminal, container, terminal.getSelection());
       handled = true;
     } else if (primary && key === 'v') {
