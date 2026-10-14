@@ -140,6 +140,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     }
   }, []);
 
+  // A lost connection clears the screen, so a find bar has nothing left to
+  // search; closing it also keeps it from taking focus back after a reconnect.
+  const endSearch = useCallback(() => {
+    searchRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchResults(null);
+  }, []);
+
   /** Closes and forgets the socket, abandons any attempt, clears the screen. */
   const disconnect = useCallback(() => {
     attemptRef.current += 1;
@@ -155,7 +163,8 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     setConnecting(false);
     setSuperseded(false);
     setFailure(null);
-  }, [cancelConnectionTimer]);
+    endSearch();
+  }, [cancelConnectionTimer, endSearch]);
 
   /** Close or error of a socket; ignored unless it is still the current one. */
   const handleSocketEnd = useCallback(
@@ -169,8 +178,9 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
       setConnecting(false);
       setFailure(null);
       if (terminalRef.current) clearScreen(terminalRef.current);
+      endSearch();
     },
-    [cancelConnectionTimer],
+    [cancelConnectionTimer, endSearch],
   );
 
   const handleMessage = useCallback((payload: unknown) => {
@@ -411,10 +421,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     };
   }, [sessionId, disconnect, sendResize]);
 
-  // Recolour in place; the WebGL atlas caches glyphs per colour.
+  // Recolour in place; the WebGL atlas caches glyphs per colour. Only on a
+  // real switch: a new terminal is created with the current theme, and
+  // clearing the atlas then wipes the one every pane with the same font shares.
+  const appliedDarkRef = useRef(isDarkMode);
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal) return;
+    if (!terminal || appliedDarkRef.current === isDarkMode) return;
+    appliedDarkRef.current = isDarkMode;
     terminal.options.theme = getXtermTheme(isDarkMode);
     terminal.clearTextureAtlas();
   }, [isDarkMode]);
@@ -447,11 +461,9 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   }, []);
 
   const closeSearch = useCallback(() => {
-    searchRef.current?.clearDecorations();
-    setSearchOpen(false);
-    setSearchResults(null);
+    endSearch();
     terminalRef.current?.focus();
-  }, []);
+  }, [endSearch]);
 
   // Any return to "neither connecting nor connected" starts a new attempt.
   useEffect(() => {
