@@ -1,6 +1,6 @@
 ---
 name: getting-started
-description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — where it shows up in the app, shows the agent's default rules and the skills. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
+description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — where it shows up in the app, shows the agent's default rules and the skills. In the cockpit it ends by consolidating and handing over to a new session in the project. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
@@ -116,9 +116,20 @@ with any MCP client.
    the first task.
 
    *Cockpit:* this session runs in a cockpit-made "Getting started" folder,
-   not in their project. For work on their own files: link the project to
-   their folder (the folder button in the sidebar), then start a new session
-   with the project's "+". Otherwise this session can simply continue.
+   not in their project — the work goes on in a new session there:
+   1. **Consolidate.** Run the `consolidate` skill for this session (it
+      proposes what to store; the user approves).
+   2. **Folder.** Ask whether the project's work lives in a folder on this
+      computer. If yes, ask them to link it now with the project's folder
+      button in the sidebar, and wait until they say it's done. If not, the
+      cockpit makes a folder for it.
+   3. **Hand over.** With the `spawn-session` skill, open a session in the
+      project (`--project <id>`, the project's name as title) with this
+      prompt: "Load the brain for project <id> (eml_show project.<id>). Say in
+      a few lines where we stand and which tasks are open, then ask which one
+      to start with."
+   4. Tell them the new session opens next to this one and the work goes on
+      there; this one can be closed.
 
 ## Guardrails
 - Keep it moving. If the user gives one-word answers, don't press for more.
