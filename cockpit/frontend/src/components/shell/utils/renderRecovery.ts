@@ -1,20 +1,25 @@
 import type { Terminal } from '@xterm/xterm';
 
-import { ATLAS_SETTLE_MS } from '../constants';
+import { ATLAS_SETTLE_MS, FRAME_GAP_MS } from '../constants';
 import { repaintAll } from './terminalFit';
 
 /**
  * Rebuilds the WebGL glyph atlas when the page regains attention. After
  * sleep/wake or a GPU reset the atlas can be corrupted without a context-loss
  * event; the first rebuild right after an app switch may itself be incomplete,
- * so a trailing pass follows once things settle. Under the DOM renderer this
- * is a visual no-op.
+ * so trailing passes follow once things settle. Under the DOM renderer this
+ * is a visual no-op. The atlas is shared by every pane with the same font and
+ * theme, so one damaged atlas garbles them all.
+ *
+ * Attention means focus, a visible tab again, or the page drawing again after
+ * a pause (watchFrameGaps): an idle display sleep keeps the window focused and
+ * the tab visible, so only the pause shows it.
  *
  * Returns `trigger` (for other callers such as the DPR watch) and a disposer.
  */
 export function installAtlasRecovery(terminal: Terminal): { trigger: () => void; dispose: () => void } {
   let frame: number | null = null;
-  let settleTimer: number | null = null;
+  let settleTimers: number[] = [];
 
   const scheduleRebuild = () => {
     if (frame !== null) return;
@@ -25,13 +30,15 @@ export function installAtlasRecovery(terminal: Terminal): { trigger: () => void;
     });
   };
 
+  const clearSettleTimers = () => {
+    for (const timer of settleTimers) window.clearTimeout(timer);
+    settleTimers = [];
+  };
+
   const trigger = () => {
     scheduleRebuild();
-    if (settleTimer !== null) window.clearTimeout(settleTimer);
-    settleTimer = window.setTimeout(() => {
-      settleTimer = null;
-      scheduleRebuild();
-    }, ATLAS_SETTLE_MS);
+    clearSettleTimers();
+    settleTimers = ATLAS_SETTLE_MS.map((delay) => window.setTimeout(scheduleRebuild, delay));
   };
 
   const onVisibility = () => {
@@ -40,17 +47,53 @@ export function installAtlasRecovery(terminal: Terminal): { trigger: () => void;
 
   window.addEventListener('focus', trigger);
   document.addEventListener('visibilitychange', onVisibility);
+  const stopGapWatch = watchFrameGaps(trigger);
 
   return {
     trigger,
     dispose: () => {
       window.removeEventListener('focus', trigger);
       document.removeEventListener('visibilitychange', onVisibility);
+      stopGapWatch();
       if (frame !== null) window.cancelAnimationFrame(frame);
-      if (settleTimer !== null) window.clearTimeout(settleTimer);
+      clearSettleTimers();
       frame = null;
-      settleTimer = null;
     },
+  };
+}
+
+// One animation-frame loop for the whole page, however many panes listen.
+const gapListeners = new Set<() => void>();
+let gapFrame: number | null = null;
+let lastFrameAt: number | null = null;
+
+function onFrame(now: number) {
+  if (lastFrameAt !== null && now - lastFrameAt > FRAME_GAP_MS) {
+    console.info(`[Shell] page not drawn for ${Math.round((now - lastFrameAt) / 1000)}s, rebuilding the glyph atlas`);
+    for (const listener of gapListeners) listener();
+  }
+  lastFrameAt = now;
+  gapFrame = window.requestAnimationFrame(onFrame);
+}
+
+/**
+ * Calls `onGap` when the page draws again after a pause of more than
+ * FRAME_GAP_MS. The browser stops animation frames while nothing of the page
+ * can be seen — the display off, the tab hidden — and macOS may release GPU
+ * memory meanwhile. Returns a disposer.
+ */
+export function watchFrameGaps(onGap: () => void): () => void {
+  gapListeners.add(onGap);
+  if (gapFrame === null) {
+    lastFrameAt = null;
+    gapFrame = window.requestAnimationFrame(onFrame);
+  }
+  return () => {
+    gapListeners.delete(onGap);
+    if (gapListeners.size === 0 && gapFrame !== null) {
+      window.cancelAnimationFrame(gapFrame);
+      gapFrame = null;
+    }
   };
 }
 

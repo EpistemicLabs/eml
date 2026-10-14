@@ -30,8 +30,10 @@ export const HIDDEN_POLL_MS = 250;
 export const RESIZE_DEBOUNCE_MS = 200;
 /** How long "connecting" is held after a failed nonce request. */
 export const NONCE_FAILURE_HOLD_MS = 1500;
-/** Delay of the trailing glyph-atlas rebuild after focus/visibility/DPR events. */
-export const ATLAS_SETTLE_MS = 400;
+/** Delays of the trailing glyph-atlas rebuilds after focus/visibility/DPR events and frame gaps. */
+export const ATLAS_SETTLE_MS = [400, 2000];
+/** A pause between two animation frames this long means the page was not drawn (display off, tab hidden). */
+export const FRAME_GAP_MS = 3000;
 
 export const MIN_COLS = 2;
 export const MIN_ROWS = 1;
