@@ -12,8 +12,8 @@ import type { SpawnQueue } from './spawn-queue.js'
  * project is one the skill creates with them.
  *
  * A fresh home is not signed in to Claude yet, and a first message would land
- * on "Not logged in". So the page first shows Settings › Models (GET
- * /api/setup → signIn), whose Sign in button opens a /login session
+ * on "Not logged in". So the page first shows its sign-in card (GET
+ * /api/setup → signIn; FirstRunSignIn), whose button opens a /login session
  * (queueSignInSession); the getting-started session is queued only once
  * Claude Code is installed and signed in. Onboarding counts as done once a tab
  * has opened that session; until then (no tab yet, host restarted) it starts

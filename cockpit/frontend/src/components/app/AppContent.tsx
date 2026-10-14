@@ -16,7 +16,7 @@ import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
-import { useFirstRunSignIn } from '@/components/first-run/FirstRun';
+import { FirstRunSignIn } from '@/components/first-run/FirstRun';
 import { findProjectOwningSession, useProjectsState } from '@/hooks/useProjectsState';
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
@@ -64,7 +64,6 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
-  useFirstRunSignIn(openSettings);
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
@@ -362,6 +361,8 @@ function AppContentInner() {
         onClose={() => setShowSettings(false)}
         initialTab={settingsInitialTab}
       />
+
+      <FirstRunSignIn openSettings={openSettings} />
 
       <CommandPalette
         projects={projects}

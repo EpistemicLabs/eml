@@ -21,16 +21,122 @@ async function setupNeeded(): Promise<boolean> {
 }
 
 /**
- * Right after the setup Claude is not signed in yet: open Settings › Models,
- * whose Sign in button starts a /login session. The host opens the
- * getting-started session once the sign-in is done.
+ * Step 2 of the first run, in the real cockpit: right after the setup Claude
+ * is not signed in yet (GET /api/setup → signIn). A card with one button opens
+ * a session that runs Claude Code's own /login; the host opens the
+ * getting-started session once the sign-in is done (onboarding.ts). Other
+ * ways to sign in (setup-token) stay in Settings › Models.
  */
-export function useFirstRunSignIn(openSettings: (tab?: string) => void): void {
+export function FirstRunSignIn({ openSettings }: { openSettings: (tab?: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runtime = useClaudeRuntime(open);
+
   useEffect(() => {
     setupStatus()
-      .then((status) => { if (status.signIn) openSettings("models"); })
+      .then((status) => { if (status.signIn) setOpen(true); })
       .catch(() => { /* older host or host gone — nothing to do */ });
-  }, [openSettings]);
+  }, []);
+
+  if (!open) return null;
+  const ready = runtime.version !== null;
+
+  const signIn = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/agents/login/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: null }),
+      });
+      if (!response.ok) throw new Error();
+      setOpen(false);
+    } catch {
+      setError("Could not open the sign-in session. Try again, or use Settings › Models.");
+      setBusy(false);
+    }
+  };
+
+  const otherWays = () => {
+    setOpen(false);
+    openSettings("models");
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md">
+      <div role="dialog" aria-modal="true" aria-labelledby="first-run-sign-in" className="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6">
+        <div className="space-y-1.5">
+          <p className="text-caption text-muted-foreground">Step 2 of 2</p>
+          <h1 id="first-run-sign-in" className="text-heading font-semibold">Connect Claude</h1>
+          <p className="text-ui text-muted-foreground">
+            Your agent runs on Claude Code with your Claude subscription. Signing in opens a terminal with Claude
+            Code's own sign-in. Once you're signed in, your agent starts and takes you through the rest.
+          </p>
+        </div>
+        <p className="text-caption text-muted-foreground">
+          The sign-in belongs to this cockpit only; a Claude Code you already use on this computer is not touched.
+          Codex can be added later in Settings › Models (beta).
+        </p>
+        {!ready && (
+          <p className="text-ui text-muted-foreground">
+            {runtime.failed ?? "Preparing Claude Code for the cockpit — a one-time download, usually under a minute."}
+          </p>
+        )}
+        {error && <p className="text-ui text-primary">{error}</p>}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => void signIn()}
+            disabled={busy || !ready}
+            autoFocus
+            className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {busy ? "Opening…" : ready ? "Sign in to Claude" : "Preparing Claude Code…"}
+          </button>
+          <button
+            type="button"
+            onClick={otherWays}
+            className="w-full rounded-md px-3 py-2 text-ui text-muted-foreground hover:text-foreground"
+          >
+            Other ways to sign in
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ClaudeRuntime = { version: string | null; failed: string | null };
+
+/**
+ * The cockpit's own Claude Code, which a fresh home downloads at the first
+ * start: a sign-in before it is installed would end in "not set up yet".
+ * Polls /api/providers while `active` until a version is there.
+ */
+function useClaudeRuntime(active: boolean): ClaudeRuntime {
+  const [runtime, setRuntime] = useState<ClaudeRuntime>({ version: null, failed: null });
+  useEffect(() => {
+    if (!active || runtime.version) return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const body = (await (await fetch("/api/providers")).json()) as {
+          providers?: Array<{ id: string; version: string | null; problem: string | null; runtime?: { lastResult?: { outcome?: string } | null } }>;
+        };
+        const claude = body.providers?.find((provider) => provider.id === "claude");
+        if (stopped || !claude) return;
+        const failed = claude.runtime?.lastResult?.outcome === "failed" ? claude.problem : null;
+        setRuntime({ version: claude.version, failed });
+      } catch { /* host busy — next round */ }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 2000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [active, runtime.version]);
+  return runtime;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -91,10 +197,15 @@ function FirstRun() {
     <div className="flex min-h-full items-center justify-center px-4 py-10">
       <form onSubmit={submit} className="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6">
         <div className="space-y-1.5">
+          <p className="text-caption text-muted-foreground">Step 1 of 2</p>
           <h1 className="text-heading font-semibold">Welcome to EML</h1>
           <p className="text-ui text-muted-foreground">
-            Your agent keeps a memory of your work in a brain on this computer. Two names to start. Next you sign
-            in to Claude, then your agent takes you through the rest.
+            EML gives your AI agent a memory. It keeps what you decide, what's open and how you like to work in a
+            brain, and loads it at the start of every session, so your agent picks up where you left off.
+          </p>
+          <p className="text-ui text-muted-foreground">
+            The brain is a file on this computer. Your conversations go to the model you sign in to, as in any
+            Claude Code session.
           </p>
         </div>
         <label className="block space-y-1.5">
@@ -106,7 +217,8 @@ function FirstRun() {
           <input className={field} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="e.g. Juno" maxLength={60} disabled={submitting} />
         </label>
         <p className="text-caption text-muted-foreground">
-          The names become your brain's handles and can't be changed later.
+          Both names also become fixed handles in your brain (who wrote what). How they're shown can be
+          changed later.
         </p>
         {error && <p className="text-ui text-primary">{error}</p>}
         <button
