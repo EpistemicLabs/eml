@@ -1,12 +1,16 @@
-// Settings › About: logo, name and version badge; the numbers come from the
-// host (GET /api/about) — cockpit version, Claude Code version (the config dir
-// shows in Settings › Brain › Paths). The License section carries the AGPL
+// Settings › About: logo, name and version badge, then every version in one
+// read-only list with a Copy button for bug reports — cockpit, Claude Code and
+// Node from the host (GET /api/about), Codex from the providers. Managing the
+// agent CLIs stays in Settings › Models. The License section carries the AGPL
 // §5(d) legal notice.
 import { Brain } from 'lucide-react';
 
 import { useState } from 'react';
 
 import { useAboutInfo } from '@/hooks/useAboutInfo';
+import { useProviders } from '@/lib/providers';
+import { Button } from '@/shared/view/ui';
+import { copyTextToClipboard } from '@/utils/clipboard';
 import { useAppUpdate } from '@/hooks/useAppUpdate';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
@@ -15,7 +19,27 @@ import SettingsSection from '../SettingsSection';
 export default function AboutTab() {
   const { info, failed } = useAboutInfo();
 
+  const { data: providers } = useProviders();
+  const [copied, setCopied] = useState(false);
+
   const versionLabel = info ? `v${info.version}` : failed ? 'unknown' : '…';
+  const codexVersion = providers?.find((provider) => provider.id === 'codex')?.version ?? null;
+  const versions: Array<[string, string]> = info
+    ? [
+        ['EML Cockpit', `${info.version}${info.runMode === 'dev' ? ' (dev)' : ''}`],
+        ['Claude Code', info.claudeVersion || '—'],
+        ...(codexVersion ? [['Codex', codexVersion] as [string, string]] : []),
+        ['Node', info.node],
+        ['OS', navigator.platform || '—'],
+      ]
+    : [];
+
+  const copyVersions = async () => {
+    if (await copyTextToClipboard(versions.map(([name, value]) => `${name}: ${value}`).join('\n'))) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -37,14 +61,24 @@ export default function AboutTab() {
         </div>
       </div>
 
-      <SettingsSection title="Runtime">
+      <SettingsSection
+        title="Versions"
+        description="Paste these into a bug report. Claude Code and Codex are managed in Settings › Models."
+      >
         <SettingsCard divided>
-          <SettingsRow label="Claude Code" description="The CLI the cockpit spawns for every session">
-            <Mono>{info?.claudeVersion ?? '—'}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Node" description="Runtime of the cockpit host">
-            <Mono>{info?.node ?? '—'}</Mono>
-          </SettingsRow>
+          {versions.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{failed ? 'unknown' : '…'}</div>}
+          {versions.map(([name, value]) => (
+            <SettingsRow key={name} label={name}>
+              <Mono>{value}</Mono>
+            </SettingsRow>
+          ))}
+          {versions.length > 0 && (
+            <div className="flex justify-end px-4 py-3">
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => void copyVersions()}>
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+          )}
         </SettingsCard>
       </SettingsSection>
 

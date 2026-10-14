@@ -1,12 +1,11 @@
-// Settings tabs: Account · Models · Agents · Brain · Preferences ·
-// Notifications · Plugins · Data · About.
+// Settings tabs: Account · Agent · Models · Brain · Preferences · Plugins ·
+// Data · About.
 export type SettingsMainTab =
   | 'account'
   | 'models'
   | 'agents'
   | 'brain'
   | 'preferences'
-  | 'notifications'
   | 'plugins'
   | 'data'
   | 'about';

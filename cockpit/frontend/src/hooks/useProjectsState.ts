@@ -35,9 +35,9 @@ export function useProjectsState() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState('preferences');
+  const [settingsInitialTab, setSettingsInitialTab] = useState('account');
 
-  const openSettings = useCallback((tab: string = 'preferences') => {
+  const openSettings = useCallback((tab: string = 'account') => {
     setSettingsInitialTab(tab);
     setShowSettings(true);
   }, []);

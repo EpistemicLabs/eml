@@ -1,7 +1,7 @@
-// Cockpit Settings › Notifications. The in-app signals (desk-tab badge,
-// title count, sidebar dot) are always on; this tab holds the opt-in for
-// browser notifications when a session finishes while the cockpit isn't
-// in front.
+// Settings › Preferences › Notifications. The in-app signals (desk-tab
+// badge, title count, sidebar dot) are always on; this section holds the
+// opt-in for browser notifications when a session finishes while the cockpit
+// isn't in front.
 import { useEffect, useState } from 'react';
 
 import SettingsCard from '../SettingsCard';
@@ -9,7 +9,7 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 
-type NotificationsTabProps = {
+type NotificationsSectionProps = {
   notifyOnDone: boolean;
   onNotifyOnDoneChange: (value: boolean) => void;
 };
@@ -19,7 +19,7 @@ type Permission = NotificationPermission | 'unsupported';
 const readPermission = (): Permission =>
   typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported';
 
-export default function NotificationsTab({ notifyOnDone, onNotifyOnDoneChange }: NotificationsTabProps) {
+export default function NotificationsSection({ notifyOnDone, onNotifyOnDoneChange }: NotificationsSectionProps) {
   const [permission, setPermission] = useState<Permission>(readPermission);
 
   useEffect(() => { setPermission(readPermission()); }, []);
@@ -45,25 +45,23 @@ export default function NotificationsTab({ notifyOnDone, onNotifyOnDoneChange }:
       : 'When a session finishes while the cockpit is not in front';
 
   return (
-    <div className="space-y-8">
-      <SettingsSection title="Sessions">
-        <SettingsCard divided>
-          <SettingsRow
-            label="Finished-session badges"
-            description="Desk tabs, the window title and the sidebar mark sessions that finished while you were elsewhere"
-          >
-            <span className="text-sm text-muted-foreground">Always on</span>
-          </SettingsRow>
-          <SettingsRow label="Browser notifications" description={description}>
-            <SettingsToggle
-              checked={notifyOnDone && permission === 'granted'}
-              onChange={(value) => { void handleToggle(value); }}
-              ariaLabel="Browser notifications"
-              disabled={!supported || denied}
-            />
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-    </div>
+    <SettingsSection title="Notifications">
+      <SettingsCard divided>
+        <SettingsRow
+          label="Finished-session badges"
+          description="Desk tabs, the window title and the sidebar mark sessions that finished while you were elsewhere"
+        >
+          <span className="text-sm text-muted-foreground">Always on</span>
+        </SettingsRow>
+        <SettingsRow label="Browser notifications" description={description}>
+          <SettingsToggle
+            checked={notifyOnDone && permission === 'granted'}
+            onChange={(value) => { void handleToggle(value); }}
+            ariaLabel="Browser notifications"
+            disabled={!supported || denied}
+          />
+        </SettingsRow>
+      </SettingsCard>
+    </SettingsSection>
   );
 }
