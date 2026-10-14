@@ -129,6 +129,8 @@ describe('Codex provider', () => {
     // Codex reads plain output starting with "[" as JSON and cuts long context off — both handled in the hook entry.
     expect(JSON.parse(first).hooks.SessionStart[0].hooks[0]).toMatchObject({ additionalContextLimit: 20000 })
     expect(JSON.parse(first).hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/hook user-prompt-submit --config "\$EML_HOOK_CONFIG" --json$/)
+    // Stop: turn state, then the EML stop hook, which prints JSON itself (no --json).
+    expect(JSON.parse(first).hooks.Stop[1].hooks[0].command).toMatch(/hook stop --config "\$EML_HOOK_CONFIG"$/)
     provider.prepare({
       hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210',
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],

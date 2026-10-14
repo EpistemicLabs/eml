@@ -1,7 +1,8 @@
 # Proposal: consolidate before the context is compacted
 
-Status: built as proposed, in `packages/mcp-server/src/hooks/compaction.ts` and the `consolidate`
-skill. Not yet observed in a real session: whether an agent acts on the two hints.
+Status: built, in `packages/mcp-server/src/hooks/compaction.ts` and the `consolidate` skill. Since
+v0.17.12 part 1 is a `Stop` hook; v0.17.9 shipped it as a hint with the next prompt (see "Part 1,
+first version" below).
 
 ## The problem
 
@@ -13,7 +14,7 @@ anyone ran `consolidate`.
 The `consolidate` skill already names this moment ("Before context gets compacted, if the session
 did real work"), but nothing prompts the agent or the user when it arrives.
 
-## What Claude Code allows
+## What the agent CLIs allow
 
 Checked against the Claude Code hooks reference:
 
@@ -23,12 +24,17 @@ Checked against the Claude Code hooks reference:
 | `PostCompact` | Run a command; it receives the finished summary (`compact_summary`). | Change the result or put text into the context. |
 | `SessionStart` with `source: "compact"` | Put text into the context right after a compaction. | Run before the compaction. |
 | `UserPromptSubmit` | Put text into the context with each prompt. | See the context usage: no hook input carries it. |
+| `Stop` | Block the end of a turn once (`decision: "block"` with a `reason`); the agent continues with the reason in the same turn. A continued turn carries `stop_hook_active`. | Start a turn in an idle session. |
+
+Codex's hooks reference documents the same for `Stop` (the reason becomes a continuation prompt,
+`stop_hook_active` marks the continued turn), `SessionStart` with `source: "compact"`, and
+`transcript_path` in every hook input. Its session files record a `token_count` event per response.
 
 Two consequences:
 
-- **No hook can run a skill or give the agent a turn.** `consolidate` needs one: it recalls against
-  the brain and judges what is worth keeping. A hook can only ask the agent, in the context, to run
-  it.
+- **No hook can run a skill.** `consolidate` needs the agent: it recalls against the brain and
+  judges what is worth keeping. A hook can only ask the agent to run it — in the context, or, from
+  `Stop`, as the reason to keep going.
 - **The compaction itself cannot be made to consolidate.** It writes one summary text and has no
   tools.
 
@@ -41,30 +47,48 @@ the first one, and the hook does not know the window size either.
 
 ## Proposal
 
-Two small additions to the EML hooks in `packages/mcp-server`, and a second mode for the skill.
-Both only add text to the context;
-the agent then runs `consolidate` in its auto mode, which part 3 adds to the skill.
+Two additions to the EML hooks in `packages/mcp-server`, and a second mode for the skill. Both
+hooks ask the agent to run `consolidate` in its auto mode, which part 3 adds to the skill.
 
-### 1. A nudge while the session grows (`UserPromptSubmit`)
+### 1. Consolidate before the session goes idle (`Stop`)
 
-The reminder hook reads the context size from the end of the transcript. Each time the context has
-grown by a fixed step since the session start, the last nudge or the last compaction, it adds one
-hint:
+When the agent ends a turn, the stop hook reads the context size from the end of the transcript.
+Has the context grown by a fixed step since the session's last save point, it blocks the stop once:
 
 ```
-[EML] This session has grown by about <N>k tokens since its last save point and may be compacted
-soon. If real work happened since then: answer this prompt first, then run the consolidate skill
-in auto mode.
+{"decision":"block","reason":"[EML] This session has grown by about <N>k tokens since its last save
+point and may be compacted soon. Before you stop, run the consolidate skill in auto mode and end
+with its short report. If nothing store-worthy happened since the last save point, say so in one
+line and stop."}
 ```
+
+The agent consolidates in the same turn, after the user's request is done, with the full context
+and a warm cache. The turn it continued carries `stop_hook_active`, and the hook lets that one end.
+
+Why the end of a turn: a session is often compacted while it is idle, before the prompt cache
+expires. A hint in the context waits there until the next prompt — the agent has no turn to act on
+it. At the end of a turn the agent still has one.
 
 - **Step, not percentage:** a step works without knowing the window size and also covers an early
-  compaction. Proposed step: 150k tokens.
+  compaction. The step is 250k tokens (150k in the first version).
 - **State:** one small file per session next to the turn counter (`<config dir>/state`). A session
-  the hook sees for the first time starts counting there, so an old session is not nudged at once.
+  the hook sees for the first time starts counting there, so an old session is not stopped at once.
   A context that shrank was compacted and starts a new count.
-- **Cost:** the hook reads only the last megabyte of the transcript file.
-- **Failure:** silent, like every EML hook. The transcript format is Claude Code's own and not a
-  documented contract; if it changes, the nudge stops and nothing else breaks.
+- **Cost:** the hook reads only the last megabyte of the transcript file. For the user, a turn every
+  250k tokens takes longer and ends with the consolidation report.
+- **Both CLIs:** the hook reads Claude Code's transcript (usage of the last main-conversation
+  response) and Codex's session file (the last `token_count` event).
+- **Failure:** silent, like every EML hook. Neither CLI documents its transcript format as a
+  contract; if it changes, the hook stops blocking and nothing else breaks.
+- **Turn state in the cockpit:** Claude Code reports the first stop to the host, so a pane shows
+  "done" while the agent consolidates. Codex reports tool use, so its pane shows "working" again.
+
+#### Part 1, first version
+
+v0.17.9 shipped part 1 as a hint the `UserPromptSubmit` hook added to the next prompt. In real use
+both compactions after the release happened while the session was idle: the hint could not have
+come in time, and the post-compaction note waited for the next prompt too. The `Stop` hook replaces
+it.
 
 ### 2. A pointer after a compaction (`SessionStart`, `source: "compact"`)
 
@@ -85,13 +109,13 @@ boot is trimmed to exactly that budget. The hint's length is taken off the boot'
 The `consolidate` skill gets a short section "After a compaction" that says the same from its side:
 candidates come from the summary, details from the transcript.
 
-This is the safety net for compactions the nudge did not announce. It works with less detail than a
+This is the safety net for compactions part 1 did not prevent. It works with less detail than a
 consolidation before the compaction, which is why part 1 comes first.
 
 ### 3. An auto mode for `consolidate`
 
 `/consolidate` stays as it is when the user invokes it: it shows a diff and writes only after
-approval. The hints of parts 1 and 2 ask for "consolidate in auto mode" instead, because a hint
+approval. Parts 1 and 2 ask for "consolidate in auto mode" instead, because a hint
 that ends in a question is easy to leave unanswered, and then the compaction comes first.
 
 One skill, two modes; the steps before the writing are the same.
@@ -116,9 +140,10 @@ run with the new text.
 
 ### Where it lives
 
-Both parts live in `packages/mcp-server/src/hooks`, so a standalone EML client gets them too. The
-cockpit needs no new hook entry: it already registers `session-start` and `user-prompt-submit` for
-each space. Both texts are agent-facing product surface and are part of this review.
+Both hooks live in `packages/mcp-server/src/hooks` (`eml-mcp-server hook stop`, and the existing
+`hook session-start`), so a standalone EML client can use them too. The cockpit registers the stop
+hook for Claude Code (each space's settings.json) and Codex (hooks.json, after its turn-state hook;
+Codex asks once to trust the new hook). The texts are agent-facing product surface.
 
 ## Rejected
 
@@ -130,6 +155,9 @@ each space. Both texts are agent-facing product surface and are part of this rev
 - **Write to the brain from a hook, without the agent.** It skips recall-before-write and the
   agent's judgment of what is worth keeping, the two things that keep duplicates and noise out of
   the brain.
+- **The cockpit types `/consolidate` into an idle pane when `PreCompact` fires.** It would reach an
+  idle session, but it races with the user typing in that pane and works only inside the cockpit.
+  The `Stop` hook reaches the same moment from inside the agent CLI.
 - **A background session per compaction.** The host could start a session that reads the
   transcript and consolidates it. It is the most complete option, and it costs a second agent run per
   compaction, working without the user who could answer its questions. Worth revisiting only if parts
@@ -137,13 +165,12 @@ each space. Both texts are agent-facing product surface and are part of this rev
 
 ## Open questions
 
-1. **Step size.** Is 150k tokens right, and should the nudge repeat at every step or fire once?
+1. **Step size.** Is 250k tokens right, and should the hook block at every step or once per
+   session?
 2. **Knowing that a consolidation happened.** The proposal does not detect it; the agent sees its
-   own consolidation in the context and ignores the nudge. Should the hook reset its counter when
-   the session wrote its log engram?
-3. **Codex.** The cockpit registers `SessionStart` and `UserPromptSubmit` for Codex too. Whether
-   Codex reports a compaction, and how its session files record usage, is not checked. Proposed:
-   Claude Code first, Codex as a follow-up.
+   own consolidation in the context. Should a `/consolidate` the user ran move the save point?
+3. **Codex.** Checked against its documentation and a real session file, not in a running Codex
+   session.
 4. **Wording.** Both hook texts above are drafts.
 5. **What auto may write.** Is "additions yes, closing and replacing no" the right line? A new
    status supersedes the prior one and is allowed; rules written in auto mode change how the agent
@@ -151,9 +178,12 @@ each space. Both texts are agent-facing product surface and are part of this rev
 
 ## What was checked
 
-- The hook behaviour above was read in the Claude Code hooks reference.
-- The usage fields and the two compaction points were read in the transcript of a real session.
-- Unit tests cover the size reading, the step logic, the reset after a compaction and the hint
-  after a compaction. The built hook was run against the transcript of a real session.
-- Not checked: an agent acting on either hint, the auto mode of the skill run by an agent, and
-  Codex.
+- The hook behaviour above was read in the Claude Code and Codex hooks references.
+- The usage fields and the compaction points were read in the transcripts of real sessions.
+- Unit tests cover the size reading for both CLIs, the step logic, the loop guard, the reset after
+  a compaction and the note after a compaction.
+- A real Claude Code turn with the stop hook (save point lowered) was blocked once, the agent
+  continued, and the continued turn's stop was let through.
+- The built hook read a real Codex session file and blocked.
+- Not checked: a running Codex session with the hook (it needs the user to trust the hook), and
+  the skill's auto mode run by an agent end to end.

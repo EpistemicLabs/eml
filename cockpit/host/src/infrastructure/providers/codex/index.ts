@@ -34,7 +34,7 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  *     per trusted folder. Codex keeps its own state in the same file, so only
  *     these tables are replaced. No token in it.
  *   - hook-curl.conf (chmod 600): the per-boot hook token as a curl header.
- *   - hooks.json: turn state to the host, and the EML hooks (boot + reminder).
+ *   - hooks.json: turn state to the host, and the EML hooks (boot, reminder, consolidate at stop).
  *     Codex runs a hook only after the user trusted it; it asks once, in the
  *     first session, and again whenever a hook's text changes — which is why
  *     nothing per boot or per space is in the hook text.
@@ -175,7 +175,8 @@ class CodexProvider implements AgentProvider {
           PermissionRequest: [turn],
           // Back to "working" once an approved tool ran — Codex has no other signal for it.
           PostToolUse: [turn],
-          Stop: [turn],
+          // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
+          Stop: [turn, emlHookEntry('stop', emlConfigArg)],
         },
       }, null, 2),
       { mode: 0o600 },

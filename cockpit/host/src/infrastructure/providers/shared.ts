@@ -74,7 +74,7 @@ export const EML_HOOK_CONFIG_ENV = 'EML_HOOK_CONFIG'
  * (see EML_HOOK_CONFIG_ENV). `json`: print the context in the hook JSON
  * envelope (Codex).
  */
-export function emlHookEntry(hook: 'session-start' | 'user-prompt-submit', configArg: string, json = false) {
+export function emlHookEntry(hook: 'session-start' | 'user-prompt-submit' | 'stop', configArg: string, json = false) {
   return {
     hooks: [{
       type: 'command',

@@ -291,7 +291,7 @@ runtimes without a browser: stored as `claude-login` (chmod 600, write-only from
 env only when `agents.json` switches sessions to token mode. Sessions keep the input at the bottom
 of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_FLICKER=1`), which `/tui`
 cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
-hooks (`eml-mcp-server hook session-start|user-prompt-submit`, boot + reminder) and the EML skills
+hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills
 (`consolidate`, `checkpoint`, `getting-started`) from the bundled `@engramprotocol/mcp-server` — nothing is read from `~/.claude`
 or `~/.eml`. The agent's environment is built from an allowlist (PATH, HOME, locale, proxy/
 cert vars) plus the injected isolation vars — nothing else the host inherited reaches a
