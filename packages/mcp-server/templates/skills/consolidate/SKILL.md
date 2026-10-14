@@ -21,7 +21,8 @@ resolved tasks.
 ## When to invoke
 
 - The user says "consolidate", "wrap up", "update the brain".
-- At a handoff to a fresh session (log first, so the next session can dock on).
+- At a handoff to a fresh session (log first, so the next session can dock on;
+  step 7 then hands over).
 - Before context gets compacted, if the session did real work.
 - An EML hint in the context asks for it "in auto mode" (the session grew a lot,
   or the context was just compacted).
@@ -160,6 +161,22 @@ plans from a task with `task_id`), append entries with `eml_task_entry`
 (ENTRY / STAGE), and patch existing engrams with `eml_update`
 (RESOLVE / INVALIDATE / ADVANCE / SUPERSEDE).
 Auto-supersede handles prior status — do NOT patch the old status manually.
+
+### 7. Hand over, if this was a handoff
+Only when the consolidation is the first half of a move to a fresh session —
+you proposed it or the user asked for it, and the user agreed. The work itself
+then belongs to the new session, even if the user's answer also named the
+next task ("ok, do B and save the state" still means: save here, B in the new
+session).
+
+- **In the EML cockpit** (`COCKPIT_SPAWN_JS` is set): open the new session with
+  the `spawn-session` skill. Its prompt names the next task and the session log
+  you just wrote, so the worker starts with `eml_show` on it.
+- **Elsewhere:** give the user a first prompt for the new session to paste,
+  naming the next task and the log.
+
+Then end your turn with one line on where the work continues. Do not start the
+next task in this session.
 
 ## Guardrails
 - Default mode: nothing is written before explicit approval. The diff is a

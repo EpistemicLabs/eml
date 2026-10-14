@@ -47,8 +47,8 @@ consolidate.
    - *How to proceed*, as options, e.g.:
      `a) continue with <X>  ·  b) tighten scope to <Y>  ·  c) break → fresh session  ·  d) consolidate now`
 
-That's it. On "break" → consolidate first (log + handoff), then continue in a
-fresh session. On "consolidate" → hand into that skill (which re-judges the
+That's it. On "break" → consolidate; it writes the log and opens the fresh
+session itself (its step 7) — the work does not go on here. On "consolidate" → hand into that skill (which re-judges the
 candidates properly before any write).
 
 ## Guardrails
