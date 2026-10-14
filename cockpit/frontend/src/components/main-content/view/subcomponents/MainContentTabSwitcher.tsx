@@ -5,7 +5,7 @@ import { Brain, NotebookPen, Plus, Terminal, X, type LucideIcon } from 'lucide-r
 
 import { cn } from '@/lib/utils';
 import Tooltip from '@/shared/view/ui/Tooltip';
-import { useProviders } from '@/lib/providers';
+import { newSessionEntries, useProviders } from '@/lib/providers';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { LLMProvider } from '@/types/app';
 
@@ -37,8 +37,9 @@ const VIEW_MODES: ViewModeDef[] = [
   { view: 'note', label: 'Note', icon: NotebookPen },
 ];
 
-// Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton).
-const NEW_LABEL: Record<PaneView, string> = { terminal: 'New terminal', brain: 'New brain view', note: 'New note' };
+// Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
+// terminal entries come from newSessionEntries.
+const NEW_LABEL: Record<Exclude<PaneView, 'terminal'>, string> = { brain: 'New brain view', note: 'New note' };
 
 /**
  * Apple-style toolbar: a Segmented Control for the pane's view mode
@@ -55,13 +56,13 @@ export default function MainContentTabSwitcher({
   const closeLabel = 'Close this pane';
   const addLabel = 'New pane next to this one';
   const [addOpen, setAddOpen] = useState(false);
-  const ready = (useProviders().data ?? []).filter((provider) => provider.version !== null);
+  const sessionEntries = newSessionEntries(useProviders().data ?? []);
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
   const addItems: AddItem[] =
     VIEW_MODES.flatMap((mode): AddItem[] =>
-      mode.view === 'terminal' && ready.length > 1
-        ? ready.map((provider) => ({
-            key: `terminal-${provider.id}`, label: `New ${provider.label} session`, icon: mode.icon, view: mode.view, provider: provider.id,
+      mode.view === 'terminal'
+        ? sessionEntries.map(({ label, provider }) => ({
+            key: provider ? `terminal-${provider}` : 'terminal', label, icon: mode.icon, view: mode.view, provider,
           }))
         : [{ key: mode.view, label: NEW_LABEL[mode.view], icon: mode.icon, view: mode.view }]);
   const addRef = useRef<HTMLDivElement>(null);

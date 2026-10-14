@@ -7,7 +7,7 @@ import type { Project } from '@/types/app';
 import type { SidebarController } from '../../useSidebarController';
 import { isSessionRecent, readShowOlderIds, storeShowOlder } from '../../utils';
 import { SidebarProjectActions } from './SidebarProjectActions';
-import { NewPaneButton, SidebarProjectNotes, isRecentNote } from './SidebarProjectNotes';
+import { NewPaneButton, SidebarGroupLabel, SidebarProjectNotes, isRecentNote } from './SidebarProjectNotes';
 import { SidebarSessionRow } from './SidebarSessionRow';
 
 const SKELETON_WIDTHS = ['w-[60%]', 'w-[75%]', 'w-[90%]'];
@@ -68,6 +68,8 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
     [notes, openNoteIds, unseenNotes, nowMs],
   );
   const olderCount = olderSessionIds.size + olderNoteIds.size;
+  // The "Sessions" label only separates the sessions from a notes group below.
+  const notesShown = showOlder ? notes.length > 0 : notes.some((note) => !olderNoteIds.has(note.id));
   const shownSessions = showOlder ? sessions : sessions.filter((session) => !olderSessionIds.has(session.id));
 
   let body: ReactNode;
@@ -134,6 +136,8 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
           />
         </div>
       </div>
+      {notesShown && <SidebarGroupLabel>Sessions</SidebarGroupLabel>}
+      {body}
       <SidebarProjectNotes
         project={project}
         notes={notes}
@@ -141,7 +145,6 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
         showOld={showOlder}
         currentTime={now}
       />
-      {body}
     </div>
   );
 }

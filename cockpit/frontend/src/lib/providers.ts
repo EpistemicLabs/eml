@@ -63,6 +63,27 @@ export function useProviders(options: { refresh?: boolean } = {}) {
   return useQuery({ queryKey: providersKey, queryFn: () => request(options.refresh ? '?refresh=1' : ''), staleTime: 15_000 });
 }
 
+/**
+ * The "+" menus' wording for a new agent session: "New Claude Code session".
+ * Without a provider (list not loaded, none set up) it reads "New session".
+ */
+export function newSessionLabel(provider?: Pick<AgentProviderInfo, 'label'> | null): string {
+  return provider ? `New ${provider.label} session` : 'New session';
+}
+
+/**
+ * The menu entries for new agent sessions: one per ready provider when there
+ * are several, otherwise one entry (provider undefined → the cockpit's
+ * default) named after the provider it will start.
+ */
+export function newSessionEntries(
+  providers: AgentProviderInfo[],
+): Array<{ label: string; provider?: LLMProvider }> {
+  const ready = providers.filter((provider) => provider.version !== null);
+  if (ready.length > 1) return ready.map((provider) => ({ label: newSessionLabel(provider), provider: provider.id }));
+  return [{ label: newSessionLabel(ready[0] ?? providers.find((provider) => provider.isDefault)) }];
+}
+
 /** Every change answers with the fresh provider list. */
 function useProviderMutation<V>(run: (vars: V) => Promise<AgentProviderInfo[]>) {
   const qc = useQueryClient();

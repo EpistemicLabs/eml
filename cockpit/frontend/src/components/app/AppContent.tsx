@@ -247,7 +247,7 @@ function AppContentInner() {
     <div className="fixed inset-0 flex flex-col bg-background">
       {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
           The sidebar rail and the pane grid start below it, top-aligned. */}
-      <div className="flex h-11 flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 backdrop-blur-sm">
+      <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 backdrop-blur-sm">
         {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
         <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[16px] font-semibold tracking-wide text-primary">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
