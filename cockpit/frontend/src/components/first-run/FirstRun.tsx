@@ -24,15 +24,16 @@ async function setupNeeded(): Promise<boolean> {
  * Step 2 of the first run, in the real cockpit: right after the setup Claude
  * is not signed in yet (GET /api/setup → signIn). A card with one button opens
  * a session that runs Claude Code's own /login; the host opens the
- * getting-started session once the sign-in is done (onboarding.ts). Other
- * ways to sign in (setup-token) stay in Settings › Models.
+ * getting-started session once the sign-in is done (onboarding.ts). The card
+ * is the only way on: no shortcut past the onboarding (the setup-token stays
+ * in Settings › Models for later).
  */
-export function FirstRunSignIn({ openSettings }: { openSettings: (tab?: string) => void }) {
+export function FirstRunSignIn() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const runtime = useClaudeRuntime(open);
+  const { runtime, retry } = useClaudeRuntime(open);
 
   useEffect(() => {
     setupStatus()
@@ -55,14 +56,9 @@ export function FirstRunSignIn({ openSettings }: { openSettings: (tab?: string) 
       if (!response.ok) throw new Error();
       setOpen(false);
     } catch {
-      setError("Could not open the sign-in session. Try again, or use Settings › Models.");
+      setError("Could not open the sign-in session. Try again.");
       setBusy(false);
     }
-  };
-
-  const otherWays = () => {
-    setOpen(false);
-    openSettings("models");
   };
 
   return (
@@ -82,11 +78,22 @@ export function FirstRunSignIn({ openSettings }: { openSettings: (tab?: string) 
         </p>
         {!ready && (
           <p className="text-ui text-muted-foreground">
-            {runtime.failed ?? "Preparing Claude Code for the cockpit — a one-time download, usually under a minute."}
+            {runtime.failed
+              ? `The download failed: ${runtime.failed}`
+              : "A one-time download of Claude Code into the cockpit, usually under a minute."}
           </p>
         )}
         {error && <p className="text-ui text-primary">{error}</p>}
-        <div className="space-y-2">
+        {runtime.failed ? (
+          <button
+            type="button"
+            onClick={() => void retry()}
+            autoFocus
+            className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground"
+          >
+            Try again
+          </button>
+        ) : (
           <button
             type="button"
             onClick={() => void signIn()}
@@ -94,16 +101,9 @@ export function FirstRunSignIn({ openSettings }: { openSettings: (tab?: string) 
             autoFocus
             className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground disabled:opacity-50"
           >
-            {busy ? "Opening…" : ready ? "Sign in to Claude" : "Preparing Claude Code…"}
+            {busy ? "Opening…" : ready ? "Sign in to Claude" : "Downloading Claude Code to the cockpit…"}
           </button>
-          <button
-            type="button"
-            onClick={otherWays}
-            className="w-full rounded-md px-3 py-2 text-ui text-muted-foreground hover:text-foreground"
-          >
-            Other ways to sign in
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -114,9 +114,10 @@ type ClaudeRuntime = { version: string | null; failed: string | null };
 /**
  * The cockpit's own Claude Code, which a fresh home downloads at the first
  * start: a sign-in before it is installed would end in "not set up yet".
- * Polls /api/providers while `active` until a version is there.
+ * Polls /api/providers while `active` until a version is there; `retry`
+ * starts a failed download again.
  */
-function useClaudeRuntime(active: boolean): ClaudeRuntime {
+function useClaudeRuntime(active: boolean): { runtime: ClaudeRuntime; retry: () => Promise<void> } {
   const [runtime, setRuntime] = useState<ClaudeRuntime>({ version: null, failed: null });
   useEffect(() => {
     if (!active || runtime.version) return;
@@ -124,11 +125,13 @@ function useClaudeRuntime(active: boolean): ClaudeRuntime {
     const check = async () => {
       try {
         const body = (await (await fetch("/api/providers")).json()) as {
-          providers?: Array<{ id: string; version: string | null; problem: string | null; runtime?: { lastResult?: { outcome?: string } | null } }>;
+          providers?: Array<{ id: string; version: string | null; runtime?: { lastResult?: { outcome?: string; error?: string } | null } }>;
         };
         const claude = body.providers?.find((provider) => provider.id === "claude");
         if (stopped || !claude) return;
-        const failed = claude.runtime?.lastResult?.outcome === "failed" ? claude.problem : null;
+        const last = claude.runtime?.lastResult;
+        // Only a failed first download blocks; a failed update keeps the old version.
+        const failed = !claude.version && last?.outcome === "failed" ? last.error ?? "unknown error" : null;
         setRuntime({ version: claude.version, failed });
       } catch { /* host busy — next round */ }
     };
@@ -136,7 +139,14 @@ function useClaudeRuntime(active: boolean): ClaudeRuntime {
     const timer = setInterval(() => void check(), 2000);
     return () => { stopped = true; clearInterval(timer); };
   }, [active, runtime.version]);
-  return runtime;
+
+  // A failed download: run the runtime check again (Settings › Models ›
+  // Check now does the same); polling picks up the outcome.
+  const retry = async () => {
+    setRuntime({ version: null, failed: null });
+    await fetch("/api/providers/claude/runtime/check", { method: "POST" }).catch(() => undefined);
+  };
+  return { runtime, retry };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

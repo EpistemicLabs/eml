@@ -1,6 +1,6 @@
 ---
 name: getting-started
-description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — lets the user look at it in the Brain tab and explains sidebar, working folders and desks, then shows the agent's default rules and the skills. In the cockpit it ends by consolidating and handing over to a new session in the project. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
+description: First-run onboarding for a fresh EML brain — a short guided start. Gets to know the user and fills their profile, creates their first project with a status and a few open tasks, then explains the brain on that project (engram types, scopes) and — in the EML cockpit — lets the user look at it in the Brain tab and explains sidebar, working folders and desks, then shows the agent's default rules and the skills. In the cockpit it ends by asking for the project's working folder, consolidating, and handing over to a new session in the project. The cockpit starts it in the first session of a new brain; invoke it on "getting started", "onboarding", "set up my brain", "erste Schritte", "einrichten".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
@@ -129,12 +129,15 @@ with any MCP client.
 
    *Cockpit:* this session runs in a cockpit-made "Getting started" folder,
    not in their project — the work goes on in a new session there:
-   1. **Consolidate.** Run the `consolidate` skill for this session (it
-      proposes what to store; the user approves).
-   2. **Working folder.** Ask whether the project's work lives in a folder on
+   1. **Working folder.** Ask whether the project's work lives in a folder on
       this computer. If yes, ask them to link it now with the project's folder
       button in the sidebar, and wait until they say it's done. If not, the
       cockpit makes one.
+   2. **Consolidate.** Run the `consolidate` skill in auto mode — they are new
+      to this, so don't ask them to approve a diff, and skip its report
+      format (no "approve · edit · undo" line). Instead say in plain words what
+      you stored and what it is for, e.g. "a log: a short summary of this
+      session, which the next session reads to pick up where we left off".
    3. **Hand over.** With the `spawn-session` skill, open a session in the
       project (`--project <id>`, the project's name as title) with this
       prompt: "Load the brain for project <id> (eml_show project.<id>). Say in
