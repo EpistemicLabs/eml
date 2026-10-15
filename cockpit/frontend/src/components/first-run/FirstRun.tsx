@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 /**
  * First-run setup (host: setup.ts). While the home has no brain, the host
@@ -33,7 +33,7 @@ export function FirstRunSignIn() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { runtime, retry } = useClaudeRuntime(open);
+  const { runtime, retry, failures } = useClaudeRuntime(open);
 
   useEffect(() => {
     setupStatus()
@@ -84,6 +84,22 @@ export function FirstRunSignIn() {
           </p>
         )}
         {error && <p className="text-ui text-primary">{error}</p>}
+        {runtime.failed && failures >= 2 && (
+          <div className="space-y-1.5 text-caption text-muted-foreground">
+            <p>
+              It keeps failing. The download comes from Anthropic's servers — check the internet connection, and a
+              proxy or firewall that might block it.
+            </p>
+            <p>
+              If that's not it, please{" "}
+              <a href={ISSUES_URL} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+                report the problem
+              </a>{" "}
+              with the error above and the host log (<code className="font-mono">host.log</code> in the cockpit home,
+              by default <code className="font-mono">~/.eml-cockpit</code>).
+            </p>
+          </div>
+        )}
         {runtime.failed ? (
           <button
             type="button"
@@ -111,27 +127,39 @@ export function FirstRunSignIn() {
 
 type ClaudeRuntime = { version: string | null; failed: string | null };
 
+const ISSUES_URL = "https://github.com/EpistemicLabs/eml/issues";
+
 /**
  * The cockpit's own Claude Code, which a fresh home downloads at the first
  * start: a sign-in before it is installed would end in "not set up yet".
  * Polls /api/providers while `active` until a version is there; `retry`
  * starts a failed download again.
  */
-function useClaudeRuntime(active: boolean): { runtime: ClaudeRuntime; retry: () => Promise<void> } {
+function useClaudeRuntime(active: boolean): { runtime: ClaudeRuntime; retry: () => Promise<void>; failures: number } {
   const [runtime, setRuntime] = useState<ClaudeRuntime>({ version: null, failed: null });
+  // Failed attempts seen: the first download plus every Try again that failed.
+  const [failures, setFailures] = useState(0);
+  // Results older than the last Try again belong to the attempt before it.
+  const retriedAt = useRef(0);
+  const lastFailureAt = useRef<string | null>(null);
   useEffect(() => {
     if (!active || runtime.version) return;
     let stopped = false;
     const check = async () => {
       try {
         const body = (await (await fetch("/api/providers")).json()) as {
-          providers?: Array<{ id: string; version: string | null; runtime?: { lastResult?: { outcome?: string; error?: string } | null } }>;
+          providers?: Array<{ id: string; version: string | null; runtime?: { lastResult?: { at?: string; outcome?: string; error?: string } | null } }>;
         };
         const claude = body.providers?.find((provider) => provider.id === "claude");
         if (stopped || !claude) return;
         const last = claude.runtime?.lastResult;
         // Only a failed first download blocks; a failed update keeps the old version.
-        const failed = !claude.version && last?.outcome === "failed" ? last.error ?? "unknown error" : null;
+        const current = last?.at !== undefined && Date.parse(last.at) >= retriedAt.current;
+        const failed = !claude.version && current && last?.outcome === "failed" ? last.error ?? "unknown error" : null;
+        if (failed && last?.at !== lastFailureAt.current) {
+          lastFailureAt.current = last?.at ?? null;
+          setFailures((n) => n + 1);
+        }
         setRuntime({ version: claude.version, failed });
       } catch { /* host busy — next round */ }
     };
@@ -143,10 +171,11 @@ function useClaudeRuntime(active: boolean): { runtime: ClaudeRuntime; retry: () 
   // A failed download: run the runtime check again (Settings › Models ›
   // Check now does the same); polling picks up the outcome.
   const retry = async () => {
+    retriedAt.current = Date.now();
     setRuntime({ version: null, failed: null });
     await fetch("/api/providers/claude/runtime/check", { method: "POST" }).catch(() => undefined);
   };
-  return { runtime, retry };
+  return { runtime, retry, failures };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
