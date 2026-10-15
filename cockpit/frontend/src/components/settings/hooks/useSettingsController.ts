@@ -1,11 +1,12 @@
-// Kept: tab normalisation on open, the "saved" flash with its 2s reset, the
-// debounced auto-save. Trimmed: provider permissions/login, notification
+// Kept: tab normalisation on open, the "saved" flash with its 2s reset.
+// Every change is written when it is made (a toggle, a select — nothing to
+// debounce). Trimmed: provider permissions/login, notification
 // preferences over HTTP, code-editor state — the cockpit persists one small
 // client-side blob (see utils/settingsStorage.ts).
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { DEFAULT_SETTINGS_TAB, KNOWN_MAIN_TABS } from '../constants/constants';
-import type { ProjectSortOrder, SaveStatus, SettingsMainTab } from '../types/types';
+import type { CockpitSettings, ProjectSortOrder, SaveStatus, SettingsMainTab } from '../types/types';
 import { readSettings, writeSettings } from '../utils/settingsStorage';
 
 type UseSettingsControllerArgs = {
@@ -31,15 +32,28 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setNotifyOnDone(settings.notifyOnDone);
   }, []);
 
-  const saveSettings = useCallback(() => {
+  // Write one change at once. The debounced auto-save this replaces skipped
+  // the first change after opening as "the load", so a first toggle was shown
+  // but never stored.
+  const save = useCallback((patch: Partial<CockpitSettings>) => {
     try {
-      writeSettings({ projectSortOrder, notifyOnDone });
+      writeSettings(patch);
       setSaveStatus('success');
     } catch (error) {
       console.error('Error saving settings:', error);
       setSaveStatus('error');
     }
-  }, [projectSortOrder, notifyOnDone]);
+  }, []);
+
+  const changeProjectSortOrder = useCallback((value: ProjectSortOrder) => {
+    setProjectSortOrder(value);
+    save({ projectSortOrder: value });
+  }, [save]);
+
+  const changeNotifyOnDone = useCallback((value: boolean) => {
+    setNotifyOnDone(value);
+    save({ notifyOnDone: value });
+  }, [save]);
 
   // Re-sync tab + values every time the modal opens.
   useEffect(() => {
@@ -47,26 +61,6 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setActiveTab(normalizeMainTab(initialTab));
     loadSettings();
   }, [initialTab, isOpen, loadSettings]);
-
-  // Auto-save with debounce; skipped for the load that follows open.
-  const autoSaveTimerRef = useRef<number | null>(null);
-  const isInitialLoadRef = useRef(true);
-
-  useEffect(() => {
-    if (isInitialLoadRef.current) {
-      isInitialLoadRef.current = false;
-      return;
-    }
-    if (autoSaveTimerRef.current !== null) window.clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = window.setTimeout(saveSettings, 500);
-    return () => {
-      if (autoSaveTimerRef.current !== null) window.clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [saveSettings]);
-
-  useEffect(() => {
-    if (isOpen) isInitialLoadRef.current = true;
-  }, [isOpen]);
 
   // Clear the "saved" flash after 2 seconds.
   useEffect(() => {
@@ -80,8 +74,8 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setActiveTab,
     saveStatus,
     projectSortOrder,
-    setProjectSortOrder,
+    setProjectSortOrder: changeProjectSortOrder,
     notifyOnDone,
-    setNotifyOnDone,
+    setNotifyOnDone: changeNotifyOnDone,
   };
 }
