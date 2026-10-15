@@ -55,7 +55,7 @@ eml-mcp-server hook stop               [--config <path>]
 data, never evaluated). Logs, the reminder's turn counters and the save points live
 next to the config file, so one config directory is one isolated EML client.
 
-## Tools (v0.17.16)
+## Tools (v0.17.17)
 
 All tools have an `eml_` prefix. Total: **24 tools**.
 
