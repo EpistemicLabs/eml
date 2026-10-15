@@ -97,7 +97,15 @@ function AppContentInner() {
         .flatMap((project) => project.sessions ?? [])
         .find((candidate) => candidate.id === event.sessionId);
       try {
-        new Notification('Session finished', { body: session?.summary || 'Claude finished a turn', tag: event.sessionId });
+        // One entry per session in the notification centre (tag), but every
+        // finished turn alerts again: without renotify the browser replaces a
+        // same-tag notification silently, so only a session's first turn showed.
+        // `renotify` is missing from TypeScript's DOM types.
+        new Notification('Session finished', {
+          body: session?.summary || 'Claude finished a turn',
+          tag: event.sessionId,
+          renotify: true,
+        } as NotificationOptions & { renotify: boolean });
       } catch { /* notifications unavailable */ }
     };
     // Worker sessions requested by a session (skill spawn-session) or by the
