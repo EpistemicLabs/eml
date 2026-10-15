@@ -11,7 +11,10 @@ sessions next to your brain, with everything it is built from.
 
 ## Quick start
 
-You need macOS or Linux, Node ≥ 22 and pnpm 10 (`corepack enable`).
+**New to the Terminal or GitHub?** Follow [INSTALL.md](INSTALL.md): install Node.js, paste one line,
+done. No GitHub account needed.
+
+For developers: you need macOS or Linux, Node ≥ 22 and pnpm 10 (`corepack enable`).
 
 ```bash
 git clone https://github.com/EpistemicLabs/eml.git && cd eml
@@ -22,8 +25,8 @@ pnpm run cockpit
 This builds everything, starts the cockpit on `127.0.0.1` and opens it in your browser. A fresh brain
 is created under `~/.eml-cockpit/`.
 
-To run a release as an app that updates itself (login service, update banner), use
-`scripts/install-app.sh latest` instead. Details, updates and the development setup are in
+To run a release as an app that updates itself (login service, update banner), use the one-line
+installer from [INSTALL.md](INSTALL.md) instead. Details, updates and the development setup are in
 [`cockpit/README.md`](cockpit/README.md).
 
 ## What's in here

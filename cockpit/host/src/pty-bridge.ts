@@ -180,12 +180,20 @@ const AGENT_ENV_ALLOWLIST = [
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
 ] as const
 
-function baseAgentEnv(): Record<string, string> {
+// A host started without a login shell (launchd login service, a bare node)
+// has no locale. The session then runs in the C locale, and macOS pbcopy —
+// which Claude Code copies through — reads its UTF-8 input as Mac Roman:
+// "ä" lands in the clipboard as "√§". Without any locale variable the session
+// gets a UTF-8 LANG; one the user set always wins.
+const UTF8_LANG = process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8'
+
+export function baseAgentEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {}
   for (const key of AGENT_ENV_ALLOWLIST) {
-    const value = process.env[key]
+    const value = source[key]
     if (value !== undefined) env[key] = value
   }
+  if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = UTF8_LANG
   return env
 }
 

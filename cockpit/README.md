@@ -33,7 +33,9 @@ pnpm run cockpit          # builds everything, starts the cockpit, opens a brows
 that updates itself, install it as an app:
 
 ```bash
-scripts/install-app.sh latest            # newest GitHub release (needs a logged-in `gh`)
+curl -fsSL https://github.com/EpistemicLabs/eml/releases/latest/download/install.sh | bash
+                                          # newest release, needs only Node ≥ 22 (guide: INSTALL.md)
+scripts/install-app.sh latest            # the same from a checkout (needs a logged-in `gh`)
 scripts/install-app.sh --from release/<v> # or local assets built with scripts/pack-release.sh
 ```
 
