@@ -51,6 +51,9 @@ describe('hygieneCheck()', () => {
       expect(byId[long.id]).toMatchObject({ type: 'rule', scope: 'project.demo', title: 'long-one' })
       expect(byId[long.id].reason).toMatch(/at most 200 characters \(got 250\)/)
       expect(byId[noTrigger.id].reason).toMatch(/needs properties\.trigger/)
+      const both = rule('global', 'both')
+      plant(both.id, 'x'.repeat(250), { applies: 'situational' })
+      expect(check('rule-profile-format').findings.find(f => f.id === both.id)!.reason).toMatch(/properties\.detail\. A situational rule needs/)
       expect(byId[profile.id].reason).toMatch(/at most 400 characters \(got 500\)/)
     })
 

@@ -95,7 +95,9 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
         .filter((c: EngramRow) => c.type === 'rule' || c.type === 'profile')
         .map((c: EngramRow) => {
           const problems = formatProblems(c.type, c.content, c.properties)
-          return problems.length > 0 ? finding(c, problems.join(' ')) : null
+          if (problems.length === 0) return null
+          // One sentence per problem, as in the write error (validateFormat).
+          return finding(c, problems.map((m, i) => i === 0 ? m : m[0].toUpperCase() + m.slice(1)).join(' '))
         })
         .filter((f): f is HygieneFinding => f !== null)
     },
