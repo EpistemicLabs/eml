@@ -58,10 +58,12 @@ with any MCP client.
    - Create it with `eml_project_create` (a short kebab-case id, a readable name).
    - Set its current state with `eml_set_status` (one or two sentences).
    - Ask for the next one to three concrete things to do, and store each with
-     `eml_track_task` in the project's scope.
+     `eml_track_task` in the project's scope. Don't set a priority they
+     didn't give.
 
 4. **The brain.** Call `eml_show project.<id>` and present the result in a
-   few lines: "This is what your next session will see." Then explain the
+   few lines, in the user's language (the engrams stay English): "This is
+   what your next session will see." Then explain the
    brain on it, one or two lines per point:
    - **Engrams** are the entries in the brain, each with a type. Name the two
      they now have — the *status* (the current state; a new one replaces the
@@ -101,6 +103,8 @@ with any MCP client.
    - **Desks:** the tabs next to the Brain tab; each desk holds its own panes,
      several sessions side by side. ⌘K (Ctrl+K) opens the command palette for
      everything else.
+
+   End with a quick "any questions?" and wait for the answer before step 6.
 
 6. **Your own identity and style.** Show the user, briefly, how you're set up to
    work — your default rules:
