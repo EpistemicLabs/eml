@@ -88,6 +88,9 @@ function AppContentInner() {
       !findProjectOwningSession(projectsRef.current, pane.sessionId ?? '');
   });
 
+  // The last "Session finished" notification per session, closed when the next one comes.
+  const sessionNotifications = useRef(new Map<string, Notification>());
+
   useEffect(() => {
     const onTurn = (event: TurnEvent) => {
       if (event.state !== 'done' || !readSettings().notifyOnDone) return;
@@ -97,15 +100,19 @@ function AppContentInner() {
         .flatMap((project) => project.sessions ?? [])
         .find((candidate) => candidate.id === event.sessionId);
       try {
-        // One entry per session in the notification centre (tag), but every
-        // finished turn alerts again: without renotify the browser replaces a
-        // same-tag notification silently, so only a session's first turn showed.
-        // `renotify` is missing from TypeScript's DOM types.
-        new Notification('Session finished', {
+        // A fresh tag per turn: a notification that reuses a tag replaces the
+        // old one without a banner, and on macOS `renotify` does not bring the
+        // banner back — so only a session's first turn alerted. Closing the
+        // session's previous notification keeps one entry per session.
+        sessionNotifications.current.get(event.sessionId)?.close();
+        const notification = new Notification('Session finished', {
           body: session?.summary || 'Claude finished a turn',
-          tag: event.sessionId,
-          renotify: true,
-        } as NotificationOptions & { renotify: boolean });
+          tag: `${event.sessionId}:${Date.now()}`,
+        });
+        sessionNotifications.current.set(event.sessionId, notification);
+        notification.onclose = () => {
+          if (sessionNotifications.current.get(event.sessionId) === notification) sessionNotifications.current.delete(event.sessionId);
+        };
       } catch { /* notifications unavailable */ }
     };
     // Worker sessions requested by a session (skill spawn-session) or by the
