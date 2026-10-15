@@ -137,6 +137,86 @@ export function validateProperties(
   }
 }
 
+// --- Rule and profile format -------------------------------------------------
+//
+// Rules and profiles are short at the source, so the boot can carry them whole
+// (note rule-delivery-model-draft): a rule's content says only what to do, the
+// rationale goes to properties.why and playbook or examples to properties.detail;
+// a situational rule names its situation in properties.trigger, which the boot
+// lists in its index. Entries written before the format (legacy) stay valid —
+// the boot shows them by title only and counts them in its hints.
+
+export const RULE_CONTENT_MAX_CHARS = 200
+export const PROFILE_CONTENT_MAX_CHARS = 400
+export const RULE_TRIGGER_MAX_CHARS = 80
+
+/**
+ * What keeps a rule or profile from the current format — empty when it fits
+ * (and for every other type). One sentence per problem, ready for an error.
+ */
+export function formatProblems(
+  type: string,
+  content: string | null | undefined,
+  properties: Record<string, unknown> | null | undefined,
+): string[] {
+  const p = properties ?? {}
+  const len = (content ?? '').length
+  const out: string[] = []
+  if (type === 'rule') {
+    if (len > RULE_CONTENT_MAX_CHARS) {
+      out.push(
+        `a rule's content is at most ${RULE_CONTENT_MAX_CHARS} characters (got ${len}) — state only what to do. ` +
+        'Put the rationale in properties.why and playbook or examples in properties.detail.',
+      )
+    }
+    if (p.applies === 'situational') {
+      const trigger = p.trigger
+      if (typeof trigger !== 'string' || trigger.trim() === '') {
+        out.push(
+          'a situational rule needs properties.trigger — the situation it applies in, ' +
+          `at most ${RULE_TRIGGER_MAX_CHARS} characters. Don't repeat it in content.`,
+        )
+      } else if (trigger.length > RULE_TRIGGER_MAX_CHARS) {
+        out.push(`properties.trigger is at most ${RULE_TRIGGER_MAX_CHARS} characters (got ${trigger.length}).`)
+      }
+    }
+  } else if (type === 'profile') {
+    if (len > PROFILE_CONTENT_MAX_CHARS) {
+      out.push(
+        `a profile's content is at most ${PROFILE_CONTENT_MAX_CHARS} characters (got ${len}) — keep the core facts; ` +
+        'put the rest in properties.detail or a separate profile.',
+      )
+    }
+  }
+  return out
+}
+
+/** True when a rule or profile does not fit the current format (a legacy entry). */
+export function isLegacyFormat(
+  type: string,
+  content: string | null | undefined,
+  properties: Record<string, unknown> | null | undefined,
+): boolean {
+  return formatProblems(type, content, properties).length > 0
+}
+
+/**
+ * Enforce the rule/profile format on a write. Callers run it on create and on
+ * an update that changes content, trigger, applies or type; status-only and
+ * review changes skip it, so legacy entries stay patchable (like legacy
+ * decisions, validateProperties create=false).
+ */
+export function validateFormat(
+  type: string,
+  content: string | null | undefined,
+  properties: Record<string, unknown> | null | undefined,
+): void {
+  const problems = formatProblems(type, content, properties)
+  if (problems.length === 0) return
+  const sentences = problems.map((m, i) => i === 0 ? m : m[0].toUpperCase() + m.slice(1))
+  throw new Error(`Invalid engram: ${sentences.join(' ')}`)
+}
+
 // v0.9.1 Cluster 1: validateSourceType removed — source_id/source_type were
 // dropped from the engram schema (1 user = 1 brain, no multi-caller).
 

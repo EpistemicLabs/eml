@@ -81,6 +81,9 @@ export interface DecisionProperties {
 // `applies` (applicability: always/situational). A rule has no weak tier — when it
 // applies, it is binding. `always` = ambient within its scope; `situational` =
 // context-gated, then fully binding. See docs/specs/v0.10.8-PROPOSAL.md.
+// Format (validate.ts, formatProblems): content ≤ 200 chars says what to do;
+// a situational rule names its situation in `trigger` (≤ 80 chars), which the
+// boot lists in its index; `why` holds the rationale, `detail` the long form.
 export type Applicability = 'always' | 'situational'
 export type RuleType = 'constraint' | 'process' | 'convention' | 'behavior' | 'security'
 
@@ -89,6 +92,9 @@ export interface RuleProperties {
   rule_type?: RuleType
   applies_to?: string[]
   context?: string
+  trigger?: string                // required when situational
+  why?: string
+  detail?: string
   review_due_at?: string          // C9 (default 90d)
 }
 

@@ -49,7 +49,8 @@ with any MCP client.
    it with `eml_get`, replace the placeholder line "The agent learns more from
    conversation…" with what you learned, written in English as plain facts,
    and send the whole new text with `eml_update` — `content` replaces the
-   engram's content completely, so keep its first line. If they said what they
+   engram's content completely, so keep its first line. A profile holds at
+   most 400 characters: keep it to the core facts. If they said what they
    want you for, add one line about that role to your identity engram
    (`<agent>-identity`) the same way.
 
