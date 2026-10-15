@@ -40,7 +40,7 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  *     nothing per boot or per space is in the hook text.
  *
  *   - skills/<name>/SKILL.md: the EML skills (consolidate, checkpoint,
- *     getting-started) from the bundled mcp-server and the cockpit's own
+ *     getting-started, brain-hygiene) from the bundled mcp-server and the cockpit's own
  *     (spawn-session, task-run), refreshed each boot. The folders those two
  *     write to — the spawn inbox, the tasks folder — are extra writable roots
  *     of the sandbox (config.toml, sandbox_workspace_write).

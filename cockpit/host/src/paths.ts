@@ -29,7 +29,7 @@ export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
 export const COCKPIT_SKILLS_DIR = path.join(HOST_ROOT, 'skills')
 const MCP_ROOT = path.dirname(require.resolve('@engramprotocol/mcp-server/package.json'))
 export const MCP_CLI_JS = path.join(MCP_ROOT, 'dist', 'cli.js')
-// EML skills (consolidate, checkpoint, getting-started) shipped with the mcp-server package.
+// EML skills (consolidate, checkpoint, getting-started, brain-hygiene) shipped with the mcp-server package.
 export const MCP_SKILLS_DIR = path.join(MCP_ROOT, 'templates', 'skills')
 
 // Frontend: in the workspace checkout serve the frontend package's own dist/ so a

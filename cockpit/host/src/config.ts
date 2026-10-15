@@ -25,6 +25,17 @@ export interface CockpitConfig {
    * which brain a token belongs to comes from control.db at boot. Absent = main only.
    */
   spaces?: Array<{ token: string; name?: string }>
+  /**
+   * When the cockpit last opened a brain-hygiene session, per brain id
+   * (brain-hygiene.ts): the cockpit version it opened for after an update, and
+   * the time of the last review round. Absent = never.
+   */
+  hygiene?: Record<string, HygieneState>
+}
+
+export interface HygieneState {
+  version?: string
+  reviewAt?: string
 }
 
 export async function readCockpitConfig(): Promise<CockpitConfig | null> {
@@ -37,16 +48,32 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
           .filter((s): s is { token: string; name?: string } => !!s && typeof s.token === 'string' && !!s.token)
           .map((s) => ({ token: s.token, ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}) }))
       : []
+    const hygiene = readHygiene(parsed.hygiene)
     return {
       token: parsed.token,
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(spaces.length ? { spaces } : {}),
+      ...(hygiene ? { hygiene } : {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
+}
+
+function readHygiene(raw: unknown): Record<string, HygieneState> | null {
+  if (!raw || typeof raw !== 'object') return null
+  const out: Record<string, HygieneState> = {}
+  for (const [brainId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const { version, reviewAt } = value as Record<string, unknown>
+    out[brainId] = {
+      ...(typeof version === 'string' ? { version } : {}),
+      ...(typeof reviewAt === 'string' ? { reviewAt } : {}),
+    }
+  }
+  return Object.keys(out).length ? out : null
 }
 
 export async function writeCockpitConfig(config: CockpitConfig): Promise<void> {

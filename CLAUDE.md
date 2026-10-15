@@ -17,6 +17,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `main` is development; a tag `vX.Y.Z` is a release. One product version for the whole repo.
 - Brain schema N ↔ release v0.N: a schema change is a new minor with a migrate file and an updated
   fresh schema (the `schema-baseline` test keeps both paths identical).
+- A release that sets a new requirement for existing engrams: what the migrate SQL can rewrite, it
+  rewrites; what needs judgement (rewriting text, naming a trigger) becomes a check in
+  `packages/core/src/hygiene.ts`. The cockpit then opens a brain-hygiene session for it after the update.
 - English everywhere in the repo (code, comments, docs, commits).
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
 - Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.

@@ -9,6 +9,7 @@ import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
+import { scheduleBrainHygiene } from './brain-hygiene.js'
 import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
@@ -178,6 +179,13 @@ async function main() {
     startOnboarding({ projects: main.registry, spawns, isClaudeReady: () => providers.get('claude')?.auth.signedIn() ?? Promise.resolve(false) })
     log('first run: getting-started session opens once Claude Code is signed in')
   }
+
+  // Brain hygiene: after an update with new requirements, or when reviews pile
+  // up, the host opens a session with the brain-hygiene skill (brain-hygiene.ts).
+  scheduleBrainHygiene({
+    spaces, spawns, version: ABOUT.version, log,
+    isReady: () => providers.default().auth.signedIn(),
+  })
 
   // After a first-run setup the setup page is already open and reloads itself.
   if (brain.reused) openBrowser(url)
