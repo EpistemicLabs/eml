@@ -32,8 +32,8 @@ Copy this line, paste it into the Terminal window (**Cmd + V**) and press **Ente
 curl -fsSL https://github.com/EpistemicLabs/eml/releases/latest/download/install.sh | bash
 ```
 
-It downloads the newest release, checks that the files are exactly the published ones, installs them
-and starts the cockpit. When it says **Done**, your browser opens the cockpit at
+It downloads the newest release, checks the cockpit's files against their published checksums, installs
+them and starts the cockpit. When it says **Done**, your browser opens the cockpit at
 [http://127.0.0.1:4317](http://127.0.0.1:4317). You can close the Terminal now.
 
 > **Prefer to read a script before you run it?** Download it, look at it, then run it:
@@ -67,6 +67,9 @@ Everything stays on your computer. Your brain (what your agent learns) lives in 
 | `Node.js … is too old` | Install the LTS version from [nodejs.org](https://nodejs.org) (step 1), then run step 3 again. |
 | `download … failed` | Check your internet connection and run step 3 again. |
 | `already installed` | Nothing to do. Open [http://127.0.0.1:4317](http://127.0.0.1:4317). |
+| `port 4317 is already in use` | Another program uses the cockpit's address. If you started a cockpit some other way, stop it, then run step 3 again. |
+| `run the command without sudo` | Paste the line from step 3 exactly as it is, without `sudo` in front. |
+| `did not start within a minute` | Open an issue (below) and attach the file `host.log` from the `.eml-cockpit` folder in your home folder. |
 | The browser says the page can't be reached | Wait a few seconds and reload. If it stays like that, log out of your Mac and back in. |
 
 Still stuck? [Open an issue](https://github.com/EpistemicLabs/eml/issues) and paste what the Terminal
@@ -80,6 +83,9 @@ Paste this into the Terminal to stop the cockpit and remove it from your login i
 node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js service uninstall
 ```
 
-Your brain stays in `~/.eml-cockpit`. To remove it too, delete that folder. **This deletes everything
-your agent has learned and cannot be undone.** Back it up first if you might want it later (Settings ›
-Brain › Back up).
+Your brain stays in `~/.eml-cockpit`. Running the installer again later brings the cockpit back with it.
+
+To remove the brain too, delete that folder. **This deletes everything your agent has learned and cannot
+be undone.** If you might want it later, back it up first: Settings › Brain › **Back up now**, then copy
+the backup out of `~/.eml-cockpit/backups` (for example into your Documents folder). The backups live
+inside the folder you are about to delete.
