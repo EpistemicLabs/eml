@@ -9,20 +9,24 @@ import { EML, boot, ALL_RULES } from '../src'
 // number on purpose. The whole boot is capped by opts.budget (below).
 const SYSTEM_RULES_BUDGET = 5900
 
-function brainWith(profiles: number, rules: number, chars: number, profileChars = 300): EML {
+// A brain at the format's limits: 2 core profiles (400), `always` always-rules
+// (200) and `situational` situational rules (200 + an 80-char trigger).
+function brainWith(always: number, situational: number): EML {
   const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
   eml.agents.store({ id: 'assistant', name: 'Assistant' })
   eml.users.create({ id: 'someone', name: 'Someone' })
-  for (let i = 0; i < profiles; i++) {
+  eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'A'.repeat(400) })
+  eml.engrams.store({ type: 'profile', scope: 'user.someone', title: 'someone', content: 'B'.repeat(400) })
+  for (let i = 0; i < always; i++) {
     eml.engrams.store({
-      type: 'profile', scope: i === 0 ? 'agent.assistant' : 'user.someone', title: `profile-${i}`,
-      content: `P${i} `.repeat(profileChars / 3), properties: { boot: ['*'] },
+      type: 'rule', scope: 'global', title: `always-${String(i).padStart(2, '0')}`,
+      content: 'C'.repeat(200), properties: { applies: 'always' },
     })
   }
-  for (let i = 0; i < rules; i++) {
+  for (let i = 0; i < situational; i++) {
     eml.engrams.store({
-      type: 'rule', scope: 'global', title: `rule-${i}`,
-      content: `R${i} `.repeat(chars / 3), properties: { applies: 'always', boot: ['*'] },
+      type: 'rule', scope: 'global', title: `situational-${String(i).padStart(2, '0')}`,
+      content: 'D'.repeat(200), properties: { applies: 'situational', trigger: 'E'.repeat(80) },
     })
   }
   return eml
@@ -33,7 +37,7 @@ describe('boot size budget (v0.15)', () => {
     const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
     try {
       const md = boot(eml, 'assistant', { systemRules: ALL_RULES }).markdown
-      const section = md.slice(md.indexOf('## EML System Rules'))
+      const section = md.slice(md.indexOf('## EML System Rules'), md.indexOf('\n---\n'))
       expect(section.length).toBeGreaterThan(0)
       expect(section.length).toBeLessThanOrEqual(SYSTEM_RULES_BUDGET)
     } finally { eml.close() }
@@ -41,72 +45,63 @@ describe('boot size budget (v0.15)', () => {
 })
 
 describe('boot hard budget (opts.budget)', () => {
-  it('renders a small brain exactly as without a budget, and reports nothing trimmed', () => {
-    const eml = brainWith(2, 3, 300)
+  it('renders a small brain exactly as without a budget, and reports nothing given up', () => {
+    const eml = brainWith(3, 3)
     try {
       const free = boot(eml, 'assistant', { systemRules: ALL_RULES })
       const capped = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 10_000 })
       expect(capped.markdown).toBe(free.markdown)
       expect(free.budget).toBeUndefined()
-      expect(capped.budget).toEqual({
-        limit: 10_000, chars: free.markdown.length, rule_cap: 600,
-        rules_named_only: 0, profiles_named_only: 0, fits: true,
-      })
+      expect(capped.budget).toEqual({ limit: 10_000, chars: free.markdown.length, situational_title_only: 0, fits: true })
     } finally { eml.close() }
   })
 
-  it('an oversized brain fits the budget: rules shortened, then named only, system rules and footer intact', () => {
-    // 20 rules x 1,500 chars + 5 profiles x 300 chars: ~18,000 chars unbounded (rules cut at 600).
-    const eml = brainWith(5, 20, 1500)
+  it('a full brain fits: situational rules from the last lose their trigger, nothing else changes, nothing is cut mid-text', () => {
+    const eml = brainWith(8, 20)
     try {
       const free = boot(eml, 'assistant', { systemRules: ALL_RULES })
       expect(free.markdown.length).toBeGreaterThan(10_000)
       const r = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 10_000 })
       expect(r.markdown.length).toBeLessThanOrEqual(10_000)
-      expect(r.budget?.fits).toBe(true)
-      expect(r.budget?.rule_cap).toBe(250)
-      expect(r.budget?.rules_named_only).toBeGreaterThan(0)
-      expect(r.budget?.profiles_named_only).toBe(0)
-      // system rules byte-identical to the unbounded render
-      const sys = (md: string) => md.slice(md.indexOf('## EML System Rules'), md.indexOf('\n---\n'))
-      expect(sys(r.markdown)).toBe(sys(free.markdown))
-      // the footer keeps the recall pointer and explains the trim
+      expect(r.budget).toMatchObject({ fits: true })
+      const n = r.budget!.situational_title_only
+      expect(n).toBeGreaterThan(0)
+      expect(n).toBeLessThan(20)
+      // everything up to the situational index is identical to the unbounded render
+      const head = (md: string) => md.slice(0, md.indexOf('## Rules (situational'))
+      expect(head(r.markdown)).toBe(head(free.markdown))
+      // the last n lose their trigger, the first 20 - n keep it
+      const withTrigger = r.markdown.match(/^- \*\*\[global \| situational-\d+\]\*\* when: E{80} · [0-9a-f-]{36}$/gm) ?? []
+      const titleOnly = r.markdown.match(/^- \[global \| situational-(\d+)\] · [0-9a-f-]{36}$/gm) ?? []
+      expect(withTrigger.length).toBe(20 - n)
+      expect(titleOnly.length).toBe(n)
+      expect(r.markdown).toContain('- [global | situational-19] · ')
+      expect(r.markdown).toContain(`## Hints\n- ${n} entries listed by title only to fit the boot's size budget.`)
       expect(r.markdown).toContain('call eml_recall <topic> or eml_show <id>')
-      expect(r.markdown).toMatch(/_Boot trimmed to the hook's size budget: behavior rules cut at 250 chars, \d+ rule\(s\) listed by name only — eml_get <id> returns the full text\._$/)
-      // a named-only rule shows scope | title and its id, nothing of its body;
-      // the others are there, shortened
-      const named = r.markdown.match(/- \*\*\[global \| rule-\d+\]\*\* _\(full text: eml_get [0-9a-f-]{36}\)_/g) ?? []
-      expect(named.length).toBe(r.budget!.rules_named_only)
-      const shortened = r.markdown.match(/- \*\*\[global \| rule-\d+\]\*\* R\d+ .*…$/gm) ?? []
-      expect(shortened.length).toBe(20 - r.budget!.rules_named_only)
+      // no entry cut mid-text
+      expect(r.markdown).not.toMatch(/…/)
     } finally { eml.close() }
   })
 
-  it('walks the ladder: 400 before 250, 250 before naming, profiles last', () => {
-    const eml = brainWith(2, 6, 700)
+  it('takes the fewest fallbacks that fit', () => {
+    const eml = brainWith(2, 6)
     try {
-      const at = (budget: number) => boot(eml, 'assistant', { systemRules: ALL_RULES, budget }).budget!
       const free = boot(eml, 'assistant', { systemRules: ALL_RULES }).markdown.length
-      expect(at(free).rule_cap).toBe(600)
-      expect(at(free - 1).rule_cap).toBe(400)
-      const at400 = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: free - 1 }).markdown.length
-      expect(at(at400 - 1)).toMatchObject({ rule_cap: 250, rules_named_only: 0 })
-      const at250 = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: at400 - 1 }).markdown.length
-      expect(at(at250 - 1)).toMatchObject({ rule_cap: 250, rules_named_only: 1, profiles_named_only: 0 })
-      // everything named: profiles go only after all rules
-      const allRulesNamed = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 5_600 }).budget!
-      expect(allRulesNamed.rules_named_only).toBe(6)
-      expect(allRulesNamed.profiles_named_only).toBeGreaterThan(0)
+      const at = (budget: number) => boot(eml, 'assistant', { systemRules: ALL_RULES, budget }).budget!
+      expect(at(free).situational_title_only).toBe(0)
+      expect(at(free - 1).situational_title_only).toBe(1)
     } finally { eml.close() }
   })
 
-  it('reports fits=false and still returns the last rung when nothing fits', () => {
-    const eml = brainWith(1, 1, 100)
+  it('never drops system rules, identity or always-rules: over the limit it reports fits=false', () => {
+    const eml = brainWith(8, 3)
     try {
-      const r = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 100 })
-      expect(r.budget).toMatchObject({ limit: 100, fits: false, rule_cap: 250, rules_named_only: 1, profiles_named_only: 1 })
-      expect(r.markdown).toContain('## EML System Rules')
+      const r = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 1_000 })
+      expect(r.budget).toMatchObject({ limit: 1_000, fits: false, situational_title_only: 3 })
       expect(r.markdown.length).toBe(r.budget!.chars)
+      expect(r.markdown).toContain('## EML System Rules')
+      expect(r.markdown).toContain('A'.repeat(400))
+      expect(r.markdown.match(/C{200}/g)?.length).toBe(8)
     } finally { eml.close() }
   })
 })

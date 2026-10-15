@@ -102,7 +102,8 @@ export async function sessionStart(
   let body: {
     markdown?: string
     version?: string
-    budget?: { limit: number; chars: number; rule_cap: number; rules_named_only: number; profiles_named_only: number; fits: boolean }
+    legacy?: number
+    budget?: { limit: number; chars: number; situational_title_only: number; fits: boolean }
   } = {}
   try {
     const res = await fetchImpl(`${cfg.EML_URL}/boot`, {
@@ -136,13 +137,17 @@ export async function sessionStart(
   }
 
   // The log shows what the budget cost, so a shortened boot is visible without
-  // debugging: "trim=none" is the normal case.
+  // debugging: "trim=none" is the normal case. OVER-BUDGET means system rules,
+  // identity and always-rules alone exceed the limit — they are never dropped,
+  // so the rules need curating. legacy = entries shown by title only until
+  // they are rewritten in the short format.
   const b = body.budget
-  const trim = !b ? 'trim=unknown'
+  const trim = !b || typeof b.situational_title_only !== 'number' ? 'trim=unknown'
     : !b.fits ? `trim=OVER-BUDGET limit=${b.limit}`
-    : b.rule_cap >= 600 && b.rules_named_only === 0 && b.profiles_named_only === 0 ? 'trim=none'
-    : `trim=rule_cap:${b.rule_cap},named_only:${b.rules_named_only}+${b.profiles_named_only}`
-  return { output: body.markdown, log: `OK ver=${body.version ?? '?'} chars=${body.markdown.length} ${trim}` }
+    : b.situational_title_only === 0 ? 'trim=none'
+    : `trim=situational_title_only:${b.situational_title_only}`
+  const legacy = typeof body.legacy === 'number' ? ` legacy=${body.legacy}` : ''
+  return { output: body.markdown, log: `OK ver=${body.version ?? '?'} chars=${body.markdown.length} ${trim}${legacy}` }
 }
 
 // --- user-prompt-submit: periodic reminder + scope nudge ---------------------
