@@ -362,7 +362,7 @@ function AppContentInner() {
         initialTab={settingsInitialTab}
       />
 
-      <FirstRunSignIn openSettings={openSettings} />
+      <FirstRunSignIn />
 
       <CommandPalette
         projects={projects}
