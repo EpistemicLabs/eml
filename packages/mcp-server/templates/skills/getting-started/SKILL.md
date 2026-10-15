@@ -142,6 +142,8 @@ with any MCP client.
       format (no "approve · edit · undo" line). Instead say in plain words what
       you stored and what it is for, e.g. "a log: a short summary of this
       session, which the next session reads to pick up where we left off".
+      If consolidate held something back, ask about it in plain words instead
+      of showing its HELD BACK list.
    3. **Hand over.** With the `spawn-session` skill, open a session in the
       project (`--project <id>`, the project's name as title) with this
       prompt: "Load the brain for project <id> (eml_show project.<id>). Say in

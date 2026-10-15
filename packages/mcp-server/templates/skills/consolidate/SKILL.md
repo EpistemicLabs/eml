@@ -1,6 +1,6 @@
 ---
 name: consolidate
-description: End-of-session brain consolidation. Scans the current session for store-worthy moments (decisions, status changes, tasks, events, feedback rules, loose ends), reconciles existing open tasks against what happened, recalls against the EML brain to dedup, and proposes an approve-before-write engram diff. In auto mode — asked for by an EML hint, not by the user — it writes additions without asking and reports them. Invoke at session end, at a handoff to a fresh session, or when the user says "consolidate" / "wrap up" / "update the brain" / "konsolidieren".
+description: End-of-session brain consolidation. Scans the current session for store-worthy moments (decisions, status changes, tasks, events, feedback rules, loose ends), reconciles existing open tasks against what happened, recalls against the EML brain to dedup, and proposes an approve-before-write engram diff. In auto mode — asked for by an EML hint or another skill, not by the user — it writes additions without asking and reports them. Invoke at session end, at a handoff to a fresh session, or when the user says "consolidate" / "wrap up" / "update the brain" / "konsolidieren".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
@@ -31,8 +31,9 @@ resolved tasks.
 
 - **Default** — the user invoked the skill or asked for it in their own words.
   Present the diff and write only after approval (steps 5 and 6).
-- **Auto** — an EML hint asked for "consolidate in auto mode" and the user did
-  not ask themselves. Nobody may be there to approve, so write what only adds
+- **Auto** — an EML hint, or a skill that runs consolidate as one of its steps
+  (getting-started at its close), asked for "consolidate in auto mode", and the
+  user did not ask themselves. Nobody may be there to approve, so write what only adds
   and hold back what closes or replaces (step 5a).
 
 Steps 1–4 are the same in both modes. When in doubt which mode applies, it is
