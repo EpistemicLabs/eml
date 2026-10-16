@@ -21,6 +21,15 @@ const report = (migration: number, review: number): Report => ({
 const NOW = new Date('2026-10-15T12:00:00.000Z')
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000).toISOString()
 
+/** The cockpit config's hygiene states; empty while the host is mid-write (writeFile truncates first). */
+function hygieneStates(home: string): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(join(home, 'config'), 'utf8')).hygiene ?? {}
+  } catch {
+    return {}
+  }
+}
+
 describe('brain hygiene (host trigger)', () => {
   let mods: Mods
 
@@ -99,7 +108,7 @@ describe('brain hygiene (host trigger)', () => {
       expect(requests[0].prompt.startsWith('Use the brain-hygiene skill.')).toBe(true)
 
       spawns.claim(requests[0].id)
-      for (let i = 0; i < 100 && !JSON.parse(readFileSync(join(home, 'config'), 'utf8')).hygiene; i++) await new Promise((r) => setTimeout(r, 10))
+      for (let i = 0; i < 100 && Object.keys(hygieneStates(home)).length < 1; i++) await new Promise((r) => setTimeout(r, 10))
       const config = JSON.parse(readFileSync(join(home, 'config'), 'utf8'))
       expect(config.hygiene).toEqual({ 'brain-1': { version: '0.17.18', reviewAt: NOW.toISOString() } })
       expect(config.token).toBe('t')
@@ -118,8 +127,7 @@ describe('brain hygiene (host trigger)', () => {
       expect(requests).toHaveLength(2)
 
       for (const r of requests) spawns.claim(r.id)
-      const recorded = () => Object.keys(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).hygiene ?? {}).length
-      for (let i = 0; i < 100 && recorded() < 2; i++) await new Promise((r) => setTimeout(r, 10))
+      for (let i = 0; i < 100 && Object.keys(hygieneStates(home)).length < 2; i++) await new Promise((r) => setTimeout(r, 10))
       const config = JSON.parse(readFileSync(join(home, 'config'), 'utf8'))
       expect(config.hygiene).toEqual({
         'brain-1': { version: '0.17.18', reviewAt: NOW.toISOString() },
