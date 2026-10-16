@@ -146,12 +146,20 @@ export class BrainHygiene {
     const now = this.now()
     for (const space of this.deps.spaces.list()) {
       if (this.pending.has(space.id)) continue
+      // Reserved while the report is fetched, so a Run now meanwhile counts as pending.
+      this.pending.add(space.id)
+      let opened = false
       try {
         const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
         const due = hygieneDue(report, config.hygiene?.[space.id] ?? {}, this.deps.version, now)
-        if (due) this.open(space, due)
+        if (due) {
+          this.open(space, due)
+          opened = true
+        }
       } catch (err) {
         this.deps.log?.(`brain hygiene: check of ${space.name} failed — ${(err as Error).message}`)
+      } finally {
+        if (!opened) this.pending.delete(space.id)
       }
     }
   }
@@ -163,16 +171,24 @@ export class BrainHygiene {
   async runNow(space: BrainSpace): Promise<RunNowResult> {
     if (!(await this.deps.isReady().catch(() => false))) return { started: false, reason: 'not-ready' }
     if (this.pending.has(space.id)) return { started: false, reason: 'pending' }
-    const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
-    const checks = report.checks.filter((c) => c.findings.length > 0)
-    if (checks.length === 0) return { started: false, reason: 'clean' }
-    const now = this.now()
-    this.open(space, {
-      reasons: ['the user started it from Settings › Brain'],
-      checks,
-      next: { version: this.deps.version, reviewAt: now.toISOString() },
-    })
-    return { started: true, findings: checks.reduce((n, c) => n + c.findings.length, 0) }
+    // Reserved while the report is fetched, so a second click meanwhile counts as pending.
+    this.pending.add(space.id)
+    let opened = false
+    try {
+      const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
+      const checks = report.checks.filter((c) => c.findings.length > 0)
+      if (checks.length === 0) return { started: false, reason: 'clean' }
+      const now = this.now()
+      this.open(space, {
+        reasons: ['the user started it from Settings › Brain'],
+        checks,
+        next: { version: this.deps.version, reviewAt: now.toISOString() },
+      })
+      opened = true
+      return { started: true, findings: checks.reduce((n, c) => n + c.findings.length, 0) }
+    } finally {
+      if (!opened) this.pending.delete(space.id)
+    }
   }
 
   /** Check now and every CHECK_INTERVAL_MS. */

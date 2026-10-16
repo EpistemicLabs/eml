@@ -171,6 +171,16 @@ describe('brain hygiene (host trigger)', () => {
       expect(await hygiene.runNow(space)).toEqual({ started: false, reason: 'pending' })
     })
 
+    it('two runs at once open one session (the second counts as pending while the first fetches)', async () => {
+      const spawns = new mods.SpawnQueue()
+      writeFileSync(join(home, 'config'), JSON.stringify({ token: 't' }))
+      const slowReport = async () => { await new Promise((r) => setTimeout(r, 20)); return report(1, 6) }
+      const hygiene = new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: slowReport, now: () => NOW })
+      const results = await Promise.all([hygiene.runNow(space), hygiene.runNow(space), hygiene.check()])
+      expect(results.slice(0, 2)).toEqual([{ started: true, findings: 7 }, { started: false, reason: 'pending' }])
+      expect(spawns.list()).toHaveLength(1)
+    })
+
     it('runNow reports a clean brain and a missing agent CLI', async () => {
       const spawns = new mods.SpawnQueue()
       expect(await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(0, 0) }).runNow(space))
