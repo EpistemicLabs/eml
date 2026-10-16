@@ -144,7 +144,7 @@ export function validateProperties(
 // rationale goes to properties.why and playbook or examples to properties.detail;
 // a situational rule names its situation in properties.trigger, which the boot
 // lists in its index. Entries written before the format (legacy) stay valid —
-// the boot shows them by title only and counts them in its hints.
+// the boot shows them by title only and counts them in its footer.
 
 export const RULE_CONTENT_MAX_CHARS = 200
 export const PROFILE_CONTENT_MAX_CHARS = 400

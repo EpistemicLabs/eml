@@ -35,7 +35,7 @@ describe('boot()', () => {
   })
 
   describe('empty brain', () => {
-    it('returns header + footer with zero counts', () => {
+    it('returns the header alone with zero counts', () => {
       const result = boot(eml, 'assistant')
       expect(result.agent).toBe('assistant')
       expect(result.engrams).toBe(0)
@@ -44,8 +44,7 @@ describe('boot()', () => {
       expect(result.recent_logs).toBe(0)
       expect(result.stale_status).toBe(0)
       expect(result.overdue_review).toBe(0)
-      expect(result.markdown).toContain('# EML Boot — assistant')
-      expect(result.markdown).not.toContain('## Hints')
+      expect(result.markdown).toBe('# EML Boot — assistant')
       expect(result.version).toBeUndefined()
     })
   })
@@ -107,7 +106,7 @@ describe('boot()', () => {
       profile('agent.assistant', 'assistant', 'I am Assistant')
       profile('user.alice', 'alice-identity', 'Alice is the user')
       const md = boot(eml, 'assistant').markdown
-      expect(md).toMatch(/## Identity\n- \*\*\[agent\.assistant \| assistant\]\*\* I am Assistant\n- \*\*\[user\.alice \| alice-identity\]\*\* Alice is the user\n/)
+      expect(md).toMatch(/## Identity\n- \*\*\[agent\.assistant \| assistant\]\*\* I am Assistant\n- \*\*\[user\.alice \| alice-identity\]\*\* Alice is the user$/)
     })
 
     it('leaves out every other profile (global, other facets, other agents)', () => {
@@ -161,12 +160,12 @@ describe('boot()', () => {
       expect(r.markdown).not.toContain('L'.repeat(201))
       expect(r.markdown).not.toContain('P'.repeat(401))
       expect(r.markdown).toContain('fine body')
-      expect(r.markdown).toContain('## Hints\n- 3 rules/profiles in the old long format are listed by title only — shorten them (rule ≤ 200, profile ≤ 400, situational needs a trigger).')
+      expect(r.markdown).toMatch(/\n---\n3 entries are in the old long format and listed by title only — eml_get <id> for the full text \(always-rules among them stay binding\)\.$/)
     })
   })
 
   describe('layout', () => {
-    it('orders system rules → identity → always → situational → hints → footer', () => {
+    it('orders identity → always → situational → system rules → footer', () => {
       profile('agent.assistant', 'assistant')
       rule('agent.assistant', 'always-one', 'always')
       rule('agent.assistant', 'sit-one', 'situational')
@@ -176,12 +175,11 @@ describe('boot()', () => {
       const md = boot(eml, 'assistant', { systemRules: rules, version: '0.17.18' }).markdown
       const order = [
         '# EML Boot — assistant',
-        '## EML System Rules (managed by engramprotocol v0.17.18)',
         '## Identity',
         '## Rules (always)',
         '## Rules (situational',
-        '## Hints',
-        '---',
+        '## EML System Rules (managed by engramprotocol v0.17.18)',
+        '\n---\n',
       ].map(s => md.indexOf(s))
       expect(order.every(i => i >= 0)).toBe(true)
       expect([...order].sort((a, b) => a - b)).toEqual(order)
@@ -189,7 +187,7 @@ describe('boot()', () => {
 
     it('omits empty sections', () => {
       const md = boot(eml, 'assistant', { systemRules: [] }).markdown
-      for (const h of ['## EML System Rules', '## Identity', '## Rules', '## Hints']) expect(md).not.toContain(h)
+      for (const h of ['## EML System Rules', '## Identity', '## Rules', '---']) expect(md).not.toContain(h)
     })
 
     it('renders the system rules with category and the version tag', () => {
@@ -203,9 +201,13 @@ describe('boot()', () => {
       expect(md).toContain('- [sot-hierarchy] brain is canonical')
     })
 
-    it('always ends with the recall-hint footer', () => {
-      const md = boot(eml, 'assistant').markdown
-      expect(md).toMatch(/---\n_For decisions, statuses, open tasks, logs, project-specific rules: call eml_recall <topic> or eml_show <id>\._$/)
+    it('has no footer when every entry is shown in full', () => {
+      profile('agent.assistant', 'assistant')
+      rule('global', 'fine', 'always')
+      const md = boot(eml, 'assistant', { systemRules: [{ category: 'behavior', text: 'be helpful' }] }).markdown
+      expect(md).not.toContain('---')
+      expect(md).not.toContain('eml_recall')
+      expect(md.endsWith('- [behavior] be helpful')).toBe(true)
     })
 
     it('does not render properties', () => {
@@ -246,12 +248,12 @@ describe('boot()', () => {
       expect(boot(eml, 'assistant', { reviewDays: 1000 }).stale_status).toBe(0)
     })
 
-    it('counts overdue reviews of decisions/rules/profiles only, without a hint', () => {
+    it('counts overdue reviews of decisions/rules/profiles only, without a footer', () => {
       eml.engrams.store(validDecision({ scope: 'global', title: 'old-decision', properties: { review_due_at: '2020-01-01T00:00:00Z' } }))
       eml.engrams.store({ type: 'task', scope: 'global', content: 'task-with-due', properties: { review_due_at: '2020-01-01T00:00:00Z' } })
       const r = boot(eml, 'assistant')
       expect(r.overdue_review).toBe(1)
-      expect(r.markdown).not.toContain('## Hints')
+      expect(r.markdown).not.toContain('---')
     })
   })
 })

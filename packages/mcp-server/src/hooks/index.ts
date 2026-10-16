@@ -103,7 +103,15 @@ export async function sessionStart(
     markdown?: string
     version?: string
     legacy?: number
-    budget?: { limit: number; chars: number; situational_title_only: number; fits: boolean }
+    budget?: {
+      limit: number
+      chars: number
+      situational_title_only: number
+      always_title_only?: number
+      profiles_title_only?: number
+      left_out?: number
+      fits: boolean
+    }
   } = {}
   try {
     const res = await fetchImpl(`${cfg.EML_URL}/boot`, {
@@ -137,15 +145,22 @@ export async function sessionStart(
   }
 
   // The log shows what the budget cost, so a shortened boot is visible without
-  // debugging: "trim=none" is the normal case. OVER-BUDGET means system rules,
-  // identity and always-rules alone exceed the limit — they are never dropped,
-  // so the rules need curating. legacy = entries shown by title only until
-  // they are rewritten in the short format.
+  // debugging: "trim=none" is the normal case, otherwise the entries listed by
+  // title only per kind and those left out (e.g. trim=situational:3,always:1).
+  // OVER-BUDGET means the system rules and the first two profiles alone exceed
+  // the limit. legacy = entries shown by title only until they are rewritten
+  // in the short format.
   const b = body.budget
+  const parts = b ? ([
+    ['situational', b.situational_title_only],
+    ['always', b.always_title_only],
+    ['profiles', b.profiles_title_only],
+    ['left_out', b.left_out],
+  ] as const).filter(([, n]) => typeof n === 'number' && n > 0).map(([k, n]) => `${k}:${n}`) : []
   const trim = !b || typeof b.situational_title_only !== 'number' ? 'trim=unknown'
     : !b.fits ? `trim=OVER-BUDGET limit=${b.limit}`
-    : b.situational_title_only === 0 ? 'trim=none'
-    : `trim=situational_title_only:${b.situational_title_only}`
+    : parts.length === 0 ? 'trim=none'
+    : `trim=${parts.join(',')}`
   const legacy = typeof body.legacy === 'number' ? ` legacy=${body.legacy}` : ''
   return { output: body.markdown, log: `OK ver=${body.version ?? '?'} chars=${body.markdown.length} ${trim}${legacy}` }
 }

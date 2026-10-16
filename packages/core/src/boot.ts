@@ -43,7 +43,13 @@ export interface BootBudgetReport {
   chars: number
   /** Situational rules listed by title only to fit (their trigger dropped). */
   situational_title_only: number
-  /** False when even every fallback is over the limit (the markdown is still returned). */
+  /** Always-rules listed by title only to fit. */
+  always_title_only: number
+  /** Profiles beyond the first two listed by title only to fit. */
+  profiles_title_only: number
+  /** Entries left out of the boot entirely because even title + id was over the limit. */
+  left_out: number
+  /** False only when nothing more can give way (system rules and the first two profiles alone are over the limit). */
   fits: boolean
 }
 
@@ -54,21 +60,24 @@ export interface BootBudgetReport {
 // user.<self> — and nothing of a project (the project block brings those).
 // Selection is by scope; properties.boot is no longer read.
 //
-//   System rules  — the protocol's own (ALL_RULES), always whole.
 //   Identity      — the core profiles: per agent.<self> and user.<self> the one
 //                   titled <id> or <id>-identity. Block capped at
 //                   IDENTITY_MAX_CHARS; other profiles stay out of the boot.
 //   Rules always  — in full: binding within their scope and delivered unasked.
 //   Rules situational — an index of title + trigger + id; the agent fetches the
 //                   rule with eml_get when the trigger applies.
-//   Hints         — short system signals (legacy entries, overflow).
+//   System rules  — the protocol's own (ALL_RULES), always whole.
+//   Footer        — only when something is listed by title only: how many
+//                   entries gave way to the budget, how many are legacy.
 //
 // Rules and profiles are short at the source (validate.ts, formatProblems), so
-// nothing is ever cut mid-text: an entry is shown whole or by title only.
-// Legacy entries (written before the format) are shown by title only and
-// counted in the hints.
+// nothing is ever cut mid-text: an entry is shown whole or by title + id.
+// Legacy entries (written before the format) are shown by title + id and
+// counted in the footer.
 
 const IDENTITY_MAX_CHARS = 1_500
+/** Profiles the overflow ladder never touches: the agent's own and the first user's. */
+const CORE_PROFILES_KEPT = 2
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 4, high: 3, normal: 2, low: 1 }
 
@@ -84,13 +93,22 @@ const PRIORITY_RANK: Record<string, number> = { urgent: 4, high: 3, normal: 2, l
 // limits. So the limit is the CALLER's to know: the hook passes the budget of
 // the harness and output form it serves (decision boot-budget-per-harness).
 //
-// What gives way until the markdown fits: situational rules, from the last
-// one, are listed by title only (the trigger dropped). System rules, identity
-// and always-rules are never dropped — when they alone are over the limit, the
-// markdown is returned anyway and the report says fits=false (the hook logs it).
+// Invariant: the markdown stays within the budget. What gives way, one whole
+// entry at a time, until it fits — each falls back to title + id: situational
+// rules (from the last), then always-rules (longest first), then profiles
+// beyond the first two. A brain still over the limit with every entry at
+// title + id (some 60 rules) then leaves entries out entirely, in the same
+// order. System rules and the first two profiles are never touched; the system
+// rules are ours and kept small by a test (boot-budget.test.ts), so the
+// markdown fits. fits=false would mean they alone are over the limit; the
+// markdown is returned anyway and the hook logs it.
 
 function entryMeta(c: EngramRow): string {
   return `[${c.scope} | ${c.title || '(untitled)'}]`
+}
+
+function fullLine(c: EngramRow): string {
+  return `- **${entryMeta(c)}** ${c.content}`
 }
 
 function titleOnlyLine(c: EngramRow): string {
@@ -131,65 +149,96 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   const legacyCount = [...profiles, ...rules].filter(legacy).length
 
   // Identity: whole profiles while the block stays within IDENTITY_MAX_CHARS.
-  const identityLines: string[] = []
-  let identityTitleOnly = 0
+  // capped = well-formed profiles over the cap, listed by title only.
+  const capped = new Set<string>()
   let identityChars = 0
   for (const c of profiles) {
-    const full = `- **${entryMeta(c)}** ${c.content}`
-    if (legacy(c)) { identityLines.push(titleOnlyLine(c)); continue }
-    if (identityChars + full.length > IDENTITY_MAX_CHARS) { identityLines.push(titleOnlyLine(c)); identityTitleOnly++; continue }
-    identityLines.push(full)
+    if (legacy(c)) continue
+    const full = fullLine(c)
+    if (identityChars + full.length > IDENTITY_MAX_CHARS) { capped.add(c.id); continue }
     identityChars += full.length + 1
   }
-
-  const alwaysLines = always.map((c: EngramRow) => legacy(c) ? titleOnlyLine(c) : `- **${entryMeta(c)}** ${c.content}`)
 
   const systemLines: string[] = []
   if (systemRules.length > 0) {
     const versionTag = opts.version ? ` v${opts.version}` : ''
     systemLines.push(`## EML System Rules (managed by engramprotocol${versionTag})`)
     for (const r of systemRules) systemLines.push(`- [${r.category}] ${r.text}`)
-    systemLines.push('')
   }
 
-  // The situational index is the only part that varies with the budget: the
-  // last `titleOnly` of its well-formed entries lose their trigger.
-  const formed = situational.filter((c: EngramRow) => !legacy(c))
-  const assemble = (titleOnly: number): string => {
-    const dropped = new Set(formed.slice(formed.length - titleOnly).map((c: EngramRow) => c.id))
-    const lines: string[] = [`# EML Boot — ${agentId}`, '', ...systemLines]
-    if (identityLines.length > 0) lines.push('## Identity', ...identityLines, '')
-    if (alwaysLines.length > 0) lines.push('## Rules (always)', ...alwaysLines, '')
-    if (situational.length > 0) {
+  // The overflow ladder (see "Size budget"): the order in which entries give
+  // way — to title + id (well-formed entries only), then out of the boot.
+  const longestFirst = (list: EngramRow[]) => list.map((c, i) => ({ c, i }))
+    .sort((a, b) => b.c.content.length - a.c.content.length || b.i - a.i).map(({ c }) => c)
+  const ladder: EngramRow[] = [
+    ...[...situational].reverse(),
+    ...longestFirst(always),
+    ...profiles.slice(CORE_PROFILES_KEPT).reverse(),
+  ]
+
+  const assemble = (titleOnly: Set<string>, leftOut: Set<string>): string => {
+    const short = (c: EngramRow) => legacy(c) || capped.has(c.id) || titleOnly.has(c.id)
+    const shown = (list: EngramRow[]) => list.filter(c => !leftOut.has(c.id))
+    const lines: string[] = [`# EML Boot — ${agentId}`, '']
+    const identity = shown(profiles)
+    if (identity.length > 0) {
+      lines.push('## Identity', ...identity.map(c => short(c) ? titleOnlyLine(c) : fullLine(c)), '')
+    }
+    const alwaysShown = shown(always)
+    if (alwaysShown.length > 0) {
+      lines.push('## Rules (always)', ...alwaysShown.map(c => short(c) ? titleOnlyLine(c) : fullLine(c)), '')
+    }
+    const situationalShown = shown(situational)
+    if (situationalShown.length > 0) {
       lines.push('## Rules (situational — eml_get <id> when the trigger applies)')
-      for (const c of situational) {
-        lines.push(legacy(c) || dropped.has(c.id)
-          ? titleOnlyLine(c)
-          : `- **${entryMeta(c)}** when: ${c.properties?.trigger} · ${c.id}`)
+      for (const c of situationalShown) {
+        lines.push(short(c) ? titleOnlyLine(c) : `- **${entryMeta(c)}** when: ${c.properties?.trigger} · ${c.id}`)
       }
       lines.push('')
     }
-    const hints: string[] = []
-    if (legacyCount > 0) {
-      hints.push(`- ${legacyCount} rules/profiles in the old long format are listed by title only — shorten them (rule ≤ 200, profile ≤ 400, situational needs a trigger).`)
+    if (systemLines.length > 0) lines.push(...systemLines, '')
+    const all = [...identity, ...alwaysShown, ...situationalShown]
+    const overflow = all.filter(c => !legacy(c) && (capped.has(c.id) || titleOnly.has(c.id))).length
+    const legacyShown = all.filter(legacy).length
+    const footer: string[] = []
+    if (leftOut.size > 0) {
+      footer.push(`${overflow} entries listed by title only and ${leftOut.size} left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule for the ones left out.`)
+    } else if (overflow > 0) {
+      footer.push(`${overflow} entries listed by title only to fit the boot's size budget — eml_get <id> for the full text.`)
     }
-    const overflow = identityTitleOnly + titleOnly
-    if (overflow > 0) hints.push(`- ${overflow} entries listed by title only to fit the boot's size budget.`)
-    if (hints.length > 0) lines.push('## Hints', ...hints, '')
-    lines.push(
-      '---',
-      '_For decisions, statuses, open tasks, logs, project-specific rules: call eml_recall <topic> or eml_show <id>._',
-    )
-    return lines.join('\n')
+    if (legacyShown > 0) {
+      footer.push(`${legacyShown} entries are in the old long format and listed by title only — eml_get <id> for the full text (always-rules among them stay binding).`)
+    }
+    if (footer.length > 0) lines.push('---', ...footer)
+    return lines.join('\n').trimEnd()
   }
 
-  let markdown = assemble(0)
+  const titleOnly = new Set<string>()
+  const leftOut = new Set<string>()
+  let markdown = assemble(titleOnly, leftOut)
   let budgetReport: BootBudgetReport | undefined
   if (opts.budget !== undefined) {
     const limit = opts.budget
-    let titleOnly = 0
-    while (markdown.length > limit && titleOnly < formed.length) markdown = assemble(++titleOnly)
-    budgetReport = { limit, chars: markdown.length, situational_title_only: titleOnly, fits: markdown.length <= limit }
+    for (const c of ladder.filter(c => !legacy(c) && !capped.has(c.id))) {
+      if (markdown.length <= limit) break
+      titleOnly.add(c.id)
+      markdown = assemble(titleOnly, leftOut)
+    }
+    for (const c of ladder) {
+      if (markdown.length <= limit) break
+      leftOut.add(c.id)
+      markdown = assemble(titleOnly, leftOut)
+    }
+    const count = (list: EngramRow[]) => list.filter(c => titleOnly.has(c.id) && !leftOut.has(c.id)).length
+    budgetReport = {
+      limit,
+      chars: markdown.length,
+      situational_title_only: count(situational),
+      always_title_only: count(always),
+      profiles_title_only: count(profiles),
+      left_out: leftOut.size,
+      fits: markdown.length <= limit,
+    }
   }
 
   // Counters retained for BootResult consumers; not rendered in the boot (open

@@ -30,12 +30,14 @@ eml-mcp-server hook stop               [--config <path>]
 - **session-start** reads the client config, POSTs to `/boot` and prints the returned markdown to
   stdout. The agent CLI injects that into the model's context. The hook sends the boot's size
   budget (10,000 characters, the most a Claude Code hook may inject before the output lands in a
-  file with only a preview shown; see `BOOT_BUDGET_CHARS`). The boot carries the system rules, the
-  core profiles and the rules of global, agent.<self> and user.<self> — always-rules in full,
-  situational rules as an index of title + trigger. To fit, situational rules fall back to title
-  only; system rules, identity and always-rules are never dropped, and nothing is cut mid-text.
-  The hook log shows what it cost (`trim=none` normally, `OVER-BUDGET` when the rules need
-  curating) and how many legacy entries await the short format. Fail-soft: a missing config or an
+  file with only a preview shown; see `BOOT_BUDGET_CHARS`). The boot carries the core profiles, the
+  rules of global, agent.<self> and user.<self> — always-rules in full, situational rules as an
+  index of title + trigger — and the system rules. It always fits: whole entries fall back to
+  title + id (situational rules, then always-rules longest first, then profiles beyond the first
+  two) and, past that, are left out; nothing is cut mid-text and the system rules are never
+  touched. A footer counts what gave way and the legacy entries. The hook log shows what it cost
+  (`trim=none` normally, else e.g. `trim=situational:3,always:1`) and how many legacy entries
+  await the short format. Fail-soft: a missing config or an
   unreachable server prints a warning and exits 0, so the session continues without the brain.
 - **user-prompt-submit** is local only (no HTTP): a short reminder on turn 1, every 5th turn and
   after a pause of more than an hour.
