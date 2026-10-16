@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
+  EML,
   initControlDatabase,
   provisionUser,
   revokeToken,
@@ -196,6 +197,22 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
         arguments: { type: 'decision', limit: 10 },
       }) as { content: Array<{ type: string, text?: string }> }
       expect(textOf(r)).toContain('mcp-wrapper')
+    })
+
+    it('eml_list label=review lists the engrams the review sweep flagged', async () => {
+      const listReview = async () => textOf(await mcpClient.callTool({
+        name: 'eml_list', arguments: { label: 'review', limit: 50 },
+      }) as { content: Array<{ type: string, text?: string }> })
+      expect(await listReview()).not.toContain('mcp-wrapper')
+
+      // Stamp as the nightly sweep would, with a cutoff past every default review date.
+      const brain = new EML({ dbPath: join(tmpDir, prov.brainFile) })
+      try {
+        expect(brain.engrams.stampDueReviewLabels('2999-01-01T00:00:00.000Z')).toBeGreaterThan(0)
+      } finally {
+        brain.close()
+      }
+      expect(await listReview()).toContain('mcp-wrapper')
     })
 
     it('eml_relate draws a directed edge (idempotent); eml_note [[wikilink]] auto-links', async () => {

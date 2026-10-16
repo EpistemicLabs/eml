@@ -43,6 +43,10 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
         tag: z.string().optional().describe(
           'Filter to engrams carrying this registered tag id (what they are ABOUT). Slugified.',
         ),
+        label: z.string().optional().describe(
+          'Filter to engrams carrying this label id. review = flagged for re-check: decisions, rules ' +
+          'and profiles past their review date, open tasks without movement.',
+        ),
         stage: z.enum(['ideation', 'planning', 'ready', 'implementation']).optional().describe(
           'Filter tasks by stage: ideation · planning · ready · implementation.',
         ),
