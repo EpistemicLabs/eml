@@ -9,7 +9,7 @@ import {
   TASK_STAGES, TASK_OPEN_STATUSES, TASK_INACTIVITY_DAYS, TASK_LINK_RELATION,
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
-import { validateEngramType, validateProperties, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
+import { validateEngramType, validateProperties, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
 import { AgentStore } from './agents'
@@ -218,6 +218,8 @@ export class EngramStore {
     // create=true: create-only requirements are enforced (v0.15 decision
     // alternatives + rationale).
     validateProperties(input.type, input.properties as Record<string, unknown> | undefined, status, { create: true })
+    // Rules and profiles in the short format (validate.ts, validateFormat).
+    validateFormat(input.type, input.content, input.properties as Record<string, unknown> | undefined)
 
     // v0.8 C3: Hard scope validation (Pattern + Existence)
     this.validateScope(input.scope)
@@ -1066,6 +1068,15 @@ export class EngramStore {
         prevStatus: existing.status,
       })
     }
+
+    // The rule/profile format, only when the update touches what it governs:
+    // status-only and review changes keep legacy entries patchable.
+    const oldProps = existing.properties ? JSON.parse(existing.properties) : {}
+    const formatTouched = (partial.type !== undefined && partial.type !== existing.type)
+      || (partial.content !== undefined && partial.content !== existing.content)
+      || newProps?.trigger !== oldProps.trigger
+      || newProps?.applies !== oldProps.applies
+    if (formatTouched) validateFormat(newType, partial.content ?? existing.content, newProps)
 
     // v0.15: task lifecycle rules that need the stored state.
     const isTask = newType === 'task'
