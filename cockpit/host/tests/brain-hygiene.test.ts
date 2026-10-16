@@ -109,6 +109,24 @@ describe('brain hygiene (host trigger)', () => {
       expect(spawns.list()).toHaveLength(0)
     })
 
+    it('keeps the state of every space when tabs claim their sessions at once', async () => {
+      const other = { id: 'brain-2', name: 'Privat', main: false, url: 'http://y', token: 'u', registry }
+      const spawns = new mods.SpawnQueue()
+      const hygiene = new mods.BrainHygiene({ spaces: { list: () => [space, other] }, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(2, 0), now: () => NOW })
+      await hygiene.check()
+      const requests = spawns.list()
+      expect(requests).toHaveLength(2)
+
+      for (const r of requests) spawns.claim(r.id)
+      const recorded = () => Object.keys(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).hygiene ?? {}).length
+      for (let i = 0; i < 100 && recorded() < 2; i++) await new Promise((r) => setTimeout(r, 10))
+      const config = JSON.parse(readFileSync(join(home, 'config'), 'utf8'))
+      expect(config.hygiene).toEqual({
+        'brain-1': { version: '0.17.18', reviewAt: NOW.toISOString() },
+        'brain-2': { version: '0.17.18', reviewAt: NOW.toISOString() },
+      })
+    })
+
     it('opens nothing before the agent CLI is ready or during onboarding', async () => {
       const spawns = new mods.SpawnQueue()
       await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => false, fetchReport: async () => report(2, 0) }).check()

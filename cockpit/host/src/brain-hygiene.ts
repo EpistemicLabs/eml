@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
-import { readCockpitConfig, writeCockpitConfig, type HygieneState } from './config.js'
+import { readCockpitConfig, updateCockpitConfig, type HygieneState } from './config.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
 import type { SpawnQueue } from './spawn-queue.js'
 
@@ -208,7 +208,5 @@ export class BrainHygiene {
 }
 
 async function recordHygiene(brainId: string, next: HygieneState): Promise<void> {
-  const config = await readCockpitConfig()
-  if (!config) return
-  await writeCockpitConfig({ ...config, hygiene: { ...config.hygiene, [brainId]: next } })
+  await updateCockpitConfig((config) => config && { ...config, hygiene: { ...config.hygiene, [brainId]: next } })
 }
