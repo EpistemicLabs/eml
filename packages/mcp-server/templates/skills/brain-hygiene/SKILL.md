@@ -1,6 +1,6 @@
 ---
 name: brain-hygiene
-description: Bring the brain in line with what the current version expects and re-check what is due for review. Works through the findings of the brain's hygiene check — engrams that no longer fit a requirement of the current version, and engrams due for review — proposes a concrete change per finding and writes only after the user approves each block. The EML cockpit opens a session with it after an update and when reviews pile up, the findings in its first message. Invoke on "brain hygiene", "clean up the brain", "review the brain", "Brain aufräumen", "Reviews durchgehen".
+description: Bring the brain in line with what the current version expects and re-check what is due for review. Works through the findings of the brain's hygiene check — engrams that no longer fit a requirement of the current version, and engrams due for review — proposes a concrete change per finding and writes only after the user approves each block. The EML cockpit opens a session with it — after an update, when reviews pile up, or from Settings › Brain › Run brain hygiene now — with the findings in its first message. Invoke on "brain hygiene", "clean up the brain", "review the brain", "Brain aufräumen", "Reviews durchgehen".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
@@ -16,13 +16,16 @@ The skill knows no check itself. Each check says **what** it requires and
 
 ## Where the findings come from
 
-- **Opened by the cockpit**: the first message lists the checks with findings,
-  each with its kind (migration or review), what, how, and the engrams found
-  (id, type, scope, title, reason). Work from that list.
-- **Invoked by the user**: without that list, take the review queue —
-  `eml_list label=review` (decisions, rules and profiles past their review date,
-  open tasks without movement). Requirements of an update reach you only through
-  the cockpit's list; say so if the user asks for them.
+The findings come only from the cockpit. It runs the brain's hygiene check and
+opens the session with the checks that have findings in its first message: each
+with its kind (migration or review), what, how, and the engrams found (id, type,
+scope, title, reason). Work from that list.
+
+Invoked without that list (the user asked in a running session): say that the
+full check runs from Settings › Brain › Run brain hygiene now. If the user wants
+to go on here anyway, work only the review queue — `eml_list label=review`
+(decisions, rules and profiles past their review date, open tasks without
+movement).
 
 ## Steps
 

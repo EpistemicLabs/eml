@@ -1,9 +1,9 @@
 // Cockpit addition: Settings › Brain. Spaces, where this cockpit keeps its
-// files, and WAL-safe backups — all from the host (GET /api/brain-info,
-// /api/brain-backups). Who is in the brain shows in Account and Agent. Read-only except "Back up now"; switching the source
-// to a remote brain and restoring a backup are later steps.
+// files, brain hygiene and WAL-safe backups — all from the host (GET
+// /api/brain-info, /api/brain-backups, POST /api/brain-hygiene). Who is in the brain shows in Account and Agent. Read-only except
+// "Run brain hygiene now" and "Back up now"; switching the source to a remote brain and restoring a backup are later steps.
 import { useCallback, useEffect, useState } from 'react';
-import { FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
+import { FolderSearch, HardDriveDownload, Loader2, Pencil, Plus, Sparkles } from 'lucide-react';
 
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { createSpace, loadSpaces, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -14,6 +14,15 @@ import SettingsSection from '../SettingsSection';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
+type HygieneRun = { started: true; findings: number } | { started: false; reason: 'not-ready' | 'pending' | 'clean' };
+
+const HYGIENE_DEFAULT = 'Opens a session that walks you through the findings — nothing changes without your approval';
+const hygieneMessage = (run: HygieneRun): string => {
+  if (run.started) return `Session opened with ${run.findings} finding${run.findings === 1 ? '' : 's'}.`;
+  if (run.reason === 'clean') return 'Nothing to do: the brain fits the current version and no reviews are due.';
+  if (run.reason === 'pending') return 'A hygiene session is already waiting to open.';
+  return 'The agent CLI is not signed in yet — see Settings › Models.';
+};
 
 const formatBytes = (bytes: number | null): string => {
   if (bytes === null) return '—';
@@ -40,6 +49,8 @@ export default function BrainTab() {
   const [backups, setBackups] = useState<BrainBackup[]>([]);
   const [backingUp, setBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
+  const [hygieneBusy, setHygieneBusy] = useState(false);
+  const [hygieneStatus, setHygieneStatus] = useState<string | null>(null);
   const { info: about } = useAboutInfo();
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
@@ -91,6 +102,18 @@ export default function BrainTab() {
       setBackupError('Backup failed — see the host log.');
     } finally {
       setBackingUp(false);
+    }
+  };
+
+  const runHygiene = async () => {
+    setHygieneBusy(true);
+    setHygieneStatus(null);
+    try {
+      setHygieneStatus(hygieneMessage(await getJson<HygieneRun>('/api/brain-hygiene', { method: 'POST' })));
+    } catch {
+      setHygieneStatus('The hygiene check failed — see the host log.');
+    } finally {
+      setHygieneBusy(false);
     }
   };
 
@@ -212,6 +235,20 @@ export default function BrainTab() {
           </SettingsRow>
           <SettingsRow label="Created">
             <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Hygiene"
+        description="Brings the brain in line with the current version and re-checks entries due for review. The cockpit also starts it on its own after an update, and when 5 or more reviews are due (at most once a week)."
+      >
+        <SettingsCard divided>
+          <SettingsRow label="Run brain hygiene now" description={hygieneStatus ?? HYGIENE_DEFAULT}>
+            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void runHygiene()} disabled={hygieneBusy}>
+              {hygieneBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {hygieneBusy ? 'Checking…' : 'Run now'}
+            </Button>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>

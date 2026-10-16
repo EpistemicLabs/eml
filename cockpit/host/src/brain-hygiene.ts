@@ -18,9 +18,10 @@ import type { SpawnQueue } from './spawn-queue.js'
  *     was opened for this cockpit version yet;
  *   - reviews: at least REVIEW_THRESHOLD engrams are due and the last review
  *     round is REVIEW_INTERVAL_DAYS or longer ago.
- * Checked at start and then every CHECK_INTERVAL_MS. The state (config.hygiene)
- * is written when a tab claims the session, so a request a restart dropped is
- * asked again; one request per space is pending at a time.
+ * Checked at start and then every CHECK_INTERVAL_MS. Settings › Brain can also
+ * start it for one space now, regardless of the thresholds (runNow). The state
+ * (config.hygiene) is written when a tab claims the session, so a request a
+ * restart dropped is asked again; one request per space is pending at a time.
  */
 
 export const HYGIENE_DIR = path.join(COCKPIT_HOME, 'brain-hygiene')
@@ -114,40 +115,95 @@ async function fetchHygiene(space: BrainSpace): Promise<HygieneReport> {
   return (await res.json()) as HygieneReport
 }
 
+export type RunNowResult =
+  | { started: true; findings: number }
+  | { started: false; reason: 'not-ready' | 'pending' | 'clean' }
+
 /**
- * Check every space once now (returns when done) — the scheduler below calls
- * it. A space that fails is logged and skipped.
+ * The hygiene trigger of this host: one pending session per space at a time,
+ * the state written when a tab claims it. The scheduler checks every space
+ * against the thresholds; Settings › Brain runs one space now.
  */
-export async function checkBrainHygiene(deps: BrainHygieneDeps, pending: Set<string>): Promise<void> {
-  if (!(await deps.isReady().catch(() => false))) return
-  const config = await readCockpitConfig()
-  if (!config || config.onboarding === 'pending') return
-  const now = (deps.now ?? (() => new Date()))()
-  for (const space of deps.spaces.list()) {
-    if (pending.has(space.id)) continue
-    try {
-      const report = await (deps.fetchReport ?? fetchHygiene)(space)
-      const due = hygieneDue(report, config.hygiene?.[space.id] ?? {}, deps.version, now)
-      if (!due) continue
-      const request = deps.spawns.add({
-        projectId: ensureHygieneProject(space),
-        prompt: hygienePrompt(due),
-        title: 'Brain hygiene',
-        fromSessionId: null,
-        ...(space.main ? {} : { spaceId: space.id }),
-      })
-      pending.add(space.id)
-      deps.log?.(`brain hygiene: session queued for ${space.name} (${due.reasons.join('; ')})`)
-      const onClaimed = (id: string) => {
-        if (id !== request.id) return
-        deps.spawns.off('claimed', onClaimed)
-        pending.delete(space.id)
-        void recordHygiene(space.id, due.next)
+export class BrainHygiene {
+  private readonly pending = new Set<string>()
+  private timer: NodeJS.Timeout | null = null
+
+  constructor(private readonly deps: BrainHygieneDeps) {}
+
+  private now(): Date {
+    return (this.deps.now ?? (() => new Date()))()
+  }
+
+  /**
+   * Check every space once (returns when done): open a session where it is
+   * due. Nothing before the agent CLI is ready or while onboarding is pending;
+   * a space that fails is logged and skipped.
+   */
+  async check(): Promise<void> {
+    if (!(await this.deps.isReady().catch(() => false))) return
+    const config = await readCockpitConfig()
+    if (!config || config.onboarding === 'pending') return
+    const now = this.now()
+    for (const space of this.deps.spaces.list()) {
+      if (this.pending.has(space.id)) continue
+      try {
+        const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
+        const due = hygieneDue(report, config.hygiene?.[space.id] ?? {}, this.deps.version, now)
+        if (due) this.open(space, due)
+      } catch (err) {
+        this.deps.log?.(`brain hygiene: check of ${space.name} failed — ${(err as Error).message}`)
       }
-      deps.spawns.on('claimed', onClaimed)
-    } catch (err) {
-      deps.log?.(`brain hygiene: check of ${space.name} failed — ${(err as Error).message}`)
     }
+  }
+
+  /**
+   * Settings › Brain: open a session for `space` now, with every check that has
+   * findings — no thresholds. Errors of the check reach the caller.
+   */
+  async runNow(space: BrainSpace): Promise<RunNowResult> {
+    if (!(await this.deps.isReady().catch(() => false))) return { started: false, reason: 'not-ready' }
+    if (this.pending.has(space.id)) return { started: false, reason: 'pending' }
+    const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
+    const checks = report.checks.filter((c) => c.findings.length > 0)
+    if (checks.length === 0) return { started: false, reason: 'clean' }
+    const now = this.now()
+    this.open(space, {
+      reasons: ['the user started it from Settings › Brain'],
+      checks,
+      next: { version: this.deps.version, reviewAt: now.toISOString() },
+    })
+    return { started: true, findings: checks.reduce((n, c) => n + c.findings.length, 0) }
+  }
+
+  /** Check now and every CHECK_INTERVAL_MS. */
+  schedule(): void {
+    void this.check()
+    this.timer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
+    this.timer.unref()
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  private open(space: BrainSpace, due: HygieneDue): void {
+    const request = this.deps.spawns.add({
+      projectId: ensureHygieneProject(space),
+      prompt: hygienePrompt(due),
+      title: 'Brain hygiene',
+      fromSessionId: null,
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    this.pending.add(space.id)
+    this.deps.log?.(`brain hygiene: session queued for ${space.name} (${due.reasons.join('; ')})`)
+    const onClaimed = (id: string) => {
+      if (id !== request.id) return
+      this.deps.spawns.off('claimed', onClaimed)
+      this.pending.delete(space.id)
+      void recordHygiene(space.id, due.next)
+    }
+    this.deps.spawns.on('claimed', onClaimed)
   }
 }
 
@@ -155,13 +211,4 @@ async function recordHygiene(brainId: string, next: HygieneState): Promise<void>
   const config = await readCockpitConfig()
   if (!config) return
   await writeCockpitConfig({ ...config, hygiene: { ...config.hygiene, [brainId]: next } })
-}
-
-/** Check now and every CHECK_INTERVAL_MS. Returns a stop function. */
-export function scheduleBrainHygiene(deps: BrainHygieneDeps): () => void {
-  const pending = new Set<string>()
-  void checkBrainHygiene(deps, pending)
-  const timer = setInterval(() => void checkBrainHygiene(deps, pending), CHECK_INTERVAL_MS)
-  timer.unref()
-  return () => clearInterval(timer)
 }

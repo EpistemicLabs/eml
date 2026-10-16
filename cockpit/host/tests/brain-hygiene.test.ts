@@ -73,7 +73,7 @@ describe('brain hygiene (host trigger)', () => {
     ].join('\n'))
   })
 
-  describe('checkBrainHygiene', () => {
+  describe('BrainHygiene', () => {
     let registry: InstanceType<Mods['ProjectRegistry']>
     let space: any
     let spaces: any
@@ -87,10 +87,9 @@ describe('brain hygiene (host trigger)', () => {
 
     it('queues one session in the Brain hygiene project and records it when a tab claims it', async () => {
       const spawns = new mods.SpawnQueue()
-      const pending = new Set<string>()
-      const deps = { spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(2, 0), now: () => NOW }
-      await mods.checkBrainHygiene(deps, pending)
-      await mods.checkBrainHygiene(deps, pending)
+      const hygiene = new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(2, 0), now: () => NOW })
+      await hygiene.check()
+      await hygiene.check()
 
       const requests = spawns.list()
       expect(requests).toHaveLength(1)
@@ -106,27 +105,53 @@ describe('brain hygiene (host trigger)', () => {
       expect(config.token).toBe('t')
 
       // Recorded: the same version opens nothing more.
-      await mods.checkBrainHygiene(deps, pending)
+      await hygiene.check()
       expect(spawns.list()).toHaveLength(0)
     })
 
     it('opens nothing before the agent CLI is ready or during onboarding', async () => {
       const spawns = new mods.SpawnQueue()
-      await mods.checkBrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => false, fetchReport: async () => report(2, 0) }, new Set())
+      await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => false, fetchReport: async () => report(2, 0) }).check()
       writeFileSync(join(home, 'config'), JSON.stringify({ token: 't', onboarding: 'pending' }))
-      await mods.checkBrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(2, 0) }, new Set())
+      await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(2, 0) }).check()
       expect(spawns.list()).toHaveLength(0)
     })
 
     it('skips a space whose check fails', async () => {
       const spawns = new mods.SpawnQueue()
       const lines: string[] = []
-      await mods.checkBrainHygiene({
+      await new mods.BrainHygiene({
         spaces, spawns, version: '0.17.18', isReady: async () => true, log: (l) => lines.push(l),
         fetchReport: async () => { throw new Error('GET /hygiene → 503') },
-      }, new Set())
+      }).check()
       expect(spawns.list()).toHaveLength(0)
       expect(lines).toEqual(['brain hygiene: check of Main failed — GET /hygiene → 503'])
+    })
+
+    it('runNow opens a session for one space below every threshold, once at a time', async () => {
+      const spawns = new mods.SpawnQueue()
+      // Already run for this version, reviews under the threshold: the scheduler opens nothing …
+      writeFileSync(join(home, 'config'), JSON.stringify({ token: 't', hygiene: { 'brain-1': { version: '0.17.18', reviewAt: NOW.toISOString() } } }))
+      const hygiene = new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(1, 2), now: () => NOW })
+      await hygiene.check()
+      expect(spawns.list()).toHaveLength(0)
+
+      // … the manual run does, with every check that has findings.
+      expect(await hygiene.runNow(space)).toEqual({ started: true, findings: 3 })
+      const [request] = spawns.list()
+      expect(request.prompt).toContain('The cockpit opened this session: the user started it from Settings › Brain.')
+      expect(request.prompt).toContain('## rule-profile-format')
+      expect(request.prompt).toContain('## review-due')
+      expect(await hygiene.runNow(space)).toEqual({ started: false, reason: 'pending' })
+    })
+
+    it('runNow reports a clean brain and a missing agent CLI', async () => {
+      const spawns = new mods.SpawnQueue()
+      expect(await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => true, fetchReport: async () => report(0, 0) }).runNow(space))
+        .toEqual({ started: false, reason: 'clean' })
+      expect(await new mods.BrainHygiene({ spaces, spawns, version: '0.17.18', isReady: async () => false, fetchReport: async () => report(2, 0) }).runNow(space))
+        .toEqual({ started: false, reason: 'not-ready' })
+      expect(spawns.list()).toHaveLength(0)
     })
   })
 })

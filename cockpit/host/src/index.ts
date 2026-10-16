@@ -9,7 +9,7 @@ import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
-import { scheduleBrainHygiene } from './brain-hygiene.js'
+import { BrainHygiene } from './brain-hygiene.js'
 import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
@@ -163,8 +163,16 @@ async function main() {
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
+  // Brain hygiene: after an update with new requirements, when reviews pile
+  // up, or from Settings › Brain, the host opens a session with the
+  // brain-hygiene skill (brain-hygiene.ts). Scheduled once the host listens.
+  const hygiene = new BrainHygiene({
+    spaces, spawns, version: ABOUT.version, log,
+    isReady: () => providers.default().auth.signedIn(),
+  })
+
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG, spawns, spawnToken },
+    { spaces, bridge, turns, providers, hookToken, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG, spawns, spawnToken, hygiene },
     origins,
   )
 
@@ -180,12 +188,7 @@ async function main() {
     log('first run: getting-started session opens once Claude Code is signed in')
   }
 
-  // Brain hygiene: after an update with new requirements, or when reviews pile
-  // up, the host opens a session with the brain-hygiene skill (brain-hygiene.ts).
-  scheduleBrainHygiene({
-    spaces, spawns, version: ABOUT.version, log,
-    isReady: () => providers.default().auth.signedIn(),
-  })
+  hygiene.schedule()
 
   // After a first-run setup the setup page is already open and reloads itself.
   if (brain.reused) openBrowser(url)
