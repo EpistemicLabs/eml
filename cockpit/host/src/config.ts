@@ -107,7 +107,11 @@ export function updateCockpitConfig(change: (config: CockpitConfig | null) => Co
 
 async function writeConfigFile(config: CockpitConfig): Promise<void> {
   await fs.mkdir(COCKPIT_HOME, { recursive: true, mode: 0o700 })
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+  // Write a temp file and rename it over the config: writeFile truncates first,
+  // so a reader outside the write chain could otherwise see an empty file.
+  const tmp = `${CONFIG_FILE}.${process.pid}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(config, null, 2), { mode: 0o600 })
+  await fs.chmod(tmp, 0o600).catch(() => {})
+  await fs.rename(tmp, CONFIG_FILE)
   await fs.chmod(COCKPIT_HOME, 0o700).catch(() => {})
-  await fs.chmod(CONFIG_FILE, 0o600).catch(() => {})
 }
