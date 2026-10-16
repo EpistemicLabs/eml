@@ -124,4 +124,5 @@ export {
   type MigrationOutcomeKind,
 } from './forward-migrations'
 export { boot, type BootResult, type BootOptions } from './boot'
+export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'
