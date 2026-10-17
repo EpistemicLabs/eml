@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi } from './spawn-api.js'
 import type { SpawnQueue } from './spawn-queue.js'
+import type { BrainHygiene } from './brain-hygiene.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces } from './brain-space.js'
@@ -84,6 +85,8 @@ export interface HostDeps {
   spawns: SpawnQueue
   /** Per-boot secret sessions send with POST /api/spawn. */
   spawnToken: string
+  /** The brain-hygiene trigger (brain-hygiene.ts) — Settings › Brain runs it now. */
+  hygiene: BrainHygiene
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -380,6 +383,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     if (resource === 'brain-backups' && !id && method === 'POST') {
       json(res, 200, { backup: await createBackup(space.token) })
+      return true
+    }
+
+    // Settings › Brain: open a brain-hygiene session for this space now.
+    if (resource === 'brain-hygiene' && !id && method === 'POST') {
+      try {
+        json(res, 200, await deps.hygiene.runNow(space))
+      } catch (err) {
+        json(res, 502, { error: { code: 'HYGIENE_CHECK_FAILED', message: (err as Error).message } })
+      }
       return true
     }
 

@@ -1084,6 +1084,11 @@ export function hasPendingShellCommand(paneId: string): boolean {
   return pendingShellCommands.has(paneId);
 }
 
+/** The queued first message without taking it (MainContent reads it during render). */
+export function peekPendingShellCommand(paneId: string): string | null {
+  return pendingShellCommands.get(paneId) ?? null;
+}
+
 export function consumePendingShellCommand(paneId: string): string | null {
   const entry = pendingShellCommands.get(paneId);
   if (entry === undefined) return null;

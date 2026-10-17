@@ -19,7 +19,7 @@ import { brainMcpServer, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry
  * Files written here, shared by every brain space (writeIsolationFiles):
  *   - hook-curl.conf (chmod 600): the per-boot hook token as a curl header for
  *     the turn-state hooks, so it stays out of the hook command line.
- *   - skills/<name>/SKILL.md: the EML skills (consolidate, checkpoint, getting-started) from the
+ *   - skills/<name>/SKILL.md: the EML skills (consolidate, checkpoint, getting-started, brain-hygiene) from the
  *     bundled mcp-server plus the cockpit's own (spawn-session), refreshed each
  *     boot; a skill of the same name without the managed marker is left alone.
  *   - .claude.json: first-run state pre-seeded (onboarding done, theme) so an

@@ -1,19 +1,19 @@
 // Kept: the pane layout (title row, floating view-mode toolbar — shown on the
 // active pane, on hover of the corner elsewhere — error-bounded body), the
-// empty "Choose Your Project" state, the pending-shell-command consume on
-// first mount, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
+// empty "Choose Your Project" state, the pending-shell-command consume once
+// the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
 // brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
 // cockpit-notes-pane). Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
 import type { LLMProvider } from '@/types/app';
-import React, { useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
 import type { MainContentProps } from '../types/types';
-import { addPaneNextTo, consumePendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { addPaneNextTo, consumePendingShellCommand, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { cn } from '@/lib/utils';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
@@ -33,12 +33,19 @@ function MainContent({
   onClosePane,
   paneLabel,
 }: MainContentProps) {
-  // Consume any shell command queued by an external spawn for this pane on
-  // first mount. Lazy-init runs once; subsequent re-renders (e.g. paneView
-  // toggles) reuse the stored value without re-consuming.
-  const [initialShellCommand] = useState<string | null>(
-    () => consumePendingShellCommand(paneId),
-  );
+  // The shell command queued by an external spawn for this pane, taken once the
+  // terminal can start — a worker of a space that isn't open has no project
+  // here yet. Read during render, removed from the (persisted) queue only
+  // after mount, so a reload before the space is opened keeps it. Held in a
+  // ref: later re-renders (e.g. paneView toggles) reuse it.
+  const heldShellCommand = useRef<string | null | undefined>(undefined);
+  if (heldShellCommand.current === undefined && (paneView !== 'terminal' || selectedProject)) {
+    heldShellCommand.current = peekPendingShellCommand(paneId);
+  }
+  const initialShellCommand = heldShellCommand.current ?? null;
+  useEffect(() => {
+    if (initialShellCommand !== null) consumePendingShellCommand(paneId);
+  }, [paneId, initialShellCommand]);
   const noteId = usePane(paneId)?.noteId;
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what

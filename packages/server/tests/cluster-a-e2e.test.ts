@@ -524,6 +524,16 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       expect(c.status).toBe(200)
       expect(c.body.engram.id).toBe(t.id)
     })
+
+    it('GET /hygiene lists the checks with their findings', async () => {
+      const r = await post('/context', { type: 'rule', scope: 'global', title: 'needs-trigger', content: 'do Y', properties: { applies: 'always' } })
+      expect(r.status).toBe(201)
+      const h = await request('GET', `${baseUrl}/hygiene`, { Authorization: `Bearer ${provA.tokenPlaintext}` })
+      expect(h.status).toBe(200)
+      expect(h.body.checks.map((c: { id: string }) => c.id)).toEqual(['rule-profile-format', 'review-due'])
+      expect(h.body.checks[0]).toMatchObject({ kind: 'migration', findings: [] })
+      expect(typeof h.body.total).toBe('number')
+    })
   })
 
   // v0.15 Cluster C: task_id on a write — edge + entry in one core transaction,
