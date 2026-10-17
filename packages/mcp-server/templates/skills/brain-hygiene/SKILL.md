@@ -23,15 +23,19 @@ scope, title, reason). Work from that list.
 
 Invoked without that list (the user asked in a running session): say that the
 full check runs from Settings › Brain › Run brain hygiene now. If the user wants
-to go on here anyway, work only the review queue — `eml_list label=review`
-(decisions, rules and profiles past their review date, open tasks without
-movement).
+to go on here anyway, work only the review queue, one block per page:
+`eml_list label=review limit=10`, then `offset=10`, `offset=20`, … for the next
+blocks (decisions, rules and profiles past their review date, open tasks without
+movement). Never fetch the whole queue at once — entries come with their full
+content.
 
 ## Steps
 
 1. **Orient.** Show the user what was found, per check: what it requires (one
    line), how many engrams, and — for a migration check — that it comes from an
-   update. Order: migration checks first, then reviews.
+   update. Order: migration checks first, then reviews. Give the counts as the
+   check reports them; don't forecast how many findings a block will clear — the
+   next hygiene run shows what is left.
 
 2. **Propose per block.** Take one check at a time, in blocks of up to ~10
    engrams. For each engram `eml_get` it and propose a concrete change following
