@@ -25,3 +25,29 @@ jobs:
       - run: pnpm test
       - run: pnpm -F @engramprotocol/cockpit-frontend build
       - run: pnpm -F eml-cockpit build
+
+  # Native Windows support is being built (docs/proposals/windows-support.md).
+  # Until this job is green it only reports: its failure does not fail the run,
+  # and it is not a required check. Once green, drop continue-on-error.
+  build-test-windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      # Keep LF line endings: tests compare file contents byte for byte.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Every package's tests and both bundles, each even after an earlier step
+      # failed: the job maps everything that breaks, not just the first thing.
+      - run: pnpm -r --no-bail test
+        if: ${{ !cancelled() }}
+      - run: pnpm -F @engramprotocol/cockpit-frontend build
+        if: ${{ !cancelled() }}
+      - run: pnpm -F eml-cockpit build
+        if: ${{ !cancelled() }}
