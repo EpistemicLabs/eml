@@ -17,7 +17,10 @@ quick-start from source. Nobody has run the cockpit in WSL2 yet.
 - Agent CLIs are spawned directly in the PTY: no login shell, no `zsh`, no `-l -c`.
 - Most paths go through `path.join` and `os.homedir()`; the mcp-server config falls back to
   `USERPROFILE`.
-- node-pty (ConPTY) and the SQLite binding ship Windows prebuilds.
+- node-pty (ConPTY) and the SQLite binding ship Windows prebuilds. better-sqlite3 13 bundles them
+  in the package (`prebuilds/win32-x64.node`); pnpm must not rebuild it from source, which needs
+  Visual Studio (found by the first Windows CI run, fixed with this proposal). npm, which installs
+  the released cockpit, skips the build already (`gypfile: false`).
 - No Keychain or other macOS credential store; config isolation via `CLAUDE_CONFIG_DIR` and
   `CODEX_HOME` is portable.
 - Pid lock files (`process.kill(pid, 0)`) and port allocation (`listen(0)`) are portable.
