@@ -1,17 +1,22 @@
 import { describe, it, expect, afterAll } from 'vitest'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ManagedRuntime, type RuntimeSource } from '../src/infrastructure/providers/managed-runtime.js'
+import { platform } from '../src/infrastructure/platform/index.js'
 
 /**
  * The install engine both agent CLIs share, driven by a fake source: what it
- * delivers is a shell script that answers --version. Every way the source or
- * the binary can fail must leave `current` untouched and versions/ clean.
+ * delivers is this node (linked, or copied) as the binary, which answers its
+ * self-test with the version the fake publisher wrote next to it — a real
+ * executable on every OS. Every way the source or the binary can fail must
+ * leave `current` untouched and versions/ clean.
  */
 
 const root = mkdtempSync(join(tmpdir(), 'cockpit-managed-runtime-test-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
+const FAKE_TOOL = join(__dirname, 'fixtures', 'fake-tool.mjs')
+const TOOL = platform.exe('tool')
 
 interface FakeOptions {
   /** The version the channel names. */
@@ -27,16 +32,17 @@ function fakeSource(opts: FakeOptions): RuntimeSource {
     label: 'Tool',
     logTag: 'tool-runtime',
     channel: 'stable',
-    entry: 'bin/tool',
+    entry: join('bin', TOOL),
     latestVersion: async () => opts.latest,
     async fetch(version, dir) {
       if (opts.refuse) throw new Error(opts.refuse)
       mkdirSync(join(dir, 'bin'))
-      const script = join(dir, 'bin', 'tool')
-      writeFileSync(script, `#!/bin/sh\necho "tool ${opts.claims?.(version) ?? version}"\n`)
-      chmodSync(script, 0o755)
+      const bin = join(dir, 'bin', TOOL)
+      try { linkSync(process.execPath, bin) } catch { copyFileSync(process.execPath, bin) }
+      writeFileSync(join(dir, 'bin', 'claims'), opts.claims?.(version) ?? version)
     },
-    selfTestEnv: () => ({ PATH: '/usr/bin:/bin' }),
+    selfTestEnv: () => platform.minimalEnv(),
+    selfTestArgs: [FAKE_TOOL],
     reportedVersion: (stdout) => stdout.trim().split(/\s+/).pop() ?? '',
   }
 }
@@ -59,7 +65,7 @@ describe('managed runtime', () => {
     expect(state.lastResult).toMatchObject({ outcome: 'installed', from: null, to: '1.0.0' })
     expect(runtime.currentVersion()).toBe('1.0.0')
     expect(runtime.problem()).toBeNull()
-    expect(existsSync(join(dir, 'versions', '1.0.0', 'bin', 'tool'))).toBe(true)
+    expect(existsSync(join(dir, 'versions', '1.0.0', 'bin', TOOL))).toBe(true)
     expect(existsSync(runtime.bin)).toBe(true)
     expect(stagingDirs(dir)).toEqual([])
   })

@@ -28,7 +28,7 @@ const source: RuntimeSource = {
   label: 'Claude Code',
   logTag: 'claude-runtime',
   channel: 'stable',
-  entry: 'claude',
+  entry: platform.exe('claude'),
 
   async latestVersion(channel) {
     const version = await fetchText(`${RELEASES}/${channel}`)
@@ -39,15 +39,18 @@ const source: RuntimeSource = {
   async fetch(version, dir, log) {
     const platformKey = platform.runtimeKey({ musl: true })
     const manifest = JSON.parse(await fetchText(`${RELEASES}/${version}/manifest.json`)) as {
-      platforms?: Record<string, { checksum?: string; size?: number }>
+      platforms?: Record<string, { binary?: string; checksum?: string; size?: number }>
     }
     const entry = manifest.platforms?.[platformKey]
     if (!entry?.checksum || !/^[a-f0-9]{64}$/.test(entry.checksum)) {
       throw new Error(`no ${platformKey} build in the ${version} manifest`)
     }
-    const bin = path.join(dir, 'claude')
+    // The manifest names the file (claude, claude.exe); the version dir holds it as the entry.
+    const binary = entry.binary ?? 'claude'
+    if (binary !== source.entry) throw new Error(`unexpected binary '${binary}' in the ${version} manifest`)
+    const bin = path.join(dir, source.entry)
     log(`downloading Claude Code ${version} (${platformKey}${entry.size ? `, ${Math.round(entry.size / 1e6)} MB` : ''})…`)
-    await downloadTo(`${RELEASES}/${version}/${platformKey}/claude`, bin, 0o755)
+    await downloadTo(`${RELEASES}/${version}/${platformKey}/${binary}`, bin, 0o755)
     if (entry.size && fs.statSync(bin).size !== entry.size) throw new Error('size does not match the manifest')
     if ((await fileDigest(bin, 'sha256', 'hex')) !== entry.checksum) throw new Error('checksum does not match the manifest')
     await platform.verifyCodeSignature(bin, ANTHROPIC_TEAM_ID, 'Anthropic')
@@ -55,8 +58,7 @@ const source: RuntimeSource = {
 
   // A neutral env: no user HOME config, the app's own config dir, updater off.
   selfTestEnv: () => ({
-    PATH: '/usr/bin:/bin',
-    HOME: process.env.HOME ?? '',
+    ...platform.minimalEnv(),
     CLAUDE_CONFIG_DIR: CONFIG_DIR,
     DISABLE_AUTOUPDATER: '1',
   }),
@@ -81,7 +83,7 @@ const source: RuntimeSource = {
 /** Sessions need Claude Code, so a home without one installs it on host start. */
 export const claudeRuntime = new ManagedRuntime(CLAUDE_RUNTIME_DIR, 'claude', source, { installUnasked: true })
 
-/** What sessions run. A symlink chain into versions/<current>. */
+/** What sessions run (managed-runtime.ts, ManagedRuntime.bin). */
 export const CLAUDE_BIN = claudeRuntime.bin
 /** Prepended to every session's PATH, so `claude` inside a session is the cockpit's too. */
 export const CLAUDE_BIN_DIR = claudeRuntime.binDir
