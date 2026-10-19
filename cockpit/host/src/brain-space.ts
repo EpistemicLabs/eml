@@ -4,7 +4,7 @@ import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
 import { writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME } from './paths.js'
-import { readCockpitConfig, writeCockpitConfig } from './config.js'
+import { updateCockpitConfig } from './config.js'
 
 /**
  * A brain space is one brain the cockpit works with (decision
@@ -122,16 +122,12 @@ export class BrainSpaces {
 
   /** Rename a space (display name only; the brain keeps its name) and persist it in the cockpit config. */
   async rename(space: BrainSpace, name: string): Promise<void> {
-    const config = await readCockpitConfig()
-    if (!config) throw new Error('no cockpit config')
-    if (space.main) {
-      await writeCockpitConfig({ ...config, mainName: name })
-    } else {
-      await writeCockpitConfig({
-        ...config,
-        spaces: (config.spaces ?? []).map((s) => (s.token === space.token ? { ...s, name } : s)),
-      })
-    }
+    await updateCockpitConfig((config) => {
+      if (!config) throw new Error('no cockpit config')
+      return space.main
+        ? { ...config, mainName: name }
+        : { ...config, spaces: (config.spaces ?? []).map((s) => (s.token === space.token ? { ...s, name } : s)) }
+    })
     space.name = name
   }
 

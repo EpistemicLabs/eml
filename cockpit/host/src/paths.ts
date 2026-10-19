@@ -83,7 +83,7 @@ export function stableAppPath(file: string): string {
   return path.join(APP_DIR, 'current', ...rest)
 }
 
-// What the EML hook commands name (shared.ts, emlHookEntry): the mcp-server CLI
+// What the EML hook commands name (shared.ts, emlHookCommand): the mcp-server CLI
 // through app/current, and node through a link the host keeps at <home>/bin/node
 // (ensureHookNode) — both stay the same text across cockpit and node updates.
 export const HOOK_MCP_CLI_JS = stableAppPath(MCP_CLI_JS)
