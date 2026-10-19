@@ -695,6 +695,42 @@ export function removePane(id: string): void {
   setSnapshot({ ...snapshot, desks });
 }
 
+/** Whether `movePaneToDesk(paneId, deskId)` would move anything. */
+export function canMovePaneToDesk(paneId: string, deskId: string): boolean {
+  const loc = findPaneLocation(paneId);
+  const target = snapshot.desks.find(s => s.id === deskId);
+  return Boolean(loc && target && !loc.pane.pinned && loc.desk.id !== target.id && loc.desk.spaceId === target.spaceId);
+}
+
+/**
+ * Move a pane to the end of another desk of the same space and show it there.
+ * Only the view moves: its session keeps running on the host, and the
+ * terminal reattaches to it on the target desk. Pinned panes stay on their
+ * desk. On a desk that only shows the empty "Choose Your Project" pane, the
+ * moved pane takes its place; a desk the move leaves empty gets a fresh empty
+ * pane, the state closing its last pane leads to.
+ */
+export function movePaneToDesk(paneId: string, deskId: string): void {
+  if (!canMovePaneToDesk(paneId, deskId)) return;
+  const { desk: source, pane } = findPaneLocation(paneId)!;
+  const idx = source.panes.findIndex(p => p.id === paneId);
+  const rest = source.panes.filter(p => p.id !== paneId);
+  const sourcePanes = rest.length > 0 ? rest : [createPane('terminal')];
+  // Like removePane: the moved pane's previous sibling takes over as active.
+  const sourceActive = source.activePaneId === paneId
+    ? (sourcePanes[Math.max(0, idx - 1)] ?? sourcePanes[0]).id
+    : source.activePaneId;
+  const desks = snapshot.desks.map(s => {
+    if (s.id === source.id) return { ...s, panes: sourcePanes, activePaneId: sourceActive };
+    if (s.id === deskId) {
+      const keep = s.panes.length === 1 && isEmptyPane(s.panes[0]) ? [] : s.panes;
+      return { ...s, panes: [...keep, pane], activePaneId: pane.id };
+    }
+    return s;
+  });
+  setSnapshot({ ...snapshot, desks, activeDeskId: deskId });
+}
+
 /**
  * Reset a pane to the empty state: no project, a fresh (unused) session id,
  * no label. Closing or deleting the session of a desk's last pane lands here.
