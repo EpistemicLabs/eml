@@ -5,6 +5,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { COCKPIT_HOME, HOST_ROOT } from './paths.js'
 import { CURRENT_HOST_ROOT, isManaged } from './app-update.js'
+import { platform } from './infrastructure/platform/index.js'
 
 /**
  * `eml-cockpit service install|uninstall|status` — run the cockpit as a
@@ -167,7 +168,7 @@ export async function runServiceCommand(argv: string[]): Promise<boolean> {
   if (argv[0] !== 'service') return false
   // `service status | head` closes stdout early; don't crash on the broken pipe.
   process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE') process.exit(0) })
-  if (process.platform !== 'darwin') {
+  if (platform.os !== 'darwin') {
     throw new Error('service install is macOS-only for now (launchd); Linux systemd --user is a TODO.')
   }
   const sub = argv[1]

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -23,6 +22,7 @@ import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { scheduleUpdateChecks } from './app-update.js'
+import { platform } from './infrastructure/platform/index.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -37,8 +37,7 @@ const log = (s: string) => process.stderr.write(s + '\n')
 
 function openBrowser(url: string): void {
   if (process.env.COCKPIT_NO_OPEN) return
-  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open'
-  try { spawn(opener, [url], { stdio: 'ignore', detached: true }).unref() } catch { /* headless */ }
+  platform.openUrl(url)
 }
 
 // A port already taken (usually a host left over from an earlier start) must
