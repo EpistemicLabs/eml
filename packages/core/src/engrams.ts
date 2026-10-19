@@ -458,7 +458,7 @@ export class EngramStore {
         this.update(taskId, { properties: { stage: input.stage } })
       }
       this.db.prepare(`
-        INSERT INTO task_entries (id, task_id, at, author, stage, text) VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO entries (id, engram_id, kind, at, author, stage, text) VALUES (?, ?, 'note', ?, ?, ?, ?)
       `).run(entry.id, entry.task_id, entry.at, entry.author, entry.stage, entry.text)
       this.stripReviewLabel(taskId)
     })()
@@ -468,7 +468,7 @@ export class EngramStore {
   /** A task's journal, oldest first. */
   taskEntries(taskId: string): TaskEntry[] {
     return this.db.prepare(
-      'SELECT id, task_id, at, author, stage, text FROM task_entries WHERE task_id = ? ORDER BY at ASC, rowid ASC',
+      'SELECT id, engram_id AS task_id, at, author, stage, text FROM entries WHERE engram_id = ? ORDER BY at ASC, rowid ASC',
     ).all(taskId) as TaskEntry[]
   }
 
@@ -840,7 +840,7 @@ export class EngramStore {
         AND c.status IN (${openPlaceholders})
         AND MAX(
           datetime(c.updated_at),
-          COALESCE(datetime((SELECT MAX(te.at) FROM task_entries te WHERE te.task_id = c.id)), datetime(c.updated_at))
+          COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = c.id)), datetime(c.updated_at))
         ) < datetime(?, ?)
         AND NOT EXISTS (
           SELECT 1 FROM engram_labels el

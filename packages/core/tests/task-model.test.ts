@@ -229,7 +229,7 @@ describe('task model (v0.15)', () => {
       const t = task('gone')
       eml.engrams.appendTaskEntry(t.id, { text: 'x' })
       eml.engrams.delete(t.id)
-      expect((rawDb().prepare(`SELECT COUNT(*) AS n FROM task_entries`).get() as { n: number }).n).toBe(0)
+      expect((rawDb().prepare(`SELECT COUNT(*) AS n FROM entries`).get() as { n: number }).n).toBe(0)
     })
   })
 
@@ -254,7 +254,7 @@ describe('task model (v0.15)', () => {
       age(t.id, 60)
       expect(eml.engrams.stampDueReviewLabels()).toBe(0)
 
-      rawDb().prepare(`UPDATE task_entries SET at = ? WHERE task_id = ?`)
+      rawDb().prepare(`UPDATE entries SET at = ? WHERE engram_id = ?`)
         .run(new Date(Date.now() - 45 * 86400_000).toISOString(), t.id)
       expect(eml.engrams.stampDueReviewLabels()).toBe(1)
     })

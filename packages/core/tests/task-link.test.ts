@@ -51,7 +51,7 @@ describe('task-linked writes (v0.15)', () => {
   it('a bad task_id writes nothing: unknown id, a non-task, a type that takes no task_id', () => {
     const task = hub()
     const note = eml.engrams.store({ type: 'note', scope: 'global', content: 'a note' })
-    const before = { engrams: count('engrams'), relations: count('relations'), entries: count('task_entries') }
+    const before = { engrams: count('engrams'), relations: count('relations'), entries: count('entries') }
 
     expect(() => eml.engrams.store(validDecision({ task_id: 'no-such-id' })))
       .toThrow('Invalid engram: task_id no-such-id is not a task.')
@@ -62,12 +62,12 @@ describe('task-linked writes (v0.15)', () => {
     expect(() => eml.engrams.store({ type: 'status', scope: 'global', content: 's', properties: { state: 'x' }, task_id: task.id }))
       .toThrow(/not available for type status/)
 
-    expect({ engrams: count('engrams'), relations: count('relations'), entries: count('task_entries') }).toEqual(before)
+    expect({ engrams: count('engrams'), relations: count('relations'), entries: count('entries') }).toEqual(before)
   })
 
   it('atomic: if the entry cannot be written, the decision and its edge roll back', () => {
     const task = hub()
-    rawDb().exec(`CREATE TRIGGER fail_entry BEFORE INSERT ON task_entries BEGIN SELECT RAISE(ABORT, 'entry write failed'); END`)
+    rawDb().exec(`CREATE TRIGGER fail_entry BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'entry write failed'); END`)
     const before = { engrams: count('engrams'), relations: count('relations') }
 
     expect(() => eml.engrams.store(validDecision({ scope: 'project.eml', content: 'doomed', task_id: task.id })))
@@ -80,6 +80,6 @@ describe('task-linked writes (v0.15)', () => {
     const task = hub()
     expect(() => eml.engrams.store({ type: 'decision', scope: 'project.eml', content: 'no alternatives', task_id: task.id }))
       .toThrow(/^Invalid engram: a decision needs/)
-    expect(count('task_entries')).toBe(0)
+    expect(count('entries')).toBe(0)
   })
 })

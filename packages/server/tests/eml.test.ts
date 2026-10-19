@@ -1061,14 +1061,14 @@ describe('EML v0.2', () => {
         goal: 'Source reliability',
         description: 'Cardano ecosystem',
         owner: 'alice',
-        tags: ['cardano', 'research'],
         started_at: '2026-01-01',
         metadata: { repo: 'example/acme-app' },
+        status_tracks: 'released version',
       })
       expect(project.goal).toBe('Source reliability')
       expect(project.owner).toBe('alice')
-      expect(project.tags).toEqual(['cardano', 'research'])
       expect(project.metadata?.repo).toBe('example/acme-app')
+      expect(project.status_tracks).toBe('released version')
     })
 
     it('get returns null for unknown id', () => {

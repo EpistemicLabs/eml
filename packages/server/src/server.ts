@@ -637,7 +637,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           description: body.description,
           owner: body.owner,
           parent_project: body.parent_project,
-          tags: body.tags,
           started_at: body.started_at,
           ended_at: body.ended_at,
           metadata: body.metadata,

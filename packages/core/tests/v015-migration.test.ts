@@ -67,7 +67,7 @@ function schemaFacts(file: string) {
       integrity: db.pragma('integrity_check', { simple: true }),
       fkViolations: (db.pragma('foreign_key_check') as unknown[]).length,
       relationIndexes: (db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='relations' AND name LIKE 'idx_%' ORDER BY name`).all() as Array<{ name: string }>).map(r => r.name),
-      taskEntries: !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_entries'`).get(),
+      taskEntries: !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='entries'`).get(), // the journal table since v0.19
       leftover: db.prepare(`SELECT name FROM sqlite_master WHERE name IN ('relations_v015','relations_v016','relations_v017')`).get(),
     }
   } finally { db.close() }
@@ -108,7 +108,7 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 14)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18, 19] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 

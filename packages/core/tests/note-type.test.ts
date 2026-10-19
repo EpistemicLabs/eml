@@ -74,9 +74,10 @@ const V14_INDEXES = [
   'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_mode', 'idx_engrams_scope',
   'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_subject', 'idx_engrams_type',
 ]
+// v0.19 adds idx_engrams_core_profile, idx_engrams_origin and idx_engrams_session.
 const EXPECTED_INDEXES = [
-  'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_scope',
-  'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
+  'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_origin', 'idx_engrams_scope',
+  'idx_engrams_session', 'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
 ]
 
 describe('v0.14 note type', () => {

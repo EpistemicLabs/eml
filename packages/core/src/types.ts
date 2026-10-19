@@ -423,10 +423,10 @@ export interface ProjectInput {
   description?: string
   owner?: string                  // agent/user id, e.g. "alice"
   parent_project?: string         // FK projects.id
-  tags?: string[]
   started_at?: string
   ended_at?: string
   metadata?: Record<string, unknown>
+  status_tracks?: string          // v0.19: what the scope's status is about
 }
 
 export interface ProjectUpdate {
@@ -436,10 +436,10 @@ export interface ProjectUpdate {
   description?: string
   owner?: string
   parent_project?: string | null  // null allowed to detach from the hierarchy
-  tags?: string[]
   started_at?: string
   ended_at?: string
   metadata?: Record<string, unknown>
+  status_tracks?: string | null   // v0.19
 }
 
 export interface Project {
@@ -450,10 +450,10 @@ export interface Project {
   description: string | null
   owner: string | null
   parent_project: string | null
-  tags: string[] | null
   started_at: string | null
   ended_at: string | null
   metadata: Record<string, unknown> | null
+  status_tracks: string | null    // v0.19: what the scope's status is about
   created_at: string
   updated_at: string
 }
