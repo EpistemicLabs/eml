@@ -1,6 +1,6 @@
 # Proposal: the cockpit on native Windows
 
-Status: in progress. Step 1 (an informative Windows CI job) ships with this proposal.
+Status: in progress. Steps 1, 3 and 4 are done: the Windows CI job is green and fails the run when Windows breaks.
 
 ## Why
 

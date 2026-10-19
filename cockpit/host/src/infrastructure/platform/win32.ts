@@ -1,3 +1,5 @@
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import type { Platform } from '../../domain/platform.js'
 import { archKey, detached, runFile } from './common.js'
 
@@ -22,6 +24,26 @@ export const win32: Platform = {
   openUrl: (url) => detached('rundll32', ['url.dll,FileProtocolHandler', url]),
   // explorer exits 1 even when it opened the window.
   revealFile: (file) => runFile('explorer.exe', [`/select,${file}`]).catch(() => {}),
+  switchDirLink(target, link) {
+    // A junction can't be renamed over another: unlink (the junction only, never
+    // what it points at), then create. A crash in between leaves no link, which
+    // the runtime reads as "damaged" and repairs on the next start.
+    try { fs.unlinkSync(link) } catch { /* not there */ }
+    fs.symlinkSync(path.resolve(target), link, 'junction')
+  },
+  // A file symlink needs admin rights or Developer Mode.
+  linksFiles: false,
+  minimalEnv() {
+    const env: Record<string, string> = {}
+    for (const key of ['SystemRoot', 'windir', 'SystemDrive', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'PATHEXT']) {
+      const value = process.env[key]
+      if (value) env[key] = value
+    }
+    const root = env.SystemRoot ?? 'C:\\Windows'
+    env.PATH = [path.join(root, 'System32'), root].join(path.delimiter)
+    return env
+  },
+  tarBin: () => path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'),
   // Authenticode checks are not wired up yet: the checksum is the check.
   verifyCodeSignature: async () => {},
 }

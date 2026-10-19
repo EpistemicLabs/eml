@@ -41,7 +41,7 @@ const source: RuntimeSource = {
   logTag: 'codex-runtime',
   // An npm dist-tag.
   channel: 'latest',
-  entry: 'bin/codex',
+  entry: path.join('bin', platform.exe('codex')),
 
   async latestVersion(channel) {
     const { version } = JSON.parse(await fetchText(`${REGISTRY}/${PACKAGE}/${channel}`)) as RegistryVersion
@@ -65,14 +65,13 @@ const source: RuntimeSource = {
 
     fs.mkdirSync(unpacked)
     // The package unpacks to a few hundred MB: minutes on a slow disk, not the
-    // 30 s of a version check. /bin/tar on a Linux without a merged /usr.
-    const tarBin = ['/usr/bin/tar', '/bin/tar'].find((bin) => fs.existsSync(bin)) ?? '/usr/bin/tar'
-    const tar = await run(tarBin, ['-xzf', tarball, '-C', unpacked], { PATH: '/usr/bin:/bin' }, UNPACK_TIMEOUT_MS)
+    // 30 s of a version check.
+    const tar = await run(platform.tarBin(), ['-xzf', tarball, '-C', unpacked], platform.minimalEnv(), UNPACK_TIMEOUT_MS)
     if (tar.code !== 0) throw new Error(`could not unpack the Codex package: ${tar.stderr.trim().slice(0, 200)}`)
     const vendor = path.join(unpacked, 'package', 'vendor')
     const targets = fs.existsSync(vendor) ? fs.readdirSync(vendor) : []
-    if (targets.length !== 1 || !fs.existsSync(path.join(vendor, targets[0], 'bin', 'codex'))) {
-      throw new Error('the Codex package does not have the expected layout (vendor/<target>/bin/codex)')
+    if (targets.length !== 1 || !fs.existsSync(path.join(vendor, targets[0], source.entry))) {
+      throw new Error(`the Codex package does not have the expected layout (vendor/<target>/${source.entry})`)
     }
     // versions/<v>/ = the target directory itself: bin/, codex-path/, codex-resources/.
     for (const name of fs.readdirSync(path.join(vendor, targets[0]))) {
@@ -80,11 +79,11 @@ const source: RuntimeSource = {
     }
     fs.rmSync(unpacked, { recursive: true, force: true })
     fs.rmSync(tarball, { force: true })
-    await platform.verifyCodeSignature(path.join(dir, 'bin', 'codex'), OPENAI_TEAM_ID, 'OpenAI')
+    await platform.verifyCodeSignature(path.join(dir, source.entry), OPENAI_TEAM_ID, 'OpenAI')
   },
 
   // A neutral env: the app's own Codex home, never the user's ~/.codex.
-  selfTestEnv: () => ({ PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '', CODEX_HOME: CODEX_CONFIG_DIR }),
+  selfTestEnv: () => ({ ...platform.minimalEnv(), CODEX_HOME: CODEX_CONFIG_DIR }),
 
   // "codex-cli 0.162.1"
   reportedVersion: (stdout) => stdout.trim().split(/\s+/).pop() ?? '',

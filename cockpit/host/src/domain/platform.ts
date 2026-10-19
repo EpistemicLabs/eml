@@ -32,6 +32,20 @@ export interface Platform {
   /** Show a file in the OS file manager (selected where the OS can). */
   revealFile(file: string): Promise<void>
 
+  /**
+   * Point the directory link `link` at the directory `target`, replacing what
+   * is there: macOS, Linux a relative symlink swapped in by one atomic rename;
+   * Windows a junction (no admin rights needed), removed and created anew.
+   */
+  switchDirLink(target: string, link: string): void
+  /** Whether a file can be linked without admin rights (Windows: no — see ManagedRuntime.bin). */
+  readonly linksFiles: boolean
+
+  /** The least environment a downloaded binary needs to start: system paths, the user's home, temp. */
+  minimalEnv(): Record<string, string>
+  /** The system's tar (macOS, Linux, Windows 10 and later ship one). */
+  tarBin(): string
+
   /** Check a downloaded binary's code signature, where the OS has one; elsewhere the checksum is the check. */
   verifyCodeSignature(bin: string, teamId: string, publisher: string): Promise<void>
 }
