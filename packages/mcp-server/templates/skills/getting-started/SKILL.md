@@ -125,7 +125,8 @@ with any MCP client.
      - `/getting-started` — this tour, any time again.
 
      *Cockpit:* also `/spawn-session` — it opens a parallel worker session
-     next to this one.
+     next to this one; and `/report-issue` — sends a bug or a wish for EML
+     to its makers as a GitHub issue.
    - **Asking** works in plain language: "where do we stand on X?" or "what did
      we decide about Y?" — you look it up in the brain instead of guessing.
 
