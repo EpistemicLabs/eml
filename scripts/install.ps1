@@ -3,10 +3,13 @@
 #
 #   irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex
 #
-# always runs the installer of the newest release. Keep this file ASCII: Windows
-# PowerShell 5.1 reads a script without a BOM as ANSI. It needs only Node >= 22: no
-# git, no gh, no GitHub account, no admin rights. It downloads the release
-# tarballs, checks them against SHA256SUMS, installs them into
+# always runs the installer of the newest release (install-eml-cockpit.cmd runs
+# it on a double-click). Keep this file ASCII: Windows PowerShell 5.1 reads a
+# script without a BOM as ANSI. It needs nothing installed: no Node, no git, no
+# GitHub account, no admin rights. It brings the cockpit's own Node (the newest
+# of the major the CI tests, from nodejs.org, checked against its SHASUMS256)
+# into <home>\node\, downloads the release tarballs, checks them against
+# SHA256SUMS, installs them into
 # <home>\app\versions\<v>\ (the layout the in-app updater uses) and registers the
 # autostart (the user's Run key, `eml-cockpit service install`). Later updates
 # come through the cockpit's update banner. The macOS twin is install.sh.
@@ -14,6 +17,10 @@
 # Env overrides: EML_COCKPIT_HOME (default ~\.eml-cockpit), COCKPIT_PORT (4317),
 # EML_VERSION (default: newest release), EML_NO_OPEN=1 (don't open the browser),
 # EML_FROM (a folder with the release assets instead of downloading them).
+
+# The Node major the cockpit runs on Windows: the one the CI tests
+# (node-version in .github/workflows/ci.yml). Change both together.
+$NodeMajor = 22
 
 # Everything runs inside the function, so a download cut off halfway through runs nothing.
 function Install-EmlCockpit {
@@ -37,18 +44,52 @@ function Install-EmlCockpit {
     try { $client.Connect('127.0.0.1', $port); return $true } catch { return $false } finally { $client.Close() }
   }
 
-  $node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
-  if (-not $node) {
-    Fail 'Node.js is not installed. Get the LTS installer from https://nodejs.org, run it, then open a new PowerShell window and paste the command again.'
+  # The cockpit's own Node in <home>\node\<version>, <home>\node\current a junction
+  # to it: never the user's Node (whose version or removal must not break the
+  # cockpit), never on the user's PATH. Returns the path of node.exe.
+  function Install-Node {
+    $nodeRoot = Join-Path $homeDir 'node'
+    $nodeCurrent = Join-Path $nodeRoot 'current'
+    $cpu = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    $arch = switch ($cpu) { 'AMD64' { 'x64' } 'ARM64' { 'arm64' } default { $null } }
+    if (-not $arch) { Fail "this Windows ($cpu) is not supported. The cockpit needs 64-bit Windows (x64 or ARM64)." }
+    try { $index = Invoke-RestMethod -UseBasicParsing -Uri 'https://nodejs.org/dist/index.json' }
+    catch { Fail 'could not reach nodejs.org to get Node.js. Check your internet connection and try again.' }
+    $release = $index | Where-Object { $_.version -like "v$NodeMajor.*" -and $_.files -contains "win-$arch-zip" } | Select-Object -First 1
+    if (-not $release) { Fail "nodejs.org lists no Node.js $NodeMajor for Windows $arch." }
+    $v = $release.version
+    $dir = Join-Path $nodeRoot $v
+    if (-not (Test-Path (Join-Path $dir 'node.exe'))) {
+      Write-Host "  downloading Node.js $v ($arch)"
+      $name = "node-$v-win-$arch"
+      $staging = Join-Path $nodeRoot (".staging-" + [System.IO.Path]::GetRandomFileName())
+      New-Item -ItemType Directory -Force -Path $staging | Out-Null
+      try {
+        $zip = Join-Path $staging "$name.zip"
+        $sums = Join-Path $staging 'SHASUMS256.txt'
+        try {
+          Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$v/$name.zip" -OutFile $zip
+          Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$v/SHASUMS256.txt" -OutFile $sums
+        } catch { Fail 'the download of Node.js failed. Check your internet connection and try again.' }
+        $expected = $null
+        foreach ($line in Get-Content -LiteralPath $sums) {
+          if ($line -match "^([0-9a-f]{64})\s+$([regex]::Escape("$name.zip"))$") { $expected = $Matches[1]; break }
+        }
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+        if (-not $expected -or $expected -ne $actual) { Fail 'the downloaded Node.js does not match its published checksum. Nothing was installed.' }
+        # tar (bsdtar, in Windows since 10 1803) unpacks zips many times faster than Expand-Archive.
+        & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $zip -C $staging
+        if ($LASTEXITCODE -ne 0) { Fail 'could not unpack Node.js.' }
+        Move-Item -LiteralPath (Join-Path $staging $name) -Destination $dir
+      } finally {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
+    if (Get-Item -LiteralPath $nodeCurrent -Force -ErrorAction SilentlyContinue) { [System.IO.Directory]::Delete($nodeCurrent) }
+    New-Item -ItemType Junction -Path $nodeCurrent -Target $dir | Out-Null
+    Write-Host "  Node.js $v ready"
+    return (Join-Path $nodeCurrent 'node.exe')
   }
-  # Single quotes inside: Windows PowerShell 5.1 passes embedded double quotes to native programs unescaped.
-  $nodeMajor = [int](& $node -p "process.versions.node.split('.')[0]")
-  if ($nodeMajor -lt 22) {
-    Fail "Node.js $(& $node -v) is too old, the cockpit needs version 22 or newer. Get the LTS installer from https://nodejs.org."
-  }
-  # npm.cmd, not npm: npm.ps1 may be blocked by the execution policy.
-  $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
-  if (-not $npm) { Fail 'npm is missing (it comes with Node.js). Reinstall Node.js from https://nodejs.org.' }
 
   # Installed and registered: nothing to do. Installed but not registered (an
   # earlier run failed at the autostart, or it was uninstalled and the brain
@@ -60,6 +101,12 @@ function Install-EmlCockpit {
     Write-Host "Open it: $url"
     return
   }
+  $node = Install-Node
+  # npm's own script with that node: npm.cmd needs a shell, npm.ps1 may be blocked by the execution policy.
+  $npmCli = Join-Path (Split-Path $node) 'node_modules\npm\bin\npm-cli.js'
+  # For this process only: npm's install scripts (node-pty's) start `node` from PATH.
+  $env:PATH = (Split-Path $node) + ';' + $env:PATH
+
   if (-not $registered -and (PortTaken)) {
     Fail "port $port is already in use by another program (perhaps a cockpit started from a checkout). Stop it, then run the command again."
   }
@@ -118,7 +165,7 @@ function Install-EmlCockpit {
       Set-Content -LiteralPath (Join-Path $staging 'package.json') -Value '{ "name": "eml-cockpit-app", "private": true }' -Encoding ASCII
       Push-Location $staging
       try {
-        & $npm install --no-fund --no-audit --omit=dev --loglevel=error ".\tarballs\engramprotocol-mcp-server-$v.tgz" ".\tarballs\eml-cockpit-$v.tgz"
+        & $node $npmCli install --no-fund --no-audit --omit=dev --loglevel=error ".\tarballs\engramprotocol-mcp-server-$v.tgz" ".\tarballs\eml-cockpit-$v.tgz"
         if ($LASTEXITCODE -ne 0) { Fail 'npm install failed (see the messages above).' }
       } finally { Pop-Location }
 

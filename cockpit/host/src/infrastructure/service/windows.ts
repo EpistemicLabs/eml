@@ -44,6 +44,9 @@ export function supervisorScript(spec: AutostartSpec, node: string, pidFile: str
   return [
     '# EML Cockpit autostart supervisor, written by `eml-cockpit service install`.',
     ...env.map(([k, v]) => `$env:${k} = ${psQuote(v)}`),
+    // The node this host runs on (on Windows the cockpit's own, install.ps1) is
+    // first on PATH: the brain MCP server and the sessions start \`node\` from it.
+    `$env:PATH = ${psQuote(path.win32.dirname(node) + path.win32.delimiter)} + $env:PATH`,
     `Set-Content -LiteralPath ${psQuote(pidFile)} -Value $PID`,
     `Set-Location -LiteralPath ${psQuote(spec.root)}`,
     'while ($true) {',

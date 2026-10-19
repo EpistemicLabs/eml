@@ -24,6 +24,7 @@ describe('Windows autostart supervisor', () => {
     expect(script).toContain(`$env:COCKPIT_PORT = '4317'`)
     expect(script).toContain(`$env:COCKPIT_LOG_FILE = 'C:\\Users\\Jane O''Neil\\.eml-cockpit\\host.log'`)
     expect(script).toContain(`$env:COCKPIT_SERVICE = '1'`)
+    expect(script).toContain(`$env:PATH = 'C:\\Program Files\\nodejs;' + $env:PATH`)
   })
 
   it('starts the host again after every exit, sooner after a clean one', () => {
