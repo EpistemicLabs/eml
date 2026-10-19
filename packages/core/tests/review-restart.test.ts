@@ -50,10 +50,41 @@ describe('review cycle on update', () => {
     expect(labels(r.id)).toContain('review')
   })
 
-  it('keeps an explicit review_due_at from the patch', () => {
+  it('keeps an explicit review_due_at from the patch, and still clears the review label', () => {
     const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: '2030-05-05T00:00:00.000Z' } })
     expect(due(r.id)).toBe('2030-05-05T00:00:00.000Z')
+    expect(labels(r.id)).not.toContain('review')
+  })
+
+  it('treats review_due_at: null in a substantive patch as not given: the cycle restarts', () => {
+    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    makeDue(r.id)
+    eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: null } })
+    expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now() + 80 * 86400_000)
+    expect(labels(r.id)).not.toContain('review')
+  })
+
+  it('uses the type default: decision 60 days, profile 180 days; a title change restarts too', () => {
+    const days = (id: string) => Math.round((Date.parse(due(id)) - Date.now()) / 86400_000)
+    const d = eml.engrams.store({ type: 'decision', scope: 'global', title: 'd', content: 'we chose X', properties: { rationale: 'r', alternatives: ['Y'] } })
+    makeDue(d.id)
+    eml.engrams.update(d.id, { content: 'we chose X, again' })
+    expect(days(d.id)).toBe(60)
+    const p = eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'p', content: 'a' })
+    makeDue(p.id)
+    eml.engrams.update(p.id, { title: 'p2' })
+    expect(days(p.id)).toBe(180)
+  })
+
+  it('does not restart when the update also takes the entry out of active, nor on a status-only reactivation', () => {
+    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    makeDue(r.id)
+    eml.engrams.update(r.id, { content: 'do Z', status: 'superseded' })
+    expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')
+    eml.engrams.update(r.id, { status: 'active' })
+    expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')
   })
 
   it('leaves types without a review date alone', () => {

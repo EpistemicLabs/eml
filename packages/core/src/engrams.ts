@@ -1070,14 +1070,16 @@ export class EngramStore {
     // A substantive edit of an active decision/rule/profile is a review: its
     // cycle starts over (review_due_at = now + the type's default, `review`
     // label cleared). Status-only, significance, tag and subject changes are
-    // not; an explicit review_due_at in the patch wins.
+    // not; an explicit review_due_at in the patch wins over the default (the
+    // label is cleared all the same); null there counts as not given.
     const reviewDays = TYPE_REVIEW_DEFAULTS[newType as keyof typeof TYPE_REVIEW_DEFAULTS]
     const substantive = (partial.content !== undefined && partial.content !== existing.content)
       || (partial.title !== undefined && partial.title !== existing.title)
       || (partial.scope !== undefined && partial.scope !== existing.scope)
       || (partial.properties !== undefined && Object.keys(partial.properties).some(k => k !== 'review_due_at'))
-    const reviewRestart = reviewDays !== undefined && newStatus === 'active' && substantive
-      && (partial.properties as Record<string, unknown> | undefined)?.review_due_at === undefined
+    const reviewed = reviewDays !== undefined && newStatus === 'active' && substantive
+    const explicitDue = (partial.properties as Record<string, unknown> | undefined)?.review_due_at
+    const reviewRestart = reviewed && (explicitDue === undefined || explicitDue === null)
     if (reviewRestart) {
       newProps = { ...(newProps ?? {}), review_due_at: new Date(Date.now() + reviewDays * 86400_000).toISOString() }
     }
@@ -1184,8 +1186,8 @@ export class EngramStore {
     // expired) means the engram no longer needs review — clear any `review` label
     // the sweep stamped. Add-only sweep never does this itself.
     // v0.15: for a task ANY movement clears it (the label means "no movement").
-    // A substantive edit restarts the review cycle (above), so it clears it too.
-    if (isTask || reviewRestart || (partial.status !== undefined && newStatus !== 'active')) this.stripReviewLabel(id)
+    // A substantive edit is a review (above), so it clears it too.
+    if (isTask || reviewed || (partial.status !== undefined && newStatus !== 'active')) this.stripReviewLabel(id)
 
     const updated = this.getRaw(id)
     if (!updated) return updated
