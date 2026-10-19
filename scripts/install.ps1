@@ -104,6 +104,8 @@ function Install-EmlCockpit {
   $node = Install-Node
   # npm's own script with that node: npm.cmd needs a shell, npm.ps1 may be blocked by the execution policy.
   $npmCli = Join-Path (Split-Path $node) 'node_modules\npm\bin\npm-cli.js'
+  # For this process only: npm's install scripts (node-pty's) start `node` from PATH.
+  $env:PATH = (Split-Path $node) + ';' + $env:PATH
 
   if (-not $registered -and (PortTaken)) {
     Fail "port $port is already in use by another program (perhaps a cockpit started from a checkout). Stop it, then run the command again."
