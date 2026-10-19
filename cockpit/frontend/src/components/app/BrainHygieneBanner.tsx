@@ -4,7 +4,7 @@
 // the session in the space's "Brain hygiene" folder; Not now counts as
 // offered too. Both are recorded by the host, so the strip stays away until
 // the next schema or the next week.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
@@ -26,11 +26,17 @@ export default function BrainHygieneBanner() {
   const [offer, setOffer] = useState<HygieneOffer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only the latest request may set the offer: after a space switch, an answer
+  // for the previous space arrives late and is dropped.
+  const latest = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++latest.current;
     try {
       const res = await fetch('/api/brain-hygiene', { cache: 'no-store' });
-      if (res.ok) setOffer(((await res.json()) as { offer: HygieneOffer | null }).offer);
+      if (!res.ok) return;
+      const body = (await res.json()) as { offer: HygieneOffer | null };
+      if (request === latest.current) setOffer(body.offer);
     } catch { /* host unreachable: keep the last state */ }
   }, []);
 

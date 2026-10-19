@@ -102,7 +102,7 @@ describe('brain hygiene (cockpit offer)', () => {
       const { spawns, hygiene } = make(report(2, 1))
       expect(await hygiene.start(space)).toEqual({ ok: true, findings: 3 })
 
-      const dir = join(home, 'brain-hygiene')
+      const dir = join(home, 'brain-hygiene', 'brain-1')
       const file = JSON.parse(readFileSync(join(dir, 'findings.json'), 'utf8'))
       expect(file).toEqual({
         space: 'Main', schema: 18, generated_at: NOW.toISOString(),
@@ -128,6 +128,16 @@ describe('brain hygiene (cockpit offer)', () => {
       expect(spawns.list()).toHaveLength(1)
     })
 
+    it('names the brain schema in findings.json also when only reviews are offered', async () => {
+      writeFileSync(join(home, 'config'), JSON.stringify({ token: 't', hygiene: { 'brain-1': { offeredSchema: 18 } } }))
+      const { spawns, hygiene } = make(report(2, 3))
+      expect(await hygiene.start(space)).toEqual({ ok: true, findings: 3 })
+      const file = JSON.parse(readFileSync(join(home, 'brain-hygiene', 'brain-1', 'findings.json'), 'utf8'))
+      expect(file.schema).toBe(18)
+      expect(file.checks.map((c: { id: string }) => c.id)).toEqual(['review-due'])
+      expect(spawns.list()[0].prompt).toMatch(/: review-due 3\.$/)
+    })
+
     it('two Starts at once open one session', async () => {
       const { spawns, hygiene } = make(report(2, 0))
       const results = await Promise.all([hygiene.start(space), hygiene.start(space)])
@@ -136,7 +146,7 @@ describe('brain hygiene (cockpit offer)', () => {
       expect(spawns.list()).toHaveLength(1)
     })
 
-    it("a further space gets its own folder and its spaceId on the request", async () => {
+    it("a further space gets its own folder, beside the main space's, and its spaceId on the request", async () => {
       const other = { id: 'brain-2', name: 'Privat', main: false, url: 'http://y', token: 'u', registry }
       const { spawns, hygiene } = make(report(1, 0))
       await hygiene.start(other)

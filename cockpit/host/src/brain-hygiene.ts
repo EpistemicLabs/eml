@@ -37,6 +37,8 @@ export interface HygieneCheckResult {
 export interface HygieneReport { schema: number; checks: HygieneCheckResult[]; total: number }
 
 export interface HygieneOffer {
+  /** The brain schema the report ran against. */
+  schema: number
   /** Why it is offered, one clause each, for the banner. */
   reasons: string[]
   /** The checks with findings the session gets. */
@@ -72,7 +74,7 @@ export function hygieneOffer(report: HygieneReport, state: HygieneState, now: Da
     next.reviewsOfferedAt = now.toISOString()
   }
 
-  return reasons.length ? { reasons, checks, next } : null
+  return reasons.length ? { schema: report.schema, reasons, checks, next } : null
 }
 
 /** The session's first message: the skill, the file, the count per check. */
@@ -81,9 +83,12 @@ export function hygienePrompt(offer: HygieneOffer): string {
   return `Use the brain-hygiene skill. The cockpit wrote this brain's hygiene findings to ${FINDINGS_FILE} in this folder: ${counts}.`
 }
 
-/** The space's "Brain hygiene" folder: one per space, the main space's at the top. */
+/**
+ * The space's "Brain hygiene" folder: one per brain, side by side, so a
+ * session in one space's folder cannot read another brain's findings.
+ */
 export function hygieneDir(space: BrainSpace): string {
-  return space.main ? HYGIENE_DIR : path.join(HYGIENE_DIR, space.id)
+  return path.join(HYGIENE_DIR, space.id)
 }
 
 export interface BrainHygieneDeps {
@@ -133,18 +138,25 @@ export class BrainHygiene {
     return offer && { space: space.name, reasons: offer.reasons, findings: count(offer.checks) }
   }
 
-  /** Start: findings.json into the space's folder, a session queued there, the offer recorded. */
+  /**
+   * Start: findings.json into the space's folder, the offer recorded, then the
+   * session queued there (a failed config write queues nothing).
+   */
   async start(space: BrainSpace): Promise<HygieneActResult> {
-    return this.once(space, async (offer) => {
+    return this.once(space, (offer) => {
       const dir = hygieneDir(space)
       fs.mkdirSync(dir, { recursive: true })
       const file = {
         space: space.name,
-        schema: offer.next.offeredSchema ?? null,
+        schema: offer.schema,
         generated_at: this.now().toISOString(),
         checks: offer.checks,
       }
-      fs.writeFileSync(path.join(dir, FINDINGS_FILE), JSON.stringify(file, null, 2) + '\n', { mode: 0o600 })
+      const target = path.join(dir, FINDINGS_FILE)
+      fs.writeFileSync(target, JSON.stringify(file, null, 2) + '\n', { mode: 0o600 })
+      fs.chmodSync(target, 0o600)
+    }, (offer) => {
+      const dir = hygieneDir(space)
       this.deps.spawns.add({
         projectId: space.registry.create(dir, 'Brain hygiene').project.projectId,
         prompt: hygienePrompt(offer),
@@ -158,17 +170,19 @@ export class BrainHygiene {
 
   /** Not now: the offer is recorded, nothing opens. */
   async dismiss(space: BrainSpace): Promise<HygieneActResult> {
-    return this.once(space, async () => {})
+    return this.once(space, () => {}, () => {})
   }
 
-  private async once(space: BrainSpace, act: (offer: HygieneOffer) => Promise<void>): Promise<HygieneActResult> {
+  /** One act per space at a time: prepare, record the offer, then follow up. */
+  private async once(space: BrainSpace, prepare: (offer: HygieneOffer) => void, then: (offer: HygieneOffer) => void): Promise<HygieneActResult> {
     if (this.busy.has(space.id)) return { ok: false, reason: 'pending' }
     this.busy.add(space.id)
     try {
       const offer = await this.offer(space)
       if (!offer) return { ok: false, reason: 'nothing-due' }
-      await act(offer)
+      prepare(offer)
       await updateCockpitConfig((config) => config && { ...config, hygiene: { ...config.hygiene, [space.id]: offer.next } })
+      then(offer)
       return { ok: true, findings: count(offer.checks) }
     } finally {
       this.busy.delete(space.id)
