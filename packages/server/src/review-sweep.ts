@@ -14,6 +14,7 @@ const SWEEP_MIN_SCHEMA = CURRENT_BRAIN_SCHEMA_VERSION
  * The ONLY writer of the `review` label in the MVP. Iterates every registered
  * brain and stamps `review` on active decision/rule/profile whose review_due_at
  * has passed (EngramStore.stampDueReviewLabels — pure date-compare, no LLM).
+ * v0.19: also expires active engrams whose expires_at has passed (expireDue).
  *
  * Brain enumeration mirrors runForwardMigrations: read the control-plane `brains`
  * table, resolve each brain_file, open a short-lived connection (fileMustExist),
@@ -28,6 +29,7 @@ export interface ReviewSweepReport {
   totalBrains: number
   sweptCount: number    // brains successfully opened + stamped
   stampedCount: number  // total newly-stamped `review` labels across all brains
+  expiredCount: number  // v0.19: engrams set to expired (expires_at passed)
   failedCount: number
   failures: Array<{ brainId: string, brainName: string, error: string }>
 }
@@ -51,6 +53,7 @@ export function runReviewSweep(opts: RunReviewSweepOptions): ReviewSweepReport {
 
   let sweptCount = 0
   let stampedCount = 0
+  let expiredCount = 0
   const failures: ReviewSweepReport['failures'] = []
 
   for (const brain of brains) {
@@ -64,6 +67,8 @@ export function runReviewSweep(opts: RunReviewSweepOptions): ReviewSweepReport {
       db.pragma('journal_mode = WAL')
       db.pragma('foreign_keys = ON')
       const eml = EML.fromConnection(db, brain.name)
+      // v0.19 (S12): expiry first, so an expired decision is not flagged for review.
+      expiredCount += eml.engrams.expireDue(opts.now)
       stampedCount += eml.engrams.stampDueReviewLabels(opts.now)
       sweptCount++
     } catch (err) {
@@ -77,6 +82,7 @@ export function runReviewSweep(opts: RunReviewSweepOptions): ReviewSweepReport {
     totalBrains: brains.length,
     sweptCount,
     stampedCount,
+    expiredCount,
     failedCount: failures.length,
     failures,
   }
@@ -92,10 +98,10 @@ export function startReviewSweepScheduler(opts: RunReviewSweepOptions & { interv
   const tick = () => {
     try {
       const report = runReviewSweep(opts)
-      if (report.stampedCount > 0 || report.failedCount > 0) {
+      if (report.stampedCount > 0 || report.expiredCount > 0 || report.failedCount > 0) {
         console.log(
           `[review-sweep] ${report.sweptCount}/${report.totalBrains} brains, ` +
-          `${report.stampedCount} newly flagged, ${report.failedCount} failed`,
+          `${report.stampedCount} newly flagged, ${report.expiredCount} expired, ${report.failedCount} failed`,
         )
       }
       for (const f of report.failures) {
