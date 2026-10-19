@@ -1,6 +1,6 @@
 # Proposal: the cockpit on native Windows
 
-Status: proposed. Step 1 (an informative Windows CI job) ships with this proposal.
+Status: in progress. Step 1 (an informative Windows CI job) ships with this proposal.
 
 ## Why
 
@@ -93,6 +93,27 @@ committing.
 | 6 | **Install and run**: `install.ps1` with the same version layout, autostart via Task Scheduler, updater (`npm.cmd`, junction switch, restart), folder browser, shortcuts. | A user installs and updates without a terminal. |
 
 Until step 6 a Windows user starts the cockpit by hand.
+
+## Architecture
+
+The host already has a port for the agent CLIs (`domain/agent-provider.ts`, adapters under
+`infrastructure/providers/`). Platform differences get the same shape, instead of `process.platform`
+checks spread over the code:
+
+- **A platform port** (`domain/platform.ts`) with one adapter per OS under
+  `infrastructure/platform/`. It holds only what really differs: activating a version (symlink or
+  junction), executable names, the session env allowlist, opening a URL and revealing a file,
+  autostart, restart after an update, stopping a process, and file modes. The adapter is picked once
+  at startup; everything else takes the port.
+- **Hooks as data.** A provider declares its hooks (event, node entry, arguments); one renderer turns
+  them into the command for the OS. No shell strings built in three places, and the rendering is
+  testable on its own.
+- **A guard rail**: a lint rule allows `process.platform` only in `infrastructure/platform/`.
+- **Tests against a fake platform**, so the Windows cases (paths in the Codex config, `.exe`, env)
+  also run on macOS, and no test needs a skip-on-Windows switch.
+
+No big-bang move of the flat top-level modules: what the Windows work touches moves to its layer,
+the rest stays where it is.
 
 ## Open questions
 
