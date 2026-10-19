@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { AgentProvider, SessionSpace } from '../src/domain/agent-provider.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
@@ -39,7 +39,7 @@ describe('Claude Code provider', () => {
     ])
     expect(launch.env.CLAUDE_CONFIG_DIR).toBe(configDir)
     expect(launch.env.DISABLE_AUTOUPDATER).toBe('1')
-    expect(launch.env.PATH.split(':')[0]).toBe(join(home, 'claude', 'bin'))
+    expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'claude', 'bin'))
     expect(launch.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN')
     expect(launch.env.CLAUDE_CODE_NO_FLICKER).toBe('1')
     // The brain reaches Claude Code through the space's mcp.json, not the session env.

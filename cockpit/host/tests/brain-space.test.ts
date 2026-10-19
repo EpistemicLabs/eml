@@ -11,6 +11,12 @@ const TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = 'hooktoken0123456789'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
 
+
+// Windows has no POSIX modes (a file there reads 0o666); the user profile's ACL keeps it private.
+const expectOwnerOnly = (file: string) => {
+  if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
+}
+
 describe('brain spaces', () => {
   let mods: {
     writeIsolationFiles: typeof import('../src/infrastructure/providers/claude/isolation.js')['writeIsolationFiles']
@@ -68,7 +74,7 @@ describe('brain spaces', () => {
       permissions: { allow: ['Bash(git status)'] },
       hooks: { Stop: [{ hooks: [ownCommand] }, { matcher: 'x', hooks: [ownCommand] }] },
     })
-    expect(statSync(settings).mode & 0o777).toBe(0o600)
+    expectOwnerOnly(settings)
 
     // A file holding nothing but the host's own writes goes entirely.
     writeFileSync(settings, JSON.stringify({ skipDangerousModePermissionPrompt: true, hooks: { SessionStart: [{ hooks: [emlCommand('session-start')] }] } }))
@@ -93,7 +99,7 @@ describe('brain spaces', () => {
     expect(space.files.mcpConfig).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'mcp.json'))
     expect(space.files.settings).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'settings.json'))
     expect(space.files.emlConfig).toBe(join(mods.EML_HOOK_DIR, 'spaces', SPACE_ID, 'config'))
-    for (const file of Object.values(space.files)) expect(statSync(file).mode & 0o777).toBe(0o600)
+    for (const file of Object.values(space.files)) expectOwnerOnly(file)
 
     const mcp = JSON.parse(readFileSync(space.files.mcpConfig, 'utf8'))
     expect(mcp.mcpServers.eml_brain.env).toEqual({ EML_API_URL: 'http://127.0.0.1:60000', EML_API_TOKEN: TOKEN })

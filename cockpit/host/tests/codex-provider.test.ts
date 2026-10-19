@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { AgentProvider, SessionSpace } from '../src/domain/agent-provider.js'
 import { hasTable, removeTables, setTopLevelKey, tableKey, tomlString, upsertTables } from '../src/infrastructure/providers/codex/toml.js'
 
@@ -142,7 +142,7 @@ describe('Codex provider', () => {
   it('delivers the EML skills and the cockpit\'s own, and lets the sandbox write where those need to', () => {
     const skills = readdirSync(join(codexHome, 'skills')).sort()
     expect(skills).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'spawn-session', 'task-run'])
-    expect(config()).toContain(`[sandbox_workspace_write]\nwritable_roots = ["${join(home, 'spawn-inbox')}", "${join(home, 'tasks')}"]`)
+    expect(config()).toContain(`[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(join(home, 'spawn-inbox'))}, ${JSON.stringify(join(home, 'tasks'))}]`)
   })
 
   it('trusts a folder once and keeps a decision that is already there', () => {
@@ -165,7 +165,7 @@ describe('Codex provider', () => {
       '--config', 'approvals_reviewer="auto_review"', 'hello',
     ])
     expect(launch.env.CODEX_HOME).toBe(codexHome)
-    expect(launch.env.PATH.split(':')[0]).toBe(join(home, 'codex', 'bin'))
+    expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'codex', 'bin'))
     expect(launch.args.join(' ')).not.toContain('c-1')
     expect(launch.args.join(' ')).not.toContain(BRAIN_TOKEN)
   })

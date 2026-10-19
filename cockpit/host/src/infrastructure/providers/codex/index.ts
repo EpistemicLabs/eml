@@ -229,7 +229,7 @@ class CodexProvider implements AgentProvider {
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
         // First on the session's PATH. Codex runs shell commands in a login shell,
         // which builds its own PATH — a `codex` typed there can still be the user's.
-        PATH: [codexRuntime.binDir, process.env.PATH].filter(Boolean).join(':'),
+        PATH: [codexRuntime.binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
       },
     }
   }
