@@ -1,5 +1,5 @@
 import type * as http from 'node:http'
-import * as os from 'node:os'
+import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
 import { projectIdForBrain } from './project-registry.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
@@ -39,9 +39,8 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
  */
 async function resolveProject(space: BrainSpace, input: string): Promise<string | null> {
   if (space.registry.get(input)) return input
-  if (input.startsWith('/') || input.startsWith('~')) {
-    const expanded = input.startsWith('~') ? os.homedir() + input.slice(1) : input
-    return space.registry.getByPath(expanded)?.projectId ?? null
+  if (path.isAbsolute(input) || input === '~' || /^~[\\/]/.test(input)) {
+    return space.registry.getByPath(input)?.projectId ?? null
   }
   const bare = input.startsWith('bp-') ? input.slice(3) : input
   const brain = await space.projects.list().catch(() => [])

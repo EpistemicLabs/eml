@@ -5,7 +5,7 @@ You don't need a GitHub account, and you don't need to download this repository.
 
 **What you need**
 
-- A Mac (the installer is macOS only for now)
+- A Mac. On Windows, see [Installing on Windows (beta)](#installing-on-windows-beta) at the end.
 - A Claude subscription. Your agent runs on it. You sign in on the first start.
 
 ## 1. Install Node.js
@@ -73,7 +73,15 @@ Everything stays on your computer. Your brain (what your agent learns) lives in 
 | The browser says the page can't be reached | Wait a few seconds and reload. If it stays like that, log out of your Mac and back in. |
 
 Still stuck? [Open an issue](https://github.com/EpistemicLabs/eml/issues) and paste what the Terminal
-shows. Leave out anything personal.
+shows. Leave out anything personal. The cockpit can add what we need to look into it, with your folders,
+project names and keys already taken out — paste its output into the issue too:
+
+```bash
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js diagnose
+```
+
+If the cockpit runs, it is easier from inside a session: type `/report-issue` and your agent writes the
+issue with you, diagnostics included.
 
 ## Uninstalling
 
@@ -89,3 +97,33 @@ To remove the brain too, delete that folder. **This deletes everything your agen
 be undone.** If you might want it later, back it up first: Settings › Brain › **Back up now**, then copy
 the backup out of `~/.eml-cockpit/backups` (for example into your Documents folder). The backups live
 inside the folder you are about to delete.
+
+## Installing on Windows (beta)
+
+The cockpit runs on Windows 10 and 11 too. It is new there: it is tested automatically on every change,
+but few people have used it yet. If something looks wrong, tell us: inside a session, type
+`/report-issue`.
+
+**What you need:** Node.js 22 or newer from [nodejs.org](https://nodejs.org) (the **LTS** installer), and
+a Claude subscription. Recommended: [Git for Windows](https://git-scm.com/download/win) (default options) —
+Claude Code runs its shell commands in Git Bash when it is there, else in PowerShell. No admin rights
+needed.
+
+1. Install Node.js (and Git for Windows) as above.
+2. Open **PowerShell**: press the **Windows key**, type **PowerShell** and press **Enter**.
+3. Paste this line (right-click pastes) and press **Enter**:
+
+   ```powershell
+   irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex
+   ```
+
+It checks the files against their published checksums, installs the cockpit into `.eml-cockpit` in your
+user folder and opens it at [http://127.0.0.1:4317](http://127.0.0.1:4317). From then on it starts on its
+own when you log in (a PowerShell window may flash up for a moment) and updates itself through the banner,
+as on a Mac.
+
+To uninstall, paste this into PowerShell. Your brain stays in `.eml-cockpit`, as on a Mac:
+
+```powershell
+node "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" service uninstall
+```

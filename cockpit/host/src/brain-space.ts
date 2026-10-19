@@ -58,9 +58,8 @@ export interface OpenSpaceOptions {
   main: boolean
   url: string
   token: string
-  /** POST /api/hook of this boot + the curl config carrying its token (isolation.ts). */
-  hookUrl: string
-  curlConfig: string
+  /** The turn-state hook's config of this boot (isolation.ts). */
+  turnHookConfig: string
 }
 
 /** Where a non-main space keeps its local state. */
@@ -68,7 +67,7 @@ const spaceStateDir = (spaceId: string) => path.join(COCKPIT_HOME, 'spaces', spa
 
 /** Write the space's session files and open its clients. */
 export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
-  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.hookUrl, opts.curlConfig)
+  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig)
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main

@@ -132,7 +132,8 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
 
   afterAll(async () => {
     try { await mcpClient?.close() } catch { /* best-effort */ }
-    if (serverProc && !serverProc.killed) serverProc.kill('SIGTERM')
+    // Wait for the exit: Windows can't delete the brain files while the server holds them open.
+    if (serverProc && serverProc.exitCode === null) await new Promise((resolve) => { serverProc.once('exit', resolve); serverProc.kill('SIGTERM') })
     rmSync(tmpDir, { recursive: true, force: true })
   })
 

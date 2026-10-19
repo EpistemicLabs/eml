@@ -25,6 +25,8 @@ export const CORE_INDEX = path.join(HOST_ROOT, 'dist', 'core.cjs')      // core 
 export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).
 export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
+// CLI a session runs for the cockpit's redacted diagnostics (diagnose-cli.ts, skill report-issue).
+export const DIAGNOSE_CLI_JS = path.join(HOST_ROOT, 'dist', 'diagnose-cli.js')
 // Skills that only make sense inside the cockpit (spawn-session).
 export const COCKPIT_SKILLS_DIR = path.join(HOST_ROOT, 'skills')
 const MCP_ROOT = path.dirname(require.resolve('@engramprotocol/mcp-server/package.json'))
@@ -83,10 +85,12 @@ export function stableAppPath(file: string): string {
   return path.join(APP_DIR, 'current', ...rest)
 }
 
-// What the EML hook commands name (shared.ts, emlHookEntry): the mcp-server CLI
+// What the EML hook commands name (shared.ts, emlHookCommand): the mcp-server CLI
 // through app/current, and node through a link the host keeps at <home>/bin/node
 // (ensureHookNode) — both stay the same text across cockpit and node updates.
 export const HOOK_MCP_CLI_JS = stableAppPath(MCP_CLI_JS)
+// The turn-state hook (turn-hook.ts), named the same way.
+export const HOOK_TURN_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'turn-hook.js'))
 export const HOOK_NODE = path.join(COCKPIT_HOME, 'bin', 'node')
 export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } chmod 600 (local loopback token)
 // Optional setup-token (Settings › Models › Advanced), injected per session only
@@ -103,9 +107,9 @@ export const spaceConfigDir = (spaceId: string) => path.join(CONFIG_DIR, 'spaces
 export const spaceEmlDir = (spaceId: string) => path.join(EML_HOOK_DIR, 'spaces', spaceId)
 // Pre-spaces locations of those files (one brain per home); removed on boot.
 export const LEGACY_EML_HOOK_CONFIG = path.join(EML_HOOK_DIR, 'config')
-// The curl config (-K) carrying the per-boot hook token for Claude Code's turn-state
-// hooks — written by the Claude provider, read into every space's settings.json.
-export const CLAUDE_HOOK_CURL_CONFIG = path.join(CONFIG_DIR, 'hook-curl.conf')
+// The turn-state hook's config (URL + per-boot token) for Claude Code — written by
+// the Claude provider, named in every space's settings.json.
+export const CLAUDE_TURN_HOOK_CONFIG = path.join(CONFIG_DIR, 'turn-hook.json')
 // Worker requests as files, for sessions whose sandbox has no network (spawn-inbox.ts).
 export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.

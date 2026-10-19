@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expectOwnerOnly } from './helpers/owner-only.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-hygiene-test-'))
@@ -108,7 +109,7 @@ describe('brain hygiene (cockpit offer)', () => {
         space: 'Main', schema: 18, generated_at: NOW.toISOString(),
         checks: report(2, 1).checks,
       })
-      expect(statSync(join(dir, 'findings.json')).mode & 0o777).toBe(0o600)
+      expectOwnerOnly(join(dir, 'findings.json'))
 
       const requests = spawns.list()
       expect(requests).toHaveLength(1)

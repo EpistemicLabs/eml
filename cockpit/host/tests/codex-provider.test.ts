@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { AgentProvider, SessionSpace } from '../src/domain/agent-provider.js'
 import { hasTable, removeTables, setTopLevelKey, tableKey, tomlString, upsertTables } from '../src/infrastructure/providers/codex/toml.js'
+import { platform } from '../src/infrastructure/platform/index.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-codex-provider-test-'))
@@ -128,21 +129,25 @@ describe('Codex provider', () => {
     expect(Object.keys(JSON.parse(first).hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'PostToolUse', 'Stop'])
     // Codex reads plain output starting with "[" as JSON and cuts long context off — both handled in the hook entry.
     expect(JSON.parse(first).hooks.SessionStart[0].hooks[0]).toMatchObject({ additionalContextLimit: 20000 })
-    expect(JSON.parse(first).hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/hook user-prompt-submit --config "\$EML_HOOK_CONFIG" --json$/)
+    // The EML hooks name no config: they read the space's from the session env (EML_HOOK_CONFIG).
+    // (Quoted words: the PowerShell line on Windows.)
+    expect(JSON.parse(first).hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/ '?hook'? '?user-prompt-submit'? '?--json'?$/)
     // Stop: turn state, then the EML stop hook, which prints JSON itself (no --json).
-    expect(JSON.parse(first).hooks.Stop[1].hooks[0].command).toMatch(/hook stop --config "\$EML_HOOK_CONFIG"$/)
+    expect(JSON.parse(first).hooks.Stop[1].hooks[0].command).toMatch(/ '?hook'? '?stop'?$/)
+    expect(first).not.toContain('--config')
+    expect(JSON.parse(first).hooks.Stop[0].hooks[0]).toMatchObject({ async: true, command: expect.stringContaining('turn-hook.js') })
     provider.prepare({
       hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210',
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
     })
     expect(read()).toBe(first)
-    expect(readFileSync(join(codexHome, 'hook-curl.conf'), 'utf8')).toContain('fedcba9876543210')
+    expect(readFileSync(join(codexHome, 'turn-hook.json'), 'utf8')).toContain('fedcba9876543210')
   })
 
   it('delivers the EML skills and the cockpit\'s own, and lets the sandbox write where those need to', () => {
     const skills = readdirSync(join(codexHome, 'skills')).sort()
     expect(skills).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'spawn-session', 'task-run'])
-    expect(config()).toContain(`[sandbox_workspace_write]\nwritable_roots = ["${join(home, 'spawn-inbox')}", "${join(home, 'tasks')}"]`)
+    expect(config()).toContain(`[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(join(home, 'spawn-inbox'))}, ${JSON.stringify(join(home, 'tasks'))}]`)
   })
 
   it('trusts a folder once and keeps a decision that is already there', () => {
@@ -159,13 +164,13 @@ describe('Codex provider', () => {
 
   it('launches the cockpit\'s own binary in the isolated home, without a daemon, sandboxed with the reviewer', () => {
     const launch = provider.launch({ sessionId: 'c-1', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
-    expect(launch.bin).toBe(join(home, 'codex', 'bin', 'codex'))
+    expect(launch.bin).toBe(platform.linksFiles ? join(home, 'codex', 'bin', 'codex') : join(home, 'codex', 'current', 'bin', 'codex.exe'))
     expect(launch.args).toEqual([
       '--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write',
       '--config', 'approvals_reviewer="auto_review"', 'hello',
     ])
     expect(launch.env.CODEX_HOME).toBe(codexHome)
-    expect(launch.env.PATH.split(':')[0]).toBe(join(home, 'codex', 'bin'))
+    expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'codex', ...(platform.linksFiles ? [] : ['current']), 'bin'))
     expect(launch.args.join(' ')).not.toContain('c-1')
     expect(launch.args.join(' ')).not.toContain(BRAIN_TOKEN)
   })

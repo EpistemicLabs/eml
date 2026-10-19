@@ -19,7 +19,7 @@ import { compactionNote, stopHook, type CompactionInput } from './compaction'
  * JSON, and the reminder starts with "[EML Reminder]". `stop` always prints
  * JSON (a block decision, or nothing): both CLIs read that form for Stop.
  *
- * --config defaults to ~/.eml/config. Logs and the reminder turn counters live
+ * --config defaults to $EML_HOOK_CONFIG, then ~/.eml/config. Logs and the reminder turn counters live
  * next to the config file (<dir>/logs, <dir>/state), so one config dir = one
  * isolated EML client. A hook never fails the session: every path exits 0.
  * stdout reaches the model's context; nothing else is printed there.
@@ -230,7 +230,10 @@ export function formatHookOutput(hook: keyof typeof HOOK_EVENT, output: string, 
 export async function runHook(argv: string[]): Promise<void> {
   const name = argv[0]
   const configIdx = argv.indexOf('--config')
-  const configPath = configIdx >= 0 && argv[configIdx + 1] ? path.resolve(argv[configIdx + 1]) : EML_CONFIG
+  // Without --config: the path in EML_HOOK_CONFIG (a host that writes one
+  // hooks file for many brains sets it per session), else ~/.eml/config.
+  const configFile = configIdx >= 0 ? argv[configIdx + 1] : process.env.EML_HOOK_CONFIG
+  const configPath = configFile ? path.resolve(configFile) : EML_CONFIG
   const ctx = contextFor(configPath)
 
   let input: { session_id?: string; cwd?: string } & CompactionInput = {}

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the release assets for the current version: the eml-cockpit and
 # @engramprotocol/mcp-server tarballs plus SHA256SUMS, in ./release/<version>/,
-# and the one-line installer install.sh (INSTALL.md links it via
-# releases/latest/download/install.sh).
+# and the one-line installers install.sh (macOS) and install.ps1 (Windows),
+# linked via releases/latest/download/<installer>.
 # Attach them to the GitHub release of tag v<version>:
 #   gh release create v<version> release/<version>/* --notes-file <notes>
 # The cockpit's updater downloads the two tarballs and SHA256SUMS by name.
@@ -24,5 +24,6 @@ for f in "eml-cockpit-$VERSION.tgz" "engramprotocol-mcp-server-$VERSION.tgz"; do
   [[ -f "$OUT/$f" ]] || { echo "[pack] missing $f" >&2; exit 1; }
 done
 cp scripts/install.sh "$OUT/install.sh"
+cp scripts/install.ps1 "$OUT/install.ps1"
 (cd "$OUT" && shasum -a 256 "eml-cockpit-$VERSION.tgz" "engramprotocol-mcp-server-$VERSION.tgz" > SHA256SUMS)
 echo "[pack] done:"; ls -la "$OUT"

@@ -78,9 +78,8 @@ export interface HostDeps {
   providers: ProviderRegistry
   /** Per-boot secret the session hooks send (HOOK_TOKEN_HEADER) — POST /api/hook requires it. */
   hookToken: string
-  /** POST /api/hook of this boot + the curl config carrying hookToken — a new space's session files need them. */
-  hookUrl: string
-  curlConfig: string
+  /** The turn-state hook's config of this boot — a new space's session files name it. */
+  turnHookConfig: string
   /** Worker-session requests from sessions (spawn-api.ts). */
   spawns: SpawnQueue
   /** Per-boot secret sessions send with POST /api/spawn. */
@@ -296,7 +295,7 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
     userName: info.users.find((u) => u.id === userId)?.name ?? userId,
   })
   const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, hookUrl: deps.hookUrl, curlConfig: deps.curlConfig,
+    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
   })
   deps.spaces.add(space)
   return { space }
@@ -562,7 +561,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
     }
 
-    // Session hook → turn state (see turn-state.ts). curl from the agent CLI,
+    // Session hook → turn state (see turn-state.ts). turn-hook.ts from the agent CLI,
     // no Origin; the per-boot token in the hook header is the guard.
     if (resource === 'hook' && !id && method === 'POST') {
       if (req.headers[HOOK_TOKEN_HEADER] !== deps.hookToken) {

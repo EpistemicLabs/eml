@@ -7,6 +7,8 @@ import type { IPty } from 'node-pty'
 import type { ITerminalAddon as IHeadlessAddon, Terminal as HeadlessTerminalType } from '@xterm/headless'
 import type { SerializeAddon as SerializeAddonType } from '@xterm/addon-serialize'
 import { ensurePtyHelperExecutable } from './pty-helper.js'
+import { platform } from './infrastructure/platform/index.js'
+import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import type { AgentProvider } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
@@ -185,15 +187,14 @@ const AGENT_ENV_ALLOWLIST = [
 // which Claude Code copies through — reads its UTF-8 input as Mac Roman:
 // "ä" lands in the clipboard as "√§". Without any locale variable the session
 // gets a UTF-8 LANG; one the user set always wins.
-const UTF8_LANG = process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8'
 
-export function baseAgentEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function baseAgentEnv(source: NodeJS.ProcessEnv = process.env, os: Platform = platform): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const key of AGENT_ENV_ALLOWLIST) {
+  for (const key of [...AGENT_ENV_ALLOWLIST, ...os.sessionEnvKeys]) {
     const value = source[key]
     if (value !== undefined) env[key] = value
   }
-  if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = UTF8_LANG
+  if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE && os.fallbackLang) env.LANG = os.fallbackLang
   return env
 }
 
