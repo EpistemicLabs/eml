@@ -6,6 +6,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { AgentRuntime, RuntimeResult, RuntimeState } from '../../domain/agent-provider.js'
 import { platform } from '../platform/index.js'
+import { FS_RETRY, renameWithRetry } from '../../fs-retry.js'
 
 export type { RuntimeResult, RuntimeState }
 
@@ -34,27 +35,6 @@ export type { RuntimeResult, RuntimeState }
  * if the source knows a newer one this home already ran (floorVersion), that
  * one — transcripts written by a newer version are not resumed by an older one.
  */
-
-/**
- * Windows keeps a binary locked for a moment after its process exited (the
- * self-test just ran it; a virus scanner may still be reading it): renaming or
- * deleting it then fails with EBUSY or EPERM. Retried with a backoff, as
- * rimraf and graceful-fs do; elsewhere the first try succeeds.
- */
-const FS_RETRY = { maxRetries: 10, retryDelay: 100 }
-const RETRYABLE = new Set(['EBUSY', 'EPERM', 'EACCES'])
-
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      fs.renameSync(from, to)
-      return
-    } catch (e) {
-      if (attempt >= FS_RETRY.maxRetries || !RETRYABLE.has((e as NodeJS.ErrnoException).code ?? '')) throw e
-      await new Promise((resolve) => setTimeout(resolve, FS_RETRY.retryDelay * (attempt + 1)))
-    }
-  }
-}
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 60 * 1000

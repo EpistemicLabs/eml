@@ -44,6 +44,9 @@ export const win32: Platform = {
     return env
   },
   tarBin: () => path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'),
+  // npm.cmd can't be started without a shell: run npm's own script with this node.
+  npm: () => ({ program: process.execPath, args: [path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')] }),
+  toolDirs: [],
   // Authenticode checks are not wired up yet: the checksum is the check.
   verifyCodeSignature: async () => {},
 }
