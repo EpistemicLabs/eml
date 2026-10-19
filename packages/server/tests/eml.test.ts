@@ -379,7 +379,7 @@ describe('EML v0.2', () => {
   describe('query', () => {
     beforeEach(() => {
       eml.engrams.store(validDecision({ content: 'EML decision', scope: 'project.eml', title: 'EML', significance: 'high' }))
-      eml.engrams.store({ content: 'Workflow rule', type: 'rule', scope: 'global', title: 'workflow', properties: { applies: 'situational' } })
+      eml.engrams.store({ content: 'Workflow rule', type: 'rule', scope: 'global', title: 'workflow', properties: { applies: 'situational', trigger: 'when it applies' } })
       eml.engrams.store({ content: 'BTC metric', type: 'note', scope: 'global', title: 'BTC', significance: 'low', properties: { value: 74200, unit: 'USD' } })
     })
 
@@ -736,72 +736,8 @@ describe('EML v0.2', () => {
   // Tests removed.
 
   // ============================================================
-  // Boot & Recall (query-level tests)
+  // Recall (query-level tests)
   // ============================================================
-  describe('boot tag filtering', () => {
-    it('filters engrams by boot tag for specific agent', () => {
-      eml.engrams.store({ content: 'Assistant identity', type: 'profile', scope: 'global', properties: { boot: ['assistant'] } })
-      eml.engrams.store({ content: 'Global rule', type: 'rule', scope: 'global', properties: { applies: 'situational', boot: ['*'] } })
-      eml.engrams.store({ content: 'Scout only', type: 'profile', scope: 'global', properties: { boot: ['scout-alpha'] } })
-      eml.engrams.store(validDecision({ content: 'No boot tag', scope: 'global' }))
-
-      const all = eml.engrams.query({ limit: 100 })
-      const assistantBoots = all.filter(c => {
-        if (!c.properties || !c.properties.boot) return false
-        const bootArr = Array.isArray(c.properties.boot) ? c.properties.boot : [c.properties.boot]
-        return bootArr.includes('assistant') || bootArr.includes('*')
-      })
-
-      expect(assistantBoots).toHaveLength(2)
-      expect(assistantBoots.map(c => c.content).sort()).toEqual(['Assistant identity', 'Global rule'])
-    })
-
-    it('wildcard boot tag matches all agents', () => {
-      eml.engrams.store({ content: 'Universal rule', type: 'rule', scope: 'global', properties: { applies: 'situational', boot: ['*'] } })
-
-      const all = eml.engrams.query({ limit: 100 })
-      const scoutBoots = all.filter(c => {
-        if (!c.properties || !c.properties.boot) return false
-        const bootArr = Array.isArray(c.properties.boot) ? c.properties.boot : [c.properties.boot]
-        return bootArr.includes('scout-alpha') || bootArr.includes('*')
-      })
-
-      expect(scoutBoots).toHaveLength(1)
-      expect(scoutBoots[0].content).toBe('Universal rule')
-    })
-
-    it('multi-agent boot tag works', () => {
-      eml.engrams.store({ content: 'Shared engram', type: 'rule', scope: 'global', properties: { applies: 'situational', boot: ['assistant', 'scout-alpha'] } })
-
-      const all = eml.engrams.query({ limit: 100 })
-      const filterFor = (agentId: string) => all.filter(c => {
-        if (!c.properties || !c.properties.boot) return false
-        const bootArr = Array.isArray(c.properties.boot) ? c.properties.boot : [c.properties.boot]
-        return bootArr.includes(agentId) || bootArr.includes('*')
-      })
-
-      expect(filterFor('assistant')).toHaveLength(1)
-      expect(filterFor('scout-alpha')).toHaveLength(1)
-      expect(filterFor('scout-beta')).toHaveLength(0)
-    })
-
-    it('engrams without boot tag are excluded', () => {
-      eml.engrams.store({ content: 'Has boot', type: 'profile', scope: 'global', properties: { boot: ['assistant'] } })
-      eml.engrams.store({ content: 'No boot', type: 'profile', scope: 'global', properties: {} })
-      eml.engrams.store(validDecision({ content: 'Null props', scope: 'global' }))
-
-      const all = eml.engrams.query({ limit: 100 })
-      const boots = all.filter(c => {
-        if (!c.properties || !c.properties.boot) return false
-        const bootArr = Array.isArray(c.properties.boot) ? c.properties.boot : [c.properties.boot]
-        return bootArr.includes('assistant') || bootArr.includes('*')
-      })
-
-      expect(boots).toHaveLength(1)
-      expect(boots[0].content).toBe('Has boot')
-    })
-  })
-
   describe('recall (FTS search)', () => {
     it('finds engrams by content search', () => {
       eml.engrams.store({ content: 'Turso migration is planned for Q2', type: 'status', scope: 'project.eml', properties: { state: 'planned' } })
@@ -1636,7 +1572,7 @@ describe('EML v0.2', () => {
       const t0 = Date.now()
       const e = eml.engrams.store({
         content: 'r', type: 'rule', scope: 'global',
-        properties: { applies: 'situational' },
+        properties: { applies: 'situational', trigger: 'when it applies' },
       })
       const dueMs = new Date((e.properties as any).review_due_at).getTime()
       expect(Math.abs(dueMs - (t0 + 90 * 86400_000))).toBeLessThan(5000)

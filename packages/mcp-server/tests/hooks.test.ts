@@ -22,24 +22,29 @@ describe('hook session-start', () => {
     const f = (async (_url: string, init: RequestInit) => {
       sent = JSON.parse(String(init.body))
       return new Response(JSON.stringify({
-        markdown: 'boot', version: '0.17.8',
-        budget: { limit: 10000, chars: 4, rule_cap: 250, rules_named_only: 2, profiles_named_only: 0, fits: true },
+        markdown: 'boot', version: '0.17.18', legacy: 3,
+        budget: { limit: 10000, chars: 4, situational_title_only: 2, always_title_only: 1, profiles_title_only: 0, left_out: 0, fits: true },
       }), { status: 200 })
     }) as unknown as typeof fetch
     const r = await sessionStart(CFG, '/x', f)
     expect(sent).toEqual({ budget: BOOT_BUDGET_CHARS })
     expect(BOOT_BUDGET_CHARS).toBe(10_000)
     expect(r.output).toBe('boot')
-    expect(r.log).toBe('OK ver=0.17.8 chars=4 trim=rule_cap:250,named_only:2+0')
+    expect(r.log).toBe('OK ver=0.17.18 chars=4 trim=situational:2,always:1 legacy=3')
   })
 
   it('logs trim=none for an untouched boot and flags one over budget', async () => {
-    const untouched = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 4, rule_cap: 600, rules_named_only: 0, profiles_named_only: 0, fits: true } })
+    const untouched = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 4, situational_title_only: 0, always_title_only: 0, profiles_title_only: 0, left_out: 0, fits: true } })
     expect((await sessionStart(CFG, '/x', untouched)).log).toMatch(/trim=none$/)
-    const over = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 12000, rule_cap: 250, rules_named_only: 3, profiles_named_only: 1, fits: false } })
+    const leftOut = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 4, situational_title_only: 0, always_title_only: 60, profiles_title_only: 0, left_out: 120, fits: true } })
+    expect((await sessionStart(CFG, '/x', leftOut)).log).toMatch(/trim=always:60,left_out:120$/)
+    const over = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 12000, situational_title_only: 5, fits: false } })
     expect((await sessionStart(CFG, '/x', over)).log).toMatch(/trim=OVER-BUDGET limit=10000$/)
     const old = fakeFetch(200, { markdown: 'boot' })
     expect((await sessionStart(CFG, '/x', old)).log).toMatch(/trim=unknown$/)
+    // A pre-0.18 server answers with the cut-ladder report.
+    const ladder = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 4, rule_cap: 600, rules_named_only: 0, profiles_named_only: 0, fits: true } })
+    expect((await sessionStart(CFG, '/x', ladder)).log).toMatch(/trim=unknown$/)
   })
 
   it('tells a rejected token apart from an unreachable server', async () => {

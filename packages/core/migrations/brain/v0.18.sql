@@ -1,7 +1,7 @@
 -- ============================================================
--- EML brain schema v0.17 — fresh brain
+-- EML brain schema v0.18 — fresh brain
 --
--- The complete schema a new brain starts with (schema 17). Existing brains
+-- The complete schema a new brain starts with (schema 18). Existing brains
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
 -- ============================================================
@@ -200,6 +200,6 @@ CREATE TABLE _eml_migrations (
 
 INSERT INTO labels (id, name, description, created_at) VALUES ('review', 'review', 'Flagged for re-check: an active decision/rule/profile whose review_due_at has passed. Stamped by the nightly deterministic sweep; cleared on confirmReview / supersede / invalidate.', datetime('now'));
 
-INSERT INTO _eml_migrations (version, name) VALUES (17, '017_v0.17');
+INSERT INTO _eml_migrations (version, name) VALUES (18, '018_v0.18');
 
 COMMIT;

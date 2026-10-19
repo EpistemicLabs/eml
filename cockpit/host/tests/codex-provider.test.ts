@@ -146,7 +146,7 @@ describe('Codex provider', () => {
 
   it('delivers the EML skills and the cockpit\'s own, and lets the sandbox write where those need to', () => {
     const skills = readdirSync(join(codexHome, 'skills')).sort()
-    expect(skills).toEqual(['checkpoint', 'consolidate', 'getting-started', 'report-issue', 'spawn-session', 'task-run'])
+    expect(skills).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'spawn-session', 'task-run'])
     expect(config()).toContain(`[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(join(home, 'spawn-inbox'))}, ${JSON.stringify(join(home, 'tasks'))}]`)
   })
 

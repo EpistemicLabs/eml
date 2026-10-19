@@ -34,6 +34,7 @@ import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
 import AppUpdateBanner from './AppUpdateBanner';
+import BrainHygieneBanner from './BrainHygieneBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { Brain } from 'lucide-react';
 
@@ -296,6 +297,7 @@ function AppContentInner() {
       {/* Outcome of the last brain-schema update, full width under the header. */}
       <UpdateBanner />
       <AppUpdateBanner />
+      <BrainHygieneBanner />
 
       <div className="flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it

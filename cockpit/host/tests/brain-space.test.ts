@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expectOwnerOnly } from './helpers/owner-only.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-brain-space-test-'))
@@ -13,10 +14,6 @@ const HOOK_URL = 'http://127.0.0.1:4318/api/hook'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
 
 
-// Windows has no POSIX modes (a file there reads 0o666); the user profile's ACL keeps it private.
-const expectOwnerOnly = (file: string) => {
-  if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
-}
 
 describe('brain spaces', () => {
   let mods: {
