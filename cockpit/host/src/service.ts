@@ -84,6 +84,12 @@ async function status(service: Autostart): Promise<void> {
   } catch { /* no log yet */ }
 }
 
+/** The autostart's state for diagnostics (diagnostics/diagnose.ts). */
+export async function serviceStatus(): Promise<{ installed: boolean; running: boolean; port: number; responds: boolean }> {
+  const { installed, running } = autostart().status()
+  return { installed, running, port: PORT, responds: await portResponds() }
+}
+
 /** Handle a `service …` invocation; returns true if it consumed the args. */
 export async function runServiceCommand(argv: string[]): Promise<boolean> {
   if (argv[0] !== 'service') return false

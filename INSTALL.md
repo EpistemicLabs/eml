@@ -73,7 +73,15 @@ Everything stays on your computer. Your brain (what your agent learns) lives in 
 | The browser says the page can't be reached | Wait a few seconds and reload. If it stays like that, log out of your Mac and back in. |
 
 Still stuck? [Open an issue](https://github.com/EpistemicLabs/eml/issues) and paste what the Terminal
-shows. Leave out anything personal.
+shows. Leave out anything personal. The cockpit can add what we need to look into it, with your folders,
+project names and keys already taken out — paste its output into the issue too:
+
+```bash
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js diagnose
+```
+
+If the cockpit runs, it is easier from inside a session: type `/report-issue` and your agent writes the
+issue with you, diagnostics included.
 
 ## Uninstalling
 
