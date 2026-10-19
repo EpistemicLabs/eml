@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brainMcpServer } from '../src/infrastructure/providers/claude/isolation.js'
 import { claudeHook, codexHook, shellLine, turnHookCommand, writeTurnHookConfig } from '../src/infrastructure/providers/shared.js'
+import { expectOwnerOnly } from './helpers/owner-only.js'
 
 // Command lines are visible to every local user via ps, so tokens must reach
 // child processes through the environment or an owner-only file instead.
@@ -44,7 +45,7 @@ describe('turn-state hook', () => {
       const file = join(dir, 'turn-hook.json')
       writeTurnHookConfig(file, 'http://127.0.0.1:4317/api/hook', HOOK_TOKEN)
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ url: 'http://127.0.0.1:4317/api/hook', token: HOOK_TOKEN })
-      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
+      expectOwnerOnly(file)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
