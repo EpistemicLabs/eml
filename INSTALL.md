@@ -100,30 +100,39 @@ inside the folder you are about to delete.
 
 ## Installing on Windows (beta)
 
-The cockpit runs on Windows 10 and 11 too. It is new there: it is tested automatically on every change,
-but few people have used it yet. If something looks wrong, tell us: inside a session, type
+The cockpit runs on Windows 10 and 11 (64-bit) too. It is new there: it is tested automatically on every
+change, but few people have used it yet. If something looks wrong, tell us: inside a session, type
 `/report-issue`.
 
-**What you need:** Node.js 22 or newer from [nodejs.org](https://nodejs.org) (the **LTS** installer), and
-a Claude subscription. Recommended: [Git for Windows](https://git-scm.com/download/win) (default options) —
-Claude Code runs its shell commands in Git Bash when it is there, else in PowerShell. No admin rights
-needed.
+**What you need:** a Claude subscription. Nothing else has to be installed first, and no admin rights are
+needed: the installer brings the Node.js the cockpit runs on into the cockpit's own folder. Recommended:
+[Git for Windows](https://git-scm.com/download/win) (default options), because Claude Code runs its shell
+commands in Git Bash when it is there and in PowerShell when it is not.
 
-1. Install Node.js (and Git for Windows) as above.
-2. Open **PowerShell**: press the **Windows key**, type **PowerShell** and press **Enter**.
-3. Paste this line (right-click pastes) and press **Enter**:
+1. Download the installer:
+   **[install-eml-cockpit.cmd](https://github.com/EpistemicLabs/eml/releases/latest/download/install-eml-cockpit.cmd)**
+2. Open the downloaded file. Windows warns that it protected your PC, because the file comes from the
+   internet and is not signed. Click **More info**, then **Run anyway**.
+3. A window shows the installation. When it says **Done**, your browser opens the cockpit at
+   [http://127.0.0.1:4317](http://127.0.0.1:4317). Press a key to close the window.
 
-   ```powershell
-   irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex
-   ```
+The installer checks every file against its published checksum and installs the cockpit and its Node.js
+into `.eml-cockpit` in your user folder. Your own Node.js, if you have one, is not touched. From then on
+the cockpit starts on its own when you log in (a PowerShell window may flash up for a moment) and updates
+itself through the banner, as on a Mac.
 
-It checks the files against their published checksums, installs the cockpit into `.eml-cockpit` in your
-user folder and opens it at [http://127.0.0.1:4317](http://127.0.0.1:4317). From then on it starts on its
-own when you log in (a PowerShell window may flash up for a moment) and updates itself through the banner,
-as on a Mac.
+> **Prefer PowerShell?** The same installer as one line: open PowerShell and paste
+> `irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex`
 
 To uninstall, paste this into PowerShell. Your brain stays in `.eml-cockpit`, as on a Mac:
 
 ```powershell
-node "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" service uninstall
+& "$env:USERPROFILE\.eml-cockpit\node\current\node.exe" "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" service uninstall
+```
+
+If the cockpit does not start, this prints what we need to look into it (folders, names and keys taken
+out). Paste it into an issue:
+
+```powershell
+& "$env:USERPROFILE\.eml-cockpit\node\current\node.exe" "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" diagnose
 ```
