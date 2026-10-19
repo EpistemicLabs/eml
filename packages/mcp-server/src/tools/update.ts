@@ -16,7 +16,10 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
         'stage change → eml_task_entry, not a content patch.\n\n' +
         'Properties merge SHALLOWLY (incoming keys overwrite, others preserved); pass null to ' +
         'delete a key. patch.content REPLACES content wholesale — no partial merge. If unsure of ' +
-        'the current state, eml_get(id) first.',
+        'the current state, eml_get(id) first.\n\n' +
+        'Reviews: changing a decision, rule or profile (content, title, scope or properties) ' +
+        'restarts its review and clears the review flag. If it still holds unchanged, confirm it ' +
+        'with properties.review_note — why it still holds.',
       inputSchema: {
         id: z.string().describe('Engram UUID, from a recall / list / show / get result.'),
         patch: z.object({
