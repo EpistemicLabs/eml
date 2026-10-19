@@ -43,9 +43,8 @@ banner, and stop. Do not look for findings yourself.
    A review that still holds fits one line: `<#>. [type] title — confirm: <why
    it still holds>`. Show the full text only to revise or withdraw. Then wait.
 
-3. **Write what was approved**, exactly as approved: one write per entry — an
-   `eml_update` with content and properties in one patch, or the status change
-   the check's **how** names (invalidate, supersede). If the server rejects a write, do not
+3. **Write what was approved**, exactly as approved: one `eml_update` per entry,
+   content and properties in one patch. If the server rejects a write, do not
    write another version on your own — put a new proposal for that entry into
    the next block.
 
