@@ -30,6 +30,10 @@ From the session first, then ask the user only for what is missing:
   - bash, zsh, Git Bash: `node "$COCKPIT_DIAGNOSE_JS"`
   - PowerShell: `node $env:COCKPIT_DIAGNOSE_JS`
 
+  The block goes into the issue **as printed**, inside `<details>` at the end
+  (step 4) — don't reword it, don't spread it over the other sections, don't
+  drop its log parts: maintainers read it as a whole.
+
   If `COCKPIT_DIAGNOSE_JS` is unset (an older cockpit, or not a cockpit session),
   collect by hand instead: the cockpit version from Settings › About (ask), OS
   (`uname -sr`; macOS `sw_vers -productVersion`; Windows `[Environment]::OSVersion`),
