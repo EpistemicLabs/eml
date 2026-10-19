@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// First: a host without a console sends its output to its log file from here on (log-file.ts).
+import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -22,7 +24,6 @@ import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
-import { logToFileIfAsked } from './log-file.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -51,7 +52,6 @@ function portError(err: NodeJS.ErrnoException, port: number): Error {
 }
 
 async function main() {
-  logToFileIfAsked()
   log('== EML Cockpit host ====================================================')
   // The home holds the brain, tokens and transcripts: owner-only.
   fs.mkdirSync(COCKPIT_HOME, { recursive: true, mode: 0o700 })

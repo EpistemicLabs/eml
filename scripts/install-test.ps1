@@ -46,6 +46,22 @@ try {
   $left = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'EML Cockpit 4399' -ErrorAction SilentlyContinue
   if ($left) { throw 'the Run key value is still there after service uninstall' }
   Write-Host 'install test passed'
+} catch {
+  # What a failed run needs to be understood: the autostart's files, and the host run in the foreground.
+  $service = Join-Path $homeDir 'service'
+  Write-Host '--- service dir ---'; Get-ChildItem -LiteralPath $service -Force -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
+  Write-Host '--- run.ps1 ---'; Get-Content -LiteralPath (Join-Path $service 'run.ps1') -ErrorAction SilentlyContinue
+  Write-Host '--- Run key ---'; Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host
+  if (Test-Path $entry) {
+    Write-Host '--- host in the foreground (20 s) ---'
+    $env:COCKPIT_PORT = '4398'
+    $out = Join-Path $homeDir 'foreground.log'
+    $p = Start-Process -FilePath $node -ArgumentList "`"$entry`"" -NoNewWindow -PassThru -RedirectStandardError $out -RedirectStandardOutput "$out.out"
+    Start-Sleep -Seconds 20
+    if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    Get-Content -LiteralPath $out, "$out.out" -ErrorAction SilentlyContinue
+  }
+  throw
 } finally {
   if (Test-Path (Join-Path $homeDir 'host.log')) { Write-Host '--- host.log (end) ---'; Get-Content -LiteralPath (Join-Path $homeDir 'host.log') -Tail 30 }
 }

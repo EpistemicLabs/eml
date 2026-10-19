@@ -5,8 +5,11 @@ import * as fs from 'node:fs'
  * hidden) names its log file in COCKPIT_LOG_FILE: everything the host and its
  * brain server print goes there, appended. launchd redirects by itself and
  * sets no such variable.
+ *
+ * Runs when imported: index.ts imports this module first, so even an error
+ * while the other modules load lands in the log.
  */
-export function logToFileIfAsked(): void {
+function logToFileIfAsked(): void {
   const file = process.env.COCKPIT_LOG_FILE
   if (!file) return
   const fd = fs.openSync(file, 'a')
@@ -19,3 +22,5 @@ export function logToFileIfAsked(): void {
     }) as typeof stream.write
   }
 }
+
+logToFileIfAsked()
