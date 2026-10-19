@@ -1067,6 +1067,23 @@ export class EngramStore {
       })
     }
 
+    // A substantive edit of an active decision/rule/profile is a review: its
+    // cycle starts over (review_due_at = now + the type's default, `review`
+    // label cleared). Status-only, significance, tag and subject changes are
+    // not; an explicit review_due_at in the patch wins over the default (the
+    // label is cleared all the same); null there counts as not given.
+    const reviewDays = TYPE_REVIEW_DEFAULTS[newType as keyof typeof TYPE_REVIEW_DEFAULTS]
+    const substantive = (partial.content !== undefined && partial.content !== existing.content)
+      || (partial.title !== undefined && partial.title !== existing.title)
+      || (partial.scope !== undefined && partial.scope !== existing.scope)
+      || (partial.properties !== undefined && Object.keys(partial.properties).some(k => k !== 'review_due_at'))
+    const reviewed = reviewDays !== undefined && newStatus === 'active' && substantive
+    const explicitDue = (partial.properties as Record<string, unknown> | undefined)?.review_due_at
+    const reviewRestart = reviewed && (explicitDue === undefined || explicitDue === null)
+    if (reviewRestart) {
+      newProps = { ...(newProps ?? {}), review_due_at: new Date(Date.now() + reviewDays * 86400_000).toISOString() }
+    }
+
     // v0.15: task lifecycle rules that need the stored state.
     const isTask = newType === 'task'
     const statusChanged = partial.status !== undefined && partial.status !== existing.status
@@ -1116,7 +1133,7 @@ export class EngramStore {
     if (partial.title !== undefined) { fields.push('title = ?'); params.push(partial.title) }
     if (partial.status !== undefined) { fields.push('status = ?'); params.push(partial.status) }
     if (partial.significance !== undefined) { fields.push('significance = ?'); params.push(partial.significance) }
-    if (partial.properties !== undefined) { fields.push('properties = ?'); params.push(JSON.stringify(newProps)) }
+    if (partial.properties !== undefined || reviewRestart) { fields.push('properties = ?'); params.push(JSON.stringify(newProps)) }
 
     // v0.12: a tags-only update has no column fields but must still run — so the
     // early-return fires only when NEITHER columns NOR tags changed.
@@ -1169,7 +1186,8 @@ export class EngramStore {
     // expired) means the engram no longer needs review — clear any `review` label
     // the sweep stamped. Add-only sweep never does this itself.
     // v0.15: for a task ANY movement clears it (the label means "no movement").
-    if (isTask || (partial.status !== undefined && newStatus !== 'active')) this.stripReviewLabel(id)
+    // A substantive edit is a review (above), so it clears it too.
+    if (isTask || reviewed || (partial.status !== undefined && newStatus !== 'active')) this.stripReviewLabel(id)
 
     const updated = this.getRaw(id)
     if (!updated) return updated
