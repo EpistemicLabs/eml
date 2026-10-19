@@ -1,5 +1,6 @@
 // Settings › Agent: the agent this brain was set up with — its name, its
-// profile (<agent> or <agent>-identity) and its rules that load in every
+// core profile (the one marked core — v0.19, was the title <agent> /
+// <agent>-identity) and its rules that load in every
 // session (applies: always). Read-only: the agent keeps these engrams itself
 // when you ask it to; editing them here, and choosing which agent with which
 // settings a space uses, come later. An entry written before the short format
@@ -35,7 +36,7 @@ function useAgentEngrams(agentId: string | null): { data: AgentEngrams | null; f
       ([profiles, rules]) => {
         if (cancelled) return;
         setData({
-          profile: profiles.engrams.find((e) => e.title === agentId || e.title === `${agentId}-identity`) ?? null,
+          profile: profiles.engrams.find((e) => e.properties?.core === true) ?? null,
           rules: rules.engrams
             .filter((e) => e.properties?.applies === 'always')
             .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? '')),

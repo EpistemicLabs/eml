@@ -15,7 +15,8 @@ function lastMovement(engram: Engram): { at: number; what: string } {
 // Ported from packages/web/components/review-actions.tsx (cockpit chip
 // styling). The review-triage bar — shown in the engram detail only while
 // the engram carries the `review` flag. Three outcomes:
-//   Still current → confirm-review (renew the clock, drop the flag)
+//   Still current → confirm-review with why it still holds (a review entry;
+//                   renews the clock, drops the flag) — v0.19
 //   Retire        → status = expired (drops the flag, moves to history)
 //   New task      → follow-up task linked back; flag stays until the task resolves
 // v0.15 for a task (flagged after 30 days without movement): "Still relevant"
@@ -29,6 +30,14 @@ export function ReviewActions({ engram }: { engram: Engram }) {
 
   const [taskOpen, setTaskOpen] = useState(false);
   const [taskText, setTaskText] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [why, setWhy] = useState("");
+
+  function submitConfirm() {
+    const text = why.trim();
+    if (!text) return;
+    confirm.mutate({ id: engram.id, text }, { onSuccess: () => { setWhy(""); setConfirmOpen(false); } });
+  }
 
   const busy = confirm.isPending || retire.isPending || createTask.isPending;
   const error =
@@ -72,14 +81,18 @@ export function ReviewActions({ engram }: { engram: Engram }) {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => confirm.mutate(engram.id)}
+          onClick={() => (isTask ? confirm.mutate({ id: engram.id }) : setConfirmOpen((v) => !v))}
           disabled={busy}
           title={
             isTask
               ? "Still relevant — counts as movement; flagged again after 30 days without movement"
-              : "Still current — resets the review clock (decision 60d · rule 90d · profile 180d)"
+              : "Still current — say why; it is kept as a review entry and the review clock restarts (decision 60d · rule 90d · profile 180d)"
           }
-          className={action}
+          className={
+            confirmOpen
+              ? "h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground disabled:opacity-40"
+              : action
+          }
         >
           {isTask ? "✓ Still relevant" : "✓ Still current"}
         </button>
@@ -110,6 +123,27 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           + New task
         </button>
       </div>
+
+      {confirmOpen && !isTask && (
+        <div className="mt-3 flex gap-2">
+          <input
+            value={why}
+            onChange={(e) => setWhy(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitConfirm(); }}
+            placeholder="Why it still holds"
+            autoFocus
+            className="h-7 min-w-0 flex-1 rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 text-body text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
+          />
+          <button
+            type="button"
+            onClick={submitConfirm}
+            disabled={!why.trim() || confirm.isPending}
+            className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+          >
+            {confirm.isPending ? "Confirming…" : "Confirm"}
+          </button>
+        </div>
+      )}
 
       {taskOpen && (
         <div className="mt-3 flex flex-col gap-2">

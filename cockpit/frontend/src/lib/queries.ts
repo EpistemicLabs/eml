@@ -14,7 +14,6 @@ import type {
   ProjectsResponse,
   RelationsResponse,
   StatsResponse,
-  TaskEntry,
   TaskStage,
   SubjectsResponse,
 } from "./types";
@@ -207,11 +206,13 @@ export function useRecall(query: string, enabled = true) {
 
 // --- Review triage (v0.13 write path). ---
 
+// v0.19: a confirmation is a review entry — a decision, rule or profile says
+// why it still holds (text required); a task confirms as a movement.
 export function useConfirmReview() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      brainPost<{ engram: Engram }>(`/engram/${id}/confirm-review`, {}),
+    mutationFn: (vars: { id: string; text?: string }) =>
+      brainPost<{ engram: Engram }>(`/engram/${vars.id}/confirm-review`, vars.text ? { text: vars.text } : {}),
     onSuccess: () => invalidateReviewSurfaces(qc),
   });
 }
@@ -221,24 +222,25 @@ export function useConfirmReview() {
 export function useRetireEngram() {
   const qc = useQueryClient();
   return useMutation({
+    // v0.19: a task closes through /task/:id/track (outcome + text); everything else via /update.
     mutationFn: (engram: Pick<Engram, "id" | "type">) =>
-      brainPost<Engram>("/update", {
-        id: engram.id,
-        patch: engram.type === "task"
-          ? { status: "invalidated", properties: { outcome: "retired in review" } }
-          : { status: "expired" },
-      }),
+      engram.type === "task"
+        ? brainPost<Engram>(`/task/${engram.id}/track`, {
+          status: "invalidated", outcome: "retired in review", text: "Retired in the cockpit review.",
+        })
+        : brainPost<Engram>("/update", { id: engram.id, patch: { status: "expired" } }),
     onSuccess: () => invalidateReviewSurfaces(qc),
   });
 }
 
-// v0.15: append a task entry (POST /task/:id/entry). A stage rides along and is
-// set on the task. Any entry is a movement — it also clears the review flag.
+// v0.15: append a task entry. v0.19: POST /task/:id/track with text (a note
+// entry); a stage rides along and is set on the task (a change entry). Any
+// entry is a movement — it also clears the review flag.
 export function useAddTaskEntry() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { taskId: string; text: string; stage?: TaskStage }) =>
-      brainPost<{ entry: TaskEntry }>(`/task/${vars.taskId}/entry`, { text: vars.text, stage: vars.stage }),
+      brainPost<Engram>(`/task/${vars.taskId}/track`, vars.stage ? { text: vars.text, stage: vars.stage } : { text: vars.text }),
     onSuccess: () => invalidateReviewSurfaces(qc),
   });
 }
@@ -249,11 +251,12 @@ export function useCreateReviewTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (vars: { engram: Engram; content: string }) => {
-      const task = await brainPost<Engram>("/context", {
-        type: "task",
+      // v0.19: a task needs a title; origin marks the cockpit's triage.
+      const task = await brainPost<Engram>("/engram/task", {
         content: vars.content,
         scope: vars.engram.scope,
-        properties: { source_id: "cockpit-review-triage", source_type: "user" },
+        title: followUpTitle(vars.content),
+        origin: "cockpit-review-triage",
       });
       await brainPost("/relate", {
         source_id: task.id,
@@ -266,6 +269,23 @@ export function useCreateReviewTask() {
     },
     onSuccess: () => invalidateReviewSurfaces(qc),
   });
+}
+
+/** A kebab-case title from the first words of the content, with a short suffix so it stays unique. */
+export function followUpTitle(content: string): string {
+  const slug = content
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 6)
+    .join("-")
+    .slice(0, 48)
+    .replace(/-+$/, "");
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${slug || "follow-up"}-${suffix}`;
 }
 
 export { REVIEW_LABEL };

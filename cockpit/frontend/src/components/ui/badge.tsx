@@ -36,6 +36,7 @@ export const TYPE_COLORS: Record<EngramType, string> = {
   event: "var(--type-event)",
   profile: "var(--type-profile)",
   log: "var(--type-log)",
+  learning: "var(--type-learning)", // v0.19: olive, apart from status green and rule red
 };
 
 /**
@@ -54,7 +55,7 @@ export function typeChipStyle(color: string, on = true): React.CSSProperties {
 }
 
 export const TYPE_ORDER: EngramType[] = [
-  "status", "task", "note", "reference", "decision", "rule", "event", "profile", "log",
+  "status", "task", "note", "reference", "decision", "rule", "learning", "event", "profile", "log",
 ];
 
 export function TypeBadge({ type }: { type: EngramType }) {

@@ -99,7 +99,8 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
     }
     setIsCreating(true);
     try {
-      const { project } = await brainPost<{ project: Record<string, unknown> }>('/project', {
+      // v0.19: projects are created through the object routes (core objects.ts).
+      const { object: project } = await brainPost<{ object: Record<string, unknown>; created: boolean }>('/object/project', {
         id: brainId,
         name,
         goal: brainGoal.trim() || undefined,

@@ -80,6 +80,7 @@
   --type-event: #166b79;
   --type-profile: #ab3f75;
   --type-log: #5a6371;
+  --type-learning: #5f6b12;
   --subject-active: #186c53;
   --hash-lightness: 38%;
 }
@@ -94,6 +95,7 @@ html.dark {
   --type-event: #5bb5c4;
   --type-profile: #d67fa8;
   --type-log: #8a94a3;
+  --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
   --color-review: #d9a441;

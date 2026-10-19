@@ -73,7 +73,7 @@ export function TagGraph({ engrams, showUntagged }: { engrams: Engram[]; showUnt
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-muted-foreground">
         <p>No tagged engrams in the selected filters.</p>
-        <p className="text-xs">Tag engrams (eml_tag_create / the tags param) to grow the tag hubs.</p>
+        <p className="text-xs">Tag engrams (eml_create_object object=tag, then the tags param) to grow the tag hubs.</p>
       </div>
     );
   }

@@ -10,7 +10,8 @@ export type EngramType =
   | "event"
   | "log"
   | "reference"
-  | "note";
+  | "note"
+  | "learning"; // v0.19
 
 export type EngramStatus =
   | "planned"
@@ -48,6 +49,10 @@ export interface Engram {
   ingested_by: string | null;
   ingestion_method: string | null;
   session_id: string | null;
+  /** v0.19: the software that wrote it (cockpit-notes, …), and the session's model and harness. */
+  origin?: string | null;
+  model?: string | null;
+  harness?: string | null;
   created_at: string;
   updated_at: string;
   tags: string[];
@@ -55,9 +60,67 @@ export interface Engram {
   /** v0.14: subject ids this engram belongs to (cross-scope strands). */
   subjects: string[];
   relations?: Relation[];
-  /** v0.15: a task's journal, oldest first (GET /engram/:id, tasks only). */
-  entries?: TaskEntry[];
+  /** v0.19: the engram's entries, oldest first (GET /engram/:id): a task's journal, a learning's evidence, review confirmations. */
+  entries?: Entry[];
+  /** v0.19: a task's bound decisions and notes (binding task, still active). */
+  bound?: BoundItem[];
+  /** v0.19: a learning's ripeness. */
+  learning?: LearningState;
 }
+
+/** v0.19: an engram's append-only entry. note/change = task journal, evidence = learning, review = confirmation. */
+export type EntryKind = "note" | "change" | "evidence" | "review";
+
+export interface Entry {
+  id: string;
+  engram_id: string;
+  kind: EntryKind;
+  at: string;
+  author: string | null;
+  session_id: string | null;
+  model: string | null;
+  stage: TaskStage | null;
+  text: string;
+  source: "user" | "observed" | "self" | null;
+  stance: "supports" | "contradicts" | "declined" | null;
+  quote: string | null;
+  rule_id: string | null;
+}
+
+/** v0.19: a decision or note bound to a task. */
+export interface BoundItem {
+  id: string;
+  type: EngramType;
+  title: string | null;
+  status: EngramStatus;
+}
+
+export type LearningStateName = "collecting" | "ripe" | "unclear" | "paused";
+
+export interface LearningState {
+  state: LearningStateName;
+  supporting_sessions: number;
+  from_user: boolean;
+  open_contradiction: boolean;
+  declined_at: string | null;
+}
+
+/**
+ * v0.19: the named fields of each type, in display order (core fields.ts
+ * TYPE_FIELDS). Anything else in properties is shown under "other".
+ */
+export const TYPE_FIELD_ORDER: Record<EngramType, readonly string[]> = {
+  decision: ["rationale", "alternatives", "binding", "expires_at", "review_due_at", "detail"],
+  rule: ["applies", "trigger", "why", "agreed", "rule_type", "detail", "review_due_at"],
+  profile: ["core", "detail", "review_due_at"],
+  status: ["state", "next_step", "blockers", "detail"],
+  task: ["context", "priority", "assignee_id", "due_date", "blockers", "stage", "outcome"],
+  event: ["occurred_at", "change_type", "source_url", "detail"],
+  log: ["what", "landed", "next", "open_threads", "detail"],
+  reference: ["source", "source_name", "checked_at", "detail"],
+  note: ["binding", "detail"],
+  learning: [],
+};
 
 // v0.15: task stage (optional maturity) and journal entries.
 export const TASK_STAGES = ["ideation", "planning", "ready", "implementation"] as const;
@@ -71,14 +134,8 @@ export const TASK_STAGE_HINTS: Record<TaskStage, string> = {
   implementation: "being built",
 };
 
-export interface TaskEntry {
-  id: string;
-  task_id: string;
-  at: string;
-  author: string | null;
-  stage: TaskStage | null;
-  text: string;
-}
+/** v0.15 name of a journal line; v0.19 it is an Entry of kind note or change. */
+export type TaskEntry = Entry;
 
 /** v0.15: a task's stage, if it carries a valid one. */
 export function taskStage(e: Pick<Engram, "type" | "properties">): TaskStage | null {
@@ -125,10 +182,11 @@ export interface Project {
   description: string | null;
   owner: string | null;
   parent_project: string | null;
-  tags: string[] | null;
   started_at: string | null;
   ended_at: string | null;
   metadata: Record<string, unknown> | null;
+  /** v0.19: what the project's status is about. */
+  status_tracks?: string | null;
   created_at: string;
   updated_at: string;
 }
