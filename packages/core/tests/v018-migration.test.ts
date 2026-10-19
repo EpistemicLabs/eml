@@ -26,8 +26,9 @@ const OLD_STAMP = '2026-10-02 10:00:00'
 const sub = (s: string) => s.replace(/<agent>/g, AGENT)
 
 /**
- * A brain as v0.17 left it, with the three seed rules as seeded, one seed rule
- * the user edited (c-1) and one copy of a seed text without the seed marker (u-1).
+ * A brain as v0.17 left it: the three seed rules as seeded, and seed-titled
+ * rows the migration must leave alone — content edited (c-1), no seed marker
+ * (u-1), a why of the user's own (w-1), no longer active (i-1).
  */
 function createV17Brain(file: string): void {
   const db = new Database(file)
@@ -38,13 +39,13 @@ function createV17Brain(file: string): void {
   db.pragma('foreign_keys = ON')
 
   const engram = db.prepare(
-    `INSERT INTO engrams (id, type, scope, title, content, properties, created_at, updated_at)
-     VALUES (?, 'rule', ?, ?, ?, ?, '2026-10-01 10:00:00', '${OLD_STAMP}')`,
+    `INSERT INTO engrams (id, type, scope, title, content, properties, status, created_at, updated_at)
+     VALUES (?, 'rule', ?, ?, ?, ?, ?, '2026-10-01 10:00:00', '${OLD_STAMP}')`,
   )
   const fts = db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
-  const add = (id: string, title: string, content: string, properties: Record<string, unknown>) => {
+  const add = (id: string, title: string, content: string, properties: Record<string, unknown>, status = 'active') => {
     const scope = `agent.${AGENT}`
-    engram.run(id, scope, title, content, JSON.stringify(properties))
+    engram.run(id, scope, title, content, JSON.stringify(properties), status)
     fts.run(id, content, scope, title)
   }
   const seedProps = (p: Record<string, unknown>) => ({
@@ -54,9 +55,12 @@ function createV17Brain(file: string): void {
   })
   OLD_SEED_RULES.forEach((r, i) => add(`s-${i + 1}`, sub(r.title), r.content, seedProps(r.properties)))
   const first = OLD_SEED_RULES[0]
-  add('c-1', `${AGENT}-own-rule`, `${first.content} Always.`, seedProps(first.properties))
+  const title = sub(first.title)
+  add('c-1', title, `${first.content} Always.`, seedProps(first.properties))
   const { source_id: _s, source_type: _t, ...unmarked } = seedProps(first.properties)
-  add('u-1', `${AGENT}-copied-rule`, first.content, unmarked)
+  add('u-1', title, first.content, unmarked)
+  add('w-1', title, first.content, { ...seedProps(first.properties), why: 'my own reason' })
+  add('i-1', title, first.content, seedProps(first.properties), 'superseded')
   db.close()
 }
 
@@ -96,12 +100,12 @@ function expectMigrated(file: string, dir: string): void {
     expect(row.properties.boot).toBeUndefined()
     expect(row.updated_at).not.toBe(OLD_STAMP)
   })
-  // Edited by the user, or a copy without the seed marker: untouched.
+  // Edited, unmarked, with a why of its own, or inactive: untouched.
   expect(after['c-1'].content).toBe(`${OLD_SEED_RULES[0].content} Always.`)
   expect(after['c-1'].properties.boot).toEqual([AGENT])
-  expect(after['u-1'].content).toBe(OLD_SEED_RULES[0].content)
-  expect(after['c-1'].updated_at).toBe(OLD_STAMP)
-  expect(after['u-1'].updated_at).toBe(OLD_STAMP)
+  for (const id of ['u-1', 'w-1', 'i-1']) expect(after[id].content).toBe(OLD_SEED_RULES[0].content)
+  expect(after['w-1'].properties.why).toBe('my own reason')
+  for (const id of ['c-1', 'u-1', 'w-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP)
 
   const db = new Database(file, { readonly: true })
   try {
@@ -110,7 +114,7 @@ function expectMigrated(file: string, dir: string): void {
     OLD_SEED_RULES.forEach((r, i) => {
       expect(fts.all(`s-${i + 1}`)).toEqual([{ content: seeds[sub(r.title)].content }])
     })
-    expect((db.prepare('SELECT count(*) AS n FROM engrams_fts').get() as { n: number }).n).toBe(5)
+    expect((db.prepare('SELECT count(*) AS n FROM engrams_fts').get() as { n: number }).n).toBe(7)
     expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     expect(db.prepare(`SELECT name FROM sqlite_temp_master WHERE name = 'seed_rules_v018'`).get()).toBeUndefined()
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok')

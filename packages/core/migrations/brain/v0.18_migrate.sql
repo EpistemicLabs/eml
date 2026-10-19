@@ -10,10 +10,12 @@
 --
 -- What needs no judgement is rewritten here: the three agent rules every brain
 -- got from the default brain (default-brain.ts, one text version since
--- v0.17.11). A rule still carrying exactly its seed text is replaced by the
--- short seed: content, properties.why and properties.detail; properties.boot
--- is dropped (no longer read). A rule the user changed, even by one
--- character, is left alone and goes to the hygiene session.
+-- v0.17.11). An active rule still carrying exactly its seed text and seed
+-- marker, with no why, detail or trigger of its own, is replaced by the short
+-- seed: content, properties.why and properties.detail; properties.boot is
+-- dropped (no longer read). A rule the user changed, even by one character or
+-- by adding one of those properties, is left alone and goes to the hygiene
+-- session; inactive rows keep their history.
 --
 -- engrams_fts is kept in step for the rewritten rows (the write path, not a
 -- trigger, maintains it).
@@ -30,6 +32,10 @@ WHERE type = 'rule'
   AND scope LIKE 'agent.%'
   AND title LIKE '%-reasoning-discipline'
   AND json_extract(properties, '$.source_id') = 'eml-default-brain'
+  AND json_extract(properties, '$.why') IS NULL
+  AND json_extract(properties, '$.detail') IS NULL
+  AND json_extract(properties, '$.trigger') IS NULL
+  AND status = 'active'
   AND content = 'Verify assumptions or mark them as such.
 
 Any claim about state, structure, behavior, or impact must be either:
@@ -56,6 +62,10 @@ WHERE type = 'rule'
   AND scope LIKE 'agent.%'
   AND title LIKE '%-engagement-style'
   AND json_extract(properties, '$.source_id') = 'eml-default-brain'
+  AND json_extract(properties, '$.why') IS NULL
+  AND json_extract(properties, '$.detail') IS NULL
+  AND json_extract(properties, '$.trigger') IS NULL
+  AND status = 'active'
   AND content = 'Engage as a senior peer, not a cheerleader.
 
 - **No empty agreement.** Forbidden: agreement without substance ("good idea", "sounds great"), enthusiasm as a substitute for analysis.
@@ -79,6 +89,10 @@ WHERE type = 'rule'
   AND scope LIKE 'agent.%'
   AND title LIKE '%-action-protocol'
   AND json_extract(properties, '$.source_id') = 'eml-default-brain'
+  AND json_extract(properties, '$.why') IS NULL
+  AND json_extract(properties, '$.detail') IS NULL
+  AND json_extract(properties, '$.trigger') IS NULL
+  AND status = 'active'
   AND content = 'Plan-Review-Build applies to non-trivial state-changing actions: code changes, deploys, pushes, config edits, external communication, commitments, decisions with downstream impact.
 
 1. Surface a proposal concrete enough to evaluate trade-offs, risks, and alternatives
