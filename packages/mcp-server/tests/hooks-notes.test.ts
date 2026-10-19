@@ -8,12 +8,13 @@ const CFG = { EML_URL: 'http://brain.test', EML_API_TOKEN: 't' }
 const INPUT = { session_id: 'sess-1', cwd: '/x/eml-app' }
 const ENV = { EML_PROJECT_SCOPE: 'project.eml-app' }
 
-type Note = { id: string; content: string; properties?: Record<string, unknown> }
-// Pane notes carry source_id 'cockpit-notes'; byAgent = a pane note the agent edited last.
-const byUser = (id: string, content: string): Note => ({ id, content, properties: { source_id: 'cockpit-notes', user_content_hash: contentHash(content) } })
-const byAgent = (id: string, content: string, stamp = 'stale'): Note => ({ id, content, properties: { source_id: 'cockpit-notes', user_content_hash: stamp } })
+type Note = { id: string; content: string; origin?: string | null; properties?: Record<string, unknown> }
+// v0.19: pane notes carry origin 'cockpit-notes' and the stamp in properties.app;
+// byAgent = a pane note the agent edited last.
+const byUser = (id: string, content: string): Note => ({ id, content, origin: 'cockpit-notes', properties: { app: { user_content_hash: contentHash(content) } } })
+const byAgent = (id: string, content: string, stamp = 'stale'): Note => ({ id, content, origin: 'cockpit-notes', properties: { app: { user_content_hash: stamp } } })
 // A note an agent wrote itself (task plan, re-filed decision) — not one of the user's notes.
-const agentWritten = (id: string, content: string): Note => ({ id, content, properties: { source_id: 'assistant', source_type: 'agent' } })
+const agentWritten = (id: string, content: string): Note => ({ id, content, origin: null })
 
 function fakeBrain(notes: () => Note[], seen: string[] = []): typeof fetch {
   return (async (url: string | URL) => {
@@ -58,6 +59,7 @@ describe('notesUpdate', () => {
     expect(r.output).toContain('"Cockpit todos" (n1)')
     expect(seen[0]).toContain('scope=project.eml-app')
     expect(seen[0]).toContain('type=note')
+    expect(seen[0]).toContain('origin=cockpit-notes')
   })
 
   it('lists only notes written in the notes pane, not agent-written notes', async () => {

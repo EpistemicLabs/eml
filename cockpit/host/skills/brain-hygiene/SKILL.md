@@ -28,7 +28,7 @@ banner, and stop. Do not look for findings yourself.
 
 2. **Propose per block.** One check at a time; blocks of 10 for a migration
    check, 20 for a review. `eml_get` each entry and propose the exact change
-   following the check's **how** — the new content and properties, not a
+   following the check's **how** — the new content and fields, not a
    summary:
 
        ## <check id> — block <n> of <m>
@@ -37,16 +37,18 @@ banner, and stop. Do not look for findings yourself.
           now:      "<current content, shortened>"
           proposed: "<new content>"
                     why "…" · detail "…" · trigger "…"
+          (a refile: → [new type] title, supersedes <short>)
 
        → ok (all) · ok <#,#> · change <#>: … · skip <#> · stop
 
    A review that still holds fits one line: `<#>. [type] title — confirm: <why
    it still holds>`. Show the full text only to revise or withdraw. Then wait.
 
-3. **Write what was approved**, exactly as approved: one `eml_update` per entry,
-   content and properties in one patch. If the server rejects a write, do not
-   write another version on your own — put a new proposal for that entry into
-   the next block.
+3. **Write what was approved**, exactly as approved: one call per entry — an
+   `eml_update` with content and the fields together, or for a refile the new
+   engram of its type with `supersedes=[<old id>]` (a type never changes in
+   place). If the server rejects a write, do not write another version on your
+   own — put a new proposal for that entry into the next block.
 
 4. **Next block** until the file is done or the user stops. Then report:
    written, skipped, rejected. Nothing else is recorded; skipped entries stay
@@ -55,7 +57,8 @@ banner, and stop. Do not look for findings yourself.
 ## Guardrails
 - Write nothing without the user's approval. No auto mode.
 - Move, never drop: new content, why and detail together keep everything the
-  old text said, unless the user drops something.
+  old text said, unless the user drops something. A refile carries everything
+  over to the new engram.
 - Write each entry at most once per session.
 - Stay in the file. Other cleanup you notice → mention it at the end, don't do it.
 - Chat follows the conversation language; engram content stays English.
