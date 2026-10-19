@@ -533,6 +533,7 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       expect(h.body.checks.map((c: { id: string }) => c.id)).toEqual(['rule-profile-format', 'review-due'])
       expect(h.body.checks[0]).toMatchObject({ kind: 'migration', since_schema: 18, findings: [] })
       expect(typeof h.body.total).toBe('number')
+      expect(typeof h.body.schema).toBe('number')
     })
   })
 

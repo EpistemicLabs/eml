@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, HYGIENE_CHECKS } from '../src'
+import { EML, hygieneCheck, HYGIENE_CHECKS, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 
 // The brain-hygiene check (hygiene.ts).
 describe('hygieneCheck()', () => {
@@ -25,6 +25,7 @@ describe('hygieneCheck()', () => {
   it('lists every check with what and how, also without findings; migration checks name their schema', () => {
     const r = hygieneCheck(eml)
     expect(r.total).toBe(0)
+    expect(r.schema).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     expect(r.checks.map(c => c.id)).toEqual(HYGIENE_CHECKS.map(c => c.id))
     for (const c of r.checks) {
       expect(c.what.length).toBeGreaterThan(0)

@@ -1,5 +1,6 @@
 import type { EML } from './index'
 import { REVIEWABLE_TYPES } from './engrams'
+import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { formatProblems, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 
 type EngramRow = Record<string, any>
@@ -59,6 +60,8 @@ export interface HygieneCheckResult {
 }
 
 export interface HygieneReport {
+  /** The brain schema the checks ran against (an open brain is always migrated to the current one). */
+  schema: number
   /** Every check, including the ones without findings. */
   checks: HygieneCheckResult[]
   /** Findings over all checks. */
@@ -127,5 +130,5 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
 export function hygieneCheck(eml: EML, opts: { now?: Date } = {}): HygieneReport {
   const now = opts.now ?? new Date()
   const checks = HYGIENE_CHECKS.map(({ detect, ...meta }) => ({ ...meta, findings: detect(eml, now) }))
-  return { checks, total: checks.reduce((n, c) => n + c.findings.length, 0) }
+  return { schema: CURRENT_BRAIN_SCHEMA_VERSION, checks, total: checks.reduce((n, c) => n + c.findings.length, 0) }
 }
