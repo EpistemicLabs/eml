@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
-import { readCockpitConfig, writeCockpitConfig } from './config.js'
+import { updateCockpitConfig } from './config.js'
 import type { ProjectRegistry } from './project-registry.js'
 import type { SpawnQueue } from './spawn-queue.js'
 
@@ -95,6 +95,5 @@ export function startOnboarding(deps: OnboardingDeps): () => void {
 }
 
 async function markOnboardingDone(): Promise<void> {
-  const config = await readCockpitConfig()
-  if (config && config.onboarding !== 'done') await writeCockpitConfig({ ...config, onboarding: 'done' })
+  await updateCockpitConfig((config) => (config && config.onboarding !== 'done' ? { ...config, onboarding: 'done' } : null))
 }
