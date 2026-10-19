@@ -45,6 +45,7 @@
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
  *   PUT  /entity/:id        { name?, kind?, description? }           → Update entity (v0.8 C6)
  *   GET  /stats                                                      → DB statistics
+ *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
  *   GET  /health                                                     → Health check
  */
 
@@ -58,6 +59,7 @@ import {
   initControlDatabase,
   runForwardMigrations,
   boot,
+  hygieneCheck,
   renderRecallMarkdown,
   renderBrainStateMarkdown,
   slugifySubject,
@@ -884,6 +886,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // (callTool stringifies the whole response → full engrams would blow the budget).
       const state = eml.engrams.buildBrainState(q.scope)
       return json(res, 200, { scope: q.scope, markdown: renderBrainStateMarkdown(state) })
+    }
+
+    // GET /hygiene — every hygiene check with what it requires, how to fix an
+    // entry, and its findings (core hygiene.ts). Read by the cockpit, which
+    // offers a brain-hygiene session when a check has findings.
+    if (url === '/hygiene' && method === 'GET') {
+      return json(res, 200, hygieneCheck(eml))
     }
 
     // GET /stats
