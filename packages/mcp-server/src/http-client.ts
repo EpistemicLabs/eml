@@ -14,6 +14,8 @@ export interface HttpClientOptions {
   url: string                              // e.g. http://localhost:3117
   token: string                            // Bearer secret without the "Bearer " prefix
   timeoutMs?: number                       // default 30s
+  /** v0.19: extra headers for every write (POST/PUT) — the provenance stamp (provenance.ts). */
+  writeHeaders?: () => Promise<Record<string, string>>
 }
 
 export class EmlApiError extends Error {
@@ -31,6 +33,7 @@ export class HttpClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
   private readonly timeoutMs: number
+  private readonly writeHeaders?: () => Promise<Record<string, string>>
 
   constructor(opts: HttpClientOptions) {
     this.baseUrl = opts.url.replace(/\/+$/, '')
@@ -39,6 +42,7 @@ export class HttpClient {
       'Content-Type': 'application/json',
     }
     this.timeoutMs = opts.timeoutMs ?? 30_000
+    this.writeHeaders = opts.writeHeaders
   }
 
   async get(path: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
@@ -67,9 +71,10 @@ export class HttpClient {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
+      const extra = method !== 'GET' && this.writeHeaders ? await this.writeHeaders().catch(() => ({})) : {}
       const res = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: this.headers,
+        headers: { ...this.headers, ...extra },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       })

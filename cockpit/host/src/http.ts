@@ -310,6 +310,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const [, resource, id] = parts
   if (await handleSpawnApi(req, res, { spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
 
+  // v0.19: the model a cockpit session runs on, for the EML MCP server's
+  // provenance stamp (it calls this per write, /model can switch mid-session).
+  // Same token as spawning: only sessions of this cockpit carry it.
+  if (resource === 'session-model' && id && method === 'GET') {
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can ask for its model' } })
+      return true
+    }
+    const entry = deps.bridge.ledger.get(id)
+    if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
+    const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+    const summary = deps.providers.forSession(id).summary(deps.bridge.ledger.ref(id, project?.path ?? null))
+    json(res, 200, { model: summary.model, provider: entry.provider })
+    return true
+  }
+
   // Spaces: the list, and a new local one (Settings › Brain).
   if (resource === 'spaces' && !id && method === 'GET') {
     json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
