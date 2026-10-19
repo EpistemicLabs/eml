@@ -129,8 +129,8 @@ describe('brain hygiene (cockpit offer)', () => {
     })
 
     it('names the brain schema in findings.json also when only reviews are offered', async () => {
-      writeFileSync(join(home, 'config'), JSON.stringify({ token: 't', hygiene: { 'brain-1': { offeredSchema: 18 } } }))
-      const { spawns, hygiene } = make(report(2, 3))
+      // Nothing recorded yet and no migration findings: only reviews are offered.
+      const { spawns, hygiene } = make(report(0, 3))
       expect(await hygiene.start(space)).toEqual({ ok: true, findings: 3 })
       const file = JSON.parse(readFileSync(join(home, 'brain-hygiene', 'brain-1', 'findings.json'), 'utf8'))
       expect(file.schema).toBe(18)
