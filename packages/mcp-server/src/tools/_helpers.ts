@@ -73,8 +73,8 @@ export function conflictBanner(result: unknown): string | null {
   return [
     header,
     ...lines,
-    'Evaluate each: supersede (eml_update status=superseded) / merge (eml_update content) / ' +
-    'relate (contradicts | related_to) / dismiss — before continuing.',
+    'Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ' +
+    'merge (eml_update content of one, invalidate the other) / relate (eml_relate contradicts | related_to) / dismiss.',
   ].join('\n')
 }
 
@@ -85,7 +85,7 @@ export function closedSubjectBanner(result: unknown): string | null {
   const closed = (result as { closed_subjects?: string[] } | null)?.closed_subjects
   if (!closed || closed.length === 0) return null
   return `ℹ filed into closed subject${closed.length > 1 ? 's' : ''} ${closed.join(', ')} — fine for late filing; ` +
-    'if the strand is ongoing again, reopen via eml_subject_update(status=active).'
+    'if the strand is ongoing again, reopen it via eml_update_object(object=subject, status=active).'
 }
 
 // v0.14 Cluster C: `[[targets]]` in content that resolved to no engram. Surfaced
@@ -100,20 +100,49 @@ export function unresolvedLinksBanner(result: unknown): string | null {
 
 // v0.15: superseding a parent task does not cascade — its open sub-tasks stay open
 // and the server lists them as `open_subtasks`. Surface them so the agent moves each
-// to the successor (eml_relate part_of) or closes it.
+// to the successor (eml_track_task parent_id) or closes it.
 export function openSubtasksBanner(result: unknown): string | null {
   const subs = (result as { open_subtasks?: Array<{ parent_id: string, id: string, title: string | null }> } | null)?.open_subtasks
   if (!subs || subs.length === 0) return null
   return [
     `⚠ ${subs.length} open sub-task${subs.length > 1 ? 's' : ''} of the superseded task stay${subs.length > 1 ? '' : 's'} open:`,
     ...subs.map(s => `  • ${s.title ?? '(no title)'} · ${s.id}`),
-    'Move each to the successor (eml_relate part_of) or close it.',
+    'Move each to the successor (eml_track_task(<sub-task id>, parent_id=<new task id>)) or close it.',
   ].join('\n')
 }
 
-/** v0.14: all write-response banners (conflicts + closed subjects + unresolved links + v0.15 open sub-tasks), in that order. */
+// v0.19 set_status: what the scope's status tracks, or a nudge to set it (only
+// project and entity scopes have an object to hold it).
+export function statusTracksBanner(result: unknown): string | null {
+  const r = result as { type?: string, scope?: string, previous_state?: string | null, properties?: { state?: string }, status_tracks?: string | null, status_tracks_missing?: boolean } | null
+  if (!r || r.type !== 'status') return null
+  const lines = [`status ${r.previous_state ?? '(first)'} → ${r.properties?.state ?? '?'}${r.previous_state === r.properties?.state ? ' (state unchanged)' : ''}`]
+  if (r.status_tracks) lines.push(`this scope's status tracks: ${r.status_tracks}`)
+  if (r.status_tracks_missing) {
+    const [object, id] = (r.scope ?? '').split('.')
+    lines.push(`ℹ ${r.scope} has no status_tracks yet — what is its status about? Set it with eml_update_object(object=${object}, id=${id}, status_tracks=…).`)
+  }
+  return lines.join('\n')
+}
+
+// v0.19 track_task: what closed with the task, what was kept, what a reopen can bring back.
+export function boundItemsBanner(result: unknown): string | null {
+  type Item = { id: string, type: string, title: string | null, status: string }
+  const r = result as { closed_with_task?: Item[], kept?: Item[], reopen_candidates?: Item[] } | null
+  if (!r) return null
+  const show = (i: Item) => `  • ${i.type} ${i.title ?? '(no title)'} · ${i.id}`
+  const parts: string[] = []
+  if (r.closed_with_task?.length) parts.push(['closed with the task:', ...r.closed_with_task.map(show)].join('\n'))
+  if (r.kept?.length) parts.push(['kept as standing:', ...r.kept.map(show)].join('\n'))
+  if (r.reopen_candidates?.length) {
+    parts.push(['closed with the task before — reactivate the ones that hold again with eml_update(id, status=active):', ...r.reopen_candidates.map(show)].join('\n'))
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null
+}
+
+/** v0.14: all write-response banners (conflicts + closed subjects + unresolved links + v0.15 open sub-tasks + v0.19 status / bound items), in that order. */
 export function writeBanner(result: unknown): string | null {
-  const parts = [conflictBanner(result), closedSubjectBanner(result), unresolvedLinksBanner(result), openSubtasksBanner(result)]
+  const parts = [statusTracksBanner(result), conflictBanner(result), closedSubjectBanner(result), unresolvedLinksBanner(result), openSubtasksBanner(result), boundItemsBanner(result)]
     .filter((p): p is string => p !== null)
   return parts.length > 0 ? parts.join('\n\n') : null
 }

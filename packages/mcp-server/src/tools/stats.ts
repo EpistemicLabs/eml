@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { HttpClient } from '../http-client'
 import { callTool } from './_helpers'
@@ -19,7 +20,7 @@ export function registerStatsTool(server: McpServer, http: HttpClient): void {
         'agent/project/user inventory. No filter — whole-brain snapshot, for audits, ' +
         'migration verification, and spotting type-imbalance (e.g. log spam). For actual ' +
         'engrams use eml_list; for one scope\'s state use eml_show.',
-      inputSchema: {},
+      inputSchema: z.object({}).strict(),
     },
     async () => callTool(() => http.get('/stats')),
   )

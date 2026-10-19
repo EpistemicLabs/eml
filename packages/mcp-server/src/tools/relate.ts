@@ -3,9 +3,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { HttpClient } from '../http-client'
 import { callTool } from './_helpers'
 
+// v0.19: supersedes and part_of are not drawn by hand — they come from
+// supersedes on a write (also after the fact via eml_update) and parent_id.
 const RELATION_VERBS = [
-  'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks',
-  'part_of',
+  'supports', 'contradicts', 'derived_from', 'refines', 'related_to', 'blocks',
 ] as const
 
 /**
@@ -25,20 +26,20 @@ export function registerRelateTool(server: McpServer, http: HttpClient): void {
         'Idempotent — re-relating the same (source, target, verb) is a no-op. Both engrams ' +
         'must already exist. Use for explicit threading the write path cannot infer; a plain ' +
         '"see also" is better written as a [[title-or-id]] wikilink in content (auto-' +
-        'materializes a related_to edge), and a replacement is properties.supersedes on the ' +
-        'new write (auto-draws supersedes + flips the old). Verbs: supports / contradicts / ' +
-        'supersedes / derived_from / refines / related_to / blocks / part_of ' +
-        '(child task → parent task; prefer parent_id on eml_track_task).',
-      inputSchema: {
+        'materializes a related_to edge). A replacement is supersedes on the new engram (on create, ' +
+        'or eml_update(new_id, supersedes=[old_id]) when both exist); a sub-task is parent_id on ' +
+        'eml_create_task / eml_track_task. Verbs: supports / contradicts / derived_from / refines / ' +
+        'related_to / blocks.',
+      inputSchema: z.object({
         source_id: z.string().describe('The engram the edge points FROM (full id).'),
         target_id: z.string().describe('The engram the edge points TO (full id). Must differ from source_id.'),
         relation: z.enum(RELATION_VERBS).describe(
-          'Directed verb source→target: supports · contradicts · supersedes · derived_from · ' +
-          'refines · related_to (generic) · blocks · part_of (child task → parent task).',
+          'Directed verb source→target: supports · contradicts · derived_from · refines · ' +
+          'related_to (generic) · blocks.',
         ),
         explanation: z.string().optional().describe('1-line why — recommended for anything but related_to.'),
         strength: z.number().min(0).max(1).optional().describe('Edge weight 0–1 (default 1.0).'),
-      },
+      }).strict(),
     },
     async (args) => callTool(() => http.post('/relate', { ...args, detection_method: 'agent_declared' })),
   )

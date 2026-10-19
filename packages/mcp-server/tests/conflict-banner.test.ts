@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, writeBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
+import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
 
 // v0.10.9 write-time conflict guardrail — rendering layer. conflictBanner turns the
 // store response's advisory `potential_conflicts` into the banner prepended to the
@@ -38,6 +38,8 @@ describe('conflictBanner', () => {
     expect(banner!).toContain('merge')
     expect(banner!).toContain('relate')
     expect(banner!).toContain('dismiss')
+    // v0.19: supersede after the fact is eml_update on the new engram
+    expect(banner!).toContain('eml_update(<new id>, supersedes=[<old id>])')
   })
 
   it('escalates wording at/above the escalation threshold (near-identical)', () => {
@@ -74,7 +76,7 @@ describe('closedSubjectBanner / writeBanner', () => {
   it('names the closed subjects and points at reopening', () => {
     const b = closedSubjectBanner({ closed_subjects: ['norway-trip'] })!
     expect(b).toContain('closed subject norway-trip')
-    expect(b).toContain('eml_subject_update(status=active)')
+    expect(b).toContain('eml_update_object(object=subject, status=active)')
   })
 
   it('writeBanner stacks the conflict banner first, then the closed-subject notice', () => {
@@ -100,5 +102,61 @@ describe('unresolvedLinksBanner', () => {
     const b = writeBanner({ potential_conflicts: [cand(0.6)], closed_subjects: ['a'], unresolved_links: ['x'] })!
     expect(b.indexOf('possibly conflicting')).toBeLessThan(b.indexOf('closed subject a'))
     expect(b.indexOf('closed subject a')).toBeLessThan(b.indexOf('unresolved wikilink'))
+  })
+})
+
+// v0.15/v0.19: open sub-tasks of a superseded parent.
+describe('openSubtasksBanner', () => {
+  it('lists them and points to eml_track_task parent_id', () => {
+    const b = openSubtasksBanner({ open_subtasks: [{ parent_id: 'p', id: 'c1', title: 'child' }] })!
+    expect(b).toContain('child · c1')
+    expect(b).toContain('eml_track_task(<sub-task id>, parent_id=<new task id>)')
+    expect(openSubtasksBanner({})).toBeNull()
+  })
+})
+
+// v0.19 set_status: the transition and status_tracks.
+describe('statusTracksBanner', () => {
+  it('is silent for other types', () => {
+    expect(statusTracksBanner({ type: 'note' })).toBeNull()
+  })
+
+  it('shows the transition, the first status and an unchanged state', () => {
+    expect(statusTracksBanner({ type: 'status', scope: 'global', previous_state: null, properties: { state: 'v1' } }))
+      .toBe('status (first) → v1')
+    expect(statusTracksBanner({ type: 'status', scope: 'global', previous_state: 'v1', properties: { state: 'v2' } }))
+      .toBe('status v1 → v2')
+    expect(statusTracksBanner({ type: 'status', scope: 'global', previous_state: 'v2', properties: { state: 'v2' } }))
+      .toContain('(state unchanged)')
+  })
+
+  it('repeats status_tracks, or asks for it with the object and id', () => {
+    const tracked = statusTracksBanner({ type: 'status', scope: 'project.eml', previous_state: 'a', properties: { state: 'b' }, status_tracks: 'schema' })!
+    expect(tracked).toContain("this scope's status tracks: schema")
+    const missing = statusTracksBanner({ type: 'status', scope: 'project.eml', previous_state: 'a', properties: { state: 'b' }, status_tracks: null, status_tracks_missing: true })!
+    expect(missing).toContain('project.eml has no status_tracks yet')
+    expect(missing).toContain('eml_update_object(object=project, id=eml, status_tracks=…)')
+  })
+})
+
+// v0.19 track_task: bound decisions / notes on close and reopen.
+describe('boundItemsBanner', () => {
+  const item = (id: string, title: string | null = 'x') => ({ id, type: 'decision', title, status: 'active' })
+  it('is silent without bound items', () => {
+    expect(boundItemsBanner({})).toBeNull()
+    expect(boundItemsBanner({ closed_with_task: [], kept: [] })).toBeNull()
+  })
+
+  it('lists closed, kept and reopen candidates', () => {
+    const b = boundItemsBanner({ closed_with_task: [item('a', 'plan')], kept: [item('b', null)], reopen_candidates: [item('c')] })!
+    expect(b).toContain('closed with the task:\n  • decision plan · a')
+    expect(b).toContain('kept as standing:\n  • decision (no title) · b')
+    expect(b).toContain('reactivate the ones that hold again with eml_update(id, status=active)')
+  })
+
+  it('writeBanner puts the status line first and bound items last', () => {
+    const b = writeBanner({ type: 'status', scope: 'global', previous_state: null, properties: { state: 's' }, potential_conflicts: [cand(0.6)], closed_with_task: [item('a')] })!
+    expect(b.indexOf('status (first)')).toBeLessThan(b.indexOf('possibly conflicting'))
+    expect(b.indexOf('possibly conflicting')).toBeLessThan(b.indexOf('closed with the task'))
   })
 })
