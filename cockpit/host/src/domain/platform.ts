@@ -46,6 +46,11 @@ export interface Platform {
   /** The system's tar (macOS, Linux, Windows 10 and later ship one). */
   tarBin(): string
 
+  /** How to run npm: the program and the arguments before npm's own. */
+  npm(): { program: string; args: string[] }
+  /** Folders a host started by a service (minimal PATH) still searches for tools such as gh. */
+  readonly toolDirs: readonly string[]
+
   /** Check a downloaded binary's code signature, where the OS has one; elsewhere the checksum is the check. */
   verifyCodeSignature(bin: string, teamId: string, publisher: string): Promise<void>
 }

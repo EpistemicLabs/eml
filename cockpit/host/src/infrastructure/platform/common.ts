@@ -19,7 +19,7 @@ export const detached = (cmd: string, args: string[]) => {
   try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref() } catch { /* headless */ }
 }
 
-export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink' | 'linksFiles' | 'minimalEnv' | 'tarBin'> = {
+export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink' | 'linksFiles' | 'minimalEnv' | 'tarBin' | 'npm' | 'toolDirs'> = {
   exe: (name) => name,
   sessionEnvKeys: [],
   switchDirLink(target, link) {
@@ -29,6 +29,12 @@ export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink
   },
   linksFiles: true,
   minimalEnv: () => ({ PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '' }),
+  // The npm next to this node (a launchd service's PATH may not have it), else PATH's.
+  npm: () => {
+    const beside = path.join(path.dirname(process.execPath), 'npm')
+    return { program: fs.existsSync(beside) ? beside : 'npm', args: [] }
+  },
+  toolDirs: ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'],
   // /bin/tar on a Linux without a merged /usr.
   tarBin: () => ['/usr/bin/tar', '/bin/tar'].find((bin) => fs.existsSync(bin)) ?? '/usr/bin/tar',
 }

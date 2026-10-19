@@ -12,6 +12,7 @@
  *      runs them on this OS (Windows: Claude Code without a shell, Codex in
  *      PowerShell; elsewhere sh): the turn hook reaches the host and moves
  *      the session's turn state, the EML boot hook prints the brain's boot
+ *   6. the diagnostics a session's report-issue runs: listed, and redacted
  *
  * Needs `pnpm build` and `pnpm -F eml-cockpit build` first.
  *
@@ -20,7 +21,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -176,6 +177,15 @@ try {
   await checkHooks('claude', claudeHooks, {})
   const codexHooks = JSON.parse(readFileSync(join(home, 'codex-config', 'hooks.json'), 'utf8')).hooks
   await checkHooks('codex', codexHooks, { EML_HOOK_CONFIG: join(home, 'eml', 'spaces', space, 'config') })
+
+  step('diagnostics, as a session runs them')
+  const diag = await run(process.execPath, [join(ROOT, 'cockpit', 'host', 'dist', 'diagnose-cli.js')], {
+    env: { EML_COCKPIT_HOME: '', COCKPIT_HOME: home, COCKPIT_URL: base },
+  })
+  if (diag.code !== 0 || !diag.stdout.includes('### Diagnostics')) fail(`diagnose exited ${diag.code}: ${diag.stderr.slice(0, 300)}`)
+  if (!/claude code: \d/.test(diag.stdout)) fail(`diagnose shows no Claude Code version:\n${diag.stdout.slice(0, 600)}`)
+  if (diag.stdout.includes(home) || diag.stdout.toLowerCase().includes(homedir().toLowerCase())) fail('diagnose printed a home path')
+  ok('diagnose: versions and runtimes listed, no home path')
 
   console.log('\nsmoke test passed')
 } catch (e) {

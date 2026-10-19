@@ -72,3 +72,7 @@ jobs:
       - run: pnpm -F @engramprotocol/cockpit-frontend build
       - run: pnpm -F eml-cockpit build
       - run: node scripts/smoke-test.mjs
+      # Windows: the one-line installer, from assets packed from this checkout,
+      # with the autostart it registers (scripts/install-test.ps1).
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-test.ps1
+        if: ${{ runner.os == 'Windows' }}
