@@ -81,6 +81,17 @@ describe('hygieneCheck()', () => {
       expect(c.findings.find(f => f.title === 'backfilled-due')!.reason).toBe('review due since 2020-02-01.')
     })
 
+    it('reads a due date without a zone as UTC, as the nightly sweep does', () => {
+      const now = new Date('2026-10-19T12:00:00.000Z')
+      const soon = rule('global', 'due-in-30-min')
+      plant(soon.id, null, { applies: 'always', review_due_at: '2026-10-19 12:30:00' })
+      const isoSoon = rule('global', 'iso-due-in-30-min')
+      plant(isoSoon.id, null, { applies: 'always', review_due_at: '2026-10-19T12:30' })
+      const past = rule('global', 'due-30-min-ago')
+      plant(past.id, null, { applies: 'always', review_due_at: '2026-10-19 11:30:00' })
+      expect(check('review-due', now).findings.map(f => f.title)).toEqual(['due-30-min-ago'])
+    })
+
     it('leaves tasks out, even when the sweep flagged them', () => {
       const task = eml.engrams.store({ type: 'task', scope: 'project.demo', title: 'idle', content: 'x' })
       ;(eml as any).db.prepare(`UPDATE engrams SET updated_at = datetime('now', '-60 days') WHERE id = ?`).run(task.id)

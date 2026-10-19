@@ -72,11 +72,15 @@ function finding(c: EngramRow, reason: string): HygieneFinding {
   return { id: c.id, type: c.type, scope: c.scope, title: c.title ?? null, reason }
 }
 
-/** review_due_at as stored: ISO-8601 from the app, 'YYYY-MM-DD HH:MM:SS' (UTC) from the v0.8 backfill. */
+/**
+ * review_due_at as a timestamp, read the way the nightly sweep's SQLite
+ * datetime() reads it: a value without a zone ('YYYY-MM-DD HH:MM[:SS]' from the
+ * v0.8 backfill, or an ISO string without Z) is UTC, not local time.
+ */
 function parseDue(value: unknown): number {
   if (typeof value !== 'string') return NaN
-  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? `${value.replace(' ', 'T')}Z` : value
-  return Date.parse(iso)
+  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)
+  return Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)
 }
 
 export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
