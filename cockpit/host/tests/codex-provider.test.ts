@@ -129,9 +129,10 @@ describe('Codex provider', () => {
     // Codex reads plain output starting with "[" as JSON and cuts long context off — both handled in the hook entry.
     expect(JSON.parse(first).hooks.SessionStart[0].hooks[0]).toMatchObject({ additionalContextLimit: 20000 })
     // The EML hooks name no config: they read the space's from the session env (EML_HOOK_CONFIG).
-    expect(JSON.parse(first).hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/ hook user-prompt-submit --json'?$/)
+    // (Quoted words: the PowerShell line on Windows.)
+    expect(JSON.parse(first).hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/ '?hook'? '?user-prompt-submit'? '?--json'?$/)
     // Stop: turn state, then the EML stop hook, which prints JSON itself (no --json).
-    expect(JSON.parse(first).hooks.Stop[1].hooks[0].command).toMatch(/ hook stop'?$/)
+    expect(JSON.parse(first).hooks.Stop[1].hooks[0].command).toMatch(/ '?hook'? '?stop'?$/)
     expect(first).not.toContain('--config')
     expect(JSON.parse(first).hooks.Stop[0].hooks[0]).toMatchObject({ async: true, command: expect.stringContaining('turn-hook.js') })
     provider.prepare({
