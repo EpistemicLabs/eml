@@ -28,7 +28,8 @@ const sub = (s: string) => s.replace(/<agent>/g, AGENT)
 /**
  * A brain as v0.17 left it: the three seed rules as seeded, and seed-titled
  * rows the migration must leave alone — content edited (c-1), no seed marker
- * (u-1), a why of the user's own (w-1), no longer active (i-1).
+ * (u-1), a why, detail or trigger of the user's own (w-1, d-1, t-1), no longer
+ * active (i-1).
  */
 function createV17Brain(file: string): void {
   const db = new Database(file)
@@ -60,6 +61,8 @@ function createV17Brain(file: string): void {
   const { source_id: _s, source_type: _t, ...unmarked } = seedProps(first.properties)
   add('u-1', title, first.content, unmarked)
   add('w-1', title, first.content, { ...seedProps(first.properties), why: 'my own reason' })
+  add('d-1', title, first.content, { ...seedProps(first.properties), detail: 'my own detail' })
+  add('t-1', title, first.content, { ...seedProps(first.properties), trigger: 'my own trigger' })
   add('i-1', title, first.content, seedProps(first.properties), 'superseded')
   db.close()
 }
@@ -103,9 +106,9 @@ function expectMigrated(file: string, dir: string): void {
   // Edited, unmarked, with a why of its own, or inactive: untouched.
   expect(after['c-1'].content).toBe(`${OLD_SEED_RULES[0].content} Always.`)
   expect(after['c-1'].properties.boot).toEqual([AGENT])
-  for (const id of ['u-1', 'w-1', 'i-1']) expect(after[id].content).toBe(OLD_SEED_RULES[0].content)
+  for (const id of ['u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].content).toBe(OLD_SEED_RULES[0].content)
   expect(after['w-1'].properties.why).toBe('my own reason')
-  for (const id of ['c-1', 'u-1', 'w-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP)
+  for (const id of ['c-1', 'u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP)
 
   const db = new Database(file, { readonly: true })
   try {
@@ -114,7 +117,7 @@ function expectMigrated(file: string, dir: string): void {
     OLD_SEED_RULES.forEach((r, i) => {
       expect(fts.all(`s-${i + 1}`)).toEqual([{ content: seeds[sub(r.title)].content }])
     })
-    expect((db.prepare('SELECT count(*) AS n FROM engrams_fts').get() as { n: number }).n).toBe(7)
+    expect((db.prepare('SELECT count(*) AS n FROM engrams_fts').get() as { n: number }).n).toBe(9)
     expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     expect(db.prepare(`SELECT name FROM sqlite_temp_master WHERE name = 'seed_rules_v018'`).get()).toBeUndefined()
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok')
