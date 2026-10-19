@@ -44,8 +44,9 @@ describe('v0.19 REST', () => {
     await waitForReady(port)
   }, 10000)
 
-  afterAll(() => {
-    if (serverProc && !serverProc.killed) serverProc.kill('SIGTERM')
+  afterAll(async () => {
+    // Wait for the server to exit before removing its brain: Windows keeps an open file locked (EBUSY).
+    if (serverProc && serverProc.exitCode === null) await new Promise((resolve) => { serverProc.once('exit', resolve); serverProc.kill('SIGTERM') })
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
