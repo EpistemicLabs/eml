@@ -10,9 +10,10 @@ export type EngramType =
   | 'task' | 'event' | 'log'                                      // v0.3
   | 'reference'                                                   // v0.7
   | 'note'                                                        // v0.14
+  | 'learning'                                                    // v0.19
 
 export const ENGRAM_TYPES: readonly EngramType[] = [
-  'decision', 'rule', 'profile', 'status', 'task', 'event', 'log', 'reference', 'note',
+  'decision', 'rule', 'profile', 'status', 'task', 'event', 'log', 'reference', 'note', 'learning',
 ]
 
 export type EngramStatus = 'planned' | 'active' | 'superseded' | 'invalidated' | 'expired' | 'resolved'
@@ -24,6 +25,7 @@ export type EngramStatus = 'planned' | 'active' | 'superseded' | 'invalidated' |
 // - event/log: historical facts, fixed
 // - reference: link validation instead of time decay (v0.10+)
 // - note (v0.14): a standing thought in the brain, no time decay, no review
+// - learning (v0.19): grows by evidence; ripeness, not a timer, brings it back
 export const TYPE_REVIEW_DEFAULTS: Partial<Record<EngramType, number>> = {
   decision: 60,
   rule:     90,
@@ -43,6 +45,7 @@ export const TYPE_DEFAULT_STATUS: Record<EngramType, EngramStatus> = {
   log:         'active',
   reference:   'active',
   note:        'active',   // v0.14
+  learning:    'active',   // v0.19
 }
 export type Significance = 'critical' | 'high' | 'normal' | 'low' | 'trivial'
 export type DetectionMethod = 'manual' | 'agent_declared' | 'auto_temporal' | 'auto_semantic'
@@ -56,7 +59,8 @@ export type RelationType =
 //   direct → explicit call (POST /context)
 //   bulk   → migration / mass import
 //   other  → catch-all
-export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'other'
+// v0.19: mcp → written through the MCP server (stamped by the server, not the agent)
+export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'mcp' | 'other'
 
 // v0.9.1 Cluster 1: SourceType type removed (source_id/source_type dropped from the schema).
 
@@ -146,15 +150,8 @@ export interface TaskProperties {
   // no review_due_at — stale tasks surface by inactivity (TASK_INACTIVITY_DAYS)
 }
 
-/** v0.15: one line in a task's append-only journal (task_entries). */
-export interface TaskEntry {
-  id: string
-  task_id: string
-  at: string                      // ISO-8601, set on append
-  author: string | null           // ingested-by handle of the caller
-  stage: TaskStage | null         // stage at the time of the entry (or the new stage)
-  text: string
-}
+/** v0.15: one line in a task's journal. v0.19: an entry (entries.ts) of kind note or change. */
+export type { Entry, EntryKind } from './entries'
 
 /**
  * v0.15: the edge a task-linked write draws to its task (X → task). A decision
@@ -162,14 +159,15 @@ export interface TaskEntry {
  * or reference it produced — refines it. Types not listed take no task_id (a
  * sub-task uses parent_id).
  */
+// v0.19: rule and profile take no task_id any more (their tools have none);
+// event, log, reference and learning are noted in the task's journal.
 export const TASK_LINK_RELATION: Partial<Record<EngramType, RelationType>> = {
   decision:  'derived_from',
   note:      'refines',
-  rule:      'refines',
-  profile:   'refines',
   event:     'refines',
   reference: 'refines',
   log:       'refines',
+  learning:  'refines',
 }
 
 /** v0.15: an open sub-task left behind when its parent was superseded (no cascade). */
@@ -179,10 +177,11 @@ export interface OpenSubtask {
   title: string | null
 }
 
-// Event (v0.3) — immutable system event
+// Event (v0.3) — something that happened at a point in time. v0.19: correctable,
+// never superseded; change_type is a checked list (fields.ts CHANGE_TYPES).
 export type ChangeType =
-  | 'deployed' | 'started' | 'completed' | 'failed'
-  | 'paused' | 'resumed' | 'created' | 'deleted'
+  | 'created' | 'started' | 'completed' | 'released' | 'deployed' | 'failed'
+  | 'incident' | 'paused' | 'resumed' | 'deleted' | 'other'
 
 export interface EventProperties {
   occurred_at: string             // ISO timestamp (required)
@@ -230,15 +229,13 @@ export interface EngramInput {
   type: EngramType
   scope: string
   title?: string
+  // v0.19: only a task takes a status on create (planned | active); every other
+  // type starts active.
   status?: EngramStatus
-  significance?: Significance
+  // v0.19: the type's fields (fields.ts TYPE_FIELDS), nothing else. Provenance
+  // (ingested_by, session_id, model, harness, ingestion_method) comes from the
+  // WriteContext, never from the input; significance is no longer written.
   properties?: Record<string, unknown>
-  // v0.9.1 Cluster 1: ingested_by and namespace removed from user input.
-  // The ingested_by column stays in the DB schema (existing legacy brain values as an
-  // audit trail) but is no longer set from user input. The namespace column is dropped
-  // in Phase 1.4 — until then store() writes an empty string as the NOT NULL default.
-  ingestion_method?: IngestionMethod
-  session_id?: string
   // v0.12: tag ids (registered slugs) this engram carries. Validated against the
   // tag registry on write — an unknown tag is rejected (create it via the tag
   // registry first). Omit to leave tags untouched; on update, [] clears them.
@@ -255,6 +252,28 @@ export interface EngramInput {
   // while working on it, its plan as a note). One transaction: the engram, the
   // edge to the task (TASK_LINK_RELATION) and a task entry. Ignored by update().
   task_id?: string
+  // v0.19: the engrams this one replaces — each is set to superseded and gets a
+  // supersedes edge. Any type over any type, except that an event is never superseded.
+  supersedes?: string[]
+  // v0.19: rule only — the learnings this rule grows from (superseded by it).
+  from_learning?: string[]
+  // v0.19: the software that writes it (fields.ts ORIGINS); REST callers only.
+  origin?: string
+  // v0.19: that software's own state (a flat text map), only with an origin.
+  app?: Record<string, string>
+}
+
+/**
+ * v0.19: who writes, stamped by the server on every engram and entry. The
+ * caller is the token's handle; session, model and harness come from the MCP
+ * server (headers), ingestion_method says which path wrote it.
+ */
+export interface WriteContext {
+  caller?: string | null
+  session_id?: string | null
+  model?: string | null
+  harness?: string | null
+  ingestion_method?: IngestionMethod | null
 }
 
 // v0.9 Cluster 1: default_namespace removed (multi-caller artifact).
@@ -303,6 +322,10 @@ export interface Engram {
   ingested_by: string | null
   ingestion_method: IngestionMethod | null
   session_id: string | null
+  // v0.19: the software that wrote it, and the model and harness of the session.
+  origin: string | null
+  model: string | null
+  harness: string | null
   created_at: string
   updated_at: string
   // v0.12: registered tag ids on this engram (always present; [] when none).
@@ -323,10 +346,20 @@ export interface TagInput {
   description?: string
 }
 
+export type TagStatus = 'active' | 'archived'
+
+export interface TagUpdate {
+  name?: string
+  description?: string | null
+  status?: TagStatus
+}
+
 export interface Tag {
   id: string
   name: string
   description: string | null
+  status: TagStatus               // v0.19: archived = stays on engrams, not assignable anew
+  engram_count: number            // v0.19: engrams carrying it (any status)
   created_at: string
 }
 
@@ -432,13 +465,13 @@ export interface ProjectInput {
 export interface ProjectUpdate {
   name?: string
   status?: ProjectStatus
-  goal?: string
-  description?: string
-  owner?: string
   parent_project?: string | null  // null allowed to detach from the hierarchy
-  started_at?: string
-  ended_at?: string
-  metadata?: Record<string, unknown>
+  goal?: string | null
+  description?: string | null
+  owner?: string | null
+  started_at?: string | null
+  ended_at?: string | null        // v0.19: set by the server when the project is archived
+  metadata?: Record<string, unknown> | null
   status_tracks?: string | null   // v0.19
 }
 
@@ -474,6 +507,11 @@ export interface ScopedBrainState {
   rules?: Engram[]                // v0.10.5: active rules in scope, name-only in render; limit 15
   relations?: Relation[]          // project brain-state: relations where source/target in scope
   pending_reviews?: Engram[]      // v0.13: active decision/rule/profile carrying the `review` label (staleness flag)
+  // v0.19 (eml_show): what the scope's status is about and the object's stable
+  // facts (project / entity), and the learnings that are ripe for the user's yes.
+  status_tracks?: string | null
+  metadata?: Record<string, unknown> | null
+  ripe_learnings?: Engram[]
 }
 
 /**
@@ -504,20 +542,31 @@ export interface EntityInput {
   id: string                      // user-chosen, e.g. "bob", "anthropic", "btc"
   name: string
   kind: EntityKind
+  status?: EntityStatus
   description?: string
+  metadata?: Record<string, string>
+  status_tracks?: string
 }
 
 export interface EntityUpdate {
   name?: string
   kind?: EntityKind
+  status?: EntityStatus
   description?: string | null
+  metadata?: Record<string, string> | null
+  status_tracks?: string | null
 }
+
+export type EntityStatus = 'active' | 'archived'
 
 export interface Entity {
   id: string
   name: string
   kind: EntityKind
+  status: EntityStatus            // v0.19
   description: string | null
+  metadata: Record<string, string> | null   // v0.19: stable facts (url, …)
+  status_tracks: string | null    // v0.19: what the scope's status is about
   created_at: string
   updated_at: string
 }
@@ -557,6 +606,10 @@ export interface EngramQuery {
   priority?: string
   change_type?: string
   stage?: string                  // v0.15: $.stage (=)
+  binding?: 'task' | 'standing'   // v0.19: decisions / notes (missing = standing)
+  task_id?: string                // v0.19: engrams a task_id write tied to this task
+  origin?: string                 // v0.19: the software that wrote it
+  session_id?: string             // v0.19: written in this session
   limit?: number
   offset?: number
   order_by?: 'created_at' | 'updated_at' | 'significance' | 'score'
@@ -565,8 +618,21 @@ export interface EngramQuery {
 
 export interface EngramWithRelations extends Engram {
   relations: RelationWithTarget[]
-  // v0.15: a task's journal, oldest first (absent for other types)
-  entries?: TaskEntry[]
+  // v0.15: a task's journal, oldest first. v0.19: every engram's entries
+  // (journal, evidence, reviews); absent when there are none.
+  entries?: import('./entries').Entry[]
+  // v0.19: a task's bound decisions and notes (binding task, still active).
+  bound?: BoundItem[]
+  // v0.19: a learning's ripeness.
+  learning?: import('./learning').LearningState
+}
+
+/** v0.19: a decision or note bound to a task (binding task). */
+export interface BoundItem {
+  id: string
+  type: EngramType
+  title: string | null
+  status: EngramStatus
 }
 
 // v0.10.9: write-time conflict guardrail. A candidate active engram a fresh write
@@ -594,6 +660,24 @@ export type StoredEngram = Engram & {
   // v0.15: superseding a parent task does not cascade — its open sub-tasks stay
   // open and are listed here so they can be moved to the successor by hand.
   open_subtasks?: OpenSubtask[]
+  // v0.19 set_status: the state this status replaces (null: the first one) and
+  // what the scope's status is about; status_tracks_missing when the scope has
+  // an object (project, entity) without status_tracks.
+  previous_state?: string | null
+  status_tracks?: string | null
+  status_tracks_missing?: boolean
+  // v0.19: what else this write changed.
+  superseded?: string[]
+  // v0.19 track_task: the entries this call wrote, the bound items that closed
+  // with the task or were kept, and on reopen the ones that closed with it.
+  entries_written?: import('./entries').Entry[]
+  closed_with_task?: BoundItem[]
+  kept?: BoundItem[]
+  reopen_candidates?: BoundItem[]
+  // v0.19 eml_update: field → [old, new].
+  diff?: Record<string, [unknown, unknown]>
+  // v0.19 learning: ripeness after this write.
+  learning?: import('./learning').LearningState
 }
 
 export interface RelationWithTarget extends Relation {

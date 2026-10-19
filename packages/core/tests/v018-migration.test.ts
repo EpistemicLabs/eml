@@ -99,8 +99,9 @@ function expectMigrated(file: string, dir: string): void {
     const row = after[`s-${i + 1}`]
     const seed = seeds[sub(r.title)]
     expect(row.content).toBe(seed.content)
-    // v0.19 moves the seed marker from properties.source_id to the origin column.
-    const { source_id: _s, source_type: _t, ...seedFields } = seed.properties
+    // v0.19 moves the seed marker from properties.source_id to the origin column;
+    // agreed is new on the v0.19 seeds (an existing rule keeps what it had).
+    const { source_id: _s, source_type: _t, agreed: _a, ...seedFields } = seed.properties
     expect(row.properties).toEqual({ ...seedFields, review_due_at: DUE })
     expect(row.properties.boot).toBeUndefined()
     expect(row.updated_at).not.toBe(OLD_STAMP)

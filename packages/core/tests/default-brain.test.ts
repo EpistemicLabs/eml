@@ -54,14 +54,35 @@ describe('seedDefaultBrain', () => {
       }
     })
 
-    it('persists provenance fields (source_id=eml-default-brain, source_type=system)', () => {
+    it('marks every seed with origin eml-default-brain (v0.19: was properties.source_id)', () => {
       seedDefaultBrain(brainPath)
       const eml = new EML({ dbPath: brainPath, namespace: DEFAULT_BRAIN_AGENT_ID })
       try {
         for (const engram of eml.engrams.query({})) {
           const props = engram.properties as Record<string, unknown>
-          expect(props.source_id).toBe('eml-default-brain')
-          expect(props.source_type).toBe('system')
+          expect(engram.origin).toBe('eml-default-brain')
+          expect(engram.ingestion_method).toBe('direct')
+          expect(engram.significance).toBe('normal')
+          expect(props.source_id).toBeUndefined()
+          expect(props.source_type).toBeUndefined()
+        }
+      } finally {
+        eml.close()
+      }
+    })
+
+    it('the identity profiles are the core profiles; the rules carry why and agreed', () => {
+      seedDefaultBrain(brainPath)
+      const eml = new EML({ dbPath: brainPath, namespace: DEFAULT_BRAIN_AGENT_ID })
+      try {
+        const profiles = eml.engrams.query({ type: 'profile' })
+        expect(profiles).toHaveLength(2)
+        for (const p of profiles) expect((p.properties as Record<string, unknown>).core).toBe(true)
+        for (const r of eml.engrams.query({ type: 'rule' })) {
+          const props = r.properties as Record<string, unknown>
+          expect(typeof props.why).toBe('string')
+          expect(typeof props.agreed).toBe('string')
+          expect(props.boot).toBeUndefined()
         }
       } finally {
         eml.close()

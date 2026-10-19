@@ -19,7 +19,8 @@ export function previewText(content: string | null | undefined, maxChars: number
 export function renderRecallMarkdown(query: string, results: Engram[]): string {
   const lines = [`# EML Recall — "${query}"`, '', `_${results.length} engram(s)_`, '']
   for (const c of results) {
-    const meta: string[] = [c.type, c.significance]
+    // v0.19: significance is no longer written (all normal), so it is not shown.
+    const meta: string[] = [c.type]
     if (c.scope) meta.push(c.scope)
     if (c.title) meta.push(c.title)
     lines.push(`- **[${meta.join(' | ')}]**`)
@@ -44,6 +45,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   const lines: string[] = [`# ${state.scope} — brain state`, '']
 
   lines.push('## Status')
+  // v0.19: what this scope's status is about (the object's status_tracks).
+  if (state.status_tracks) lines.push(`_tracks: ${state.status_tracks}_`)
   if (state.current_status.length === 0) lines.push('_none_')
   for (const s of state.current_status) {
     const st = s.properties?.state ? `[${s.properties.state}] ` : ''
@@ -69,7 +72,10 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     lines.push('## Latest session')
     for (const l of state.recent_logs) {
       const by = l.ingested_by ? ` · by ${l.ingested_by}` : ''
-      lines.push(`- ${l.title ?? '(no title)'} — ${previewText(l.content, SHOW_PREVIEW_CHARS)}${by} · ${l.id}`)
+      // v0.19: a log written with eml_log has its next steps as a field.
+      const next = typeof l.properties?.next === 'string' ? ` · next: ${previewText(l.properties.next as string, SHOW_PREVIEW_CHARS)}` : ''
+      const body = typeof l.properties?.what === 'string' ? l.properties.what as string : l.content
+      lines.push(`- ${l.title ?? '(no title)'} — ${previewText(body, SHOW_PREVIEW_CHARS)}${next}${by} · ${l.id}`)
     }
     lines.push('')
   }
@@ -90,11 +96,29 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
       }
     }
     if (situational.length > 0) {
-      lines.push('### Situational (eml_get for full content)')
+      lines.push('### Situational (eml_get when the trigger applies)')
       for (const r of situational) {
-        lines.push(`- ${r.title ?? '(no title)'} · ${r.id}`)
+        // v0.19: with the trigger, until the project block delivers project rules.
+        const trigger = typeof r.properties?.trigger === 'string' ? ` — when: ${r.properties.trigger as string}` : ''
+        lines.push(`- ${r.title ?? '(no title)'}${trigger} · ${r.id}`)
       }
     }
+    lines.push('')
+  }
+
+  // v0.19: learnings ripe for the user's yes (ask at a natural stop, not mid-work).
+  const ripe = state.ripe_learnings ?? []
+  if (ripe.length > 0) {
+    lines.push('## Ripe learnings (ask the user at a natural stop whether to make each a rule)')
+    for (const l of ripe) lines.push(`- ${l.title ?? '(no title)'} — ${previewText(l.content, SHOW_PREVIEW_CHARS)} · ${l.id}`)
+    lines.push('')
+  }
+
+  // v0.19: the project's or entity's stable facts.
+  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata) : []
+  if (meta.length > 0) {
+    lines.push('## Metadata')
+    for (const [k, v] of meta) lines.push(`- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
     lines.push('')
   }
 

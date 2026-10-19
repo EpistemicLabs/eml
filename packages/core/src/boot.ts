@@ -61,7 +61,7 @@ export interface BootBudgetReport {
 // Selection is by scope; properties.boot is no longer read.
 //
 //   Identity      — the core profiles: per agent.<self> and user.<self> the one
-//                   titled <id> or <id>-identity. Block capped at
+//                   marked core. Block capped at
 //                   IDENTITY_MAX_CHARS; other profiles stay out of the boot.
 //   Rules always  — in full: binding within their scope and delivered unasked.
 //   Rules situational — an index of title + trigger + id; the agent fetches the
@@ -137,10 +137,11 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
     .filter((c: EngramRow) => (c.type === 'rule' || c.type === 'profile') && bootScopes.has(c.scope))
   const legacy = (c: EngramRow) => isLegacyFormat(c.type, c.content, c.properties)
 
-  // Core profiles: the one per self scope titled <id> or <id>-identity.
-  const coreProfile = (scope: string, id: string): EngramRow | undefined =>
-    active.find((c: EngramRow) => c.type === 'profile' && c.scope === scope && (c.title === id || c.title === `${id}-identity`))
-  const profiles = [coreProfile(agentScope, agentId), ...userIds.map(id => coreProfile(`user.${id}`, id))]
+  // Core profiles: the one per self scope marked core (v0.19; the migration set
+  // it from the old title convention <id> / <id>-identity).
+  const coreProfile = (scope: string): EngramRow | undefined =>
+    active.find((c: EngramRow) => c.type === 'profile' && c.scope === scope && c.properties?.core === true)
+  const profiles = [coreProfile(agentScope), ...userIds.map(id => coreProfile(`user.${id}`))]
     .filter((c): c is EngramRow => c !== undefined)
 
   const rules = active.filter((c: EngramRow) => c.type === 'rule').sort(order)

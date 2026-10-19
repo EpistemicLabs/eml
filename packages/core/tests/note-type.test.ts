@@ -13,7 +13,6 @@ import { runForwardMigrations } from '../src/forward-migrations'
 
 const MIGRATIONS = join(__dirname, '..', 'migrations', 'brain')
 const V12_FIXTURE = join(__dirname, 'fixtures', 'brain-v12.sql')
-const SRC = { source_id: 'x', source_type: 'agent' } as const
 
 /** A brain exactly as v0.13 left it, seeded with engrams + every kind of link. */
 function createV13Brain(file: string): void {
@@ -101,7 +100,6 @@ describe('v0.14 note type', () => {
   it('stores a note: active, no review date', () => {
     const e = eml.engrams.store({
       type: 'note', scope: 'global', title: 'thesis', content: 'subjects beat hand-drawn edges',
-      properties: { ...SRC },
     })
     expect(e.type).toBe('note')
     expect(e.status).toBe('active')
@@ -111,8 +109,8 @@ describe('v0.14 note type', () => {
 
   it('reference is still a valid type', () => {
     const e = eml.engrams.store({
-      type: 'reference', scope: 'global', content: 'the spec',
-      properties: { ...SRC, source_url: 'https://example.org/spec' },
+      type: 'reference', scope: 'global', title: 'the-spec', content: 'the spec',
+      properties: { source: 'https://example.org/spec' },
     })
     expect(e.type).toBe('reference')
   })
@@ -163,7 +161,7 @@ describe('v0.14 migration — engrams rebuild on a seeded v0.13 brain', () => {
 
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
-      const n = eml.engrams.store({ type: 'note', scope: 'global', content: 'a note after the rebuild', properties: { ...SRC } })
+      const n = eml.engrams.store({ type: 'note', scope: 'global', title: 'after-rebuild', content: 'a note after the rebuild' })
       expect(n.type).toBe('note')
     } finally { eml.close() }
   })

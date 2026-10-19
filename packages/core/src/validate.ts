@@ -1,4 +1,4 @@
-import { EngramType, EngramStatus, ENGRAM_TYPES, TASK_STAGES, TASK_OUTCOME_STATUSES } from './types'
+import { EngramType, ENGRAM_TYPES } from './types'
 
 /**
  * An engram type must be one of ENGRAM_TYPES — a readable 400 instead of the
@@ -30,120 +30,16 @@ export function validateNoTemplateLeak(content: string | undefined | null): void
   }
 }
 
-/**
- * Validate required properties for an engram type.
- * Throws on missing required fields.
- *
- * v0.15: `opts.create` gates the requirements that only hold for NEW engrams
- * (decision: rationale + ≥ 1 alternative), so legacy data stays patchable and
- * supersedable. `opts.prevStatus` is the stored status on update, for checks that
- * fire on a status TRANSITION only. Errors from these checks start with
- * `Invalid engram:` (one prefix for the server's 400 mapping).
- */
-export function validateProperties(
-  type: EngramType,
-  properties: Record<string, unknown> | null | undefined,
-  status?: EngramStatus,
-  opts: { create: boolean; prevStatus?: EngramStatus } = { create: false }
-): void {
-  const p = properties ?? {}
-  const errors: string[] = []
-
-  function require(field: string) {
-    if (p[field] === undefined || p[field] === null) {
-      errors.push(field)
-    }
-  }
-
-  switch (type) {
-    case 'decision': {
-      // v0.15: a decision is a choice between real alternatives, with a rationale.
-      // Create only — legacy decisions without them stay patchable/supersedable.
-      if (!opts.create) break
-      const missing: string[] = []
-      const alts = p.alternatives
-      if (!Array.isArray(alts) || !alts.some(a => typeof a === 'string' && a.trim() !== '')) {
-        missing.push('a decision needs at least one alternative that was considered and rejected.')
-      }
-      if (typeof p.rationale !== 'string' || p.rationale.trim() === '') {
-        missing.push('a decision needs a rationale — why this option won.')
-      }
-      if (missing.length > 0) {
-        const sentences = missing.map((m, i) => i === 0 ? m : m[0].toUpperCase() + m.slice(1))
-        throw new Error(`Invalid engram: ${sentences.join(' ')}`)
-      }
-      break
-    }
-
-    case 'rule':
-      // v0.10.8: `applies` (always|situational) replaces `enforcement`. Required +
-      // enum-validated here so direct library/CLI/SDK writes can't inject off-schema
-      // values that bypass the MCP gate (the gap that let `always`/`must` in pre-0.10.8).
-      require('applies')
-      if (p.applies !== undefined && p.applies !== null
-        && p.applies !== 'always' && p.applies !== 'situational') {
-        errors.push(`applies (must be 'always' or 'situational', got '${String(p.applies)}')`)
-      }
-      break
-
-    case 'profile':
-      // v0.5: ProfileType removed entirely. Core identity data lives in the
-      // users/agents tables; profile engrams no longer have required properties.
-      break
-
-    case 'status':
-      // v0.8 C7: status_type/subject_state/phase gone; state required.
-      require('state')
-      break
-
-    case 'task': {
-      // v0.15: stage is an optional enum (a property, so the DB does not guard it).
-      if (p.stage !== undefined && p.stage !== null && !(TASK_STAGES as readonly unknown[]).includes(p.stage)) {
-        throw new Error(`Invalid engram: stage must be one of ${TASK_STAGES.join(', ')}.`)
-      }
-      // v0.15: closing a task with a result needs an outcome — on the TRANSITION
-      // into resolved/invalidated only (a create counts as one). A legacy closed
-      // task without outcome stays patchable.
-      const entering = status !== undefined && TASK_OUTCOME_STATUSES.includes(status)
-        && (opts.create || opts.prevStatus !== status)
-      if (entering && (typeof p.outcome !== 'string' || p.outcome.trim() === '')) {
-        throw new Error('Invalid engram: closing a task (resolved/invalidated) needs an outcome.')
-      }
-      break
-    }
-
-    case 'event':
-      require('occurred_at')
-      require('change_type')
-      break
-
-    case 'log':
-      // No required fields — log can minimally have only content
-      break
-
-    case 'reference':
-      // v0.7: No required fields — substance lives in content + title +
-      // source_url/source_name (core engram columns). ReferenceProperties
-      // (reference_type, accessed_at, notes) are all optional.
-      break
-
-    case 'note':
-      // v0.14: No typed properties — a note is its content.
-      break
-  }
-
-  if (errors.length > 0) {
-    throw new Error(`Missing required properties for ${type}: ${errors.join(', ')}`)
-  }
-}
+// v0.19: the per-type field rules moved to fields.ts (TYPE_FIELDS, validateFields);
+// the write paths in engrams.ts check the conditional ones (binding with
+// task_id, a task's outcome on close, …).
 
 // --- Rule and profile format -------------------------------------------------
 //
 // Rules and profiles are short at the source, so the boot can carry them whole
 // (note rule-delivery-model-draft): a rule's content says only what to do, the
-// rationale goes to properties.why and playbook or examples to properties.detail;
-// a situational rule names its situation in properties.trigger, which the boot
-// lists in its index. Entries written before the format (legacy) stay valid —
+// rationale goes to `why` and playbook or examples to `detail`; a situational
+// rule names its situation in `trigger`, which the boot lists in its index. Entries written before the format (legacy) stay valid —
 // the boot shows them by title only and counts them in its footer.
 
 export const RULE_CONTENT_MAX_CHARS = 200
@@ -166,25 +62,25 @@ export function formatProblems(
     if (len > RULE_CONTENT_MAX_CHARS) {
       out.push(
         `a rule's content is at most ${RULE_CONTENT_MAX_CHARS} characters (got ${len}) — state only what to do. ` +
-        'Put the rationale in properties.why and playbook or examples in properties.detail.',
+        'Put the rationale in why and playbook or examples in detail.',
       )
     }
     if (p.applies === 'situational') {
       const trigger = p.trigger
       if (typeof trigger !== 'string' || trigger.trim() === '') {
         out.push(
-          'a situational rule needs properties.trigger — the situation it applies in, ' +
+          'a situational rule needs trigger — the situation it applies in, ' +
           `at most ${RULE_TRIGGER_MAX_CHARS} characters. Don't repeat it in content.`,
         )
       } else if (trigger.length > RULE_TRIGGER_MAX_CHARS) {
-        out.push(`properties.trigger is at most ${RULE_TRIGGER_MAX_CHARS} characters (got ${trigger.length}).`)
+        out.push(`trigger is at most ${RULE_TRIGGER_MAX_CHARS} characters (got ${trigger.length}).`)
       }
     }
   } else if (type === 'profile') {
     if (len > PROFILE_CONTENT_MAX_CHARS) {
       out.push(
         `a profile's content is at most ${PROFILE_CONTENT_MAX_CHARS} characters (got ${len}) — keep the core facts; ` +
-        'put the rest in properties.detail or a separate profile.',
+        'put the rest in detail or a separate profile.',
       )
     }
   }

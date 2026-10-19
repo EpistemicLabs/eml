@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, boot, ALL_RULES, type SystemRule } from '../src'
-import { validDecision, validTask } from './fixtures'
+import { validDecision, validTask, validNote, validStatus, validLog, closedTask } from './fixtures'
 
 // Legacy entries (written before the short format) cannot be stored through
 // the store any more; tests plant them with a raw UPDATE, the way they sit in
@@ -17,10 +17,11 @@ describe('boot()', () => {
   const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`, trigger?: string) =>
     eml.engrams.store({
       type: 'rule', scope, title, content,
-      properties: { applies, ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) },
+      properties: { applies, why: 'test why', agreed: 'yes', ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) },
     })
-  const profile = (scope: string, title: string, content = `${title} facts`) =>
-    eml.engrams.store({ type: 'profile', scope, title, content })
+  // v0.19: the identity is the profile marked core (one per scope), not a title.
+  const profile = (scope: string, title: string, content = `${title} facts`, core = true) =>
+    eml.engrams.store({ type: 'profile', scope, title, content, properties: core ? { core: true } : {} })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
@@ -64,7 +65,8 @@ describe('boot()', () => {
     it('leaves out project rules, other agents\' rules and non-active rules', () => {
       rule('project.demo', 'p-rule', 'always')
       rule('agent.atlas', 'atlas-rule', 'always')
-      eml.engrams.store({ type: 'rule', scope: 'global', title: 'old-rule', content: 'old', status: 'superseded', properties: { applies: 'always' } })
+      const old = rule('global', 'old-rule', 'always', 'old')
+      eml.engrams.update(old.id, { status: 'invalidated' })
       const r = boot(eml, 'assistant')
       expect(r.engrams).toBe(0)
       expect(r.markdown).not.toContain('p-rule')
@@ -73,7 +75,9 @@ describe('boot()', () => {
     })
 
     it('ignores properties.boot: a flagged project rule stays out, an unflagged global rule boots', () => {
-      eml.engrams.store({ type: 'rule', scope: 'project.demo', title: 'flagged', content: 'flagged', properties: { applies: 'always', boot: ['*'] } })
+      // A legacy row still carrying the flag (planted raw: boot is no field since v0.19).
+      const flagged = rule('project.demo', 'flagged', 'always', 'flagged')
+      makeLegacy(eml, flagged.id, 'flagged', { applies: 'always', why: 'w', agreed: 'yes', boot: ['*'] })
       rule('global', 'unflagged', 'always')
       const md = boot(eml, 'assistant').markdown
       expect(md).not.toContain('[project.demo | flagged]')
@@ -91,31 +95,41 @@ describe('boot()', () => {
     })
 
     it('renders no other engram type', () => {
-      eml.engrams.store({ type: 'note', scope: 'global', content: 'note-content' })
-      eml.engrams.store({ type: 'status', scope: 'global', content: 'status-content', properties: { state: 'running' } })
+      eml.engrams.store(validNote({ scope: 'global', content: 'note-content' }))
+      eml.engrams.store(validStatus({ scope: 'global', content: 'status-content', properties: { state: 'running' } }))
       eml.engrams.store(validDecision({ scope: 'global', content: 'decision-content' }))
-      eml.engrams.store({ type: 'task', scope: 'global', content: 'task-content', status: 'active' })
-      eml.engrams.store({ type: 'log', scope: 'global', content: 'log-content' })
+      eml.engrams.store(validTask({ scope: 'global', content: 'task-content', status: 'active' }))
+      eml.engrams.store(validLog({ scope: 'global', content: 'log-content' }))
       const md = boot(eml, 'assistant').markdown
       for (const t of ['note', 'status', 'decision', 'task', 'log']) expect(md).not.toContain(`${t}-content`)
     })
   })
 
   describe('identity: the core profiles', () => {
-    it('boots the profile titled <id> or <id>-identity in agent.<self> and user.<self>', () => {
+    it('boots the profile marked core in agent.<self> and user.<self>', () => {
       profile('agent.assistant', 'assistant', 'I am Assistant')
       profile('user.alice', 'alice-identity', 'Alice is the user')
       const md = boot(eml, 'assistant').markdown
       expect(md).toMatch(/## Identity\n- \*\*\[agent\.assistant \| assistant\]\*\* I am Assistant\n- \*\*\[user\.alice \| alice-identity\]\*\* Alice is the user$/)
     })
 
-    it('leaves out every other profile (global, other facets, other agents)', () => {
-      profile('agent.assistant', 'assistant-tools', 'tool facet')
-      profile('global', 'server-setup', 'server facts')
+    it('leaves out every other profile (facets, a title without core, other agents)', () => {
+      profile('agent.assistant', 'assistant-tools', 'tool facet', false)
+      profile('agent.assistant', 'assistant', 'titled like the old convention', false)
+      profile('user.alice', 'alice-identity', 'old identity title', false)
       profile('agent.atlas', 'atlas', 'I am Atlas')
       const r = boot(eml, 'assistant')
       expect(r.engrams).toBe(0)
       expect(r.markdown).not.toContain('## Identity')
+    })
+
+    it('boots one core per scope: a new core profile supersedes the old one', () => {
+      const first = profile('agent.assistant', 'assistant', 'I was Assistant')
+      profile('agent.assistant', 'assistant-identity', 'I am Assistant now')
+      expect(eml.engrams.get(first.id)!.status).toBe('superseded')
+      const md = boot(eml, 'assistant').markdown
+      expect(md).toContain('I am Assistant now')
+      expect(md).not.toContain('I was Assistant')
     })
   })
 
@@ -147,7 +161,7 @@ describe('boot()', () => {
       const longRule = rule('global', 'long-rule', 'always')
       makeLegacy(eml, longRule.id, 'L'.repeat(450))
       const noTrigger = rule('agent.assistant', 'no-trigger', 'situational')
-      makeLegacy(eml, noTrigger.id, 'short', { applies: 'situational' })
+      makeLegacy(eml, noTrigger.id, 'short', { applies: 'situational', why: 'w', agreed: 'yes' })
       const longProfile = profile('agent.assistant', 'assistant')
       makeLegacy(eml, longProfile.id, 'P'.repeat(700))
       rule('global', 'fine', 'always')
@@ -213,11 +227,12 @@ describe('boot()', () => {
     it('does not render properties', () => {
       eml.engrams.store({
         type: 'rule', scope: 'global', title: 'r', content: 'body',
-        properties: { applies: 'always', why: 'because-text', detail: 'detail-text', review_due_at: '2026-10-14' },
+        properties: { applies: 'always', why: 'because-text', agreed: 'agreed-text', detail: 'detail-text', review_due_at: '2026-10-14' },
       })
       const md = boot(eml, 'assistant').markdown
       expect(md).not.toContain('because-text')
       expect(md).not.toContain('detail-text')
+      expect(md).not.toContain('agreed-text')
       expect(md).not.toContain('review_due_at')
     })
   })
@@ -231,10 +246,10 @@ describe('boot()', () => {
 
   describe('counters (not rendered)', () => {
     it('counts open tasks and recent logs without rendering them', () => {
-      eml.engrams.store({ type: 'task', scope: 'global', content: 'planned-task' })
-      eml.engrams.store({ type: 'task', scope: 'global', content: 'active-task', status: 'active' })
-      eml.engrams.store(validTask({ scope: 'global', content: 'resolved-task', status: 'resolved' }))
-      eml.engrams.store({ type: 'log', scope: 'global', content: 'session-summary-1' })
+      eml.engrams.store(validTask({ scope: 'global', content: 'planned-task' }))
+      eml.engrams.store(validTask({ scope: 'global', content: 'active-task', status: 'active' }))
+      closedTask(eml, { scope: 'global', content: 'resolved-task' })
+      eml.engrams.store(validLog({ scope: 'global', content: 'session-summary-1' }))
       const result = boot(eml, 'assistant')
       expect(result.open_tasks).toBe(2)
       expect(result.recent_logs).toBe(1)
@@ -243,14 +258,16 @@ describe('boot()', () => {
     })
 
     it('counts stale status', () => {
-      eml.engrams.store({ type: 'status', scope: 'global', content: 'long status body', properties: { state: 'running' } })
+      eml.engrams.store(validStatus({ scope: 'global', content: 'long status body', properties: { state: 'running' } }))
       expect(boot(eml, 'assistant', { reviewDays: -1 }).stale_status).toBe(1)
       expect(boot(eml, 'assistant', { reviewDays: 1000 }).stale_status).toBe(0)
     })
 
     it('counts overdue reviews of decisions/rules/profiles only, without a footer', () => {
       eml.engrams.store(validDecision({ scope: 'global', title: 'old-decision', properties: { review_due_at: '2020-01-01T00:00:00Z' } }))
-      eml.engrams.store({ type: 'task', scope: 'global', content: 'task-with-due', properties: { review_due_at: '2020-01-01T00:00:00Z' } })
+      // A task has no review_due_at (v0.19: no such field) — plant a legacy one raw.
+      const task = eml.engrams.store(validTask({ scope: 'global', content: 'task-with-due' }))
+      makeLegacy(eml, task.id, 'task-with-due', { review_due_at: '2020-01-01T00:00:00Z' })
       const r = boot(eml, 'assistant')
       expect(r.overdue_review).toBe(1)
       expect(r.markdown).not.toContain('---')

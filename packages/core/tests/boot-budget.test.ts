@@ -15,22 +15,22 @@ const SYSTEM_RULES_BUDGET = 5900
 function brainWith(always: number, situational: number, users = 1): EML {
   const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
   eml.agents.store({ id: 'assistant', name: 'Assistant' })
-  eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'A'.repeat(400) })
+  eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'A'.repeat(400), properties: { core: true } })
   for (let u = 0; u < users; u++) {
     const id = `user${u}`
     eml.users.create({ id, name: id })
-    eml.engrams.store({ type: 'profile', scope: `user.${id}`, title: id, content: 'B'.repeat(400) })
+    eml.engrams.store({ type: 'profile', scope: `user.${id}`, title: id, content: 'B'.repeat(400), properties: { core: true } })
   }
   for (let i = 0; i < always; i++) {
     eml.engrams.store({
       type: 'rule', scope: 'global', title: `always-${String(i).padStart(2, '0')}`,
-      content: 'C'.repeat(200), properties: { applies: 'always' },
+      content: 'C'.repeat(200), properties: { applies: 'always', why: 'w', agreed: 'yes' },
     })
   }
   for (let i = 0; i < situational; i++) {
     eml.engrams.store({
       type: 'rule', scope: 'global', title: `situational-${String(i).padStart(2, '0')}`,
-      content: 'D'.repeat(200), properties: { applies: 'situational', trigger: 'E'.repeat(80) },
+      content: 'D'.repeat(200), properties: { applies: 'situational', trigger: 'E'.repeat(80), why: 'w', agreed: 'yes' },
     })
   }
   return eml
@@ -39,7 +39,7 @@ function brainWith(always: number, situational: number, users = 1): EML {
 // Legacy entries cannot be stored through the store any more; plant them with
 // a raw UPDATE, the way they sit in an existing brain.
 function plantLegacy(eml: EML, scope: string, title: string, content: string): void {
-  const r = eml.engrams.store({ type: 'rule', scope, title, content: 'x', properties: { applies: 'always' } })
+  const r = eml.engrams.store({ type: 'rule', scope, title, content: 'x', properties: { applies: 'always', why: 'w', agreed: 'yes' } })
   ;(eml as any).db.prepare('UPDATE engrams SET content = ? WHERE id = ?').run(content, r.id)
 }
 
@@ -179,7 +179,7 @@ describe('boot hard budget (opts.budget)', () => {
   it('then always-rules, longest first', () => {
     const eml = brainWith(0, 2)
     for (const [title, len] of [['r-short', 50], ['r-long', 200], ['r-mid', 120]] as const) {
-      eml.engrams.store({ type: 'rule', scope: 'global', title, content: title + '.'.repeat(len - title.length), properties: { applies: 'always' } })
+      eml.engrams.store({ type: 'rule', scope: 'global', title, content: title + '.'.repeat(len - title.length), properties: { applies: 'always', why: 'w', agreed: 'yes' } })
     }
     try {
       const b = largestBudget(eml, r => r.always_title_only >= 1)

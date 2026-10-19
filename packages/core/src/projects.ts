@@ -75,7 +75,7 @@ export class ProjectStore {
     if (patch.parent_project !== undefined) { fields.push('parent_project = ?'); params.push(patch.parent_project) }
     if (patch.started_at !== undefined)     { fields.push('started_at = ?');     params.push(patch.started_at) }
     if (patch.ended_at !== undefined)       { fields.push('ended_at = ?');       params.push(patch.ended_at) }
-    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(JSON.stringify(patch.metadata)) }
+    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
     if (patch.status_tracks !== undefined)  { fields.push('status_tracks = ?');  params.push(patch.status_tracks) }
 
     if (fields.length === 0) return this.rowToProject(existing)

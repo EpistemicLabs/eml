@@ -83,7 +83,7 @@ function parseDue(value: unknown): number {
   return Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)
 }
 
-export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
+const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-profile-format',
     kind: 'migration',
@@ -91,12 +91,11 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
     what:
       `Rules and profiles are short, so the boot can carry them whole: a rule's content at most ${RULE_CONTENT_MAX_CHARS} characters ` +
       `and only what to do, a profile's at most ${PROFILE_CONTENT_MAX_CHARS}; a situational rule names its situation in ` +
-      `properties.trigger (at most ${RULE_TRIGGER_MAX_CHARS}). Entries written before are shown by title only until they fit.`,
+      `trigger (at most ${RULE_TRIGGER_MAX_CHARS}). Entries written before are shown by title only until they fit.`,
     how:
       'Shorten content to what to do (rule) or the core facts (profile). Move, never drop: the rationale goes to ' +
-      'properties.why, playbook and examples to properties.detail. A situational rule gets a trigger that names the ' +
-      'situation, not repeated in content. Set properties.boot to null if present (no longer read). One eml_update per ' +
-      'entry, content and properties in the same patch.',
+      'why, playbook and examples to detail. A situational rule gets a trigger that names the situation, not repeated ' +
+      'in content. One eml_update per entry, content and the fields in the same call.',
     detect(eml) {
       return eml.engrams
         .query({ limit: 10000, status: 'active' })
@@ -114,13 +113,13 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
     id: 'review-due',
     kind: 'review',
     what:
-      'Decisions, rules and profiles carry a review date (properties.review_due_at). Due entries are re-checked ' +
-      'so stale knowledge does not stay in force.',
+      'Decisions, rules and profiles carry a review date (review_due_at). Due entries are re-checked so stale ' +
+      'knowledge does not stay in force.',
     how:
-      'Check each entry against what is known now, then one of three. Still holds → eml_update with ' +
-      'properties.review_note (why it still holds). Changed → eml_update with the new content. Both restart the ' +
-      'review. No longer holds → invalidate with the reason, or supersede if another active engram replaces it. ' +
-      'When unsure, ask the user instead of confirming.',
+      'Check each entry against what is known now, then one of three. Still holds → eml_update with review_note ' +
+      '(why it still holds; it becomes a review entry). Changed → eml_update with the new content. Both restart the ' +
+      'review. No longer holds → eml_update status=invalidated, or, if another active engram replaces it, ' +
+      'eml_update(<that engram>, supersedes=[<this id>]). When unsure, ask the user instead of confirming.',
     detect(eml, now) {
       const reviewable = REVIEWABLE_TYPES as readonly string[]
       return (eml.engrams.query({ limit: 10000, status: 'active' }) as EngramRow[])
@@ -128,6 +127,124 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
         .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
     },
   },
+]
+
+// --- Schema 19 (v0.19 tool surface) ------------------------------------------------
+//
+// What the v0.19 migration could not decide on its own: whether a reference is
+// really a pointer, where a misfiled profile belongs, which engram succeeded a
+// superseded one, why a rule holds and whether the user agreed to it, and
+// whether a decision or note taken in a task outlives it.
+
+const ACTIVE = (eml: EML): EngramRow[] => eml.engrams.query({ limit: 100000, status: 'active' }) as EngramRow[]
+
+const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'reference-without-source',
+    kind: 'migration',
+    since_schema: 19,
+    what:
+      'A reference points to something outside the brain and names it in source (URL, repo path, document id). ' +
+      'Many older references are syntheses or working theses that live in the brain — those are notes.',
+    how:
+      'Points outside → eml_update with source (and source_name, checked_at if known). Lives in the brain → write it ' +
+      'as a note (eml_note, same title and content) with supersedes=[<reference id>]; the type of an engram never ' +
+      'changes in place.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'reference' && (typeof c.properties?.source !== 'string' || c.properties.source.trim() === ''))
+        .map(c => finding(c, 'no source.'))
+    },
+  },
+  {
+    id: 'profile-scope',
+    kind: 'migration',
+    since_schema: 19,
+    what:
+      'A profile is about someone: it lives in agent.<id>, user.<id> or entity.<id>. Setup, access and how-to ' +
+      'information is a note or a reference, a way of working a rule.',
+    how:
+      'Write it as the type it is (eml_note / eml_reference / eml_rule — a rule only with the user\'s yes) with ' +
+      'supersedes=[<profile id>]. If it really is a facet of someone, write it as a profile in their scope with ' +
+      'supersedes=[<profile id>].',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'profile' && !/^(agent|user|entity)\./.test(c.scope))
+        .map(c => finding(c, `profile in ${c.scope}.`))
+    },
+  },
+  {
+    id: 'superseded-without-successor',
+    kind: 'migration',
+    since_schema: 19,
+    what:
+      'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
+      'supersedes set the status without the edge, so the history ends there.',
+    how:
+      'Find the successor (same title thread, the newer engram on the topic) and link it: ' +
+      'eml_update(<successor id>, supersedes=[<this id>]). No successor exists → leave it; do not invent one.',
+    detect(eml) {
+      const rows = eml.engrams.query({ limit: 100000, status: 'superseded' }) as EngramRow[]
+      const linked = new Set(eml.engrams.supersededWithEdge())
+      return rows.filter(c => !linked.has(c.id)).map(c => finding(c, 'superseded, no supersedes edge.'))
+    },
+  },
+  {
+    id: 'rule-without-why',
+    kind: 'migration',
+    since_schema: 19,
+    what: 'A rule says why it holds (why). New rules need it; older ones were written without.',
+    how:
+      'Propose a why from the rule, its detail and its history (eml_get), show it to the user, and set it with ' +
+      'eml_update(why) once they agree. If no reason can be found, ask whether the rule should stay.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && (typeof c.properties?.why !== 'string' || c.properties.why.trim() === ''))
+        .map(c => finding(c, 'no why.'))
+    },
+  },
+  {
+    id: 'rule-without-agreement',
+    kind: 'migration',
+    since_schema: 19,
+    what:
+      'A rule is agreed with the user (agreed holds their yes). Older rules were often written after a single ' +
+      'incident; what the agent noticed on its own is a learning until it recurs and the user agrees.',
+    how:
+      'Show the rule to the user. They want it as a rule → eml_update(agreed=<their words>). It came from one ' +
+      'incident and they do not want it as a rule yet → write a learning (eml_learning: the rule as the lesson, the ' +
+      'incident as evidence) and link it: eml_update(<learning id>, supersedes=[<rule id>]). Ask in batches, not ' +
+      'one by one.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && (typeof c.properties?.agreed !== 'string' || c.properties.agreed.trim() === ''))
+        .map(c => finding(c, 'no agreement recorded.'))
+    },
+  },
+  {
+    id: 'task-link-without-binding',
+    kind: 'migration',
+    since_schema: 19,
+    what:
+      'A decision or note taken in a task says whether it outlives the task (binding standing) or only governs ' +
+      'how the task is done (binding task; it closes with the task). Without binding it counts as standing.',
+    how:
+      'Ask: does it still constrain work once the task is done? Yes → eml_update(binding=standing). No → task still ' +
+      'open: eml_update(binding=task); task already closed: eml_update(status=invalidated).',
+    detect(eml) {
+      const linked = new Map(eml.engrams.taskLinkedItems().map(r => [r.id, r.task_status]))
+      return ACTIVE(eml)
+        .filter(c => (c.type === 'decision' || c.type === 'note') && linked.has(c.id) && c.properties?.binding === undefined)
+        .map(c => finding(c, `taken in a task (${linked.get(c.id)}), no binding.`))
+    },
+  },
+]
+
+/** Every check, migration checks by schema, then the recurring review. */
+export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
+  ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
+  ...SCHEMA_19_CHECKS,
+  ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
 ]
 
 /** Run every hygiene check against the brain. */

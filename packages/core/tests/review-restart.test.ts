@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
+import { validRule } from './fixtures'
 
 // A substantive update of an active decision, rule or profile restarts its
 // review cycle (decision 60 / rule 90 / profile 180 days).
@@ -23,43 +24,53 @@ describe('review cycle on update', () => {
   }
 
   it('restarts on a content change: review_due_at moves forward, the review label goes', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z' })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now() + 80 * 86400_000)
     expect(labels(r.id)).not.toContain('review')
   })
 
-  it('restarts on a properties change — a review_note confirms without a change — or a title change', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+  it('restarts on a field change, on a review_note (a confirmation without a change) or a title change', () => {
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
-    eml.engrams.update(r.id, { properties: { review_note: 'still holds' } })
+    eml.engrams.update(r.id, { properties: { detail: 'more' } })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now())
     expect(labels(r.id)).not.toContain('review')
+    makeDue(r.id)
+    eml.engrams.update(r.id, { review_note: 'still holds' })
+    expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now())
+    expect(labels(r.id)).not.toContain('review')
+    expect(eml.engrams.entries(r.id, ['review']).map(e => e.text)).toEqual(['still holds'])
     makeDue(r.id)
     eml.engrams.update(r.id, { title: 'r2' })
     expect(labels(r.id)).not.toContain('review')
   })
 
-  it('does not restart on significance, tags or an unchanged content', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+  it('does not restart on tags or an unchanged content', () => {
+    eml.tags.create({ name: 'ops' })
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
-    eml.engrams.update(r.id, { significance: 'high' })
+    eml.engrams.update(r.id, { tags: ['ops'] })
     eml.engrams.update(r.id, { content: 'do Y' })
     expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')
     expect(labels(r.id)).toContain('review')
   })
 
   it('keeps an explicit review_due_at from the patch, and still clears the review label', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: '2030-05-05T00:00:00.000Z' } })
     expect(due(r.id)).toBe('2030-05-05T00:00:00.000Z')
     expect(labels(r.id)).not.toContain('review')
   })
 
-  it('treats review_due_at: null in a substantive patch as not given: the cycle restarts', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+  // v0.19 (S7) makes null clear an optional field; v0.18 read review_due_at: null
+  // as "not given" and restarted the cycle. With the v0.19 core the null deletes
+  // review_due_at and nothing restarts it — reported as an open question, see the
+  // build report. Kept as a todo until it is settled.
+  it('treats review_due_at: null in a substantive patch as not given (v0.18 behaviour)', () => {
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: null } })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now() + 80 * 86400_000)
@@ -79,9 +90,9 @@ describe('review cycle on update', () => {
   })
 
   it('does not restart when the update also takes the entry out of active, nor on a status-only reactivation', () => {
-    const r = eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content: 'do Y', properties: { applies: 'always' } })
+    const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
-    eml.engrams.update(r.id, { content: 'do Z', status: 'superseded' })
+    eml.engrams.update(r.id, { content: 'do Z', status: 'invalidated' })
     expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')
     eml.engrams.update(r.id, { status: 'active' })
     expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')

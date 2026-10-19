@@ -126,8 +126,10 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
 
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
-      eml.engrams.relate({ source_id: 't-child', target_id: 't-parent', relation: 'part_of', detection_method: 'manual' })
-      expect(eml.engrams.appendTaskEntry('t-parent', { text: 'first entry after the update' }, 'assistant')!.author).toBe('assistant')
+      // v0.19: part_of comes from a task's parent (trackTask), entries from trackTask text.
+      eml.engrams.trackTask('t-child', { parent_id: 't-parent' }, 'assistant')
+      const tracked = eml.engrams.trackTask('t-parent', { text: 'first entry after the update' }, 'assistant')!
+      expect(tracked.entries_written![0].author).toBe('assistant')
     } finally { eml.close() }
 
     const after = snapshot(brainFile)
