@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -30,8 +30,9 @@ import { platform } from './infrastructure/platform/index.js'
  * brain (a fresh home first runs the first-run setup, setup.ts) → launch the bundled loopback server → write isolation files →
  * start the http+ws host → open the tab.
  *
- * `eml-cockpit service …` is handled first (autostart install/uninstall/status)
- * and exits; with no subcommand the host boots normally.
+ * `eml-cockpit service …` (autostart install/uninstall/status) and
+ * `eml-cockpit diagnose` (redacted diagnostics for an issue) are handled first
+ * and exit; with no subcommand the host boots normally.
  */
 
 const log = (s: string) => process.stderr.write(s + '\n')
@@ -147,6 +148,9 @@ async function main() {
     COCKPIT_URL: `http://127.0.0.1:${hostPort}`,
     COCKPIT_SPAWN_TOKEN: spawnToken,
     COCKPIT_SPAWN_JS: SPAWN_CLI_JS,
+    // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
+    COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
+    COCKPIT_HOME,
     // Where a session without network leaves its worker request (spawn-inbox.ts).
     COCKPIT_SPAWN_DIR: SPAWN_INBOX_DIR,
     // v0.17 task runs (skill task-run): the home of a task's files when its
@@ -192,6 +196,14 @@ async function main() {
   process.on('SIGTERM', shutdown)
 }
 
+async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
+  if (argv[0] !== 'diagnose') return false
+  const { diagnose } = await import('./diagnostics/diagnose.js')
+  process.stdout.write(`${await diagnose()}\n`)
+  return true
+}
+
 runServiceCommand(process.argv.slice(2))
+  .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

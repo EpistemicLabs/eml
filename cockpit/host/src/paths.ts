@@ -25,6 +25,8 @@ export const CORE_INDEX = path.join(HOST_ROOT, 'dist', 'core.cjs')      // core 
 export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).
 export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
+// CLI a session runs for the cockpit's redacted diagnostics (diagnose-cli.ts, skill report-issue).
+export const DIAGNOSE_CLI_JS = path.join(HOST_ROOT, 'dist', 'diagnose-cli.js')
 // Skills that only make sense inside the cockpit (spawn-session).
 export const COCKPIT_SKILLS_DIR = path.join(HOST_ROOT, 'skills')
 const MCP_ROOT = path.dirname(require.resolve('@engramprotocol/mcp-server/package.json'))
