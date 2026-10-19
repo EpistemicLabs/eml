@@ -77,7 +77,7 @@ export {
   renderRecallMarkdown, renderBrainStateMarkdown, previewText,
   RECALL_PREVIEW_CHARS, SHOW_PREVIEW_CHARS,
 } from './render'
-export { validateEngramType, validateProperties, validateNoTemplateLeak } from './validate'
+export { validateEngramType, validateProperties, validateNoTemplateLeak, validateFormat, formatProblems, isLegacyFormat, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 export { ProjectStore } from './projects'
 export { TagStore, slugifyTag } from './tags'
 export { LabelStore, slugifyLabel, hydrateEngramLabels } from './labels'
@@ -124,4 +124,5 @@ export {
   type MigrationOutcomeKind,
 } from './forward-migrations'
 export { boot, type BootResult, type BootOptions } from './boot'
+export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'

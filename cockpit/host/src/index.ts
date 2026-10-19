@@ -8,6 +8,7 @@ import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
+import { BrainHygiene } from './brain-hygiene.js'
 import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
@@ -161,8 +162,11 @@ async function main() {
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
+  // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
+  const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
+
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG, spawns, spawnToken },
+    { spaces, bridge, turns, providers, hookToken, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG, spawns, spawnToken, hygiene },
     origins,
   )
 

@@ -35,6 +35,7 @@ import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, write
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
+import type { BrainHygiene } from './brain-hygiene.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -84,6 +85,8 @@ export interface HostDeps {
   spawns: SpawnQueue
   /** Per-boot secret sessions send with POST /api/spawn. */
   spawnToken: string
+  /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
+  hygiene: BrainHygiene
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -353,6 +356,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const pending = (await readCockpitConfig())?.onboarding === 'pending'
       json(res, 200, { needed: false, signIn: pending && !(await deps.providers.get('claude')?.auth.signedIn().catch(() => false)) })
       return true
+    }
+
+    // Brain hygiene of this space: GET = the banner's offer (null = none),
+    // POST start = findings.json + a session, POST dismiss = Not now.
+    if (resource === 'brain-hygiene') {
+      if (!id && method === 'GET') {
+        json(res, 200, { offer: await deps.hygiene.view(space) })
+        return true
+      }
+      if ((id === 'start' || id === 'dismiss') && method === 'POST') {
+        json(res, 200, id === 'start' ? await deps.hygiene.start(space) : await deps.hygiene.dismiss(space))
+        return true
+      }
     }
 
     if (resource === 'about' && !id && method === 'GET') {
