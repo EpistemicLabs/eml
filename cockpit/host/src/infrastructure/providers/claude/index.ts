@@ -90,7 +90,7 @@ class ClaudeProvider implements AgentProvider {
         // inside a cockpit session (launch flags), so it is set at spawn.
         ...(readRenderer() === 'fullscreen' ? { CLAUDE_CODE_NO_FLICKER: '1' } : {}),
         // `claude` typed inside a session is the cockpit's as well.
-        PATH: [CLAUDE_BIN_DIR, process.env.PATH].filter(Boolean).join(':'),
+        PATH: [CLAUDE_BIN_DIR, process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
       },
     }

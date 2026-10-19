@@ -56,12 +56,12 @@ export class ProjectPathError extends Error {
   }
 }
 
-/** `~` and `~/x` expand to the home directory; the result is absolute + normalised. */
+/** `~`, `~/x` and `~\\x` expand to the home directory; the result is absolute + normalised. */
 export function normalizeProjectPath(input: string): string {
   const trimmed = (input ?? '').trim()
   if (!trimmed) return ''
   const expanded = trimmed === '~' ? os.homedir()
-    : trimmed.startsWith('~/') ? path.join(os.homedir(), trimmed.slice(2))
+    : /^~[\\/]/.test(trimmed) ? path.join(os.homedir(), trimmed.slice(2))
     : trimmed
   return path.resolve(expanded)
 }
