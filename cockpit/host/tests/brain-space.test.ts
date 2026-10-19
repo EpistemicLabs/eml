@@ -9,6 +9,7 @@ process.env.EML_COCKPIT_HOME = home
 
 const TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = 'hooktoken0123456789'
+const HOOK_URL = 'http://127.0.0.1:4318/api/hook'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
 
 
@@ -22,6 +23,7 @@ describe('brain spaces', () => {
     writeIsolationFiles: typeof import('../src/infrastructure/providers/claude/isolation.js')['writeIsolationFiles']
     openBrainSpace: typeof import('../src/brain-space.js')['openBrainSpace']
     BrainSpaces: typeof import('../src/brain-space.js')['BrainSpaces']
+    shellLine: typeof import('../src/infrastructure/providers/shared.js')['shellLine']
     CONFIG_DIR: string
     EML_HOOK_DIR: string
   }
@@ -30,7 +32,8 @@ describe('brain spaces', () => {
     const isolation = await import('../src/infrastructure/providers/claude/isolation.js')
     const space = await import('../src/brain-space.js')
     const paths = await import('../src/paths.js')
-    mods = { ...isolation, ...space, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
+    const { shellLine } = await import('../src/infrastructure/providers/shared.js')
+    mods = { ...isolation, ...space, shellLine, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -38,7 +41,7 @@ describe('brain spaces', () => {
     mkdirSync(mods.CONFIG_DIR, { recursive: true })
     mkdirSync(mods.EML_HOOK_DIR, { recursive: true })
     const settings = join(mods.CONFIG_DIR, 'settings.json')
-    const legacy = [join(mods.CONFIG_DIR, 'mcp.json'), join(mods.EML_HOOK_DIR, 'config')]
+    const legacy = [join(mods.CONFIG_DIR, 'mcp.json'), join(mods.EML_HOOK_DIR, 'config'), join(mods.CONFIG_DIR, 'hook-curl.conf')]
     for (const file of legacy) writeFileSync(file, 'stale')
     // What the host wrote there before spaces: its EML hooks naming the cli.js of the version
     // installed back then (gone after an update) and the removed eml/config, and the turn-state
@@ -62,10 +65,10 @@ describe('brain spaces', () => {
       },
     }), { mode: 0o600 })
 
-    const isolation = mods.writeIsolationFiles(HOOK_TOKEN)
+    const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
 
     expect(isolation.configDir).toBe(mods.CONFIG_DIR)
-    expect(readFileSync(isolation.curlConfig, 'utf8')).toContain(HOOK_TOKEN)
+    expect(readFileSync(isolation.turnHookConfig, 'utf8')).toContain(HOOK_TOKEN)
     for (const file of legacy) expect(existsSync(file)).toBe(false)
     // The host's commands are gone, Claude Code's own settings and hooks stay, the mode is kept.
     expect(JSON.parse(readFileSync(settings, 'utf8'))).toEqual({
@@ -78,22 +81,22 @@ describe('brain spaces', () => {
 
     // A file holding nothing but the host's own writes goes entirely.
     writeFileSync(settings, JSON.stringify({ skipDangerousModePermissionPrompt: true, hooks: { SessionStart: [{ hooks: [emlCommand('session-start')] }] } }))
-    mods.writeIsolationFiles(HOOK_TOKEN)
+    mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     expect(existsSync(settings)).toBe(false)
 
     // A settings.json Claude Code wrote itself is left untouched, byte for byte — so is one that is not JSON.
     for (const own of [JSON.stringify({ permissions: { allow: ['Bash(git status)'] }, hooks: { Stop: [{ hooks: [ownCommand] }] } }), 'null', '{ not json']) {
       writeFileSync(settings, own)
-      mods.writeIsolationFiles(HOOK_TOKEN)
+      mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
       expect(readFileSync(settings, 'utf8')).toBe(own)
     }
   })
 
   it('gives a space its own session files, owner-only, with the token only in env and the hook config', () => {
-    const isolation = mods.writeIsolationFiles(HOOK_TOKEN)
+    const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const space = mods.openBrainSpace({
       id: SPACE_ID, name: 'Main', brainName: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      hookUrl: 'http://127.0.0.1:4318/api/hook', curlConfig: isolation.curlConfig,
+      turnHookConfig: isolation.turnHookConfig,
     })
 
     expect(space.files.mcpConfig).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'mcp.json'))
@@ -108,18 +111,22 @@ describe('brain spaces', () => {
     const settings = readFileSync(space.files.settings, 'utf8')
     expect(settings).not.toContain(TOKEN)
     expect(settings).not.toContain(HOOK_TOKEN)
-    // The EML hooks read this space's config, the turn-state hooks the shared curl config.
-    expect(settings).toContain(`--config '${space.files.emlConfig}'`)
-    expect(settings).toContain(`-K '${isolation.curlConfig}'`)
+    // The EML hooks read this space's config, the turn-state hooks the shared turn-hook config.
+    // A path as a hook names it: bare in Claude Code's exec form (Windows), shell-quoted elsewhere.
+    const quoted = (file: string) => (process.platform === 'win32' ? file : mods.shellLine({ program: file, args: [] }))
+    const line = (hook: { command: string; args?: string[] }) => [hook.command, ...(hook.args ?? [])].join(' ')
+    const hooks = JSON.parse(settings).hooks
+    expect(line(hooks.SessionStart[0].hooks[0])).toContain(`--config ${quoted(space.files.emlConfig)}`)
+    expect(line(hooks.Stop[0].hooks[0])).toContain(quoted(isolation.turnHookConfig))
 
     expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)
   })
 
   it('resolves a space by id and falls back to main', () => {
-    const isolation = mods.writeIsolationFiles(HOOK_TOKEN)
+    const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string) => mods.openBrainSpace({
       id, name, brainName: name, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      hookUrl: 'http://127.0.0.1:4318/api/hook', curlConfig: isolation.curlConfig,
+      turnHookConfig: isolation.turnHookConfig,
     })
     const main = open(SPACE_ID, 'Main')
     const spaces = new mods.BrainSpaces(main)

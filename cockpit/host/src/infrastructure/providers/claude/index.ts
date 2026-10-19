@@ -43,7 +43,7 @@ class ClaudeProvider implements AgentProvider {
 
   /** The shared files; a space's mcp.json and settings.json are written by brain-space.ts (writeSpaceFiles). */
   prepare(ctx: IsolationContext): void {
-    this.isolation = writeIsolationFiles(ctx.hookToken)
+    this.isolation = writeIsolationFiles(ctx.hookUrl, ctx.hookToken)
   }
 
   private files(): IsolationFiles {

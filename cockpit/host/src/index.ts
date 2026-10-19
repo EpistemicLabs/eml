@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_HOOK_CURL_CONFIG, COCKPIT_HOME, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -106,7 +106,7 @@ async function main() {
   const hookUrl = `http://127.0.0.1:${hostPort}/api/hook`
 
   // Each agent CLI writes the files its sessions share across spaces (for
-  // Claude Code: the hook curl config, the skills, .claude.json; for Codex:
+  // Claude Code: the turn-hook config, the skills, .claude.json; for Codex:
   // config.toml and hooks.json). A space's own files follow below.
   for (const provider of providers.all()) {
     provider.prepare({ hookUrl, hookToken, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
@@ -125,8 +125,7 @@ async function main() {
     main: true,
     url: server.baseUrl,
     token: brain.token,
-    hookUrl,
-    curlConfig: CLAUDE_HOOK_CURL_CONFIG,
+    turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
   })
   const spaces = new BrainSpaces(main)
   for (const extra of config?.spaces ?? []) {
@@ -134,7 +133,7 @@ async function main() {
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
       id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
-      url: server.baseUrl, token: extra.token, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
     }))
   }
   log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
@@ -166,7 +165,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, hookUrl, curlConfig: CLAUDE_HOOK_CURL_CONFIG, spawns, spawnToken, hygiene },
+    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
     origins,
   )
 
