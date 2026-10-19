@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expectOwnerOnly } from './helpers/owner-only.js'
 
 // paths.ts reads the home at import time — set it before loading the module.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-config-test-'))
@@ -48,6 +49,6 @@ describe('cockpit config writes', () => {
   it('writes atomically: no temp file left, the config readable by the owner only', async () => {
     await config.updateCockpitConfig((c) => c && { ...c, mainName: 'Final' })
     expect(readdirSync(home).filter((f) => f.endsWith('.tmp'))).toEqual([])
-    expect(statSync(join(home, 'config')).mode & 0o777).toBe(0o600)
+    expectOwnerOnly(join(home, 'config'))
   })
 })
