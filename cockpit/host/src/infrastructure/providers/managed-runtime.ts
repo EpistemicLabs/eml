@@ -117,28 +117,6 @@ export async function fileDigest(file: string, algorithm: 'sha256' | 'sha512', e
   return hash.digest(encoding)
 }
 
-/** macOS: the binary's code signature is valid and the publisher's. Elsewhere the checksum is the check. */
-export async function verifyTeamSignature(bin: string, teamId: string, publisher: string): Promise<void> {
-  if (process.platform !== 'darwin') return
-  const verify = await run('/usr/bin/codesign', ['--verify', '--strict', bin])
-  if (verify.code !== 0) throw new Error(`code signature invalid: ${verify.stderr.trim().slice(0, 200)}`)
-  const info = await run('/usr/bin/codesign', ['-dv', bin])
-  if (!info.stderr.includes(`TeamIdentifier=${teamId}`)) throw new Error(`binary is not signed by ${publisher}`)
-}
-
-/** `darwin-arm64`, `linux-x64`, … — with `-musl` on a musl Linux when `musl` is asked for. */
-export function platformKey(musl = false): string {
-  const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : null
-  if (!arch) throw new Error(`unsupported architecture: ${process.arch}`)
-  if (process.platform === 'darwin') return `darwin-${arch}`
-  if (process.platform === 'linux') {
-    let isMusl = false
-    if (musl) try { isMusl = fs.readdirSync('/lib').some((n) => n.startsWith('ld-musl')) } catch { /* glibc */ }
-    return `linux-${arch}${isMusl ? '-musl' : ''}`
-  }
-  throw new Error(`unsupported platform: ${process.platform}`)
-}
-
 // --- the runtime ----------------------------------------------------------------
 
 export class ManagedRuntime {

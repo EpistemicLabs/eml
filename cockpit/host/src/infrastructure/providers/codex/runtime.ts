@@ -2,9 +2,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CODEX_CONFIG_DIR, CODEX_RUNTIME_DIR } from '../../../paths.js'
 import {
-  ManagedRuntime, downloadTo, fetchText, fileDigest, isVersion, platformKey, run, verifyTeamSignature,
+  ManagedRuntime, downloadTo, fetchText, fileDigest, isVersion, run,
   type RuntimeSource,
 } from '../managed-runtime.js'
+import { platform } from '../../platform/index.js'
 
 /**
  * The cockpit's own Codex CLI (managed-runtime.ts), under <home>/codex.
@@ -49,16 +50,16 @@ const source: RuntimeSource = {
   },
 
   async fetch(version, dir, log) {
-    const platform = platformKey()
-    const { dist } = JSON.parse(await fetchText(`${REGISTRY}/${PACKAGE}/${version}-${platform}`)) as RegistryVersion
+    const platformKey = platform.runtimeKey()
+    const { dist } = JSON.parse(await fetchText(`${REGISTRY}/${PACKAGE}/${version}-${platformKey}`)) as RegistryVersion
     const integrity = /^sha512-([A-Za-z0-9+/=]+)$/.exec(dist?.integrity ?? '')?.[1]
     if (!dist?.tarball?.startsWith(`${REGISTRY}/${PACKAGE}/-/`) || !integrity) {
-      throw new Error(`no ${platform} build of Codex ${version} on the npm registry`)
+      throw new Error(`no ${platformKey} build of Codex ${version} on the npm registry`)
     }
 
     const tarball = path.join(dir, 'package.tgz')
     const unpacked = path.join(dir, 'unpacked')
-    log(`downloading Codex ${version} (${platform})…`)
+    log(`downloading Codex ${version} (${platformKey})…`)
     await downloadTo(dist.tarball, tarball)
     if ((await fileDigest(tarball, 'sha512', 'base64')) !== integrity) throw new Error('checksum does not match the npm registry')
 
@@ -79,7 +80,7 @@ const source: RuntimeSource = {
     }
     fs.rmSync(unpacked, { recursive: true, force: true })
     fs.rmSync(tarball, { force: true })
-    await verifyTeamSignature(path.join(dir, 'bin', 'codex'), OPENAI_TEAM_ID, 'OpenAI')
+    await platform.verifyCodeSignature(path.join(dir, 'bin', 'codex'), OPENAI_TEAM_ID, 'OpenAI')
   },
 
   // A neutral env: the app's own Codex home, never the user's ~/.codex.

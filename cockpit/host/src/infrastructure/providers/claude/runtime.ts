@@ -2,9 +2,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CLAUDE_RUNTIME_DIR, CONFIG_DIR } from '../../../paths.js'
 import {
-  ManagedRuntime, downloadTo, fetchText, fileDigest, isVersion, maxVersion, platformKey, verifyTeamSignature,
+  ManagedRuntime, downloadTo, fetchText, fileDigest, isVersion, maxVersion,
   type RuntimeSource,
 } from '../managed-runtime.js'
+import { platform } from '../../platform/index.js'
 
 export { compareVersions, type RuntimeResult, type RuntimeState } from '../managed-runtime.js'
 
@@ -36,20 +37,20 @@ const source: RuntimeSource = {
   },
 
   async fetch(version, dir, log) {
-    const platform = platformKey(true)
+    const platformKey = platform.runtimeKey({ musl: true })
     const manifest = JSON.parse(await fetchText(`${RELEASES}/${version}/manifest.json`)) as {
       platforms?: Record<string, { checksum?: string; size?: number }>
     }
-    const entry = manifest.platforms?.[platform]
+    const entry = manifest.platforms?.[platformKey]
     if (!entry?.checksum || !/^[a-f0-9]{64}$/.test(entry.checksum)) {
-      throw new Error(`no ${platform} build in the ${version} manifest`)
+      throw new Error(`no ${platformKey} build in the ${version} manifest`)
     }
     const bin = path.join(dir, 'claude')
-    log(`downloading Claude Code ${version} (${platform}${entry.size ? `, ${Math.round(entry.size / 1e6)} MB` : ''})…`)
-    await downloadTo(`${RELEASES}/${version}/${platform}/claude`, bin, 0o755)
+    log(`downloading Claude Code ${version} (${platformKey}${entry.size ? `, ${Math.round(entry.size / 1e6)} MB` : ''})…`)
+    await downloadTo(`${RELEASES}/${version}/${platformKey}/claude`, bin, 0o755)
     if (entry.size && fs.statSync(bin).size !== entry.size) throw new Error('size does not match the manifest')
     if ((await fileDigest(bin, 'sha256', 'hex')) !== entry.checksum) throw new Error('checksum does not match the manifest')
-    await verifyTeamSignature(bin, ANTHROPIC_TEAM_ID, 'Anthropic')
+    await platform.verifyCodeSignature(bin, ANTHROPIC_TEAM_ID, 'Anthropic')
   },
 
   // A neutral env: no user HOME config, the app's own config dir, updater off.
