@@ -51,6 +51,8 @@ const systemSection = (md: string) => {
 const OVERFLOW_LINE = /\n---\n(\d+) entries listed by title only to fit the boot's size budget — eml_get <id> for the full text\.$/
 const LEFT_OUT_LINE = /\n---\n(\d+) entries listed by title only and (\d+) left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule for the ones left out\.(\n|$)/
 
+const LEGACY_LEFT_OUT_LINE = /\n---\n(\d+) entries left out to fit the boot's size budget — eml_list type=rule for the ones left out\.\n/
+
 /** The largest budget at which entries are left out or `pred` holds (it must fail for large budgets). */
 function largestBudget(eml: EML, pred: (b: NonNullable<ReturnType<typeof boot>['budget']>) => boolean): number {
   let lo = 0
@@ -213,5 +215,20 @@ describe('boot hard budget (opts.budget)', () => {
       expect(r.markdown).toContain(`- **[user.user0 | user0]** ${'B'.repeat(400)}`)
       expect(r.markdown).not.toContain('user1')
     } finally { eml.close() }
+  })
+})
+
+describe('boot footer when only legacy entries give way', () => {
+  it('names the entries left out without a "0 listed by title only"', () => {
+    // An unmigrated brain: every rule in the old long format, already title + id.
+    const eml = brainWith(0, 0)
+    for (let i = 0; i < 200; i++) plantLegacy(eml, 'global', `legacy-${String(i).padStart(3, '0')}`, 'L'.repeat(800))
+    const r = boot(eml, 'assistant', { systemRules: ALL_RULES, budget: 10_000 })
+    expect(r.budget!.fits).toBe(true)
+    expect(r.budget!.left_out).toBeGreaterThan(0)
+    expect(r.markdown).not.toMatch(/\b0 entries listed by title only/)
+    const m = r.markdown.match(LEGACY_LEFT_OUT_LINE)
+    expect(m && Number(m[1])).toBe(r.budget!.left_out)
+    eml.close()
   })
 })

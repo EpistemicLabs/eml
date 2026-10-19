@@ -42,7 +42,7 @@ describe('hook session-start', () => {
     expect((await sessionStart(CFG, '/x', over)).log).toMatch(/trim=OVER-BUDGET limit=10000$/)
     const old = fakeFetch(200, { markdown: 'boot' })
     expect((await sessionStart(CFG, '/x', old)).log).toMatch(/trim=unknown$/)
-    // A pre-0.17.18 server answers with the cut-ladder report.
+    // A pre-0.18 server answers with the cut-ladder report.
     const ladder = fakeFetch(200, { markdown: 'boot', budget: { limit: 10000, chars: 4, rule_cap: 600, rules_named_only: 0, profiles_named_only: 0, fits: true } })
     expect((await sessionStart(CFG, '/x', ladder)).log).toMatch(/trim=unknown$/)
   })
