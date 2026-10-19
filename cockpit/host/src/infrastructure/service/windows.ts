@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { SERVICE_ENV, type Autostart, type AutostartSpec, type AutostartStatus } from '../../domain/autostart.js'
@@ -42,7 +42,7 @@ export function supervisorScript(spec: AutostartSpec, node: string, pidFile: str
     ['COCKPIT_LOG_FILE', spec.log],
   ]
   return [
-    '# EML Cockpit autostart supervisor — written by `eml-cockpit service install`.',
+    '# EML Cockpit autostart supervisor, written by `eml-cockpit service install`.',
     ...env.map(([k, v]) => `$env:${k} = ${psQuote(v)}`),
     `Set-Content -LiteralPath ${psQuote(pidFile)} -Value $PID`,
     `Set-Location -LiteralPath ${psQuote(spec.root)}`,
@@ -84,11 +84,22 @@ export function windowsAutostart(spec: AutostartSpec): Autostart {
     install() {
       fs.mkdirSync(dir, { recursive: true })
       stop()
-      fs.writeFileSync(script, supervisorScript(spec, process.execPath, pidFile))
+      // With a BOM: Windows PowerShell 5.1 reads a script without one as ANSI,
+      // which breaks every path with a character beyond ASCII (a user folder "Jürgen").
+      fs.writeFileSync(script, `\ufeff${supervisorScript(spec, process.execPath, pidFile)}`, 'utf8')
       const res = reg(['add', RUN_KEY, '/v', label, '/t', 'REG_SZ', '/d', commandLine, '/f'])
       if (!res.ok) throw new Error(`could not register the autostart: ${res.out || 'reg.exe failed'}`)
-      // Start now, as login will: detached, without a window.
-      spawn(powershell, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      // Start now, as login will: through Start-Process, which gives the
+      // supervisor a console of its own (then hidden). A detached child of node
+      // gets none, and Windows PowerShell exits at once without one.
+      const argList = args.map((a) => psQuote(/\s/.test(a) ? `"${a}"` : a)).join(',')
+      execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+        `Start-Process -FilePath ${psQuote(powershell)} -WindowStyle Hidden -ArgumentList ${argList}`], { stdio: 'ignore' })
+      const until = Date.now() + 15_000
+      while (!supervisorPid()) {
+        if (Date.now() > until) throw new Error(`the autostart is registered, but its supervisor did not start (${script})`)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250)
+      }
     },
     uninstall() {
       stop()

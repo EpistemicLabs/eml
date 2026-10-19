@@ -1,9 +1,10 @@
-# Install the EML Cockpit on Windows — the one-line installer for people without
+# Install the EML Cockpit on Windows: the one-line installer for people without
 # a developer setup. It is attached to every GitHub release, so (in PowerShell)
 #
 #   irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex
 #
-# always runs the installer of the newest release. It needs only Node >= 22: no
+# always runs the installer of the newest release. Keep this file ASCII: Windows
+# PowerShell 5.1 reads a script without a BOM as ANSI. It needs only Node >= 22: no
 # git, no gh, no GitHub account, no admin rights. It downloads the release
 # tarballs, checks them against SHA256SUMS, installs them into
 # <home>\app\versions\<v>\ (the layout the in-app updater uses) and registers the
