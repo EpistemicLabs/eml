@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { AgentProvider, SessionSpace } from '../src/domain/agent-provider.js'
 import { hasTable, removeTables, setTopLevelKey, tableKey, tomlString, upsertTables } from '../src/infrastructure/providers/codex/toml.js'
+import { platform } from '../src/infrastructure/platform/index.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-codex-provider-test-'))
@@ -163,13 +164,13 @@ describe('Codex provider', () => {
 
   it('launches the cockpit\'s own binary in the isolated home, without a daemon, sandboxed with the reviewer', () => {
     const launch = provider.launch({ sessionId: 'c-1', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
-    expect(launch.bin).toBe(join(home, 'codex', 'bin', 'codex'))
+    expect(launch.bin).toBe(platform.linksFiles ? join(home, 'codex', 'bin', 'codex') : join(home, 'codex', 'current', 'bin', 'codex.exe'))
     expect(launch.args).toEqual([
       '--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write',
       '--config', 'approvals_reviewer="auto_review"', 'hello',
     ])
     expect(launch.env.CODEX_HOME).toBe(codexHome)
-    expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'codex', 'bin'))
+    expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'codex', ...(platform.linksFiles ? [] : ['current']), 'bin'))
     expect(launch.args.join(' ')).not.toContain('c-1')
     expect(launch.args.join(' ')).not.toContain(BRAIN_TOKEN)
   })

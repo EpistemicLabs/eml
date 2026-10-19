@@ -35,6 +35,27 @@ export type { RuntimeResult, RuntimeState }
  * one — transcripts written by a newer version are not resumed by an older one.
  */
 
+/**
+ * Windows keeps a binary locked for a moment after its process exited (the
+ * self-test just ran it; a virus scanner may still be reading it): renaming or
+ * deleting it then fails with EBUSY or EPERM. Retried with a backoff, as
+ * rimraf and graceful-fs do; elsewhere the first try succeeds.
+ */
+const FS_RETRY = { maxRetries: 10, retryDelay: 100 }
+const RETRYABLE = new Set(['EBUSY', 'EPERM', 'EACCES'])
+
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(from, to)
+      return
+    } catch (e) {
+      if (attempt >= FS_RETRY.maxRetries || !RETRYABLE.has((e as NodeJS.ErrnoException).code ?? '')) throw e
+      await new Promise((resolve) => setTimeout(resolve, FS_RETRY.retryDelay * (attempt + 1)))
+    }
+  }
+}
+
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 60 * 1000
 const LOCK_STALE_MS = 15 * 60 * 1000
@@ -217,11 +238,11 @@ export class ManagedRuntime {
     try {
       await this.source.fetch(version, staging, (line) => this.log(line))
       await this.selfTest(path.join(staging, this.source.entry), version)
-      fs.rmSync(target, { recursive: true, force: true })
-      fs.renameSync(staging, target)
+      fs.rmSync(target, { recursive: true, force: true, ...FS_RETRY })
+      await renameWithRetry(staging, target)
       this.log(`${this.source.label} ${version} verified and installed`)
     } finally {
-      fs.rmSync(staging, { recursive: true, force: true })
+      fs.rmSync(staging, { recursive: true, force: true, ...FS_RETRY })
     }
   }
 
