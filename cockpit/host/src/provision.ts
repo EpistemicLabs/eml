@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CORE_INDEX, DATA_DIR } from './paths.js'
-import { readCockpitConfig, writeCockpitConfig } from './config.js'
+import { readCockpitConfig, updateCockpitConfig, writeCockpitConfig } from './config.js'
 
 /**
  * Load or provision the persistent local brain.
@@ -63,7 +63,10 @@ export async function provisionSpace(name: string, identity: BrainIdentity): Pro
       dataDir: DATA_DIR,
       tokenName: identity.userId,
     })
-    await writeCockpitConfig({ ...config, spaces: [...(config.spaces ?? []), { token: res.tokenPlaintext, name }] })
+    await updateCockpitConfig((current) => {
+      if (!current) throw new Error('no cockpit config — the main brain is not provisioned')
+      return { ...current, spaces: [...(current.spaces ?? []), { token: res.tokenPlaintext, name }] }
+    })
     return { brainId: res.brainId, token: res.tokenPlaintext }
   } finally {
     control.close()

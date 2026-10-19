@@ -49,9 +49,42 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
   }
 }
 
-export async function writeCockpitConfig(config: CockpitConfig): Promise<void> {
+// Every write goes through one chain, so a read-modify-write (updateCockpitConfig)
+// never interleaves with another write: two at once would each read the old file
+// and the later write would drop the earlier change.
+let writes: Promise<unknown> = Promise.resolve()
+
+function serialised<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writes.then(fn, fn)
+  writes = run.catch(() => {})
+  return run
+}
+
+/** Replace the whole config (first-run provisioning). */
+export function writeCockpitConfig(config: CockpitConfig): Promise<void> {
+  return serialised(() => writeConfigFile(config))
+}
+
+/**
+ * Change the config: `change` gets the current config (null when there is none)
+ * and returns the new one, or null to leave the file as it is. Serialised with
+ * every other write; resolves to what was written.
+ */
+export function updateCockpitConfig(change: (config: CockpitConfig | null) => CockpitConfig | null): Promise<CockpitConfig | null> {
+  return serialised(async () => {
+    const next = change(await readCockpitConfig())
+    if (next) await writeConfigFile(next)
+    return next
+  })
+}
+
+async function writeConfigFile(config: CockpitConfig): Promise<void> {
   await fs.mkdir(COCKPIT_HOME, { recursive: true, mode: 0o700 })
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+  // Write a temp file and rename it over the config: writeFile truncates first,
+  // so a reader outside the write chain could otherwise see an empty file.
+  const tmp = `${CONFIG_FILE}.${process.pid}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(config, null, 2), { mode: 0o600 })
+  await fs.chmod(tmp, 0o600).catch(() => {})
+  await fs.rename(tmp, CONFIG_FILE)
   await fs.chmod(COCKPIT_HOME, 0o700).catch(() => {})
-  await fs.chmod(CONFIG_FILE, 0o600).catch(() => {})
 }
