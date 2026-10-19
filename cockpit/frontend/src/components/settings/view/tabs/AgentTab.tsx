@@ -1,8 +1,10 @@
 // Settings › Agent: the agent this brain was set up with — its name, its
-// profile (<agent>-identity) and the rules it loads in every session
-// (applies: always). Read-only: the agent keeps these engrams itself when you
-// ask it to; editing them here, and choosing which agent with which settings a
-// space uses, come later.
+// profile (<agent> or <agent>-identity) and its rules that load in every
+// session (applies: always). Read-only: the agent keeps these engrams itself
+// when you ask it to; editing them here, and choosing which agent with which
+// settings a space uses, come later. An entry written before the short format
+// (rule over 200, profile over 400 characters) loads by title only — the boot
+// counts it as legacy (core boot.ts); this tab says so.
 import { useEffect, useState } from 'react';
 
 import { brainGet } from '@/lib/api';
@@ -13,6 +15,10 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
 type AgentEngrams = { profile: Engram | null; rules: Engram[] };
+
+// The short format's limits (core validate.ts).
+const RULE_MAX_CHARS = 200;
+const PROFILE_MAX_CHARS = 400;
 
 function useAgentEngrams(agentId: string | null): { data: AgentEngrams | null; failed: boolean } {
   const [data, setData] = useState<AgentEngrams | null>(null);
@@ -29,7 +35,7 @@ function useAgentEngrams(agentId: string | null): { data: AgentEngrams | null; f
       ([profiles, rules]) => {
         if (cancelled) return;
         setData({
-          profile: profiles.engrams.find((e) => e.title === `${agentId}-identity`) ?? profiles.engrams[0] ?? null,
+          profile: profiles.engrams.find((e) => e.title === agentId || e.title === `${agentId}-identity`) ?? null,
           rules: rules.engrams
             .filter((e) => e.properties?.applies === 'always')
             .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? '')),
@@ -67,6 +73,9 @@ export default function AgentTab() {
           <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
             {data ? data.profile?.content ?? 'No profile yet.' : <span className="text-muted-foreground">{fallback}</span>}
           </div>
+          {data?.profile && data.profile.content.length > PROFILE_MAX_CHARS && (
+            <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+          )}
         </SettingsCard>
       </SettingsSection>
 
@@ -84,6 +93,9 @@ export default function AgentTab() {
                 {ruleLabel(rule, agent?.id ?? '')}
               </summary>
               <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
+              {rule.content.length > RULE_MAX_CHARS && (
+                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
+              )}
             </details>
           ))}
         </SettingsCard>
@@ -95,6 +107,10 @@ export default function AgentTab() {
       </div>
     </div>
   );
+}
+
+function legacyNote(kind: 'rule' | 'profile', max: number): string {
+  return `Loads by title only until it is shortened to ${max} characters — ask your agent to rewrite this ${kind}.`;
 }
 
 /** "juno-engagement-style" → "Engagement style". */

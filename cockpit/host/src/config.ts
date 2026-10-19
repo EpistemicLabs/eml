@@ -25,6 +25,16 @@ export interface CockpitConfig {
    * which brain a token belongs to comes from control.db at boot. Absent = main only.
    */
   spaces?: Array<{ token: string; name?: string }>
+  /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
+  hygiene?: Record<string, HygieneState>
+}
+
+/** When the hygiene banner was last started or dismissed for one brain. */
+export interface HygieneState {
+  /** The brain schema whose migration findings were offered. */
+  offeredSchema?: number
+  /** When due reviews were last offered (ISO). */
+  reviewsOfferedAt?: string
 }
 
 export async function readCockpitConfig(): Promise<CockpitConfig | null> {
@@ -42,6 +52,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(spaces.length ? { spaces } : {}),
+      ...(readHygiene(parsed.hygiene) ?? {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -49,9 +60,56 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
   }
 }
 
-export async function writeCockpitConfig(config: CockpitConfig): Promise<void> {
+function readHygiene(raw: unknown): { hygiene: Record<string, HygieneState> } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: Record<string, HygieneState> = {}
+  for (const [brainId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const { offeredSchema, reviewsOfferedAt } = value as Record<string, unknown>
+    out[brainId] = {
+      ...(typeof offeredSchema === 'number' && Number.isInteger(offeredSchema) ? { offeredSchema } : {}),
+      ...(typeof reviewsOfferedAt === 'string' ? { reviewsOfferedAt } : {}),
+    }
+  }
+  return Object.keys(out).length ? { hygiene: out } : null
+}
+
+// Every write goes through one chain, so a read-modify-write (updateCockpitConfig)
+// never interleaves with another write: two at once would each read the old file
+// and the later write would drop the earlier change.
+let writes: Promise<unknown> = Promise.resolve()
+
+function serialised<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writes.then(fn, fn)
+  writes = run.catch(() => {})
+  return run
+}
+
+/** Replace the whole config (first-run provisioning). */
+export function writeCockpitConfig(config: CockpitConfig): Promise<void> {
+  return serialised(() => writeConfigFile(config))
+}
+
+/**
+ * Change the config: `change` gets the current config (null when there is none)
+ * and returns the new one, or null to leave the file as it is. Serialised with
+ * every other write; resolves to what was written.
+ */
+export function updateCockpitConfig(change: (config: CockpitConfig | null) => CockpitConfig | null): Promise<CockpitConfig | null> {
+  return serialised(async () => {
+    const next = change(await readCockpitConfig())
+    if (next) await writeConfigFile(next)
+    return next
+  })
+}
+
+async function writeConfigFile(config: CockpitConfig): Promise<void> {
   await fs.mkdir(COCKPIT_HOME, { recursive: true, mode: 0o700 })
-  await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
+  // Write a temp file and rename it over the config: writeFile truncates first,
+  // so a reader outside the write chain could otherwise see an empty file.
+  const tmp = `${CONFIG_FILE}.${process.pid}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(config, null, 2), { mode: 0o600 })
+  await fs.chmod(tmp, 0o600).catch(() => {})
+  await fs.rename(tmp, CONFIG_FILE)
   await fs.chmod(COCKPIT_HOME, 0o700).catch(() => {})
-  await fs.chmod(CONFIG_FILE, 0o600).catch(() => {})
 }
