@@ -87,6 +87,8 @@ export function stableAppPath(file: string): string {
 // through app/current, and node through a link the host keeps at <home>/bin/node
 // (ensureHookNode) — both stay the same text across cockpit and node updates.
 export const HOOK_MCP_CLI_JS = stableAppPath(MCP_CLI_JS)
+// The turn-state hook (turn-hook.ts), named the same way.
+export const HOOK_TURN_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'turn-hook.js'))
 export const HOOK_NODE = path.join(COCKPIT_HOME, 'bin', 'node')
 export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } chmod 600 (local loopback token)
 // Optional setup-token (Settings › Models › Advanced), injected per session only
@@ -103,9 +105,9 @@ export const spaceConfigDir = (spaceId: string) => path.join(CONFIG_DIR, 'spaces
 export const spaceEmlDir = (spaceId: string) => path.join(EML_HOOK_DIR, 'spaces', spaceId)
 // Pre-spaces locations of those files (one brain per home); removed on boot.
 export const LEGACY_EML_HOOK_CONFIG = path.join(EML_HOOK_DIR, 'config')
-// The curl config (-K) carrying the per-boot hook token for Claude Code's turn-state
-// hooks — written by the Claude provider, read into every space's settings.json.
-export const CLAUDE_HOOK_CURL_CONFIG = path.join(CONFIG_DIR, 'hook-curl.conf')
+// The turn-state hook's config (URL + per-boot token) for Claude Code — written by
+// the Claude provider, named in every space's settings.json.
+export const CLAUDE_TURN_HOOK_CONFIG = path.join(CONFIG_DIR, 'turn-hook.json')
 // Worker requests as files, for sessions whose sandbox has no network (spawn-inbox.ts).
 export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.

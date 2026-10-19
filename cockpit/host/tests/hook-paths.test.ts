@@ -48,9 +48,9 @@ describe('hook paths', () => {
     shared.ensureHookNode()
     expect(readlinkSync(link)).toBe(process.execPath)
 
-    const command = shared.emlHookEntry('session-start', "'/x/config'").hooks[0].command
-    expect(command.startsWith(`'${link}' `)).toBe(true)
+    const command = shared.shellLine(shared.emlHookCommand('session-start', '/x/config'))
+    expect(command.startsWith(`${shared.shellLine({ program: link, args: [] })} `)).toBe(true)
     expect(command).not.toContain(process.execPath)
-    expect(command).toContain(`'${paths.HOOK_MCP_CLI_JS}' hook session-start --config '/x/config'`)
+    expect(command).toContain(`${shared.shellLine({ program: paths.HOOK_MCP_CLI_JS, args: [] })} hook session-start --config /x/config`)
   })
 })

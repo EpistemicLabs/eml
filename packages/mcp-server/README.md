@@ -51,7 +51,7 @@ eml-mcp-server hook stop               [--config <path>]
   needs it: it reads stdout that starts with `[` or `{` as JSON, and the reminder starts with
   `[EML Reminder]`. Claude Code takes both forms.
 
-`--config` defaults to `~/.eml/config` (`key=value` lines: `EML_URL`, `EML_API_TOKEN`; parsed as
+`--config` defaults to the path in `EML_HOOK_CONFIG`, then `~/.eml/config` (`key=value` lines: `EML_URL`, `EML_API_TOKEN`; parsed as
 data, never evaluated). Logs, the reminder's turn counters and the save points live
 next to the config file, so one config directory is one isolated EML client.
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { brainMcpServer, hookCurlConfig, hookEntry, HOOK_TOKEN_HEADER } from '../src/infrastructure/providers/claude/isolation.js'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { brainMcpServer } from '../src/infrastructure/providers/claude/isolation.js'
+import { claudeHook, codexHook, shellLine, turnHookCommand, writeTurnHookConfig } from '../src/infrastructure/providers/shared.js'
 
 // Command lines are visible to every local user via ps, so tokens must reach
 // child processes through the environment or an owner-only file instead.
@@ -20,30 +24,29 @@ describe('brain MCP server entry', () => {
   })
 })
 
-describe('turn-state hook entry', () => {
-  const command = hookEntry('http://127.0.0.1:4317/api/hook', '/home/me/claude-config/hook-curl.conf').hooks[0].command
+describe('turn-state hook', () => {
+  const cmd = turnHookCommand('/home/me/claude-config/turn-hook.json')
 
-  it('keeps the hook token out of the command line', () => {
-    expect(command).not.toContain(HOOK_TOKEN)
-    expect(command).not.toContain('?k=')
+  it('keeps the hook token out of the command line, in every rendering', () => {
+    for (const hook of [claudeHook(cmd, 'darwin'), claudeHook(cmd, 'win32'), codexHook(cmd, 'linux'), codexHook(cmd, 'win32')]) {
+      expect(JSON.stringify(hook)).not.toContain(HOOK_TOKEN)
+    }
   })
 
-  it('reads the token from the curl config file', () => {
-    expect(command).toContain("-K '/home/me/claude-config/hook-curl.conf'")
+  it('names only its config file, no shell syntax', () => {
+    expect(cmd.args.at(-1)).toBe('/home/me/claude-config/turn-hook.json')
+    expect(shellLine(cmd)).not.toMatch(/\$|\|\||>|curl/)
   })
 
-  it('names the cockpit session from the session env, expanded by the shell', () => {
-    expect(command).toContain('-H "x-cockpit-session: $COCKPIT_SESSION_ID"')
-  })
-
-  it('quotes a config path with spaces', () => {
-    const spaced = hookEntry('http://127.0.0.1:4317/api/hook', '/Users/Jane Doe/hook-curl.conf').hooks[0].command
-    expect(spaced).toContain("-K '/Users/Jane Doe/hook-curl.conf'")
-  })
-})
-
-describe('hook curl config', () => {
-  it('sends the token as the hook header', () => {
-    expect(hookCurlConfig(HOOK_TOKEN)).toContain(`header = "${HOOK_TOKEN_HEADER}: ${HOOK_TOKEN}"`)
+  it('reads URL and token from an owner-only file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-turn-hook-config-'))
+    try {
+      const file = join(dir, 'turn-hook.json')
+      writeTurnHookConfig(file, 'http://127.0.0.1:4317/api/hook', HOOK_TOKEN)
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ url: 'http://127.0.0.1:4317/api/hook', token: HOOK_TOKEN })
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
