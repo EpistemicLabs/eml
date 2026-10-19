@@ -95,7 +95,7 @@ export const SYSTEM_RULES: SystemRule[] = [
   {
     category: 'type-vocabulary',
     text:
-      'eml_note writes a note by default (kind omitted): a thought that lives in the brain — observation, research note/synthesis, living tracker, working thesis. Plus 5 less-frequent kinds: rule (a way of working), profile (identity facet), event (immutable timestamped occurrence), reference (pointer to something outside the brain — URL, doc, paper, issue), log (narrative entry).',
+      'eml_note writes a note by default (kind omitted): a thought that lives in the brain — observation, research note/synthesis, living tracker, working thesis. Plus 5 less-frequent kinds: rule (a way of working, ≤ 200 chars), profile (identity facet, ≤ 400 chars), event (immutable timestamped occurrence), reference (pointer to something outside the brain — URL, doc, paper, issue), log (narrative entry).',
   },
 
   // --- 4. Type routing (distinctions between similar types) ---

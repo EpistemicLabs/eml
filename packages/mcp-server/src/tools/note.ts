@@ -60,7 +60,7 @@ export function registerNoteTool(server: McpServer, http: HttpClient): void {
           'rationale is a decision, not a note.)',
         ),
         content: z.string().describe(
-          'Per kind — note: the thought itself · rule: the rule then why · profile: short fact · ' +
+          'Per kind — note: the thought itself · rule: what to do, ≤ 200 chars · profile: short facts, ≤ 400 chars · ' +
           'event: what happened · reference: title + why it matters · log: session recap. ' +
           'A [[title-or-id]] wikilink in the text auto-draws a related_to edge to that engram ' +
           '(v0.14) — use it to cross-reference instead of pasting ids. Matching is case-insensitive; ' +
@@ -84,7 +84,9 @@ export function registerNoteTool(server: McpServer, http: HttpClient): void {
         properties: z.record(z.string(), z.unknown()).optional().describe(
           'event REQUIRES occurred_at (ISO) + change_type (deployed|started|completed|failed|' +
           'paused|resumed|created|deleted) · rule REQUIRES applies (always = ambient within its ' +
-          'scope; situational = applies only when its context is triggered, then fully binding) · ' +
+          'scope; situational = applies only when its context is triggered, then fully binding) — ' +
+          'situational also REQUIRES trigger (the situation, ≤ 80 chars, not repeated in content); ' +
+          'optional why (rationale) and detail (playbook, examples) · ' +
           'reference: source_url (+ optional source_name, reference_type) · ' +
           'note/profile/log: free-form.',
         ),
