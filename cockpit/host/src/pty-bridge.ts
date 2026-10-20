@@ -51,11 +51,12 @@ const { SerializeAddon } = require('@xterm/addon-serialize') as typeof import('@
 /**
  * The first prompt of a plain new session when the greeting is on (Settings ›
  * Preferences › Sessions). It shows in the terminal as the user's message, so
- * it is short and reads as one. The agent answers in the user's language.
+ * it is short and reads as one; the reply follows the user's preferred
+ * language from their profile.
  */
 export const GREETING_PROMPT =
   'Session start: greet me briefly, say which project this session is in and where it stands ' +
-  '(status, next step, open tasks), then ask what I want to work on.'
+  '(status, next step, open tasks), then ask what I want to work on. Answer in my preferred language.'
 
 /**
  * Only a plain new session opens with the greeting: not a resume, not one with
