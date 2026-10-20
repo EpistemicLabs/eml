@@ -35,8 +35,9 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
 
 /**
  * v0.10.5 DISPLAY: compact orientation dashboard for one scope. Identify-don't-
- * dump — status/tasks/logs show meta + a capped preview + id; decisions and rules
- * are titles only. Full body always via eml_get.
+ * dump — status/tasks/logs show meta + a capped preview + id; rules are titles
+ * only. v0.19: the last five logs instead of a decisions list (decisions via
+ * eml_list). Full body always via eml_get.
  *
  * v0.10.8: rules render by applicability — `always` rules full, `situational`
  * rules name-only (eml_get for the body).
@@ -69,7 +70,7 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   lines.push('')
 
   if (state.recent_logs.length > 0) {
-    lines.push('## Latest session')
+    lines.push('## Recent sessions (last 5, newest first)')
     for (const l of state.recent_logs) {
       const by = l.ingested_by ? ` · by ${l.ingested_by}` : ''
       // v0.19: a log written with eml_log has its next steps as a field.
@@ -119,14 +120,6 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   if (meta.length > 0) {
     lines.push('## Metadata')
     for (const [k, v] of meta) lines.push(`- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
-    lines.push('')
-  }
-
-  if (state.recent_decisions.length > 0) {
-    lines.push('## Decisions')
-    for (const d of state.recent_decisions) {
-      lines.push(`- ${d.title ?? '(no title)'} · ${d.id}`)
-    }
     lines.push('')
   }
 

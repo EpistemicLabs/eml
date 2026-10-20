@@ -1940,8 +1940,8 @@ export class EngramStore {
    * Returns a curated snapshot:
    *   - current_status: active status engrams in the scope (top 3 by updated_at DESC)
    *   - open_tasks: planned/active tasks in the scope, sorted by priority + due_date (limit 10)
-   *   - recent_decisions: top 5 decisions by significance + created_at DESC
-   *   - recent_logs: top 3 logs by created_at DESC
+   *   - recent_decisions: top 5 decisions by created_at DESC (not rendered by eml_show since v0.19)
+   *   - recent_logs: top 5 logs by created_at DESC
    *   - relations: relations where source or target is in the scope (limit 20)
    *
    * The caller checks itself whether the scope exists (e.g. a project lookup
@@ -1970,7 +1970,7 @@ export class EngramStore {
     const recent_logs = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'log'
-      ORDER BY created_at DESC LIMIT 2
+      ORDER BY created_at DESC LIMIT 5
     `, [scope])
 
     // v0.10.5: active rules in scope — name-only in the dashboard render. (relations

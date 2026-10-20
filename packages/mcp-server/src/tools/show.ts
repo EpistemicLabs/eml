@@ -16,10 +16,10 @@ export function registerShowTool(server: McpServer, http: HttpClient): void {
     {
       title: 'Show BrainState for Scope',
       description:
-        'Curated snapshot for one scope: the status (with what it tracks), open tasks, recent ' +
-        'decisions, the latest session log with its next steps, active rules (situational ones with ' +
-        'their trigger), ripe learnings, plus the project\'s or entity\'s metadata. ' +
-        'The "where do we stand?" tool when you know the exact scope. For fuzzy/cross-scope search use ' +
+        'Curated snapshot for one scope: the status (with what it tracks), open tasks, the last five ' +
+        'session logs with their next steps, active rules (situational ones with their trigger), ripe ' +
+        'learnings, plus the project\'s or entity\'s metadata. The "where do we stand?" tool when you ' +
+        'know the exact scope. Decisions: eml_list type=decision. For fuzzy/cross-scope search use ' +
         'eml_recall; for filtered enumeration use eml_list; for one engram use eml_get. Relations are ' +
         'not included — fetch via eml_get(with_relations).',
       inputSchema: z.object({

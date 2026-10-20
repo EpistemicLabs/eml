@@ -713,12 +713,13 @@ describe('EML v0.2', () => {
       expect(md).toContain('[high·planned] eml-show-bounded — cap eml_show per section · t-1')
     })
 
-    it('decisions and rules are titles-only (no body)', () => {
+    it('rules are titles-only (no body); decisions are not rendered (v0.19: eml_list type=decision)', () => {
       const md = renderBrainStateMarkdown(state({
         recent_decisions: [{ id: 'd-1', type: 'decision', title: 'read-layer-architecture', content: 'LONG_RATIONALE_BODY' }],
         rules: [{ id: 'r-1', type: 'rule', title: 'eml-no-workarounds', content: 'RULE_BODY_TEXT' }],
       }) as any)
-      expect(md).toContain('- read-layer-architecture · d-1')
+      expect(md).not.toContain('read-layer-architecture')
+      expect(md).not.toContain('## Decisions')
       expect(md).not.toContain('LONG_RATIONALE_BODY')
       expect(md).toContain('- eml-no-workarounds · r-1')
       expect(md).not.toContain('RULE_BODY_TEXT')
