@@ -10,14 +10,20 @@ bench talks to it only through the interfaces an agent uses: its REST server, it
 and its MCP server. That is why the same bench can measure the current branch, a release worktree or
 an older version.
 
-1. **Fixture brain** — `fixture/brain.json`: a fictional solo maker with four projects, written
-   with the hard cases on purpose (superseded decisions, an old and a new status per scope, the same
-   words in different projects, rules with and without a trigger). It is written through the REST
+1. **Fixture brain** — `fixture/brain.json` (the engrams the questions are about) and
+   `fixture/volume.json` (everything around them): a fictional solo maker with seven projects, about
+   180 engrams, written with the hard cases on purpose — superseded decisions, an old and a new status
+   per scope, newer notes that contradict older ones without superseding them, the same words in
+   different projects, rules with and without a trigger, routine entries (weekly order numbers,
+   closed tasks, posts, session logs). It is written through the REST
    API of a *base* version (default: the version under test) and aged, so recency ranks as in a real
    brain. A base older than the version under test measures the brain as a user has it after the
    update: the server migrates it at startup.
 2. **Questions** — `fixture/questions.json`: each question has a retrieval probe (stage 1) and a
-   question in the user's words with a reference answer (stage 2).
+   question in the user's words with a reference answer (stage 2). Categories: direct, paraphrase,
+   current over stale, silent contradiction, scope, dashboard, rule, implicit rule (a request a rule
+   applies to without the question naming it), multi-step (the answer needs two engrams), unanswerable
+   (the brain does not know — the agent must say so), history.
 3. **Stage 1: retrieval** (deterministic, no model). Each probe goes to the route the matching MCP
    tool calls (`eml_recall`, `eml_show`, the boot), and the markdown the agent would read is scored:
    - recall@5 / MRR — is the expected engram there, and how far up
@@ -30,7 +36,7 @@ an older version.
    context and its MCP server as tools, on its own copy of the brain. Graded deterministically (did
    the tool output contain the expected engrams?) and by a judge model against the reference answer
    and the outdated claims listed for the question: accuracy, stale rate, evidence rate, tool calls,
-   tokens. Two runners:
+   tokens, and how many answers changed the brain on the way (writes). Two runners:
    - `claude-code` (default): headless Claude Code (`claude -p`) per question, isolated from the
      machine (own HOME and config dir, no built-in tools, only the `eml_brain` tools), with the
      version's MCP server and hooks configured as the cockpit does. Signs in with a Claude Code token
@@ -72,8 +78,10 @@ in `work/` (ignored), for reading why a number moved.
 - The fixture and the questions are written by the people who build EML; they favour what EML was
   built to do. Questions from real sessions (against a private copy of a real brain, never checked in)
   are the counterweight.
-- The fixture is small and its questions are direct: v0.18.2 with Opus 5.5 answers all of them
-  (stage 2 accuracy 1.0), so stage 2 does not yet separate versions on correctness — only on effort
-  (tool calls, tokens). Volume, contradictions without a supersede, multi-step and unanswerable
-  questions come next.
+- Stage 2 is one sample per question: a question can pass in one run and fail in the next. Compare
+  versions on more than one run before reading a single question's change.
+- With Opus 5.5 most questions pass; differences between versions show first in the silent
+  contradictions, in effort (tool calls, tokens) and in writes.
+- Dates in the fixture are relative to the run; a fixture text must not name an absolute date the
+  agent could compare with today.
 - The fixture is written with the base version's write API, so a base must accept its format.

@@ -43,8 +43,17 @@ export interface Brain {
   baseVersion: string
 }
 
+/** brain.json (the engrams the questions are about) followed by volume.json (everything around them). */
 export function readFixture(): FixtureBrain {
-  return JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'brain.json'), 'utf8'))
+  const core: FixtureBrain = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'brain.json'), 'utf8'))
+  const volume: Pick<FixtureBrain, 'projects' | 'engrams'> = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'volume.json'), 'utf8'))
+  const brain = { ...core, projects: [...core.projects, ...volume.projects], engrams: [...core.engrams, ...volume.engrams] }
+  const keys = new Set<string>()
+  for (const e of brain.engrams) {
+    if (keys.has(e.key)) throw new Error(`fixture: duplicate key ${e.key}`)
+    keys.add(e.key)
+  }
+  return brain
 }
 
 const DAY_MS = 86_400_000

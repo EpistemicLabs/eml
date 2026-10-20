@@ -78,6 +78,8 @@ export interface Verdict {
 
 export interface AgentResult extends Answer {
   id: string
+  /** tool calls that change the brain (not a read) */
+  writes: number
   category: string
   correct: boolean
   stale: boolean
@@ -109,7 +111,7 @@ export async function runAgent(sut: Sut, brain: Brain, questions: Question[], wo
 
 async function runQuestion(sut: Sut, brain: Brain, q: Question, dir: string, opts: AgentOptions): Promise<AgentResult> {
   const result: AgentResult = {
-    id: q.id, category: q.category, answer: '', tool_calls: [], seen_ids: [], turns: 0, stop: '',
+    id: q.id, category: q.category, writes: 0, answer: '', tool_calls: [], seen_ids: [], turns: 0, stop: '',
     usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
     correct: false, stale: false, judge_reason: '', evidence_found: 0, evidence_expected: q.expect.length,
   }
@@ -123,6 +125,7 @@ async function runQuestion(sut: Sut, brain: Brain, q: Question, dir: string, opt
     const session: Session = { sut, question: q, dir, server, token: brain.token, configPath, env: { PATH: process.env.PATH ?? '', HOME: dir } }
     const answer = opts.runner === 'claude-code' ? await askClaudeCode(session, opts) : await askApi(session, opts)
     Object.assign(result, answer)
+    result.writes = answer.tool_calls.filter(c => !READ_TOOLS.has(c.name)).length
     const seen = new Set(answer.seen_ids)
     result.evidence_found = q.expect.filter(k => seen.has(brain.ids[k])).length
     if (result.answer && !result.error) {
@@ -144,6 +147,12 @@ async function runQuestion(sut: Sut, brain: Brain, q: Question, dir: string, opt
   return result
 }
 
+// Read-only tools across versions; any other eml tool call counts as a write.
+const READ_TOOLS = new Set([
+  'eml_boot', 'eml_recall', 'eml_get', 'eml_list', 'eml_show', 'eml_stats',
+  'eml_projects', 'eml_entities', 'eml_tags', 'eml_subjects', 'eml_search',
+])
+
 export function judgePrompt(q: Question, answer: string): string {
   const a = q.agent!
   return `Grade an assistant's answer against a reference answer. Reply only with the verdict.
@@ -158,6 +167,7 @@ ${answer}
 </answer>
 
 correct: the answer states the facts of the reference answer (wording may differ; extra correct detail is fine; a missing key fact or a wrong fact makes it incorrect). For a request to act, the answer must do what the reference says (e.g. hold off and say why).
+If the reference says the information is not in the memory, correct means the answer says so and invents nothing (mentioning related facts that are recorded is fine).
 stale: the answer asserts one of the outdated claims as currently true.
 reason: one sentence.`
 }
@@ -238,6 +248,8 @@ export interface AgentSummary {
   errors: number
   avg_tool_calls: number
   avg_turns: number
+  /** questions where the agent changed the brain while answering */
+  answers_with_writes: number
   tokens: { input: number; output: number; cache_read: number; cache_write: number }
   cost_usd: number | null
   by_category: Record<string, { questions: number; accuracy: number }>
@@ -267,6 +279,7 @@ export function summarizeAgent(results: AgentResult[], opts: AgentOptions): Agen
     errors: results.filter(r => r.error).length,
     avg_tool_calls: mean(results.map(r => r.tool_calls.length)),
     avg_turns: mean(results.map(r => r.turns)),
+    answers_with_writes: results.filter(r => r.writes > 0).length,
     tokens,
     cost_usd: costs.length ? Math.round(costs.reduce((a, b) => a + b, 0) * 100) / 100 : null,
     by_category,

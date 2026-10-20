@@ -126,6 +126,7 @@ function printAgentSummary(s: AgentSummary): void {
   console.log(`  evidence rate  ${s.evidence_rate.toFixed(3)}   (expected engrams the agent actually retrieved)`)
   console.log(`  errors         ${s.errors}`)
   console.log(`  avg tool calls ${s.avg_tool_calls}   avg turns ${s.avg_turns}`)
+  console.log(`  wrote to brain ${s.answers_with_writes} of ${s.questions} answers`)
   if (s.cost_usd !== null) console.log(`  cost           $${s.cost_usd} (API-equivalent, as reported by the runner)`)
   console.log(`  tokens         in ${s.tokens.input} · out ${s.tokens.output} · cache read ${s.tokens.cache_read} · cache write ${s.tokens.cache_write}`)
   console.log('  by category')
@@ -163,6 +164,7 @@ function compare(aPath: string, bPath: string): void {
     row('agent stale', a.agent.summary.stale_rate, b.agent.summary.stale_rate)
     row('agent evidence', a.agent.summary.evidence_rate, b.agent.summary.evidence_rate)
     row('agent tool calls', a.agent.summary.avg_tool_calls, b.agent.summary.avg_tool_calls, 1)
+    row('agent writes', a.agent.summary.answers_with_writes ?? 0, b.agent.summary.answers_with_writes ?? 0, 0)
   }
   // Per question: what moved.
   const byId = new Map<string, any>(a.retrieval.results.map((r: any) => [r.id, r]))

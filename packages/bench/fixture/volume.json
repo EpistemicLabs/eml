@@ -1,0 +1,1412 @@
+{
+ "about": "Volume for the fixture brain: three more projects, routine entries (weekly order numbers, closed tasks, posts, session logs), and entries that contradict older ones without superseding them. Written after brain.json.",
+ "projects": [
+  {
+   "id": "studio",
+   "name": "Studio and production",
+   "goal": "Throwing, glazing and firing"
+  },
+  {
+   "id": "workshops",
+   "name": "Workshops",
+   "goal": "Beginner pottery classes in the studio"
+  },
+  {
+   "id": "wholesale",
+   "name": "Wholesale",
+   "goal": "Tableware for cafés and roasteries"
+  }
+ ],
+ "engrams": [
+  {
+   "key": "n-hosting-cost-old",
+   "type": "note",
+   "scope": "project.infra",
+   "title": "hosting-costs",
+   "age_days": 80,
+   "content": "Hosting costs per month: shared hosting for the shop 9 EUR, the VPS 6 EUR, together 15 EUR."
+  },
+  {
+   "key": "n-hosting-cost-new",
+   "type": "note",
+   "scope": "project.infra",
+   "title": "hosting-costs-now",
+   "age_days": 3,
+   "content": "Since the shared hosting is cancelled, hosting is down to the one VPS: 6 EUR per month."
+  },
+  {
+   "key": "n-market-old",
+   "type": "note",
+   "scope": "global",
+   "title": "saturday-market",
+   "age_days": 70,
+   "content": "Weekly stall at the Saturday market on Karlsplatz, 8 to 13 o'clock; bring the folding table and the card reader."
+  },
+  {
+   "key": "n-market-new",
+   "type": "note",
+   "scope": "global",
+   "title": "markets-from-now-on",
+   "age_days": 10,
+   "content": "Gave up the Saturday stall at Karlsplatz. From now on only the Christmas market, on the first three weekends of December."
+  },
+  {
+   "key": "n-supplier-update",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "clay-minimum-order",
+   "age_days": 12,
+   "content": "The Westerwald clay supplier has raised the minimum order to 300 kg; the price per kg stays the same."
+  },
+  {
+   "key": "n-newsletter-growth",
+   "type": "note",
+   "scope": "project.blog",
+   "title": "newsletter-subscribers",
+   "age_days": 3,
+   "content": "The newsletter crossed 800 subscribers after the Shopify launch giveaway."
+  },
+  {
+   "key": "n-revenue-update",
+   "type": "note",
+   "scope": "global",
+   "title": "revenue-so-far",
+   "age_days": 2,
+   "content": "Revenue so far this year according to lexoffice: about 19,200 EUR (as of the end of last month)."
+  },
+  {
+   "key": "n-shipping-rates",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "postage-rates",
+   "age_days": 19,
+   "content": "Postage: Warenpost 2.85 EUR per parcel up to 1 kg; DHL parcel up to 5 kg 5.49 EUR, insured."
+  },
+  {
+   "key": "n-packaging-cost",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "packaging-cost",
+   "age_days": 33,
+   "content": "Packaging for a single mug costs about 1.90 EUR: box 1.20, honeycomb paper 0.50, tape and label 0.20."
+  },
+  {
+   "key": "s-studio",
+   "type": "status",
+   "scope": "project.studio",
+   "title": "studio",
+   "age_days": 8,
+   "content": "Kiln out of order until the new element is installed; production is paused.",
+   "properties": {
+    "state": "kiln down"
+   }
+  },
+  {
+   "key": "e-kiln",
+   "type": "event",
+   "scope": "project.studio",
+   "title": "kiln-element-broke",
+   "age_days": 9,
+   "content": "A kiln element broke during the glaze firing; replacement ordered, the kiln is out for about a week.",
+   "properties": {
+    "change_type": "failed"
+   }
+  },
+  {
+   "key": "n-kiln-schedule",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "firing-temperatures",
+   "age_days": 140,
+   "content": "Bisque firing at 950 °C, glaze firing at 1240 °C; a full cycle including cool-down takes about 26 hours."
+  },
+  {
+   "key": "n-glaze-celadon",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "glaze-celadon",
+   "age_days": 160,
+   "content": "Celadon glaze: 40 % feldspar, 30 % silica, 20 % whiting, 10 % kaolin, plus 1.5 % iron oxide."
+  },
+  {
+   "key": "n-glaze-speckled",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "glaze-speckled-white",
+   "age_days": 150,
+   "content": "Speckled white: the base white glaze plus 2 % granular ilmenite; looks best on the grey stoneware."
+  },
+  {
+   "key": "n-clay-bodies",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "clay-bodies",
+   "age_days": 130,
+   "content": "Two clay bodies in use: grey stoneware for mugs and bowls, white porcelain for the small vases."
+  },
+  {
+   "key": "n-studio-rent",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "studio-rent",
+   "age_days": 200,
+   "content": "Studio rent is 480 EUR per month, due on the 1st; the lease runs until the end of next year."
+  },
+  {
+   "key": "n-batches",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "batch-size",
+   "age_days": 110,
+   "content": "Mugs are thrown in batches of 30; about 15 % are lost in firing or sorted out as seconds."
+  },
+  {
+   "key": "n-seconds",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "seconds-sale",
+   "age_days": 95,
+   "content": "Seconds with small flaws are sold at 40 % off in a separate shop collection once a quarter."
+  },
+  {
+   "key": "n-packaging",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "packaging",
+   "age_days": 120,
+   "content": "Every mug is wrapped in honeycomb paper and packed in a double-walled box; no plastic fill."
+  },
+  {
+   "key": "n-glaze-safety",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "glaze-safety",
+   "age_days": 175,
+   "content": "All glazes are lead-free; the food-safety test for the celadon passed in spring."
+  },
+  {
+   "key": "n-kiln-maintenance",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "kiln-maintenance",
+   "age_days": 145,
+   "content": "Check the kiln elements every 50 firings; vacuum the kiln and check the thermocouple at the same time."
+  },
+  {
+   "key": "n-photo-setup",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "photo-setup",
+   "age_days": 100,
+   "content": "Photo setup by the north window: white sweep, tripod, shoot between 10 and 14 o'clock."
+  },
+  {
+   "key": "n-insurance",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "studio-insurance",
+   "age_days": 210,
+   "content": "Studio contents are insured for 25,000 EUR; the kiln is listed separately."
+  },
+  {
+   "key": "n-cobalt-tests",
+   "type": "note",
+   "scope": "project.studio",
+   "title": "cobalt-glaze-tests",
+   "age_days": 21,
+   "content": "Test tiles for a new cobalt blue: run 3 was too runny, run 4 looks promising, one more firing needed."
+  },
+  {
+   "key": "t-cobalt",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "cobalt-glaze",
+   "age_days": 21,
+   "content": "Finish the cobalt blue glaze tests and decide whether it goes into the spring collection."
+  },
+  {
+   "key": "t-kiln-element",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "kiln-element",
+   "age_days": 8,
+   "content": "Install the replacement kiln element and do a test firing.",
+   "status": "active"
+  },
+  {
+   "key": "d-clay-body",
+   "type": "decision",
+   "scope": "project.studio",
+   "title": "tableware-clay",
+   "age_days": 130,
+   "content": "Use the grey stoneware for all tableware.",
+   "properties": {
+    "rationale": "Chips less than porcelain in daily use and costs less.",
+    "alternatives": [
+     "Porcelain for everything",
+     "Red earthenware"
+    ]
+   }
+  },
+  {
+   "key": "s-workshops",
+   "type": "status",
+   "scope": "project.workshops",
+   "title": "workshops",
+   "age_days": 18,
+   "content": "Beginner wheel workshops twice a month on Saturdays, six places each, usually sold out.",
+   "properties": {
+    "state": "running"
+   }
+  },
+  {
+   "key": "n-workshop-pricing",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "workshop-pricing",
+   "age_days": 60,
+   "content": "Workshop price: 95 EUR per person for three hours, including clay, glazing and the firing of two pieces."
+  },
+  {
+   "key": "d-workshop-booking",
+   "type": "decision",
+   "scope": "project.workshops",
+   "title": "workshop-booking",
+   "age_days": 55,
+   "content": "Sell workshop places in the shop as a product with one variant per date.",
+   "properties": {
+    "rationale": "One checkout, one payment provider, stock count = free places.",
+    "alternatives": [
+     "Eventbrite",
+     "Bookings by email"
+    ]
+   }
+  },
+  {
+   "key": "n-workshop-email",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "workshop-confirmation-email",
+   "age_days": 50,
+   "content": "After booking, participants get an automatic email with directions, what to wear and when their pieces can be picked up."
+  },
+  {
+   "key": "n-workshop-pickup",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "workshop-pickup",
+   "age_days": 48,
+   "content": "Fired workshop pieces are ready for pick-up about three weeks after the workshop."
+  },
+  {
+   "key": "n-workshop-cancel",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "workshop-cancellation",
+   "age_days": 47,
+   "content": "Cancellation up to 7 days before the workshop: full refund; later: a voucher for another date."
+  },
+  {
+   "key": "t-xmas-workshop",
+   "type": "task",
+   "scope": "project.workshops",
+   "title": "christmas-workshop",
+   "age_days": 11,
+   "content": "Plan a Christmas special workshop in December: decorating ready-made mugs, eight places."
+  },
+  {
+   "key": "n-vouchers",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "gift-vouchers",
+   "age_days": 40,
+   "content": "Workshop gift vouchers sell best in November and December; sold as a digital product in the shop."
+  },
+  {
+   "key": "e-october-sold-out",
+   "type": "event",
+   "scope": "project.workshops",
+   "title": "october-workshops-sold-out",
+   "age_days": 25,
+   "content": "The October workshops sold out within two days of the announcement.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "n-workshop-materials",
+   "type": "note",
+   "scope": "project.workshops",
+   "title": "workshop-materials",
+   "age_days": 58,
+   "content": "Workshop clay: 1.5 kg per person; aprons and tools are provided."
+  },
+  {
+   "key": "s-wholesale",
+   "type": "status",
+   "scope": "project.wholesale",
+   "title": "wholesale",
+   "age_days": 14,
+   "content": "Two cafés buy wholesale; a third one in Mainz is interested.",
+   "properties": {
+    "state": "two customers"
+   }
+  },
+  {
+   "key": "d-wholesale-price",
+   "type": "decision",
+   "scope": "project.wholesale",
+   "title": "wholesale-pricing",
+   "age_days": 90,
+   "content": "Wholesale price is 50 % of retail, minimum order 24 pieces.",
+   "properties": {
+    "rationale": "Keeps a margin after packaging and the extra handling.",
+    "alternatives": [
+     "40 % off retail",
+     "No minimum order"
+    ]
+   }
+  },
+  {
+   "key": "n-cafe-kornblume",
+   "type": "note",
+   "scope": "project.wholesale",
+   "title": "cafe-kornblume",
+   "age_days": 85,
+   "content": "Café Kornblume orders 24 espresso cups every three months and pays by invoice within 14 days."
+  },
+  {
+   "key": "n-roastery",
+   "type": "note",
+   "scope": "project.wholesale",
+   "title": "roastery-hafen",
+   "age_days": 75,
+   "content": "Rösterei Hafen orders mugs with their logo stamped in; the stamp was a one-off cost of 80 EUR."
+  },
+  {
+   "key": "t-mainz-offer",
+   "type": "task",
+   "scope": "project.wholesale",
+   "title": "mainz-offer",
+   "age_days": 6,
+   "content": "Send the wholesale offer to the café in Mainz, with photos of the speckled mug range.",
+   "status": "active"
+  },
+  {
+   "key": "n-wholesale-shipping",
+   "type": "note",
+   "scope": "project.wholesale",
+   "title": "wholesale-shipping",
+   "age_days": 70,
+   "content": "Wholesale orders above 60 pieces go on a pallet with a freight forwarder; smaller ones as DHL parcels."
+  },
+  {
+   "key": "n-wholesale-invoices",
+   "type": "note",
+   "scope": "project.wholesale",
+   "title": "wholesale-invoices",
+   "age_days": 65,
+   "content": "Wholesale invoices are written in lexoffice with 14 days payment terms."
+  },
+  {
+   "key": "e-roastery-order",
+   "type": "event",
+   "scope": "project.wholesale",
+   "title": "roastery-order",
+   "age_days": 30,
+   "content": "Rösterei Hafen ordered 48 logo mugs.",
+   "properties": {
+    "change_type": "created"
+   }
+  },
+  {
+   "key": "n-discount-codes",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "discount-codes",
+   "age_days": 27,
+   "content": "Discount code WELCOME10 gives 10 % on the first order; codes are created in the Shopify admin."
+  },
+  {
+   "key": "n-service-hours",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "customer-service",
+   "age_days": 44,
+   "content": "Customer emails are answered Monday to Friday within 24 hours."
+  },
+  {
+   "key": "n-gift-wrap",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "gift-wrapping",
+   "age_days": 26,
+   "content": "Gift wrapping costs 3 EUR, offered as a checkbox at checkout."
+  },
+  {
+   "key": "n-bestsellers",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "best-sellers",
+   "age_days": 13,
+   "content": "Best sellers this year: the speckled mug, the celadon bowl and the small bud vase."
+  },
+  {
+   "key": "n-reviews",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "product-reviews",
+   "age_days": 24,
+   "content": "Product reviews are collected with a review app; 4.8 stars on average from 112 reviews."
+  },
+  {
+   "key": "n-abandoned-cart",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "abandoned-cart-email",
+   "age_days": 23,
+   "content": "The abandoned-cart email goes out after four hours, without a discount."
+  },
+  {
+   "key": "d-eu-only",
+   "type": "decision",
+   "scope": "project.shop",
+   "title": "shipping-countries",
+   "age_days": 65,
+   "content": "Ship only within the EU.",
+   "properties": {
+    "rationale": "Customs paperwork for ceramics outside the EU is not worth it at this volume.",
+    "alternatives": [
+     "Worldwide",
+     "Germany only"
+    ]
+   }
+  },
+  {
+   "key": "n-shop-legal",
+   "type": "note",
+   "scope": "project.shop",
+   "title": "legal-texts",
+   "age_days": 120,
+   "content": "Imprint, terms and privacy policy come from a legal text service and update automatically."
+  },
+  {
+   "key": "n-app-icons",
+   "type": "note",
+   "scope": "project.app",
+   "title": "app-icon",
+   "age_days": 66,
+   "content": "The app icon is the speckled mug on a sand background; source file in the design folder."
+  },
+  {
+   "key": "n-app-analytics",
+   "type": "note",
+   "scope": "project.app",
+   "title": "app-analytics",
+   "age_days": 62,
+   "content": "No analytics SDK in the app; crash reports only, through the Expo service."
+  },
+  {
+   "key": "n-dns",
+   "type": "note",
+   "scope": "project.infra",
+   "title": "dns",
+   "age_days": 7,
+   "content": "DNS is managed at the domain registrar; the shop domain points to Shopify, blog. subdomain to the VPS."
+  },
+  {
+   "key": "n-blog-comments",
+   "type": "note",
+   "scope": "project.blog",
+   "title": "blog-comments",
+   "age_days": 77,
+   "content": "Comments on the blog are members-only to keep spam out."
+  },
+  {
+   "key": "e-week-10",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-10",
+   "age_days": 205,
+   "content": "Week 10: 24 orders, 960 EUR revenue; best seller: espresso cup.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-11",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-11",
+   "age_days": 198,
+   "content": "Week 11: 34 orders, 1,292 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-12",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-12",
+   "age_days": 191,
+   "content": "Week 12: 31 orders, 1,209 EUR revenue; best seller: bud vase.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-13",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-13",
+   "age_days": 184,
+   "content": "Week 13: 32 orders, 1,216 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-14",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-14",
+   "age_days": 177,
+   "content": "Week 14: 20 orders, 760 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-15",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-15",
+   "age_days": 170,
+   "content": "Week 15: 27 orders, 1,188 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-16",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-16",
+   "age_days": 163,
+   "content": "Week 16: 21 orders, 819 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-17",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-17",
+   "age_days": 156,
+   "content": "Week 17: 27 orders, 1,026 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-18",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-18",
+   "age_days": 149,
+   "content": "Week 18: 32 orders, 1,248 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-19",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-19",
+   "age_days": 142,
+   "content": "Week 19: 34 orders, 1,632 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-20",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-20",
+   "age_days": 135,
+   "content": "Week 20: 15 orders, 705 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-21",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-21",
+   "age_days": 128,
+   "content": "Week 21: 26 orders, 988 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-22",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-22",
+   "age_days": 121,
+   "content": "Week 22: 15 orders, 690 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-23",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-23",
+   "age_days": 114,
+   "content": "Week 23: 18 orders, 756 EUR revenue; best seller: espresso cup.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-24",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-24",
+   "age_days": 107,
+   "content": "Week 24: 18 orders, 828 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-25",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-25",
+   "age_days": 100,
+   "content": "Week 25: 32 orders, 1,344 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-26",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-26",
+   "age_days": 93,
+   "content": "Week 26: 35 orders, 1,400 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-27",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-27",
+   "age_days": 86,
+   "content": "Week 27: 32 orders, 1,504 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-28",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-28",
+   "age_days": 79,
+   "content": "Week 28: 20 orders, 860 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-29",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-29",
+   "age_days": 72,
+   "content": "Week 29: 31 orders, 1,519 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-30",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-30",
+   "age_days": 65,
+   "content": "Week 30: 32 orders, 1,216 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-31",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-31",
+   "age_days": 58,
+   "content": "Week 31: 20 orders, 900 EUR revenue; best seller: speckled mug.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-32",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-32",
+   "age_days": 51,
+   "content": "Week 32: 31 orders, 1,364 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-33",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-33",
+   "age_days": 44,
+   "content": "Week 33: 24 orders, 1,080 EUR revenue; best seller: serving plate.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-34",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-34",
+   "age_days": 37,
+   "content": "Week 34: 28 orders, 1,204 EUR revenue; best seller: bud vase.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-35",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-35",
+   "age_days": 30,
+   "content": "Week 35: 21 orders, 1,050 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-36",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-36",
+   "age_days": 23,
+   "content": "Week 36: 36 orders, 1,800 EUR revenue; best seller: celadon bowl.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-37",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-37",
+   "age_days": 16,
+   "content": "Week 37: 16 orders, 752 EUR revenue; best seller: bud vase.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-38",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-38",
+   "age_days": 9,
+   "content": "Week 38: 30 orders, 1,350 EUR revenue; best seller: bud vase.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-week-39",
+   "type": "event",
+   "scope": "project.shop",
+   "title": "weekly-orders-week-39",
+   "age_days": 2,
+   "content": "Week 39: 37 orders, 1,665 EUR revenue; best seller: bud vase.",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "t-done-0",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "fix-the-broken-image",
+   "age_days": 175,
+   "content": "Fix the broken image on the bud vase product page.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-1",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "add-care-instructions-to",
+   "age_days": 38,
+   "content": "Add care instructions to every product page.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-2",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "set-up-the-welcome10",
+   "age_days": 50,
+   "content": "Set up the WELCOME10 discount code.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-3",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "translate-the-returns-page",
+   "age_days": 151,
+   "content": "Translate the returns page into English.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-4",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "connect-stripe-to-shopify",
+   "age_days": 127,
+   "content": "Connect Stripe to Shopify.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-5",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "redirect-old-woocommerce-product",
+   "age_days": 62,
+   "content": "Redirect old WooCommerce product URLs.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-6",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "order-new-shipping-boxes",
+   "age_days": 107,
+   "content": "Order new shipping boxes.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-7",
+   "type": "task",
+   "scope": "project.shop",
+   "title": "photograph-the-autumn-collection",
+   "age_days": 58,
+   "content": "Photograph the autumn collection.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-8",
+   "type": "task",
+   "scope": "project.app",
+   "title": "set-up-the-expo",
+   "age_days": 145,
+   "content": "Set up the Expo project.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-9",
+   "type": "task",
+   "scope": "project.app",
+   "title": "design-the-product-list",
+   "age_days": 127,
+   "content": "Design the product list screen.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-10",
+   "type": "task",
+   "scope": "project.app",
+   "title": "add-magic-link-login",
+   "age_days": 30,
+   "content": "Add magic-link login.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-11",
+   "type": "task",
+   "scope": "project.app",
+   "title": "invite-the-first-40",
+   "age_days": 191,
+   "content": "Invite the first 40 beta testers.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-12",
+   "type": "task",
+   "scope": "project.app",
+   "title": "fix-the-crash-on",
+   "age_days": 39,
+   "content": "Fix the crash on the order detail screen.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-13",
+   "type": "task",
+   "scope": "project.infra",
+   "title": "move-the-blog-to",
+   "age_days": 162,
+   "content": "Move the blog to the new VPS.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-14",
+   "type": "task",
+   "scope": "project.infra",
+   "title": "set-up-wireguard",
+   "age_days": 166,
+   "content": "Set up WireGuard.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-15",
+   "type": "task",
+   "scope": "project.infra",
+   "title": "add-log-rotation-on",
+   "age_days": 100,
+   "content": "Add log rotation on the VPS.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-16",
+   "type": "task",
+   "scope": "project.infra",
+   "title": "restore-test-from-the",
+   "age_days": 107,
+   "content": "Restore test from the restic backup.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-17",
+   "type": "task",
+   "scope": "project.blog",
+   "title": "migrate-the-newsletter-list",
+   "age_days": 197,
+   "content": "Migrate the newsletter list into Ghost.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-18",
+   "type": "task",
+   "scope": "project.blog",
+   "title": "write-the-post-about",
+   "age_days": 109,
+   "content": "Write the post about the studio move.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-19",
+   "type": "task",
+   "scope": "project.blog",
+   "title": "set-up-the-members-only",
+   "age_days": 172,
+   "content": "Set up the members-only comments.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-20",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "buy-a-second-set",
+   "age_days": 147,
+   "content": "Buy a second set of kiln shelves.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-21",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "mix-a-new-batch",
+   "age_days": 168,
+   "content": "Mix a new batch of celadon.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-22",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "repair-the-wheel-splash",
+   "age_days": 136,
+   "content": "Repair the wheel splash pan.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-23",
+   "type": "task",
+   "scope": "project.studio",
+   "title": "sort-and-price-the",
+   "age_days": 37,
+   "content": "Sort and price the seconds.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-24",
+   "type": "task",
+   "scope": "project.workshops",
+   "title": "buy-six-more-aprons",
+   "age_days": 43,
+   "content": "Buy six more aprons.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-25",
+   "type": "task",
+   "scope": "project.workshops",
+   "title": "write-the-workshop-confirmation",
+   "age_days": 89,
+   "content": "Write the workshop confirmation email.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-26",
+   "type": "task",
+   "scope": "project.workshops",
+   "title": "create-the-workshop-product",
+   "age_days": 141,
+   "content": "Create the workshop product with date variants.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-27",
+   "type": "task",
+   "scope": "project.wholesale",
+   "title": "deliver-the-espresso-cups",
+   "age_days": 198,
+   "content": "Deliver the espresso cups to Café Kornblume.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-28",
+   "type": "task",
+   "scope": "project.wholesale",
+   "title": "order-the-logo-stamp",
+   "age_days": 190,
+   "content": "Order the logo stamp for Rösterei Hafen.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "t-done-29",
+   "type": "task",
+   "scope": "project.wholesale",
+   "title": "write-the-wholesale-price",
+   "age_days": 36,
+   "content": "Write the wholesale price list.",
+   "status": "resolved",
+   "properties": {
+    "outcome": "done"
+   }
+  },
+  {
+   "key": "e-post-0",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-why-speckled-glazes-speckle",
+   "age_days": 15,
+   "content": "Published the blog post \"Why speckled glazes speckle\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-1",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-a-day-in-the",
+   "age_days": 29,
+   "content": "Published the blog post \"A day in the studio\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-2",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-how-we-pack-a",
+   "age_days": 43,
+   "content": "Published the blog post \"How we pack a mug\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-3",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-from-clay-to-cup",
+   "age_days": 57,
+   "content": "Published the blog post \"From clay to cup\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-4",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-choosing-a-kiln",
+   "age_days": 71,
+   "content": "Published the blog post \"Choosing a kiln\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-5",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-our-first-market-season",
+   "age_days": 85,
+   "content": "Published the blog post \"Our first market season\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-6",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-five-things-about-celadon",
+   "age_days": 99,
+   "content": "Published the blog post \"Five things about celadon\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-7",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-seconds-why-we-sell",
+   "age_days": 113,
+   "content": "Published the blog post \"Seconds: why we sell them\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-8",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-the-wheel-explained",
+   "age_days": 127,
+   "content": "Published the blog post \"The wheel, explained\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-9",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-behind-the-new-shop",
+   "age_days": 141,
+   "content": "Published the blog post \"Behind the new shop\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-10",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-caring-for-stoneware",
+   "age_days": 155,
+   "content": "Published the blog post \"Caring for stoneware\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "e-post-11",
+   "type": "event",
+   "scope": "project.blog",
+   "title": "published-workshop-diaries",
+   "age_days": 169,
+   "content": "Published the blog post \"Workshop diaries\".",
+   "properties": {
+    "change_type": "completed"
+   }
+  },
+  {
+   "key": "l-session-0",
+   "type": "log",
+   "scope": "project.shop",
+   "title": "session-0",
+   "age_days": 5,
+   "content": "Session: Worked through the Shopify theme settings and the checkout branding."
+  },
+  {
+   "key": "l-session-1",
+   "type": "log",
+   "scope": "project.shop",
+   "title": "session-1",
+   "age_days": 14,
+   "content": "Session: Set up shipping profiles for Warenpost and DHL in Shopify."
+  },
+  {
+   "key": "l-session-2",
+   "type": "log",
+   "scope": "project.app",
+   "title": "session-2",
+   "age_days": 23,
+   "content": "Session: Built the order list screen; TestFlight build 14 uploaded."
+  },
+  {
+   "key": "l-session-3",
+   "type": "log",
+   "scope": "project.infra",
+   "title": "session-3",
+   "age_days": 32,
+   "content": "Session: Moved the blog to the new VPS and set up Caddy."
+  },
+  {
+   "key": "l-session-4",
+   "type": "log",
+   "scope": "project.studio",
+   "title": "session-4",
+   "age_days": 41,
+   "content": "Session: Glaze tests for the cobalt blue, runs 3 and 4."
+  },
+  {
+   "key": "l-session-5",
+   "type": "log",
+   "scope": "project.workshops",
+   "title": "session-5",
+   "age_days": 50,
+   "content": "Session: Prepared the October workshop dates and the confirmation email."
+  },
+  {
+   "key": "l-session-6",
+   "type": "log",
+   "scope": "project.wholesale",
+   "title": "session-6",
+   "age_days": 59,
+   "content": "Session: Drafted the price list and the offer template for cafés."
+  },
+  {
+   "key": "l-session-7",
+   "type": "log",
+   "scope": "project.blog",
+   "title": "session-7",
+   "age_days": 68,
+   "content": "Session: Wrote and scheduled the studio tour post."
+  }
+ ]
+}
