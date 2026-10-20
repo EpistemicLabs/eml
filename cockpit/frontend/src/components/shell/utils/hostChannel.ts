@@ -8,6 +8,8 @@ export interface InitFrame {
   cols: number;
   rows: number;
   initialCommand: string | null;
+  /** Settings › Preferences › Sessions; the host greets only a plain new session. */
+  greet: boolean;
   taskId: string | null;
   provider: 'claude' | 'codex' | null;
   spaceId: string | null;

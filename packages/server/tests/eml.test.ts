@@ -1200,6 +1200,21 @@ describe('EML v0.2', () => {
       expect(state.open_tasks.map(t => t.content)).toEqual(['urgent', 'high', 'low'])
     })
 
+    it('open_tasks of one priority: last activity first (task update or journal entry)', () => {
+      const raw = (eml as any).db
+      const task = (content: string, updatedAt: string) => {
+        const t = eml.engrams.store({ content, type: 'task', scope: 'project.eml', status: 'planned', properties: { priority: 'normal' } })
+        raw.prepare('UPDATE engrams SET updated_at = ?, created_at = ? WHERE id = ?').run(updatedAt, updatedAt, t.id)
+        return t
+      }
+      const old = task('old, but a journal entry today', '2026-01-01T00:00:00.000Z')
+      task('touched in march', '2026-03-01T00:00:00.000Z')
+      task('touched in february', '2026-02-01T00:00:00.000Z')
+      eml.engrams.appendTaskEntry(old.id, { text: 'worked on it' })
+      const state = eml.projects.getBrainState('eml')!
+      expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
+    })
+
     it('recent_decisions sorted by significance DESC', () => {
       eml.engrams.store(validDecision({ content: 'normal', scope: 'project.eml', significance: 'normal' }))
       eml.engrams.store(validDecision({ content: 'critical', scope: 'project.eml', significance: 'critical' }))

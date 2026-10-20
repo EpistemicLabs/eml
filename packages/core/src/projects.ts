@@ -96,7 +96,7 @@ export class ProjectStore {
    * v0.9.1 Cluster 1: namespace filter removed — 1 user = 1 brain.
    *
    * - current_status: type=status, scope=project.<id>, top 3 by updated_at DESC
-   * - open_tasks: tasks with status in (planned,active), sorted priority DESC, due_date ASC, limit 10
+   * - open_tasks: tasks with status in (planned,active), sorted priority DESC, due_date ASC, last activity DESC, limit 10
    * - recent_decisions: top 5 decisions by significance DESC, created_at DESC
    * - recent_logs: top 3 logs by created_at DESC
    * - relations: relations where source or target has scope=project.<id>, limit 20

@@ -28,7 +28,8 @@ describe('hook session-start', () => {
     }) as unknown as typeof fetch
     const r = await sessionStart(CFG, '/x', f)
     expect(sent).toEqual({ budget: BOOT_BUDGET_CHARS })
-    expect(BOOT_BUDGET_CHARS).toBe(10_000)
+    // The output plus the newline runHook prints stays within Claude Code's 10,000.
+    expect(BOOT_BUDGET_CHARS + 1).toBe(10_000)
     expect(r.output).toBe('boot')
     expect(r.log).toBe('OK ver=0.17.18 chars=4 trim=situational:2,always:1 legacy=3')
   })
@@ -89,6 +90,12 @@ describe('hook user-prompt-submit', () => {
     expect(reminderFor('/work/eml', '/home/u')).toMatch(/eml_show project\.eml/)
     expect(reminderFor('/home/u', '/home/u')).toBe(REMINDER_TEXT)
   })
+
+  it('drops the cwd nudge when the host delivers the project block', () => {
+    expect(reminderFor('/work/eml', '/home/u', false)).toBe(REMINDER_TEXT)
+    const input = { session_id: 'abc-456', cwd: '/work/eml' }
+    expect(userPromptSubmit(ctx(), input, Date.now(), false).output).toBe(REMINDER_TEXT)
+  })
 })
 
 // v0.15: the reminder lives twice — REMINDER_TEXT (node hook) and the heredoc in
@@ -104,5 +111,6 @@ describe('hook output format', () => {
       hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: '[EML Reminder]\n- x' },
     })
     expect(JSON.parse(formatHookOutput('session-start', '# EML Boot', true)).hookSpecificOutput.hookEventName).toBe('SessionStart')
+    expect(JSON.parse(formatHookOutput('project-block', '# Project', true)).hookSpecificOutput.hookEventName).toBe('SessionStart')
   })
 })

@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
+import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
   ERROR_NO_IDENTITY,
   ERROR_NO_SIZE,
@@ -243,6 +244,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
           cols: size.cols,
           rows: size.rows,
           initialCommand: initialCommand ?? null,
+          greet: readSettings().greetOnStart,
           taskId: pane?.taskId ?? null,
           provider: pane?.provider ?? null,
           spaceId: desk?.spaceId ?? null,

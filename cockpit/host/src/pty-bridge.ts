@@ -28,7 +28,7 @@ import type { BrainSpace, BrainSpaces } from './brain-space.js'
  * session id from the pane (decision cockpit-session-resume-strategy).
  *
  * Wire protocol:
- *   client → { type:'init', paneId, projectId, sessionId, cols, rows, initialCommand?, isDarkMode?, provider? }
+ *   client → { type:'init', paneId, projectId, sessionId, cols, rows, initialCommand?, greet?, isDarkMode?, provider? }
  *   client → { type:'input', data }
  *   client → { type:'resize', cols, rows }
  *   host   → binary frame [0x01, ...utf8]           (pty output, hot path)
@@ -48,6 +48,27 @@ const require = createRequire(import.meta.url)
 const { Terminal: HeadlessTerminal } = require('@xterm/headless') as typeof import('@xterm/headless')
 const { SerializeAddon } = require('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize')
 
+/**
+ * The first prompt of a plain new session when the greeting is on (Settings ›
+ * Preferences › Sessions). It shows in the terminal as the user's message, so
+ * it is short and reads as one; the reply follows the user's preferred
+ * language from their profile. A folder project, or a brain project that no
+ * longer exists, has no project block: the agent says so instead of searching.
+ */
+export const GREETING_PROMPT =
+  'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
+  'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
+  'instead of searching. Then ask what I want to work on. Answer in my preferred language.'
+
+/**
+ * Only a plain new session opens with the greeting: not a resume, not one with
+ * its own first prompt (task run, hygiene, onboarding, spawned work), not a
+ * worker — and only when the user turned it on.
+ */
+export function greetingFor(start: { resume: boolean, initialPrompt: string | null, greet: boolean, worker: boolean }): string | null {
+  return start.greet && !start.resume && start.initialPrompt === null && !start.worker ? GREETING_PROMPT : null
+}
+
 type ShellIncomingMessage = {
   type?: string
   data?: string
@@ -64,6 +85,8 @@ type ShellIncomingMessage = {
   taskId?: string
   /** The pane's brain space (brain-space.ts); absent = main. */
   spaceId?: string
+  /** Settings › Preferences › Sessions: open a fresh session with a greeting. */
+  greet?: boolean
 }
 
 type PendingResize = {
@@ -358,6 +381,7 @@ export class PtyBridge {
     sessionId: string,
     resume: boolean,
     initialPrompt: string | null,
+    greeting: string | null,
     cwd: string,
     cols: number,
     rows: number,
@@ -369,12 +393,13 @@ export class PtyBridge {
     provider.trustProject(cwd)
     // Workers — opened by another session, nobody watching — run unattended.
     // An externally queued command maps to the agent's initial prompt (the
-    // cockpit spawns agents, not shells).
+    // cockpit spawns agents, not shells). The greeting is a first prompt too,
+    // but the user is watching: it leaves the session attended.
     const unattended = this.ledger.get(sessionId)?.worker === true || initialPrompt !== null
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, providerSessionId, resume, initialPrompt, unattended,
+      sessionId, providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
       space: { id: space.id, url: space.url, token: space.token, files: space.files },
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
@@ -523,7 +548,7 @@ export class PtyBridge {
         const provider = this.ctx.providers.forSession(session.sessionId)
         const fresh = this.spawnAgent(
           provider,
-          session.sessionId, false, null, session.projectPath,
+          session.sessionId, false, null, null, session.projectPath,
           session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
         )
         session.pty = fresh
@@ -665,8 +690,11 @@ export class PtyBridge {
           // and resends it on every reconnect; on a resume (after a host restart)
           // it would land as a new user message in the running conversation.
           const initialPrompt = resume ? null : readString(data.initialCommand) || null
+          const greeting = greetingFor({
+            resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
+          })
           const isDarkMode = readBoolean(data.isDarkMode, true)
-          const proc = this.spawnAgent(provider, sessionId, resume, initialPrompt, projectPath, cols, rows, isDarkMode, projectId, space)
+          const proc = this.spawnAgent(provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, isDarkMode, projectId, space)
 
           const headless = new HeadlessTerminal({
             cols, rows, scrollback: HEADLESS_SCROLLBACK, allowProposedApi: true,

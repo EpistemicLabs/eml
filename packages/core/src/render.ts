@@ -79,20 +79,22 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   // (context-gated playbooks) are a name-only list; eml_get for the full body.
   const rules = state.rules ?? []
   if (rules.length > 0) {
+    // Rules of parent projects (inheritedRules) carry their own scope.
+    const inherited = (r: Engram) => (!r.scope || r.scope === state.scope ? '' : ` (inherited from ${r.scope})`)
     const always = rules.filter(r => r.properties?.applies === 'always')
     const situational = rules.filter(r => r.properties?.applies !== 'always')
     lines.push('## Rules')
     if (always.length > 0) {
       lines.push('### Always (apply whenever working here)')
       for (const r of always) {
-        lines.push(`- **${r.title ?? '(no title)'}** — ${r.content}`)
+        lines.push(`- **${r.title ?? '(no title)'}**${inherited(r)} — ${r.content}`)
         lines.push(`  · ${r.id}`)
       }
     }
     if (situational.length > 0) {
       lines.push('### Situational (eml_get for full content)')
       for (const r of situational) {
-        lines.push(`- ${r.title ?? '(no title)'} · ${r.id}`)
+        lines.push(`- ${r.title ?? '(no title)'}${inherited(r)} · ${r.id}`)
       }
     }
     lines.push('')
