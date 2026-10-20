@@ -4,7 +4,8 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod'
-import { SITUATION, runHook, type AgentOptions, type Answer, type Session, type Verdict } from './agent'
+import { runHook, type AgentOptions, type Answer, type Verdict } from './agent'
+import { situation, type Workspace } from './arms'
 import { idsInOrder } from './retrieval'
 
 // --- Runner: Messages API ---------------------------------------------------------------
@@ -20,20 +21,20 @@ import { idsInOrder } from './retrieval'
 
 let client: Anthropic | undefined
 
-export async function askApi(s: Session, opts: AgentOptions): Promise<Answer> {
+export async function askApi(s: Workspace, opts: AgentOptions, prompt: string): Promise<Answer> {
+  if (s.arm !== 'eml') throw new Error('api runner: only the eml arm (use the claude-code runner for baselines)')
   client ??= new Anthropic()
-  const q = s.question
   const out: Answer = { answer: '', tool_calls: [], seen_ids: [], turns: 0, stop: '', usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 } }
-  const hookSession = { session_id: `bench-${q.id}`, cwd: path.join(s.dir, 'workspace') }
-  const boot = runHook(s.sut, 'session-start', s.configPath, s.env, hookSession)
-  const reminder = runHook(s.sut, 'user-prompt-submit', s.configPath, s.env, { ...hookSession, prompt: q.agent!.question })
+  const hookSession = { session_id: `bench-${path.basename(s.dir)}`, cwd: s.cwd }
+  const boot = runHook(s.sut, 'session-start', s.configPath!, s.env, hookSession)
+  const reminder = runHook(s.sut, 'user-prompt-submit', s.configPath!, s.env, { ...hookSession, prompt })
 
   const mcp = new Client({ name: 'eml-bench', version: '0.0.0' })
   const seen = new Set<string>()
   try {
     await mcp.connect(new StdioClientTransport({
       command: process.execPath,
-      args: [s.sut.mcpEntry, '--url', s.server.url, '--token', s.token, '--name', 'eml-bench'],
+      args: [s.sut.mcpEntry, '--url', s.server!.url, '--token', s.token!, '--name', 'eml-bench'],
       env: s.env,
       stderr: 'ignore',
     }))
@@ -42,8 +43,8 @@ export async function askApi(s: Session, opts: AgentOptions): Promise<Answer> {
       description: t.description ?? '',
       input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
     }))
-    const system = `${SITUATION}\n\n<session-start-hook>\n${boot}\n</session-start-hook>`
-    const userText = reminder ? `<user-prompt-submit-hook>\n${reminder}\n</user-prompt-submit-hook>\n\n${q.agent!.question}` : q.agent!.question
+    const system = `${situation('eml')}\n\n<session-start-hook>\n${boot}\n</session-start-hook>`
+    const userText = reminder ? `<user-prompt-submit-hook>\n${reminder}\n</user-prompt-submit-hook>\n\n${prompt}` : prompt
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userText }]
 
     for (let turn = 0; turn < opts.maxTurns; turn++) {

@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { openSut, startServer, Api } from './sut'
 import { buildBrain } from './fixture'
 import { readQuestions, runRetrieval, summarize, RECALL_K, type RetrievalSummary } from './retrieval'
 import { runAgent, summarizeAgent, measureSurface, type AgentOptions, type AgentSummary, type Surface } from './agent'
+import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummary } from './scenarios'
+import { ARMS, type Arm } from './arms'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
-  eml-bench run --eml <checkout> [--base <checkout>] [--agent] [--out <file>]
+  eml-bench run --eml <checkout> [--base <checkout>] [--agent] [--scenarios] [--out <file>]
       Builds the fixture brain with --base (default: --eml), then measures --eml
       on it. A base older than --eml measures the brain as a user has it after
       updating (the server migrates it at startup).
 
       Stage 1 (retrieval) always runs. --agent adds stage 2: a Claude model
-      answers the questions over the SUT's hooks and MCP tools.
+      answers the questions over the SUT's hooks and MCP tools. --scenarios
+      runs the multi-session scenarios (work over time). Both take:
+        --arms <a,b>        eml (default), claude-md (the same knowledge as a
+                            CLAUDE.md), none (no memory); e.g. eml,claude-md,none
+        --repeat <n>        runs per question / scenario (default 1)
         --runner <r>        claude-code (default): headless Claude Code, signed in
                             with a Claude Code token — CLAUDE_CODE_OAUTH_TOKEN or
                             --claude-token-file <file> (from \`claude setup-token\`)
@@ -24,7 +31,9 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
         --judge <id>        judge model (default claude-opus-5-5)
         --effort <level>    low|medium|high|xhigh|max (default medium)
         --concurrency <n>   questions in parallel (default 4)
-        --only <id,id>      only these questions
+        --only <id,id>      only these questions / scenarios
+      --work-dir <dir>      where runs keep their data, logs and transcripts
+                            (default: <tmp>/eml-bench; must be outside the repo)
 
   eml-bench compare <a.json> <b.json>
       Prints the change from result a to result b.
@@ -44,7 +53,11 @@ async function run(args: string[]): Promise<void> {
   const base = openSut(arg(args, 'base') ?? emlPath)
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const workDir = path.join(BENCH_DIR, 'work', `${sut.version}-${stamp}`)
+  // Outside the repository: Claude Code would read the repo's CLAUDE.md from a parent directory.
+  const workRoot = path.resolve(arg(args, 'work-dir') ?? path.join(os.tmpdir(), 'eml-bench'))
+  if (isInside(workRoot, sut.root) || isInside(workRoot, BENCH_DIR)) throw new Error(`--work-dir must lie outside the repository (${workRoot})`)
+  const workDir = path.join(workRoot, `${sut.version}-${stamp}`)
+  console.log(`work dir:      ${workDir}`)
   const dataDir = path.join(workDir, 'data')
   console.log(`fixture brain: written by ${base.version} (${base.root})`)
   const brain = await buildBrain(base, dataDir)
@@ -63,11 +76,16 @@ async function run(args: string[]): Promise<void> {
   printSurface(surface)
 
   let agent: { summary: AgentSummary; results: unknown[] } | undefined
-  if (args.includes('--agent')) {
+  let scenarios: { summary: Partial<Record<Arm, ScenarioArmSummary>>; results: unknown[] } | undefined
+  if (args.includes('--agent') || args.includes('--scenarios')) {
     const runner = (arg(args, 'runner') ?? 'claude-code') as AgentOptions['runner']
     const tokenFile = arg(args, 'claude-token-file')
+    const arms = (arg(args, 'arms') ?? 'eml').split(',') as Arm[]
+    for (const a of arms) if (!ARMS.includes(a)) throw new Error(`unknown arm ${a} (${ARMS.join(', ')})`)
     const opts: AgentOptions = {
       runner,
+      arms,
+      repeat: parseInt(arg(args, 'repeat') ?? '1', 10),
       claudeToken: process.env.CLAUDE_CODE_OAUTH_TOKEN || (tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : undefined),
       model: arg(args, 'model') ?? 'claude-opus-5-5',
       judgeModel: arg(args, 'judge') ?? 'claude-opus-5-5',
@@ -76,12 +94,23 @@ async function run(args: string[]): Promise<void> {
       concurrency: parseInt(arg(args, 'concurrency') ?? '4', 10),
     }
     const only = arg(args, 'only')?.split(',')
-    const questions = readQuestions().filter(q => !only || only.includes(q.id))
-    console.log(`\nagent — ${opts.runner} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel}`)
-    const agentResults = await runAgent(sut, brain, questions, workDir, opts)
-    const agentSummary = summarizeAgent(agentResults, opts)
-    printAgentSummary(agentSummary)
-    agent = { summary: agentSummary, results: agentResults }
+    const header = `${opts.runner} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel} · arms ${arms.join(', ')} · ${opts.repeat} run(s)`
+    if (args.includes('--agent')) {
+      const questions = readQuestions().filter(q => !only || only.includes(q.id))
+      console.log(`\nagent — ${header}`)
+      const agentResults = await runAgent(sut, brain, questions, workDir, opts)
+      const agentSummary = summarizeAgent(agentResults, opts)
+      printAgentSummary(agentSummary)
+      agent = { summary: agentSummary, results: agentResults }
+    }
+    if (args.includes('--scenarios')) {
+      const list = readScenarios().filter(s => !only || only.includes(s.id))
+      console.log(`\nscenarios — ${header}`)
+      const scenarioResults = await runScenarios(sut, brain, list, workDir, opts)
+      const scenarioSummary = summarizeScenarios(scenarioResults, arms)
+      printScenarioSummary(scenarioSummary)
+      scenarios = { summary: scenarioSummary, results: scenarioResults }
+    }
   }
 
   const out = arg(args, 'out') ?? path.join(BENCH_DIR, 'results', `${sut.version}${base.version !== sut.version ? `-from-${base.version}` : ''}.json`)
@@ -93,8 +122,14 @@ async function run(args: string[]): Promise<void> {
     surface,
     retrieval: { k: RECALL_K, summary, results },
     ...(agent && { agent }),
+    ...(scenarios && { scenarios }),
   }, null, 2) + '\n')
   console.log(`\nresult: ${path.relative(process.cwd(), out)}`)
+}
+
+function isInside(dir: string, parent: string): boolean {
+  const rel = path.relative(parent, dir)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
 }
 
 function printSummary(s: RetrievalSummary): void {
@@ -120,19 +155,46 @@ function printSurface(s: Surface): void {
 }
 
 function printAgentSummary(s: AgentSummary): void {
-  console.log(`\nagent — ${s.questions} questions · ${s.runner}${s.harness ? ` (${s.harness})` : ''} · ${s.model} · effort ${s.effort}`)
-  console.log(`  accuracy       ${s.accuracy.toFixed(3)}`)
-  console.log(`  stale rate     ${s.stale_rate.toFixed(3)}   (answer asserts an outdated claim)`)
-  console.log(`  evidence rate  ${s.evidence_rate.toFixed(3)}   (expected engrams the agent actually retrieved)`)
-  console.log(`  errors         ${s.errors}`)
-  console.log(`  avg tool calls ${s.avg_tool_calls}   avg turns ${s.avg_turns}`)
-  console.log(`  wrote to brain ${s.answers_with_writes} of ${s.questions} answers`)
-  if (s.cost_usd !== null) console.log(`  cost           $${s.cost_usd} (API-equivalent, as reported by the runner)`)
-  console.log(`  tokens         in ${s.tokens.input} · out ${s.tokens.output} · cache read ${s.tokens.cache_read} · cache write ${s.tokens.cache_write}`)
+  const arms = Object.keys(s.arms) as Arm[]
+  const col = (f: (a: NonNullable<AgentSummary['arms'][Arm]>) => string) => arms.map(a => f(s.arms[a]!).padStart(12)).join('')
+  const any = s.arms[arms[0]]!
+  console.log(`\nagent — ${any.questions} questions × ${s.repeat} run(s) · ${s.runner}${s.harness ? ` (${s.harness})` : ''} · ${s.model} · effort ${s.effort}`)
+  console.log(`  ${''.padEnd(22)}${arms.map(a => a.padStart(12)).join('')}`)
+  console.log(`  ${'accuracy'.padEnd(22)}${col(a => a.accuracy.toFixed(3))}`)
+  console.log(`  ${'  per run'.padEnd(22)}${col(a => a.accuracy_by_run.map(x => x.toFixed(2)).join('/'))}`)
+  console.log(`  ${'stale rate'.padEnd(22)}${col(a => a.stale_rate.toFixed(3))}`)
+  console.log(`  ${'evidence rate'.padEnd(22)}${col(a => (a.evidence_rate === null ? '–' : a.evidence_rate.toFixed(3)))}`)
+  console.log(`  ${'avg tool calls'.padEnd(22)}${col(a => String(a.avg_tool_calls))}`)
+  console.log(`  ${'answers with writes'.padEnd(22)}${col(a => String(a.answers_with_writes))}`)
+  console.log(`  ${'errors'.padEnd(22)}${col(a => String(a.errors))}`)
+  console.log(`  ${'cost $ (API-equiv.)'.padEnd(22)}${col(a => (a.cost_usd === null ? '–' : String(a.cost_usd)))}`)
   console.log('  by category')
-  for (const [cat, c] of Object.entries(s.by_category)) {
-    console.log(`    ${cat.padEnd(20)} n=${String(c.questions).padEnd(3)} accuracy ${c.accuracy.toFixed(2)}`)
+  for (const cat of Object.keys(any.by_category)) {
+    console.log(`    ${cat.padEnd(20)}${col(a => (a.by_category[cat] ?? 0).toFixed(2))}`)
   }
+  const unstable = Object.keys(any.by_question).filter(id => arms.some(a => {
+    const [ok, n] = s.arms[a]!.by_question[id].split('/').map(Number)
+    return ok !== n
+  }))
+  if (unstable.length) {
+    console.log('  questions not passed every run')
+    for (const id of unstable) console.log(`    ${id.padEnd(20)}${col(a => a.by_question[id])}`)
+  }
+}
+
+function printScenarioSummary(s: Partial<Record<Arm, ScenarioArmSummary>>): void {
+  const arms = Object.keys(s) as Arm[]
+  const col = (f: (a: ScenarioArmSummary) => string) => arms.map(a => f(s[a]!).padStart(12)).join('')
+  const any = s[arms[0]]!
+  console.log(`\nscenarios — ${any.scenarios} scenarios × ${any.runs} run(s)`)
+  console.log(`  ${''.padEnd(22)}${arms.map(a => a.padStart(12)).join('')}`)
+  console.log(`  ${'accuracy'.padEnd(22)}${col(a => a.accuracy.toFixed(3))}`)
+  console.log(`  ${'  per run'.padEnd(22)}${col(a => a.accuracy_by_run.map(x => x.toFixed(2)).join('/'))}`)
+  console.log(`  ${'stale rate'.padEnd(22)}${col(a => a.stale_rate.toFixed(3))}`)
+  console.log(`  ${'avg writes'.padEnd(22)}${col(a => String(a.avg_writes))}`)
+  console.log(`  ${'errors'.padEnd(22)}${col(a => String(a.errors))}`)
+  console.log(`  ${'cost $ (API-equiv.)'.padEnd(22)}${col(a => String(a.cost_usd))}`)
+  for (const id of Object.keys(any.by_scenario)) console.log(`    ${id.padEnd(20)}${col(a => a.by_scenario[id])}`)
 }
 
 function compare(aPath: string, bPath: string): void {
@@ -159,12 +221,22 @@ function compare(aPath: string, bPath: string): void {
     row('tools', a.surface.tools, b.surface.tools, 0)
     row('tools chars', a.surface.tools_json_chars, b.surface.tools_json_chars, 0)
   }
-  if (a.agent && b.agent) {
-    row('agent accuracy', a.agent.summary.accuracy, b.agent.summary.accuracy)
-    row('agent stale', a.agent.summary.stale_rate, b.agent.summary.stale_rate)
-    row('agent evidence', a.agent.summary.evidence_rate, b.agent.summary.evidence_rate)
-    row('agent tool calls', a.agent.summary.avg_tool_calls, b.agent.summary.avg_tool_calls, 1)
-    row('agent writes', a.agent.summary.answers_with_writes ?? 0, b.agent.summary.answers_with_writes ?? 0, 0)
+  // Stage 2 and scenarios: the eml arm is the version under test.
+  const ea = a.agent?.summary?.arms?.eml
+  const eb = b.agent?.summary?.arms?.eml
+  if (ea && eb) {
+    row('agent accuracy', ea.accuracy, eb.accuracy)
+    console.log(`  ${'  per run'.padEnd(16)} ${ea.accuracy_by_run.map((x: number) => x.toFixed(2)).join('/').padStart(9)} ${eb.accuracy_by_run.map((x: number) => x.toFixed(2)).join('/').padStart(9)}`)
+    row('agent stale', ea.stale_rate, eb.stale_rate)
+    if (ea.evidence_rate !== null && eb.evidence_rate !== null) row('agent evidence', ea.evidence_rate, eb.evidence_rate)
+    row('agent tool calls', ea.avg_tool_calls, eb.avg_tool_calls, 1)
+    row('agent writes', ea.answers_with_writes, eb.answers_with_writes, 0)
+  }
+  const sa2 = a.scenarios?.summary?.eml
+  const sb2 = b.scenarios?.summary?.eml
+  if (sa2 && sb2) {
+    row('scenario accuracy', sa2.accuracy, sb2.accuracy)
+    row('scenario writes', sa2.avg_writes, sb2.avg_writes, 1)
   }
   // Per question: what moved.
   const byId = new Map<string, any>(a.retrieval.results.map((r: any) => [r.id, r]))

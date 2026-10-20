@@ -1,0 +1,42 @@
+{
+  "about": "Work over time: each scenario is a few sessions on one memory (the brain, or the CLAUDE.md), each session a fresh agent. Earlier sessions bring new information in passing, next to the actual request; the check at the end asks for it in a later session. Passing needs the agent to have written it down when it heard it, and to find it again. Graded like the questions: reference answer and outdated claims.",
+  "scenarios": [
+    {
+      "id": "newsletter-switch",
+      "sessions": [
+        "Quick update: from today we send the newsletter with Buttondown instead of Ghost; the blog itself stays on Ghost. Now, give me three subject line ideas for the next newsletter about the studio tour.",
+        "What's on the blog content plan this quarter?"
+      ],
+      "check": { "question": "Which tool do we send the newsletter with, and what runs the blog?", "reference": "The newsletter goes out with Buttondown (since the switch); the blog still runs on Ghost.", "stale_claims": ["The newsletter is sent with Ghost's built-in newsletter feature"] }
+    },
+    {
+      "id": "handling-fee",
+      "sessions": [
+        "I'm raising the handling fee in our price formula from 12 to 14 EUR, effective now. Also, remind me what the returns policy says about items that arrive broken."
+      ],
+      "check": { "question": "What should a glazed mug cost if the material is 8 EUR?", "reference": "39.10 EUR: 8 x 2.5 + 14 = 34 EUR, plus the 15 % glaze surcharge.", "stale_claims": ["36.80 EUR, with the old 12 EUR handling fee"] }
+    },
+    {
+      "id": "kiln-fixed",
+      "sessions": [
+        "Good news: I installed the new kiln element this morning and the test firing went fine, so production is running again. What were the firing temperatures again?"
+      ],
+      "check": { "question": "Is the kiln working, and what is still open in the studio?", "reference": "Yes: the new element is installed and the test firing went fine; still open in the studio: the cobalt blue glaze tests.", "stale_claims": ["The kiln is out of order", "Installing the kiln element is still open"] }
+    },
+    {
+      "id": "new-rule",
+      "sessions": [
+        "New rule for you: never schedule anything for the shop on the first Tuesday of a month, that's newsletter day and I have no time. Anyway, what's still open for the app?"
+      ],
+      "check": { "question": "Can we put the next shop photo shoot on the first Tuesday of next month?", "reference": "No: the first Tuesday of a month is newsletter day, and nothing for the shop is scheduled then; pick another day.", "stale_claims": [] }
+    },
+    {
+      "id": "mainz-signed",
+      "sessions": [
+        "The café in Mainz signed: they take 36 speckled mugs every two months, first delivery mid-November. Draft a short thank-you note to them.",
+        "How much clay do I need to order at least?"
+      ],
+      "check": { "question": "How many wholesale customers do we have now, and what does the café in Mainz take?", "reference": "Three: Café Kornblume, Rösterei Hafen and the café in Mainz, which takes 36 speckled mugs every two months (first delivery mid-November).", "stale_claims": ["Two wholesale customers", "The café in Mainz is only interested so far"] }
+    }
+  ]
+}
