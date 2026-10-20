@@ -132,15 +132,19 @@ export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt:
 }
 
 /** Runs `claude` isolated; returns the JSON events it printed. The judge runs outside the workspace (no CLAUDE.md). */
-// Rate limits and overload end a session with an error result; wait and run it again.
+// Rate limits and overload end a session with an error result, a killed process with
+// no result at all; wait and run it again.
 const RETRY_STATUS = new Set([429, 529])
 const RETRIES = 4
 
 async function claude(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge = false): Promise<any[]> {
   for (let attempt = 0; ; attempt++) {
     const events = await claudeOnce(ws, opts, args, label, configKey, judge)
-    const status = events.find(ev => ev.type === 'result')?.api_error_status
-    if (!RETRY_STATUS.has(status) || attempt >= RETRIES) return events
+    const result = events.find(ev => ev.type === 'result')
+    // No result event: the process ended mid-stream (killed or crashed) — also worth one more try.
+    const retry = result ? RETRY_STATUS.has(result.api_error_status) : true
+    const status = result ? result.api_error_status : 'no result'
+    if (!retry || attempt >= RETRIES) return events
     const wait = 30_000 * 2 ** attempt
     console.log(`  … ${label}: API ${status}, retry in ${wait / 1000}s (${path.relative(path.dirname(path.dirname(ws.dir)), ws.dir)})`)
     await new Promise(r => setTimeout(r, wait))
