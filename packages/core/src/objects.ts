@@ -94,8 +94,13 @@ function scopeCount(eml: EML, scope: string): number {
  * or closed ones only with a status filter. With id: one object with all its
  * fields, or null.
  */
-export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string } = {}): unknown {
+export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string } = {}): unknown {
   assertObject(object)
+  // An entity list can be narrowed by kind (person · org · asset); the other objects have none.
+  if (opts.kind !== undefined) {
+    if (object !== 'entity') throw new Error('Invalid object: kind filters entities only.')
+    if (!['person', 'org', 'asset'].includes(opts.kind)) throw new Error('Invalid object: kind is one of person, org, asset.')
+  }
   if (opts.id !== undefined) {
     switch (object) {
       case 'project': {
@@ -122,7 +127,7 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
       return all.filter(p => opts.status || p.status !== 'archived').map(p => ({ ...p, engram_count: scopeCount(eml, `project.${p.id}`) }))
     }
     case 'entity':
-      return eml.entities.list({ status: (opts.status ?? 'active') as 'active' }).map(e => ({ ...e, engram_count: scopeCount(eml, `entity.${e.id}`) }))
+      return eml.entities.list({ status: (opts.status ?? 'active') as 'active', ...(opts.kind ? { kind: opts.kind as 'person' } : {}) }).map(e => ({ ...e, engram_count: scopeCount(eml, `entity.${e.id}`) }))
     case 'tag':
       return eml.tags.list((opts.status ?? 'active') as 'active')
     case 'subject':

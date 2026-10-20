@@ -21,7 +21,7 @@
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&label=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
- *   GET  /object/:object    ?id=&status=                             → Objects of a kind (project · entity · tag · subject), or one (v0.19)
+ *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject), or one (v0.19; kind: entities)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
  *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)
  *   GET  /projects          ?status=                                 → List projects (v0.4)
@@ -553,8 +553,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const id = objectMatch[2] !== undefined ? decodeURIComponent(objectMatch[2]) : undefined
       if (method === 'GET' && id === undefined) {
         const q = parseQuery(req.url)
-        if (rejectUnknownParams(res, q, new Set(['id', 'status']))) return
-        const result = readObject(eml, object, { id: q.id, status: q.status })
+        if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
+        const result = readObject(eml, object, { id: q.id, status: q.status, kind: q.kind })
         if (q.id !== undefined && result === null) return json(res, 404, { error: `${object} "${q.id}" not found` })
         return json(res, 200, q.id !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
       }

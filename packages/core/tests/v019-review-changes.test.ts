@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, type WriteContext } from '../src'
+import { EML, readObject, createObject, type WriteContext } from '../src'
 import { renderBrainStateMarkdown } from '../src/render'
 import { validDecision, validLog } from './fixtures'
 
@@ -33,6 +33,18 @@ describe('v0.19 review changes', () => {
       expect(md).not.toContain('session-1 ')
       expect(md).not.toContain('## Decisions')
       expect(md).not.toContain('some-choice')
+    })
+  })
+
+  describe('C2 eml_read_object: kind filter for entities', () => {
+    it('lists entities of one kind; kind on another object or an unknown kind errors', () => {
+      createObject(eml, 'entity', { name: 'Acme', kind: 'org' })
+      createObject(eml, 'entity', { name: 'Bea', kind: 'person' })
+      const orgs = readObject(eml, 'entity', { kind: 'org' }) as Array<{ id: string }>
+      expect(orgs.map(e => e.id)).toEqual(['acme'])
+      expect((readObject(eml, 'entity') as unknown[]).length).toBe(2)
+      expect(() => readObject(eml, 'project', { kind: 'org' })).toThrow('Invalid object: kind filters entities only.')
+      expect(() => readObject(eml, 'entity', { kind: 'team' })).toThrow('Invalid object: kind is one of person, org, asset.')
     })
   })
 })

@@ -53,8 +53,9 @@ export function registerReadObjectTool(server: McpServer, http: HttpClient): voi
       object: z.enum(OBJECTS).describe('project · entity · tag · subject.'),
       id: z.string().optional().describe('One object by id.'),
       status: z.enum(['active', 'paused', 'archived', 'closed']).optional().describe('List only this status (archived / closed are hidden otherwise).'),
+      kind: z.enum(['person', 'org', 'asset']).optional().describe('Entities only: person · org · asset.'),
     }).strict(),
-  }, async (args) => callTool(() => http.get(`/object/${args.object}`, { id: args.id, status: args.status })))
+  }, async (args) => callTool(() => http.get(`/object/${args.object}`, { id: args.id, status: args.status, kind: args.kind })))
 }
 
 export function registerCreateObjectTool(server: McpServer, http: HttpClient): void {
