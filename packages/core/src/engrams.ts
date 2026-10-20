@@ -1398,6 +1398,15 @@ export class EngramStore {
         : "json_extract(c.properties, '$.binding') = ?")
       if (q.binding !== 'standing') params.push(q.binding)
     }
+    if (q.learning_state) {
+      // v0.19: a learning's state is computed from its evidence, so the matching
+      // ids are resolved first and the LIMIT still applies after filtering.
+      const ids = (this.db.prepare(`SELECT id FROM engrams WHERE type = 'learning'`).all() as Array<{ id: string }>)
+        .map(r => r.id)
+        .filter(id => learningState(this.entries(id)).state === q.learning_state)
+      conditions.push(ids.length > 0 ? `c.id IN (${ids.map(() => '?').join(', ')})` : '0')
+      params.push(...ids)
+    }
     if (q.task_id) {
       // v0.19: everything a task_id write tied to this task (decisions, notes, events, …).
       conditions.push(`c.id IN (SELECT source_id FROM relations WHERE target_id = ? AND relation IN ('derived_from', 'refines'))`)
@@ -1869,14 +1878,6 @@ export class EngramStore {
       .slice(0, CONFLICT_MAX)
   }
 
-  /** Learnings that are ripe in a scope (eml_show). */
-  ripeLearnings(scope: string): Array<Engram & { learning: LearningState }> {
-    const rows = this.queryEngramsRaw(`SELECT * FROM engrams WHERE scope = ? AND type = 'learning' AND status = 'active' ORDER BY updated_at DESC`, [scope])
-    return rows
-      .map(e => ({ ...e, learning: learningState(this.entries(e.id)) }))
-      .filter(e => e.learning.state === 'ripe')
-  }
-
   /** Returns true if a new edge was inserted, false if it already existed (idempotent). */
   relate(input: RelationInput): boolean {
     // v0.19: supersedes and part_of are not drawn by hand — they come from
@@ -1994,7 +1995,7 @@ export class EngramStore {
       LIMIT 15
     `, [REVIEW_LABEL, scope])
 
-    // v0.19: the scope's object (project / entity) and its ripe learnings.
+    // v0.19: the scope's object (project / entity).
     const m = /^(project|entity)\.(.+)$/.exec(scope)
     const object = m
       ? this.db.prepare(`SELECT status_tracks, metadata FROM ${m[1] === 'project' ? 'projects' : 'entities'} WHERE id = ?`).get(m[2]) as { status_tracks: string | null, metadata: string | null } | undefined
@@ -2003,7 +2004,6 @@ export class EngramStore {
       scope, current_status, open_tasks, recent_decisions, recent_logs, rules, pending_reviews,
       status_tracks: object?.status_tracks ?? null,
       metadata: object?.metadata ? JSON.parse(object.metadata) : null,
-      ripe_learnings: this.ripeLearnings(scope),
     }
   }
 

@@ -102,9 +102,8 @@ session:
   materially → **UPDATE** (eml_track_task with content and text).
 - Untouched → leave it.
 
-Also look at the learnings of the scopes you touched (`eml_show` lists the ripe
-ones): a ripe learning is a question for the user — **RULE?** in the diff —
-never a rule written by you.
+Also look for ripe learnings (`eml_list type=learning state=ripe`): each is a
+question for the user — **RULE?** in the diff — never a rule written by you.
 Step 1 opens/creates, step 2 closes/advances. Skipping it lets
 resolved-but-still-open tasks accumulate.
 

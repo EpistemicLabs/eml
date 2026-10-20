@@ -508,10 +508,9 @@ export interface ScopedBrainState {
   relations?: Relation[]          // project brain-state: relations where source/target in scope
   pending_reviews?: Engram[]      // v0.13: active decision/rule/profile carrying the `review` label (staleness flag)
   // v0.19 (eml_show): what the scope's status is about and the object's stable
-  // facts (project / entity), and the learnings that are ripe for the user's yes.
+  // facts (project / entity). Ripe learnings: eml_list type=learning state=ripe.
   status_tracks?: string | null
   metadata?: Record<string, unknown> | null
-  ripe_learnings?: Engram[]
 }
 
 /**
@@ -610,6 +609,7 @@ export interface EngramQuery {
   task_id?: string                // v0.19: engrams a task_id write tied to this task
   origin?: string                 // v0.19: the software that wrote it
   session_id?: string             // v0.19: written in this session
+  learning_state?: 'collecting' | 'ripe' | 'unclear' | 'paused' // v0.19: learnings by ripeness (computed from their evidence)
   limit?: number
   offset?: number
   order_by?: 'created_at' | 'updated_at' | 'significance' | 'score'

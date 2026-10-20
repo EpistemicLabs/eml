@@ -353,8 +353,10 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       // evidence from another session (written over REST with another session header) makes it ripe
       const ripe = await httpPostWith(port, '/learning', { id: learning.id, source: 'self', happened: 'third time' }, prov.tokenPlaintext, { 'X-EML-Session': 'other-session' }) as any
       expect(ripe.learning.state).toBe('ripe')
+      const list = await call('eml_list', { type: 'learning', state: 'ripe' })
+      expect(textOf(list)).toContain(learning.id)
       const show = await call('eml_show', { scope: 'user.mcp' })
-      expect(textOf(show)).toContain('Ripe learnings')
+      expect(textOf(show)).not.toContain('confirm-before-push')
     })
 
     it('eml_update: a typed field, null clears, supersedes after the fact, tasks rejected', async () => {

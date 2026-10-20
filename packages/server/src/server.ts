@@ -257,6 +257,8 @@ const RELATION_VERBS = new Set([
   'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks', 'part_of',
 ])
 
+const LEARNING_STATES = ['ripe', 'unclear', 'collecting', 'paused']
+
 const ALLOWED_LIST_PARAMS = new Set([
   'type', 'scope', 'title',
   'status', 'significance',
@@ -267,6 +269,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'subject',    // v0.14: filter engrams by subject id (cross-scope strand)
   'stage',    // v0.15: filter tasks by stage
   'binding', 'task_id', 'origin', 'session_id', // v0.19
+  'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -473,6 +476,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url === '/list' && method === 'GET') {
       const q = parseQuery(req.url)
       if (rejectUnknownParams(res, q, ALLOWED_LIST_PARAMS)) return
+      if (q.state !== undefined && !LEARNING_STATES.includes(q.state)) {
+        return json(res, 400, { error: `state is one of ${LEARNING_STATES.join(', ')} (learnings)` })
+      }
 
       const results = eml.engrams.query({
         type: q.type as EngramType | undefined,
@@ -494,6 +500,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         task_id: q.task_id,
         origin: q.origin,
         session_id: q.session_id,
+        learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
       })
       return json(res, 200, { count: results.length, engrams: results })
     }

@@ -504,7 +504,7 @@ describe('v0.19 write model', () => {
       expect(() => eml.engrams.learn({ id: a.engram.id, source: 'self', happened: 'x' })).toThrow(/evidence goes to an active learning/)
     })
 
-    it('ripeLearnings lists only ripe ones in a scope', () => {
+    it('the learning_state filter lists only ripe ones in a scope', () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date('2026-10-01T10:00:00Z'))
       const a = lesson()
@@ -512,7 +512,7 @@ describe('v0.19 write model', () => {
       if (!a.written) throw new Error('not written')
       vi.setSystemTime(new Date('2026-10-02T10:00:00Z'))
       eml.engrams.learn({ id: a.engram.id, source: 'observed', happened: 'x' }, ctx('s2'))
-      expect(eml.engrams.ripeLearnings('user.ada').map(e => e.id)).toEqual([a.engram.id])
+      expect(eml.engrams.query({ scope: 'user.ada', learning_state: 'ripe' }).map(e => e.id)).toEqual([a.engram.id])
     })
   })
 

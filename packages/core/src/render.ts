@@ -107,14 +107,6 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     lines.push('')
   }
 
-  // v0.19: learnings ripe for the user's yes (ask at a natural stop, not mid-work).
-  const ripe = state.ripe_learnings ?? []
-  if (ripe.length > 0) {
-    lines.push('## Ripe learnings (ask the user at a natural stop whether to make each a rule)')
-    for (const l of ripe) lines.push(`- ${l.title ?? '(no title)'} — ${previewText(l.content, SHOW_PREVIEW_CHARS)} · ${l.id}`)
-    lines.push('')
-  }
-
   // v0.19: the project's or entity's stable facts.
   const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata) : []
   if (meta.length > 0) {

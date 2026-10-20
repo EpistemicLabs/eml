@@ -47,4 +47,20 @@ describe('v0.19 review changes', () => {
       expect(() => readObject(eml, 'entity', { kind: 'team' })).toThrow('Invalid object: kind is one of person, org, asset.')
     })
   })
+
+  describe('C3 learnings: out of eml_show, eml_list state filter', () => {
+    it('finds ripe learnings by state; eml_show no longer lists them', () => {
+      const a = eml.engrams.learn({ title: 'ask-before-push', content: 'Ask before pushing.', scope: 'user.ada', source: 'user', happened: 'pushed without asking', quote: 'ask first' }, ctx('s1'))
+      expect(a.written).toBe(true)
+      const id = (a as { engram: { id: string } }).engram.id
+      expect(eml.engrams.query({ learning_state: 'collecting' }).map(e => e.id)).toEqual([id])
+      expect(eml.engrams.query({ learning_state: 'ripe' })).toEqual([])
+      eml.engrams.learn({ id, source: 'observed', happened: 'pushed again' }, ctx('s2'))
+      expect(eml.engrams.query({ learning_state: 'ripe' }).map(e => e.id)).toEqual([id])
+      expect(eml.engrams.query({ learning_state: 'ripe', scope: 'project.p' })).toEqual([])
+      const state = eml.engrams.buildBrainState('user.ada') as unknown as Record<string, unknown>
+      expect(state.ripe_learnings).toBeUndefined()
+      expect(renderBrainStateMarkdown(eml.engrams.buildBrainState('user.ada'))).not.toContain('ask-before-push')
+    })
+  })
 })

@@ -49,6 +49,9 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
         binding: z.enum(['task', 'standing']).optional().describe(
           'Decisions and notes by binding: task (close with their task) · standing (without one, a decision or note is standing).',
         ),
+        state: z.enum(['ripe', 'unclear', 'collecting', 'paused']).optional().describe(
+          'Learnings by state: ripe (ask the user whether to make it a rule) · unclear · collecting · paused.',
+        ),
         subject: z.string().optional().describe(
           'Filter to engrams belonging to this subject id (the strand they BELONG TO, cross-scope). Slugified.',
         ),
