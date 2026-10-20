@@ -8,8 +8,23 @@ import { readQuestions, runRetrieval, summarize, RECALL_K, type RetrievalSummary
 import { runAgent, summarizeAgent, measureSurface, type AgentOptions, type AgentSummary, type Surface } from './agent'
 import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummary } from './scenarios'
 import { ARMS, type Arm } from './arms'
+import { RESULTS_DIR, fixtureHash, findBaseline, retrievalRegressions } from './baseline'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
+
+  eml-bench check --eml <checkout>
+      Release gate (CI): stage 1 (retrieval) and the agent surface, no model.
+      Compared with the newest checked-in result on the same fixture, up to
+      this version. Exits 1 if any stage-1 number got worse — stage 1 is
+      deterministic, so a drop is a real change in what the agent reads.
+
+  eml-bench release --eml <checkout> [--no-agent] [--claude-token-file <file>]
+      Measures a release: stage 1, surface and the agent stage (eml arm,
+      --repeat 3 unless given). Writes results/<version>.json and prints the
+      change from the previous release. A report for the release notes, not a
+      gate: read the per-run spread before reading one question's change.
+      After an intended stage-1 change, or a changed fixture, this is also how
+      the baseline is renewed.
 
   eml-bench run --eml <checkout> [--base <checkout>] [--agent] [--scenarios] [--out <file>]
       Builds the fixture brain with --base (default: --eml), then measures --eml
@@ -37,6 +52,9 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
   eml-bench compare <a.json> <b.json>
       Prints the change from result a to result b.
+
+  run writes its result into the work dir unless --out is given; only release
+  writes to results/.
 `
 
 const BENCH_DIR = path.resolve(__dirname, '..')
@@ -46,7 +64,14 @@ function arg(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined
 }
 
-async function run(args: string[]): Promise<void> {
+interface Measurement {
+  result: Record<string, unknown>
+  workDir: string
+  version: string
+  baseVersion: string
+}
+
+async function measure(args: string[]): Promise<Measurement> {
   const emlPath = arg(args, 'eml')
   if (!emlPath) throw new Error('--eml <checkout> is required')
   const sut = openSut(emlPath)
@@ -113,18 +138,68 @@ async function run(args: string[]): Promise<void> {
     }
   }
 
-  const out = arg(args, 'out') ?? path.join(BENCH_DIR, 'results', `${sut.version}${base.version !== sut.version ? `-from-${base.version}` : ''}.json`)
-  fs.mkdirSync(path.dirname(out), { recursive: true })
-  fs.writeFileSync(out, JSON.stringify({
+  const result = {
     version: sut.version,
     base_version: base.version,
+    fixture_hash: fixtureHash(),
     measured_at: new Date().toISOString(),
     surface,
     retrieval: { k: RECALL_K, summary, results },
     ...(agent && { agent }),
     ...(scenarios && { scenarios }),
-  }, null, 2) + '\n')
-  console.log(`\nresult: ${path.relative(process.cwd(), out)}`)
+  }
+  return { result, workDir, version: sut.version, baseVersion: base.version }
+}
+
+function writeResult(file: string, result: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(result, null, 2) + '\n')
+  console.log(`\nresult: ${path.relative(process.cwd(), file)}`)
+}
+
+async function run(args: string[]): Promise<void> {
+  const m = await measure(args)
+  writeResult(path.resolve(arg(args, 'out') ?? path.join(m.workDir, 'result.json')), m.result)
+}
+
+async function check(args: string[]): Promise<void> {
+  const m = await measure(args.filter(a => a !== '--agent' && a !== '--scenarios'))
+  writeResult(path.join(m.workDir, 'result.json'), m.result)
+  const hash = m.result.fixture_hash as string
+  const baseline = findBaseline(m.version, hash, true)
+  if (!baseline) {
+    console.log(`\nno baseline: no checked-in result on this fixture (${hash}) up to ${m.version}.`)
+    console.log('Measure the last release with `eml-bench release` on its checkout and commit results/<version>.json.')
+    return
+  }
+  console.log(`\nbaseline: ${path.relative(process.cwd(), baseline.file)}\n`)
+  compareResults(baseline.data, m.result)
+  const regressions = retrievalRegressions(baseline.data.retrieval.summary, (m.result as any).retrieval.summary)
+  if (regressions.length) {
+    console.log(`\nFAIL — stage 1 got worse than ${baseline.data.version}: ${regressions.join('; ')}`)
+    console.log('If the change is intended, renew the baseline: eml-bench release --eml <checkout> [--no-agent], commit results/<version>.json.')
+    process.exitCode = 1
+  } else {
+    console.log(`\nOK — stage 1 not worse than ${baseline.data.version}`)
+  }
+}
+
+async function release(args: string[]): Promise<void> {
+  const agentArgs = args.includes('--no-agent') ? [] : ['--agent', ...(arg(args, 'repeat') ? [] : ['--repeat', '3'])]
+  // The release measures the eml arm only; other arms and scenarios belong to `run`.
+  const own = args.filter((a, i) => a !== '--scenarios' && a !== '--arms' && args[i - 1] !== '--arms')
+  const m = await measure([...own, ...agentArgs])
+  if (m.baseVersion !== m.version) throw new Error('release measures a version on a brain it wrote itself (no --base)')
+  writeResult(path.join(RESULTS_DIR, `${m.version}.json`), m.result)
+  const baseline = findBaseline(m.version, m.result.fixture_hash as string, false)
+  if (!baseline) {
+    console.log('\nno previous release on this fixture to compare with.')
+    return
+  }
+  console.log(`\nchange from ${baseline.data.version}:\n`)
+  compareResults(baseline.data, m.result)
+  const regressions = retrievalRegressions(baseline.data.retrieval.summary, (m.result as any).retrieval.summary)
+  if (regressions.length) console.log(`\nstage 1 got worse: ${regressions.join('; ')}`)
 }
 
 function isInside(dir: string, parent: string): boolean {
@@ -198,8 +273,11 @@ function printScenarioSummary(s: Partial<Record<Arm, ScenarioArmSummary>>): void
 }
 
 function compare(aPath: string, bPath: string): void {
-  const a = JSON.parse(fs.readFileSync(aPath, 'utf8'))
-  const b = JSON.parse(fs.readFileSync(bPath, 'utf8'))
+  compareResults(JSON.parse(fs.readFileSync(aPath, 'utf8')), JSON.parse(fs.readFileSync(bPath, 'utf8')))
+}
+
+function compareResults(a: any, b: any): void {
+  if (a.fixture_hash !== b.fixture_hash) console.log('  (different fixtures — the numbers are not comparable)\n')
   const sa: RetrievalSummary = a.retrieval.summary
   const sb: RetrievalSummary = b.retrieval.summary
   const row = (name: string, x: number, y: number, digits = 3) => {
@@ -251,6 +329,8 @@ function compare(aPath: string, bPath: string): void {
 async function main(): Promise<void> {
   const [cmd, ...args] = process.argv.slice(2)
   if (cmd === 'run') return run(args)
+  if (cmd === 'check') return check(args)
+  if (cmd === 'release') return release(args)
   if (cmd === 'compare' && args.length === 2) return compare(args[0], args[1])
   process.stdout.write(USAGE)
   process.exitCode = cmd ? 1 : 0

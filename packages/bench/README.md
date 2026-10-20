@@ -65,10 +65,32 @@ an older version.
 Stage 1 under stage 2 separates the two kinds of failure: the brain did not surface the knowledge,
 or the model did not use it.
 
+## Release benchmark (internal)
+
+Does an update make things better or worse? Two commands, both on the version in a checkout:
+
+- `eml-bench check --eml .` — **CI gate.** Stage 1 and the agent surface, no model. Compared with
+  the newest checked-in result on the same fixture, up to this version; fails if any stage-1 number
+  got worse. Stage 1 is deterministic (two runs give identical results), so a drop is a real change
+  in what the agent reads, not noise.
+- `eml-bench release --eml .` — **release step.** Stage 1, surface and the agent stage on the eml
+  arm with three runs per question. Writes `results/<version>.json` (commit it with the release) and
+  prints the change from the previous release for the release notes. Not a gate: the agent stage is
+  sampled, so read the per-run spread before reading one question's change.
+
+Each result carries a hash of the fixture; only results on the same fixture are compared. After
+changing the fixture or the questions, or after an intended stage-1 change, renew the baseline:
+`eml-bench release --eml <checkout of the last release>` (`--no-agent` for stage 1 only) and commit
+the result.
+
 ## Run
 
 ```bash
 pnpm -F @engramprotocol/bench build
+
+# release benchmark (see above)
+node packages/bench/dist/cli.js check --eml .
+node packages/bench/dist/cli.js release --eml . --claude-token-file <file>
 
 # stage 1 + surface, the version in this checkout
 node packages/bench/dist/cli.js run --eml .
@@ -86,10 +108,11 @@ node packages/bench/dist/cli.js run --eml . --agent --scenarios --arms eml,claud
 node packages/bench/dist/cli.js run --eml . --agent --runner api
 
 # what changed between two results
-node packages/bench/dist/cli.js compare packages/bench/results/0.18.2.json packages/bench/results/0.19.0.json
+node packages/bench/dist/cli.js compare packages/bench/results/0.18.3.json <work dir>/result.json
 ```
 
-Results land in `results/<version>[-from-<base>].json` (checked in, one per release). Each run keeps
+`release` writes `results/<version>.json` (checked in, one per release); `run` and `check` write
+their result into the run's work dir (`--out` for another place). Each run keeps
 its data dir, server logs, the markdown of every probe, the surface texts and the stage-2 transcripts
 in a work dir (`<tmp>/eml-bench/`, or `--work-dir`; it must lie outside the repository), for reading
 why a number moved.
