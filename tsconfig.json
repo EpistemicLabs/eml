@@ -1,8 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/core" },
-    { "path": "packages/server" },
-    { "path": "packages/mcp-server" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/server"
+    },
+    {
+      "path": "packages/mcp-server"
+    },
+    {
+      "path": "packages/bench"
+    }
   ]
 }

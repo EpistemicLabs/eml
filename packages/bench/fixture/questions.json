@@ -1,0 +1,749 @@
+{
+  "about": "Questions against fixture/brain.json. `retrieval` is the stage-1 probe (recall: the query an agent would send; show: a scope dashboard; boot: the session start). `expect` are keys that must surface (rank = best rank among them), `stale` keys must not surface or must rank below the current one, `absent` keys must not appear at all. `agent` is the stage-2 part: a question in the user's words, the reference answer, and claims that would mean the agent acted on outdated knowledge.",
+  "questions": [
+    {
+      "id": "shipping-direct",
+      "category": "current-over-stale",
+      "retrieval": {
+        "tool": "recall",
+        "query": "shipping carrier parcels"
+      },
+      "expect": [
+        "d-shipping-new"
+      ],
+      "stale": [
+        "d-shipping-old"
+      ],
+      "agent": {
+        "question": "Which carrier do we use for a single small mug?",
+        "reference": "Deutsche Post Warenpost (parcels up to 1 kg); DHL only for fragile or larger parcels.",
+        "stale_claims": [
+          "All parcels go with DHL"
+        ]
+      }
+    },
+    {
+      "id": "shipping-paraphrase",
+      "category": "paraphrase",
+      "retrieval": {
+        "tool": "recall",
+        "query": "how do we send packages to customers"
+      },
+      "expect": [
+        "d-shipping-new"
+      ],
+      "stale": [
+        "d-shipping-old"
+      ],
+      "agent": {
+        "question": "How do orders get to the customer at the moment?",
+        "reference": "Small parcels up to 1 kg by Deutsche Post Warenpost, fragile and larger ones by DHL.",
+        "stale_claims": [
+          "Everything is shipped with DHL"
+        ]
+      }
+    },
+    {
+      "id": "shop-platform",
+      "category": "current-over-stale",
+      "retrieval": {
+        "tool": "recall",
+        "query": "shop platform"
+      },
+      "expect": [
+        "d-platform-new",
+        "s-shop-new"
+      ],
+      "stale": [
+        "d-platform-old",
+        "s-shop-old"
+      ],
+      "agent": {
+        "question": "What does the shop run on?",
+        "reference": "Shopify (moved from WooCommerce; the old site redirects).",
+        "stale_claims": [
+          "The shop runs on WooCommerce"
+        ]
+      }
+    },
+    {
+      "id": "shop-status",
+      "category": "dashboard",
+      "retrieval": {
+        "tool": "show",
+        "scope": "project.shop"
+      },
+      "expect": [
+        "s-shop-new",
+        "t-photos",
+        "t-seo"
+      ],
+      "absent": [
+        "s-shop-old",
+        "t-import",
+        "d-platform-old",
+        "d-shipping-old"
+      ],
+      "agent": {
+        "question": "Where does the shop stand and what is still open there?",
+        "reference": "Live on Shopify, checkout under one second; open: reshoot product photos for the spring collection, category texts for search engines (in progress).",
+        "stale_claims": [
+          "Checkout takes about 4 seconds",
+          "The product import is still open"
+        ]
+      }
+    },
+    {
+      "id": "theme-deploy-scope",
+      "category": "scope",
+      "retrieval": {
+        "tool": "recall",
+        "query": "deploy theme"
+      },
+      "expect": [
+        "n-shop-theme-deploy"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "How do I deploy a change to the shop theme?",
+        "reference": "With the Shopify CLI (shopify theme push) from the theme repository, to the preview theme first, then check checkout on mobile.",
+        "stale_claims": [
+          "Upload a zip in the admin"
+        ]
+      }
+    },
+    {
+      "id": "returns-paraphrase",
+      "category": "paraphrase",
+      "retrieval": {
+        "tool": "recall",
+        "query": "customer got a broken item refund"
+      },
+      "expect": [
+        "n-returns"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "A customer's bowl arrived broken. What do we do?",
+        "reference": "A photo is enough; full refund, the customer does not need to send it back.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "pricing",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "pricing formula"
+      },
+      "expect": [
+        "n-pricing"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "What should a glazed mug cost if the material is 8 EUR?",
+        "reference": "8 x 2.5 + 12 = 32 EUR, plus 15 % glaze surcharge = 36.80 EUR.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "android-push",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "android push notifications"
+      },
+      "expect": [
+        "t-push",
+        "s-app"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Why is there no Android build yet?",
+        "reference": "It is blocked on the push notification setup (Firebase Cloud Messaging), which is an open task.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "app-backend",
+      "category": "current-over-stale",
+      "retrieval": {
+        "tool": "recall",
+        "query": "app backend api"
+      },
+      "expect": [
+        "d-app-backend-new"
+      ],
+      "stale": [
+        "d-app-backend-old"
+      ],
+      "agent": {
+        "question": "Where does the app get its product data from?",
+        "reference": "Directly from the Shopify Storefront API; the own Node API was shut down.",
+        "stale_claims": [
+          "From our own Node API on the VPS",
+          "From WooCommerce"
+        ]
+      }
+    },
+    {
+      "id": "beta-feedback",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "beta tester feedback"
+      },
+      "expect": [
+        "n-beta-feedback"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "What did the beta testers complain about most?",
+        "reference": "The magic-link login confuses them (12 mentions); also wanted: order tracking; crash on iPad split view.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "magic-link",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "magic link login"
+      },
+      "expect": [
+        "n-beta-feedback"
+      ],
+      "stale": [],
+      "agent": null
+    },
+    {
+      "id": "backups",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "backup"
+      },
+      "expect": [
+        "d-backups"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "How long do we keep server backups?",
+        "reference": "30 days (nightly restic backups to object storage).",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "outage-paraphrase",
+      "category": "paraphrase",
+      "retrieval": {
+        "tool": "recall",
+        "query": "site went down disk full"
+      },
+      "expect": [
+        "e-outage"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Has the blog ever been down? What was the cause?",
+        "reference": "Yes, for three hours: the disk filled up with logs; fixed with log rotation.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "infra-status",
+      "category": "current-over-stale",
+      "retrieval": {
+        "tool": "recall",
+        "query": "hosting servers"
+      },
+      "expect": [
+        "s-infra-new"
+      ],
+      "stale": [
+        "s-infra-old"
+      ],
+      "agent": {
+        "question": "Which servers do we still run?",
+        "reference": "One VPS for the blog and the newsletter; the WooCommerce shared hosting is cancelled at the end of the month.",
+        "stale_claims": [
+          "The VPS runs the app API",
+          "The shop runs on shared hosting"
+        ]
+      }
+    },
+    {
+      "id": "newsletter",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "newsletter tool"
+      },
+      "expect": [
+        "d-newsletter"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "What do we send the newsletter with?",
+        "reference": "Ghost's built-in newsletter feature.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "bookkeeping",
+      "category": "paraphrase",
+      "retrieval": {
+        "tool": "recall",
+        "query": "accounting software"
+      },
+      "expect": [
+        "d-accounting"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Which software do we use for accounting?",
+        "reference": "lexoffice.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "vat",
+      "category": "paraphrase",
+      "retrieval": {
+        "tool": "recall",
+        "query": "when do we have to charge VAT"
+      },
+      "expect": [
+        "n-tax"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Do we have to charge VAT yet?",
+        "reference": "Not yet: VAT-exempt until yearly revenue passes 22,000 EUR; about 19,200 EUR so far this year.",
+        "stale_claims": [
+          "Revenue so far is about 18,000 EUR"
+        ]
+      }
+    },
+    {
+      "id": "clay",
+      "category": "silent-contradiction",
+      "retrieval": {
+        "tool": "recall",
+        "query": "clay order"
+      },
+      "expect": [
+        "n-supplier-update"
+      ],
+      "stale": [
+        "n-supplier"
+      ],
+      "agent": {
+        "question": "How much clay do I have to order at least?",
+        "reference": "300 kg (the supplier raised it from 200 kg); order roughly every six weeks.",
+        "stale_claims": [
+          "The minimum order is 200 kg"
+        ]
+      }
+    },
+    {
+      "id": "friday-deploy",
+      "category": "rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "deploy production friday"
+      },
+      "expect": [
+        "r-no-friday-deploys"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "It's Friday 16:30. Can you push the new shop theme live now?",
+        "reference": "No: no production deploys on Fridays after 14:00; wait until Monday morning.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "migration-snapshot",
+      "category": "rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "bulk import migration"
+      },
+      "expect": [
+        "r-backup-before-migration"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "I want to bulk-import 300 new product variants into the shop. Anything to do first?",
+        "reference": "Take a database snapshot first (rule for migrations and bulk imports on shop data).",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "customer-email",
+      "category": "rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "email customers"
+      },
+      "expect": [
+        "r-ask-before-email"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Send all customers an email that the spring collection is out.",
+        "reference": "Do not send it yet: draft the text and have Alex approve the exact wording first.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "gift-guide",
+      "category": "direct",
+      "retrieval": {
+        "tool": "recall",
+        "query": "gift guide"
+      },
+      "expect": [
+        "n-content-plan"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "By when does the gift guide need to be published?",
+        "reference": "Before 1 December.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "app-open-work",
+      "category": "dashboard",
+      "retrieval": {
+        "tool": "show",
+        "scope": "project.app"
+      },
+      "expect": [
+        "s-app",
+        "t-push",
+        "t-store-review"
+      ],
+      "absent": [
+        "d-app-backend-old"
+      ],
+      "agent": {
+        "question": "What is open for the app?",
+        "reference": "Android push notifications (Firebase Cloud Messaging) and the App Store submission after the second beta round.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "product-import-history",
+      "category": "history",
+      "retrieval": null,
+      "expect": [
+        "t-import"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Did the product import into Shopify finish, and how many products came over?",
+        "reference": "Yes, done: 214 products imported, 6 variants fixed by hand.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "boot-rules",
+      "category": "boot",
+      "retrieval": {
+        "tool": "boot"
+      },
+      "expect": [
+        "r-tests-before-push",
+        "r-commit-english",
+        "r-no-friday-deploys",
+        "r-ask-before-email"
+      ],
+      "stale": [],
+      "agent": null
+    },
+    {
+      "id": "hosting-cost",
+      "category": "silent-contradiction",
+      "retrieval": {
+        "tool": "recall",
+        "query": "hosting costs per month"
+      },
+      "expect": [
+        "n-hosting-cost-new"
+      ],
+      "stale": [
+        "n-hosting-cost-old"
+      ],
+      "agent": {
+        "question": "What do we pay for hosting per month now?",
+        "reference": "6 EUR per month for the one VPS; the shared hosting is cancelled.",
+        "stale_claims": [
+          "15 EUR per month",
+          "9 EUR for shared hosting"
+        ]
+      }
+    },
+    {
+      "id": "saturday-market",
+      "category": "silent-contradiction",
+      "retrieval": {
+        "tool": "recall",
+        "query": "saturday market stall"
+      },
+      "expect": [
+        "n-market-new"
+      ],
+      "stale": [
+        "n-market-old"
+      ],
+      "agent": {
+        "question": "Am I at the Karlsplatz market this Saturday?",
+        "reference": "No: the Saturday stall was given up; only the Christmas market on the first three weekends of December.",
+        "stale_claims": [
+          "There is a stall every Saturday at Karlsplatz"
+        ]
+      }
+    },
+    {
+      "id": "newsletter-subscribers",
+      "category": "silent-contradiction",
+      "retrieval": {
+        "tool": "recall",
+        "query": "newsletter subscribers"
+      },
+      "expect": [
+        "n-newsletter-growth"
+      ],
+      "stale": [
+        "s-blog"
+      ],
+      "agent": {
+        "question": "How many newsletter subscribers do we have?",
+        "reference": "More than 800 (after the Shopify launch giveaway).",
+        "stale_claims": [
+          "About 600 subscribers"
+        ]
+      }
+    },
+    {
+      "id": "wifi-password",
+      "category": "unanswerable",
+      "retrieval": null,
+      "expect": [],
+      "stale": [],
+      "agent": {
+        "question": "What's the wifi password in the studio?",
+        "reference": "Not in the memory: the assistant says it does not know and does not make one up.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "feldspar-supplier",
+      "category": "unanswerable",
+      "retrieval": null,
+      "expect": [],
+      "stale": [],
+      "agent": {
+        "question": "Who do we buy our feldspar from?",
+        "reference": "Not in the memory: only the clay supplier (Westerwald) is recorded, which is not a feldspar supplier; the assistant says it does not know.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "mainz-reply",
+      "category": "unanswerable",
+      "retrieval": null,
+      "expect": [],
+      "stale": [],
+      "agent": {
+        "question": "What did the café in Mainz reply to our wholesale offer?",
+        "reference": "No reply is recorded: sending the offer is still an open task, so there is nothing to report.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "vat-headroom",
+      "category": "multi-step",
+      "retrieval": {
+        "tool": "recall",
+        "query": "VAT revenue limit"
+      },
+      "expect": [
+        "n-tax",
+        "n-revenue-update"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "How many more 40-EUR bowls can we sell this year before we have to charge VAT?",
+        "reference": "About 70: the 22,000 EUR limit minus about 19,200 EUR revenue so far leaves about 2,800 EUR; 2,800 / 40 = 70.",
+        "stale_claims": [
+          "About 100 bowls (based on 18,000 EUR revenue)"
+        ]
+      }
+    },
+    {
+      "id": "mug-send-cost",
+      "category": "multi-step",
+      "retrieval": {
+        "tool": "recall",
+        "query": "packaging cost postage"
+      },
+      "expect": [
+        "n-packaging-cost",
+        "n-shipping-rates"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "What does packaging plus postage cost us to send a single mug by Warenpost?",
+        "reference": "About 4.75 EUR: 1.90 EUR packaging plus 2.85 EUR Warenpost.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "monitoring-target",
+      "category": "multi-step",
+      "retrieval": {
+        "tool": "recall",
+        "query": "uptime monitoring server access"
+      },
+      "expect": [
+        "t-monitoring",
+        "n-server-access"
+      ],
+      "stale": [
+        "s-infra-old"
+      ],
+      "agent": {
+        "question": "For the uptime monitoring task: which server do I have to watch, and how do I get into it?",
+        "reference": "The one VPS (blog and newsletter; the shop runs on Shopify); access by SSH key through WireGuard, port 22 is closed to the internet.",
+        "stale_claims": [
+          "The shop runs on shared hosting",
+          "The VPS runs the app API"
+        ]
+      }
+    },
+    {
+      "id": "xmas-workshop-date",
+      "category": "multi-step",
+      "retrieval": {
+        "tool": "recall",
+        "query": "christmas workshop december"
+      },
+      "expect": [
+        "t-xmas-workshop",
+        "n-market-new"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Can I put the Christmas workshop on the second Saturday of December?",
+        "reference": "Better not: the Christmas market runs on the first three weekends of December, so the second Saturday clashes; pick a date after it.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "bulk-price-change",
+      "category": "implicit-rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "bulk edit all prices"
+      },
+      "expect": [
+        "r-backup-before-migration"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Raise all shop prices by 5 % with a bulk edit, go ahead.",
+        "reference": "Take a snapshot of the shop data first (rule for bulk changes); the assistant cannot do the edit itself.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "delay-email",
+      "category": "implicit-rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "tell customers shipping delayed"
+      },
+      "expect": [
+        "r-ask-before-email"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Tell all customers with open orders that shipping is a week late because of the kiln repair.",
+        "reference": "Draft the message but do not send it: Alex approves the exact text of customer emails first.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "ship-app-build",
+      "category": "implicit-rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "new app build testers"
+      },
+      "expect": [
+        "r-app-test-device"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "The new app build is ready, ship it to the testers.",
+        "reference": "Test it on the oldest supported device (iPhone SE 2nd gen) first, then release it to TestFlight.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "german-commit",
+      "category": "implicit-rule",
+      "retrieval": {
+        "tool": "recall",
+        "query": "commit message"
+      },
+      "expect": [
+        "r-commit-english"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "Commit the checkout fix with the message 'Checkout-Fehler behoben'.",
+        "reference": "Use an English message in imperative mood instead (e.g. 'Fix checkout error'); the assistant cannot commit itself.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "workshop-price",
+      "category": "scope",
+      "retrieval": {
+        "tool": "recall",
+        "query": "workshop price"
+      },
+      "expect": [
+        "n-workshop-pricing"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "What does a beginner workshop cost?",
+        "reference": "95 EUR per person for three hours, including clay, glazing and the firing of two pieces.",
+        "stale_claims": []
+      }
+    },
+    {
+      "id": "wholesale-shipping",
+      "category": "scope",
+      "retrieval": {
+        "tool": "recall",
+        "query": "wholesale order shipping"
+      },
+      "expect": [
+        "n-wholesale-shipping"
+      ],
+      "stale": [],
+      "agent": {
+        "question": "How do we ship a wholesale order of 80 mugs?",
+        "reference": "On a pallet with a freight forwarder (orders above 60 pieces).",
+        "stale_claims": []
+      }
+    }
+  ]
+}

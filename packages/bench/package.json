@@ -1,0 +1,22 @@
+{
+  "name": "@engramprotocol/bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "EML benchmark — measures a build of EML against a fixed fixture brain: retrieval (deterministic) and agent (a Claude model over the real MCP tools)",
+  "license": "AGPL-3.0-only",
+  "main": "dist/cli.js",
+  "bin": {
+    "eml-bench": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "bench": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

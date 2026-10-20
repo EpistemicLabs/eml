@@ -23,6 +23,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
+      # Release benchmark, stage 1: what the agent reads must not get worse than
+      # the last release's checked-in result (packages/bench/README.md).
+      - run: node packages/bench/dist/cli.js check --eml .
       - run: pnpm -F @engramprotocol/cockpit-frontend build
       - run: pnpm -F eml-cockpit build
 
