@@ -86,11 +86,13 @@ Load the **open** tasks (planned + active) for each scope the session touched
 (`eml_show <scope>`, or `eml_list type=task` with `status=planned` and
 `status=active`). For each, check it against what actually happened this
 session:
-- Got finished → **RESOLVE** (status=resolved, an outcome and the story as
-  text). Abandoned → **INVALIDATE** (status=invalidated, the outcome says why).
-  Decisions and notes bound to the task close with it: check them (eml_get on
-  the task lists them) and keep the ones that still hold. Don't let done work
-  stay open.
+- Got finished → **RESOLVE** (status=resolved + outcome + text (the story);
+  with bound decisions/notes keep=[ids that outlive the task] or keep=[] to
+  close them all). Abandoned → **INVALIDATE** (status=invalidated + outcome
+  (why) + text; with bound decisions/notes keep=[ids that outlive the task]
+  or keep=[] to close them all). Decisions and notes bound to the task close
+  with it: check them (eml_get on the task lists them) and keep the ones that
+  still hold. Don't let done work stay open.
 - Started this session → **ADVANCE** (status=active).
 - Progress worth keeping → **ENTRY** on the task (eml_track_task with text),
   not a content rewrite.
@@ -173,8 +175,9 @@ held-back items under `HELD BACK — needs you (n)`, and this last line:
 Keep the report short and go on with what the user asked for. On "approve"
 write the held-back item; on "edit" correct the engram (`eml_update`, a task
 `eml_track_task`); on "undo" invalidate it (`eml_update status=invalidated`; a
-task you created: `eml_track_task` status=invalidated, outcome "undone"; an
-advanced task goes back to its former status with `eml_track_task`).
+task you created: `eml_track_task` status=invalidated, outcome "undone", text
+"undone", keep=[]; an advanced task goes back to its former status with
+`eml_track_task`).
 
 ### 6. Write on approval only
 After the user approves/edits, write with the create tool of each type
@@ -183,9 +186,11 @@ After the user approves/edits, write with the create tool of each type
 with `task_id` and `binding`; a replacement with `supersedes`), everything
 about an existing task with `eml_track_task` (ENTRY / STAGE / ADVANCE /
 RESOLVE / INVALIDATE), and corrections of other engrams with `eml_update`.
-A RULE? the user said yes to → `eml_rule` with `agreed` (their words) and
-`why`; from a ripe learning with `from_learning`. A no to a ripe learning →
-`eml_learning` on it with stance declined and the user's words.
+A RULE? the user said yes to → `eml_rule` with `title`, `applies` (plus
+`trigger` when situational), `content` (what to do, ≤ 200 chars), `agreed`
+(their words) and `why`; from a ripe learning with `from_learning`. A no to a
+ripe learning → `eml_learning` on it with its `id`, `source=user`, `happened`,
+`quote` (the user's words) and stance declined.
 A new status supersedes the prior one by itself — do not patch the old one.
 
 ### 7. Hand over, if this was a handoff

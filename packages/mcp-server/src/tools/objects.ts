@@ -19,7 +19,7 @@ const FIELDS =
   'project.<id>), status active · paused · archived, goal (one line: what done looks like), description (1-2 ' +
   'sentences), owner, parent_project, started_at, status_tracks (what the project\'s status is about), metadata ' +
   '(flat text map: repo, infra, url …)\n' +
-  '- entity (an external person, org or asset): name, id, kind person · org · asset, status active · archived, ' +
+  '- entity (an external person, org or asset): name, id, kind (required) person · org · asset, status active · archived, ' +
   'description (what it is, why it matters), status_tracks, metadata\n' +
   '- tag: name (stored as its slug, "CI / CD" → "ci-cd"; an existing slug is a no-op), description (one line), ' +
   'status active · archived. Only for a genuinely new category — one tag per category, no deploy / deployment ' +

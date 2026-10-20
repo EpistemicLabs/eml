@@ -64,6 +64,29 @@ describe('HttpClient', () => {
       const r = await c.post('/boot', { agent: 'assistant' }) as { engrams: number }
       expect(r.engrams).toBe(3)
     })
+
+    it('v0.19: writeHeaders ride on writes only — not on GET, /boot or /recall', async () => {
+      const seen: Array<{ url: string, session: string | undefined }> = []
+      mockFetch((url, init) => {
+        seen.push({ url, session: (init.headers as Record<string, string>)['X-EML-Session'] })
+        return new Response('{}', { status: 200 })
+      })
+      const writeHeaders = vi.fn(async () => ({ 'X-EML-Session': 'sess-1' }))
+      const c = new HttpClient({ url: 'http://x', token: 't', writeHeaders })
+      await c.get('/list')
+      await c.post('/boot', {})
+      await c.post('/recall', { query: 'x' })
+      await c.post('/engram/note', { scope: 'global' })
+      await c.put('/object/project/p', { name: 'P' })
+      expect(seen.map((s) => s.session)).toEqual([undefined, undefined, undefined, 'sess-1', 'sess-1'])
+      expect(writeHeaders).toHaveBeenCalledTimes(2)
+    })
+
+    it('a failing writeHeaders lookup does not block the write', async () => {
+      mockFetch(() => new Response('{}', { status: 200 }))
+      const c = new HttpClient({ url: 'http://x', token: 't', writeHeaders: async () => { throw new Error('no session') } })
+      await expect(c.post('/engram/note', {})).resolves.toEqual({})
+    })
   })
 
   describe('errors', () => {

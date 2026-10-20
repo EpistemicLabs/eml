@@ -764,8 +764,10 @@ async function proxyBrain(req: http.IncomingMessage, res: http.ServerResponse, d
     const text = await upstream.text()
     // A project created/patched through the proxy must show up in the next
     // GET /api/projects, not after the 5s cache lapses (a new project used to
-    // appear only after a reload).
-    if (upstream.ok && method !== 'GET' && method !== 'HEAD' && /^\/projects?(\/|\?|$)/.test(rel)) {
+    // appear only after a reload). v0.19: the wizard creates and the detail
+    // updates through /object/project (POST, PUT /object/project/:id) — those
+    // invalidate too.
+    if (upstream.ok && method !== 'GET' && method !== 'HEAD' && /^\/(object\/)?projects?(\/|\?|$)/.test(rel)) {
       space.projects.invalidate()
     }
     res.writeHead(upstream.status, {

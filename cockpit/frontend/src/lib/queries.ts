@@ -223,10 +223,12 @@ export function useRetireEngram() {
   const qc = useQueryClient();
   return useMutation({
     // v0.19: a task closes through /task/:id/track (outcome + text); everything else via /update.
+    // keep: [] — Retire closes everything bound to the task (decisions, notes);
+    // without keep, core refuses the close while bound items exist.
     mutationFn: (engram: Pick<Engram, "id" | "type">) =>
       engram.type === "task"
         ? brainPost<Engram>(`/task/${engram.id}/track`, {
-          status: "invalidated", outcome: "retired in review", text: "Retired in the cockpit review.",
+          status: "invalidated", outcome: "retired in review", text: "Retired in the cockpit review.", keep: [],
         })
         : brainPost<Engram>("/update", { id: engram.id, patch: { status: "expired" } }),
     onSuccess: () => invalidateReviewSurfaces(qc),

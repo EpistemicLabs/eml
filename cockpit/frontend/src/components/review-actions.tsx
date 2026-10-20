@@ -18,10 +18,12 @@ function lastMovement(engram: Engram): { at: number; what: string } {
 //   Still current → confirm-review with why it still holds (a review entry;
 //                   renews the clock, drops the flag) — v0.19
 //   Retire        → status = expired (drops the flag, moves to history)
-//   New task      → follow-up task linked back; flag stays until the task resolves
+//   New task      → follow-up task linked back; the flag stays — confirm or
+//                   retire once the task is done
 // v0.15 for a task (flagged after 30 days without movement): "Still relevant"
 // counts as a movement; Retire invalidates it with outcome "retired in review"
-// (open sub-tasks are invalidated with it — the core cascade).
+// (open sub-tasks and bound decisions/notes close with it — keep: [], the
+// core cascade).
 export function ReviewActions({ engram }: { engram: Engram }) {
   const isTask = engram.type === "task";
   const confirm = useConfirmReview();
@@ -102,7 +104,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           disabled={busy}
           title={
             isTask
-              ? "Drop it — invalidated with outcome “retired in review”; open sub-tasks are invalidated too"
+              ? "Drop it — invalidated with outcome “retired in review”; open sub-tasks and bound decisions and notes close with it"
               : "Outdated — marks the engram expired and drops the flag"
           }
           className={action}
@@ -177,7 +179,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
               Cancel
             </button>
           </div>
-          <p className="text-caption text-muted-foreground">The flag stays until the linked task resolves.</p>
+          <p className="text-caption text-muted-foreground">The flag stays; confirm or retire once the task is done.</p>
         </div>
       )}
 

@@ -62,7 +62,7 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
           'created_at (newest) · updated_at (last changed) · score (relevance, only with search).',
         ),
         limit: z.number().int().positive().max(200).optional().describe(
-          'Page size, default ~20, max 200.',
+          'Page size, default 50, max 200.',
         ),
         offset: z.number().int().nonnegative().optional().describe('Pagination offset.'),
         has_relations: z.boolean().optional().describe(

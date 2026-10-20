@@ -68,10 +68,13 @@ export class HttpClient {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    // The provenance headers belong to writes only; a read POST (/boot,
+    // /recall) goes without them. Built before the timer starts: the
+    // headers' own lookup must not eat into the request's time budget.
+    const extra = isWrite(method, path) && this.writeHeaders ? await this.writeHeaders().catch(() => ({})) : {}
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
-      const extra = method !== 'GET' && this.writeHeaders ? await this.writeHeaders().catch(() => ({})) : {}
       const res = await fetch(`${this.baseUrl}${path}`, {
         method,
         headers: { ...this.headers, ...extra },
@@ -99,6 +102,14 @@ export class HttpClient {
       clearTimeout(timer)
     }
   }
+}
+
+/** POST routes that read (server.ts): the boot and a recall query. */
+const READ_POST_ROUTES = new Set(['/boot', '/recall'])
+
+function isWrite(method: string, path: string): boolean {
+  if (method === 'GET') return false
+  return !(method === 'POST' && READ_POST_ROUTES.has(path.split('?')[0]))
 }
 
 function extractErrorMessage(body: unknown): string | null {

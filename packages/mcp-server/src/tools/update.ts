@@ -52,7 +52,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       landed: z.string().optional().describe('log.'),
       next: z.string().optional().describe('log.'),
       open_threads: z.array(z.string()).optional().describe('log.'),
-      detail: nullable('every type except task and learning.'),
+      detail: nullable('every type except task, learning and status.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),

@@ -117,9 +117,11 @@ async function brain<T>(deps: NotesDeps, path: string, body?: unknown): Promise<
   return { status: res.status, data: data as T }
 }
 
+// Only a pane note (origin cockpit-notes, like listNotes): an agent's note is
+// not found here, so the pane cannot read, overwrite or archive it.
 async function getNote(deps: NotesDeps, id: string): Promise<Engram | null> {
   const { status, data } = await brain<Engram>(deps, `/engram/${encodeURIComponent(id)}`)
-  if (status !== 200 || !data || data.type !== 'note' || data.status !== 'active') return null
+  if (status !== 200 || !data || data.type !== 'note' || data.status !== 'active' || data.origin !== NOTES_ORIGIN) return null
   return projectForScope(data.scope) ? data : null
 }
 

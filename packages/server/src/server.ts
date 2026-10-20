@@ -22,6 +22,7 @@
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&label=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
  *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject), or one (v0.19; kind: entities)
+ *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
  *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)
  *   GET  /projects          ?status=                                 → List projects (v0.4)
@@ -47,7 +48,9 @@
  *
  * Provenance (v0.19): the MCP server sends X-EML-Session, X-EML-Model,
  * X-EML-Harness and X-EML-Ingestion; the server stamps them on every write
- * together with the token's handle. Other callers write as 'direct'.
+ * together with the token's handle. Other callers write as 'direct'. The
+ * headers are taken as sent: they are attribution, not access control — the
+ * token decides what a caller may do.
  *   GET  /stats                                                      → DB statistics
  *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
  *   GET  /health                                                     → Health check
@@ -259,6 +262,7 @@ const RELATION_VERBS = new Set([
 ])
 
 const LEARNING_STATES = ['ripe', 'unclear', 'collecting', 'paused']
+const BINDINGS = ['task', 'standing']
 
 const ALLOWED_LIST_PARAMS = new Set([
   'type', 'scope', 'title',
@@ -483,6 +487,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (q.state !== undefined && !LEARNING_STATES.includes(q.state)) {
         return json(res, 400, { error: `state is one of ${LEARNING_STATES.join(', ')} (learnings)` })
       }
+      // An unknown type or binding used to answer 200 with an empty list.
+      if (q.type !== undefined && !(ENGRAM_TYPES as readonly string[]).includes(q.type)) {
+        return json(res, 400, { error: `type is one of ${ENGRAM_TYPES.join(', ')}` })
+      }
+      if (q.binding !== undefined && !BINDINGS.includes(q.binding)) {
+        return json(res, 400, { error: `binding is one of ${BINDINGS.join(', ')}` })
+      }
 
       const results = eml.engrams.query({
         type: q.type as EngramType | undefined,
@@ -562,12 +573,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (objectMatch) {
       const object = objectMatch[1]
       const id = objectMatch[2] !== undefined ? decodeURIComponent(objectMatch[2]) : undefined
-      if (method === 'GET' && id === undefined) {
+      if (method === 'GET') {
         const q = parseQuery(req.url)
         if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
-        const result = readObject(eml, object, { id: q.id, status: q.status, kind: q.kind })
-        if (q.id !== undefined && result === null) return json(res, 404, { error: `${object} "${q.id}" not found` })
-        return json(res, 200, q.id !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
+        // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
+        const wanted = id ?? q.id
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind })
+        if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
+        return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
@@ -860,6 +873,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.15: all new validation errors share the `Invalid engram:` prefix.
     const msg = String(e.message || '')
     if (
+      msg === 'Invalid JSON' ||              // readBody: an unparseable request body
       msg.startsWith('Invalid engram:') ||
       msg.startsWith('Invalid object:') ||  // v0.19: object field errors
       msg.startsWith('Invalid scope') ||

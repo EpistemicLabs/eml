@@ -230,6 +230,8 @@ describe('v0.19 REST', () => {
       expect(one.status).toBe(200)
       expect(one.body.object).toMatchObject({ id: 'rest-project', engram_count: 0 })
       expect((await get('/object/project?id=ghost')).status).toBe(404)
+      expect((await get('/object/project/rest-project')).body.object).toMatchObject({ id: 'rest-project' })
+      expect((await get('/object/project/ghost')).status).toBe(404)
       const list = await get('/object/project')
       expect(list.body.objects.map((p: { id: string }) => p.id)).toContain('rest-project')
 
@@ -308,6 +310,24 @@ describe('v0.19 REST', () => {
       expect(await ids(`task_id=${task.body.id}&binding=standing`)).toEqual([standing.body.id])
       expect((await get('/list?significance=high')).status).toBe(200)
       expect((await get('/list?flavour=x')).status).toBe(400)
+    })
+
+    it('an unknown type or binding is a 400 naming the allowed values, not an empty list', async () => {
+      const type = await get('/list?type=planet')
+      expect(type.status).toBe(400)
+      expect(type.body.error).toMatch(/^type is one of .*decision.*task/)
+      const binding = await get('/list?binding=loose')
+      expect(binding.status).toBe(400)
+      expect(binding.body.error).toBe('binding is one of task, standing')
+      expect((await get('/list?type=task&binding=task')).status).toBe(200)
+    })
+  })
+
+  describe('request body', () => {
+    it('an unparseable JSON body is a 400, not a 500', async () => {
+      const r = await request('POST', `${baseUrl}/engram/note`, auth(), '{"scope": "global",')
+      expect(r.status).toBe(400)
+      expect(r.body.error).toBe('Invalid JSON')
     })
   })
 })

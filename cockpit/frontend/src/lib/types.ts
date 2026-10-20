@@ -100,6 +100,8 @@ export type LearningStateName = "collecting" | "ripe" | "unclear" | "paused";
 export interface LearningState {
   state: LearningStateName;
   supporting_sessions: number;
+  /** Supporting evidence without a session id; it does not count toward the sessions. */
+  unsessioned_evidence: number;
   from_user: boolean;
   open_contradiction: boolean;
   declined_at: string | null;

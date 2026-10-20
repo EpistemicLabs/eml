@@ -61,7 +61,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
     let cancelled = false;
     brainGet<ProjectsResponse>('/projects')
       .then((res) => { if (!cancelled) setTakenIds(new Set(res.projects.map((p) => p.id))); })
-      .catch(() => { /* unreachable brain: the server's 409 still guards the id */ });
+      .catch(() => { /* unreachable brain: the server's 400 ("already exists") still guards the id */ });
     return () => { cancelled = true; };
   }, []);
   const brainId = uniqueId(slugify(brainName), takenIds);
