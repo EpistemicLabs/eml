@@ -109,11 +109,16 @@ export const EML_HOOK_CONFIG_ENV = 'EML_HOOK_CONFIG'
  * the path from EML_HOOK_CONFIG_ENV. `json`: print the context in the hook
  * JSON envelope (Codex).
  */
-export function emlHookCommand(hook: 'session-start' | 'user-prompt-submit' | 'stop', configFile?: string, json = false): HookCommand {
+export function emlHookCommand(
+  hook: 'session-start' | 'user-prompt-submit' | 'project-block' | 'stop',
+  configFile?: string,
+  json = false,
+  flags: string[] = [],
+): HookCommand {
   // Stable text (paths.ts): node through the host's link, the CLI through app/current.
   return {
     program: hookNode(),
-    args: [HOOK_MCP_CLI_JS, 'hook', hook, ...(configFile ? ['--config', configFile] : []), ...(json ? ['--json'] : [])],
+    args: [HOOK_MCP_CLI_JS, 'hook', hook, ...(configFile ? ['--config', configFile] : []), ...(json ? ['--json'] : []), ...flags],
   }
 }
 

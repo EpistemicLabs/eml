@@ -115,6 +115,13 @@ describe('brain spaces', () => {
     const hooks = JSON.parse(settings).hooks
     expect(line(hooks.SessionStart[0].hooks[0])).toContain(`--config ${quoted(space.files.emlConfig)}`)
     expect(line(hooks.Stop[0].hooks[0])).toContain(quoted(isolation.turnHookConfig))
+    // The project block: a second SessionStart command for every source (no matcher);
+    // the reminder then drops its working-directory guess.
+    expect(hooks.SessionStart).toHaveLength(2)
+    expect(hooks.SessionStart[1].matcher).toBeUndefined()
+    expect(line(hooks.SessionStart[1].hooks[0])).toContain(`hook project-block --config ${quoted(space.files.emlConfig)}`)
+    expect(hooks.UserPromptSubmit).toHaveLength(2)
+    expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
     expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)
   })

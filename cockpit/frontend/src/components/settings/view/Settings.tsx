@@ -27,6 +27,8 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
     setProjectSortOrder,
     notifyOnDone,
     setNotifyOnDone,
+    greetOnStart,
+    setGreetOnStart,
   } = useSettingsController({ isOpen, initialTab });
 
   // Escape closes — registered in the capture phase so a focused terminal
@@ -104,6 +106,8 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
                   onProjectSortOrderChange={setProjectSortOrder}
                   notifyOnDone={notifyOnDone}
                   onNotifyOnDoneChange={setNotifyOnDone}
+                  greetOnStart={greetOnStart}
+                  onGreetOnStartChange={setGreetOnStart}
                 />
               )}
 

@@ -2113,7 +2113,7 @@ export class EngramStore {
    * Works for `global`, `project.X`, `entity.X`, `agent.X`, `user.X`.
    * Returns a curated snapshot:
    *   - current_status: active status engrams in the scope (top 3 by updated_at DESC)
-   *   - open_tasks: planned/active tasks in the scope, sorted by priority + due_date (limit 10)
+   *   - open_tasks: planned/active tasks in the scope, sorted by priority, due_date, last activity (limit 10)
    *   - recent_decisions: top 5 decisions by created_at DESC (not rendered by eml_show since v0.19)
    *   - recent_logs: top 5 logs by created_at DESC
    *   - relations: relations where source or target is in the scope (limit 20)

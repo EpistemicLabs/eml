@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { EML, significanceWeight, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown } from '../../core/src'
+import { EML, significanceWeight, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown, appendEntry } from '../../core/src'
 import {
   validDecision, validTask, validNote, validRule, validEvent, validLog, validReference, validProfile, validStatus, closedTask,
 } from '../../core/tests/fixtures'
@@ -1169,6 +1169,24 @@ describe('EML v0.2', () => {
       eml.engrams.store(validTask({ content: 'high', scope: 'project.eml', status: 'active', properties: { priority: 'high' } }))
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['urgent', 'high', 'low'])
+    })
+
+    it('open_tasks of one priority: last activity first (task update or journal entry)', () => {
+      const raw = (eml as any).db
+      const task = (content: string, updatedAt: string) => {
+        const t = eml.engrams.store(validTask({ content, scope: 'project.eml', properties: { priority: 'normal' } }))
+        raw.prepare('UPDATE engrams SET updated_at = ?, created_at = ? WHERE id = ?').run(updatedAt, updatedAt, t.id)
+        // the created entry carries the real time; move it back with the task
+        raw.prepare('UPDATE entries SET at = ? WHERE engram_id = ?').run(updatedAt, t.id)
+        return t
+      }
+      const old = task('old, but a journal entry today', '2026-01-01T00:00:00.000Z')
+      task('touched in march', '2026-03-01T00:00:00.000Z')
+      task('touched in february', '2026-02-01T00:00:00.000Z')
+      // a journal entry alone (the task row untouched) counts as activity
+      appendEntry(raw, old.id, { kind: 'note', text: 'worked on it' })
+      const state = eml.projects.getBrainState('eml')!
+      expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
 
     it('recent_decisions sorted by significance DESC', () => {

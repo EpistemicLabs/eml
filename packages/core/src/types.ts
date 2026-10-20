@@ -494,7 +494,7 @@ export interface Project {
 export interface ScopedBrainState {
   scope: string
   current_status: Engram[]        // top 3 status engrams in the scope, by updated_at DESC
-  open_tasks: Engram[]            // tasks with status in (planned, active), sorted priority DESC, due_date ASC; limit 10
+  open_tasks: Engram[]            // tasks with status in (planned, active), sorted priority DESC, due_date ASC, last activity DESC; limit 10
   recent_decisions: Engram[]      // top 5 decisions by created_at DESC (engrams.buildBrainState: recency)
   recent_logs: Engram[]           // recent logs by created_at DESC
   // The two brain-state builders fill these differently (tracked for convergence):
