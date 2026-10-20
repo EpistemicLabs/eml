@@ -24,5 +24,7 @@ export type CockpitSettings = {
   projectSortOrder: ProjectSortOrder;
   /** Browser notification when a session finishes while the cockpit isn't in front. */
   notifyOnDone: boolean;
+  /** A plain new session opens with a greeting and the project's state (default on). */
+  greetOnStart: boolean;
   lastUpdated?: string;
 };

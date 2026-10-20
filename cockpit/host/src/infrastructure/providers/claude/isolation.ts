@@ -165,14 +165,19 @@ export function writeSpaceFiles(
   fs.chmodSync(mcpConfig, 0o600)
   const entry = (cmd: HookCommand, options: Record<string, unknown>) => ({ hooks: [claudeHook(cmd, platform.os, options)] })
   const turn = entry(turnHookCommand(turnHookConfig), TURN_HOOK_OPTIONS)
-  const eml = (hook: Parameters<typeof emlHookCommand>[0]) => entry(emlHookCommand(hook, emlConfig), EML_HOOK_OPTIONS)
+  const eml = (hook: Parameters<typeof emlHookCommand>[0], flags: string[] = []) =>
+    entry(emlHookCommand(hook, emlConfig, false, flags), EML_HOOK_OPTIONS)
+  // The project block (mcp-server hooks/project-block.ts): a second SessionStart
+  // command, so its own output limit, on every source (startup, resume,
+  // compact, clear). It brings the session's project, so the reminder drops
+  // its guess from the working directory.
   fs.writeFileSync(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
       hooks: {
-        SessionStart: [eml('session-start')],
-        UserPromptSubmit: [turn, eml('user-prompt-submit')],
+        SessionStart: [eml('session-start'), eml('project-block')],
+        UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
         // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
         Stop: [turn, eml('stop')],
         // Every notification type reaches the host; turn-state.ts decides which

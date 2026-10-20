@@ -3,6 +3,7 @@ import * as path from 'path'
 import { EML_CONFIG, HOME_DIR, readConfig, type EmlConfig } from '../config'
 import { notesUpdate } from './notes'
 import { compactionNote, stopHook, type CompactionInput } from './compaction'
+import { projectBlockHook } from './project-block'
 
 /**
  * Claude Code hooks as CLI commands (no bash/curl/jq needed, so they run
@@ -10,7 +11,8 @@ import { compactionNote, stopHook, type CompactionInput } from './compaction'
  * their own config file:
  *
  *   eml-mcp-server hook session-start      [--config <path>] [--json]
- *   eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
+ *   eml-mcp-server hook user-prompt-submit [--config <path>] [--json] [--no-cwd-nudge]
+ *   eml-mcp-server hook project-block      [--config <path>] [--json]
  *   eml-mcp-server hook stop               [--config <path>]
  *
  * --json prints the context as the hook JSON envelope
@@ -71,8 +73,11 @@ function logLine(ctx: HookContext, hook: string, line: string): void {
  * — the only consumer of --json today, through its own hook runner — has an
  * unmeasured limit. Both get this value until measured; a harness with a
  * smaller limit needs its own budget here, not a smaller boot in core.
+ *
+ * One character below the limit: runHook prints a newline after the output,
+ * and that newline counts toward the hook's stdout.
  */
-export const BOOT_BUDGET_CHARS = 10_000
+export const BOOT_BUDGET_CHARS = 10_000 - 1
 
 export interface BootResult {
   output: string
@@ -172,10 +177,14 @@ export function shouldRemind(turn: number, msSinceLastTurn: number | null): bool
   return turn === 1 || turn % 5 === 0 || (msSinceLastTurn !== null && msSinceLastTurn > PAUSE_MS)
 }
 
-/** The reminder, plus a nudge naming the likely active project (basename(cwd) == project id). */
-export function reminderFor(cwd: string, home: string = HOME_DIR): string {
+/**
+ * The reminder, plus a nudge naming the likely active project (basename(cwd) ==
+ * project id). A host that delivers the project block (hook project-block)
+ * passes --no-cwd-nudge: the session then gets the project itself, not a guess.
+ */
+export function reminderFor(cwd: string, home: string = HOME_DIR, cwdNudge = true): string {
   const projectId = cwd ? path.basename(cwd) : ''
-  if (!cwd || cwd === home || !projectId) return REMINDER_TEXT
+  if (!cwdNudge || !cwd || cwd === home || !projectId) return REMINDER_TEXT
   return `${REMINDER_TEXT}\n- Active working dir: ${cwd} — if \`project.${projectId}\` is a tracked project, call \`eml_show project.${projectId}\` FIRST to load its status, open tasks and project-specific rules before editing code or making decisions in it.`
 }
 
@@ -185,6 +194,7 @@ export function userPromptSubmit(
   ctx: HookContext,
   input: { session_id?: string; cwd?: string },
   now: number = Date.now(),
+  cwdNudge = true,
 ): BootResult {
   const sessionId = input.session_id ?? ''
   const cwd = input.cwd || process.cwd()
@@ -205,7 +215,7 @@ export function userPromptSubmit(
   } catch { /* a lost counter only means an extra reminder */ }
 
   if (!shouldRemind(turn, msSinceLast)) return { output: '', log: `silent turn=${turn} sid=${sessionId}` }
-  return { output: reminderFor(cwd), log: `reminded turn=${turn} sid=${sessionId} cwd=${cwd}` }
+  return { output: reminderFor(cwd, HOME_DIR, cwdNudge), log: `reminded turn=${turn} sid=${sessionId} cwd=${cwd}` }
 }
 
 // --- CLI dispatch -------------------------------------------------------------
@@ -217,7 +227,7 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-const HOOK_EVENT = { 'session-start': 'SessionStart', 'user-prompt-submit': 'UserPromptSubmit' } as const
+const HOOK_EVENT = { 'session-start': 'SessionStart', 'user-prompt-submit': 'UserPromptSubmit', 'project-block': 'SessionStart' } as const
 
 /** What a hook prints: the context as it is, or wrapped in the hook JSON envelope. */
 export function formatHookOutput(hook: keyof typeof HOOK_EVENT, output: string, json: boolean): string {
@@ -249,11 +259,14 @@ export async function runHook(argv: string[]): Promise<void> {
       result = await sessionStart(readConfig(configPath), configPath, fetch, BOOT_BUDGET_CHARS - (note ? note.length + 2 : 0))
       if (note) result = { output: `${note}\n\n${result.output}`, log: `${result.log} compact-note=${note.length}` }
     } else if (name === 'user-prompt-submit') {
-      result = userPromptSubmit(ctx, input)
+      result = userPromptSubmit(ctx, input, Date.now(), !argv.includes('--no-cwd-nudge'))
       // The user's note edits since the last prompt (hooks/notes.ts).
       const notes = await notesUpdate(readConfig(configPath), ctx.stateDir, input)
       logLine(ctx, name, notes.log)
       if (notes.output) result = { ...result, output: [result.output, notes.output].filter(Boolean).join('\n\n') }
+    } else if (name === 'project-block') {
+      // The project's context on every session start (hooks/project-block.ts).
+      result = await projectBlockHook(readConfig(configPath), input)
     } else if (name === 'stop') {
       // Consolidate before the session goes idle (hooks/compaction.ts). The
       // output is the block decision as JSON, the same for Claude Code and Codex.
@@ -262,7 +275,7 @@ export async function runHook(argv: string[]): Promise<void> {
       logLine(ctx, name, stop.log)
       return
     } else {
-      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit | hook stop [--config <path>] [--json]\n`)
+      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit | hook project-block | hook stop [--config <path>] [--json]\n`)
       return
     }
     if (result.output) process.stdout.write(formatHookOutput(name, result.output, argv.includes('--json')) + '\n')

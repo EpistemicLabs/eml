@@ -5,7 +5,7 @@ MCP wrapper around the EML HTTP API. Exposes the Engram Protocol as MCP tools fo
 ## Use
 
 The EML Cockpit bundles this package and wires it into every Claude Code session it starts: the MCP
-server, the two hooks and the skills. Nothing to install by hand.
+server, the hooks and the skills. Nothing to install by hand.
 
 To use an EML server from a plain Claude Code install, register the MCP server with the server URL
 and a token:
@@ -18,12 +18,13 @@ claude mcp add eml_brain \
 
 ## Hooks
 
-Three session hooks ship as CLI commands (node only, no bash/curl/jq). They fit any agent CLI with
+Four session hooks ship as CLI commands (node only, no bash/curl/jq). They fit any agent CLI with
 Claude Code-style hooks (Claude Code, Codex):
 
 ```
 eml-mcp-server hook session-start      [--config <path>] [--json]
-eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
+eml-mcp-server hook user-prompt-submit [--config <path>] [--json] [--no-cwd-nudge]
+eml-mcp-server hook project-block      [--config <path>] [--json]
 eml-mcp-server hook stop               [--config <path>]
 ```
 
@@ -40,7 +41,18 @@ eml-mcp-server hook stop               [--config <path>]
   await the short format. Fail-soft: a missing config or an
   unreachable server prints a warning and exits 0, so the session continues without the brain.
 - **user-prompt-submit** is local only (no HTTP): a short reminder on turn 1, every 5th turn and
-  after a pause of more than an hour.
+  after a pause of more than an hour. It names the working directory's likely project
+  (`project.<basename>`); `--no-cwd-nudge` drops that line for a host that delivers the project
+  block.
+- **project-block** POSTs `EML_PROJECT_SCOPE` (set per session by the host; without it the hook is
+  silent) to `/project-block` and prints the project's context: status, the first 10 open tasks
+  with a preview and the rest as a count, the latest session log, ALL rules of the project and its
+  parent projects (situational as title + trigger, always-rules in full, inherited ones marked),
+  and the number of engrams due for review. Its own command, so its own 10,000-character budget;
+  whole entries give way (task previews, tasks, the log line, triggers, always-rules), nothing is
+  cut mid-text. Register it as a second `SessionStart` command without a matcher: it prints on
+  every source (startup, resume, compact, clear), so the block is current after a compaction or a
+  resume and the hook keeps no state. A project the brain does not know gets no block.
 - **stop** asks for the `consolidate` skill's auto mode before the context is compacted, because a
   compaction summary is written to continue the task, not to keep what belongs in the brain. When
   the agent ends a turn, the hook reads the context size from the transcript named in the hook
@@ -60,7 +72,7 @@ eml-mcp-server hook stop               [--config <path>]
 data, never evaluated). Logs, the reminder's turn counters and the save points live
 next to the config file, so one config directory is one isolated EML client.
 
-## Tools (v0.18.2)
+## Tools (v0.18.3)
 
 All tools have an `eml_` prefix. Total: **24 tools**.
 

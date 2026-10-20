@@ -16,10 +16,11 @@ export function readSettings(): CockpitSettings {
     return {
       projectSortOrder: toSortOrder(parsed.projectSortOrder),
       notifyOnDone: parsed.notifyOnDone === true,
+      greetOnStart: parsed.greetOnStart !== false,
       lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : undefined,
     };
   } catch {
-    return { projectSortOrder: DEFAULT_PROJECT_SORT_ORDER, notifyOnDone: false };
+    return { projectSortOrder: DEFAULT_PROJECT_SORT_ORDER, notifyOnDone: false, greetOnStart: true };
   }
 }
 

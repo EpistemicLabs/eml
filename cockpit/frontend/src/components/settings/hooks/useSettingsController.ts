@@ -25,11 +25,13 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(null);
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSortOrder>(() => readSettings().projectSortOrder);
   const [notifyOnDone, setNotifyOnDone] = useState<boolean>(() => readSettings().notifyOnDone);
+  const [greetOnStart, setGreetOnStart] = useState<boolean>(() => readSettings().greetOnStart);
 
   const loadSettings = useCallback(() => {
     const settings = readSettings();
     setProjectSortOrder(settings.projectSortOrder);
     setNotifyOnDone(settings.notifyOnDone);
+    setGreetOnStart(settings.greetOnStart);
   }, []);
 
   // Write one change at once. The debounced auto-save this replaces skipped
@@ -55,6 +57,11 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     save({ notifyOnDone: value });
   }, [save]);
 
+  const changeGreetOnStart = useCallback((value: boolean) => {
+    setGreetOnStart(value);
+    save({ greetOnStart: value });
+  }, [save]);
+
   // Re-sync tab + values every time the modal opens.
   useEffect(() => {
     if (!isOpen) return;
@@ -77,5 +84,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setProjectSortOrder: changeProjectSortOrder,
     notifyOnDone,
     setNotifyOnDone: changeNotifyOnDone,
+    greetOnStart,
+    setGreetOnStart: changeGreetOnStart,
   };
 }
