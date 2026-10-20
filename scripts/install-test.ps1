@@ -1,6 +1,8 @@
-# CI (Windows): install the cockpit with install.ps1 from release assets packed
-# from this checkout, the way a user's one-liner does, then check the autostart
-# and remove it again. Needs `pnpm build`, the frontend and the eml-cockpit build.
+# CI (Windows): install the cockpit the way a user does, by running
+# install-eml-cockpit.cmd (which runs install.ps1), from release assets packed
+# from this checkout and with no Node on PATH: the installer brings its own.
+# Then check the autostart and remove it again. Needs `pnpm build`, the
+# frontend and the eml-cockpit build.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $assets = Join-Path ([System.IO.Path]::GetTempPath()) ('eml-assets-' + [System.IO.Path]::GetRandomFileName())
@@ -21,11 +23,22 @@ $env:EML_FROM = $assets
 $env:EML_COCKPIT_HOME = $homeDir
 $env:COCKPIT_PORT = '4399'
 $env:EML_NO_OPEN = '1'
-$node = (Get-Command node.exe).Source
+$env:EML_NO_PAUSE = '1'
+$node = Join-Path $homeDir 'node\current\node.exe'
 $entry = Join-Path $homeDir 'app\current\node_modules\eml-cockpit\dist\index.js'
 try {
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1')
-  if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+  # A machine without Node: nothing node-like on PATH for the installer.
+  $fullPath = $env:PATH
+  $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -notmatch 'node|npm|pnpm' }) -join ';'
+  if (Get-Command node.exe -ErrorAction SilentlyContinue) { throw 'node is still on PATH for the test' }
+  & cmd.exe /d /c (Join-Path $root 'scripts\install-eml-cockpit.cmd')
+  $code = $LASTEXITCODE
+  $env:PATH = $fullPath
+  if ($code -ne 0) { throw "install-eml-cockpit.cmd failed ($code)" }
+
+  if (-not (Test-Path $node)) { throw "the installer brought no Node ($node)" }
+  Write-Host "cockpit's own node: $(& $node -v)"
+  if ((Get-Content -LiteralPath (Join-Path $homeDir 'service\run.ps1') -Raw) -notmatch [regex]::Escape('node\current\node.exe')) { throw 'the autostart does not run the cockpit''s own node' }
 
   $status = & $node $entry service status | Out-String
   Write-Host $status
