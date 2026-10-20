@@ -132,7 +132,22 @@ export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt:
 }
 
 /** Runs `claude` isolated; returns the JSON events it printed. The judge runs outside the workspace (no CLAUDE.md). */
-function claude(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge = false): Promise<any[]> {
+// Rate limits and overload end a session with an error result; wait and run it again.
+const RETRY_STATUS = new Set([429, 529])
+const RETRIES = 4
+
+async function claude(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge = false): Promise<any[]> {
+  for (let attempt = 0; ; attempt++) {
+    const events = await claudeOnce(ws, opts, args, label, configKey, judge)
+    const status = events.find(ev => ev.type === 'result')?.api_error_status
+    if (!RETRY_STATUS.has(status) || attempt >= RETRIES) return events
+    const wait = 30_000 * 2 ** attempt
+    console.log(`  … ${label}: API ${status}, retry in ${wait / 1000}s (${path.relative(path.dirname(path.dirname(ws.dir)), ws.dir)})`)
+    await new Promise(r => setTimeout(r, wait))
+  }
+}
+
+function claudeOnce(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge: boolean): Promise<any[]> {
   if (!opts.claudeToken) throw new Error('claude-code runner: no Claude Code token (CLAUDE_CODE_OAUTH_TOKEN or --claude-token-file)')
   const env = {
     ...ws.env,
