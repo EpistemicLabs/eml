@@ -24,16 +24,17 @@ DEV_PORT=${DEV_PORT:-4318}
 DEV_SESSION=${DEV_SESSION:-eml-dev}
 WORKTREE=$(cd "$(dirname "$0")/../.." && pwd)
 
-brain_file() { # $1 = home dir → absolute path of its (single) brain file, per control.db
+brain_file() { # $1 = home dir → absolute path of its first brain file (the main space), per control.db
   local home="$1" ctl="$1/data/control.db" rel
   [ -f "$ctl" ] || { echo "no control.db at $ctl" >&2; exit 1; }
-  rel=$(sqlite3 "$ctl" "SELECT brain_file FROM brains LIMIT 1")
+  rel=$(sqlite3 "$ctl" "SELECT brain_file FROM brains ORDER BY rowid LIMIT 1")
   [ -n "$rel" ] || { echo "no brain row in $ctl" >&2; exit 1; }
   echo "$home/data/$rel"
 }
 
 PROD_DB=$(brain_file "$PROD_HOME")
 DEV_DB=$(brain_file "$DEV_HOME")
+DEV_REL=${DEV_DB#"$DEV_HOME/data/"}   # as control.db names it
 [ -f "$PROD_DB" ] || { echo "prod brain not found: $PROD_DB" >&2; exit 1; }
 echo "prod brain: $PROD_DB ($(sqlite3 "$PROD_DB" 'SELECT count(*) FROM engrams') engrams, schema $(sqlite3 "$PROD_DB" 'SELECT MAX(version) FROM _eml_migrations'))"
 echo "dev  brain: $DEV_DB"
@@ -56,9 +57,11 @@ if [ -f "$DEV_DB" ]; then
 fi
 rm -f "$DEV_DB" "$DEV_DB-wal" "$DEV_DB-shm"
 sqlite3 "$PROD_DB" "VACUUM INTO '$DEV_DB'"
-# The dev control.db must report the copied brain's schema so the runner migrates it forward.
+# The dev control.db must report the copied brain's schema so the runner migrates it
+# forward — only this brain's row: the other brains of the dev home keep their version,
+# or the runner would re-run their migration and the preflight would take them offline.
 SV=$(sqlite3 "$DEV_DB" "SELECT MAX(version) FROM _eml_migrations")
-sqlite3 "$DEV_HOME/data/control.db" "UPDATE brains SET schema_version = $SV"
+sqlite3 "$DEV_HOME/data/control.db" "UPDATE brains SET schema_version = $SV WHERE brain_file = '$DEV_REL'"
 echo "copied: $(sqlite3 "$DEV_DB" 'SELECT count(*) FROM engrams') engrams, schema $SV, integrity $(sqlite3 "$DEV_DB" 'PRAGMA integrity_check' | head -1)"
 
 if [ "${NO_RESTART:-0}" = "1" ]; then
