@@ -263,12 +263,15 @@ describe('v0.19 write model', () => {
       expect(() => eml.engrams.update(ev.id, { supersedes: [eml.engrams.store(validNote()).id] })).toThrow(/an event does not supersede/)
     })
 
-    it('a log changes its START HERE fields only in its own session; content is correctable from anywhere', () => {
+    it('a log\'s START HERE fields and content are correctable from any session; a correction from another session is noted', () => {
       const log = eml.engrams.store(validLog({ content: 'the story' }), ctx('s1'))
       const r = eml.engrams.update(log.id, { properties: { next: 'next step 2' } }, ctx('s1'))!
       expect(r.content).toContain('**NEXT:** next step 2')
       expect(r.content.endsWith('the story')).toBe(true)
-      expect(() => eml.engrams.update(log.id, { properties: { landed: 'x' } }, ctx('s2'))).toThrow(/landed of a log change only in the session that wrote it/)
+      expect(eml.engrams.entries(log.id)).toEqual([])
+      const other = eml.engrams.update(log.id, { properties: { landed: 'x' } }, ctx('s2'))!
+      expect(other.content).toContain('**WHERE WE LANDED:** x')
+      expect(eml.engrams.entries(log.id)).toMatchObject([{ kind: 'change', text: 'landed corrected from session s2', session_id: 's2' }])
       const fixed = eml.engrams.update(log.id, { content: 'the corrected story' }, ctx('s2'))!
       expect(fixed.content).toContain('**NEXT:** next step 2')
       expect(fixed.content.endsWith('the corrected story')).toBe(true)

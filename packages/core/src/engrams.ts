@@ -1505,7 +1505,8 @@ export class EngramStore {
    * reactivation); superseded comes only from supersedes. supersedes (B1):
    * this engram replaces the listed ones after the fact, across types. A status
    * engram takes only invalidated + tags/subjects; an event is corrected, never
-   * superseded; a log's START HERE fields change only in its own session.
+   * superseded; a log's START HERE fields corrected from another session leave
+   * a change entry on the log.
    * review_note confirms a decision, rule or profile in a review (a review
    * entry). Returns the engram with the diff, or null for an unknown id.
    */
@@ -1580,11 +1581,14 @@ export class EngramStore {
       }
       if (isBlank(patch.review_note)) throw new Error('Invalid engram: review_note must say why it still holds.')
     }
+    // A log's START HERE fields are correctable from any session; a correction
+    // from another session is noted on the log (decision v0.19-log-corrections-any-session).
+    let logCorrection: string | null = null
     if (type === 'log') {
       const own = !!ctx.session_id && ctx.session_id === existing.session_id
       const startHere = ['what', 'landed', 'next', 'open_threads'].filter(k => fieldPatch[k] !== undefined)
       if (startHere.length > 0 && !own) {
-        throw new Error(`Invalid engram: ${startHere.join(', ')} of a log change only in the session that wrote it — correct the content instead.`)
+        logCorrection = `${startHere.join(', ')} corrected from session ${ctx.session_id ?? '(unknown)'}`
       }
     }
     if (patch.content !== undefined) {
@@ -1684,6 +1688,7 @@ export class EngramStore {
         superseded.push(oldId)
       }
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
+      if (logCorrection) appendEntry(this.db, id, { kind: 'change', text: logCorrection }, stamp)
       if (type === 'learning' && patch.content !== undefined && patch.content !== existing.content) {
         appendEntry(this.db, id, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
       }
