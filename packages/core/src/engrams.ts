@@ -576,6 +576,11 @@ export class EngramStore {
   }
 
   /** A task-bound decision or note needs a task that is still open. */
+  /** The task a decision or note is tied to (task_id at creation: a refines / derived_from edge). */
+  private boundTaskOf(id: string): { id: string, status: string } | undefined {
+    return this.db.prepare(`SELECT t.id, t.status FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines')`).get(id) as { id: string, status: string } | undefined
+  }
+
   private assertTaskOpenForBinding(taskId: string, type: string): void {
     const t = this.db.prepare('SELECT status FROM engrams WHERE id = ?').get(taskId) as { status: string } | undefined
     if (t && !(TASK_OPEN_STATUSES as readonly string[]).includes(t.status)) {
@@ -818,8 +823,13 @@ export class EngramStore {
     if (existing.status === 'superseded' && statusChanged) {
       throw new Error('Invalid engram: a superseded task stays superseded — continue on its successor.')
     }
-    // closed → closed is not a close: the outcome changes by reopening and closing again (both in the journal)
-    if (closing && !wasOpen) {
+    // closed → closed is not a close: the outcome changes by reopening and closing
+    // again (both in the journal). The current status repeated without an outcome
+    // is a no-op. Checked before the field rules, so the answer names the state.
+    const closesAgain = input.status !== undefined && !wasOpen && existing.status !== 'superseded'
+      && (input.status === 'resolved' || input.status === 'invalidated')
+      && (input.status !== existing.status || input.outcome !== undefined)
+    if (closesAgain) {
       throw new Error(`Invalid engram: task ${id} is already ${existing.status} — to change how it ended, reopen it (status planned or active) and close it again.`)
     }
     const supersedes = [...new Set(input.supersedes ?? [])]
@@ -1764,11 +1774,19 @@ export class EngramStore {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
     }
     if ((type === 'decision' || type === 'note') && fieldPatch.binding === 'task') {
-      const linked = this.db.prepare(`SELECT t.id FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines')`).get(id) as { id: string } | undefined
+      const linked = this.boundTaskOf(id)
       if (!linked) throw new Error(`Invalid engram: binding task needs a task — this ${type} is not linked to one.`)
       this.assertTaskOpenForBinding(linked.id, type)
     }
     const newStatus = patch.status ?? existing.status
+    // A task-bound item closed with its task comes back with the task: reopening the
+    // task lists it to reactivate. Alone it is reactivated only as a standing item.
+    if ((type === 'decision' || type === 'note') && newStatus === 'active' && existing.status !== 'active' && newProps.binding === 'task') {
+      const linked = this.boundTaskOf(id)
+      if (linked && !(TASK_OPEN_STATUSES as readonly string[]).includes(linked.status)) {
+        throw new Error(`Invalid engram: task ${linked.id} is ${linked.status} — a ${type} bound to it stays closed with it; reopen the task first (eml_track_task status planned or active lists it to reactivate), or make it standing (binding=standing) in the same call.`)
+      }
+    }
     // One core profile per scope: an explicit core=true replaces the current one;
     // a reactivation or a move into a scope that has one is refused, not silently retiring it.
     const coreNewlySet = newProps.core === true && oldProps.core !== true

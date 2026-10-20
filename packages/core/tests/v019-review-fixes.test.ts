@@ -252,4 +252,39 @@ describe('v0.19 review fixes', () => {
       expect(learningState(eml.engrams.entries(stale.engram.id)).state).toBe('collecting')
     })
   })
+
+  // Found in the dev-cockpit smoke test of the release (2026-10-20).
+  describe('closed tasks and their bound items (dev smoke test)', () => {
+    it('closing a closed task again names the state, whatever else the call carries', () => {
+      const done = closedTask(eml, { title: 'done' })
+      expect(() => eml.engrams.trackTask(done.id, { status: 'resolved', outcome: 'again', text: 'again' })).toThrow(/is already resolved — to change how it ended, reopen it/)
+      // the current status repeated without an outcome is a plain journal note
+      expect(eml.engrams.trackTask(done.id, { status: 'resolved', text: 'a late note' })!.status).toBe('resolved')
+      expect(() => eml.engrams.trackTask(done.id, { status: 'invalidated', outcome: 'x', text: 'x' })).toThrow(/is already resolved/)
+      expect(statusOf(done.id)).toBe('resolved')
+    })
+
+    it('a decision closed with its task comes back with the task: the reopen lists it, then it reactivates', () => {
+      const task = eml.engrams.store(validTask({ title: 'work' }))
+      const bound = eml.engrams.store(validDecision({ task_id: task.id, properties: { binding: 'task' } }))
+      eml.engrams.trackTask(task.id, { status: 'resolved', outcome: 'done', text: 'done', keep: [] })
+      expect(statusOf(bound.id)).toBe('resolved')
+      expect(() => eml.engrams.update(bound.id, { status: 'active' })).toThrow(/is resolved — a decision bound to it stays closed with it/)
+      expect(statusOf(bound.id)).toBe('resolved')
+      const reopened = eml.engrams.trackTask(task.id, { status: 'active', text: 'more to do' }) as any
+      expect(reopened.reopen_candidates.map((c: any) => c.id)).toEqual([bound.id])
+      eml.engrams.update(bound.id, { status: 'active' })
+      expect(statusOf(bound.id)).toBe('active')
+    })
+
+    it('… or it outlives the closed task as a standing item, in the same call', () => {
+      const task = eml.engrams.store(validTask({ title: 'work' }))
+      const bound = eml.engrams.store(validNote({ task_id: task.id, properties: { binding: 'task' } }))
+      eml.engrams.trackTask(task.id, { status: 'invalidated', outcome: 'dropped', text: 'dropped', keep: [] })
+      expect(statusOf(bound.id)).toBe('invalidated')
+      eml.engrams.update(bound.id, { status: 'active', properties: { binding: 'standing' } })
+      expect(statusOf(bound.id)).toBe('active')
+      expect(propsOf(bound.id).binding).toBe('standing')
+    })
+  })
 })
