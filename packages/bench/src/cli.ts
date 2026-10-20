@@ -14,9 +14,12 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
       updating (the server migrates it at startup).
 
       Stage 1 (retrieval) always runs. --agent adds stage 2: a Claude model
-      answers the questions over the SUT's hooks and MCP tools. It calls the
-      Anthropic API (credentials from the environment, e.g. ANTHROPIC_API_KEY)
-      and costs money per run.
+      answers the questions over the SUT's hooks and MCP tools.
+        --runner <r>        claude-code (default): headless Claude Code, signed in
+                            with a Claude Code token — CLAUDE_CODE_OAUTH_TOKEN or
+                            --claude-token-file <file> (from \`claude setup-token\`)
+                            api: plain tool loop over the Anthropic API
+                            (ANTHROPIC_API_KEY); costs API credit
         --model <id>        agent model (default claude-opus-5-5)
         --judge <id>        judge model (default claude-opus-5-5)
         --effort <level>    low|medium|high|xhigh|max (default medium)
@@ -61,7 +64,11 @@ async function run(args: string[]): Promise<void> {
 
   let agent: { summary: AgentSummary; results: unknown[] } | undefined
   if (args.includes('--agent')) {
+    const runner = (arg(args, 'runner') ?? 'claude-code') as AgentOptions['runner']
+    const tokenFile = arg(args, 'claude-token-file')
     const opts: AgentOptions = {
+      runner,
+      claudeToken: process.env.CLAUDE_CODE_OAUTH_TOKEN || (tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : undefined),
       model: arg(args, 'model') ?? 'claude-opus-5-5',
       judgeModel: arg(args, 'judge') ?? 'claude-opus-5-5',
       effort: (arg(args, 'effort') ?? 'medium') as AgentOptions['effort'],
@@ -70,7 +77,7 @@ async function run(args: string[]): Promise<void> {
     }
     const only = arg(args, 'only')?.split(',')
     const questions = readQuestions().filter(q => !only || only.includes(q.id))
-    console.log(`\nagent — ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel}`)
+    console.log(`\nagent — ${opts.runner} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel}`)
     const agentResults = await runAgent(sut, brain, questions, workDir, opts)
     const agentSummary = summarizeAgent(agentResults, opts)
     printAgentSummary(agentSummary)
@@ -113,12 +120,13 @@ function printSurface(s: Surface): void {
 }
 
 function printAgentSummary(s: AgentSummary): void {
-  console.log(`\nagent — ${s.questions} questions`)
+  console.log(`\nagent — ${s.questions} questions · ${s.runner}${s.harness ? ` (${s.harness})` : ''} · ${s.model} · effort ${s.effort}`)
   console.log(`  accuracy       ${s.accuracy.toFixed(3)}`)
   console.log(`  stale rate     ${s.stale_rate.toFixed(3)}   (answer asserts an outdated claim)`)
   console.log(`  evidence rate  ${s.evidence_rate.toFixed(3)}   (expected engrams the agent actually retrieved)`)
   console.log(`  errors         ${s.errors}`)
   console.log(`  avg tool calls ${s.avg_tool_calls}   avg turns ${s.avg_turns}`)
+  if (s.cost_usd !== null) console.log(`  cost           $${s.cost_usd} (API-equivalent, as reported by the runner)`)
   console.log(`  tokens         in ${s.tokens.input} · out ${s.tokens.output} · cache read ${s.tokens.cache_read} · cache write ${s.tokens.cache_write}`)
   console.log('  by category')
   for (const [cat, c] of Object.entries(s.by_category)) {

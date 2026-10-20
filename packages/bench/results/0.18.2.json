@@ -1,7 +1,7 @@
 {
   "version": "0.18.2",
   "base_version": "0.18.2",
-  "measured_at": "2026-10-20T02:37:09.250Z",
+  "measured_at": "2026-10-20T02:51:03.723Z",
   "surface": {
     "boot_chars": 6371,
     "reminder_chars": 603,
@@ -22,7 +22,7 @@
         "recall": 1132,
         "show": 936
       },
-      "avg_ms": 1.3,
+      "avg_ms": 1.2,
       "by_category": {
         "boot": {
           "questions": 1,
@@ -73,7 +73,7 @@
         "category": "current-over-stale",
         "tool": "recall",
         "chars": 628,
-        "ms": 3.6679579999999987
+        "ms": 3.0895000000000437
       },
       {
         "rank": 9,
@@ -86,7 +86,7 @@
         "category": "paraphrase",
         "tool": "recall",
         "chars": 2333,
-        "ms": 1.5199579999999742
+        "ms": 1.4047079999999141
       },
       {
         "rank": 1,
@@ -99,7 +99,7 @@
         "category": "current-over-stale",
         "tool": "recall",
         "chars": 2396,
-        "ms": 1.1044580000000224
+        "ms": 1.0333750000000919
       },
       {
         "rank": 1,
@@ -112,7 +112,7 @@
         "category": "dashboard",
         "tool": "show",
         "chars": 1003,
-        "ms": 1.4207499999999982
+        "ms": 1.1722080000000688
       },
       {
         "rank": 1,
@@ -125,7 +125,7 @@
         "category": "scope",
         "tool": "recall",
         "chars": 933,
-        "ms": 0.8127080000000433
+        "ms": 0.6710420000000568
       },
       {
         "rank": 1,
@@ -138,7 +138,7 @@
         "category": "paraphrase",
         "tool": "recall",
         "chars": 2902,
-        "ms": 0.8855409999999893
+        "ms": 0.7977909999999611
       },
       {
         "rank": 1,
@@ -151,7 +151,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 298,
-        "ms": 0.6640409999999974
+        "ms": 0.5627910000000611
       },
       {
         "rank": 1,
@@ -164,7 +164,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 1911,
-        "ms": 1.1080839999999625
+        "ms": 0.9784590000000435
       },
       {
         "rank": 1,
@@ -177,7 +177,7 @@
         "category": "current-over-stale",
         "tool": "recall",
         "chars": 2007,
-        "ms": 1.043833999999947
+        "ms": 1.0274999999999181
       },
       {
         "rank": 1,
@@ -190,7 +190,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 825,
-        "ms": 0.7785840000000235
+        "ms": 0.8127909999999474
       },
       {
         "rank": 1,
@@ -203,7 +203,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 353,
-        "ms": 0.7597079999999323
+        "ms": 0.7012920000000804
       },
       {
         "rank": 1,
@@ -216,7 +216,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 260,
-        "ms": 0.5536250000000109
+        "ms": 0.5447499999999081
       },
       {
         "rank": 1,
@@ -229,7 +229,7 @@
         "category": "paraphrase",
         "tool": "recall",
         "chars": 1557,
-        "ms": 0.6824580000001106
+        "ms": 0.6696249999999964
       },
       {
         "rank": 1,
@@ -242,7 +242,7 @@
         "category": "current-over-stale",
         "tool": "recall",
         "chars": 305,
-        "ms": 0.5555409999999483
+        "ms": 0.5194169999999758
       },
       {
         "rank": 1,
@@ -255,7 +255,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 1457,
-        "ms": 0.6735830000000078
+        "ms": 0.6874579999999924
       },
       {
         "rank": 1,
@@ -268,7 +268,7 @@
         "category": "paraphrase",
         "tool": "recall",
         "chars": 226,
-        "ms": 0.7375419999999622
+        "ms": 0.6669170000000122
       },
       {
         "rank": 2,
@@ -281,7 +281,7 @@
         "category": "paraphrase",
         "tool": "recall",
         "chars": 2473,
-        "ms": 0.6680000000000064
+        "ms": 0.6043330000001106
       },
       {
         "rank": 1,
@@ -294,7 +294,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 853,
-        "ms": 0.5541670000000067
+        "ms": 0.46145799999999326
       },
       {
         "rank": 1,
@@ -307,7 +307,7 @@
         "category": "rule",
         "tool": "recall",
         "chars": 1157,
-        "ms": 0.5268330000000105
+        "ms": 0.48775000000000546
       },
       {
         "rank": 1,
@@ -320,7 +320,7 @@
         "category": "rule",
         "tool": "recall",
         "chars": 290,
-        "ms": 0.5902499999999691
+        "ms": 0.564083000000096
       },
       {
         "rank": 1,
@@ -333,7 +333,7 @@
         "category": "rule",
         "tool": "recall",
         "chars": 274,
-        "ms": 0.4928339999999025
+        "ms": 0.47520799999995234
       },
       {
         "rank": 1,
@@ -346,7 +346,7 @@
         "category": "direct",
         "tool": "recall",
         "chars": 328,
-        "ms": 0.469916000000012
+        "ms": 0.4548749999999018
       },
       {
         "rank": 1,
@@ -359,7 +359,7 @@
         "category": "dashboard",
         "tool": "show",
         "chars": 869,
-        "ms": 0.7389580000000251
+        "ms": 0.7240829999999505
       },
       {
         "rank": 1,
@@ -372,7 +372,1147 @@
         "category": "boot",
         "tool": "boot",
         "chars": 6371,
-        "ms": 9.924375000000055
+        "ms": 9.406375000000025
+      }
+    ]
+  },
+  "agent": {
+    "summary": {
+      "runner": "claude-code",
+      "harness": "claude-code 2.1.292",
+      "model": "claude-opus-5-5",
+      "judge_model": "claude-opus-5-5",
+      "effort": "medium",
+      "questions": 23,
+      "accuracy": 1,
+      "stale_rate": 0,
+      "evidence_rate": 1,
+      "errors": 0,
+      "avg_tool_calls": 2.826,
+      "avg_turns": 3.826,
+      "tokens": {
+        "input": 134,
+        "output": 10759,
+        "cache_read": 1262208,
+        "cache_write": 195178
+      },
+      "cost_usd": 2.03,
+      "by_category": {
+        "current-over-stale": {
+          "questions": 4,
+          "accuracy": 1
+        },
+        "dashboard": {
+          "questions": 2,
+          "accuracy": 1
+        },
+        "direct": {
+          "questions": 7,
+          "accuracy": 1
+        },
+        "history": {
+          "questions": 1,
+          "accuracy": 1
+        },
+        "paraphrase": {
+          "questions": 5,
+          "accuracy": 1
+        },
+        "rule": {
+          "questions": 3,
+          "accuracy": 1
+        },
+        "scope": {
+          "questions": 1,
+          "accuracy": 1
+        }
+      }
+    },
+    "results": [
+      {
+        "id": "shipping-direct",
+        "category": "current-over-stale",
+        "answer": "For a single small mug under 1 kg, use **Deutsche Post Warenpost**. That's the current shipping-carrier decision from 2026-09-30, which replaced \"DHL for everything\". Its stated reason is that Warenpost halves the cost for single mugs.\n\nThe same decision also says fragile parcels stay with DHL, because they need DHL's insurance. A ceramic mug could count as fragile, so the two parts of the rule pull against each other here. My reading is that you meant single mugs to go Warenpost, since the reason names them directly. If you'd rather send them by DHL, tell me and I'll update the decision.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "carrier shipping mug"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "52d94f87-8782-43aa-a979-d1909fe7caf3",
+              "with_relations": true
+            }
+          }
+        ],
+        "seen_ids": [
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "9f590bf4-db27-4696-8b2b-30820ac79a88",
+          "507a4cb3-5c96-45a6-86fc-3826360d7b3a",
+          "63a7e96d-514c-4fbf-9cb1-26ca48e46c6d"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 507,
+          "cache_read": 56348,
+          "cache_write": 8020
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer names Deutsche Post Warenpost for parcels under 1 kg and keeps DHL for fragile parcels, which matches the reference; it also says \"DHL for everything\" was replaced rather than claiming it still applies.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0855936
+      },
+      {
+        "id": "shipping-paraphrase",
+        "category": "paraphrase",
+        "answer": "Right now you use two carriers, according to the decision you recorded on 2026-09-30:\n\n- Small parcels up to 1 kg go with Deutsche Post Warenpost.\n- Fragile and larger parcels go with DHL.\n\nThe reason you gave: Warenpost costs about half as much for single mugs, but fragile items still need DHL's insurance. Before that, everything went with DHL to keep packing simple. That rule was replaced in September.\n\nMy notes don't cover how you pack, when you hand parcels over, or how customers get tracking. Let me know if any of that should be added.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "shipping orders delivery carrier"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "title": "shipping-carrier"
+            }
+          }
+        ],
+        "seen_ids": [
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+          "560cd0ad-5387-47cb-9af3-69df44fd987c",
+          "9f590bf4-db27-4696-8b2b-30820ac79a88",
+          "507a4cb3-5c96-45a6-86fc-3826360d7b3a"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 362,
+          "cache_read": 56599,
+          "cache_write": 8242
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives the current split (Warenpost for parcels up to 1 kg, DHL for fragile and larger ones), and it says the all-DHL rule was replaced rather than claiming it still applies.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0845198
+      },
+      {
+        "id": "shop-platform",
+        "category": "current-over-stale",
+        "answer": "The shop runs on Shopify. You decided to move it off WooCommerce, and it's now live there. The old WooCommerce site redirects to it, and checkout loads in under a second.\n\nRelated details from memory:\n- **Payments:** Stripe for cards, with PayPal as the second option.\n- **Theme changes:** pushed with the Shopify CLI (`shopify theme push`) to the preview theme first, then checkout is checked on mobile.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "shop platform"
+            }
+          },
+          {
+            "name": "eml_projects",
+            "input": {}
+          }
+        ],
+        "seen_ids": [
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "517f4226-0bf1-429c-8f3f-67e901b00143",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "b4139174-3305-48f7-838b-584f20317868",
+          "8e9047f8-1906-497a-a9ca-a15db525858a",
+          "3e5d5640-1b56-4ccc-abbd-043426238c0c",
+          "1d937e94-09fd-46fd-bbd9-e6968b3e0ebf",
+          "4eb8d190-3be8-44aa-8eb0-827639a96320",
+          "52d94f87-8782-43aa-a979-d1909fe7caf3"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 4,
+          "output": 280,
+          "cache_read": 35040,
+          "cache_write": 8692
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the shop runs on Shopify, that it moved off WooCommerce, and that the old site redirects, and it only mentions WooCommerce as the past platform.",
+        "evidence_found": 2,
+        "evidence_expected": 2,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.08216000000000001
+      },
+      {
+        "id": "shop-status",
+        "category": "dashboard",
+        "answer": "Here's where the shop stands, from your brain.\n\n**Status:** The shop is live on Shopify, and the old WooCommerce site redirects to it. Checkout now loads in under a second.\n\n**Still open (2 tasks):**\n- **SEO category texts (in progress):** Write texts for mugs, bowls and vases, 150 to 200 words each.\n- **Product photos (not started):** Reshoot the spring collection with the daylight setup.\n\n**Current decisions:**\n- **Platform:** Shopify. This replaced the earlier plan to stay on WooCommerce.\n- **Shipping:** Deutsche Post Warenpost for parcels up to 1 kg. DHL for fragile or larger parcels. This replaced \"DHL for everything.\"\n- **Payments:** Stripe for cards, PayPal as the second option.\n\nAll three decisions are due for review around Dec 19. Nothing is blocked.",
+        "tool_calls": [
+          {
+            "name": "eml_projects",
+            "input": {}
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.shop"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.shop",
+              "type": "decision"
+            }
+          }
+        ],
+        "seen_ids": [
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "b4139174-3305-48f7-838b-584f20317868",
+          "4eb8d190-3be8-44aa-8eb0-827639a96320",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "1d937e94-09fd-46fd-bbd9-e6968b3e0ebf",
+          "1b5caefb-0f7d-4365-8785-615310ddaab8",
+          "507a4cb3-5c96-45a6-86fc-3826360d7b3a"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 8,
+          "output": 546,
+          "cache_read": 78888,
+          "cache_write": 10037
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the shop is live on Shopify with checkout under one second, and lists both open tasks (photo reshoot for the spring collection, SEO category texts in progress); it repeats neither outdated claim.",
+        "evidence_found": 3,
+        "evidence_expected": 3,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.1070256
+      },
+      {
+        "id": "theme-deploy-scope",
+        "category": "scope",
+        "answer": "According to your notes, a shop theme change goes out like this:\n\n1. In the theme repository, push the change with the Shopify CLI (`shopify theme push`), and send it to the preview theme first, not the live one.\n2. Check the preview, especially checkout on mobile.\n3. If it looks good, push it to the live theme.\n\nYou also have a rule against production deploys on Fridays after 14:00. Today is Tuesday, so that doesn't stop you.\n\nI can't run the push myself, because I only have access to your memory. When you're ready, run step 1 against the preview theme yourself.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "theme deploy"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "5abb5987-b232-4f64-a4dc-d885c9b7793a"
+            }
+          },
+          {
+            "name": "eml_projects",
+            "input": {}
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.shop"
+            }
+          }
+        ],
+        "seen_ids": [
+          "3e5d5640-1b56-4ccc-abbd-043426238c0c",
+          "f877e02c-9dd9-4075-b041-c6d9a0d7c14c",
+          "9d953521-efb0-402a-a718-93855de03c5c",
+          "5abb5987-b232-4f64-a4dc-d885c9b7793a",
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "b4139174-3305-48f7-838b-584f20317868",
+          "4eb8d190-3be8-44aa-8eb0-827639a96320",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "1d937e94-09fd-46fd-bbd9-e6968b3e0ebf",
+          "1b5caefb-0f7d-4365-8785-615310ddaab8",
+          "507a4cb3-5c96-45a6-86fc-3826360d7b3a"
+        ],
+        "turns": 5,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 609,
+          "cache_read": 57663,
+          "cache_write": 9099
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer covers every key fact in the reference (Shopify CLI theme push from the theme repo, preview theme first, check checkout on mobile) and never presents a zip upload in the admin as the current method.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0965286
+      },
+      {
+        "id": "returns-paraphrase",
+        "category": "paraphrase",
+        "answer": "Your returns policy covers this: if an item arrives broken, the customer sends a photo and gets a full refund. They don't need to send the bowl back.\n\nSteps:\n1. Ask the customer for a photo of the broken bowl, if they haven't sent one.\n2. Once you have the photo, refund the full amount.\n3. Reply to the customer. I can draft the email, but I won't send anything until you've approved the exact text. That's your standing rule, and I can't send email from here anyway.\n\nTwo other thoughts, though your notes don't cover either:\n- Fragile parcels go with DHL, so you could file a damage claim with DHL. Keep the customer's photo for that.\n- Offering a replacement instead of a refund isn't in your policy, so that's your call.\n\nShould I draft the reply? If so, tell me the customer's name and whether they've already sent a photo.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "broken damaged shipping return refund"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "f17cd454-1f08-4ec5-b1ad-25f1ad7d4f20"
+            }
+          }
+        ],
+        "seen_ids": [
+          "9f590bf4-db27-4696-8b2b-30820ac79a88",
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "f17cd454-1f08-4ec5-b1ad-25f1ad7d4f20"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 4,
+          "output": 485,
+          "cache_read": 35059,
+          "cache_write": 7603
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives the key facts: a photo is enough, the customer gets a full refund, and they don't send the bowl back; its extra points are clearly marked as outside the policy and don't contradict it.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0775518
+      },
+      {
+        "id": "pricing",
+        "category": "direct",
+        "answer": "It should cost 36.80 EUR, using the pricing formula saved in your notes:\n\n- 8 EUR material × 2.5 = 20.00 EUR\n- plus 12 EUR handling = 32.00 EUR\n- plus 15 % for glazing = 36.80 EUR\n\nThe note says the glaze surcharge comes \"on top of that,\" so I applied the 15 % to the whole 32 EUR. If you meant it to apply only to the material cost, the price would be 33.20 EUR. Let me know if that's the case and I'll make the note clearer.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "pricing mug material markup"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.shop",
+              "search": "price"
+            }
+          }
+        ],
+        "seen_ids": [
+          "12a837c8-f302-43cd-b51b-c9f98c479012"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 466,
+          "cache_read": 56213,
+          "cache_write": 7482
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gets 36.80 EUR with the same calculation as the reference (8×2.5+12=32, plus 15%), and mentioning the other possible reading is just a caveat, not a wrong fact.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0804426
+      },
+      {
+        "id": "android-push",
+        "category": "direct",
+        "answer": "The Android build is waiting on push notifications. The app's current status (Oct 8) says it is \"blocked on the push notification setup.\"\n\nThe task that would unblock it is setting up Firebase Cloud Messaging so the Android build can receive push notifications. It was opened on Oct 6 and is still marked planned. It has no progress entries, so as far as the brain knows, nobody has started it. That's two weeks with no movement.\n\nMeanwhile iOS is in TestFlight beta with 40 testers. Once push works, Android follows the normal release process: an EAS build, then submitting it to the internal testing track.\n\nIf the Firebase setup has been started or the plan has changed, tell me and I'll update the task and status. If not, the next step is to start it.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "android build"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "1662506e-f0aa-400d-840b-be7f0b5fe975"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "7797b900-a6f9-4a0d-ad06-cebd54595e03"
+            }
+          }
+        ],
+        "seen_ids": [
+          "1662506e-f0aa-400d-840b-be7f0b5fe975",
+          "7797b900-a6f9-4a0d-ad06-cebd54595e03",
+          "d936e9cc-ab41-43a4-9374-806756713ac5",
+          "352720b5-6d6c-4a9d-b4e7-71a602988722",
+          "36d7e5d7-5362-4d79-93b4-ff99ee5d3fea"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 489,
+          "cache_read": 56576,
+          "cache_write": 8135
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the Android build is blocked on the push notification setup through Firebase Cloud Messaging, and that this task is still open.",
+        "evidence_found": 2,
+        "evidence_expected": 2,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0861992
+      },
+      {
+        "id": "app-backend",
+        "category": "current-over-stale",
+        "answer": "The app pulls its product data, and its orders, straight from the Shopify Storefront API. You decided this on 2026-09-25. Your reasoning was that the Storefront API is fast enough, and going direct means one less server to run.\n\nThat replaced the earlier setup from August. Back then the app talked to your own small Node API on the VPS, and that API read products and orders from WooCommerce. According to that same decision, the Node API has been shut down. This is what the brain records; I can't check the live app or the server myself. The decision is due for review on 2026-12-19.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "product data source"
+            }
+          },
+          {
+            "name": "eml_projects",
+            "input": {}
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.app"
+            }
+          },
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "app backend API catalog"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+              "with_relations": true
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "8b4740e2-7d69-4484-8218-de5991dc30a7",
+              "with_relations": true
+            }
+          }
+        ],
+        "seen_ids": [
+          "b4139174-3305-48f7-838b-584f20317868",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "e2e3dc53-dc77-4fc5-9bf6-b6c16f4c3692",
+          "7797b900-a6f9-4a0d-ad06-cebd54595e03",
+          "1662506e-f0aa-400d-840b-be7f0b5fe975",
+          "39df5e76-d249-462b-8b40-d4a0240e2453",
+          "36d7e5d7-5362-4d79-93b4-ff99ee5d3fea",
+          "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+          "8b4740e2-7d69-4484-8218-de5991dc30a7",
+          "352720b5-6d6c-4a9d-b4e7-71a602988722",
+          "df0258f7-4873-45e4-999e-7e49f7c990a0",
+          "d936e9cc-ab41-43a4-9374-806756713ac5",
+          "c549ebde-72d4-4097-b3b6-3e4933b961e0"
+        ],
+        "turns": 7,
+        "stop": "end_turn",
+        "usage": {
+          "input": 8,
+          "output": 641,
+          "cache_read": 80881,
+          "cache_write": 11227
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the app gets product data directly from the Shopify Storefront API and that the Node API was shut down; it mentions the Node API and WooCommerce only as the earlier setup.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.11884420000000001
+      },
+      {
+        "id": "beta-feedback",
+        "category": "direct",
+        "answer": "Testers complained most about the magic-link login. It confused people, and it came up 12 times in the round-one feedback (noted 2026-10-11).\n\nThe other two points from that round:\n- They want order tracking in the app.\n- The app crashes on iPad in split view.\n\nThe brain only has a count for the login issue, so I can't say how the other two rank. It also has no notes from a second feedback round yet. Your App Store submission is waiting on that round. If round two has happened, tell me what came out of it and I'll add it.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "beta testers feedback",
+              "limit": 20
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "title": "beta-feedback"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "df0258f7-4873-45e4-999e-7e49f7c990a0"
+            }
+          }
+        ],
+        "seen_ids": [
+          "df0258f7-4873-45e4-999e-7e49f7c990a0",
+          "7797b900-a6f9-4a0d-ad06-cebd54595e03",
+          "39df5e76-d249-462b-8b40-d4a0240e2453"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 431,
+          "cache_read": 56439,
+          "cache_write": 8049
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives all three reference facts: the magic-link login confusion with 12 mentions, the request for order tracking, and the crash in iPad split view. It contains no outdated claims.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0843238
+      },
+      {
+        "id": "backups",
+        "category": "direct",
+        "answer": "We keep them 30 days. The VPS is backed up every night with restic to object storage. That was decided on 2026-09-10, over relying only on the provider's snapshots, because those aren't stored off-site and can't restore single files.\n\nThe brain only records the decision, not whether the nightly job is actually running. I can't check that from here. The decision is due for review on 2026-12-19.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "server backups retention"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "search": "backup",
+              "limit": 20
+            }
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.infra"
+            }
+          }
+        ],
+        "seen_ids": [
+          "d0bd880c-98a4-4df4-a5ca-aa1c2ec20d4f",
+          "5cdd19a2-61ea-4b27-8de6-cef04fece410",
+          "5881fbe1-5d14-444c-a3b4-2f9ce66479e1",
+          "8e9047f8-1906-497a-a9ca-a15db525858a"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 371,
+          "cache_read": 56166,
+          "cache_write": 7840
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives 30-day retention with nightly restic backups to object storage, which matches the reference, and the extra detail doesn't contradict it.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0813972
+      },
+      {
+        "id": "outage-paraphrase",
+        "category": "paraphrase",
+        "answer": "Yes, once, on 5 October 2026. The blog was down for about three hours because the VPS disk filled up with logs. It was fixed by adding log rotation.\n\nThat's the only outage in your notes. A related task is still open: setting up uptime monitoring for the shop, blog and newsletter, with alerts to your phone.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "blog outage down"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "type": "event",
+              "limit": 50
+            }
+          }
+        ],
+        "seen_ids": [
+          "66cc7376-1083-4889-87f7-ff540c8e81ca",
+          "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+          "c657b128-42ef-417c-9f79-2b60f95ddc1e",
+          "85a5273b-2d26-4931-8c3d-5fd54912dd85",
+          "a2844e77-920e-418a-9dda-76329002607a",
+          "02f58585-065e-4c28-b9c4-c7d247c64b08",
+          "f877e02c-9dd9-4075-b041-c6d9a0d7c14c",
+          "5881fbe1-5d14-444c-a3b4-2f9ce66479e1",
+          "8e9047f8-1906-497a-a9ca-a15db525858a",
+          "517f4226-0bf1-429c-8f3f-67e901b00143"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 4,
+          "output": 276,
+          "cache_read": 35057,
+          "cache_write": 8598
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives all the reference facts: about three hours of downtime, a disk filled with logs as the cause, and log rotation as the fix.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0813314
+      },
+      {
+        "id": "infra-status",
+        "category": "current-over-stale",
+        "answer": "According to the latest infra status (written 16 Oct 2026):\n\n- **One VPS.** It hosts the blog and the newsletter.\n- **The WooCommerce shared hosting for the shop.** It's still running, but it's cancelled as of the end of this month (31 Oct).\n\nThe app API isn't on the list anymore. The previous status (31 Aug) had it on the VPS, but the current one only names the blog and the newsletter, so it seems to have been shut down. Nothing in the brain records that directly, though.\n\nOne gap: the brain doesn't say where the shop will run once the shared hosting ends. If it's moving to the VPS or to a hosted platform, tell me and I'll update the status. The open uptime-monitoring task also covers the shop, so it depends on that answer.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "server",
+              "limit": 20
+            }
+          },
+          {
+            "name": "eml_entities",
+            "input": {
+              "kind": "asset"
+            }
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.infra"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.infra",
+              "limit": 50
+            }
+          }
+        ],
+        "seen_ids": [
+          "d0bd880c-98a4-4df4-a5ca-aa1c2ec20d4f",
+          "5881fbe1-5d14-444c-a3b4-2f9ce66479e1",
+          "8e9047f8-1906-497a-a9ca-a15db525858a",
+          "5cdd19a2-61ea-4b27-8de6-cef04fece410",
+          "66cc7376-1083-4889-87f7-ff540c8e81ca",
+          "ff1107cf-a24f-4a8b-b4b7-d5cdee3a3083",
+          "cf738fe2-143e-4f22-8284-e29fe336b3a1"
+        ],
+        "turns": 5,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 610,
+          "cache_read": 56337,
+          "cache_write": 9588
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer names the one VPS for the blog and newsletter and says the WooCommerce shared hosting is cancelled at month end, and it treats the API-on-VPS claim as past, not current.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.1001954
+      },
+      {
+        "id": "newsletter",
+        "category": "direct",
+        "answer": "You send it with Ghost's built-in newsletter feature. That was decided on 2026-09-20, and you chose it over Mailchimp and Buttondown because it's already part of the blog, so you don't need a second tool or a second subscriber list. It goes to about 600 subscribers and runs on your one VPS, the same one that hosts the blog.\n\nIf any of those subscribers are customers, your rule that you approve customer emails before they go out probably covers each newsletter send too.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "newsletter"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "title": "newsletter-tool"
+            }
+          }
+        ],
+        "seen_ids": [
+          "02f58585-065e-4c28-b9c4-c7d247c64b08",
+          "5881fbe1-5d14-444c-a3b4-2f9ce66479e1",
+          "8e9047f8-1906-497a-a9ca-a15db525858a",
+          "85a5273b-2d26-4931-8c3d-5fd54912dd85"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 381,
+          "cache_read": 56495,
+          "cache_write": 7795
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer names Ghost's built-in newsletter feature, which matches the reference, and the extra details don't contradict it.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.08130300000000001
+      },
+      {
+        "id": "bookkeeping",
+        "category": "paraphrase",
+        "answer": "You use lexoffice for bookkeeping. You chose it on 17 July 2026 over a spreadsheet and sevDesk because it syncs with your bank, lets you capture receipts on your phone, and your tax advisor works with it. That's still the current decision, and it's due for review on 19 December 2026.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "accounting software"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "title": "accounting-tool"
+            }
+          }
+        ],
+        "seen_ids": [
+          "563c86c7-5ab0-43fe-8a93-78048ca1ce4b"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 286,
+          "cache_read": 56171,
+          "cache_write": 7462
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer names lexoffice as the accounting software, which matches the reference, and the extra details don't contradict it.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0766742
+      },
+      {
+        "id": "vat",
+        "category": "paraphrase",
+        "answer": "Probably not yet, but the number I have is out of date, so I can't say for sure.\n\nMy only note on this is from 12 July 2026. It says you're VAT-exempt as a small business until your revenue for the year passes 22,000 EUR, and that you were at about 18,000 EUR then. That's over three months ago. If sales kept the same pace since then, you could be close to the limit or already past it.\n\nTwo things to check:\n1. Your revenue so far this year. If it's past 22,000 EUR, you'd have to start charging VAT. If it's close, plan for it now.\n2. The limit itself. I haven't checked the 22,000 EUR figure. If you're in Germany, the small-business rules changed in 2025: as far as I know, the limits are now 25,000 EUR for the previous year and 100,000 EUR for the current year. Ask your tax advisor which one applies to you.\n\nTell me your current revenue and I'll update the note.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "VAT"
+            }
+          },
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "revenue"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "81e1e8f5-8670-4e74-bf11-a1f90e95173e"
+            }
+          }
+        ],
+        "seen_ids": [
+          "81e1e8f5-8670-4e74-bf11-a1f90e95173e"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 617,
+          "cache_read": 56190,
+          "cache_write": 7718
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says not yet and gives the 22,000 EUR threshold and the roughly 18,000 EUR revenue figure; adding caveats is fine.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.085346
+      },
+      {
+        "id": "clay",
+        "category": "direct",
+        "answer": "The minimum order is 200 kg. That comes from the note on your Westerwald clay supplier, which also says you order every six weeks and delivery takes about ten days.\n\nThat note was written on 22 July 2026 and hasn't been updated since. If the supplier has changed their terms since then, check with them before you order.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "clay order minimum"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "search": "clay supplier",
+              "order_by": "updated_at"
+            }
+          }
+        ],
+        "seen_ids": [
+          "560cd0ad-5387-47cb-9af3-69df44fd987c",
+          "517f4226-0bf1-429c-8f3f-67e901b00143",
+          "df0258f7-4873-45e4-999e-7e49f7c990a0"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 308,
+          "cache_read": 56416,
+          "cache_write": 7656
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives all three reference facts: a 200 kg minimum, an order every six weeks and delivery in about ten days, and it doesn't assert any outdated claims.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.07871519999999999
+      },
+      {
+        "id": "friday-deploy",
+        "category": "rule",
+        "answer": "I wouldn't push it now, and I couldn't anyway. I only have access to your memory, not the Shopify CLI.\n\nYour own rule says no production deploys on Fridays after 14:00, so it should wait until Monday morning. At 16:30 on a Friday, a broken checkout could go unnoticed all weekend, and you're the only one around to fix it.\n\nWhat I'd do Monday morning, following your notes:\n1. Run `shopify theme push` from the theme repo to the preview theme, not the live one.\n2. Check checkout on mobile.\n3. If it looks good, publish it live.\n\nPushing to preview today is fine if you want a head start, since it doesn't touch the live shop.\n\nOne thing to check: my system date says Tuesday, 20 October 2026, not Friday. If it's really Tuesday, the rule doesn't apply and we can follow the same steps now. Which day is it?",
+        "tool_calls": [
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "5abb5987-b232-4f64-a4dc-d885c9b7793a"
+            }
+          },
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "shop theme"
+            }
+          }
+        ],
+        "seen_ids": [
+          "5abb5987-b232-4f64-a4dc-d885c9b7793a",
+          "3e5d5640-1b56-4ccc-abbd-043426238c0c",
+          "f877e02c-9dd9-4075-b041-c6d9a0d7c14c",
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "517f4226-0bf1-429c-8f3f-67e901b00143",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "4eb8d190-3be8-44aa-8eb0-827639a96320",
+          "b4139174-3305-48f7-838b-584f20317868",
+          "8e9047f8-1906-497a-a9ca-a15db525858a",
+          "1d937e94-09fd-46fd-bbd9-e6968b3e0ebf"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 4,
+          "output": 544,
+          "cache_read": 35058,
+          "cache_write": 8459
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer holds off on the deploy and cites the rule against production deploys on Fridays after 14:00, and it says to wait until Monday morning, which matches the reference.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0855796
+      },
+      {
+        "id": "migration-snapshot",
+        "category": "rule",
+        "answer": "Yes. Your brain has a rule for this shop: take a snapshot of the shop data before any migration or bulk import. So do that before you import the 300 variants.\n\nOne catch: the rule says \"database snapshot\", but the shop now runs on Shopify, where you can't reach the database directly. The closest thing is a full product export to CSV from the Shopify admin, saved as a dated file. If something goes wrong, that file is your way back. You could also use a backup app if you have one installed.\n\nOther things I'd do, though no rule covers them:\n- Import 5–10 variants first and check that prices, SKUs, stock and option names come out right.\n- Make sure none of the new SKUs match existing ones, so the import doesn't overwrite live products.\n- Do it at a quiet time, not while orders are busy.\n\nI can't run the export or the import myself. If you want, I can add a task to the brain to track this import.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "product import variants"
+            }
+          },
+          {
+            "name": "eml_projects",
+            "input": {}
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.shop"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "d603f800-0fad-4542-a44f-3c3e93c2858b"
+            }
+          }
+        ],
+        "seen_ids": [
+          "b4139174-3305-48f7-838b-584f20317868",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "4eb8d190-3be8-44aa-8eb0-827639a96320",
+          "52d94f87-8782-43aa-a979-d1909fe7caf3",
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "1d937e94-09fd-46fd-bbd9-e6968b3e0ebf",
+          "1b5caefb-0f7d-4365-8785-615310ddaab8",
+          "507a4cb3-5c96-45a6-86fc-3826360d7b3a"
+        ],
+        "turns": 5,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 618,
+          "cache_read": 57078,
+          "cache_write": 8930
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer gives the key fact, which is to take a snapshot of the shop data before the bulk import because a rule requires it for migrations and bulk imports; the extra Shopify and CSV-export detail doesn't contradict the reference.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.09523960000000001
+      },
+      {
+        "id": "customer-email",
+        "category": "rule",
+        "answer": "I can't send email myself, and I wouldn't send this one yet anyway. Your rule is that no customer email goes out until you've approved the exact text. Here's a draft for you to review:\n\n---\nSubject: The spring collection is here\n\nHi,\n\nOur new spring collection is now in the shop: fresh glazes and new shapes, each piece handmade.\n\nTake a look: [shop link]\n\nPieces are made in small batches, so some won't be around for long.\n\nWarm regards,\nAlex\n---\n\nOne thing to check first: your task to reshoot the spring collection's product photos with the daylight setup is still open. If the shop still has the old photos, you might want to finish the reshoot before you send this.\n\nOnce you approve the text and have the link ready, you'd send it from your email tool. Tell me if you want any changes to the draft.",
+        "tool_calls": [
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "f17cd454-1f08-4ec5-b1ad-25f1ad7d4f20"
+            }
+          },
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "spring collection customers email"
+            }
+          }
+        ],
+        "seen_ids": [
+          "f17cd454-1f08-4ec5-b1ad-25f1ad7d4f20",
+          "b4139174-3305-48f7-838b-584f20317868"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 4,
+          "output": 455,
+          "cache_read": 35045,
+          "cache_write": 7521
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer holds off on sending, drafts the text, and asks Alex to approve the exact wording first, which matches the reference.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.076293
+      },
+      {
+        "id": "gift-guide",
+        "category": "direct",
+        "answer": "The gift guide has to be published before 1 December 2026, so 30 November at the latest. That's about six weeks from today. This comes from the blog content plan for this quarter.\n\nRight now the only blog post being worked on is the glazing-process post, and the gift guide isn't set up as a task. Do you want me to add it as a task with that deadline?",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "gift guide"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.blog"
+            }
+          }
+        ],
+        "seen_ids": [
+          "a2844e77-920e-418a-9dda-76329002607a",
+          "c657b128-42ef-417c-9f79-2b60f95ddc1e",
+          "85a5273b-2d26-4931-8c3d-5fd54912dd85",
+          "02f58585-065e-4c28-b9c4-c7d247c64b08",
+          "f877e02c-9dd9-4075-b041-c6d9a0d7c14c"
+        ],
+        "turns": 3,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 303,
+          "cache_read": 56194,
+          "cache_write": 8488
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the guide must be published before 1 December, which matches the reference, and the extra details don't contradict it.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.08522680000000002
+      },
+      {
+        "id": "app-open-work",
+        "category": "dashboard",
+        "answer": "The companion app has two open tasks. Neither has been started:\n\n1. **android-push**: set up Firebase Cloud Messaging so the Android build can receive push notifications. This is the main blocker, because the Android build can't go ahead until it's done. It has been open since Oct 6.\n2. **app-store-submission**: submit the iOS app for App Store review after the second round of beta feedback. It has been open since Oct 13.\n\nThe app is currently in TestFlight beta with 40 testers. Nothing in the brain says whether the second feedback round has started, so I don't know when the iOS submission will be unblocked.\n\nAlso: the brain has a rule to test on the oldest device. It's worth doing that before the App Store submission.",
+        "tool_calls": [
+          {
+            "name": "eml_projects",
+            "input": {}
+          },
+          {
+            "name": "eml_show",
+            "input": {
+              "scope": "project.app"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.app",
+              "type": "task",
+              "limit": 50
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "afdcd061-fddf-4bbf-a136-b7c043dfc468"
+            }
+          },
+          {
+            "name": "eml_get",
+            "input": {
+              "id": "8b4740e2-7d69-4484-8218-de5991dc30a7"
+            }
+          }
+        ],
+        "seen_ids": [
+          "7797b900-a6f9-4a0d-ad06-cebd54595e03",
+          "1662506e-f0aa-400d-840b-be7f0b5fe975",
+          "39df5e76-d249-462b-8b40-d4a0240e2453",
+          "36d7e5d7-5362-4d79-93b4-ff99ee5d3fea",
+          "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+          "8b4740e2-7d69-4484-8218-de5991dc30a7",
+          "352720b5-6d6c-4a9d-b4e7-71a602988722"
+        ],
+        "turns": 6,
+        "stop": "end_turn",
+        "usage": {
+          "input": 8,
+          "output": 661,
+          "cache_read": 79463,
+          "cache_write": 9687
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer names both open items from the reference: Android push via Firebase Cloud Messaging, and the App Store submission after the second beta feedback round.",
+        "evidence_found": 3,
+        "evidence_expected": 3,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.1066406
+      },
+      {
+        "id": "product-import-history",
+        "category": "history",
+        "answer": "Yes, it finished. The product-import task (WooCommerce to Shopify, including images and variants) is marked resolved, and the recorded result is **214 products imported, with 6 variants fixed by hand**.\n\nThe task was logged on 2026-09-22. The shop then went live on Shopify on 2026-10-14, and the current shop status says it's running there.\n\nMy memory doesn't say whether anyone has checked those 214 against the original WooCommerce product count. If you want to be sure nothing was missed, compare the two counts.",
+        "tool_calls": [
+          {
+            "name": "eml_recall",
+            "input": {
+              "query": "Shopify product import"
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.shop",
+              "search": "import",
+              "limit": 30
+            }
+          },
+          {
+            "name": "eml_list",
+            "input": {
+              "scope": "project.shop",
+              "type": "event",
+              "limit": 30
+            }
+          }
+        ],
+        "seen_ids": [
+          "b4139174-3305-48f7-838b-584f20317868",
+          "d603f800-0fad-4542-a44f-3c3e93c2858b",
+          "517f4226-0bf1-429c-8f3f-67e901b00143",
+          "3e5d5640-1b56-4ccc-abbd-043426238c0c",
+          "d4416fbe-c7b8-40cc-89d1-f3486ac75cb5",
+          "9319ac74-f68c-4a37-8f71-b95a35301d8f",
+          "afdcd061-fddf-4bbf-a136-b7c043dfc468",
+          "2348e260-bbe1-4c13-97fb-6f250aa96803"
+        ],
+        "turns": 4,
+        "stop": "end_turn",
+        "usage": {
+          "input": 6,
+          "output": 513,
+          "cache_read": 56832,
+          "cache_write": 8850
+        },
+        "correct": true,
+        "stale": false,
+        "judge_reason": "The answer says the import finished, with 214 products imported and 6 variants fixed by hand, which matches the reference.",
+        "evidence_found": 1,
+        "evidence_expected": 1,
+        "harness": "claude-code 2.1.292",
+        "cost_usd": 0.0924504
       }
     ]
   }

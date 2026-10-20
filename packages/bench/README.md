@@ -26,11 +26,18 @@ an older version.
    - absent rate — an engram shows that must not (e.g. a superseded decision on a dashboard)
 4. **Agent surface** (no model): what an agent reads before it acts — the session-start hook output,
    the prompt reminder and the tool list, in characters.
-5. **Stage 2: agent** (`--agent`, calls the Anthropic API). A Claude model answers each question with
-   the version's hooks as context and its MCP server as tools, on its own copy of the brain. Graded
-   deterministically (did the tool output contain the expected engrams?) and by a judge model against
-   the reference answer and the outdated claims listed for the question: accuracy, stale rate,
-   evidence rate, tool calls, tokens.
+5. **Stage 2: agent** (`--agent`). A Claude model answers each question with the version's hooks as
+   context and its MCP server as tools, on its own copy of the brain. Graded deterministically (did
+   the tool output contain the expected engrams?) and by a judge model against the reference answer
+   and the outdated claims listed for the question: accuracy, stale rate, evidence rate, tool calls,
+   tokens. Two runners:
+   - `claude-code` (default): headless Claude Code (`claude -p`) per question, isolated from the
+     machine (own HOME and config dir, no built-in tools, only the `eml_brain` tools), with the
+     version's MCP server and hooks configured as the cockpit does. Signs in with a Claude Code token
+     (`CLAUDE_CODE_OAUTH_TOKEN`, or `--claude-token-file`). The Claude Code version goes into the
+     result; compare two EML versions only on the same one.
+   - `api`: a plain tool loop over the Anthropic Messages API (`ANTHROPIC_API_KEY`), no harness
+     around the model — for comparing models.
 
 Stage 1 under stage 2 separates the two kinds of failure: the brain did not surface the knowledge,
 or the model did not use it.
@@ -46,8 +53,11 @@ node packages/bench/dist/cli.js run --eml .
 # another build, on a brain written by this one (the update path)
 node packages/bench/dist/cli.js run --eml ../eml-v0.19.0 --base .
 
-# with stage 2 (needs Anthropic credentials in the environment, costs money)
-node packages/bench/dist/cli.js run --eml . --agent [--model claude-opus-5-5] [--effort medium]
+# with stage 2 in Claude Code (token from `claude setup-token`)
+node packages/bench/dist/cli.js run --eml . --agent --claude-token-file <file> [--model claude-opus-5-5] [--effort medium]
+
+# stage 2 over the API instead (ANTHROPIC_API_KEY, costs API credit)
+node packages/bench/dist/cli.js run --eml . --agent --runner api
 
 # what changed between two results
 node packages/bench/dist/cli.js compare packages/bench/results/0.18.2.json packages/bench/results/0.19.0.json
@@ -62,5 +72,8 @@ in `work/` (ignored), for reading why a number moved.
 - The fixture and the questions are written by the people who build EML; they favour what EML was
   built to do. Questions from real sessions (against a private copy of a real brain, never checked in)
   are the counterweight.
-- The fixture is small; rankings near the top are easy at this size. Volume comes next.
+- The fixture is small and its questions are direct: v0.18.2 with Opus 5.5 answers all of them
+  (stage 2 accuracy 1.0), so stage 2 does not yet separate versions on correctness — only on effort
+  (tool calls, tokens). Volume, contradictions without a supersede, multi-step and unanswerable
+  questions come next.
 - The fixture is written with the base version's write API, so a base must accept its format.
