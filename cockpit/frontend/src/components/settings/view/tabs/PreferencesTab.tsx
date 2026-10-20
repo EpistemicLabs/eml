@@ -1,10 +1,11 @@
 // Settings › Preferences: the user's personal setup, one section per area
-// (Appearance, Sidebar, Notifications). Theme presets land with the theme redo.
+// (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
 import { ThemeModeSelector } from '@/shared/view/ui';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import SettingsToggle from '../SettingsToggle';
 import NotificationsSection from './NotificationsSection';
 
 type PreferencesTabProps = {
@@ -12,6 +13,8 @@ type PreferencesTabProps = {
   onProjectSortOrderChange: (value: ProjectSortOrder) => void;
   notifyOnDone: boolean;
   onNotifyOnDoneChange: (value: boolean) => void;
+  greetOnStart: boolean;
+  onGreetOnStartChange: (value: boolean) => void;
 };
 
 // Apple-style inline select — bg-transparent so it sits ON the form-card
@@ -24,6 +27,8 @@ export default function PreferencesTab({
   onProjectSortOrderChange,
   notifyOnDone,
   onNotifyOnDoneChange,
+  greetOnStart,
+  onGreetOnStartChange,
 }: PreferencesTabProps) {
   return (
     <div className="space-y-8">
@@ -52,6 +57,21 @@ export default function PreferencesTab({
               <option value="name">Alphabetical</option>
               <option value="date">Recent Activity</option>
             </select>
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Sessions">
+        <SettingsCard divided>
+          <SettingsRow
+            label="Greeting at session start"
+            description="A new session opens with a short greeting and where the project stands. Sessions started with their own task stay as they are."
+          >
+            <SettingsToggle
+              checked={greetOnStart}
+              onChange={onGreetOnStartChange}
+              ariaLabel="Greeting at session start"
+            />
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
