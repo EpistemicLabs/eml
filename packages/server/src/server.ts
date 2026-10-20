@@ -13,6 +13,7 @@
  *
  * Endpoints:
  *   POST /boot              { agent?: string, budget?: number }      → Boot identity load (budget = max chars)
+ *   POST /project-block     { scope: project.<id>, budget?: number } → Project block for a session (404: no such project)
  *   POST /recall            { query: string, limit? }                → Recall
  *   POST /store             { content, type, scope, ... }            → DEPRECATED v0.7 — use /context
  *   POST /context           { content, type, scope, ... }            → Store an engram (v0.7)
@@ -59,6 +60,8 @@ import {
   initControlDatabase,
   runForwardMigrations,
   boot,
+  projectBlock,
+  inheritedRules,
   hygieneCheck,
   renderRecallMarkdown,
   renderBrainStateMarkdown,
@@ -885,7 +888,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // v0.10.5: return the compact dashboard markdown, not the full structured state
       // (callTool stringifies the whole response → full engrams would blow the budget).
       const state = eml.engrams.buildBrainState(q.scope)
+      // A project's dashboard shows its parents' rules too, marked inherited.
+      state.rules = [...(state.rules ?? []), ...inheritedRules(eml, q.scope)]
       return json(res, 200, { scope: q.scope, markdown: renderBrainStateMarkdown(state) })
+    }
+
+    // POST /project-block — the project context a host injects into a session
+    // that works in one project (core/project-block.ts). budget: the caller's
+    // hard cap for the markdown, in characters, as for /boot.
+    if (url === '/project-block' && method === 'POST') {
+      const body = await readBody(req)
+      const scope = typeof body.scope === 'string' ? body.scope : ''
+      if (!scope.startsWith('project.')) return json(res, 400, { error: 'scope project.<id> required' })
+      const budget = typeof body.budget === 'number' && Number.isFinite(body.budget) && body.budget > 0
+        ? Math.floor(body.budget) : undefined
+      const result = projectBlock(eml, scope.slice('project.'.length), budget !== undefined ? { budget } : {})
+      if (!result) return json(res, 404, { error: `project "${scope}" not found` })
+      return json(res, 200, result)
     }
 
     // GET /hygiene — every hygiene check with what it requires, how to fix an

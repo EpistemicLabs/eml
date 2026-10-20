@@ -279,6 +279,34 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
     })
   })
 
+  // The project-block hook (mcp-server hooks/project-block.ts) asks for one
+  // project; eml_show of a child project carries its parents' rules.
+  describe('project block', () => {
+    const auth = () => ({ Authorization: `Bearer ${provA.tokenPlaintext}` })
+    const post = (url: string, body: unknown) => request('POST', `${baseUrl}${url}`, auth(), JSON.stringify(body))
+
+    it('POST /project-block → block within the budget, parents\' rules inherited; 404 / 400 otherwise', async () => {
+      expect((await post('/project', { id: 'pb-base', name: 'Base' })).status).toBe(201)
+      expect((await post('/project', { id: 'pb-app', name: 'App', parent_project: 'pb-base' })).status).toBe(201)
+      const rule = await post('/context', {
+        type: 'rule', scope: 'project.pb-base', title: 'base-rule', content: 'Test before merge.', properties: { applies: 'always' },
+      })
+      expect(rule.status).toBe(201)
+
+      const r = await post('/project-block', { scope: 'project.pb-app', budget: 10_000 })
+      expect(r.status).toBe(200)
+      expect(r.body.markdown).toContain('# Project — project.pb-app (App)')
+      expect(r.body.markdown).toContain('- **base-rule** (inherited from project.pb-base) Test before merge.')
+      expect(r.body.budget).toMatchObject({ limit: 10_000, fits: true })
+
+      const show = await request('GET', `${baseUrl}/brain-state?scope=project.pb-app`, auth())
+      expect(show.body.markdown).toContain('- **base-rule** (inherited from project.pb-base) — Test before merge.')
+
+      expect((await post('/project-block', { scope: 'project.no-such' })).status).toBe(404)
+      expect((await post('/project-block', { scope: 'global' })).status).toBe(400)
+    })
+  })
+
   describe('/health remains public', () => {
     it('no auth required, returns spec format', async () => {
       const r = await request('GET', `${baseUrl}/health`)
