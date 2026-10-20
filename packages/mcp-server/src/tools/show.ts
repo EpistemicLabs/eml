@@ -18,7 +18,7 @@ export function registerShowTool(server: McpServer, http: HttpClient): void {
       description:
         'Curated snapshot for one scope: the status (with what it tracks), open tasks, recent ' +
         'decisions, the latest session log with its next steps, active rules (situational ones with ' +
-        'their trigger), ripe learnings and pending reviews, plus the project\'s or entity\'s metadata. ' +
+        'their trigger), ripe learnings, plus the project\'s or entity\'s metadata. ' +
         'The "where do we stand?" tool when you know the exact scope. For fuzzy/cross-scope search use ' +
         'eml_recall; for filtered enumeration use eml_list; for one engram use eml_get. Relations are ' +
         'not included — fetch via eml_get(with_relations).',

@@ -19,7 +19,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       'something new? Don\'t patch: write the new engram with supersedes=[id]; if it already exists, pass ' +
       'supersedes=[old ids] here on the new one.\n\n' +
       'Only the fields of the engram\'s own type are accepted; the error lists them. null clears an optional ' +
-      'field.\n\n' +
+      'field. If unsure of the current state, eml_get(id) first.\n\n' +
       'Reviews: changing a decision, rule or profile restarts its review and clears the review flag. If it still ' +
       'holds unchanged, confirm it with review_note — why it still holds.',
     inputSchema: z.object({
@@ -41,7 +41,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       trigger: nullable('rule: the situation, at most 80 characters.'),
       applies: z.enum(['always', 'situational']).optional().describe('rule.'),
       rule_type: z.enum(RULE_TYPES).nullable().optional().describe('rule.'),
-      core: z.boolean().optional().describe('profile: true = the core identity (supersedes the scope\'s previous core profile).'),
+      core: z.boolean().optional().describe('profile: true = this scope\'s core profile; if the scope already has one, it is replaced (superseded).'),
       source: z.string().optional().describe('reference.'),
       source_name: nullable('reference.'),
       checked_at: nullable('reference: ISO date the source was last verified.'),

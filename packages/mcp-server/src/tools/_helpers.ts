@@ -63,11 +63,11 @@ export function conflictBanner(result: unknown): string | null {
 
   const top = Math.max(...pc.map(c => c.coverage))
   const header = top >= CONFLICT_ESCALATION_COVERAGE
-    ? `⚠ near-identical active engram${pc.length > 1 ? 's' : ''} already exist${pc.length > 1 ? '' : 's'} — resolve before continuing.`
+    ? `⚠ active engram${pc.length > 1 ? 's' : ''} with high word overlap exist${pc.length > 1 ? '' : 's'} — check whether one already covers this before continuing.`
     : `⚠ ${pc.length} possibly conflicting/duplicate active engram${pc.length > 1 ? 's' : ''} found (advisory).`
 
   const lines = pc.map(c =>
-    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · coverage ${c.coverage} — ${c.gist.slice(0, 120)}`,
+    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap — ${c.gist.slice(0, 120)}`,
   )
 
   return [
@@ -85,7 +85,7 @@ export function closedSubjectBanner(result: unknown): string | null {
   const closed = (result as { closed_subjects?: string[] } | null)?.closed_subjects
   if (!closed || closed.length === 0) return null
   return `ℹ filed into closed subject${closed.length > 1 ? 's' : ''} ${closed.join(', ')} — fine for late filing; ` +
-    'if the strand is ongoing again, reopen it via eml_update_object(object=subject, status=active).'
+    'if the strand is ongoing again, reopen it via eml_update_object(object=subject, id=<subject id>, status=active).'
 }
 
 // v0.14 Cluster C: `[[targets]]` in content that resolved to no engram. Surfaced

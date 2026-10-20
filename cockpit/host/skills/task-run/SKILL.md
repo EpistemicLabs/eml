@@ -16,8 +16,8 @@ this one session.
    notes bound to it. Then `eml_show <the task's scope>` for the project
    around it.
 2. If the task is resolved or invalidated: say so and stop.
-3. `eml_track_task` with text "Task run started in session
-   $COCKPIT_SESSION_ID." — and status `active` if it is `planned`.
+3. `eml_track_task` with text "Task run started." — and status `active` if it
+   is `planned`.
 4. Say in two or three lines what the task is, which stage it is in and what
    this stage will produce — then do that stage.
 

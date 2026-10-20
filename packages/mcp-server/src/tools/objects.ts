@@ -15,11 +15,16 @@ const OBJECTS = ['project', 'entity', 'tag', 'subject'] as const
 
 const FIELDS =
   'Fields per object (anything else errors with the list):\n' +
-  '- project: name, id (optional, else the slug of name), status active · paused · archived, goal, description, ' +
-  'owner, parent_project, started_at, status_tracks (what the project\'s status is about), metadata (flat text map: repo, infra, url …)\n' +
-  '- entity: name, id, kind person · org · asset, status active · archived, description, status_tracks, metadata\n' +
-  '- tag: name, description, status active · archived\n' +
-  '- subject: name, description, status active · closed'
+  '- project (internal work: a codebase or undertaking): name, id (optional, else the slug of name; used as ' +
+  'project.<id>), status active · paused · archived, goal (one line: what done looks like), description (1-2 ' +
+  'sentences), owner, parent_project, started_at, status_tracks (what the project\'s status is about), metadata ' +
+  '(flat text map: repo, infra, url …)\n' +
+  '- entity (an external person, org or asset): name, id, kind person · org · asset, status active · archived, ' +
+  'description (what it is, why it matters), status_tracks, metadata\n' +
+  '- tag: name (stored as its slug, "CI / CD" → "ci-cd"; an existing slug is a no-op), description (one line), ' +
+  'status active · archived. Only for a genuinely new category — one tag per category, no deploy / deployment ' +
+  'splits.\n' +
+  '- subject: name (slugged like a tag), description (what the strand is and when it is done), status active · closed'
 
 const fieldShape = {
   name: z.string().optional(),
@@ -39,8 +44,10 @@ export function registerReadObjectTool(server: McpServer, http: HttpClient): voi
   server.registerTool('eml_read_object', {
     title: 'Read Objects',
     description:
-      'Without id: the objects of that kind with usage counts (reuse existing tags and subjects before creating). ' +
-      'Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
+      'Without id: the objects of that kind with usage counts — check a project or entity exists before writing ' +
+      'in its scope; reuse existing tags and subjects before creating. A tag is what engrams are ABOUT, a recurring ' +
+      'category that never ends ("architecture", "deploy"); a subject is a strand they BELONG TO that can be done ' +
+      '("v0.14-planning"). Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
       'dashboard stays eml_show.',
     inputSchema: z.object({
       object: z.enum(OBJECTS).describe('project · entity · tag · subject.'),
@@ -69,7 +76,9 @@ export function registerUpdateObjectTool(server: McpServer, http: HttpClient): v
     description:
       'Updates a project, entity, tag or subject; only the fields of that kind, null clears an optional one. ' +
       'Archiving a project sets its end date; an archived tag stays on the engrams that carry it but is not ' +
-      'assigned anew. The response shows the diff.\n\n' + FIELDS,
+      'assigned anew. The response shows the diff. It changes the registration, not knowledge about it — facts go ' +
+      'into engrams in its scope. Close a subject (status=closed) when the strand is over; its engrams keep it. An ' +
+      'id never changes; name is the display label.\n\n' + FIELDS,
     inputSchema: z.object({
       object: z.enum(OBJECTS).describe('project · entity · tag · subject.'),
       ...fieldShape,

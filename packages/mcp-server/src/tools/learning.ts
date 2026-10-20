@@ -50,19 +50,20 @@ export function registerLearningTool(server: McpServer, http: HttpClient): void 
 
 /** The topic match (nothing written) or the ripeness after the write. */
 export function learningBanner(result: unknown): string | null {
-  const r = result as { written?: boolean, matches?: Array<{ id: string, title: string | null, coverage: number, content: string }>, learning?: { state: string } } | null
+  const r = result as { written?: boolean, matches?: Array<{ id: string, title: string | null, coverage: number, content: string }>, learning?: { state: string, supporting_sessions?: number } } | null
   if (!r) return null
   if (r.written === false && r.matches) {
     return [
       `ℹ nothing written — an active learning on this topic exists:`,
-      ...r.matches.map(m => `  • ${m.title ?? '(no title)'} · ${m.id} · coverage ${m.coverage} — ${m.content.slice(0, 120)}`),
+      ...r.matches.map(m => `  • ${m.title ?? '(no title)'} · ${m.id} · ${Math.round(m.coverage * 100)} % word overlap — ${m.content.slice(0, 120)}`),
       'Add your incident there with id, or pass new_topic=true if it really is a different topic.',
     ].join('\n')
   }
   const state = r.learning?.state
+  const sessions = r.learning?.supporting_sessions
   const lines: string[] = []
-  if (state === 'ripe') lines.push('✓ ripe — at the next natural stop, ask the user whether to make it a rule (eml_rule from_learning=[id], agreed=…).')
-  if (state === 'unclear') lines.push('⚠ unclear — contradicting evidence is open. Ask the user, then sharpen content (eml_learning id + content) or invalidate it.')
+  if (state === 'ripe') lines.push(`✓ ripe (supporting incidents in ${sessions ?? 2} sessions, at least one in the user's words) — at the next natural stop, ask the user whether to make it a rule (eml_rule from_learning=[id], agreed=…).`)
+  if (state === 'unclear') lines.push('⚠ unclear — contradicting evidence is open. Ask the user, then sharpen the content (eml_update(id, content)) or invalidate it (eml_update(id, status=invalidated)).')
   if (state === 'paused') lines.push('ℹ paused — the user declined a rule; the question waits for two more incidents from different sessions.')
   const banner = writeBanner(result)
   if (banner) lines.push(banner)

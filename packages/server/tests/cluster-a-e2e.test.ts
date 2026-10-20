@@ -446,7 +446,7 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
 
       const blocked = await post(`/task/${parent.id}/track`, { status: 'resolved', outcome: 'done', text: 'done' })
       expect(blocked.status).toBe(400)
-      expect(blocked.body.error).toBe(`Invalid engram: task ${parent.id} has open sub-tasks: ${child.id} http-child`)
+      expect(blocked.body.error).toBe(`Invalid engram: task ${parent.id} has open sub-tasks: ${child.id} http-child — close each or move it (eml_track_task(<sub-task id>, parent_id=…)) first.`)
 
       const noOutcome = await post(`/task/${child.id}/track`, { status: 'resolved', text: 'done' })
       expect(noOutcome.status).toBe(400)

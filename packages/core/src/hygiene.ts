@@ -195,8 +195,8 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
     since_schema: 19,
     what: 'A rule says why it holds (why). New rules need it; older ones were written without.',
     how:
-      'Propose a why from the rule, its detail and its history (eml_get), show it to the user, and set it with ' +
-      'eml_update(why) once they agree. If no reason can be found, ask whether the rule should stay.',
+      'Find the reason in the rule, its detail and its history (eml_get) and set it with eml_update(why). No ' +
+      'reason to be found → ask the user whether the rule should stay.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && (typeof c.properties?.why !== 'string' || c.properties.why.trim() === ''))
@@ -211,10 +211,11 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'A rule is agreed with the user (agreed holds their yes). Older rules were often written after a single ' +
       'incident; what the agent noticed on its own is a learning until it recurs and the user agrees.',
     how:
-      'Show the rule to the user. They want it as a rule → eml_update(agreed=<their words>). It came from one ' +
-      'incident and they do not want it as a rule yet → write a learning (eml_learning: the rule as the lesson, the ' +
-      'incident as evidence) and link it: eml_update(<learning id>, supersedes=[<rule id>]). Ask in batches, not ' +
-      'one by one.',
+      'List the rules compactly (title and one line each) and ask once whether to keep them as rules. Every rule ' +
+      'their answer does not except → eml_update(agreed=<their answer>). Each exception: no longer wanted → ' +
+      'eml_update(status=invalidated); one incident, not a rule yet → a learning (eml_learning: the rule as the ' +
+      'lesson, the incident as evidence), then eml_update(<learning id>, supersedes=[<rule id>]); wanted but ' +
+      'changed → new content and agreed in one call. rule-without-why runs first.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && (typeof c.properties?.agreed !== 'string' || c.properties.agreed.trim() === ''))
@@ -229,7 +230,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'A decision or note taken in a task says whether it outlives the task (binding standing) or only governs ' +
       'how the task is done (binding task; it closes with the task). Without binding it counts as standing.',
     how:
-      'Ask: does it still constrain work once the task is done? Yes → eml_update(binding=standing). No → task still ' +
+      'Decide: does it still constrain work once the task is done? Yes → eml_update(binding=standing). No → task still ' +
       'open: eml_update(binding=task); task already closed: eml_update(status=invalidated).',
     detect(eml) {
       const linked = new Map(eml.engrams.taskLinkedItems().map(r => [r.id, r.task_status]))

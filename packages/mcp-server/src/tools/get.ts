@@ -12,7 +12,8 @@ export function registerGetTool(server: McpServer, http: HttpClient): void {
         'Fetches one engram by ID with full content + properties — the drill-down after an ID ' +
         'surfaces in eml_recall / eml_list / eml_show. Not a search: if you don\'t have the ID, ' +
         'use eml_recall. The returned `ingested_by` field is the authorship handle — who wrote ' +
-        'the engram (the token\'s caller), useful in a shared team brain. Its entries come with it, oldest ' +
+        'the engram (the token\'s caller), useful in a shared team brain. `session_id` and `model` say which ' +
+        'session and model wrote it. Its entries come with it, oldest ' +
         'first: a task\'s journal (note = written by an agent, change = written by the server) and the decisions ' +
         'and notes bound to it, a learning\'s evidence and ripeness, review confirmations.',
       inputSchema: z.object({

@@ -14,9 +14,6 @@ import {
  * mcp-tool-surface-v2-tool-drafts.
  */
 
-const CONFLICTS =
-  'If the response carries potential_conflicts, evaluate each before continuing: supersede / merge / relate / dismiss.'
-
 /** Drop undefined so the body carries only what the agent passed. */
 function body(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
@@ -35,7 +32,7 @@ export function registerDecideTool(server: McpServer, http: HttpClient): void {
       'governs how this task is done → task (scope, sequencing, approach, one-off measures); it closes with the ' +
       'task. Without task_id a decision is always standing.\n\n' +
       'Replaces an earlier decision? Pass its id in supersedes, don\'t duplicate. A small correction of the same ' +
-      'decision → eml_update(content).\n\n' + CONFLICTS,
+      'decision → eml_update(content).',
     inputSchema: z.object({
       content: content('The decision, 1-3 sentences, lead with the choice.'),
       scope: scope(SCOPE_ANY),
@@ -64,7 +61,7 @@ export function registerSetStatusTool(server: McpServer, http: HttpClient): void
       'content = what changed against the previous state, 1-3 sentences; the backstory belongs in a task journal ' +
       'or a log.\n\n' +
       'NOT a status: open work → eml_create_task · a choice with rationale → eml_decide · a one-off occurrence ' +
-      '(deploy, outage) → eml_event · a way of working → eml_rule.\n\n' + CONFLICTS,
+      '(deploy, outage) → eml_event · a way of working → eml_rule.',
     inputSchema: z.object({
       scope: scope('The scope whose state this is.'),
       state: z.string().describe('Short canonical phrase, not a sentence ("schema 17", "v0.17.17 live", "blocked on TLS cert"). The headline.'),
@@ -88,8 +85,8 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
       'eml_set_status · speculation without commitment → wait.\n\n' +
       'After this call, everything about the task goes through eml_track_task: progress, stage, status, closing, ' +
       'edits.\n\n' +
-      'Larger work: make the task the hub. Decisions → eml_decide(task_id) · the plan → eml_note(task_id) · ' +
-      'sub-tasks → eml_create_task(parent_id).\n\n' + CONFLICTS,
+      'Larger work: make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
+      'eml_note(task_id, binding) · sub-tasks → eml_create_task(parent_id).',
     inputSchema: z.object({
       content: content('What needs doing, 1-3 sentences, action verb first, specific enough that "done" is clear.'),
       scope: scope('Narrowest true scope: project.<id> for project work, entity.<id> for person/customer follow-ups. global is rare.'),
@@ -120,9 +117,10 @@ export function registerNoteTool(server: McpServer, http: HttpClient): void {
       'something that happened → eml_event.\n\n' +
       'A task\'s plan or spec → pass task_id and binding (does the note still hold once the task is done? yes → ' +
       'standing, no → task; it closes with the task). A later update of a still-valid note (e.g. the next research ' +
-      'round) → a new note with the same title to thread the series; the note itself is replaced → supersedes.\n\n' +
-      'Cross-reference with wikilinks (double square brackets around a title or id) instead of pasting ids.\n\n' +
-      CONFLICTS,
+      'round) → a new note with the same title to thread the series; the note itself is replaced → supersedes; a ' +
+      'small correction → eml_update(content).\n\n' +
+      'Cross-reference with [[title-or-id]] wikilinks instead of pasting ids; an id prefix of ≥ 8 chars works, ' +
+      'unresolved links come back as unresolved_links.',
     inputSchema: z.object({
       content: content('The note itself.'),
       scope: scope(SCOPE_ANY),
@@ -153,7 +151,7 @@ export function registerRuleTool(server: McpServer, http: HttpClient): void {
       'applies = always → binding within its scope; global, agent and user rules are delivered at session start ' +
       '(boot), project rules with eml_show of the project. situational → binding when its trigger occurs; listed ' +
       'as title + trigger, body via eml_get.\n\n' +
-      'Refining a rule → eml_update; replacing it → eml_rule(supersedes).\n\n' + CONFLICTS,
+      'Refining a rule → eml_update; replacing it → eml_rule(supersedes).',
     inputSchema: z.object({
       content: content('Only what to do, at most 200 characters.'),
       scope: scope('agent.<id> · user.<id> · project.<id> · global.'),
@@ -161,7 +159,7 @@ export function registerRuleTool(server: McpServer, http: HttpClient): void {
       applies: z.enum(['always', 'situational']).describe('always · situational.'),
       trigger: z.string().max(80).optional().describe('Required when situational: the situation, at most 80 characters; not repeated in content.'),
       why: z.string().describe('The rationale.'),
-      agreed: z.string().describe('The user\'s agreement, verbatim where possible ("ja, mach eine Regel draus").'),
+      agreed: z.string().describe('The user\'s agreement, verbatim where possible ("yes, make it a rule").'),
       from_learning: z.array(z.string()).optional().describe('Ids of the learnings this rule grows from; they become superseded and are linked to the rule.'),
       rule_type: z.enum(RULE_TYPES).optional().describe('constraint · process · convention · behavior · security.'),
       detail: z.string().optional().describe('Playbook, examples.'),
@@ -182,9 +180,7 @@ export function registerEventTool(server: McpServer, http: HttpClient): void {
       'be corrected with eml_update, but an event is never superseded.\n\n' +
       'NOT an event: the resulting state → eml_set_status (often both: event "v0.19.0 released" + status ' +
       '"v0.19.0 live") · a session recap → eml_log · open work → eml_create_task.\n\n' +
-      'Happened while working on a task? Pass task_id; it is noted in the task\'s journal.\n\n' +
-      'If the response carries potential_conflicts (e.g. the same event already recorded), evaluate each before ' +
-      'continuing.',
+      'Happened while working on a task? Pass task_id; it is noted in the task\'s journal.',
     inputSchema: z.object({
       content: content('What happened, facts.'),
       scope: scope(SCOPE_ANY),
@@ -208,7 +204,7 @@ export function registerReferenceTool(server: McpServer, http: HttpClient): void
       'in a repo) and why it matters. The substance stays at the source; this engram says where it is and what it ' +
       'is good for.\n\n' +
       'NOT a reference: a synthesis, research note or working thesis that lives in the brain → eml_note · a fact ' +
-      'about the thing being built → eml_note or eml_decide.\n\n' + CONFLICTS,
+      'about the thing being built → eml_note or eml_decide.',
     inputSchema: z.object({
       content: content('What it is and why it matters, short.'),
       scope: scope(SCOPE_ANY),
@@ -216,8 +212,8 @@ export function registerReferenceTool(server: McpServer, http: HttpClient): void
       source: z.string().describe('URL, repo path or document id. No source, no reference.'),
       source_name: z.string().optional().describe('Publisher or site, e.g. "Anthropic docs".'),
       checked_at: optIsoDate('ISO date, when the source was last verified.'),
-      task_id: taskId(),
-      supersedes: supersedes('e.g. a newer version of the same document.'),
+      task_id: taskId('The task this was found for; noted in the task\'s journal.'),
+      supersedes: supersedes('Ids of references this one replaces, e.g. a newer version of the same document.'),
       detail: detail(),
       tags: tags(),
       subjects: subjects(),
@@ -231,7 +227,8 @@ export function registerLogTool(server: McpServer, http: HttpClient): void {
     description:
       'Writes the session log: the one narrative of this session, so the next session can dock on. One per ' +
       'session, at the end or at a handoff to a fresh session. A second log in the same session is rejected: ' +
-      'update the first with eml_update.\n\n' +
+      'update the first with eml_update. what and next show in eml_show for the next sessions — keep each to one ' +
+      'or two sentences.\n\n' +
       'Not for status reports or customer updates (→ eml_set_status / eml_note) and not for single occurrences ' +
       '(→ eml_event).',
     inputSchema: z.object({
@@ -256,15 +253,15 @@ export function registerProfileTool(server: McpServer, http: HttpClient): void {
     description:
       'Records a facet of who someone is: an agent, a user, or an entity (person, organization). Identity, ' +
       'preferences, background, how they work — short.\n\n' +
-      'The core profile (core: true) is the identity the boot loads every session; one per agent / user. Other ' +
-      'profiles are facets, loaded on demand.\n\n' +
+      'Every agent and every user has one core profile, in its own scope: the identity the boot loads every ' +
+      'session (the agent\'s and each user\'s). Other profiles are facets, loaded on demand.\n\n' +
       'NOT a profile: how-to, setup or access info → eml_note / eml_reference · a way of working to follow → ' +
-      'eml_rule.\n\n' + CONFLICTS,
+      'eml_rule.',
     inputSchema: z.object({
       content: content('At most 400 characters.'),
       scope: scope('agent.<id> · user.<id> · entity.<id> only — a profile is always about someone.'),
       title: title(),
-      core: z.boolean().optional().describe('true = the core identity the boot loads. At most one per scope; a new core profile supersedes the old one automatically.'),
+      core: z.boolean().optional().describe('true = this scope\'s core profile (agent.<id> or user.<id>). If the scope already has one, it is replaced (superseded); other scopes are untouched.'),
       detail: z.string().optional().describe('Additions beyond 400 characters.'),
       review_due_at: optIsoDate('ISO date, when to re-check it. Default 180 days; due ones come up in brain hygiene.'),
       supersedes: supersedes(),

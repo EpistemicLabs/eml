@@ -28,11 +28,11 @@ describe('conflictBanner', () => {
     const banner = conflictBanner({ potential_conflicts: [cand(0.6)] })
     expect(banner).not.toBeNull()
     expect(banner!).toContain('(advisory)')
-    expect(banner!).not.toContain('near-identical')
+    expect(banner!).not.toContain('high word overlap')
     expect(banner!).toContain('[decision]')
     expect(banner!).toContain('brand-and-domain')
     expect(banner!).toContain('abcdef12')              // id sliced to 8
-    expect(banner!).toContain('coverage 0.6')
+    expect(banner!).toContain('60 % word overlap')
     // the resolve instruction reaches the agent at write time
     expect(banner!).toContain('supersede')
     expect(banner!).toContain('merge')
@@ -42,19 +42,19 @@ describe('conflictBanner', () => {
     expect(banner!).toContain('eml_update(<new id>, supersedes=[<old id>])')
   })
 
-  it('escalates wording at/above the escalation threshold (near-identical)', () => {
+  it('escalates wording at/above the escalation threshold (high word overlap)', () => {
     const banner = conflictBanner({ potential_conflicts: [cand(CONFLICT_ESCALATION_COVERAGE)] })
-    expect(banner!).toContain('near-identical')
+    expect(banner!).toContain('high word overlap')
     expect(banner!).not.toContain('(advisory)')
-    // singular candidate → singular verb agreement ("engram already exists")
-    expect(banner!).toMatch(/active engram already exists —/)
+    // singular candidate → singular verb agreement ("engram … exists")
+    expect(banner!).toMatch(/active engram with high word overlap exists —/)
   })
 
   it('uses the highest coverage to decide escalation across multiple candidates', () => {
     const banner = conflictBanner({ potential_conflicts: [cand(0.55), cand(0.9, { id: 'ffff0000ffff0000', title: 'brand-rename' })] })
-    expect(banner!).toContain('near-identical')
-    // plural form when more than one candidate — noun + verb agree ("engrams already exist")
-    expect(banner!).toMatch(/active engrams already exist —/)
+    expect(banner!).toContain('high word overlap')
+    // plural form when more than one candidate — noun + verb agree ("engrams … exist")
+    expect(banner!).toMatch(/active engrams with high word overlap exist —/)
     // both candidates listed
     expect(banner!).toContain('brand-and-domain')
     expect(banner!).toContain('brand-rename')
@@ -76,7 +76,7 @@ describe('closedSubjectBanner / writeBanner', () => {
   it('names the closed subjects and points at reopening', () => {
     const b = closedSubjectBanner({ closed_subjects: ['norway-trip'] })!
     expect(b).toContain('closed subject norway-trip')
-    expect(b).toContain('eml_update_object(object=subject, status=active)')
+    expect(b).toContain('eml_update_object(object=subject, id=<subject id>, status=active)')
   })
 
   it('writeBanner stacks the conflict banner first, then the closed-subject notice', () => {

@@ -319,7 +319,7 @@ export class EngramStore {
     validateEngramType(input.type)
     const type = input.type
     if (type === 'learning') {
-      throw new Error('Invalid engram: a learning is written with eml_learning (learn()), which checks the topic first.')
+      throw new Error('Invalid engram: a learning is written with eml_learning, which checks the topic first.')
     }
     const unknownInput = Object.keys(input).filter(k => !STORE_INPUT_KEYS.has(k) && (input as unknown as Record<string, unknown>)[k] !== undefined)
     if (unknownInput.length > 0) throw unknownFieldsError(type, unknownInput, createInputKeys(type))
@@ -775,7 +775,7 @@ export class EngramStore {
     if (closing && newStatus === 'resolved') {
       const open = this.openSubtasksOf(id)
       if (open.length > 0) {
-        throw new Error(`Invalid engram: task ${id} has open sub-tasks: ${open.map(c => `${c.id} ${c.title ?? '(no title)'}`).join(', ')}`)
+        throw new Error(`Invalid engram: task ${id} has open sub-tasks: ${open.map(c => `${c.id} ${c.title ?? '(no title)'}`).join(', ')} — close each or move it (eml_track_task(<sub-task id>, parent_id=…)) first.`)
       }
     }
     if (closing) {
@@ -1158,7 +1158,7 @@ export class EngramStore {
     // v0.19: an archived tag stays where it is but is not assigned anew.
     const archived = [...(this.tagStore?.archivedIds(slugs) ?? [])].filter(t => !current.includes(t))
     if (archived.length > 0) {
-      throw new Error(`tag "${archived.join('", "')}" is archived — it stays on the engrams that carry it, but is not assigned anew`)
+      throw new Error(`Invalid engram: tag "${archived.join('", "')}" is archived — it stays on the engrams that carry it but is not assigned anew; pick an active one (eml_read_object object=tag).`)
     }
     return slugs
   }

@@ -165,7 +165,8 @@ export const SYSTEM_RULES: SystemRule[] = [
       '(architecture, deploy); it never ends. A subject is a concrete strand with a lifecycle — ' +
       'what an engram BELONGS TO (v0.14-planning, norway-trip), across scopes. Test: can it be ' +
       '"done"? Then it is a subject. Call eml_read_object(object=subject) before assigning; create via ' +
-      'eml_create_object, close via eml_update_object(status=closed) when the strand is over.',
+      'eml_create_object(object=subject), close via eml_update_object(object=subject, id=<id>, status=closed) when ' +
+      'the strand is over.',
     why: 'v0.19: objects through eml_read_object / eml_create_object / eml_update_object.',
   },
 

@@ -125,8 +125,11 @@ with any MCP client.
      want it shorter, they just say so;
    - propose before non-trivial changes, and act after their go.
 
-   Ask whether that fits. On a change, update the matching rule with
-   `eml_update` (the answer length lives in `<agent>-engagement-style`).
+   Ask whether that fits — these rules count only with their yes. Yes → set
+   `agreed` on each with their words (`eml_update`). A change → update the
+   rule's content and set `agreed` in the same call (the answer length lives in
+   `<agent>-engagement-style`). A rule they don't want → `eml_update`
+   status=invalidated.
 
 7. **Skills and asking.** Two or three lines:
    - **Skills** are routines they can call with a slash command:
