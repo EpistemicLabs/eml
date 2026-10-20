@@ -42,6 +42,24 @@ describe('conflictBanner', () => {
     expect(banner!).toContain('eml_update(<new id>, supersedes=[<old id>])')
   })
 
+  // v0.19: the resolve line follows the written type's lifecycle — the call it
+  // proposes must be one the server accepts.
+  it('proposes the supersede path of the written type: task → track_task, event → invalidate, status → none', () => {
+    const task = conflictBanner({ type: 'task', potential_conflicts: [cand(0.6, { type: 'task' })] })!
+    expect(task).toContain('eml_track_task(<new id>, supersedes=[<old id>])')
+    expect(task).not.toContain('eml_update(<new id>, supersedes')
+    const event = conflictBanner({ type: 'event', potential_conflicts: [cand(0.9, { type: 'event' })] })!
+    expect(event).toContain('eml_update(<new id>, status=invalidated)')
+    expect(event).not.toContain('supersede')
+    const status = conflictBanner({ type: 'status', potential_conflicts: [cand(0.6)] })!
+    expect(status).toContain('already superseded by this write')
+    expect(status).not.toContain('supersedes=[')
+    // a task among the candidates of a note: not superseded by the note
+    const note = conflictBanner({ type: 'note', potential_conflicts: [cand(0.6, { type: 'task' })] })!
+    expect(note).toContain('eml_update(<new id>, supersedes=[<old id>])')
+    expect(note).toContain('A task is not superseded by this write — close it with eml_track_task')
+  })
+
   it('escalates wording at/above the escalation threshold (high word overlap)', () => {
     const banner = conflictBanner({ potential_conflicts: [cand(CONFLICT_ESCALATION_COVERAGE)] })
     expect(banner!).toContain('high word overlap')
@@ -152,6 +170,12 @@ describe('boundItemsBanner', () => {
     expect(b).toContain('closed with the task:\n  • decision plan · a')
     expect(b).toContain('kept as standing:\n  • decision (no title) · b')
     expect(b).toContain('reactivate the ones that hold again with eml_update(id, status=active)')
+  })
+
+  it('reopen candidates that are sub-tasks get the track_task path', () => {
+    const b = boundItemsBanner({ reopen_candidates: [item('c'), { id: 'd', type: 'task', title: 'child', status: 'invalidated' }] })!
+    expect(b).toContain('reactivate the ones that hold again with eml_update(id, status=active):\n  • decision x · c')
+    expect(b).toContain('reopen the ones that are still work with eml_track_task(id, status=planned, text):\n  • task child · d')
   })
 
   it('writeBanner puts the status line first and bound items last', () => {

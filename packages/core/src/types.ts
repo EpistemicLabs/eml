@@ -66,14 +66,11 @@ export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'mcp' | 'other'
 
 // === Properties (type-specific) ===
 
-// Decision (v0.8 C7: + decision_type Enum, + review_due_at)
-// v0.15: decision_type is no longer written (eml_decide dropped it); the type stays
-// for legacy data. rationale + alternatives (≥ 1) are required on CREATE
-// (validateProperties) — optional here because legacy decisions may lack them.
-export type DecisionType = 'strategic' | 'architectural' | 'operational' | 'roadmap'
-
+// Decision (v0.8 C7: + review_due_at; v0.19: decision_type gone — the v0.19
+// migration moved legacy values into detail). rationale + alternatives (≥ 1) are
+// required on CREATE (validateProperties) — optional here because legacy
+// decisions may lack them.
 export interface DecisionProperties {
-  decision_type?: DecisionType
   rationale?: string
   alternatives?: string[]
   expires_at?: string             // hard lifecycle: obsolete from then on
@@ -200,16 +197,15 @@ export interface LogProperties {
 // issue, thread). v0.14 narrows it back to that role: thoughts, syntheses, living
 // trackers and working theses that live in the brain are `note` (no typed
 // properties — the content is the note).
-// v0.8 C7: source_url + source_name moved in from top level (no BaseProperties
-// on the context layer; reference is the only context type with typed source fields).
-export type ReferenceType = 'analysis' | 'documentation' | 'spec' | 'issue' | 'thread' | 'paper' | 'other'
-
+// v0.8 C7: source + source_name moved in from top level (no BaseProperties on
+// the context layer; reference is the only context type with typed source fields).
+// v0.19: the fields of fields.ts — source_url / url became source, researched_at /
+// accessed_at became checked_at, reference_type and notes went into detail.
 export interface ReferenceProperties {
-  reference_type?: ReferenceType
-  source_url?: string             // v0.8: from top level
-  source_name?: string            // v0.8: from top level
-  accessed_at?: string
-  notes?: string
+  source?: string                 // required on CREATE (fields.ts); legacy rows may lack it
+  source_name?: string
+  checked_at?: string
+  detail?: string
 }
 
 // Union type for all properties
@@ -574,6 +570,7 @@ export interface Entity {
 
 export interface EngramQuery {
   scope?: string
+  scopes?: string[]               // v0.19: any of these scopes (the learning topic check: the scope + the session's agent / user scopes)
   type?: EngramType
   title?: string
   status?: EngramStatus

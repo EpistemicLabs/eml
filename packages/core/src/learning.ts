@@ -9,7 +9,8 @@ import type { Entry } from './entries'
 //
 // Ripe = all three:
 //   1. ≥ 2 supporting pieces of evidence from different sessions (several in one
-//      session count as one incident);
+//      session count as one incident; evidence without a session id cannot be
+//      told apart, so it counts toward nothing but is reported);
 //   2. ≥ 1 of them with source user (observed or self evidence alone never
 //      makes a learning ripe);
 //   3. no open contradiction — contradicting evidence makes the learning
@@ -23,6 +24,8 @@ export interface LearningState {
   state: LearningStateName
   /** Distinct sessions with supporting evidence. */
   supporting_sessions: number
+  /** Supporting evidence written without a session id (REST / CLI without the session header) — it does not count toward the sessions. */
+  unsessioned_evidence: number
   /** At least one supporting piece of evidence comes from the user. */
   from_user: boolean
   /** Contradicting evidence after the last sharpening of the content. */
@@ -40,21 +43,23 @@ export function learningState(entries: readonly Entry[]): LearningState {
   const evidence = entries.filter(e => e.kind === 'evidence')
   const sharpenedAt = entries.filter(e => e.kind === 'change' && e.text.startsWith(LEARNING_SHARPENED)).map(e => e.at).pop() ?? ''
   const supporting = evidence.filter(e => (e.stance ?? 'supports') === 'supports')
-  const sessionKey = (e: Entry) => e.session_id ?? `entry:${e.id}`
-  const sessions = new Set(supporting.map(sessionKey))
+  const sessionsOf = (entries: readonly Entry[]) => new Set(entries.map(e => e.session_id).filter((s): s is string => !!s))
+  const sessions = sessionsOf(supporting)
+  const unsessioned = supporting.filter(e => !e.session_id).length
   const fromUser = supporting.some(e => e.source === 'user')
   const openContradiction = evidence.some(e => e.stance === 'contradicts' && e.at > sharpenedAt)
   const declined = evidence.filter(e => e.stance === 'declined').pop() ?? null
 
   const base = {
     supporting_sessions: sessions.size,
+    unsessioned_evidence: unsessioned,
     from_user: fromUser,
     open_contradiction: openContradiction,
     declined_at: declined?.at ?? null,
   }
   if (openContradiction) return { state: 'unclear', ...base }
   if (declined) {
-    const after = new Set(supporting.filter(e => e.at > declined.at).map(sessionKey))
+    const after = sessionsOf(supporting.filter(e => e.at > declined.at))
     if (after.size < LEARNING_RIPE_SESSIONS) return { state: 'paused', ...base }
   }
   const ripe = sessions.size >= LEARNING_RIPE_SESSIONS && fromUser

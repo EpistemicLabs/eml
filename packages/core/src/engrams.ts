@@ -204,12 +204,15 @@ export interface TrackTaskInput {
   due_date?: string | null
   blockers?: string[] | null
   parent_id?: string | null
+  scope?: string
+  /** Tasks this one replaces after the fact (task → task; their bound items move here). */
+  supersedes?: string[]
   tags?: string[]
   subjects?: string[]
 }
 const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'context', 'priority',
-  'assignee_id', 'due_date', 'blockers', 'parent_id', 'tags', 'subjects',
+  'assignee_id', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
@@ -377,6 +380,7 @@ export class EngramStore {
       if (input.task_id === undefined && props.binding === 'task') {
         throw new Error(`Invalid engram: binding task needs task_id — without a task a ${type} is standing.`)
       }
+      if (props.binding === 'task') this.assertTaskOpenForBinding(input.task_id!, type)
     }
     if (type === 'profile' && !/^(agent|user|entity)\./.test(input.scope)) {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
@@ -394,7 +398,7 @@ export class EngramStore {
     if (supersedes.length > 0 && (type === 'status' || type === 'event' || type === 'log')) {
       throw new Error(`Invalid engram: ${type === 'status' ? 'a status supersedes the previous one by itself' : `${type === 'event' ? 'an event' : 'a log'} does not supersede`} — no supersedes.`)
     }
-    for (const oldId of supersedes) this.assertSupersedable(oldId, null)
+    for (const oldId of supersedes) this.assertSupersedable(oldId, null, type)
 
     // Rules and profiles in the short format (validate.ts).
     validateFormat(type, input.content, props)
@@ -460,15 +464,12 @@ export class EngramStore {
       }
 
       for (const oldId of supersedes) {
-        this.linkSupersede(id, oldId, 'agent_declared')
+        if (type === 'task') openSubtasks.push(...this.supersedeTask(id, oldId, stamp))
+        else this.supersede(id, oldId, stamp)
         superseded.push(oldId)
-        if (type === 'task') {
-          this.moveBoundItems(oldId, id, stamp)
-          openSubtasks.push(...this.openSubtasksOf(oldId))
-        }
       }
       for (const lid of fromLearning) {
-        this.linkSupersede(id, lid, 'agent_declared')
+        this.supersede(id, lid, stamp)
         superseded.push(lid)
       }
 
@@ -515,12 +516,71 @@ export class EngramStore {
     return { ...stored, ...extra }
   }
 
-  /** An engram may be superseded: it exists, it is not the new one, and it is not an event. */
-  private assertSupersedable(oldId: string, newId: string | null): void {
+  /**
+   * An engram may be superseded by `newType`: it exists, it is not the new one,
+   * and its lifecycle allows it. An event is corrected, never superseded. A
+   * task is replaced by a task only (create_task / track_task supersedes, which
+   * move its bound items) and a status by the next set_status in its scope —
+   * neither is closed from the side by another type.
+   */
+  private assertSupersedable(oldId: string, newId: string | null, newType: EngramType): void {
     if (oldId === newId) throw new Error('Invalid engram: an engram cannot supersede itself.')
     const old = this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(oldId) as { type: string } | undefined
     if (!old) throw new Error(`Invalid engram: supersedes ${oldId} — no such engram.`)
     if (old.type === 'event') throw new Error(`Invalid engram: ${oldId} is an event — an event is corrected, never superseded.`)
+    if (old.type === 'task' && newType !== 'task') {
+      throw new Error(`Invalid engram: ${oldId} is a task — a task is replaced by a task (eml_create_task(supersedes=[id]) or eml_track_task(<new task id>, supersedes=[id])) or closed with eml_track_task.`)
+    }
+    if (old.type === 'status') {
+      throw new Error(`Invalid engram: ${oldId} is a status — a status is superseded by the next eml_set_status in its scope.`)
+    }
+  }
+
+  /** The successor engram of a supersede after the fact must be live itself. */
+  private assertSuccessorActive(id: string, status: string): void {
+    if (status !== 'active') {
+      throw new Error(`Invalid engram: ${id} is ${status} — only an active engram supersedes another; reactivate it first (status=active) or write a new one.`)
+    }
+  }
+
+  /** Supersede one engram by another: status flip + edge, review label gone. Inside the caller's transaction. */
+  private supersede(newId: string, oldId: string, stamp: EntryStamp): void {
+    this.linkSupersede(newId, oldId, 'agent_declared')
+    this.stripReviewLabel(oldId)
+    if ((this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(oldId) as { type: string }).type === 'task') {
+      this.appendTaskChange(oldId, `superseded by ${newId}`, stamp)
+    }
+  }
+
+  /**
+   * A task replaced by a new task (S2): the old one is superseded (journal
+   * entry on both sides), its bound items move to the new one, and its open
+   * sub-tasks are returned for the caller to surface. An already superseded
+   * task only gets the missing edge (the hygiene re-link).
+   */
+  private supersedeTask(newId: string, oldId: string, stamp: EntryStamp): OpenSubtask[] {
+    const old = this.db.prepare('SELECT type, status FROM engrams WHERE id = ?').get(oldId) as { type: string, status: string } | undefined
+    if (old?.type !== 'task') throw new Error(`Invalid engram: supersedes ${oldId} — a task is replaced by a task.`)
+    if (old.status === 'superseded') {
+      this.linkSupersede(newId, oldId, 'agent_declared')
+      this.appendTaskChange(oldId, `superseded by ${newId}`, stamp)
+      return []
+    }
+    if (!(TASK_OPEN_STATUSES as readonly string[]).includes(old.status)) {
+      throw new Error(`Invalid engram: task ${oldId} is ${old.status} — a closed task stays as it ended; only an open task is replaced.`)
+    }
+    this.supersede(newId, oldId, stamp)
+    this.appendTaskChange(newId, `supersedes ${oldId}`, stamp)
+    this.moveBoundItems(oldId, newId, stamp)
+    return this.openSubtasksOf(oldId)
+  }
+
+  /** A task-bound decision or note needs a task that is still open. */
+  private assertTaskOpenForBinding(taskId: string, type: string): void {
+    const t = this.db.prepare('SELECT status FROM engrams WHERE id = ?').get(taskId) as { status: string } | undefined
+    if (t && !(TASK_OPEN_STATUSES as readonly string[]).includes(t.status)) {
+      throw new Error(`Invalid engram: task ${taskId} is ${t.status} — a ${type} bound to it would close with it; use binding standing, or reopen the task first.`)
+    }
   }
 
   /** The active log written in this session, if any (eml_log is one per session). */
@@ -549,6 +609,16 @@ export class EngramStore {
     const table = m[1] === 'project' ? 'projects' : 'entities'
     const row = this.db.prepare(`SELECT status_tracks FROM ${table} WHERE id = ?`).get(m[2]) as { status_tracks: string | null } | undefined
     return { hasObject: !!row, value: row?.status_tracks ?? null }
+  }
+
+  /** The scope's active core profile other than `exceptId`, if any. */
+  private activeCoreProfileIn(scope: string, exceptId: string): string | null {
+    const row = this.db.prepare(`
+      SELECT id FROM engrams
+      WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ?
+        AND json_extract(properties, '$.core') = 1
+    `).get(scope, exceptId) as { id: string } | undefined
+    return row?.id ?? null
   }
 
   /** A new core profile supersedes the scope's previous one (one core per scope). */
@@ -717,10 +787,13 @@ export class EngramStore {
    * close, reopen, edits. `text` becomes a note entry; every field change gets
    * a change entry. Rules: text is required for progress (a call with nothing
    * else), a stage or status change, closing, reopening and a content rewrite;
-   * closing needs an outcome; bound decisions and notes close with the task
-   * unless kept (an absent `keep` with bound items errors with their list); a
-   * parent can't be resolved while a sub-task is open; invalidating a parent
-   * invalidates its open sub-tasks. Returns null for an unknown id.
+   * closing needs an outcome and an open task (closed → closed is reopen +
+   * close); bound decisions and notes close with the task unless kept (an
+   * absent `keep` with bound items errors with their list); a parent can't be
+   * resolved while a sub-task is open; invalidating a parent invalidates its
+   * open sub-tasks. `supersedes` replaces other open tasks by this one (their
+   * bound items move here); `scope` moves the task. Returns null for an
+   * unknown id.
    */
   trackTask(id: string, input: TrackTaskInput, context?: WriteContext | string | null): StoredEngram | null {
     const ctx = writeContext(context)
@@ -745,6 +818,23 @@ export class EngramStore {
     if (existing.status === 'superseded' && statusChanged) {
       throw new Error('Invalid engram: a superseded task stays superseded — continue on its successor.')
     }
+    // closed → closed is not a close: the outcome changes by reopening and closing again (both in the journal)
+    if (closing && !wasOpen) {
+      throw new Error(`Invalid engram: task ${id} is already ${existing.status} — to change how it ended, reopen it (status planned or active) and close it again.`)
+    }
+    const supersedes = [...new Set(input.supersedes ?? [])]
+    if (supersedes.length > 0) {
+      if (!(TASK_OPEN_STATUSES as readonly string[]).includes(newStatus)) {
+        throw new Error('Invalid engram: only an open task replaces another — reopen this one first, or close the old task with eml_track_task.')
+      }
+      for (const oldId of supersedes) {
+        if (oldId === id) throw new Error('Invalid engram: an engram cannot supersede itself.')
+        const old = this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(oldId) as { type: string } | undefined
+        if (!old) throw new Error(`Invalid engram: supersedes ${oldId} — no such engram.`)
+        if (old.type !== 'task') throw new Error(`Invalid engram: supersedes ${oldId} is a ${old.type} — a task replaces a task; a ${old.type} is superseded by eml_update(<new id>, supersedes=[…]) on its successor.`)
+      }
+    }
+    if (input.scope !== undefined && input.scope !== existing.scope) this.validateScope(input.scope)
 
     // the typed fields this call sets (null clears an optional one)
     const fieldPatch: Record<string, unknown> = {}
@@ -805,6 +895,10 @@ export class EngramStore {
     let closedWith: BoundItem[] = []
     let kept: BoundItem[] = []
     let reopenCandidates: BoundItem[] = []
+    const openSubtasks: OpenSubtask[] = []
+    const superseded: string[] = []
+    let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
+    const scopeChanged = input.scope !== undefined && input.scope !== existing.scope
     this.db.transaction(() => {
       const props = { ...old }
       for (const [k, v] of Object.entries(fieldPatch)) {
@@ -817,12 +911,14 @@ export class EngramStore {
       if (statusChanged) { sets.push('status = ?'); params.push(newStatus) }
       if (input.content !== undefined) { sets.push('content = ?'); params.push(input.content) }
       if (input.title !== undefined) { sets.push('title = ?'); params.push(input.title) }
+      if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
       sets.push("updated_at = datetime('now')")
       this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
-      if (input.content !== undefined || input.title !== undefined) {
+      if (input.content !== undefined || input.title !== undefined || scopeChanged) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
         this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
       }
+      if (contentChanged) wikilinks = this.materializeWikilinks(id, input.content!, input.scope ?? existing.scope)
 
       if (text) written.push(appendEntry(this.db, id, { kind: 'note', text, stage: props.stage ?? null }, stamp))
       const change = (t: string) => written.push(this.appendTaskChange(id, t, stamp))
@@ -842,6 +938,11 @@ export class EngramStore {
       if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
       if (contentChanged) change('content rewritten')
       if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)
+      if (scopeChanged) change(`scope ${existing.scope} → ${input.scope}`)
+      for (const oldId of supersedes) {
+        openSubtasks.push(...this.supersedeTask(id, oldId, stamp))
+        superseded.push(oldId)
+      }
 
       if (input.parent_id !== undefined) {
         const current = this.parentOf(id)
@@ -861,11 +962,16 @@ export class EngramStore {
         written.push(...r.entries)
         if (newStatus === 'invalidated') this.cascadeInvalidate(id, stamp)
       }
-      if (reopening) reopenCandidates = this.boundItems(id, ['resolved', 'invalidated'])
+      // what a reopen may bring back: the bound items that closed with it, and
+      // the sub-tasks the invalidate cascade took down (an offer, never automatic)
+      if (reopening) reopenCandidates = [...this.boundItems(id, ['resolved', 'invalidated']), ...this.cascadedSubtasksOf(id)]
       // any movement clears the inactivity review
       this.stripReviewLabel(id)
     })()
 
+    if (wikilinks.unresolved.length > 0) {
+      console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
+    }
     const updated = this.getRaw(id)!
     return {
       ...updated,
@@ -873,7 +979,21 @@ export class EngramStore {
       ...(closedWith.length > 0 ? { closed_with_task: closedWith } : {}),
       ...(kept.length > 0 ? { kept } : {}),
       ...(reopenCandidates.length > 0 ? { reopen_candidates: reopenCandidates } : {}),
+      ...(superseded.length > 0 ? { superseded } : {}),
+      ...(openSubtasks.length > 0 ? { open_subtasks: openSubtasks } : {}),
+      ...(wikilinks.unresolved.length > 0 ? { unresolved_links: wikilinks.unresolved } : {}),
     }
+  }
+
+  /** Direct sub-tasks the invalidate cascade closed (outcome "parent invalidated"). */
+  private cascadedSubtasksOf(parentId: string): BoundItem[] {
+    return this.db.prepare(`
+      SELECT e.id, e.type, e.title, e.status FROM relations r
+      JOIN engrams e ON e.id = r.source_id
+      WHERE r.target_id = ? AND r.relation = 'part_of' AND e.type = 'task' AND e.status = 'invalidated'
+        AND json_extract(e.properties, '$.outcome') = 'parent invalidated'
+      ORDER BY e.created_at ASC
+    `).all(parentId) as BoundItem[]
   }
 
   private parentOf(id: string): string | undefined {
@@ -1324,6 +1444,10 @@ export class EngramStore {
       conditions.push('c.scope = ?')
       params.push(q.scope)
     }
+    if (q.scopes && q.scopes.length > 0) {
+      conditions.push(`c.scope IN (${q.scopes.map(() => '?').join(', ')})`)
+      params.push(...q.scopes)
+    }
     if (q.title) {
       conditions.push('c.title = ?')
       params.push(q.title)
@@ -1525,14 +1649,18 @@ export class EngramStore {
     }
     const unknown = Object.keys(raw).filter(k => !UPDATE_PATCH_KEYS.has(k) && raw[k] !== undefined)
     if (unknown.length > 0) {
-      throw unknownFieldsError(type, unknown, [...UPDATE_PATCH_KEYS].filter(k => k !== 'properties').concat(Object.keys(TYPE_FIELDS[type])))
+      // the list names what this engram takes: review_note only on a reviewable type, app only with an origin
+      const universal = [...UPDATE_PATCH_KEYS].filter(k => k !== 'properties'
+        && (k !== 'review_note' || (REVIEWABLE_TYPES as readonly string[]).includes(type))
+        && (k !== 'app' || !!existing.origin))
+      throw unknownFieldsError(type, unknown, universal.concat(Object.keys(TYPE_FIELDS[type])))
     }
     const fieldPatch: Record<string, unknown> = { ...(patch.properties ?? {}) }
     if (type === 'learning') {
       const other = Object.keys(raw).filter(k => raw[k] !== undefined && !['content', 'title', 'status', 'tags', 'subjects', 'supersedes'].includes(k))
         .concat(Object.keys(fieldPatch))
       if (other.length > 0) {
-        throw new Error('Invalid engram: a learning takes content, title, status, tags and subjects here — new evidence goes through eml_learning(id).')
+        throw new Error('Invalid engram: a learning takes content, title, status, tags, subjects and supersedes (a rule or learning) here — new evidence goes through eml_learning(id).')
       }
       // A rule that came from a single incident is turned back into a learning on the user's word.
       for (const oldId of patch.supersedes ?? []) {
@@ -1565,6 +1693,13 @@ export class EngramStore {
           throw new Error('Invalid engram: a superseded engram is reactivated only once its successor is invalidated — until then the successor holds.')
         }
       }
+      // An expiry that has passed would expire it again in the next sweep.
+      if (patch.status === 'active' && existing.status !== 'active') {
+        const expiresAt = fieldPatch.expires_at === undefined ? (existing.properties ? JSON.parse(existing.properties).expires_at : undefined) : fieldPatch.expires_at
+        if (typeof expiresAt === 'string' && Date.parse(expiresAt) < Date.now()) {
+          throw new Error(`Invalid engram: expires_at ${expiresAt} has passed — reactivating needs a new expires_at (or null to clear it) in the same call.`)
+        }
+      }
     }
     if (type === 'status') {
       const allowed = ['status', 'tags', 'subjects']
@@ -1582,12 +1717,16 @@ export class EngramStore {
     if (supersedes.length > 0 && (type === 'status' || type === 'event' || type === 'log')) {
       throw new Error(`Invalid engram: ${type === 'event' ? 'an event' : `a ${type}`} does not supersede.`)
     }
-    for (const oldId of supersedes) this.assertSupersedable(oldId, id)
+    if (supersedes.length > 0) this.assertSuccessorActive(id, patch.status ?? existing.status)
+    for (const oldId of supersedes) this.assertSupersedable(oldId, id, type)
     if (patch.review_note !== undefined) {
       if (!(REVIEWABLE_TYPES as readonly string[]).includes(type)) {
         throw new Error('Invalid engram: review_note confirms a decision, rule or profile in a review.')
       }
       if (isBlank(patch.review_note)) throw new Error('Invalid engram: review_note must say why it still holds.')
+      if ((patch.status ?? existing.status) !== 'active') {
+        throw new Error(`Invalid engram: ${id} is ${existing.status} — a review confirms an active engram.`)
+      }
     }
     // A log's START HERE fields are correctable from any session; a correction
     // from another session is noted on the log (decision v0.19-log-corrections-any-session).
@@ -1620,14 +1759,26 @@ export class EngramStore {
     }
     if (patch.app !== undefined) newProps.app = patch.app
     const newScope = patch.scope ?? existing.scope
-    if (type === 'profile' && !/^(agent|user|entity)\./.test(newScope)) {
+    // The profile scope rule applies to a move; a legacy profile elsewhere stays editable (and retirable).
+    if (type === 'profile' && patch.scope !== undefined && patch.scope !== existing.scope && !/^(agent|user|entity)\./.test(newScope)) {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
     }
     if ((type === 'decision' || type === 'note') && fieldPatch.binding === 'task') {
-      const linked = this.db.prepare(`SELECT 1 FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines')`).get(id)
+      const linked = this.db.prepare(`SELECT t.id FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines')`).get(id) as { id: string } | undefined
       if (!linked) throw new Error(`Invalid engram: binding task needs a task — this ${type} is not linked to one.`)
+      this.assertTaskOpenForBinding(linked.id, type)
     }
     const newStatus = patch.status ?? existing.status
+    // One core profile per scope: an explicit core=true replaces the current one;
+    // a reactivation or a move into a scope that has one is refused, not silently retiring it.
+    const coreNewlySet = newProps.core === true && oldProps.core !== true
+    if (type === 'profile' && newProps.core === true && newStatus === 'active' && !coreNewlySet) {
+      const arriving = existing.status !== 'active' || (patch.scope !== undefined && patch.scope !== existing.scope)
+      const other = arriving ? this.activeCoreProfileIn(newScope, id) : null
+      if (other) {
+        throw new Error(`Invalid engram: scope ${newScope} already has a core profile (${other}) — invalidate it first, or write the new identity with core=true so it replaces the current one.`)
+      }
+    }
     const formatTouched = (patch.content !== undefined && patch.content !== existing.content)
       || newProps.trigger !== oldProps.trigger || newProps.applies !== oldProps.applies
     if (formatTouched) validateFormat(type, patch.content ?? existing.content, newProps)
@@ -1691,8 +1842,7 @@ export class EngramStore {
       if (subjectSlugs !== undefined) this.replaceEngramSubjects(id, subjectSlugs)
       if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope)
       for (const oldId of supersedes) {
-        this.linkSupersede(id, oldId, 'agent_declared')
-        this.stripReviewLabel(oldId)
+        this.supersede(id, oldId, stamp)
         superseded.push(oldId)
       }
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
@@ -1741,6 +1891,8 @@ export class EngramStore {
     const ctx = writeContext(context)
     const existing = this.db.prepare('SELECT * FROM engrams WHERE id = ?').get(id) as any
     if (!existing) return null
+    const live = existing.type === 'task' ? (TASK_OPEN_STATUSES as readonly string[]).includes(existing.status) : existing.status === 'active'
+    if (!live) throw new Error(`Invalid engram: ${id} is ${existing.status} — a review confirms an active engram${existing.type === 'task' ? ' (an open task)' : ''}.`)
     if (existing.type === 'task') {
       this.db.transaction(() => {
         this.db.prepare(`UPDATE engrams SET updated_at = datetime('now') WHERE id = ?`).run(id)
@@ -1792,6 +1944,7 @@ export class EngramStore {
       throw new Error(`Invalid engram: ${stance === 'declined' ? 'a decline' : 'evidence from the user'} needs quote — the user's words, verbatim.`)
     }
     if (input.content !== undefined) {
+      if (isBlank(input.content)) throw new Error('Invalid engram: content must not be empty — the lesson as an instruction to yourself.')
       validateNoTemplateLeak(input.content)
       if (input.content.length > LEARNING_CONTENT_MAX_CHARS) {
         throw new Error(`Invalid engram: a learning's content is at most ${LEARNING_CONTENT_MAX_CHARS} characters (got ${input.content.length}) — the lesson as an instruction to yourself.`)
@@ -1884,8 +2037,8 @@ export class EngramStore {
     const scopes = new Set<string>([scope])
     if (caller) scopes.add(`agent.${caller}`)
     for (const u of this.db.prepare('SELECT id FROM users').all() as Array<{ id: string }>) scopes.add(`user.${u.id}`)
-    const candidates = this.query({ type: 'learning', search: salient.join(' '), search_mode: 'or', statuses: ['active'], order_by: 'score', limit: CONFLICT_CANDIDATE_LIMIT })
-      .filter(c => scopes.has(c.scope))
+    // the scope filter is part of the query, so the limit applies after it (the C0 bug class)
+    const candidates = this.query({ type: 'learning', scopes: [...scopes], search: salient.join(' '), search_mode: 'or', statuses: ['active'], order_by: 'score', limit: CONFLICT_CANDIDATE_LIMIT })
     return candidates
       .map(c => ({ id: c.id, scope: c.scope, title: c.title, content: c.content, coverage: Math.round(termCoverage(salient, `${c.title ?? ''} ${c.content}`) * 100) / 100 }))
       .filter(c => c.coverage >= CONFLICT_COVERAGE_THRESHOLD || (c.title !== null && c.title === title))
@@ -1919,6 +2072,11 @@ export class EngramStore {
     )
     if (input.relation !== 'related_to') this.dropWikilinkEcho(input.source_id, input.target_id)
     return info.changes > 0
+  }
+
+  /** A learning's ripeness from its evidence (brain hygiene, lists). */
+  learningStateOf(id: string): LearningState {
+    return learningState(this.entries(id))
   }
 
   /** Ids of superseded engrams that have an incoming supersedes edge (brain hygiene). */

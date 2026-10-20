@@ -96,7 +96,7 @@ All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is stric
 
 | Tool | HTTP endpoint | Use case |
 |---|---|---|
-| `eml_track_task` | `POST /task/:id/track` | Everything about an existing task: progress, stage, start, close (`outcome` + `text`, `keep` for bound items), reopen, edits — each call writes the journal |
+| `eml_track_task` | `POST /task/:id/track` | Everything about an existing task: progress, stage, start, close (`outcome` + `text`, `keep` for bound items), reopen, edits, a move (`scope`), replacing other open tasks (`supersedes`) — each call writes the journal |
 | `eml_update` | `POST /update` | Correct or retire any engram except a task; only its type's fields, `null` clears; `supersedes` after the fact (across types); `review_note` confirms a review |
 | `eml_relate` | `POST /relate` | A directed semantic edge (supports / contradicts / derived_from / refines / related_to / blocks); idempotent |
 

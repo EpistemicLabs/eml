@@ -195,8 +195,11 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
       'supersedes set the status without the edge, so the history ends there.',
     how:
-      'Find the successor (same title thread, the newer engram on the topic) and link it: ' +
-      'eml_update(<successor id>, supersedes=[<this id>]). No successor exists → leave it; do not invent one.',
+      'Find the successor: a `superseded_by:` line in detail names it (the migration kept the old hint there); ' +
+      'else the same title thread, the newer engram on the topic. Link it: eml_update(<successor id>, ' +
+      'supersedes=[<this id>]); for a task eml_track_task(<successor task id>, supersedes=[<this id>]). A status ' +
+      'is linked to the next status of its scope by the migration; one without is the scope\'s latest and stays. ' +
+      'No successor exists → leave it; do not invent one.',
     detect(eml) {
       const rows = eml.engrams.query({ limit: 100000, status: 'superseded' }) as EngramRow[]
       const linked = new Set(eml.engrams.supersededWithEdge())
@@ -256,6 +259,77 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
         .map(c => finding(c, `taken in a task (${linked.get(c.id)}), no binding.`))
     },
   },
+  {
+    id: 'decision-without-rationale',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A decision names its rationale and at least one rejected alternative — without them it is a note, not a ' +
+      'choice. New decisions need both; older ones were written without.',
+    how:
+      'Find the rationale and the alternatives in the decision, its detail and its history (eml_get) and set them ' +
+      'with eml_update(rationale, alternatives). Nothing was weighed → it is a note: eml_note (same title and ' +
+      'content) with supersedes=[<decision id>]. Unsure → ask the user.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'decision' && (typeof c.properties?.rationale !== 'string' || c.properties.rationale.trim() === ''
+          || !Array.isArray(c.properties?.alternatives) || c.properties.alternatives.length === 0))
+        .map(c => finding(c, [
+          (typeof c.properties?.rationale !== 'string' || c.properties.rationale.trim() === '') ? 'no rationale' : null,
+          (!Array.isArray(c.properties?.alternatives) || c.properties.alternatives.length === 0) ? 'no alternatives' : null,
+        ].filter(Boolean).join(', ') + '.'))
+    },
+  },
+]
+
+// --- Learnings (recurring) ----------------------------------------------------------
+//
+// A learning is never binding, so nothing forces a look at it: an unclear one
+// (open contradiction) waits for the user's word, a stale one (a single
+// supporting session, long ago) for the agent's.
+
+/** A learning with one supporting session older than this is stale. */
+export const LEARNING_STALE_DAYS = 90
+
+const LEARNING_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'learning-unclear',
+    kind: 'review',
+    decides: 'user',
+    what:
+      'A learning with contradicting evidence is unclear: the lesson as written does not hold in every case. It ' +
+      'stays unclear until its content is sharpened or it is dropped.',
+    how:
+      'Show the user the lesson and the evidence for and against (eml_get) and ask what the lesson really is. ' +
+      'Sharpen it with eml_update(content) — the contradiction counts as settled from then on — or drop it with ' +
+      'eml_update(status=invalidated).',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning' && eml.engrams.learningStateOf(c.id).state === 'unclear')
+        .map(c => finding(c, 'contradicting evidence is open.'))
+    },
+  },
+  {
+    id: 'learning-stale',
+    kind: 'review',
+    decides: 'agent',
+    what:
+      `A learning that rests on a single incident for more than ${LEARNING_STALE_DAYS} days has not recurred. ` +
+      'Either the lesson was learned, or it was a one-off.',
+    how:
+      'Still relevant (the situation can come up again) → leave it; it costs nothing. A one-off, or already how ' +
+      'you work → eml_update(status=invalidated). Never make it a rule from here — that takes recurrence and the ' +
+      'user\'s yes.',
+    detect(eml, now) {
+      const cutoff = now.getTime() - LEARNING_STALE_DAYS * 86400_000
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning')
+        .map(c => ({ c, state: eml.engrams.learningStateOf(c.id), last: eml.engrams.entries(c.id, ['evidence']).map(e => Date.parse(e.at)).pop() ?? Date.parse(c.created_at) }))
+        .filter(({ state, last }) => state.state === 'collecting' && state.supporting_sessions <= 1 && last < cutoff)
+        .map(({ c, last }) => finding(c, `one incident, last on ${new Date(last).toISOString().slice(0, 10)}.`))
+    },
+  },
 ]
 
 /** Every check, migration checks by schema, then the recurring review. */
@@ -263,6 +337,7 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
   ...SCHEMA_19_CHECKS,
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
+  ...LEARNING_CHECKS,
 ]
 
 /** Run every hygiene check against the brain. */

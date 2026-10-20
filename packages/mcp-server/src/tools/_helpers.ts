@@ -58,7 +58,8 @@ interface ConflictCandidateView {
 }
 
 export function conflictBanner(result: unknown): string | null {
-  const pc = (result as { potential_conflicts?: ConflictCandidateView[] } | null)?.potential_conflicts
+  const r = result as { type?: string, potential_conflicts?: ConflictCandidateView[] } | null
+  const pc = r?.potential_conflicts
   if (!pc || pc.length === 0) return null
 
   const top = Math.max(...pc.map(c => c.coverage))
@@ -70,12 +71,24 @@ export function conflictBanner(result: unknown): string | null {
     `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap — ${c.gist.slice(0, 120)}`,
   )
 
-  return [
-    header,
-    ...lines,
-    'Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ' +
-    'merge (eml_update content of one, invalidate the other) / relate (eml_relate contradicts | related_to) / dismiss.',
-  ].join('\n')
+  // v0.19: the resolve options follow the lifecycle of the written type — an
+  // event is corrected, a status is versioned by set_status, a task is replaced
+  // by a task (eml_track_task supersedes), everything else by eml_update supersedes.
+  const merge = 'merge (eml_update content of one, invalidate the other) / relate (eml_relate contradicts | related_to) / dismiss.'
+  let evaluate: string
+  if (r?.type === 'event') {
+    evaluate = 'Evaluate each before continuing: the same occurrence (this write is a duplicate: eml_update(<new id>, status=invalidated)) / ' +
+      'a different one (relate: eml_relate related_to, or dismiss).'
+  } else if (r?.type === 'status') {
+    evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${merge}`
+  } else if (r?.type === 'task') {
+    evaluate = 'Evaluate each before continuing: supersede (this task replaces it: eml_track_task(<new id>, supersedes=[<old id>]); ' +
+      `its bound decisions and notes move along) / ${merge}`
+  } else {
+    evaluate = `Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ${merge}`
+    if (pc.some(c => c.type === 'task')) evaluate += ' A task is not superseded by this write — close it with eml_track_task (resolved or invalidated) if it is done, else relate.'
+  }
+  return [header, ...lines, evaluate].join('\n')
 }
 
 // v0.14: filing into a CLOSED subject is allowed (late filing) — the server flags it
@@ -135,7 +148,10 @@ export function boundItemsBanner(result: unknown): string | null {
   if (r.closed_with_task?.length) parts.push(['closed with the task:', ...r.closed_with_task.map(show)].join('\n'))
   if (r.kept?.length) parts.push(['kept as standing:', ...r.kept.map(show)].join('\n'))
   if (r.reopen_candidates?.length) {
-    parts.push(['closed with the task before — reactivate the ones that hold again with eml_update(id, status=active):', ...r.reopen_candidates.map(show)].join('\n'))
+    const items = r.reopen_candidates.filter(i => i.type !== 'task')
+    const subs = r.reopen_candidates.filter(i => i.type === 'task')
+    if (items.length) parts.push(['closed with the task before — reactivate the ones that hold again with eml_update(id, status=active):', ...items.map(show)].join('\n'))
+    if (subs.length) parts.push(['sub-tasks invalidated with it before — reopen the ones that are still work with eml_track_task(id, status=planned, text):', ...subs.map(show)].join('\n'))
   }
   return parts.length > 0 ? parts.join('\n\n') : null
 }

@@ -132,5 +132,5 @@ export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANC
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, createObject, updateObject, OBJECT_KINDS, type ObjectKind } from './objects'
 export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type TrackTaskInput, type LearnInput, type LearnResult } from './engrams'
-export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
+export { hygieneCheck, HYGIENE_CHECKS, LEARNING_STALE_DAYS, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'

@@ -23,7 +23,7 @@ export function validateNoTemplateLeak(content: string | undefined | null): void
   if (!content) return
   if (/<parameter\s+name=/i.test(content)) {
     throw new Error(
-      'content contains tool-call template syntax (`<parameter name=...`) — ' +
+      'Invalid engram: content contains tool-call template syntax (`<parameter name=...`) — ' +
       'this is almost always an XML escaping bug. Closing tags use `</parameter>`, ' +
       'not `</field-name>`. Re-check your tool-call structure.'
     )
@@ -176,10 +176,11 @@ export function validateScopeExists(scope: string, stores: ScopeStores): void {
       throw new Error(`Invalid scope "${scope}": empty ${label} id after "${prefix}".`)
     }
     if (!store.exists(id)) {
-      throw new Error(
-        `Scope "${scope}" references unknown ${label} "${id}". ` +
-        `Create the ${label} via POST /${label}.`
-      )
+      // v0.19: projects and entities are objects (eml_create_object); users and agents come from setup / the cockpit.
+      const hint = label === 'project' || label === 'entity'
+        ? `Create it first with eml_create_object(object=${label}, name=…, id=${id}).`
+        : `Users and agents are set up by the cockpit, not by a write.`
+      throw new Error(`Scope "${scope}" references unknown ${label} "${id}". ${hint}`)
     }
     return
   }

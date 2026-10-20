@@ -24,14 +24,16 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       'invalidating it invalidates them. Decisions and notes bound to the task close with it; before closing, ' +
       'check them: any that still hold once the task is done → keep (they become standing), and say why in text; ' +
       'keep=[] closes them all.\n\n' +
-      'Reopening a closed task (status planned or active) needs text; the stage can change again.\n\n' +
-      'Replaced by a new task? Create the new one with eml_create_task(supersedes=[id]).',
+      'Reopening a closed task (status planned or active) needs text; the stage can change again. A closed task is ' +
+      'not closed again — to change how it ended, reopen it and close it again.\n\n' +
+      'Replaced by a new task? Create the new one with eml_create_task(supersedes=[id]); an existing open task ' +
+      'takes over with supersedes here (task → task; bound decisions and notes move along).',
     inputSchema: z.object({
       task_id: z.string().describe('Full id of the task.'),
       text: z.string().optional().describe('Journal note, 1-3 sentences: what happened and what\'s next; required for progress, stage change, closing, reopening, content rewrite.'),
       status: z.enum(['planned', 'active', 'resolved', 'invalidated']).optional().describe('planned · active · resolved · invalidated.'),
       outcome: z.string().optional().describe('One line, required when closing.'),
-      keep: z.array(z.string()).optional().describe('Only when closing: ids of task-bound decisions and notes that outlive the task; they become standing and stay active. The rest close with the task.'),
+      keep: z.array(z.string()).optional().describe('Required when closing a task with bound decisions or notes: the ids that outlive the task (they become standing and stay active), or [] to close them all.'),
       stage: z.enum(STAGES).nullable().optional().describe('ideation · planning · ready · implementation; frozen while the task is closed, free again after a reopen.'),
       content: z.string().optional().describe('Rewritten definition (wholesale); needs text.'),
       title: z.string().optional().describe('Set the title.'),
@@ -41,6 +43,8 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       due_date: z.string().nullable().optional().describe('ISO date; null clears.'),
       blockers: z.array(z.string()).nullable().optional().describe('Replaces the list; [] or null clears.'),
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),
+      scope: z.string().optional().describe('Move the task to another scope (project.<id> …); sub-tasks and bound items keep theirs.'),
+      supersedes: z.array(z.string()).optional().describe('Ids of open tasks this one replaces: they are closed as superseded and their bound decisions and notes move here.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),

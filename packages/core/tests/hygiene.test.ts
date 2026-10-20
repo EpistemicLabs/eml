@@ -116,9 +116,10 @@ describe('hygieneCheck()', () => {
       const nineteen = r.checks.filter(c => c.since_schema === 19).map(c => c.id)
       expect(nineteen).toEqual([
         'reference-without-source', 'profile-scope', 'superseded-without-successor',
-        'rule-without-why', 'rule-without-agreement', 'task-link-without-binding',
+        'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
       ])
-      expect(r.checks[r.checks.length - 1].id).toBe('review-due')
+      // the recurring checks come last: review-due, then the learning checks
+      expect(r.checks.slice(-3).map(c => c.id)).toEqual(['review-due', 'learning-unclear', 'learning-stale'])
     })
 
     it('reference-without-source: active references without source', () => {
