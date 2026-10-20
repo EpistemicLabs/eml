@@ -23,6 +23,8 @@ describe('hook project-block', () => {
     expect(r.output).toBe('# Project — project.demo (Demo)')
     expect(r.log).toMatch(/OK project\.demo startup chars=\d+ trim=none tasks=3 reviews=1 legacy=0/)
     expect(seen[0]).toEqual({ url: 'http://brain.test/project-block', body: { scope: 'project.demo', budget: PROJECT_BLOCK_BUDGET_CHARS } })
+    // The block plus the newline runHook prints stays within Claude Code's 10,000.
+    expect(PROJECT_BLOCK_BUDGET_CHARS + 1).toBe(10_000)
   })
 
   it('delivers on every session start source — it keeps no state', async () => {

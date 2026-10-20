@@ -12,6 +12,9 @@
 #   run 1  two SessionStart hooks, ~9,000 chars each → both must arrive uncut
 #   run 2  one SessionStart hook,  ~11,000 chars     → must NOT arrive whole
 #          (the control: the limit exists, so run 1 shows it is per hook)
+#   run 3  one SessionStart hook of exactly 10,000 chars, the last one the
+#          newline our hooks print after the output (budget 9,999) → must
+#          arrive uncut. Run 4 (10,001 chars) only reports where the edge is.
 #
 # "Arrives uncut" = the model repeats the hook's end marker, and the transcript
 # shows no <persisted-output> for the run (Claude Code's form for an output it
@@ -33,14 +36,17 @@ pass=0; fail=0
 ok(){  pass=$((pass+1)); printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
 bad(){ fail=$((fail+1)); printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
 
-# A hook that prints <chars> characters: a start line, filler, an end marker.
-hook_script() { # $1 name, $2 chars
-  local f="$BASE/hook-$1.js"
+# A hook that prints <chars> characters: a start line, filler, an end marker,
+# and with $3 = nl a trailing newline (counted in <chars>), as our hooks print.
+hook_script() { # $1 name, $2 chars, [$3 nl]
+  local f="$BASE/hook-$1.js" tail=""
+  [ "${3:-}" = nl ] && tail='\n'
   cat > "$f" <<EOF
 const end = '${MARKER}-$1-END'
 const start = '${MARKER}-$1-START\n'
-const filler = 'x'.repeat($2 - start.length - end.length - 1).replace(/(.{99})./g, '\$1\n')
-process.stdout.write(start + filler + '\n' + end)
+const tail = '$tail'
+const filler = 'x'.repeat($2 - start.length - end.length - tail.length - 1).replace(/(.{99})./g, '\$1\n')
+process.stdout.write(start + filler + '\n' + end + tail)
 EOF
   printf 'node %s' "$f"
 }
@@ -88,6 +94,25 @@ elif printf '%s' "$ANS2" | grep -q "${MARKER}-C-END" || ! transcript_has "$SID2"
   bad "control: an 11,000-char hook arrived whole — the limit is not where we think"
 else
   ok "control: an 11,000-char hook was cut to a preview (the limit exists)"
+fi
+
+# run 3: one hook of exactly 10,000 chars incl. the trailing newline (our budget edge)
+S3="$BASE/settings-edge.json"; settings "$(hook_script D 10000 nl)" > "$S3"
+OUT3="$(run edge "$S3")"; SID3="$(printf '%s\n' "$OUT3" | head -1)"; ANS3="$(printf '%s\n' "$OUT3" | tail -n +2)"
+if transcript_has "$SID3" "${MARKER}-D-START" && ! transcript_has "$SID3" "persisted-output" \
+  && printf '%s' "$ANS3" | grep -q "${MARKER}-D-END"; then
+  ok "edge: a 10,000-char hook (9,999 + newline) arrived uncut"
+else
+  bad "edge: a 10,000-char hook (9,999 + newline) did not arrive uncut"
+fi
+
+# run 4: 10,001 chars — information only: where exactly the limit cuts
+S4="$BASE/settings-over.json"; settings "$(hook_script E 10001 nl)" > "$S4"
+OUT4="$(run over "$S4")"; SID4="$(printf '%s\n' "$OUT4" | head -1)"
+if transcript_has "$SID4" "persisted-output"; then
+  echo "  ....  info: 10,001 chars is cut (the limit is exactly 10,000)"
+else
+  echo "  ....  info: 10,001 chars still arrives whole (the cut is above 10,001)"
 fi
 
 echo "== $pass passed, $fail failed (work dir $BASE)"

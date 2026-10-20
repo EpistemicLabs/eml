@@ -23,9 +23,10 @@ import type { EmlConfig } from '../config'
  * Claude Code's limit for one hook's plain stdout, the same as the boot's
  * (hooks/index.ts, BOOT_BUDGET_CHARS): above it the model only sees a preview.
  * The limit holds per hook command, so the block does not share the boot's
- * (scripts/hook-budget-gate.sh checks that).
+ * (scripts/hook-budget-gate.sh checks that). One character below the limit for
+ * the newline runHook prints after the output.
  */
-export const PROJECT_BLOCK_BUDGET_CHARS = 10_000
+export const PROJECT_BLOCK_BUDGET_CHARS = 10_000 - 1
 
 const TIMEOUT_MS = 5000
 const SAFE_SCOPE = /^project\.[A-Za-z0-9_.-]+$/

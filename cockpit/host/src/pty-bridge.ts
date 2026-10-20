@@ -52,11 +52,13 @@ const { SerializeAddon } = require('@xterm/addon-serialize') as typeof import('@
  * The first prompt of a plain new session when the greeting is on (Settings ›
  * Preferences › Sessions). It shows in the terminal as the user's message, so
  * it is short and reads as one; the reply follows the user's preferred
- * language from their profile.
+ * language from their profile. A folder project, or a brain project that no
+ * longer exists, has no project block: the agent says so instead of searching.
  */
 export const GREETING_PROMPT =
-  'Session start: greet me briefly, say which project this session is in and where it stands ' +
-  '(status, next step, open tasks), then ask what I want to work on. Answer in my preferred language.'
+  'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
+  'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
+  'instead of searching. Then ask what I want to work on. Answer in my preferred language.'
 
 /**
  * Only a plain new session opens with the greeting: not a resume, not one with

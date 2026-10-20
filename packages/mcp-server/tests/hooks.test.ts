@@ -28,7 +28,8 @@ describe('hook session-start', () => {
     }) as unknown as typeof fetch
     const r = await sessionStart(CFG, '/x', f)
     expect(sent).toEqual({ budget: BOOT_BUDGET_CHARS })
-    expect(BOOT_BUDGET_CHARS).toBe(10_000)
+    // The output plus the newline runHook prints stays within Claude Code's 10,000.
+    expect(BOOT_BUDGET_CHARS + 1).toBe(10_000)
     expect(r.output).toBe('boot')
     expect(r.log).toBe('OK ver=0.17.18 chars=4 trim=situational:2,always:1 legacy=3')
   })

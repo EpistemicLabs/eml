@@ -73,8 +73,11 @@ function logLine(ctx: HookContext, hook: string, line: string): void {
  * — the only consumer of --json today, through its own hook runner — has an
  * unmeasured limit. Both get this value until measured; a harness with a
  * smaller limit needs its own budget here, not a smaller boot in core.
+ *
+ * One character below the limit: runHook prints a newline after the output,
+ * and that newline counts toward the hook's stdout.
  */
-export const BOOT_BUDGET_CHARS = 10_000
+export const BOOT_BUDGET_CHARS = 10_000 - 1
 
 export interface BootResult {
   output: string
