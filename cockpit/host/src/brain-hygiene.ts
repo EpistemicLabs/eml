@@ -29,6 +29,8 @@ export interface HygieneFinding { id: string; type: string; scope: string; title
 export interface HygieneCheckResult {
   id: string
   kind: 'migration' | 'review'
+  /** Who decides a finding: agent (writes the clear cases) or user (needs their word). */
+  decides: 'agent' | 'user'
   since_schema?: number
   what: string
   how: string

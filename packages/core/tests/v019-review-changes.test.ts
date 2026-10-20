@@ -76,4 +76,12 @@ describe('v0.19 review changes', () => {
       expect(check.findings.map(f => f.id)).toContain(seed.id)
     })
   })
+
+  describe('C6 hygiene: who decides', () => {
+    it('every check says who decides; only the rule agreement needs the user', () => {
+      const checks = hygieneCheck(eml).checks
+      expect(checks.every(c => c.decides === 'agent' || c.decides === 'user')).toBe(true)
+      expect(checks.filter(c => c.decides === 'user').map(c => c.id)).toEqual(['rule-without-agreement'])
+    })
+  })
 })

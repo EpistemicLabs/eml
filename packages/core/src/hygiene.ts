@@ -30,6 +30,13 @@ type EngramRow = Record<string, any>
 
 export type HygieneCheckKind = 'migration' | 'review'
 
+/**
+ * Who decides a finding (decision hygiene-agent-decides-by-check): agent = the
+ * agent writes the clear cases itself and asks only where it is unsure; user =
+ * it needs the user's word (e.g. a rule's agreement).
+ */
+export type HygieneDecider = 'agent' | 'user'
+
 export interface HygieneFinding {
   id: string
   type: string
@@ -41,6 +48,7 @@ export interface HygieneFinding {
 export interface HygieneCheck {
   id: string
   kind: HygieneCheckKind
+  decides: HygieneDecider
   /** Brain schema that introduced the requirement (migration checks only). */
   since_schema?: number
   /** What the check requires, for the agent and the user. */
@@ -53,6 +61,7 @@ export interface HygieneCheck {
 export interface HygieneCheckResult {
   id: string
   kind: HygieneCheckKind
+  decides: HygieneDecider
   since_schema?: number
   what: string
   how: string
@@ -87,6 +96,7 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-profile-format',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 18,
     what:
       `Rules and profiles are short, so the boot can carry them whole: a rule's content at most ${RULE_CONTENT_MAX_CHARS} characters ` +
@@ -112,6 +122,7 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'review-due',
     kind: 'review',
+    decides: 'agent',
     what:
       'Decisions, rules and profiles carry a review date (review_due_at). Due entries are re-checked so stale ' +
       'knowledge does not stay in force.',
@@ -142,6 +153,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'reference-without-source',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 19,
     what:
       'A reference points to something outside the brain and names it in source (URL, repo path, document id). ' +
@@ -159,6 +171,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'profile-scope',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 19,
     what:
       'A profile is about someone: it lives in agent.<id>, user.<id> or entity.<id>. Setup, access and how-to ' +
@@ -176,6 +189,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'superseded-without-successor',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 19,
     what:
       'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
@@ -192,6 +206,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-without-why',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 19,
     what: 'A rule says why it holds (why). New rules need it; older ones were written without.',
     how:
@@ -206,6 +221,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-without-agreement',
     kind: 'migration',
+    decides: 'user',
     since_schema: 19,
     what:
       'A rule is agreed with the user (agreed holds their yes). Older rules were often written after a single ' +
@@ -225,6 +241,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'task-link-without-binding',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 19,
     what:
       'A decision or note taken in a task says whether it outlives the task (binding standing) or only governs ' +

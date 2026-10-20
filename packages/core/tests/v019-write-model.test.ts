@@ -244,7 +244,10 @@ describe('v0.19 write model', () => {
       expect(eml.engrams.update(n.id, { status: 'active' })!.status).toBe('active')
       const next = eml.engrams.store(validNote({ supersedes: [n.id] }))
       expect(next.superseded).toEqual([n.id])
-      expect(() => eml.engrams.update(n.id, { status: 'active' })).toThrow(/a superseded engram is not reactivated/)
+      expect(() => eml.engrams.update(n.id, { status: 'active' })).toThrow(/reactivated only once its successor is invalidated/)
+      // undo of a refile: invalidate the successor, then the old one comes back
+      eml.engrams.update(next.id, { status: 'invalidated' })
+      expect(eml.engrams.update(n.id, { status: 'active' })!.status).toBe('active')
     })
 
     it('a status takes only status=invalidated, tags and subjects', () => {

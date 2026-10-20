@@ -1555,7 +1555,15 @@ export class EngramStore {
         )
       }
       if (patch.status === 'active' && existing.status === 'superseded') {
-        throw new Error('Invalid engram: a superseded engram is not reactivated — its successor holds.')
+        // Reactivating is the undo of a supersede (e.g. a hygiene refile): only once
+        // no successor holds any more (decision hygiene-agent-decides-by-check).
+        const successors = this.db.prepare(`
+          SELECT e.status FROM relations r JOIN engrams e ON e.id = r.source_id
+          WHERE r.target_id = ? AND r.relation = 'supersedes'
+        `).all(id) as Array<{ status: string }>
+        if (successors.length === 0 || successors.some(r => r.status !== 'invalidated')) {
+          throw new Error('Invalid engram: a superseded engram is reactivated only once its successor is invalidated — until then the successor holds.')
+        }
       }
     }
     if (type === 'status') {
