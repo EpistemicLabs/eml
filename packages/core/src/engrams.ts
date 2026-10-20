@@ -10,7 +10,7 @@ import {
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
 import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
-import { TYPE_FIELDS, ORIGINS, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
+import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
 import {
   appendEntry, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
   type Entry, type EntryInput, type EntryKind, type EntryStamp, type EvidenceSource, type EvidenceStance,
@@ -325,7 +325,9 @@ export class EngramStore {
     if (unknownInput.length > 0) throw unknownFieldsError(type, unknownInput, createInputKeys(type))
     const props: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(input.properties ?? {})) if (v !== null && v !== undefined) props[k] = v
-    validateFields(type, props, 'create')
+    // A default-brain seed rule has no agreement yet: getting-started asks the
+    // user and sets agreed with their words (decision v0.19-seed-rules-agreement).
+    validateFields(type, props, 'create', type === 'rule' && input.origin === SEED_ORIGIN ? ['agreed'] : [])
 
     // --- universal rules ---
     if (type !== 'log' && isBlank(input.content)) throw new Error('Invalid engram: content must not be empty.')

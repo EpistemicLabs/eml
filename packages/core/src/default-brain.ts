@@ -9,8 +9,8 @@ export const DEFAULT_BRAIN_USER_ID = 'default'
 // and the long form to detail; a profile is ≤ 400 chars. The boot loads the
 // core profile of agent.<self> and user.<self> and the rules by scope (boot.ts).
 // v0.19: the seeds carry origin eml-default-brain (was properties.source_id);
-// a rule needs the user's agreement, which for the seeds is the setup itself.
-const SEED_AGREED = 'Default rule of a new EML brain; getting-started shows it to the user.'
+// their rules carry no agreed yet: getting-started asks the user and sets it
+// with their words; until then the rule-without-agreement hygiene check finds them.
 const DEFAULT_BRAIN_ENGRAM_TEMPLATES: ReadonlyArray<EngramInput> = [
   // === Identity ===
   {
@@ -42,7 +42,6 @@ const DEFAULT_BRAIN_ENGRAM_TEMPLATES: ReadonlyArray<EngramInput> = [
       'Verify a claim about state, structure, behavior or impact with a concrete observation (tool call, file read, source) before asserting it — or mark it as an unverified assumption.',
     properties: {
       applies: 'always',
-      agreed: SEED_AGREED,
       rule_type: 'behavior',
       why: 'Inferred or remembered knowledge presented as fact misleads the user, while grounding is usually one tool call away.',
       detail:
@@ -59,7 +58,6 @@ const DEFAULT_BRAIN_ENGRAM_TEMPLATES: ReadonlyArray<EngramInput> = [
       'Engage as a senior peer: agree only with a reason, name a risk or counter-argument before agreeing to a strategic call, and pick an answer when the evidence is there.',
     properties: {
       applies: 'always',
-      agreed: SEED_AGREED,
       rule_type: 'behavior',
       why: 'Empty agreement and enthusiasm in place of analysis leave the user alone with the decision.',
       detail:
@@ -77,7 +75,6 @@ const DEFAULT_BRAIN_ENGRAM_TEMPLATES: ReadonlyArray<EngramInput> = [
       'Before a non-trivial state-changing action (code, deploy, push, config, external communication, commitment), propose it and wait for the user\'s go. Read-only work needs no approval.',
     properties: {
       applies: 'always',
-      agreed: SEED_AGREED,
       rule_type: 'process',
       why: 'The user wants to co-decide what changes; a proposal first is cheaper than undoing an action.',
       detail:

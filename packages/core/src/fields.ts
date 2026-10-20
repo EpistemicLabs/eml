@@ -39,6 +39,8 @@ export const CHANGE_TYPES = [
 
 /** Engram origins the software writes (the cockpit notes pane, review triage, the default brain). */
 export const ORIGINS = ['cockpit-notes', 'cockpit-review-triage', 'eml-default-brain'] as const
+/** The origin of the default-brain seeds: its rules wait for the user's agreement (getting-started). */
+export const SEED_ORIGIN = 'eml-default-brain'
 
 const text = (o: Omit<FieldSpec, 'kind'> = {}): FieldSpec => ({ kind: 'text', ...o })
 const list = (o: Omit<FieldSpec, 'kind'> = {}): FieldSpec => ({ kind: 'text[]', ...o })
@@ -178,7 +180,7 @@ export function isBlank(value: unknown): boolean {
  * be there; on update a null clears an optional field and a required one
  * cannot be cleared. Throws `Invalid engram: …` naming every problem.
  */
-export function validateFields(type: EngramType, fields: Record<string, unknown>, mode: 'create' | 'update'): void {
+export function validateFields(type: EngramType, fields: Record<string, unknown>, mode: 'create' | 'update', notRequired: readonly string[] = []): void {
   const specs = TYPE_FIELDS[type]
   const unknown = Object.keys(fields).filter(k => !(k in specs))
   if (unknown.length > 0) throw unknownFieldsError(type, unknown, Object.keys(specs))
@@ -186,7 +188,7 @@ export function validateFields(type: EngramType, fields: Record<string, unknown>
   for (const [name, spec] of Object.entries(specs)) {
     const value = fields[name]
     if (value === undefined) {
-      if (mode === 'create' && spec.required) problems.push(`${article(type)} ${type} needs ${name}.`)
+      if (mode === 'create' && spec.required && !notRequired.includes(name)) problems.push(`${article(type)} ${type} needs ${name}.`)
       continue
     }
     if (value === null) {

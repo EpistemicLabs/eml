@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, readObject, createObject, type WriteContext } from '../src'
 import { renderBrainStateMarkdown } from '../src/render'
-import { validDecision, validLog } from './fixtures'
+import { validDecision, validLog, validRule } from './fixtures'
+import { hygieneCheck } from '../src/hygiene'
 
 // v0.19 — behaviour changes from the review of the agent-facing texts
 // (note v0.19-agent-texts-decisions, C1–C6).
@@ -61,6 +62,18 @@ describe('v0.19 review changes', () => {
       const state = eml.engrams.buildBrainState('user.ada') as unknown as Record<string, unknown>
       expect(state.ripe_learnings).toBeUndefined()
       expect(renderBrainStateMarkdown(eml.engrams.buildBrainState('user.ada'))).not.toContain('ask-before-push')
+    })
+  })
+
+  describe('C4 default-brain seed rules wait for the user\'s agreement', () => {
+    it('only a seed rule may be written without agreed; the hygiene check finds it', () => {
+      const rule = validRule() as Record<string, any>
+      const { agreed: _drop, ...props } = rule.properties
+      expect(() => eml.engrams.store({ ...rule, properties: props } as any)).toThrow('a rule needs agreed.')
+      const seed = eml.engrams.store({ ...rule, title: 'seed-rule', properties: props, origin: 'eml-default-brain' } as any)
+      expect((seed.properties as any).agreed).toBeUndefined()
+      const check = hygieneCheck(eml).checks.find(c => c.id === 'rule-without-agreement')!
+      expect(check.findings.map(f => f.id)).toContain(seed.id)
     })
   })
 })

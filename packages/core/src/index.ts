@@ -125,7 +125,7 @@ export {
 } from './forward-migrations'
 export { boot, type BootResult, type BootOptions } from './boot'
 export {
-  TYPE_FIELDS, ORIGINS, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
+  TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
 export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EntryStamp, type EvidenceSource, type EvidenceStance } from './entries'

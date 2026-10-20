@@ -74,6 +74,7 @@ import {
   readObject,
   createObject,
   updateObject,
+  SEED_ORIGIN,
   type WriteContext,
   type EngramType,
   type EngramStatus,
@@ -450,6 +451,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const type = createMatch[1] as EngramType
       const body = await readBody(req)
       rejectNestedProperties(type, body)
+      // The default-brain seeds are written in-process only; over HTTP that origin
+      // would skip a rule's agreement (decision v0.19-seed-rules-agreement).
+      if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
       const engram = eml.engrams.store(input, writeCtx)

@@ -619,7 +619,7 @@ describe('v0.19 write model', () => {
     beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'eml-v019-seed-')) })
     afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-    it('core profiles, origin eml-default-brain, rules with why and agreed', () => {
+    it('core profiles, origin eml-default-brain, rules with why and no agreement yet', () => {
       const file = join(dir, 'b.db')
       seedDefaultBrain(file, 'juno', 'ada')
       const seeded = new EML({ dbPath: file, namespace: 'juno' })
@@ -630,7 +630,7 @@ describe('v0.19 write model', () => {
           .toEqual(['agent.juno:true', 'user.ada:true'])
         for (const r of seeded.engrams.query({ type: 'rule' })) {
           expect((r.properties as any).why).toBeTruthy()
-          expect((r.properties as any).agreed).toBeTruthy()
+          expect((r.properties as any).agreed).toBeUndefined()
         }
       } finally { seeded.close() }
     })

@@ -71,7 +71,7 @@ describe('seedDefaultBrain', () => {
       }
     })
 
-    it('the identity profiles are the core profiles; the rules carry why and agreed', () => {
+    it('the identity profiles are the core profiles; the rules carry why and wait for the user agreement', () => {
       seedDefaultBrain(brainPath)
       const eml = new EML({ dbPath: brainPath, namespace: DEFAULT_BRAIN_AGENT_ID })
       try {
@@ -81,7 +81,7 @@ describe('seedDefaultBrain', () => {
         for (const r of eml.engrams.query({ type: 'rule' })) {
           const props = r.properties as Record<string, unknown>
           expect(typeof props.why).toBe('string')
-          expect(typeof props.agreed).toBe('string')
+          expect(props.agreed).toBeUndefined()
           expect(props.boot).toBeUndefined()
         }
       } finally {
