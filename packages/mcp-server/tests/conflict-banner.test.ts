@@ -54,10 +54,32 @@ describe('conflictBanner', () => {
     const status = conflictBanner({ type: 'status', potential_conflicts: [cand(0.6)] })!
     expect(status).toContain('already superseded by this write')
     expect(status).not.toContain('supersedes=[')
+    expect(status).not.toContain('merge (eml_update')
     // a task among the candidates of a note: not superseded by the note
-    const note = conflictBanner({ type: 'note', potential_conflicts: [cand(0.6, { type: 'task' })] })!
+    const note = conflictBanner({ type: 'note', potential_conflicts: [cand(0.6), cand(0.6, { id: '7a5c0000aaaa', type: 'task' })] })!
     expect(note).toContain('eml_update(<new id>, supersedes=[<old id>])')
-    expect(note).toContain('A task is not superseded by this write — close it with eml_track_task')
+    expect(note).toContain('7a5c0000: a task, not superseded by this write — close it with eml_track_task')
+  })
+
+  // v0.19 (second-session review): the proposal follows the candidate's type too.
+  it('proposes no supersede the server would reject for the candidate', () => {
+    // only a task among the candidates of a note: no supersede, no merge
+    const onlyTask = conflictBanner({ type: 'note', potential_conflicts: [cand(0.6, { type: 'task' })] })!
+    expect(onlyTask).not.toContain('supersedes=[')
+    expect(onlyTask).not.toContain('merge (eml_update')
+    // a status candidate under a decision write
+    const dec = conflictBanner({ type: 'decision', potential_conflicts: [cand(0.9, { id: '5b64a5270000', type: 'status' })] })!
+    expect(dec).not.toContain('supersedes=[')
+    expect(dec).toContain('5b64a527: a status, replaced only by the next eml_set_status in its scope.')
+    // a task write next to a decision and a task: track_task supersede for the task, the decision is named
+    const task = conflictBanner({ type: 'task', potential_conflicts: [cand(0.8, { id: 'dddd00000000' }), cand(0.8, { id: 'tttt00000000', type: 'task' })] })!
+    expect(task).toContain('eml_track_task(<new id>, supersedes=[<old id>])')
+    expect(task).toContain('dddd0000: not replaced by a task')
+    expect(task).not.toContain('eml_update content')
+    // a task write with only a decision candidate: relate or dismiss
+    const taskDec = conflictBanner({ type: 'task', potential_conflicts: [cand(0.8)] })!
+    expect(taskDec).not.toContain('supersede')
+    expect(taskDec).toContain('relate (eml_relate contradicts | related_to) / dismiss.')
   })
 
   it('escalates wording at/above the escalation threshold (high word overlap)', () => {

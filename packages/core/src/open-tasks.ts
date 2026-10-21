@@ -14,7 +14,7 @@ export const OPEN_TASKS_IN_SCOPE_SQL = `
       WHEN 'high'   THEN 3
       WHEN 'normal' THEN 2
       WHEN 'low'    THEN 1
-      ELSE 0
+      ELSE 2  -- no priority reads as normal, as every list shows it
     END DESC,
     COALESCE(json_extract(e.properties, '$.due_date'), '9999-12-31') ASC,
     MAX(

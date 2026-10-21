@@ -71,22 +71,41 @@ export function conflictBanner(result: unknown): string | null {
     `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap — ${c.gist.slice(0, 120)}`,
   )
 
-  // v0.19: the resolve options follow the lifecycle of the written type — an
-  // event is corrected, a status is versioned by set_status, a task is replaced
-  // by a task (eml_track_task supersedes), everything else by eml_update supersedes.
-  const merge = 'merge (eml_update content of one, invalidate the other) / relate (eml_relate contradicts | related_to) / dismiss.'
+  // v0.19: the resolve options follow the lifecycle of both sides — the call
+  // proposed for a candidate must be one the server accepts for that pair.
+  // An event is corrected, a status is versioned by set_status, a task is
+  // replaced only by a task (eml_track_task supersedes), and a task write
+  // supersedes no other type.
+  const relate = 'relate (eml_relate contradicts | related_to) / dismiss.'
+  const ids = (cs: ConflictCandidateView[]) => cs.map(c => c.id.slice(0, 8)).join(', ')
+  const ofType = (t: string) => pc.filter(c => c.type === t)
+  const written = r?.type
   let evaluate: string
-  if (r?.type === 'event') {
+  if (written === 'event') {
     evaluate = 'Evaluate each before continuing: the same occurrence (this write is a duplicate: eml_update(<new id>, status=invalidated)) / ' +
       'a different one (relate: eml_relate related_to, or dismiss).'
-  } else if (r?.type === 'status') {
-    evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${merge}`
-  } else if (r?.type === 'task') {
-    evaluate = 'Evaluate each before continuing: supersede (this task replaces it: eml_track_task(<new id>, supersedes=[<old id>]); ' +
-      `its bound decisions and notes move along) / ${merge}`
+  } else if (written === 'status') {
+    evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${relate}`
+  } else if (written === 'task') {
+    const tasks = ofType('task')
+    const others = pc.filter(c => c.type !== 'task')
+    evaluate = tasks.length > 0
+      ? 'Evaluate each before continuing: supersede (this task replaces it: eml_track_task(<new id>, supersedes=[<old id>]); ' +
+        `its bound decisions and notes move along) / ${relate}`
+      : `Evaluate each before continuing: ${relate}`
+    if (tasks.length > 0 && others.length > 0) evaluate += ` ${ids(others)}: not replaced by a task — relate or dismiss.`
   } else {
-    evaluate = `Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ${merge}`
-    if (pc.some(c => c.type === 'task')) evaluate += ' A task is not superseded by this write — close it with eml_track_task (resolved or invalidated) if it is done, else relate.'
+    const tasks = ofType('task')
+    const statuses = ofType('status')
+    const events = ofType('event')
+    const supersedable = pc.length - tasks.length - statuses.length - events.length
+    evaluate = supersedable > 0 && written !== 'log'
+      ? 'Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ' +
+        `merge (eml_update content of one, invalidate the other) / ${relate}`
+      : `Evaluate each before continuing: ${relate}`
+    if (tasks.length > 0) evaluate += ` ${ids(tasks)}: a task, not superseded by this write — close it with eml_track_task (resolved or invalidated) if it is done, else relate.`
+    if (statuses.length > 0) evaluate += ` ${ids(statuses)}: a status, replaced only by the next eml_set_status in its scope.`
+    if (events.length > 0) evaluate += ` ${ids(events)}: an event, corrected and never superseded.`
   }
   return [header, ...lines, evaluate].join('\n')
 }

@@ -287,4 +287,100 @@ describe('v0.19 review fixes', () => {
       expect(propsOf(bound.id).binding).toBe('standing')
     })
   })
+
+  // Second-session review of the release branch (2026-10-21), blocks A and B.
+  describe('second-session review', () => {
+    const relate = (s: string, t: string, relation: 'derived_from' | 'refines' | 'related_to') =>
+      eml.engrams.relate({ source_id: s, target_id: t, relation, detection_method: 'agent_declared' })
+
+    it('A2: invalidating a parent asks for keep on its sub-tasks\' bound items and reports them', () => {
+      const parent = eml.engrams.store(validTask({ title: 'parent' }))
+      const child = eml.engrams.store(validTask({ title: 'child', parent_id: parent.id }))
+      const d = eml.engrams.store(validDecision({ task_id: child.id, properties: { binding: 'task' } }))
+      const n = eml.engrams.store(validNote({ task_id: child.id, properties: { binding: 'task' } }))
+      expect(() => eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'x', text: 'x' }))
+        .toThrow(/bound to its open sub-tasks, which are invalidated with it: decision/)
+      const r = eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'x', text: 'x', keep: [n.id] }) as any
+      expect(r.closed_with_task.map((i: any) => i.id)).toEqual([d.id])
+      expect(r.kept.map((i: any) => i.id)).toEqual([n.id])
+      expect(statusOf(d.id)).toBe('invalidated')
+      expect(statusOf(n.id)).toBe('active')
+      expect(propsOf(n.id).binding).toBe('standing')
+      expect(statusOf(child.id)).toBe('invalidated')
+    })
+
+    it('A3: a bound item belongs to one task; relate does not draw a second binding edge', () => {
+      const t1 = eml.engrams.store(validTask({ title: 't1' }))
+      const t2 = eml.engrams.store(validTask({ title: 't2' }))
+      const d = eml.engrams.store(validDecision({ task_id: t1.id, properties: { binding: 'task' } }))
+      expect(() => relate(d.id, t2.id, 'derived_from')).toThrow(`is bound to task ${t1.id} — a decision is bound to one task`)
+      expect(() => relate(d.id, t2.id, 'refines')).toThrow(/bound to one task/)
+      expect(relate(d.id, t2.id, 'related_to')).toBe(true)
+      // a standing item may point at several tasks
+      eml.engrams.update(d.id, { properties: { binding: 'standing' } })
+      expect(relate(d.id, t2.id, 'derived_from')).toBe(true)
+    })
+
+    it('A4: an engram with a successor is not superseded a second time', () => {
+      const a = eml.engrams.store(validTask({ title: 'a' }))
+      const b = eml.engrams.store(validTask({ title: 'b', supersedes: [a.id] }))
+      const c = eml.engrams.store(validTask({ title: 'c' }))
+      expect(() => eml.engrams.trackTask(c.id, { supersedes: [a.id], text: 'x' })).toThrow(`${a.id} is already superseded by ${b.id} — continue on that one`)
+      const d1 = eml.engrams.store(validDecision())
+      const d2 = eml.engrams.store(validDecision({ supersedes: [d1.id] }))
+      const d3 = eml.engrams.store(validDecision())
+      expect(() => eml.engrams.update(d3.id, { supersedes: [d1.id] })).toThrow(`already superseded by ${d2.id}`)
+      expect(rawDb().prepare(`SELECT COUNT(*) AS n FROM relations WHERE target_id = ? AND relation = 'supersedes'`).get(d1.id).n).toBe(1)
+    })
+
+    it('B5: the hygiene repair draws only the missing edge — any successor type and state', () => {
+      const plantSuperseded = (e: { id: string }) => rawDb().prepare(`UPDATE engrams SET status = 'superseded' WHERE id = ?`).run(e.id)
+      // decision successor no longer active
+      const old1 = eml.engrams.store(validDecision()); plantSuperseded(old1)
+      const succ1 = eml.engrams.store(validDecision())
+      eml.engrams.update(succ1.id, { status: 'invalidated' })
+      eml.engrams.update(succ1.id, { supersedes: [old1.id] })
+      expect(edge(succ1.id, old1.id, 'supersedes')).toBeTruthy()
+      expect(statusOf(succ1.id)).toBe('invalidated')
+      // a legacy task replaced by a note
+      const oldTask = eml.engrams.store(validTask({ title: 'legacy' })); plantSuperseded(oldTask)
+      const note = eml.engrams.store(validNote())
+      eml.engrams.update(note.id, { supersedes: [oldTask.id] })
+      expect(edge(note.id, oldTask.id, 'supersedes')).toBeTruthy()
+      expect(journal(oldTask.id)).toContain(`change:superseded by ${note.id}`)
+      // a closed task successor
+      const oldTask2 = eml.engrams.store(validTask({ title: 'legacy2' })); plantSuperseded(oldTask2)
+      const done = closedTask(eml, { title: 'done' })
+      eml.engrams.trackTask(done.id, { supersedes: [oldTask2.id], text: 'the successor of legacy2' })
+      expect(edge(done.id, oldTask2.id, 'supersedes')).toBeTruthy()
+      expect(statusOf(done.id)).toBe('resolved')
+      expect(journal(done.id)).toContain(`change:supersedes ${oldTask2.id}`)
+      // and the findings are gone (an unrepaired one stays, as the control)
+      const control = eml.engrams.store(validDecision()); plantSuperseded(control)
+      const found = hygieneCheck(eml, { since: 18 }).checks.find(c => c.id === 'superseded-without-successor')!
+      expect(found.findings.map(f => f.id)).not.toContain(old1.id)
+      expect(found.findings.map(f => f.id)).not.toContain(oldTask.id)
+      expect(found.findings.map(f => f.id)).not.toContain(oldTask2.id)
+      expect(found.findings.map(f => f.id)).toContain(control.id)
+      // a live engram is still replaced only by a live successor
+      const live = eml.engrams.store(validDecision())
+      expect(() => eml.engrams.update(succ1.id, { supersedes: [live.id] })).toThrow(/only an active engram supersedes another/)
+    })
+
+    it('B7: a task without priority sorts as normal', () => {
+      const raw = rawDb()
+      const mk = (title: string, priority?: string, at = '2026-01-01T00:00:00.000Z') => {
+        const t = eml.engrams.store(validTask({ title, scope: 'project.p', properties: priority ? { priority } : {} }))
+        if (!priority) raw.prepare(`UPDATE engrams SET properties = json_remove(properties, '$.priority') WHERE id = ?`).run(t.id)
+        raw.prepare('UPDATE engrams SET updated_at = ? WHERE id = ?').run(at, t.id)
+        raw.prepare('UPDATE entries SET at = ? WHERE engram_id = ?').run(at, t.id)
+        return t
+      }
+      mk('low-one', 'low', '2026-03-01T00:00:00.000Z')
+      mk('none-one', undefined, '2026-01-01T00:00:00.000Z')
+      mk('normal-one', 'normal', '2026-02-01T00:00:00.000Z')
+      const order = eml.engrams.buildBrainState('project.p').open_tasks.map(t => t.title)
+      expect(order).toEqual(['normal-one', 'none-one', 'low-one'])
+    })
+  })
 })
