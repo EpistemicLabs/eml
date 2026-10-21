@@ -7,7 +7,6 @@ import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { validDecision } from './fixtures'
 
 const MIGRATIONS = join(__dirname, '..', 'migrations', 'brain')
-const SRC = { source_id: 'x', source_type: 'agent' } as const
 const NOW = '2026-08-17T00:00:00.000Z'
 const PAST = '2026-08-01T00:00:00.000Z'
 const FUTURE = '2026-12-01T00:00:00.000Z'
@@ -15,7 +14,7 @@ const FUTURE = '2026-12-01T00:00:00.000Z'
 function decision(eml: EML, title: string, review_due_at: string, extra: Record<string, unknown> = {}) {
   return eml.engrams.store(validDecision({
     scope: 'global', title, content: `decision ${title}`,
-    properties: { ...SRC, review_due_at, ...extra },
+    properties: { review_due_at, ...extra },
   }))
 }
 
@@ -66,17 +65,17 @@ describe('v0.13 labels — review sweep', () => {
 
   it('does NOT stamp a non-active engram', () => {
     const d = decision(eml, 'dead', PAST)
-    eml.engrams.update(d.id, { status: 'superseded' })
+    eml.engrams.update(d.id, { status: 'invalidated' })
     expect(eml.engrams.stampDueReviewLabels(NOW)).toBe(0)
     expect(eml.engrams.get(d.id)!.labels).not.toContain('review')
   })
 
   it('does NOT stamp a type outside decision/rule/profile', () => {
-    // a task carrying a past review_due_at property must be ignored
-    eml.engrams.store({
-      type: 'task', scope: 'global', title: 't', content: 'a task',
-      properties: { ...SRC, review_due_at: PAST, priority: 'normal' },
-    })
+    // a task carrying a past review_due_at property must be ignored (v0.19 does
+    // not let a task take the field, so it is written raw)
+    const t = eml.engrams.store({ type: 'task', scope: 'global', title: 't', content: 'a task', properties: { priority: 'normal' } })
+    ;(eml.engrams as any).db.prepare(`UPDATE engrams SET properties = json_set(properties, '$.review_due_at', ?), updated_at = ? WHERE id = ?`)
+      .run(PAST, NOW, t.id)
     expect(eml.engrams.stampDueReviewLabels(NOW)).toBe(0)
   })
 
@@ -100,7 +99,7 @@ describe('v0.13 labels — review sweep', () => {
     const d = decision(eml, 'confirm-me', PAST)
     eml.engrams.stampDueReviewLabels(NOW)
     expect(eml.engrams.get(d.id)!.labels).toContain('review')
-    eml.engrams.confirmReview(d.id)
+    eml.engrams.confirmReview(d.id, 'still holds')
     expect(eml.engrams.get(d.id)!.labels).not.toContain('review')
   })
 
@@ -108,7 +107,7 @@ describe('v0.13 labels — review sweep', () => {
     const d = decision(eml, 'supersede-me', PAST)
     eml.engrams.stampDueReviewLabels(NOW)
     expect(eml.engrams.get(d.id)!.labels).toContain('review')
-    eml.engrams.update(d.id, { status: 'superseded' })
+    eml.engrams.update(d.id, { status: 'invalidated' })
     expect(eml.engrams.get(d.id)!.labels).not.toContain('review')
   })
 
@@ -123,7 +122,7 @@ describe('v0.13 labels — review sweep', () => {
     const d = decision(eml, 'pending', PAST)
     eml.engrams.store({
       type: 'task', scope: 'global', title: 'work', content: 'real work',
-      properties: { ...SRC, priority: 'normal' },
+      properties: { priority: 'normal' },
     })
     eml.engrams.stampDueReviewLabels(NOW)
     const state = eml.engrams.buildBrainState('global')

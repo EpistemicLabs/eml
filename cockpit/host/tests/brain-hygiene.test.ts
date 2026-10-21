@@ -15,8 +15,8 @@ const finding = (id: string) => ({ id, type: 'rule', scope: 'global', title: `t-
 const report = (migration: number, review: number, schema = 18): Report => ({
   schema,
   checks: [
-    { id: 'rule-profile-format', kind: 'migration', since_schema: 18, what: 'W', how: 'H', findings: Array.from({ length: migration }, (_, i) => finding(`m${i}`)) },
-    { id: 'review-due', kind: 'review', what: 'RW', how: 'RH', findings: Array.from({ length: review }, (_, i) => finding(`r${i}`)) },
+    { id: 'rule-profile-format', kind: 'migration', decides: 'agent', since_schema: 18, what: 'W', how: 'H', findings: Array.from({ length: migration }, (_, i) => finding(`m${i}`)) },
+    { id: 'review-due', kind: 'review', decides: 'agent', what: 'RW', how: 'RH', findings: Array.from({ length: review }, (_, i) => finding(`r${i}`)) },
   ],
   total: migration + review,
 })

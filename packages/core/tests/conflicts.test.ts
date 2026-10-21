@@ -6,7 +6,7 @@ import {
   CONFLICT_COVERAGE_THRESHOLD,
   CONFLICT_MAX,
 } from '../src'
-import { validDecision } from './fixtures'
+import { validDecision, validLog } from './fixtures'
 
 // v0.10.9 write-time conflict guardrail. Asserts the term-coverage gate at the
 // calibrated threshold (≈0.5): a vocabulary-overlapping re-write FIRES (candidate
@@ -127,12 +127,11 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('EXCLUDES log/event candidates: a heavily-overlapping log is never a supersede/merge target', () => {
-    eml.engrams.store({
-      type: 'log',
+    eml.engrams.store(validLog({
       scope: 'project.eml',
       title: 'session-brand-work',
       content: 'Brand name Engram Protocol, domain engramprotocol.io, canonical naming choice discussed.',
-    })
+    }))
 
     const res = eml.engrams.store(validDecision({
       scope: 'project.eml',
@@ -205,12 +204,11 @@ describe('conflict guardrail — store() integration', () => {
       title: 'brand-and-domain',
       content: 'Brand name Engram Protocol domain canonical naming choice.',
     }))
-    const res = eml.engrams.store({
-      type: 'log',
+    const res = eml.engrams.store(validLog({
       scope: 'project.eml',
       title: 'session-recap',
       content: 'Brand Engram Protocol domain canonical naming choice recap.',
-    })
+    }))
     expect(res.potential_conflicts).toBeUndefined()
   })
 })

@@ -12,32 +12,32 @@
     {
       "key": "r-tests-before-push", "type": "rule", "scope": "user.alex", "title": "tests-before-push", "age_days": 120,
       "content": "Run the full test suite before every push; never push with failing tests.",
-      "properties": { "applies": "always" }
+      "properties": { "applies": "always", "why": "A failing build reached the shop once and took an evening to roll back.", "agreed": "Alex, when the brain was set up" }
     },
     {
       "key": "r-commit-english", "type": "rule", "scope": "global", "title": "commit-messages-english", "age_days": 110,
       "content": "Write commit messages in English, imperative mood, one change per commit.",
-      "properties": { "applies": "always" }
+      "properties": { "applies": "always", "why": "The repository is shared with a freelance developer who reads English.", "agreed": "Alex, when the brain was set up" }
     },
     {
       "key": "r-no-friday-deploys", "type": "rule", "scope": "global", "title": "no-friday-deploys", "age_days": 90,
       "content": "No production deploys on Fridays after 14:00; wait until Monday morning.",
-      "properties": { "applies": "situational", "trigger": "deploying anything to production" }
+      "properties": { "applies": "situational", "trigger": "deploying anything to production", "why": "A Friday deploy broke checkout once and nobody was around to fix it over the weekend.", "agreed": "Alex, after that weekend" }
     },
     {
       "key": "r-backup-before-migration", "type": "rule", "scope": "project.shop", "title": "snapshot-before-migration", "age_days": 70,
       "content": "Take a database snapshot before running any migration or bulk import on shop data.",
-      "properties": { "applies": "situational", "trigger": "running a migration or bulk import" }
+      "properties": { "applies": "situational", "trigger": "running a migration or bulk import", "why": "A migration once went wrong and the data had to be restored by hand.", "agreed": "Alex, after that restore" }
     },
     {
       "key": "r-ask-before-email", "type": "rule", "scope": "user.alex", "title": "approve-customer-emails", "age_days": 60,
       "content": "Never send an email to customers without Alex approving the exact text first.",
-      "properties": { "applies": "situational", "trigger": "sending email to customers" }
+      "properties": { "applies": "situational", "trigger": "sending email to customers", "why": "Customers got an email with a wrong date once; Alex wants to see every text first.", "agreed": "Alex, when the brain was set up" }
     },
     {
       "key": "r-app-test-device", "type": "rule", "scope": "project.app", "title": "test-on-oldest-device", "age_days": 50,
       "content": "Test every app build on the oldest supported device (iPhone SE 2nd gen) before it goes out.",
-      "properties": { "applies": "situational", "trigger": "releasing a new app build" }
+      "properties": { "applies": "situational", "trigger": "releasing a new app build", "why": "A build that crashed on the oldest phones reached customers once.", "agreed": "Alex, after the build 9 crash reports" }
     },
 
     {

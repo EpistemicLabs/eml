@@ -45,22 +45,27 @@ with any MCP client.
    it open. Don't ask about language, tone or how long your answers should be
    — see above, and step 6 for the length.
 
-   Update their profile engram (`<user>-identity`, scope `user.<user>`): read
-   it with `eml_get`, replace the placeholder line "The agent learns more from
+   Update their core profile (scope `user.<user>`, the profile marked core —
+   `eml_list type=profile scope=user.<user>` finds it): read it with
+   `eml_get`, replace the placeholder line "The agent learns more from
    conversation…" with what you learned, written in English as plain facts,
    and send the whole new text with `eml_update` — `content` replaces the
-   engram's content completely, so keep its first line. A profile holds at
-   most 400 characters: keep it to the core facts. If they said what they
-   want you for, add one line about that role to your identity engram
-   (`<agent>-identity`) the same way.
+   engram's content completely, so keep its first line. A profile's content
+   holds at most 400 characters: keep it to the core facts; more goes into
+   its `detail`. If they said what they want you for, add one line about that
+   role to your own core profile (scope `agent.<agent>`) the same way.
 
 3. **The first project.** Ask what they'd like to start with — the thing they
    named in step 2 is the obvious candidate. Then:
-   - Create it with `eml_project_create` (a short kebab-case id, a readable name).
-   - Set its current state with `eml_set_status` (one or two sentences).
+   - Create it with `eml_create_object` (object=project, a readable name, a
+     short kebab-case id). Ask what the project's status should track (e.g.
+     "the released version", "the current phase") and set it as
+     `status_tracks` in the same call.
+   - Set its current state with `eml_set_status` (state = a short phrase,
+     content = one or two sentences).
    - Ask for the next one to three concrete things to do, and store each with
-     `eml_track_task` in the project's scope. Don't set a priority they
-     didn't give.
+     `eml_create_task` in the project's scope, with a short kebab-case title.
+     Don't set a priority they didn't give.
 
 4. **The brain.** Call `eml_show project.<id>` and present the result in a
    few lines, in the user's language (the engrams stay English): "This is
@@ -71,11 +76,16 @@ with any MCP client.
      old) and the *tasks* (open work, from idea to done) — then the others
      that come with time:
      - *decision* — a choice between real alternatives, with the reason;
-     - *note* — a thought that lives in the brain, plus a few special kinds:
-       *rule* (a way of working, like the ones in step 6), *profile* (who
-       someone is — like the one you just filled in), *event* (something that
-       happened), *reference* (a link to something outside), *log* (a session
-       summary).
+       taken inside a task it either outlives the task or closes with it;
+     - *note* — a thought that lives in the brain;
+     - *rule* — a way of working, like the ones in step 6 — only ever with
+       their yes;
+     - *learning* — something you learned about working with them, from their
+       corrections and your own mistakes; once it has come up a few times,
+       you ask whether to make it a rule;
+     - *profile* (who someone is — like the one you just filled in), *event*
+       (something that happened), *reference* (a link to something outside),
+       *log* (a session summary).
    - **Scopes** say what an engram is about: this project, a person or
      organisation (entity), the user, the agent, or global.
 
@@ -115,8 +125,11 @@ with any MCP client.
      want it shorter, they just say so;
    - propose before non-trivial changes, and act after their go.
 
-   Ask whether that fits. On a change, update the matching rule with
-   `eml_update` (the answer length lives in `<agent>-engagement-style`).
+   Ask whether that fits — these rules count only with their yes. Yes → set
+   `agreed` on each with their words (`eml_update`). A change → update the
+   rule's content and set `agreed` in the same call (the answer length lives in
+   `<agent>-engagement-style`). A rule they don't want → `eml_update`
+   status=invalidated.
 
 7. **Skills and asking.** Two or three lines:
    - **Skills** are routines they can call with a slash command:

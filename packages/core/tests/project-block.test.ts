@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, projectBlock, projectScopeChain, inheritedRules, renderBrainStateMarkdown } from '../src'
-import { validDecision, validTask } from './fixtures'
+import { validDecision, validTask, validRule, validLog } from './fixtures'
 
 // Legacy rules (written before the short format) cannot be stored through the
 // store any more; tests plant them with a raw UPDATE, as boot.test.ts does.
@@ -12,10 +12,10 @@ describe('projectBlock()', () => {
   let eml: EML
 
   const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`) =>
-    eml.engrams.store({
-      type: 'rule', scope, title, content,
+    eml.engrams.store(validRule({
+      scope, title, content,
       properties: { applies, ...(applies === 'situational' && { trigger: `${title} situation` }) },
-    })
+    }))
   const task = (title: string, priority = 'normal', content = `${title} work`) =>
     eml.engrams.store(validTask({ scope: 'project.app', title, content, properties: { priority } }))
 
@@ -38,7 +38,7 @@ describe('projectBlock()', () => {
   it('renders status, tasks, latest session, situational and always rules — in that order, no decisions', () => {
     eml.engrams.store({ type: 'status', scope: 'project.app', content: 'v1 shipped', properties: { state: 'live', next_step: 'v2' } })
     task('build-thing', 'high')
-    eml.engrams.store({ type: 'log', scope: 'project.app', title: 'session-1', content: 'did things' })
+    eml.engrams.store(validLog({ scope: 'project.app', title: 'session-1', content: 'did things' }))
     rule('project.app', 'when-deploying', 'situational')
     rule('project.app', 'always-test', 'always')
     eml.engrams.store(validDecision({ scope: 'project.app', title: 'chose-x' }))
@@ -102,7 +102,7 @@ describe('projectBlock()', () => {
     beforeEach(() => {
       eml.engrams.store({ type: 'status', scope: 'project.app', content: 'state of things', properties: { state: 'ok' } })
       for (let i = 0; i < 10; i++) task(`task-${i}`, 'normal', 'y'.repeat(200))
-      eml.engrams.store({ type: 'log', scope: 'project.app', title: 'session-log', content: 'log' })
+      eml.engrams.store(validLog({ scope: 'project.app', title: 'session-log', content: 'log' }))
       for (let i = 0; i < 3; i++) rule('project.app', `sit-${i}`, 'situational')
       for (let i = 0; i < 3; i++) rule('project.app', `alw-${i}`, 'always', `${'z'.repeat(150 + i)}`)
     })
@@ -167,8 +167,8 @@ describe('project parents', () => {
   })
 
   it('gives eml_show the parents\' rules, marked inherited', () => {
-    eml.engrams.store({ type: 'rule', scope: 'project.root', title: 'root-rule', content: 'root body', properties: { applies: 'always' } })
-    eml.engrams.store({ type: 'rule', scope: 'project.leaf', title: 'leaf-rule', content: 'leaf body', properties: { applies: 'always' } })
+    eml.engrams.store(validRule({ scope: 'project.root', title: 'root-rule', content: 'root body' }))
+    eml.engrams.store(validRule({ scope: 'project.leaf', title: 'leaf-rule', content: 'leaf body' }))
     expect(inheritedRules(eml, 'project.leaf').map(r => r.title)).toEqual(['root-rule'])
     expect(inheritedRules(eml, 'global')).toEqual([])
     const state = eml.engrams.buildBrainState('project.leaf')

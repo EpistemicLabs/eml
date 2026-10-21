@@ -25,6 +25,8 @@
 export interface SystemRule {
   category: string
   text: string
+  /** Why the rule exists and since when (rule system-rule-needs-rationale). Not rendered into the boot. */
+  why?: string
 }
 
 // --- BEHAVIOR_DEFAULTS ---
@@ -67,7 +69,8 @@ export const SYSTEM_RULES: SystemRule[] = [
     category: 'behavioral-patterns',
     text:
       'Recall before write: call eml_recall (or eml_list with filters) for the topic before storing a new engram. ' +
-      'If a matching active engram exists with the same state, skip; if outdated, supersede via eml_update.',
+      'If a matching active engram exists with the same state, skip; if outdated, write the new one with supersedes=[id].',
+    why: 'v0.19: supersede is a parameter of the new write (or eml_update(new, supersedes) after the fact); eml_update no longer sets superseded.',
   },
   {
     category: 'behavioral-patterns',
@@ -90,19 +93,28 @@ export const SYSTEM_RULES: SystemRule[] = [
   {
     category: 'type-vocabulary',
     text:
-      'task (eml_track_task): open work. status: planned (not started or parked) · active (started, not finished) · resolved/invalidated (closed, with an outcome). Optional stage: ideation → planning → ready → implementation. Done things are not tasks.',
+      'task (eml_create_task, then eml_track_task for everything after): open work. status: planned (not started or parked) · active (started, not finished) · resolved/invalidated (closed, with an outcome). Optional stage: ideation → planning → ready → implementation. Done things are not tasks.',
+    why: 'v0.19: a task is created with eml_create_task; progress, stage, closing and edits go through eml_track_task.',
   },
   {
     category: 'type-vocabulary',
     text:
-      'eml_note writes a note by default (kind omitted): a thought that lives in the brain — observation, research note/synthesis, living tracker, working thesis. Plus 5 less-frequent kinds: rule (a way of working, ≤ 200 chars), profile (identity facet, ≤ 400 chars), event (immutable timestamped occurrence), reference (pointer to something outside the brain — URL, doc, paper, issue), log (narrative entry).',
+      'One create tool per type: eml_note (a thought that lives in the brain — observation, synthesis, plan, tracker) · eml_rule (a way of working, ≤ 200 chars) · eml_profile (who someone is, ≤ 400 chars) · eml_event (a dated occurrence) · eml_reference (a pointer outside the brain) · eml_log (the session recap) · eml_learning (a lesson about how you work).',
+    why: 'v0.19: eml_note(kind=…) split into one tool per type; learning is new.',
+  },
+  {
+    category: 'type-vocabulary',
+    text:
+      'A rule needs the user\'s yes (agreed). What you notice yourself — a correction, a turned-down proposal, your own mistake — is a learning (eml_learning); when it is ripe, ask the user whether to make it a rule.',
+    why: 'v0.19 (decision feedback-before-rule, 2026-10-13/19): rules were written too fast after a single incident; a rule needs recurrence and the user\'s agreement.',
   },
 
   // --- 4. Type routing (distinctions between similar types) ---
   {
     category: 'type-routing',
     text:
-      'task as hub: a decision or plan made in a task → eml_decide / eml_note with task_id; progress → eml_task_entry, not a rewrite of the task.',
+      'task as hub: a decision or plan made in a task → eml_decide / eml_note with task_id and binding; progress → eml_track_task, not a rewrite of the task.',
+    why: 'v0.19: eml_task_entry merged into eml_track_task; binding says whether the item closes with the task.',
   },
   {
     category: 'type-routing',
@@ -131,16 +143,18 @@ export const SYSTEM_RULES: SystemRule[] = [
     category: 'scope-routing',
     text:
       'project.<id> and entity.<id> require the project/entity to exist first. ' +
-      'Create via eml_project_create / eml_entity_create before storing engrams in that scope.',
+      'Create via eml_create_object(object=project|entity) before storing engrams in that scope.',
+    why: 'v0.19: objects through eml_read_object / eml_create_object / eml_update_object.',
   },
 
   // --- 5b. Tag vocabulary (controlled cross-scope facet) ---
   {
     category: 'tag-vocabulary',
     text:
-      'Recall before tagging: call eml_tags and reuse an existing tag; create a ' +
-      'new one via eml_tag_create only for a genuinely new category. Only registered ' +
+      'Recall before tagging: call eml_read_object(object=tag) and reuse an existing tag; create a ' +
+      'new one via eml_create_object(object=tag) only for a genuinely new category. Only registered ' +
       'tags are accepted.',
+    why: 'v0.19: objects through eml_read_object / eml_create_object / eml_update_object.',
   },
 
   // --- 5c. Subject vocabulary (v0.14: strands with a lifecycle) ---
@@ -150,8 +164,10 @@ export const SYSTEM_RULES: SystemRule[] = [
       'tag vs subject: a tag is an abstract, recurring category — what an engram is ABOUT ' +
       '(architecture, deploy); it never ends. A subject is a concrete strand with a lifecycle — ' +
       'what an engram BELONGS TO (v0.14-planning, norway-trip), across scopes. Test: can it be ' +
-      '"done"? Then it is a subject. Call eml_subjects before assigning; create via ' +
-      'eml_subject_create, close via eml_subject_update(status=closed) when the strand is over.',
+      '"done"? Then it is a subject. Call eml_read_object(object=subject) before assigning; create via ' +
+      'eml_create_object(object=subject), close via eml_update_object(object=subject, id=<id>, status=closed) when ' +
+      'the strand is over.',
+    why: 'v0.19: objects through eml_read_object / eml_create_object / eml_update_object.',
   },
 
   // --- 6. Write semantics (one-topic-one-engram) ---

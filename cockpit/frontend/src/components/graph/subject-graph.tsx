@@ -97,7 +97,7 @@ export function SubjectGraph({ engrams, showWithoutSubject }: { engrams: Engram[
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-muted-foreground">
         <p>No engrams in a subject in the selected filters.</p>
-        <p className="text-xs">Create a subject (eml_subject_create) and assign it via the subjects param to grow the strands.</p>
+        <p className="text-xs">Create a subject (eml_create_object object=subject) and assign it via the subjects param to grow the strands.</p>
       </div>
     );
   }

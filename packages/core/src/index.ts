@@ -70,14 +70,14 @@ export { bucketByRelevance, BM25_RELEVANCE_EPS, extractWikilinkTargets } from '.
 export {
   extractSalientTerms, termCoverage,
   CONFLICT_TYPES, CONFLICT_COVERAGE_THRESHOLD,
-  CONFLICT_CANDIDATE_LIMIT, CONFLICT_MAX,
+  CONFLICT_CANDIDATE_LIMIT, CONFLICT_MAX, CONFLICT_MIN_SHARED_TERMS,
   REVIEW_LABEL, REVIEWABLE_TYPES,
 } from './engrams'
 export {
   renderRecallMarkdown, renderBrainStateMarkdown, previewText,
   RECALL_PREVIEW_CHARS, SHOW_PREVIEW_CHARS,
 } from './render'
-export { validateEngramType, validateProperties, validateNoTemplateLeak, validateFormat, formatProblems, isLegacyFormat, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
+export { validateEngramType, validateNoTemplateLeak, validateFormat, formatProblems, isLegacyFormat, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 export { ProjectStore } from './projects'
 export { TagStore, slugifyTag } from './tags'
 export { LabelStore, slugifyLabel, hydrateEngramLabels } from './labels'
@@ -124,6 +124,14 @@ export {
   type MigrationOutcomeKind,
 } from './forward-migrations'
 export { boot, type BootResult, type BootOptions } from './boot'
+export {
+  TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
+  validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
+} from './fields'
+export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EntryStamp, type EvidenceSource, type EvidenceStance } from './entries'
+export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
+export { readObject, createObject, updateObject, OBJECT_KINDS, type ObjectKind } from './objects'
+export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type TrackTaskInput, type LearnInput, type LearnResult } from './engrams'
 export { projectBlock, projectScopeChain, inheritedRules, type ProjectBlockResult, type ProjectBlockOptions, type ProjectBlockBudgetReport } from './project-block'
-export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
+export { hygieneCheck, HYGIENE_CHECKS, LEARNING_STALE_DAYS, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'

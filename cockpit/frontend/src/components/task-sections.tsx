@@ -255,7 +255,10 @@ export function TaskHubBlocks({
 
 // "decision taken: <label> (<uuid>)" / "note written: …" — entries core writes
 // for a task-linked write (Cluster C). Shown as "auto" with the id as a link.
-const AUTO_ENTRY = /^(\w+ (?:taken|written)): (.*) \(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)$/s;
+// v0.19: the server writes change entries (kind "change"); many end with the
+// id of the engram they concern — "decision taken: <label> (<id>)" — which is
+// linked. Only used for the link, not to tell change from note.
+const TRAILING_ID = /^(.*) \(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)$/s;
 
 function formatAt(iso: string): string {
   const d = new Date(iso);
@@ -265,7 +268,7 @@ function formatAt(iso: string): string {
 
 /** The task's append-only journal, oldest first, plus a one-line composer. */
 export function TaskJournal({ engram, relationHref }: { engram: Engram; relationHref: (otherId: string) => string }) {
-  const entries: TaskEntry[] = engram.entries ?? [];
+  const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change");
   const add = useAddTaskEntry();
   const [text, setText] = useState("");
   const [stage, setStage] = useState<TaskStage | "">("");
@@ -297,11 +300,15 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
             // A stage change is only visible against the previous entry — the
             // first entry just carries the stage the task had then.
             const moved = i > 0 && e.stage !== null && e.stage !== entries[i - 1].stage;
-            const auto = AUTO_ENTRY.exec(e.text);
+            const change = e.kind === "change";
+            const linked = change ? TRAILING_ID.exec(e.text) : null;
             return (
               <li key={e.id} className="grid grid-cols-[14px_1fr] gap-2.5">
                 <div className="flex flex-col items-center">
-                  <span className="mt-1.5 h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: TASK }} />
+                  <span
+                    className="mt-1.5 h-[7px] w-[7px] shrink-0 rounded-full"
+                    style={change ? { border: `1px solid ${TASK}`, opacity: 0.6 } : { background: TASK }}
+                  />
                   {i < entries.length - 1 && <span className="mt-1 w-px flex-1 bg-border" />}
                 </div>
                 <div className="pb-3">
@@ -309,14 +316,14 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
                     <span>{formatAt(e.at)}</span>
                     {e.author && <span>{e.author}</span>}
                     {moved && <StageChip stage={e.stage!} move />}
-                    {auto && <span className="rounded-full border border-dashed border-border px-1.5 text-[10px] leading-4">auto</span>}
+                    {change && <span className="rounded-full border border-dashed border-border px-1.5 text-[10px] leading-4">change</span>}
                   </div>
-                  <div className="mt-0.5 text-ui whitespace-pre-wrap text-foreground">
-                    {auto ? (
+                  <div className={change ? "mt-0.5 text-caption whitespace-pre-wrap text-muted-foreground" : "mt-0.5 text-ui whitespace-pre-wrap text-foreground"}>
+                    {linked ? (
                       <>
-                        {auto[1]}:{" "}
-                        <Link to={relationHref(auto[3])} className="underline decoration-dotted underline-offset-2 hover:text-foreground">
-                          {auto[2]}
+                        {linked[1]}{" "}
+                        <Link to={relationHref(linked[2])} className="underline decoration-dotted underline-offset-2 hover:text-foreground">
+                          open
                         </Link>
                       </>
                     ) : (

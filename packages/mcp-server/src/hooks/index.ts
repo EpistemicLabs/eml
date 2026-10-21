@@ -28,9 +28,10 @@ import { projectBlockHook } from './project-block'
  */
 
 export const REMINDER_TEXT = `[EML Reminder]
-- Store-worthy moments (decisions, status changes, tasks, events, feedback rules) → use the matching typed tool (eml_decide / eml_set_status / eml_track_task / eml_note); progress on a task → eml_task_entry.
+- Store-worthy moments (decisions, status changes, tasks, events) → the matching create tool (eml_decide / eml_set_status / eml_create_task / eml_event / eml_note); anything about an existing task → eml_track_task.
+- The user corrects you, turns down a proposal, or you notice your own mistake → eml_learning. A rule only with the user's yes.
 - Question about customer / project / topic? eml_recall or eml_show first — don't guess from conversation memory.
-- Before write: matching active engram exists? skip, or supersede via eml_update (don't duplicate).
+- Before write: matching active engram exists? skip, correct it (eml_update), or replace it (supersedes=[id]) — don't duplicate.
 - Routine updates: act + inform in 1-2 lines, no permission-asking.
 - EML brain is the canonical knowledge base — check it before falling back to conversation memory.`
 

@@ -7,7 +7,7 @@ interface Seen { method: string; url: string; auth: string | undefined; body: st
 
 let server: Server | null = null
 
-/** A stand-in brain: one project, PUT /project/:id renames it, anything else 404s. */
+/** A stand-in brain: one project, PUT /object/project/:id renames it, anything else 404s. */
 async function fakeBrain(): Promise<{ url: string; seen: Seen[]; project: { id: string; name: string } }> {
   const seen: Seen[] = []
   const project = { id: 'alpha', name: 'Alpha' }
@@ -19,7 +19,7 @@ async function fakeBrain(): Promise<{ url: string; seen: Seen[]; project: { id: 
       res.setHeader('Content-Type', 'application/json')
       if (req.method === 'GET' && req.url === '/projects') {
         res.end(JSON.stringify({ projects: [project] }))
-      } else if (req.method === 'PUT' && req.url === `/project/${project.id}`) {
+      } else if (req.method === 'PUT' && req.url === `/object/project/${project.id}`) {
         project.name = (JSON.parse(body) as { name: string }).name
         res.end(JSON.stringify({ project }))
       } else {
@@ -46,7 +46,7 @@ describe('BrainProjectsClient.rename', () => {
     await client.rename('alpha', 'Completely different')
 
     const put = brain.seen.find((r) => r.method === 'PUT')
-    expect(put).toMatchObject({ url: '/project/alpha', auth: 'Bearer tok' })
+    expect(put).toMatchObject({ url: '/object/project/alpha', auth: 'Bearer tok' })
     expect(JSON.parse(put!.body)).toEqual({ name: 'Completely different' })
     expect(client.cached()).toBeNull()
     expect((await client.list())[0]).toMatchObject({ id: 'alpha', name: 'Completely different' })

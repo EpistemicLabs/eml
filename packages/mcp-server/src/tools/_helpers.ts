@@ -58,24 +58,56 @@ interface ConflictCandidateView {
 }
 
 export function conflictBanner(result: unknown): string | null {
-  const pc = (result as { potential_conflicts?: ConflictCandidateView[] } | null)?.potential_conflicts
+  const r = result as { type?: string, potential_conflicts?: ConflictCandidateView[] } | null
+  const pc = r?.potential_conflicts
   if (!pc || pc.length === 0) return null
 
   const top = Math.max(...pc.map(c => c.coverage))
   const header = top >= CONFLICT_ESCALATION_COVERAGE
-    ? `⚠ near-identical active engram${pc.length > 1 ? 's' : ''} already exist${pc.length > 1 ? '' : 's'} — resolve before continuing.`
+    ? `⚠ active engram${pc.length > 1 ? 's' : ''} with high word overlap exist${pc.length > 1 ? '' : 's'} — check whether one already covers this before continuing.`
     : `⚠ ${pc.length} possibly conflicting/duplicate active engram${pc.length > 1 ? 's' : ''} found (advisory).`
 
   const lines = pc.map(c =>
-    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · coverage ${c.coverage} — ${c.gist.slice(0, 120)}`,
+    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap — ${c.gist.slice(0, 120)}`,
   )
 
-  return [
-    header,
-    ...lines,
-    'Evaluate each: supersede (eml_update status=superseded) / merge (eml_update content) / ' +
-    'relate (contradicts | related_to) / dismiss — before continuing.',
-  ].join('\n')
+  // v0.19: the resolve options follow the lifecycle of both sides — the call
+  // proposed for a candidate must be one the server accepts for that pair.
+  // An event is corrected, a status is versioned by set_status, a task is
+  // replaced only by a task (eml_track_task supersedes), and a task write
+  // supersedes no other type.
+  const relate = 'relate (eml_relate contradicts | related_to) / dismiss.'
+  const ids = (cs: ConflictCandidateView[]) => cs.map(c => c.id.slice(0, 8)).join(', ')
+  const ofType = (t: string) => pc.filter(c => c.type === t)
+  const written = r?.type
+  let evaluate: string
+  if (written === 'event') {
+    evaluate = 'Evaluate each before continuing: the same occurrence (this write is a duplicate: eml_update(<new id>, status=invalidated)) / ' +
+      'a different one (relate: eml_relate related_to, or dismiss).'
+  } else if (written === 'status') {
+    evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${relate}`
+  } else if (written === 'task') {
+    const tasks = ofType('task')
+    const others = pc.filter(c => c.type !== 'task')
+    evaluate = tasks.length > 0
+      ? 'Evaluate each before continuing: supersede (this task replaces it: eml_track_task(<new id>, supersedes=[<old id>]); ' +
+        `its bound decisions and notes move along) / ${relate}`
+      : `Evaluate each before continuing: ${relate}`
+    if (tasks.length > 0 && others.length > 0) evaluate += ` ${ids(others)}: not replaced by a task — relate or dismiss.`
+  } else {
+    const tasks = ofType('task')
+    const statuses = ofType('status')
+    const events = ofType('event')
+    const supersedable = pc.length - tasks.length - statuses.length - events.length
+    evaluate = supersedable > 0 && written !== 'log'
+      ? 'Evaluate each before continuing: supersede (the new one replaces it: eml_update(<new id>, supersedes=[<old id>])) / ' +
+        `merge (eml_update content of one, invalidate the other) / ${relate}`
+      : `Evaluate each before continuing: ${relate}`
+    if (tasks.length > 0) evaluate += ` ${ids(tasks)}: a task, not superseded by this write — close it with eml_track_task (resolved or invalidated) if it is done, else relate.`
+    if (statuses.length > 0) evaluate += ` ${ids(statuses)}: a status, replaced only by the next eml_set_status in its scope.`
+    if (events.length > 0) evaluate += ` ${ids(events)}: an event, corrected and never superseded.`
+  }
+  return [header, ...lines, evaluate].join('\n')
 }
 
 // v0.14: filing into a CLOSED subject is allowed (late filing) — the server flags it
@@ -85,7 +117,7 @@ export function closedSubjectBanner(result: unknown): string | null {
   const closed = (result as { closed_subjects?: string[] } | null)?.closed_subjects
   if (!closed || closed.length === 0) return null
   return `ℹ filed into closed subject${closed.length > 1 ? 's' : ''} ${closed.join(', ')} — fine for late filing; ` +
-    'if the strand is ongoing again, reopen via eml_subject_update(status=active).'
+    'if the strand is ongoing again, reopen it via eml_update_object(object=subject, id=<subject id>, status=active).'
 }
 
 // v0.14 Cluster C: `[[targets]]` in content that resolved to no engram. Surfaced
@@ -100,20 +132,52 @@ export function unresolvedLinksBanner(result: unknown): string | null {
 
 // v0.15: superseding a parent task does not cascade — its open sub-tasks stay open
 // and the server lists them as `open_subtasks`. Surface them so the agent moves each
-// to the successor (eml_relate part_of) or closes it.
+// to the successor (eml_track_task parent_id) or closes it.
 export function openSubtasksBanner(result: unknown): string | null {
   const subs = (result as { open_subtasks?: Array<{ parent_id: string, id: string, title: string | null }> } | null)?.open_subtasks
   if (!subs || subs.length === 0) return null
   return [
     `⚠ ${subs.length} open sub-task${subs.length > 1 ? 's' : ''} of the superseded task stay${subs.length > 1 ? '' : 's'} open:`,
     ...subs.map(s => `  • ${s.title ?? '(no title)'} · ${s.id}`),
-    'Move each to the successor (eml_relate part_of) or close it.',
+    'Move each to the successor (eml_track_task(<sub-task id>, parent_id=<new task id>)) or close it.',
   ].join('\n')
 }
 
-/** v0.14: all write-response banners (conflicts + closed subjects + unresolved links + v0.15 open sub-tasks), in that order. */
+// v0.19 set_status: what the scope's status tracks, or a nudge to set it (only
+// project and entity scopes have an object to hold it).
+export function statusTracksBanner(result: unknown): string | null {
+  const r = result as { type?: string, scope?: string, previous_state?: string | null, properties?: { state?: string }, status_tracks?: string | null, status_tracks_missing?: boolean } | null
+  if (!r || r.type !== 'status') return null
+  const lines = [`status ${r.previous_state ?? '(first)'} → ${r.properties?.state ?? '?'}${r.previous_state === r.properties?.state ? ' (state unchanged)' : ''}`]
+  if (r.status_tracks) lines.push(`this scope's status tracks: ${r.status_tracks}`)
+  if (r.status_tracks_missing) {
+    const [object, id] = (r.scope ?? '').split('.')
+    lines.push(`ℹ ${r.scope} has no status_tracks yet — what is its status about? Set it with eml_update_object(object=${object}, id=${id}, status_tracks=…).`)
+  }
+  return lines.join('\n')
+}
+
+// v0.19 track_task: what closed with the task, what was kept, what a reopen can bring back.
+export function boundItemsBanner(result: unknown): string | null {
+  type Item = { id: string, type: string, title: string | null, status: string }
+  const r = result as { closed_with_task?: Item[], kept?: Item[], reopen_candidates?: Item[] } | null
+  if (!r) return null
+  const show = (i: Item) => `  • ${i.type} ${i.title ?? '(no title)'} · ${i.id}`
+  const parts: string[] = []
+  if (r.closed_with_task?.length) parts.push(['closed with the task:', ...r.closed_with_task.map(show)].join('\n'))
+  if (r.kept?.length) parts.push(['kept as standing:', ...r.kept.map(show)].join('\n'))
+  if (r.reopen_candidates?.length) {
+    const items = r.reopen_candidates.filter(i => i.type !== 'task')
+    const subs = r.reopen_candidates.filter(i => i.type === 'task')
+    if (items.length) parts.push(['closed with the task before — reactivate the ones that hold again with eml_update(id, status=active):', ...items.map(show)].join('\n'))
+    if (subs.length) parts.push(['sub-tasks invalidated with it before — reopen the ones that are still work with eml_track_task(id, status=planned, text):', ...subs.map(show)].join('\n'))
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null
+}
+
+/** v0.14: all write-response banners (conflicts + closed subjects + unresolved links + v0.15 open sub-tasks + v0.19 status / bound items), in that order. */
 export function writeBanner(result: unknown): string | null {
-  const parts = [conflictBanner(result), closedSubjectBanner(result), unresolvedLinksBanner(result), openSubtasksBanner(result)]
+  const parts = [statusTracksBanner(result), conflictBanner(result), closedSubjectBanner(result), unresolvedLinksBanner(result), openSubtasksBanner(result), boundItemsBanner(result)]
     .filter((p): p is string => p !== null)
   return parts.length > 0 ? parts.join('\n\n') : null
 }

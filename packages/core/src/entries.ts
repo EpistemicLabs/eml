@@ -1,0 +1,85 @@
+import type Database from 'better-sqlite3'
+import { v4 as uuid } from 'uuid'
+
+// --- Entries (v0.19, was task_entries) -------------------------------------------
+//
+// An engram's append-only entries, stamped with time, author, session and model:
+//   note     — a task journal entry the agent wrote (progress, the closing story)
+//   change   — a one-liner the server writes for every change to a task
+//   evidence — an incident behind a learning (source, stance, quote)
+//   review   — a confirmation that a decision, rule or profile still holds
+// Entries are never edited or deleted (only with their engram).
+
+export const ENTRY_KINDS = ['note', 'change', 'evidence', 'review'] as const
+export type EntryKind = typeof ENTRY_KINDS[number]
+
+export const EVIDENCE_SOURCES = ['user', 'observed', 'self'] as const
+export type EvidenceSource = typeof EVIDENCE_SOURCES[number]
+export const EVIDENCE_STANCES = ['supports', 'contradicts', 'declined'] as const
+export type EvidenceStance = typeof EVIDENCE_STANCES[number]
+
+export interface Entry {
+  id: string
+  engram_id: string
+  kind: EntryKind
+  at: string
+  author: string | null
+  session_id: string | null
+  model: string | null
+  stage: string | null
+  text: string
+  source: EvidenceSource | null
+  stance: EvidenceStance | null
+  quote: string | null
+  rule_id: string | null
+}
+
+export interface EntryInput {
+  kind: EntryKind
+  text: string
+  stage?: string | null
+  source?: EvidenceSource
+  stance?: EvidenceStance
+  quote?: string
+  rule_id?: string
+}
+
+/** Who writes: stamped on every entry (and on every engram). */
+export interface EntryStamp {
+  author?: string | null
+  session_id?: string | null
+  model?: string | null
+}
+
+/** Append one entry. Runs inside the caller's transaction when there is one. */
+export function appendEntry(db: Database.Database, engramId: string, input: EntryInput, stamp: EntryStamp = {}): Entry {
+  const entry: Entry = {
+    id: uuid(),
+    engram_id: engramId,
+    kind: input.kind,
+    at: new Date().toISOString(),
+    author: stamp.author ?? null,
+    session_id: stamp.session_id ?? null,
+    model: stamp.model ?? null,
+    stage: input.stage ?? null,
+    text: input.text,
+    source: input.source ?? null,
+    stance: input.stance ?? null,
+    quote: input.quote ?? null,
+    rule_id: input.rule_id ?? null,
+  }
+  db.prepare(`
+    INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id)
+    VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id)
+  `).run(entry)
+  return entry
+}
+
+/** An engram's entries, oldest first; optionally only some kinds. */
+export function listEntries(db: Database.Database, engramId: string, kinds?: readonly EntryKind[]): Entry[] {
+  const filter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => '?').join(', ')})` : ''
+  return db.prepare(
+    `SELECT id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id
+     FROM entries WHERE engram_id = ?${filter} ORDER BY at ASC, rowid ASC`,
+  ).all(engramId, ...(kinds ?? [])) as Entry[]
+}

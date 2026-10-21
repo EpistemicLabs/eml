@@ -14,7 +14,7 @@ describe('rule and profile format', () => {
   afterEach(() => { eml.close() })
 
   const storeRule = (content: string, properties: Record<string, unknown>) =>
-    eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content, properties })
+    eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content, properties: { why: 'w', agreed: 'yes', ...properties } })
 
   // A legacy entry as it sits in an existing brain (written before the format).
   const plantLegacy = (id: string, content: string, properties?: Record<string, unknown>) => {
@@ -28,17 +28,17 @@ describe('rule and profile format', () => {
       expect(() => storeRule('x'.repeat(200), { applies: 'always' })).not.toThrow()
       expect(() => storeRule('x'.repeat(201), { applies: 'always' })).toThrow(
         "Invalid engram: a rule's content is at most 200 characters (got 201) — state only what to do. " +
-        'Put the rationale in properties.why and playbook or examples in properties.detail.',
+        'Put the rationale in why and playbook or examples in detail.',
       )
     })
 
     it('requires a trigger of at most 80 chars on a situational rule', () => {
       expect(() => storeRule('do Y', { applies: 'situational' })).toThrow(
-        "Invalid engram: a situational rule needs properties.trigger — the situation it applies in, at most 80 characters. Don't repeat it in content.",
+        "Invalid engram: a situational rule needs trigger — the situation it applies in, at most 80 characters. Don't repeat it in content.",
       )
-      expect(() => storeRule('do Y', { applies: 'situational', trigger: '  ' })).toThrow(/needs properties.trigger/)
+      expect(() => storeRule('do Y', { applies: 'situational', trigger: '  ' })).toThrow(/needs trigger/)
       expect(() => storeRule('do Y', { applies: 'situational', trigger: 'x'.repeat(81) })).toThrow(
-        'Invalid engram: properties.trigger is at most 80 characters (got 81).',
+        'Invalid engram: trigger is at most 80 characters (got 81).',
       )
       expect(() => storeRule('do Y', { applies: 'situational', trigger: 'x'.repeat(80) })).not.toThrow()
     })
@@ -49,7 +49,7 @@ describe('rule and profile format', () => {
 
     it('reports every problem in one error', () => {
       expect(() => storeRule('x'.repeat(250), { applies: 'situational' })).toThrow(
-        /at most 200 characters \(got 250\).*properties\.detail\. A situational rule needs properties\.trigger/,
+        /at most 200 characters \(got 250\).*in detail\. A situational rule needs trigger/,
       )
     })
 
@@ -57,12 +57,12 @@ describe('rule and profile format', () => {
       const store = (content: string) => eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'p', content })
       expect(() => store('x'.repeat(400))).not.toThrow()
       expect(() => store('x'.repeat(401))).toThrow(
-        "Invalid engram: a profile's content is at most 400 characters (got 401) — keep the core facts; put the rest in properties.detail or a separate profile.",
+        "Invalid engram: a profile's content is at most 400 characters (got 401) — keep the core facts; put the rest in detail or a separate profile.",
       )
     })
 
     it('leaves other types alone', () => {
-      expect(() => eml.engrams.store({ type: 'note', scope: 'global', content: 'x'.repeat(5000) })).not.toThrow()
+      expect(() => eml.engrams.store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(5000) })).not.toThrow()
     })
   })
 
@@ -73,10 +73,11 @@ describe('rule and profile format', () => {
       plantLegacy(id, 'x'.repeat(600), { applies: 'situational' })
     })
 
-    it('allows status, significance, title, tags and review changes', () => {
-      expect(() => eml.engrams.update(id, { status: 'superseded' })).not.toThrow()
-      expect(() => eml.engrams.update(id, { title: 'renamed', significance: 'high' })).not.toThrow()
+    it('allows status, title, tags and review changes', () => {
+      expect(() => eml.engrams.update(id, { title: 'renamed' })).not.toThrow()
+      expect(() => eml.engrams.update(id, { review_note: 'still holds' })).not.toThrow()
       expect(() => eml.engrams.update(id, { properties: { review_due_at: '2027-01-01T00:00:00Z', why: 'because' } })).not.toThrow()
+      expect(() => eml.engrams.update(id, { status: 'invalidated' })).not.toThrow()
     })
 
     it('enforces the format when content, trigger or applies change', () => {
@@ -90,9 +91,9 @@ describe('rule and profile format', () => {
       expect(r?.content).toBe('Do Y.')
     })
 
-    it('enforces the format when another type becomes a rule or profile', () => {
-      const note = eml.engrams.store({ type: 'note', scope: 'global', content: 'x'.repeat(500) })
-      expect(() => eml.engrams.update(note.id, { type: 'profile' })).toThrow(/a profile's content is at most 400/)
+    it('a type never changes in place (v0.19: refile = new engram + supersedes)', () => {
+      const note = eml.engrams.store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(500) })
+      expect(() => eml.engrams.update(note.id, { type: 'profile' } as any)).toThrow(/does not change — write the new engram/)
     })
 
     it('applies to profiles the same way', () => {

@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { Api, startServer, sutCore, sutSqlite, type Sut } from './sut'
+import { compareVersions } from './baseline'
 
 // --- Fixture brain ----------------------------------------------------------------
 //
@@ -78,19 +79,15 @@ export async function buildBrain(base: Sut, dataDir: string): Promise<Brain> {
   const now = Date.now()
   try {
     const api = new Api(server.url, prov.tokenPlaintext)
-    for (const p of fixture.projects) await api.call('POST', '/project', p)
+    const write = compareVersions(base.version, '0.19.0') >= 0 ? writeV19 : writeLegacy
+    for (const p of fixture.projects) await write.project(api, p)
     for (const e of fixture.engrams) {
       const properties: Record<string, unknown> = { ...(e.properties ?? {}) }
-      if (e.supersedes?.length) properties.supersedes = e.supersedes.map(k => mustId(ids, k, e.key))
       if (e.type === 'event' && properties.occurred_at === undefined) {
         properties.occurred_at = new Date(now - e.age_days * DAY_MS).toISOString()
       }
-      const stored = await api.call('POST', '/context', {
-        type: e.type, scope: e.scope, title: e.title, content: e.content,
-        status: e.status, significance: e.significance,
-        properties: Object.keys(properties).length ? properties : undefined,
-      })
-      ids[e.key] = stored.id
+      const supersedes = (e.supersedes ?? []).map(k => mustId(ids, k, e.key))
+      ids[e.key] = await write.engram(api, e, properties, supersedes)
       titles[e.key] = e.title
     }
   } finally {
@@ -98,15 +95,20 @@ export async function buildBrain(base: Sut, dataDir: string): Promise<Brain> {
   }
 
   // Age the engrams: recency is part of the ranking, so a brain where everything
-  // was written in the same second would not rank like a real one.
+  // was written in the same second would not rank like a real one. A task's
+  // journal entries are aged with it (open tasks sort by their last activity).
   const Database = sutSqlite(base)
   const db = new Database(path.join(dataDir, prov.brainFile))
   try {
     const stmt = db.prepare('UPDATE engrams SET created_at = ?, updated_at = ? WHERE id = ?')
+    const table = (name: string) => !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name)
+    const entries = table('entries') ? db.prepare('UPDATE entries SET at = ? WHERE engram_id = ?')
+      : table('task_entries') ? db.prepare('UPDATE task_entries SET at = ? WHERE task_id = ?') : null
     db.transaction(() => {
       for (const e of fixture.engrams) {
         const t = new Date(now - e.age_days * DAY_MS).toISOString()
         stmt.run(t, t, ids[e.key])
+        entries?.run(t, ids[e.key])
       }
     })()
   } finally {
@@ -115,6 +117,52 @@ export async function buildBrain(base: Sut, dataDir: string): Promise<Brain> {
 
   const brain: Brain = { dataDir, token: prov.tokenPlaintext, agent: fixture.agent, ids, titles, baseVersion: base.version }
   return brain
+}
+
+// How the fixture is written, per API generation of the base version. The
+// fixture is the same; only the routes and the shape of the body differ.
+interface Writer {
+  project(api: Api, p: FixtureBrain['projects'][number]): Promise<void>
+  /** Writes the engram, returns its id. */
+  engram(api: Api, e: FixtureEngram, properties: Record<string, unknown>, supersedes: string[]): Promise<string>
+}
+
+/** Up to v0.18: POST /project and POST /context with a properties object. */
+const writeLegacy: Writer = {
+  async project(api, p) { await api.call('POST', '/project', p) },
+  async engram(api, e, properties, supersedes) {
+    if (supersedes.length) properties.supersedes = supersedes
+    const stored = await api.call('POST', '/context', {
+      type: e.type, scope: e.scope, title: e.title, content: e.content,
+      status: e.status, significance: e.significance,
+      properties: Object.keys(properties).length ? properties : undefined,
+    })
+    return stored.id
+  },
+}
+
+/**
+ * From v0.19: POST /object/project and POST /engram/<type> with the type's
+ * fields flat in the body. A task is never created closed: a closed fixture
+ * task is created, then closed through POST /task/<id>/track with its outcome.
+ * A status has no title and supersedes the previous one by itself.
+ */
+const writeV19: Writer = {
+  async project(api, p) { await api.call('POST', '/object/project', p) },
+  async engram(api, e, properties, supersedes) {
+    const { outcome, ...fields } = properties
+    const closed = e.type === 'task' && (e.status === 'resolved' || e.status === 'invalidated')
+    // a status has no title since v0.19 (one per scope; its history is the supersedes chain)
+    const body: Record<string, unknown> = { scope: e.scope, ...(e.type === 'status' ? {} : { title: e.title }), content: e.content, ...fields }
+    if (e.type === 'task') body.status = closed ? 'planned' : e.status
+    else if (outcome !== undefined) body.outcome = outcome
+    if (supersedes.length && e.type !== 'status') body.supersedes = supersedes
+    const stored = await api.call('POST', `/engram/${e.type}`, body)
+    if (closed) {
+      await api.call('POST', `/task/${stored.id}/track`, { status: e.status, outcome: outcome ?? 'done', text: 'closed (fixture)', keep: [] })
+    }
+    return stored.id
+  },
 }
 
 function mustId(ids: Record<string, string>, key: string, from: string): string {

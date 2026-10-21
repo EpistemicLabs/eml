@@ -18,9 +18,10 @@ import { brainIdFromProjectId, projectIdForBrain } from './project-registry.js'
  *   DELETE /api/notes/<id>         archive (status invalidated), no hard delete
  * plus the `notes` event on /api/events (NotesWatcher).
  *
+ * Pane notes carry origin `cockpit-notes` (v0.19; was properties.source_id).
  * Who wrote the current content: every write from here stamps
- * properties.user_content_hash. An agent edit (eml_update) replaces the content
- * but leaves the stamp, so a mismatch means the agent wrote last. The
+ * properties.app.user_content_hash. An agent edit (eml_update) replaces the
+ * content but leaves the stamp, so a mismatch means the agent wrote last. The
  * UserPromptSubmit hook reads the same stamp to show only the user's edits.
  */
 
@@ -55,12 +56,13 @@ interface Engram {
   content: string
   created_at: string
   updated_at: string
-  properties?: Record<string, unknown>
+  origin?: string | null
+  properties?: { app?: { user_content_hash?: string } } & Record<string, unknown>
 }
 
 const MAX_CONTENT = 200_000
 const NEW_NOTE_CONTENT = 'New note'
-const SOURCE = { source_type: 'user', source_id: 'cockpit-notes' } as const
+export const NOTES_ORIGIN = 'cockpit-notes'
 
 export function contentHash(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 16)
@@ -95,7 +97,7 @@ function toView(e: Engram): NoteView | null {
     createdAt: e.created_at,
     updatedAt: e.updated_at,
     version: versionOf(e),
-    lastEditor: e.properties?.user_content_hash === contentHash(e.content) ? 'user' : 'agent',
+    lastEditor: e.properties?.app?.user_content_hash === contentHash(e.content) ? 'user' : 'agent',
   }
 }
 
@@ -115,21 +117,22 @@ async function brain<T>(deps: NotesDeps, path: string, body?: unknown): Promise<
   return { status: res.status, data: data as T }
 }
 
+// Only a pane note (origin cockpit-notes, like listNotes): an agent's note is
+// not found here, so the pane cannot read, overwrite or archive it.
 async function getNote(deps: NotesDeps, id: string): Promise<Engram | null> {
   const { status, data } = await brain<Engram>(deps, `/engram/${encodeURIComponent(id)}`)
-  if (status !== 200 || !data || data.type !== 'note' || data.status !== 'active') return null
+  if (status !== 200 || !data || data.type !== 'note' || data.status !== 'active' || data.origin !== NOTES_ORIGIN) return null
   return projectForScope(data.scope) ? data : null
 }
 
 export async function listNotes(deps: NotesDeps, scope?: string): Promise<NoteView[]> {
-  const q = new URLSearchParams({ type: 'note', status: 'active', order_by: 'updated_at', limit: '200' })
+  // Only notes written in the pane: agents write notes too (task plans, re-filed
+  // decisions), and those belong to the brain, not to the user's notes list.
+  const q = new URLSearchParams({ type: 'note', status: 'active', origin: NOTES_ORIGIN, order_by: 'updated_at', limit: '200' })
   if (scope) q.set('scope', scope)
   const { status, data } = await brain<{ engrams?: Engram[] }>(deps, `/list?${q}`)
   if (status !== 200) throw new Error(`brain /list → ${status}`)
-  // Only notes written in the pane: agents write notes too (task plans, re-filed
-  // decisions), and those belong to the brain, not to the user's notes list.
   return (data.engrams ?? [])
-    .filter((e) => e.properties?.source_id === SOURCE.source_id)
     .map(toView)
     .filter((n): n is NoteView => n !== null)
 }
@@ -165,8 +168,8 @@ export async function handleNotesApi(
     if (!scope) { needsBrain(); return true }
     const content = typeof body.content === 'string' && body.content.trim() ? body.content : NEW_NOTE_CONTENT
     if (content.length > MAX_CONTENT) { json(res, 413, { error: { code: 'TOO_LARGE', message: 'Note too large' } }); return true }
-    const { status, data } = await brain<Engram>(deps, '/context', {
-      type: 'note', scope, content, properties: { ...SOURCE, user_content_hash: contentHash(content) },
+    const { status, data } = await brain<Engram>(deps, '/engram/note', {
+      scope, content, origin: NOTES_ORIGIN, app: { user_content_hash: contentHash(content) },
     })
     if (status !== 201) { json(res, 502, { error: { code: 'BRAIN_WRITE_FAILED', message: JSON.stringify(data) } }); return true }
     watcher.poke()
@@ -196,7 +199,7 @@ export async function handleNotesApi(
     }
     const content = body.content.trim() ? body.content : NEW_NOTE_CONTENT
     const { status, data } = await brain<Engram>(deps, '/update', {
-      id, patch: { content, properties: { ...SOURCE, user_content_hash: contentHash(content) } },
+      id, patch: { content, app: { user_content_hash: contentHash(content) } },
     })
     if (status !== 200) { json(res, 502, { error: { code: 'BRAIN_WRITE_FAILED', message: JSON.stringify(data) } }); return true }
     watcher.poke()

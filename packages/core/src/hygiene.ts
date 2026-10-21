@@ -30,6 +30,13 @@ type EngramRow = Record<string, any>
 
 export type HygieneCheckKind = 'migration' | 'review'
 
+/**
+ * Who decides a finding (decision hygiene-agent-decides-by-check): agent = the
+ * agent writes the clear cases itself and asks only where it is unsure; user =
+ * it needs the user's word (e.g. a rule's agreement).
+ */
+export type HygieneDecider = 'agent' | 'user'
+
 export interface HygieneFinding {
   id: string
   type: string
@@ -41,6 +48,7 @@ export interface HygieneFinding {
 export interface HygieneCheck {
   id: string
   kind: HygieneCheckKind
+  decides: HygieneDecider
   /** Brain schema that introduced the requirement (migration checks only). */
   since_schema?: number
   /** What the check requires, for the agent and the user. */
@@ -53,6 +61,7 @@ export interface HygieneCheck {
 export interface HygieneCheckResult {
   id: string
   kind: HygieneCheckKind
+  decides: HygieneDecider
   since_schema?: number
   what: string
   how: string
@@ -83,20 +92,20 @@ function parseDue(value: unknown): number {
   return Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)
 }
 
-export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
+const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-profile-format',
     kind: 'migration',
+    decides: 'agent',
     since_schema: 18,
     what:
       `Rules and profiles are short, so the boot can carry them whole: a rule's content at most ${RULE_CONTENT_MAX_CHARS} characters ` +
       `and only what to do, a profile's at most ${PROFILE_CONTENT_MAX_CHARS}; a situational rule names its situation in ` +
-      `properties.trigger (at most ${RULE_TRIGGER_MAX_CHARS}). Entries written before are shown by title only until they fit.`,
+      `trigger (at most ${RULE_TRIGGER_MAX_CHARS}). Entries written before are shown by title only until they fit.`,
     how:
       'Shorten content to what to do (rule) or the core facts (profile). Move, never drop: the rationale goes to ' +
-      'properties.why, playbook and examples to properties.detail. A situational rule gets a trigger that names the ' +
-      'situation, not repeated in content. Set properties.boot to null if present (no longer read). One eml_update per ' +
-      'entry, content and properties in the same patch.',
+      'why, playbook and examples to detail. A situational rule gets a trigger that names the situation, not repeated ' +
+      'in content. One eml_update per entry, content and the fields in the same call.',
     detect(eml) {
       return eml.engrams
         .query({ limit: 10000, status: 'active' })
@@ -113,14 +122,15 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'review-due',
     kind: 'review',
+    decides: 'agent',
     what:
-      'Decisions, rules and profiles carry a review date (properties.review_due_at). Due entries are re-checked ' +
-      'so stale knowledge does not stay in force.',
+      'Decisions, rules and profiles carry a review date (review_due_at). Due entries are re-checked so stale ' +
+      'knowledge does not stay in force.',
     how:
-      'Check each entry against what is known now, then one of three. Still holds → eml_update with ' +
-      'properties.review_note (why it still holds). Changed → eml_update with the new content. Both restart the ' +
-      'review. No longer holds → invalidate with the reason, or supersede if another active engram replaces it. ' +
-      'When unsure, ask the user instead of confirming.',
+      'Check each entry against what is known now, then one of three. Still holds → eml_update with review_note ' +
+      '(why it still holds; it becomes a review entry). Changed → eml_update with the new content. Both restart the ' +
+      'review. No longer holds → eml_update status=invalidated, or, if another active engram replaces it, ' +
+      'eml_update(<that engram>, supersedes=[<this id>]). When unsure, ask the user instead of confirming.',
     detect(eml, now) {
       const reviewable = REVIEWABLE_TYPES as readonly string[]
       return (eml.engrams.query({ limit: 10000, status: 'active' }) as EngramRow[])
@@ -128,6 +138,207 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
         .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
     },
   },
+]
+
+// --- Schema 19 (v0.19 tool surface) ------------------------------------------------
+//
+// What the v0.19 migration could not decide on its own: whether a reference is
+// really a pointer, where a misfiled profile belongs, which engram succeeded a
+// superseded one, why a rule holds and whether the user agreed to it, and
+// whether a decision or note taken in a task outlives it.
+
+const ACTIVE = (eml: EML): EngramRow[] => eml.engrams.query({ limit: 100000, status: 'active' }) as EngramRow[]
+
+const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'reference-without-source',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A reference points to something outside the brain and names it in source (URL, repo path, document id). ' +
+      'Many older references are syntheses or working theses that live in the brain — those are notes.',
+    how:
+      'Points outside → eml_update with source (and source_name, checked_at if known). Lives in the brain → write it ' +
+      'as a note (eml_note, same title and content) with supersedes=[<reference id>]; the type of an engram never ' +
+      'changes in place.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'reference' && (typeof c.properties?.source !== 'string' || c.properties.source.trim() === ''))
+        .map(c => finding(c, 'no source.'))
+    },
+  },
+  {
+    id: 'profile-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A profile is about someone: it lives in agent.<id>, user.<id> or entity.<id>. Setup, access and how-to ' +
+      'information is a note or a reference, a way of working a rule.',
+    how:
+      'Write it as the type it is (eml_note / eml_reference / eml_rule — a rule only with the user\'s yes) with ' +
+      'supersedes=[<profile id>]. If it really is a facet of someone, write it as a profile in their scope with ' +
+      'supersedes=[<profile id>].',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'profile' && !/^(agent|user|entity)\./.test(c.scope))
+        .map(c => finding(c, `profile in ${c.scope}.`))
+    },
+  },
+  {
+    id: 'superseded-without-successor',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
+      'supersedes set the status without the edge, so the history ends there.',
+    how:
+      'Find the successor: a `superseded_by:` line in detail names it (the migration kept the old hint there); ' +
+      'else the same title thread, the newer engram on the topic. Link it: eml_update(<successor id>, ' +
+      'supersedes=[<this id>]), or eml_track_task(<successor id>, supersedes=[<this id>]) when the successor is a ' +
+      'task. This only draws the missing edge — the successor may be of another type and closed itself. A status ' +
+      'is linked to the next status of its scope by the migration; one without is the scope\'s latest and stays. ' +
+      'No successor exists → leave it; do not invent one.',
+    detect(eml) {
+      const rows = eml.engrams.query({ limit: 100000, status: 'superseded' }) as EngramRow[]
+      const linked = new Set(eml.engrams.supersededWithEdge())
+      return rows.filter(c => !linked.has(c.id)).map(c => finding(c, 'superseded, no supersedes edge.'))
+    },
+  },
+  {
+    id: 'rule-without-why',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what: 'A rule says why it holds (why). New rules need it; older ones were written without.',
+    how:
+      'Find the reason in the rule, its detail and its history (eml_get) and set it with eml_update(why). No ' +
+      'reason to be found → ask the user whether the rule should stay.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && (typeof c.properties?.why !== 'string' || c.properties.why.trim() === ''))
+        .map(c => finding(c, 'no why.'))
+    },
+  },
+  {
+    id: 'rule-without-agreement',
+    kind: 'migration',
+    decides: 'user',
+    since_schema: 19,
+    what:
+      'A rule is agreed with the user (agreed holds their yes). Older rules were often written after a single ' +
+      'incident; what the agent noticed on its own is a learning until it recurs and the user agrees.',
+    how:
+      'List the rules compactly (title and one line each) and ask once whether to keep them as rules. Every rule ' +
+      'their answer does not except → eml_update(agreed=<their answer>). Each exception: no longer wanted → ' +
+      'eml_update(status=invalidated); one incident, not a rule yet → a learning (eml_learning: the rule as the ' +
+      'lesson, the incident as evidence), then eml_update(<learning id>, supersedes=[<rule id>]); wanted but ' +
+      'changed → new content and agreed in one call. rule-without-why runs first.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && (typeof c.properties?.agreed !== 'string' || c.properties.agreed.trim() === ''))
+        .map(c => finding(c, 'no agreement recorded.'))
+    },
+  },
+  {
+    id: 'task-link-without-binding',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A decision or note taken in a task says whether it outlives the task (binding standing) or only governs ' +
+      'how the task is done (binding task; it closes with the task). Without binding it counts as standing.',
+    how:
+      'Decide: does it still constrain work once the task is done? Yes → eml_update(binding=standing). No → task still ' +
+      'open: eml_update(binding=task); task already closed: eml_update(status=invalidated).',
+    detect(eml) {
+      const linked = new Map(eml.engrams.taskLinkedItems().map(r => [r.id, r.task_status]))
+      return ACTIVE(eml)
+        .filter(c => (c.type === 'decision' || c.type === 'note') && linked.has(c.id) && c.properties?.binding === undefined)
+        .map(c => finding(c, `taken in a task (${linked.get(c.id)}), no binding.`))
+    },
+  },
+  {
+    id: 'decision-without-rationale',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 19,
+    what:
+      'A decision names its rationale and at least one rejected alternative — without them it is a note, not a ' +
+      'choice. New decisions need both; older ones were written without.',
+    how:
+      'Find the rationale and the alternatives in the decision, its detail and its history (eml_get) and set them ' +
+      'with eml_update(rationale, alternatives). Nothing was weighed → it is a note: eml_note (same title and ' +
+      'content) with supersedes=[<decision id>]. Unsure → ask the user.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'decision' && (typeof c.properties?.rationale !== 'string' || c.properties.rationale.trim() === ''
+          || !Array.isArray(c.properties?.alternatives) || c.properties.alternatives.length === 0))
+        .map(c => finding(c, [
+          (typeof c.properties?.rationale !== 'string' || c.properties.rationale.trim() === '') ? 'no rationale' : null,
+          (!Array.isArray(c.properties?.alternatives) || c.properties.alternatives.length === 0) ? 'no alternatives' : null,
+        ].filter(Boolean).join(', ') + '.'))
+    },
+  },
+]
+
+// --- Learnings (recurring) ----------------------------------------------------------
+//
+// A learning is never binding, so nothing forces a look at it: an unclear one
+// (open contradiction) waits for the user's word, a stale one (a single
+// supporting session, long ago) for the agent's.
+
+/** A learning with one supporting session older than this is stale. */
+export const LEARNING_STALE_DAYS = 90
+
+const LEARNING_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'learning-unclear',
+    kind: 'review',
+    decides: 'user',
+    what:
+      'A learning with contradicting evidence is unclear: the lesson as written does not hold in every case. It ' +
+      'stays unclear until its content is sharpened or it is dropped.',
+    how:
+      'Show the user the lesson and the evidence for and against (eml_get) and ask what the lesson really is. ' +
+      'Sharpen it with eml_update(content) — the contradiction counts as settled from then on — or drop it with ' +
+      'eml_update(status=invalidated).',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning' && eml.engrams.learningStateOf(c.id).state === 'unclear')
+        .map(c => finding(c, 'contradicting evidence is open.'))
+    },
+  },
+  {
+    id: 'learning-stale',
+    kind: 'review',
+    decides: 'agent',
+    what:
+      `A learning that rests on a single incident for more than ${LEARNING_STALE_DAYS} days has not recurred. ` +
+      'Either the lesson was learned, or it was a one-off.',
+    how:
+      'Still relevant (the situation can come up again) → leave it; it costs nothing. A one-off, or already how ' +
+      'you work → eml_update(status=invalidated). Never make it a rule from here — that takes recurrence and the ' +
+      'user\'s yes.',
+    detect(eml, now) {
+      const cutoff = now.getTime() - LEARNING_STALE_DAYS * 86400_000
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning')
+        .map(c => ({ c, state: eml.engrams.learningStateOf(c.id), last: eml.engrams.entries(c.id, ['evidence']).map(e => Date.parse(e.at)).pop() ?? Date.parse(c.created_at) }))
+        .filter(({ state, last }) => state.state === 'collecting' && state.supporting_sessions <= 1 && last < cutoff)
+        .map(({ c, last }) => finding(c, `one incident, last on ${new Date(last).toISOString().slice(0, 10)}.`))
+    },
+  },
+]
+
+/** Every check, migration checks by schema, then the recurring review. */
+export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
+  ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
+  ...SCHEMA_19_CHECKS,
+  ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
+  ...LEARNING_CHECKS,
 ]
 
 /** Run every hygiene check against the brain. */

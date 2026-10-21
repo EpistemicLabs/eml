@@ -62,6 +62,7 @@ function read(file: string) {
     // v0.17 renamed engrams.subject → title and engram_themes → engram_subjects;
     // the reader takes either, so the data compares across both renames.
     const v17 = !!db.prepare(`SELECT name FROM sqlite_master WHERE name = 'engram_subjects'`).get()
+    const v19 = !!db.prepare(`SELECT name FROM sqlite_master WHERE name = 'entries'`).get()
     return {
       engrams: db.prepare(`SELECT id, type, scope, ${v17 ? 'title' : 'subject'} AS title, content, status, significance, properties, created_at, updated_at FROM engrams ORDER BY id`).all() as any[],
       relations: db.prepare('SELECT id, source_id, target_id, relation, explanation FROM relations ORDER BY id').all() as any[],
@@ -70,7 +71,10 @@ function read(file: string) {
       themes: db.prepare(v17
         ? 'SELECT engram_id, subject_id AS theme_id FROM engram_subjects ORDER BY engram_id'
         : 'SELECT engram_id, theme_id FROM engram_themes ORDER BY engram_id').all(),
-      entries: db.prepare('SELECT id, task_id, text FROM task_entries ORDER BY id').all(),
+      // v0.19 turned task_entries into entries (task_id → engram_id)
+      entries: db.prepare(v19
+        ? 'SELECT id, engram_id AS task_id, text FROM entries ORDER BY id'
+        : 'SELECT id, task_id, text FROM task_entries ORDER BY id').all(),
     }
   } finally { db.close() }
 }
@@ -94,8 +98,8 @@ function schemaFacts(file: string) {
 const EXPECTED = {
   version: CURRENT_BRAIN_SCHEMA_VERSION, integrity: 'ok', fkViolations: 0, hasMode: false,
   engramIndexes: [
-    'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_scope', 'idx_engrams_significance',
-    'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
+    'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_origin', 'idx_engrams_scope',
+    'idx_engrams_session', 'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
   ],
   relationIndexes: ['idx_relations_source', 'idx_relations_target', 'idx_relations_type'],
 }
@@ -110,7 +114,11 @@ function expectMigratedData(before: ReturnType<typeof read>, after: ReturnType<t
     expect({ ...a, type: undefined, properties: undefined }).toEqual({ ...b, type: undefined, properties: undefined })
     if (wasEpistemic) {
       expect(a.type).toBe('note')
-      expect(JSON.parse(a.properties)).toEqual({ ...JSON.parse(b.properties ?? '{}'), original_epistemic_type: b.type })
+      // v0.16 kept the former type in properties.original_epistemic_type; v0.19
+      // folds every key a note does not have into detail ("key: value", key order).
+      const kept = { ...JSON.parse(b.properties ?? '{}'), original_epistemic_type: b.type } as Record<string, string>
+      const detail = Object.keys(kept).sort().map(k => `${k}: ${kept[k]}`).join('\n')
+      expect(JSON.parse(a.properties)).toEqual({ detail })
     } else {
       expect(a).toEqual(b)
     }
@@ -163,7 +171,7 @@ describe('v0.16 migration — epistemic mode removed on a seeded v0.15 brain', (
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 15)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 

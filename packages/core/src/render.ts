@@ -19,7 +19,8 @@ export function previewText(content: string | null | undefined, maxChars: number
 export function renderRecallMarkdown(query: string, results: Engram[]): string {
   const lines = [`# EML Recall — "${query}"`, '', `_${results.length} engram(s)_`, '']
   for (const c of results) {
-    const meta: string[] = [c.type, c.significance]
+    // v0.19: significance is no longer written (all normal), so it is not shown.
+    const meta: string[] = [c.type]
     if (c.scope) meta.push(c.scope)
     if (c.title) meta.push(c.title)
     lines.push(`- **[${meta.join(' | ')}]**`)
@@ -34,8 +35,9 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
 
 /**
  * v0.10.5 DISPLAY: compact orientation dashboard for one scope. Identify-don't-
- * dump — status/tasks/logs show meta + a capped preview + id; decisions and rules
- * are titles only. Full body always via eml_get.
+ * dump — status/tasks/logs show meta + a capped preview + id; rules are titles
+ * only. v0.19: the last five logs instead of a decisions list (decisions via
+ * eml_list). Full body always via eml_get.
  *
  * v0.10.8: rules render by applicability — `always` rules full, `situational`
  * rules name-only (eml_get for the body).
@@ -44,6 +46,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   const lines: string[] = [`# ${state.scope} — brain state`, '']
 
   lines.push('## Status')
+  // v0.19: what this scope's status is about (the object's status_tracks).
+  if (state.status_tracks) lines.push(`_tracks: ${state.status_tracks}_`)
   if (state.current_status.length === 0) lines.push('_none_')
   for (const s of state.current_status) {
     const st = s.properties?.state ? `[${s.properties.state}] ` : ''
@@ -53,7 +57,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   }
   lines.push('')
 
-  lines.push(`## Open tasks (${state.open_tasks.length})`)
+  const openTotal = Math.max(state.open_tasks_total ?? 0, state.open_tasks.length)
+  lines.push(`## Open tasks (${openTotal})`)
   if (state.open_tasks.length === 0) lines.push('_none_')
   for (const t of state.open_tasks) {
     const prio = (t.properties?.priority as string) ?? 'normal'
@@ -63,13 +68,19 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     const stage = t.properties?.stage ? `·${t.properties.stage as string}` : ''
     lines.push(`- [${prio}·${t.status}${stage}]${asg} ${t.title ?? '(no title)'} — ${previewText(t.content, SHOW_PREVIEW_CHARS)} · ${t.id}`)
   }
+  // the list stops at 10; the rest as a count with the call that lists them (as the project block does)
+  const moreTasks = openTotal - state.open_tasks.length
+  if (moreTasks > 0) lines.push(`- ${moreTasks} more open tasks — eml_list type=task scope=${state.scope} status=planned (or active)`)
   lines.push('')
 
   if (state.recent_logs.length > 0) {
-    lines.push('## Latest session')
+    lines.push('## Recent sessions (last 5, newest first)')
     for (const l of state.recent_logs) {
       const by = l.ingested_by ? ` · by ${l.ingested_by}` : ''
-      lines.push(`- ${l.title ?? '(no title)'} — ${previewText(l.content, SHOW_PREVIEW_CHARS)}${by} · ${l.id}`)
+      // v0.19: a log written with eml_log has its next steps as a field.
+      const next = typeof l.properties?.next === 'string' ? ` · next: ${previewText(l.properties.next as string, SHOW_PREVIEW_CHARS)}` : ''
+      const body = typeof l.properties?.what === 'string' ? l.properties.what as string : l.content
+      lines.push(`- ${l.title ?? '(no title)'} — ${previewText(body, SHOW_PREVIEW_CHARS)}${next}${by} · ${l.id}`)
     }
     lines.push('')
   }
@@ -92,19 +103,21 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
       }
     }
     if (situational.length > 0) {
-      lines.push('### Situational (eml_get for full content)')
+      lines.push('### Situational (eml_get when the trigger applies)')
       for (const r of situational) {
-        lines.push(`- ${r.title ?? '(no title)'}${inherited(r)} · ${r.id}`)
+        // v0.19: with the trigger; rules of parent projects say where they come from.
+        const trigger = typeof r.properties?.trigger === 'string' ? ` — when: ${r.properties.trigger as string}` : ''
+        lines.push(`- ${r.title ?? '(no title)'}${inherited(r)}${trigger} · ${r.id}`)
       }
     }
     lines.push('')
   }
 
-  if (state.recent_decisions.length > 0) {
-    lines.push('## Decisions')
-    for (const d of state.recent_decisions) {
-      lines.push(`- ${d.title ?? '(no title)'} · ${d.id}`)
-    }
+  // v0.19: the project's or entity's stable facts.
+  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata) : []
+  if (meta.length > 0) {
+    lines.push('## Metadata')
+    for (const [k, v] of meta) lines.push(`- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
     lines.push('')
   }
 

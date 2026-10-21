@@ -1350,7 +1350,12 @@
    "scope": "project.shop",
    "title": "session-0",
    "age_days": 5,
-   "content": "Session: Worked through the Shopify theme settings and the checkout branding."
+   "content": "Session: Worked through the Shopify theme settings and the checkout branding.",
+   "properties": {
+    "what": "Worked through the Shopify theme settings and the checkout branding.",
+    "landed": "Done as described.",
+    "next": "Order a test product through the shop."
+   }
   },
   {
    "key": "l-session-1",
@@ -1358,7 +1363,12 @@
    "scope": "project.shop",
    "title": "session-1",
    "age_days": 14,
-   "content": "Session: Set up shipping profiles for Warenpost and DHL in Shopify."
+   "content": "Session: Set up shipping profiles for Warenpost and DHL in Shopify.",
+   "properties": {
+    "what": "Set up shipping profiles for Warenpost and DHL in Shopify.",
+    "landed": "Done as described.",
+    "next": "Test a Warenpost label end to end."
+   }
   },
   {
    "key": "l-session-2",
@@ -1366,7 +1376,12 @@
    "scope": "project.app",
    "title": "session-2",
    "age_days": 23,
-   "content": "Session: Built the order list screen; TestFlight build 14 uploaded."
+   "content": "Session: Built the order list screen; TestFlight build 14 uploaded.",
+   "properties": {
+    "what": "Built the order list screen; TestFlight build 14 uploaded.",
+    "landed": "Done as described.",
+    "next": "Collect TestFlight feedback on build 14."
+   }
   },
   {
    "key": "l-session-3",
@@ -1374,7 +1389,12 @@
    "scope": "project.infra",
    "title": "session-3",
    "age_days": 32,
-   "content": "Session: Moved the blog to the new VPS and set up Caddy."
+   "content": "Session: Moved the blog to the new VPS and set up Caddy.",
+   "properties": {
+    "what": "Moved the blog to the new VPS and set up Caddy.",
+    "landed": "Done as described.",
+    "next": "Point the DNS for the blog to the new VPS."
+   }
   },
   {
    "key": "l-session-4",
@@ -1382,7 +1402,12 @@
    "scope": "project.studio",
    "title": "session-4",
    "age_days": 41,
-   "content": "Session: Glaze tests for the cobalt blue, runs 3 and 4."
+   "content": "Session: Glaze tests for the cobalt blue, runs 3 and 4.",
+   "properties": {
+    "what": "Glaze tests for the cobalt blue, runs 3 and 4.",
+    "landed": "Done as described.",
+    "next": "Fire glaze test run 5."
+   }
   },
   {
    "key": "l-session-5",
@@ -1390,7 +1415,12 @@
    "scope": "project.workshops",
    "title": "session-5",
    "age_days": 50,
-   "content": "Session: Prepared the October workshop dates and the confirmation email."
+   "content": "Session: Prepared the October workshop dates and the confirmation email.",
+   "properties": {
+    "what": "Prepared the October workshop dates and the confirmation email.",
+    "landed": "Done as described.",
+    "next": "Send the confirmation email to the October group."
+   }
   },
   {
    "key": "l-session-6",
@@ -1398,7 +1428,12 @@
    "scope": "project.wholesale",
    "title": "session-6",
    "age_days": 59,
-   "content": "Session: Drafted the price list and the offer template for cafés."
+   "content": "Session: Drafted the price list and the offer template for cafés.",
+   "properties": {
+    "what": "Drafted the price list and the offer template for cafés.",
+    "landed": "Done as described.",
+    "next": "Send the offer to the first two cafés."
+   }
   },
   {
    "key": "l-session-7",
@@ -1406,7 +1441,12 @@
    "scope": "project.blog",
    "title": "session-7",
    "age_days": 68,
-   "content": "Session: Wrote and scheduled the studio tour post."
+   "content": "Session: Wrote and scheduled the studio tour post.",
+   "properties": {
+    "what": "Wrote and scheduled the studio tour post.",
+    "landed": "Done as described.",
+    "next": "Share the post on Instagram when it goes live."
+   }
   }
  ]
 }

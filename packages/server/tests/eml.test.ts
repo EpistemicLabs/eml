@@ -1,6 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { EML, significanceWeight, validateProperties, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown } from '../../core/src'
-import { validDecision, validTask } from '../../core/tests/fixtures'
+import { EML, significanceWeight, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown, appendEntry } from '../../core/src'
+import {
+  validDecision, validTask, validNote, validRule, validEvent, validLog, validReference, validProfile, validStatus, closedTask,
+} from '../../core/tests/fixtures'
+
+// v0.19: significance is no longer written (every new engram is normal), but its
+// read paths stay (recall tie-break, list filter). Read-path tests plant it raw.
+function plantSignificance(eml: EML, id: string, significance: string): void {
+  const db = (eml as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): void } } }).db
+  db.prepare('UPDATE engrams SET significance = ? WHERE id = ?').run(significance, id)
+}
+
+/** Raw SQL write, for rows as an older brain holds them (no v0.19 write path). */
+function raw(eml: EML, sql: string, ...params: unknown[]): void {
+  const db = (eml as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): void } } }).db
+  db.prepare(sql).run(...params)
+}
 
 // v0.8 C3: hard scope validation. Tests that use scope='project.<id>' / 'agent.<id>'
 // / 'user.<id>' / 'entity.<id>' must register the referenced entity first.
@@ -75,29 +90,20 @@ describe('EML v0.2', () => {
       expect(retrieved!.content).toBe('EML uses SQLite with FTS5')
     })
 
-    // v0.9.1 Cluster 1: ingested_by user input dropped, source_id/source_type
-    // removed from the schema. decay_* stays free-form in properties (no server schema).
-    it('stores engram with optional fields (post-Cluster-1: without multi-caller columns)', () => {
-      const engram = eml.engrams.store({
+    // v0.19: provenance comes from the write context (never the input), free
+    // properties and significance are gone — the type's fields only.
+    it('stores provenance from the write context, the type\'s fields in properties', () => {
+      const engram = eml.engrams.store(validNote({
         content: 'BTC at $74,200',
-        type: 'note',
-        scope: 'global',
         title: 'BTC',
-        significance: 'high',
-        properties: {
-          value: 74200, unit: 'USD',
-          decay_model: 'ttl', decay_params: { ttl_seconds: 3600 },
-        },
-        ingestion_method: 'hook',
-        session_id: 'sess-123',
-      })
+        properties: { detail: 'value: 74200 USD' },
+      }), { caller: 'assistant', ingestion_method: 'hook', session_id: 'sess-123', model: 'm', harness: 'h' })
 
-      expect(engram.significance).toBe('high')
-      expect(engram.ingestion_method).toBe('hook')
-      const props = engram.properties as Record<string, any>
-      expect(props.value).toBe(74200)
-      expect(props.decay_model).toBe('ttl')
-      expect(props.decay_params?.ttl_seconds).toBe(3600)
+      expect(engram.significance).toBe('normal')
+      expect(engram).toMatchObject({ ingestion_method: 'hook', session_id: 'sess-123', ingested_by: 'assistant', model: 'm', harness: 'h' })
+      expect(engram.properties).toEqual({ detail: 'value: 74200 USD' })
+      expect(() => eml.engrams.store({ ...validNote(), significance: 'high' } as never)).toThrow(/unknown field significance/)
+      expect(() => eml.engrams.store(validNote({ properties: { value: 74200 } }))).toThrow(/unknown field value for a note/)
     })
 
     it('updates an engram', () => {
@@ -108,63 +114,56 @@ describe('EML v0.2', () => {
 
       const updated = eml.engrams.update(engram.id, {
         content: 'New content',
-        significance: 'high',
-        status: 'superseded',
+        status: 'invalidated',
       })
 
       expect(updated!.content).toBe('New content')
-      expect(updated!.significance).toBe('high')
-      expect(updated!.status).toBe('superseded')
+      expect(updated!.status).toBe('invalidated')
+      expect(() => eml.engrams.update(engram.id, { significance: 'high' } as never)).toThrow(/unknown field significance/)
+      expect(() => eml.engrams.update(engram.id, { status: 'superseded' })).toThrow(/Superseded comes from supersedes/)
     })
 
     it('update() merges properties shallowly (incoming wins, others preserved)', () => {
       const engram = eml.engrams.store(validDecision({
         content: 'Test',
         scope: 'global',
-        properties: { source_id: 'assistant', source_type: 'agent', decided_at: '2026-05-01' },
+        properties: { detail: 'decided 2026-05-01' },
       }))
 
       const updated = eml.engrams.update(engram.id, {
-        properties: { decided_at: '2026-05-20' },
+        properties: { detail: 'decided 2026-05-20' },
       })
 
       const props = updated!.properties as Record<string, unknown>
-      expect(props.decided_at).toBe('2026-05-20')
-      expect(props.source_id).toBe('assistant')
-      expect(props.source_type).toBe('agent')
+      expect(props.detail).toBe('decided 2026-05-20')
+      expect(props.rationale).toBe('test rationale')
+      expect(props.alternatives).toEqual(['test alternative'])
     })
 
     it('update() with null property value deletes that key', () => {
-      const engram = eml.engrams.store({
+      const engram = eml.engrams.store(validRule({
         content: 'Test',
-        type: 'rule',
-        scope: 'global',
-        properties: { applies: 'always', source_id: 'assistant', source_type: 'agent', boot: ['*'] },
-      })
-
-      const updated = eml.engrams.update(engram.id, {
-        properties: { boot: null },
-      })
-
-      const props = updated!.properties as Record<string, unknown>
-      expect(props.boot).toBeUndefined()
-      expect(props.applies).toBe('always')
-      expect(props.source_id).toBe('assistant')
-    })
-
-    it('update() merges into empty existing properties', () => {
-      const engram = eml.engrams.store(validDecision({
-        content: 'Test',
-        scope: 'global',
+        properties: { rule_type: 'process', detail: 'long form' },
       }))
 
       const updated = eml.engrams.update(engram.id, {
-        properties: { source_id: 'assistant', source_type: 'agent' },
+        properties: { detail: null },
       })
 
       const props = updated!.properties as Record<string, unknown>
-      expect(props.source_id).toBe('assistant')
-      expect(props.source_type).toBe('agent')
+      expect(props.detail).toBeUndefined()
+      expect(props.applies).toBe('always')
+      expect(props.rule_type).toBe('process')
+    })
+
+    it('update() merges into empty existing properties', () => {
+      const engram = eml.engrams.store(validNote({ content: 'Test' }))
+
+      const updated = eml.engrams.update(engram.id, {
+        properties: { detail: 'more' },
+      })
+
+      expect(updated!.properties).toEqual({ detail: 'more' })
     })
 
     it('deletes an engram and its relations', () => {
@@ -187,9 +186,10 @@ describe('EML v0.2', () => {
   // Properties Validation
   // ============================================================
   describe('validation', () => {
-    it('rejects an update to an unknown type', () => {
-      const e = eml.engrams.store({ content: 'A note', type: 'note', scope: 'global' })
-      expect(() => eml.engrams.update(e.id, { type: 'bogus' as any })).toThrow(/unknown type/)
+    // v0.19: no type change in place at all (a refile is a new engram with supersedes)
+    it('rejects a type change in an update', () => {
+      const e = eml.engrams.store(validNote({ content: 'A note' }))
+      expect(() => eml.engrams.update(e.id, { type: 'bogus' } as never)).toThrow(/type of an engram does not change/)
     })
 
     it('rejects an unknown type', () => {
@@ -207,14 +207,10 @@ describe('EML v0.2', () => {
       })).toThrow('applies')
     })
 
-    it('accepts profile without properties (v0.5: profile_type removed)', () => {
-      const engram = eml.engrams.store({
-        content: 'Profile sans type',
-        type: 'profile',
-        scope: 'global',
-        properties: {},
-      })
+    it('accepts profile without properties (v0.5: profile_type removed); v0.19: only about someone', () => {
+      const engram = eml.engrams.store(validProfile({ content: 'Profile sans type', scope: 'agent.assistant', properties: {} }))
       expect(engram.type).toBe('profile')
+      expect(() => eml.engrams.store(validProfile({ scope: 'global' }))).toThrow(/a profile is about someone/)
     })
 
     // v0.8 C7: status_type gone; state required.
@@ -245,7 +241,6 @@ describe('EML v0.2', () => {
         content: 'EML: v0.2 done, bootstrap next',
         type: 'status',
         scope: 'project.eml',
-        title: 'EML',
         properties: {
           state: 'v0.2 complete',
           next_step: 'Bootstrap: assistant knowledge into EML',
@@ -261,7 +256,7 @@ describe('EML v0.2', () => {
 
       const results = eml.engrams.query({ type: 'status' })
       expect(results).toHaveLength(1)
-      expect(results[0].title).toBe('EML')
+      expect(results[0].title).toBeNull() // v0.19: a status has no title
     })
   })
 
@@ -314,8 +309,8 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('relations', () => {
     it('rejects the removed evaluates verb (v0.16)', () => {
-      const a = eml.engrams.store({ content: 'A', type: 'note', scope: 'global' })
-      const b = eml.engrams.store({ content: 'B', type: 'note', scope: 'global' })
+      const a = eml.engrams.store(validNote({ content: 'A' }))
+      const b = eml.engrams.store(validNote({ content: 'B' }))
       expect(() => eml.engrams.relate({
         source_id: a.id, target_id: b.id,
         relation: 'evaluates' as any, detection_method: 'agent_declared',
@@ -324,7 +319,7 @@ describe('EML v0.2', () => {
 
     it('creates and loads relations on get', () => {
       const a = eml.engrams.store(validDecision({ content: 'A', scope: 'global' }))
-      const b = eml.engrams.store({ content: 'B', type: 'note', scope: 'global' })
+      const b = eml.engrams.store(validNote({ content: 'B' }))
 
       eml.engrams.relate({
         source_id: a.id, target_id: b.id,
@@ -378,9 +373,11 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('query', () => {
     beforeEach(() => {
-      eml.engrams.store(validDecision({ content: 'EML decision', scope: 'project.eml', title: 'EML', significance: 'high' }))
-      eml.engrams.store({ content: 'Workflow rule', type: 'rule', scope: 'global', title: 'workflow', properties: { applies: 'situational', trigger: 'when it applies' } })
-      eml.engrams.store({ content: 'BTC metric', type: 'note', scope: 'global', title: 'BTC', significance: 'low', properties: { value: 74200, unit: 'USD' } })
+      const d = eml.engrams.store(validDecision({ content: 'EML decision', scope: 'project.eml', title: 'EML' }))
+      plantSignificance(eml, d.id, 'high')
+      eml.engrams.store(validRule({ content: 'Workflow rule', title: 'workflow', properties: { applies: 'situational', trigger: 'when it applies' } }))
+      const n = eml.engrams.store(validNote({ content: 'BTC metric', title: 'BTC', properties: { detail: 'value: 74200 USD' } }))
+      plantSignificance(eml, n.id, 'low')
     })
 
     it('filters by scope', () => {
@@ -519,9 +516,11 @@ describe('EML v0.2', () => {
   describe('statuses set (v0.10.5)', () => {
     it("filters to a status SET (recall's {active, planned}); excludes historical states", () => {
       // active knowledge, open work, and a dead/historical engram sharing a term.
-      eml.engrams.store(validDecision({ content: 'kappa active fact', scope: 'project.eml', status: 'active' }))
-      eml.engrams.store({ content: 'kappa open work', type: 'task', scope: 'project.eml', status: 'planned' })
-      eml.engrams.store({ content: 'kappa old state', type: 'status', scope: 'project.eml', status: 'superseded', properties: { state: 'old' } })
+      eml.engrams.store(validDecision({ content: 'kappa active fact', scope: 'project.eml' }))
+      eml.engrams.store(validTask({ content: 'kappa open work', scope: 'project.eml', status: 'planned' }))
+      // a status is superseded by the next one in its scope
+      eml.engrams.store(validStatus({ content: 'kappa old state', scope: 'project.eml', properties: { state: 'old' } }))
+      eml.engrams.store(validStatus({ content: 'the newer state', scope: 'project.eml', properties: { state: 'new' } }))
 
       const live = eml.engrams.query({ search: 'kappa', statuses: ['active', 'planned'] })
       expect(live).toHaveLength(2)
@@ -534,8 +533,8 @@ describe('EML v0.2', () => {
     })
 
     it('statuses takes precedence over single status when both are passed', () => {
-      eml.engrams.store(validDecision({ content: 'lambda active', scope: 'project.eml', status: 'active' }))
-      eml.engrams.store({ content: 'lambda planned', type: 'task', scope: 'project.eml', status: 'planned' })
+      eml.engrams.store(validDecision({ content: 'lambda active', scope: 'project.eml' }))
+      eml.engrams.store(validTask({ content: 'lambda planned', scope: 'project.eml', status: 'planned' }))
 
       // statuses wins → both returned, single `status: 'active'` ignored.
       const results = eml.engrams.query({ search: 'lambda', status: 'active', statuses: ['active', 'planned'] })
@@ -549,9 +548,9 @@ describe('EML v0.2', () => {
   describe('bm25 ranking (v0.10.5)', () => {
     it('relevance leads over significance: a dense trivial match outranks a sparse critical one', () => {
       // 'zeta' dense + dedicated (strong bm25) but trivial significance.
-      eml.engrams.store(validDecision({ content: 'zeta zeta zeta dedicated note', scope: 'project.eml', significance: 'trivial' }))
+      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'zeta zeta zeta dedicated note', scope: 'project.eml' })).id, 'trivial')
       // 'zeta' once inside a long unrelated passage (weak bm25) but critical.
-      eml.engrams.store(validDecision({ content: 'zeta appears once inside a very long passage about many entirely unrelated subjects and other matters', scope: 'project.eml', significance: 'critical' }))
+      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'zeta appears once inside a very long passage about many entirely unrelated subjects and other matters', scope: 'project.eml' })).id, 'critical')
 
       const results = eml.engrams.query({ search: 'zeta', order_by: 'score' })
       expect(results).toHaveLength(2)
@@ -562,8 +561,8 @@ describe('EML v0.2', () => {
     it('bucket-tiebreak: equally-relevant matches are ordered by significance', () => {
       // Identical content → identical bm25 rank → same relevance bucket →
       // significance × recency breaks the tie.
-      eml.engrams.store(validDecision({ content: 'omega identical body text', scope: 'project.eml', significance: 'normal', title: 'low-sig' }))
-      eml.engrams.store(validDecision({ content: 'omega identical body text', scope: 'project.eml', significance: 'critical', title: 'high-sig' }))
+      eml.engrams.store(validDecision({ content: 'omega identical body text', scope: 'project.eml', title: 'low-sig' }))
+      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'omega identical body text', scope: 'project.eml', title: 'high-sig' })).id, 'critical')
 
       const results = eml.engrams.query({ search: 'omega', order_by: 'score' })
       expect(results).toHaveLength(2)
@@ -584,9 +583,9 @@ describe('EML v0.2', () => {
       // in DISTINCT relevance buckets, so pure bm25 order holds and the recency
       // tiebreak never engages. (A shallower 3/2/1 spread puts tf3+tf2 inside one
       // bucket — gap ~0.12 < EPS — where recency, not frequency, would decide.)
-      eml.engrams.store(validDecision({ content: 'rho rho rho rho rho rho rho rho rho filler', scope: 'project.eml', significance: 'normal', title: 'tf3' }))
-      eml.engrams.store(validDecision({ content: 'rho rho rho filler filler filler filler filler filler filler', scope: 'project.eml', significance: 'normal', title: 'tf2' }))
-      eml.engrams.store(validDecision({ content: 'rho filler filler filler filler filler filler filler filler filler', scope: 'project.eml', significance: 'normal', title: 'tf1' }))
+      eml.engrams.store(validDecision({ content: 'rho rho rho rho rho rho rho rho rho filler', scope: 'project.eml', title: 'tf3' }))
+      eml.engrams.store(validDecision({ content: 'rho rho rho filler filler filler filler filler filler filler', scope: 'project.eml', title: 'tf2' }))
+      eml.engrams.store(validDecision({ content: 'rho filler filler filler filler filler filler filler filler filler', scope: 'project.eml', title: 'tf1' }))
 
       const results = eml.engrams.query({ search: 'rho', order_by: 'score' })
       expect(results.map(e => e.title)).toEqual(['tf3', 'tf2', 'tf1'])
@@ -675,9 +674,11 @@ describe('EML v0.2', () => {
       expect(md).not.toContain('source_id: assistant')
     })
 
-    it('meta line is [type | significance | scope | title]', () => {
+    // v0.19: significance is no longer written, so the meta line leaves it out.
+    it('meta line is [type | scope | title]', () => {
       const md = renderRecallMarkdown('q', [hit()] as any)
-      expect(md).toContain('[log | high | project.eml | subj]')
+      expect(md).toContain('[log | project.eml | subj]')
+      expect(md).not.toContain('high')
     })
   })
 
@@ -712,12 +713,13 @@ describe('EML v0.2', () => {
       expect(md).toContain('[high·planned] eml-show-bounded — cap eml_show per section · t-1')
     })
 
-    it('decisions and rules are titles-only (no body)', () => {
+    it('rules are titles-only (no body); decisions are not rendered (v0.19: eml_list type=decision)', () => {
       const md = renderBrainStateMarkdown(state({
         recent_decisions: [{ id: 'd-1', type: 'decision', title: 'read-layer-architecture', content: 'LONG_RATIONALE_BODY' }],
         rules: [{ id: 'r-1', type: 'rule', title: 'eml-no-workarounds', content: 'RULE_BODY_TEXT' }],
       }) as any)
-      expect(md).toContain('- read-layer-architecture · d-1')
+      expect(md).not.toContain('read-layer-architecture')
+      expect(md).not.toContain('## Decisions')
       expect(md).not.toContain('LONG_RATIONALE_BODY')
       expect(md).toContain('- eml-no-workarounds · r-1')
       expect(md).not.toContain('RULE_BODY_TEXT')
@@ -740,8 +742,8 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('recall (FTS search)', () => {
     it('finds engrams by content search', () => {
-      eml.engrams.store({ content: 'Turso migration is planned for Q2', type: 'status', scope: 'project.eml', properties: { state: 'planned' } })
-      eml.engrams.store({ content: 'Assistant is a digital moth', type: 'profile', scope: 'global', properties: {} })
+      eml.engrams.store(validStatus({ content: 'Turso migration is planned for Q2', scope: 'project.eml', properties: { state: 'planned' } }))
+      eml.engrams.store(validProfile({ content: 'Assistant is a digital moth', scope: 'agent.assistant' }))
 
       const results = eml.engrams.query({ search: 'turso migration', limit: 10 })
       expect(results).toHaveLength(1)
@@ -753,31 +755,30 @@ describe('EML v0.2', () => {
   // v0.3: task type
   // ============================================================
   describe('v0.3: task type', () => {
-    it('stores task with minimal properties (content only) — v0.8: default status=planned', () => {
-      const engram = eml.engrams.store({
+    it('stores task with minimal fields (content + title) — v0.8: default status=planned; v0.19: a created entry', () => {
+      const engram = eml.engrams.store(validTask({
         content: 'Extend SETUP.md with section 3.3',
-        type: 'task',
         scope: 'project.eml',
-      })
+      }))
       expect(engram.type).toBe('task')
       // v0.8 C1: TYPE_DEFAULT_STATUS — task defaults to 'planned' (workflow lifecycle).
       expect(engram.status).toBe('planned')
+      expect(eml.engrams.entries(engram.id).map(e => [e.kind, e.text])).toEqual([['change', 'created (planned)']])
+      expect(() => eml.engrams.store({ type: 'task', scope: 'project.eml', content: 'untitled' })).toThrow(/a task needs a title/)
     })
 
     it('stores task with full properties', () => {
-      const engram = eml.engrams.store({
+      const engram = eml.engrams.store(validTask({
         content: 'Deploy EML v0.3 to the VPS',
-        type: 'task',
         scope: 'project.eml',
         status: 'planned',
-        significance: 'high',
         properties: {
           due_date: '2026-05-01',
           assignee_id: 'alice',
           priority: 'high',
           context: 'Blocks assistant dogfooding of v0.3 features',
         },
-      })
+      }))
       expect(engram.status).toBe('planned')
       expect(engram.properties).toEqual({
         due_date: '2026-05-01',
@@ -787,53 +788,51 @@ describe('EML v0.2', () => {
       })
     })
 
-    it('task status transitions (planned → active → resolved)', () => {
-      const engram = eml.engrams.store({
+    it('task status transitions (planned → active → resolved) through trackTask', () => {
+      const engram = eml.engrams.store(validTask({
         content: 'Carry out the schema migration',
-        type: 'task',
         scope: 'project.eml',
         status: 'planned',
-      })
-      let updated = eml.engrams.update(engram.id, { status: 'active' })
+      }))
+      let updated = eml.engrams.trackTask(engram.id, { status: 'active' })
       expect(updated?.status).toBe('active')
-      updated = eml.engrams.update(engram.id, { status: 'resolved', properties: { outcome: 'migrated' } })
+      updated = eml.engrams.trackTask(engram.id, { status: 'resolved', outcome: 'migrated', text: 'ran it', keep: [] })
       expect(updated?.status).toBe('resolved')
+      expect(() => eml.engrams.update(engram.id, { status: 'active' })).toThrow(/eml_track_task/)
     })
 
     it('task without assignee is allowed (unassigned)', () => {
-      const engram = eml.engrams.store({
+      const engram = eml.engrams.store(validTask({
         content: 'Someone should clean up the docs',
-        type: 'task',
         scope: 'project.eml',
-      })
-      expect(engram.properties).toBeNull()
+      }))
+      expect(engram.properties).toEqual({})
     })
   })
 
   // ============================================================
-  // v0.3: event type (with immutability)
+  // v0.3: event type
   // ============================================================
   describe('v0.3: event type', () => {
-    it('stores event with required properties', () => {
-      const engram = eml.engrams.store({
+    it('stores event with required properties; v0.19 drops previous_state / new_state / triggered_by', () => {
+      const engram = eml.engrams.store(validEvent({
         content: 'EML API v0.3 deployed',
-        type: 'event',
         scope: 'project.eml',
         properties: {
           occurred_at: '2026-04-20T12:00:00Z',
           change_type: 'deployed',
-          previous_state: 'v0.2',
-          new_state: 'v0.3',
-          triggered_by: 'alice',
+          detail: 'v0.2 → v0.3, by alice',
         },
-      })
+      }))
       expect(engram.properties?.change_type).toBe('deployed')
+      expect(() => eml.engrams.store(validEvent({ properties: { previous_state: 'v0.2' } })))
+        .toThrow(/unknown field previous_state for an event/)
     })
 
     it('throws for an event without occurred_at', () => {
       expect(() => {
         eml.engrams.store({
-          content: 'broken event',
+          content: 'broken event', title: 'broken',
           type: 'event',
           scope: 'project.eml',
           properties: { change_type: 'deployed' },
@@ -841,66 +840,53 @@ describe('EML v0.2', () => {
       }).toThrow(/occurred_at/)
     })
 
-    it('throws for an event without change_type', () => {
+    it('throws for an event without change_type, or with one off the list', () => {
       expect(() => {
         eml.engrams.store({
-          content: 'broken event',
+          content: 'broken event', title: 'broken',
           type: 'event',
           scope: 'project.eml',
           properties: { occurred_at: '2026-04-20T12:00:00Z' },
         })
       }).toThrow(/change_type/)
+      expect(() => eml.engrams.store(validEvent({ properties: { change_type: 'launched' } })))
+        .toThrow(/change_type must be one of/)
     })
   })
 
   // ============================================================
-  // v0.3: event immutability enforcement
+  // v0.3: event lock — v0.19: correctable, never superseded (N2)
   // ============================================================
-  describe('v0.3: event immutability', () => {
-    it('update() throws on a content change to an event', () => {
-      const engram = eml.engrams.store({
-        content: 'API deployed',
-        type: 'event',
-        scope: 'project.eml',
-        properties: { occurred_at: '2026-04-20T12:00:00Z', change_type: 'deployed' },
-      })
-      expect(() => {
-        eml.engrams.update(engram.id, { content: 'API redeployed' })
-      }).toThrow(/Cannot modify event fields/)
+  describe('v0.3: event immutability (v0.19: correctable, never superseded)', () => {
+    const deployed = () => eml.engrams.store(validEvent({
+      content: 'API deployed',
+      scope: 'project.eml',
+      properties: { occurred_at: '2026-04-20T12:00:00Z', change_type: 'deployed' },
+    }))
+
+    it('update() corrects content and the event fields', () => {
+      const engram = deployed()
+      expect(eml.engrams.update(engram.id, { content: 'API redeployed' })?.content).toBe('API redeployed')
+      const fixed = eml.engrams.update(engram.id, { properties: { occurred_at: '2026-04-20T13:00:00Z' } })
+      expect(fixed?.properties?.occurred_at).toBe('2026-04-20T13:00:00Z')
     })
 
-    it('update() throws on a properties change to an event', () => {
-      const engram = eml.engrams.store({
-        content: 'API deployed',
-        type: 'event',
-        scope: 'project.eml',
-        properties: { occurred_at: '2026-04-20T12:00:00Z', change_type: 'deployed' },
-      })
-      expect(() => {
-        eml.engrams.update(engram.id, { properties: { occurred_at: '2026-04-20T13:00:00Z', change_type: 'deployed' } })
-      }).toThrow(/Cannot modify event fields/)
+    it('an event is never superseded — neither by a new engram nor after the fact', () => {
+      const engram = deployed()
+      expect(() => eml.engrams.store(validNote({ supersedes: [engram.id] }))).toThrow(/an event is corrected, never superseded/)
+      const note = eml.engrams.store(validNote())
+      expect(() => eml.engrams.update(note.id, { supersedes: [engram.id] })).toThrow(/never superseded/)
     })
 
-    it('update() allows a significance change on an event', () => {
-      const engram = eml.engrams.store({
-        content: 'API deployed',
-        type: 'event',
-        scope: 'project.eml',
-        properties: { occurred_at: '2026-04-20T12:00:00Z', change_type: 'deployed' },
-      })
-      const updated = eml.engrams.update(engram.id, { significance: 'critical' })
-      expect(updated?.significance).toBe('critical')
+    it('significance is not writable on an event (or any engram)', () => {
+      const engram = deployed()
+      expect(() => eml.engrams.update(engram.id, { significance: 'critical' } as never)).toThrow(/unknown field significance/)
     })
 
-    it('update() allows a status change on an event (all values)', () => {
-      const engram = eml.engrams.store({
-        content: 'Duplicate event',
-        type: 'event',
-        scope: 'project.eml',
-        properties: { occurred_at: '2026-04-20T12:00:00Z', change_type: 'deployed' },
-      })
-      const superseded = eml.engrams.update(engram.id, { status: 'invalidated' })
-      expect(superseded?.status).toBe('invalidated')
+    it('update() allows a status change on an event', () => {
+      const engram = deployed()
+      const invalidated = eml.engrams.update(engram.id, { status: 'invalidated' })
+      expect(invalidated?.status).toBe('invalidated')
     })
 
     it('update() on non-event types still works (regression)', () => {
@@ -914,47 +900,36 @@ describe('EML v0.2', () => {
   })
 
   // ============================================================
-  // v0.3: log type
+  // v0.3: log type — v0.19: START HERE fields, one per session
   // ============================================================
   describe('v0.3: log type', () => {
-    it('stores log with minimal content (no properties)', () => {
-      const engram = eml.engrams.store({
-        content: 'Session with Alice today on the v0.3 design',
+    it('a log needs what / landed / next; the content is rendered from them', () => {
+      expect(() => eml.engrams.store({
+        content: 'Session with Alice today on the v0.3 design', title: 'session-x',
         type: 'log',
         scope: 'project.eml',
-      })
+      })).toThrow(/a log needs what/)
+      const engram = eml.engrams.store(validLog({ content: 'Session with Alice today on the v0.3 design', scope: 'project.eml' }))
       expect(engram.type).toBe('log')
+      expect(engram.content).toMatch(/^## START HERE\n\*\*WHAT:\*\* test what/)
+      expect(engram.content).toMatch(/Session with Alice today on the v0.3 design$/)
     })
 
-    it('stores log with occurred_at + session_id (v0.8: source in properties)', () => {
-      const engram = eml.engrams.store({
-        content: 'Design decision: engram as the umbrella term',
-        type: 'log',
+    it('the session comes from the write context (not the input); old keys go to detail', () => {
+      const engram = eml.engrams.store(validLog({
         scope: 'project.eml',
         title: 'v0.3-proposal',
-        session_id: '2026-04-20-v03-design-a7c3b2',
-        // v0.8 C7: source_* live in properties (ad hoc for context types).
-        properties: {
-          occurred_at: '2026-04-20T11:30:00Z',
-          source_id: 'assistant',
-          source_type: 'agent',
-        },
-      })
+        properties: { detail: 'occurred_at: 2026-04-20T11:30:00Z' },
+      }), { caller: 'assistant', session_id: '2026-04-20-v03-design-a7c3b2' })
       expect(engram.session_id).toBe('2026-04-20-v03-design-a7c3b2')
-      const props = engram.properties as Record<string, any>
-      expect(props.source_id).toBe('assistant')
-      expect(props.source_type).toBe('agent')
-      expect(props.occurred_at).toBe('2026-04-20T11:30:00Z')
+      expect(engram.ingested_by).toBe('assistant')
+      expect(() => eml.engrams.store({ ...validLog(), session_id: 'x' } as never)).toThrow(/unknown field session_id for a log/)
     })
 
-    it('log is not immutable — update() works', () => {
-      const engram = eml.engrams.store({
-        content: 'First note',
-        type: 'log',
-        scope: 'project.eml',
-      })
+    it('log is not immutable — update() corrects the content', () => {
+      const engram = eml.engrams.store(validLog({ content: 'First note', scope: 'project.eml' }))
       const updated = eml.engrams.update(engram.id, { content: 'Corrected note' })
-      expect(updated?.content).toBe('Corrected note')
+      expect(updated?.content).toMatch(/Corrected note$/)
     })
   })
 
@@ -964,28 +939,28 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('v0.5: ProfileType removed', () => {
     it('accepts a profile engram without profile_type', () => {
-      const engram = eml.engrams.store({
+      const engram = eml.engrams.store(validProfile({
         content: 'Assistant workstyle',
-        type: 'profile',
         scope: 'agent.assistant',
         title: 'workstyle',
         properties: {},
-      })
+      }))
       expect(engram.type).toBe('profile')
       // v0.8 C9: profile automatically gets review_due_at (180d).
       expect((engram.properties as any).review_due_at).toBeDefined()
     })
 
-    it('accepts a profile engram with other properties (title carries the facet info)', () => {
-      const engram = eml.engrams.store({
+    it('the title carries the facet; other facts go to detail (v0.19: no free keys)', () => {
+      const engram = eml.engrams.store(validProfile({
         content: 'Erin, Grace — family',
-        type: 'profile',
         scope: 'user.alice',
         title: 'family',
-        properties: { since: '2025-10-09' },
-      })
+        properties: { detail: 'since: 2025-10-09' },
+      }))
       expect(engram.title).toBe('family')
-      expect(engram.properties?.since).toBe('2025-10-09')
+      expect(engram.properties?.detail).toBe('since: 2025-10-09')
+      expect(() => eml.engrams.store(validProfile({ scope: 'user.alice', properties: { since: '2025-10-09' } })))
+        .toThrow(/unknown field since for a profile/)
     })
   })
 
@@ -994,18 +969,16 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('v0.3: blocks relation', () => {
     it('stores a blocks relation between two tasks', () => {
-      const blocker = eml.engrams.store({
+      const blocker = eml.engrams.store(validTask({
         content: 'Migration must go through',
-        type: 'task',
         scope: 'project.eml',
         status: 'active',
-      })
-      const blocked = eml.engrams.store({
+      }))
+      const blocked = eml.engrams.store(validTask({
         content: 'Deploy feature X',
-        type: 'task',
         scope: 'project.eml',
         status: 'planned',
-      })
+      }))
       eml.engrams.relate({
         source_id: blocker.id,
         target_id: blocked.id,
@@ -1023,14 +996,14 @@ describe('EML v0.2', () => {
   // v0.3: bug fix — pass /store status through
   // ============================================================
   describe('v0.3: status pass-through (bug-fix regression)', () => {
-    it('store({status: planned}) lands as planned in the DB', () => {
-      const engram = eml.engrams.store({
+    it('store({status: planned}) lands as planned in the DB; v0.19: only a task takes a status', () => {
+      const engram = eml.engrams.store(validTask({
         content: 'Planned Task',
-        type: 'task',
         scope: 'project.eml',
         status: 'planned',
-      })
+      }))
       expect(engram.status).toBe('planned')
+      expect(() => eml.engrams.store(validDecision({ status: 'planned' }))).toThrow(/status is not set on create/)
     })
 
     it('store without status defaults to active', () => {
@@ -1061,14 +1034,14 @@ describe('EML v0.2', () => {
         goal: 'Source reliability',
         description: 'Cardano ecosystem',
         owner: 'alice',
-        tags: ['cardano', 'research'],
         started_at: '2026-01-01',
         metadata: { repo: 'example/acme-app' },
+        status_tracks: 'released version',
       })
       expect(project.goal).toBe('Source reliability')
       expect(project.owner).toBe('alice')
-      expect(project.tags).toEqual(['cardano', 'research'])
       expect(project.metadata?.repo).toBe('example/acme-app')
+      expect(project.status_tracks).toBe('released version')
     })
 
     it('get returns null for unknown id', () => {
@@ -1123,20 +1096,18 @@ describe('EML v0.2', () => {
   // v0.8 C3: the soft warning became a hard throw. Tests adjusted.
   describe('v0.8 C3: hard scope validation (was: v0.4 soft)', () => {
     it('store with unknown project scope throws', () => {
-      expect(() => eml.engrams.store({
+      expect(() => eml.engrams.store(validTask({
         content: 'task for unknown project',
-        type: 'task',
         scope: 'project.nonexistent',
-      })).toThrow(/unknown project "nonexistent"/)
+      }))).toThrow(/unknown project "nonexistent"/)
     })
 
     it('store with known project scope succeeds', () => {
       // 'eml' is already registered via seedScopeFixtures
-      const engram = eml.engrams.store({
+      const engram = eml.engrams.store(validTask({
         content: 'task for known project',
-        type: 'task',
         scope: 'project.eml',
-      })
+      }))
       expect(engram).toBeDefined()
     })
 
@@ -1147,9 +1118,9 @@ describe('EML v0.2', () => {
 
     // v0.8 C2: external.* is dropped — the newly validated pattern is entity.*
     it('store with external.* scope throws (v0.8 C2: rename → entity)', () => {
-      expect(() => eml.engrams.store({
-        content: 'b', type: 'note', scope: 'external.charles_hoskinson',
-      })).toThrow(/Invalid scope/)
+      expect(() => eml.engrams.store(validNote({
+        content: 'b', scope: 'external.charles_hoskinson',
+      }))).toThrow(/Invalid scope/)
     })
 
     it('store with invalid scope pattern throws', () => {
@@ -1175,13 +1146,13 @@ describe('EML v0.2', () => {
     })
 
     it('aggregates status, tasks, decisions, logs, relations', () => {
-      eml.engrams.store({ content: 'API running', type: 'status', scope: 'project.eml', properties: { state: 'live' } })
-      eml.engrams.store({ content: 'Write tests', type: 'task', scope: 'project.eml', status: 'planned', properties: { priority: 'high' } })
-      eml.engrams.store({ content: 'Deploy v0.4', type: 'task', scope: 'project.eml', status: 'active', properties: { priority: 'urgent' } })
-      eml.engrams.store(validTask({ content: 'Resolved task', scope: 'project.eml', status: 'resolved' }))
-      eml.engrams.store(validDecision({ content: 'Use SQLite', scope: 'project.eml', significance: 'critical' }))
-      eml.engrams.store(validDecision({ content: 'Normal decision', scope: 'project.eml', significance: 'normal' }))
-      eml.engrams.store({ content: 'Session with alice', type: 'log', scope: 'project.eml' })
+      eml.engrams.store(validStatus({ content: 'API running', scope: 'project.eml', properties: { state: 'live' } }))
+      eml.engrams.store(validTask({ content: 'Write tests', scope: 'project.eml', status: 'planned', properties: { priority: 'high' } }))
+      eml.engrams.store(validTask({ content: 'Deploy v0.4', scope: 'project.eml', status: 'active', properties: { priority: 'urgent' } }))
+      closedTask(eml, { content: 'Resolved task', scope: 'project.eml' })
+      eml.engrams.store(validDecision({ content: 'Use SQLite', scope: 'project.eml' }))
+      eml.engrams.store(validDecision({ content: 'Normal decision', scope: 'project.eml' }))
+      eml.engrams.store(validLog({ content: 'Session with alice', scope: 'project.eml' }))
 
       const state = eml.projects.getBrainState('eml')
       expect(state).not.toBeNull()
@@ -1193,9 +1164,9 @@ describe('EML v0.2', () => {
     })
 
     it('open_tasks sorted by priority (urgent > high > normal > low)', () => {
-      eml.engrams.store({ content: 'low', type: 'task', scope: 'project.eml', status: 'planned', properties: { priority: 'low' } })
-      eml.engrams.store({ content: 'urgent', type: 'task', scope: 'project.eml', status: 'planned', properties: { priority: 'urgent' } })
-      eml.engrams.store({ content: 'high', type: 'task', scope: 'project.eml', status: 'active', properties: { priority: 'high' } })
+      eml.engrams.store(validTask({ content: 'low', scope: 'project.eml', status: 'planned', properties: { priority: 'low' } }))
+      eml.engrams.store(validTask({ content: 'urgent', scope: 'project.eml', status: 'planned', properties: { priority: 'urgent' } }))
+      eml.engrams.store(validTask({ content: 'high', scope: 'project.eml', status: 'active', properties: { priority: 'high' } }))
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['urgent', 'high', 'low'])
     })
@@ -1203,22 +1174,26 @@ describe('EML v0.2', () => {
     it('open_tasks of one priority: last activity first (task update or journal entry)', () => {
       const raw = (eml as any).db
       const task = (content: string, updatedAt: string) => {
-        const t = eml.engrams.store({ content, type: 'task', scope: 'project.eml', status: 'planned', properties: { priority: 'normal' } })
+        const t = eml.engrams.store(validTask({ content, scope: 'project.eml', properties: { priority: 'normal' } }))
         raw.prepare('UPDATE engrams SET updated_at = ?, created_at = ? WHERE id = ?').run(updatedAt, updatedAt, t.id)
+        // the created entry carries the real time; move it back with the task
+        raw.prepare('UPDATE entries SET at = ? WHERE engram_id = ?').run(updatedAt, t.id)
         return t
       }
       const old = task('old, but a journal entry today', '2026-01-01T00:00:00.000Z')
       task('touched in march', '2026-03-01T00:00:00.000Z')
       task('touched in february', '2026-02-01T00:00:00.000Z')
-      eml.engrams.appendTaskEntry(old.id, { text: 'worked on it' })
+      // a journal entry alone (the task row untouched) counts as activity
+      appendEntry(raw, old.id, { kind: 'note', text: 'worked on it' })
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
 
     it('recent_decisions sorted by significance DESC', () => {
-      eml.engrams.store(validDecision({ content: 'normal', scope: 'project.eml', significance: 'normal' }))
-      eml.engrams.store(validDecision({ content: 'critical', scope: 'project.eml', significance: 'critical' }))
-      eml.engrams.store(validDecision({ content: 'high', scope: 'project.eml', significance: 'high' }))
+      // read path: significance as an older brain holds it (no longer written)
+      eml.engrams.store(validDecision({ content: 'normal', scope: 'project.eml' }))
+      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'critical', scope: 'project.eml' })).id, 'critical')
+      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'high', scope: 'project.eml' })).id, 'high')
       const state = eml.projects.getBrainState('eml')!
       expect(state.recent_decisions.map(d => d.content)).toEqual(['critical', 'high', 'normal'])
     })
@@ -1313,53 +1288,48 @@ describe('EML v0.2', () => {
   // ============================================================
   describe('v0.8 C3: hard scope validation user/agent', () => {
     it('throws on store with unknown user scope', () => {
-      expect(() => eml.engrams.store({
+      expect(() => eml.engrams.store(validNote({
         content: 'mention',
-        type: 'note',
         scope: 'user.unknown',
-      })).toThrow(/unknown user "unknown"/)
+      }))).toThrow(/unknown user "unknown"/)
     })
 
     it('throws on store with unknown agent scope', () => {
-      expect(() => eml.engrams.store({
+      expect(() => eml.engrams.store(validNote({
         content: 'mention',
-        type: 'note',
         scope: 'agent.scout-x',
-      })).toThrow(/unknown agent "scout-x"/)
+      }))).toThrow(/unknown agent "scout-x"/)
     })
 
     it('succeeds when user/agent exists', () => {
       // alice + assistant are registered via seedScopeFixtures
-      const a = eml.engrams.store({ content: 'a', type: 'profile', scope: 'user.alice', title: 'workstyle' })
-      const b = eml.engrams.store({ content: 'b', type: 'profile', scope: 'agent.assistant', title: 'identity' })
+      const a = eml.engrams.store(validProfile({ content: 'a', scope: 'user.alice', title: 'workstyle' }))
+      const b = eml.engrams.store(validProfile({ content: 'b', scope: 'agent.assistant', title: 'identity' }))
       expect(a).toBeDefined()
       expect(b).toBeDefined()
     })
 
     it('throws on store with unknown entity scope', () => {
-      expect(() => eml.engrams.store({
+      expect(() => eml.engrams.store(validNote({
         content: 'mention',
-        type: 'note',
         scope: 'entity.unknown-person',
-      })).toThrow(/unknown entity "unknown-person"/)
+      }))).toThrow(/unknown entity "unknown-person"/)
     })
 
     it('succeeds for entity.<id> when entity exists', () => {
       // 'bob' is registered as an entity via seedScopeFixtures
-      const e = eml.engrams.store({
-        content: 'note about bob', type: 'note',
-        scope: 'entity.bob',
-      })
+      const e = eml.engrams.store(validNote({
+        content: 'note about bob', scope: 'entity.bob',
+      }))
       expect(e).toBeDefined()
     })
 
     // v0.8 C2: external.* is dropped — entity.* is the new container.
     it('throws for external.X scopes (v0.8 C2: rename → entity)', () => {
-      expect(() => eml.engrams.store({
+      expect(() => eml.engrams.store(validNote({
         content: 'note about external person',
-        type: 'note',
         scope: 'external.charles_hoskinson',
-      })).toThrow(/Invalid scope/)
+      }))).toThrow(/Invalid scope/)
     })
 
     it('throws on update when scope changes to unknown user/agent', () => {
@@ -1378,20 +1348,22 @@ describe('EML v0.2', () => {
   // source_name are gone. Filtering via a top-level query is no longer possible —
   // search via search/FTS or JSON properties (a later cluster).
   // ============================================================
-  describe('v0.8 C7: source_* in properties', () => {
-    it('store with source_* in properties', () => {
-      const e = eml.engrams.store({
+  // v0.19: source_id / source_type are gone for good — the author is the token's
+  // handle (ingested_by), software writes carry an origin.
+  describe('v0.8 C7: source_* in properties (v0.19: removed)', () => {
+    it('store with source_* in properties is rejected with the upgrade hint', () => {
+      expect(() => eml.engrams.store(validNote({
         content: 'BTC note',
-        type: 'note',
-        scope: 'global',
-        properties: {
-          source_id: 'scout-btc',
-          source_type: 'agent',
-        },
-      })
-      const props = e.properties as Record<string, any>
-      expect(props.source_id).toBe('scout-btc')
-      expect(props.source_type).toBe('agent')
+        properties: { source_id: 'scout-btc', source_type: 'agent' },
+      }))).toThrow(/unknown fields source_id, source_type for a note.*upgrade/)
+    })
+
+    it('authorship comes from the caller, software from origin', () => {
+      const e = eml.engrams.store(validNote({ content: 'BTC note' }), 'scout-btc')
+      expect(e.ingested_by).toBe('scout-btc')
+      const pane = eml.engrams.store(validNote({ content: 'pane note', title: undefined, origin: 'cockpit-notes' }))
+      expect(pane.origin).toBe('cockpit-notes')
+      expect(() => eml.engrams.store(validNote({ origin: 'my-app' }))).toThrow(/origin must be one of/)
     })
 
     // v0.9.1 Cluster 1 Phase 1.2: source_id/source_type removed from the schema —
@@ -1412,35 +1384,31 @@ describe('EML v0.2', () => {
   // v0.7: reference type (context layer)
   // ============================================================
   describe('v0.7: reference type', () => {
-    it('stores reference (v0.8: source_url/source_name in properties)', () => {
+    it('stores reference (v0.19: source, source_name, checked_at)', () => {
       const e = eml.engrams.store({
         content: 'Mem0 — vector-based memory layer for agents',
         type: 'reference',
         scope: 'project.eml',
         title: 'competitor-mem0',
-        // v0.8 C7: source_url + source_name now live in properties
-        // (ReferenceProperties — typed).
         properties: {
-          reference_type: 'analysis',
-          source_url: 'https://mem0.ai/docs',
+          source: 'https://mem0.ai/docs',
           source_name: 'Mem0 Docs',
-          accessed_at: '2026-04-28',
+          checked_at: '2026-04-28',
         },
       })
       expect(e.type).toBe('reference')
       const props = e.properties as Record<string, any>
-      expect(props.source_url).toBe('https://mem0.ai/docs')
-      expect(props.reference_type).toBe('analysis')
+      expect(props.source).toBe('https://mem0.ai/docs')
+      expect(props.checked_at).toBe('2026-04-28')
+      expect(() => eml.engrams.store(validReference({ properties: { source_url: 'https://x', reference_type: 'paper' } })))
+        .toThrow(/unknown fields source_url, reference_type for a reference/)
     })
 
-    it('reference accepts empty properties (all optional)', () => {
-      const e = eml.engrams.store({
+    it('a reference needs a source (v0.19: no source, no reference)', () => {
+      expect(() => eml.engrams.store({
         content: 'just a pointer', type: 'reference',
         scope: 'project.eml', title: 'rfc-9999',
-      })
-      expect(e.type).toBe('reference')
-      // No properties set is fine
-      expect(e.properties).toBeNull()
+      })).toThrow(/a reference needs source/)
     })
 
     it('CHECK constraint accepts reference at DB level', () => {
@@ -1557,18 +1525,16 @@ describe('EML v0.2', () => {
 
     it('post-migration: store with entity.<id> (registered) succeeds', () => {
       // 'bob' is registered as an entity via seedScopeFixtures
-      const e = eml.engrams.store({
-        content: 'note about bob', type: 'note',
-        scope: 'entity.bob',
-      })
+      const e = eml.engrams.store(validNote({
+        content: 'note about bob', scope: 'entity.bob',
+      }))
       expect(e.scope).toBe('entity.bob')
     })
 
     it('post-migration: store with external.<id> is rejected', () => {
-      expect(() => eml.engrams.store({
-        content: 'should fail', type: 'note',
-        scope: 'external.legacy',
-      })).toThrow(/Invalid scope/)
+      expect(() => eml.engrams.store(validNote({
+        content: 'should fail', scope: 'external.legacy',
+      }))).toThrow(/Invalid scope/)
     })
   })
 
@@ -1585,19 +1551,19 @@ describe('EML v0.2', () => {
 
     it('default setter: rule gets review_due_at = now + 90d', () => {
       const t0 = Date.now()
-      const e = eml.engrams.store({
-        content: 'r', type: 'rule', scope: 'global',
+      const e = eml.engrams.store(validRule({
+        content: 'r', scope: 'global',
         properties: { applies: 'situational', trigger: 'when it applies' },
-      })
+      }))
       const dueMs = new Date((e.properties as any).review_due_at).getTime()
       expect(Math.abs(dueMs - (t0 + 90 * 86400_000))).toBeLessThan(5000)
     })
 
     it('default setter: profile gets review_due_at = now + 180d', () => {
       const t0 = Date.now()
-      const e = eml.engrams.store({
-        content: 'p', type: 'profile', scope: 'agent.assistant', properties: {},
-      })
+      const e = eml.engrams.store(validProfile({
+        content: 'p', scope: 'agent.assistant', properties: {},
+      }))
       const dueMs = new Date((e.properties as any).review_due_at).getTime()
       expect(Math.abs(dueMs - (t0 + 180 * 86400_000))).toBeLessThan(5000)
     })
@@ -1612,11 +1578,11 @@ describe('EML v0.2', () => {
     })
 
     it('default setter does NOT apply to note/task/log', () => {
-      const o = eml.engrams.store({
-        content: 'o', type: 'note', scope: 'global',
-      })
-      const t = eml.engrams.store({ content: 't', type: 'task', scope: 'global' })
-      const l = eml.engrams.store({ content: 'l', type: 'log', scope: 'global' })
+      const o = eml.engrams.store(validNote({
+        content: 'o', scope: 'global',
+      }))
+      const t = eml.engrams.store(validTask({ content: 't', scope: 'global' }))
+      const l = eml.engrams.store(validLog({ content: 'l', scope: 'global' }))
       expect((o.properties as any)?.review_due_at).toBeUndefined()
       expect((t.properties as any)?.review_due_at).toBeUndefined()
       expect((l.properties as any)?.review_due_at).toBeUndefined()
@@ -1628,17 +1594,17 @@ describe('EML v0.2', () => {
         properties: { review_due_at: '2020-01-01T00:00:00.000Z' },
       }))
       const t0 = Date.now()
-      const updated = eml.engrams.confirmReview(e.id)!
+      const updated = eml.engrams.confirmReview(e.id, 'still holds')!
       const newDue = new Date((updated.properties as any).review_due_at).getTime()
       expect(Math.abs(newDue - (t0 + 60 * 86400_000))).toBeLessThan(5000)
     })
 
     it('confirmReview throws for a non-eligible type', () => {
-      const o = eml.engrams.store({
-        content: 'o', type: 'note', scope: 'global',
-      })
-      expect(() => eml.engrams.confirmReview(o.id))
-        .toThrow(/only supported for decision\/rule\/profile/)
+      const o = eml.engrams.store(validNote({
+        content: 'o', scope: 'global',
+      }))
+      expect(() => eml.engrams.confirmReview(o.id, 'x'))
+        .toThrow(/a review is confirmed for a decision, rule, profile or task/)
     })
 
     it('confirmReview returns null for an unknown id', () => {
@@ -1649,17 +1615,17 @@ describe('EML v0.2', () => {
 
   describe('v0.8 C1: status lifecycle', () => {
     it('TYPE_DEFAULT_STATUS — task defaults to planned', () => {
-      const t = eml.engrams.store({
-        content: 'a task', type: 'task', scope: 'global',
-      })
+      const t = eml.engrams.store(validTask({
+        content: 'a task', scope: 'global',
+      }))
       expect(t.status).toBe('planned')
     })
 
     it('TYPE_DEFAULT_STATUS — non-task defaults to active', () => {
       const d = eml.engrams.store(validDecision({ content: 'd', scope: 'global' }))
-      const o = eml.engrams.store({
-        content: 'o', type: 'note', scope: 'global',
-      })
+      const o = eml.engrams.store(validNote({
+        content: 'o', scope: 'global',
+      }))
       const s = eml.engrams.store({
         content: 's', type: 'status', scope: 'global',
         properties: { state: 'live' },
@@ -1670,23 +1636,23 @@ describe('EML v0.2', () => {
     })
 
     it('explicit status in the input overrides the default', () => {
-      const t = eml.engrams.store({
-        content: 'a', type: 'task', scope: 'global', status: 'active',
-      })
+      const t = eml.engrams.store(validTask({
+        content: 'a', scope: 'global', status: 'active',
+      }))
       expect(t.status).toBe('active')
     })
 
     it('auto-supersede: the old active status gets superseded', () => {
       const s1 = eml.engrams.store({
         content: 'EML v0.6 deployed', type: 'status',
-        scope: 'project.eml', title: 'EML',
+        scope: 'project.eml',
         properties: { state: 'v0.6 live' },
       })
       expect(s1.status).toBe('active')
 
       const s2 = eml.engrams.store({
         content: 'EML v0.7 deployed', type: 'status',
-        scope: 'project.eml', title: 'EML',
+        scope: 'project.eml',
         properties: { state: 'v0.7 live' },
       })
       expect(s2.status).toBe('active')

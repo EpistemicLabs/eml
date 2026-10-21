@@ -99,13 +99,17 @@ function expectMigrated(file: string, dir: string): void {
     const row = after[`s-${i + 1}`]
     const seed = seeds[sub(r.title)]
     expect(row.content).toBe(seed.content)
-    expect(row.properties).toEqual({ ...seed.properties, review_due_at: DUE })
+    // v0.19 moves the seed marker from properties.source_id to the origin column;
+    // agreed is new on the v0.19 seeds (an existing rule keeps what it had).
+    const { source_id: _s, source_type: _t, agreed: _a, ...seedFields } = seed.properties
+    expect(row.properties).toEqual({ ...seedFields, review_due_at: DUE })
     expect(row.properties.boot).toBeUndefined()
     expect(row.updated_at).not.toBe(OLD_STAMP)
   })
   // Edited, unmarked, with a why of its own, or inactive: untouched.
   expect(after['c-1'].content).toBe(`${OLD_SEED_RULES[0].content} Always.`)
-  expect(after['c-1'].properties.boot).toEqual([AGENT])
+  // (v0.19 then drops properties.boot everywhere; the edit itself stays.)
+  expect(after['c-1'].properties.boot).toBeUndefined()
   for (const id of ['u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].content).toBe(OLD_SEED_RULES[0].content)
   expect(after['w-1'].properties.why).toBe('my own reason')
   for (const id of ['c-1', 'u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP)
@@ -153,7 +157,7 @@ describe('v0.18 migration — unchanged default-brain seed rules become the shor
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 17)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18, 19] })
     } finally { control.close() }
 
     expectMigrated(brainFile, dir)

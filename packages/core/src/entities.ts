@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Entity, EntityInput, EntityKind, EntityUpdate } from './types'
+import { Entity, EntityInput, EntityKind, EntityStatus, EntityUpdate } from './types'
 
 // v0.8 C6: first-class entities table for external parties (people, orgs,
 // assets). Replaces the free-form `external.<x>` scope convention with
@@ -10,13 +10,16 @@ export class EntityStore {
 
   create(input: EntityInput): Entity {
     this.db.prepare(`
-      INSERT INTO entities (id, name, kind, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+      INSERT INTO entities (id, name, kind, status, description, metadata, status_tracks, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
       input.id,
       input.name,
       input.kind,
-      input.description ?? null
+      input.status ?? 'active',
+      input.description ?? null,
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      input.status_tracks ?? null,
     )
     return this.get(input.id)!
   }
@@ -27,14 +30,14 @@ export class EntityStore {
     return this.rowToEntity(row)
   }
 
-  list(filter?: { kind?: EntityKind }): Entity[] {
-    if (filter?.kind) {
-      return (this.db.prepare(
-        'SELECT * FROM entities WHERE kind = ? ORDER BY created_at DESC'
-      ).all(filter.kind) as any[]).map(r => this.rowToEntity(r))
-    }
-    return (this.db.prepare('SELECT * FROM entities ORDER BY created_at DESC').all() as any[])
-      .map(r => this.rowToEntity(r))
+  list(filter?: { kind?: EntityKind, status?: EntityStatus }): Entity[] {
+    const where: string[] = []
+    const params: string[] = []
+    if (filter?.kind) { where.push('kind = ?'); params.push(filter.kind) }
+    if (filter?.status) { where.push('status = ?'); params.push(filter.status) }
+    return (this.db.prepare(
+      `SELECT * FROM entities ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC`,
+    ).all(...params) as any[]).map(r => this.rowToEntity(r))
   }
 
   update(id: string, patch: EntityUpdate): Entity | null {
@@ -47,6 +50,9 @@ export class EntityStore {
     if (patch.name !== undefined)        { fields.push('name = ?');        params.push(patch.name) }
     if (patch.kind !== undefined)        { fields.push('kind = ?');        params.push(patch.kind) }
     if (patch.description !== undefined) { fields.push('description = ?'); params.push(patch.description) }
+    if (patch.status !== undefined)      { fields.push('status = ?');      params.push(patch.status) }
+    if (patch.metadata !== undefined)    { fields.push('metadata = ?');    params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
+    if (patch.status_tracks !== undefined) { fields.push('status_tracks = ?'); params.push(patch.status_tracks) }
 
     if (fields.length === 0) return this.rowToEntity(existing)
 
@@ -66,7 +72,10 @@ export class EntityStore {
       id: row.id,
       name: row.name,
       kind: row.kind,
+      status: row.status ?? 'active',
       description: row.description ?? null,
+      metadata: row.metadata ? JSON.parse(row.metadata) : null,
+      status_tracks: row.status_tracks ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }

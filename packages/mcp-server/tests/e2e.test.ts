@@ -15,6 +15,15 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { TOOL_NAMES } from '../src/tools'
 import { validDecideArgs, validTaskArgs } from './fixtures'
 
+type Result = { content: Array<{ type: string, text?: string }>, isError?: boolean }
+
+/** The JSON body after the banner (the banner is prepended with a blank line). */
+function jsonOf(r: Result): any {
+  const t = textOf(r)
+  const i = t.indexOf('{')
+  return JSON.parse(t.slice(i))
+}
+
 /**
  * E2E (v0.9-PROPOSAL §6.6 Acceptance):
  *
@@ -23,9 +32,8 @@ import { validDecideArgs, validTaskArgs } from './fixtures'
  * Validates: initialize handshake, tools/list, tool calls against the live server,
  * error handling as isError:true.
  *
- * v0.9 Cluster 4 Phase 4.3 steps 1+2: 7 tools after cleanup
- * (boot, recall, list, get, update, entity_create, entity_update).
- * Steps 3+4 add 10 more tools.
+ * v0.19: the 22-tool surface (create per type, track_task, update, relate,
+ * objects, reads), strict schemas, banners from the live server.
  */
 
 async function httpPost(port: number, path: string, body: unknown, token: string): Promise<unknown> {
@@ -50,6 +58,17 @@ async function httpPost(port: number, path: string, body: unknown, token: string
     req.write(data)
     req.end()
   })
+}
+
+async function httpPostWith(port: number, path: string, body: unknown, token: string, headers: Record<string, string>): Promise<unknown> {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers },
+    body: JSON.stringify(body),
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`)
+  return JSON.parse(text)
 }
 
 function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
@@ -125,6 +144,19 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(names).toEqual([...TOOL_NAMES].sort())
     })
 
+    it('every schema is strict (additionalProperties false) and lists no removed field', async () => {
+      const result = await mcpClient.listTools()
+      for (const t of result.tools) {
+        expect((t.inputSchema as Record<string, unknown>).additionalProperties, t.name).toBe(false)
+        const props = Object.keys((t.inputSchema.properties ?? {}) as Record<string, unknown>)
+        // relate's source_id is the edge's start and an entity's kind is person/org/asset — not the removed fields
+        const removed = ['significance', 'properties', 'source_type']
+          .concat(t.name === 'eml_relate' ? [] : ['source_id'])
+          .concat(t.name.endsWith('_object') ? [] : ['kind'])
+        for (const key of removed) expect(props, `${t.name}.${key}`).not.toContain(key)
+      }
+    })
+
     it('all tools have title + description + inputSchema', async () => {
       const result = await mcpClient.listTools()
       for (const t of result.tools) {
@@ -136,322 +168,245 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
     })
   })
 
+  const call = async (name: string, args: Record<string, unknown>): Promise<Result> =>
+    await mcpClient.callTool({ name, arguments: args }) as Result
+
   describe('happy paths', () => {
-    it('eml_entity_create creates an entity', async () => {
-      const create = await mcpClient.callTool({
-        name: 'eml_entity_create',
-        arguments: { id: 'bob', name: 'Bob', kind: 'person' },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(create.isError).toBeFalsy()
+    it('strict schema: an unknown key (significance) is rejected before the server', async () => {
+      const r = await call('eml_decide', validDecideArgs({ title: 'x-strict', significance: 'high' }))
+      expect(r.isError).toBe(true)
+      expect(textOf(r)).toMatch(/significance|Unrecognized|unrecognized/)
+    })
+
+    it('eml_create_object / eml_read_object / eml_update_object for project, entity, tag, subject', async () => {
+      const project = await call('eml_create_object', { object: 'project', name: 'EML', id: 'eml', goal: 'memory layer' })
+      expect(project.isError).toBeFalsy()
+      expect(jsonOf(project).created).toBe(true)
+      expect((await call('eml_create_object', { object: 'entity', id: 'bob', name: 'Bob', kind: 'person' })).isError).toBeFalsy()
+      expect((await call('eml_create_object', { object: 'tag', name: 'deploy' })).isError).toBeFalsy()
+      expect((await call('eml_create_object', { object: 'subject', name: 'v0-19-build' })).isError).toBeFalsy()
+
+      const list = await call('eml_read_object', { object: 'project' })
+      expect(textOf(list)).toContain('"id": "eml"')
+      const one = await call('eml_read_object', { object: 'entity', id: 'bob' })
+      expect(jsonOf(one).object.kind).toBe('person')
+
+      const upd = await call('eml_update_object', { object: 'project', id: 'eml', goal: 'engram protocol', status_tracks: 'brain schema version' })
+      expect(upd.isError).toBeFalsy()
+      expect(jsonOf(upd).diff.goal).toEqual(['memory layer', 'engram protocol'])
+
+      const bad = await call('eml_create_object', { object: 'tag', name: 'x', goal: 'nope' })
+      expect(bad.isError).toBe(true)
+      expect(textOf(bad)).toContain('Invalid object')
     })
 
     it('eml_decide writes a decision engram (typed)', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_decide',
-        arguments: validDecideArgs({
-          content: 'Bob builds the MCP server wrapper as the reference',
-          scope: 'entity.bob',
-          title: 'mcp-wrapper',
-        }),
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
+      const r = await call('eml_decide', validDecideArgs({
+        content: 'Bob builds the MCP server wrapper as the reference',
+        scope: 'entity.bob',
+        title: 'mcp-wrapper',
+      }))
       expect(r.isError).toBeFalsy()
-      const text = textOf(r)
-      expect(text).toContain('"type": "decision"')
-      expect(text).toContain('"scope": "entity.bob"')
-      expect(text).toContain('"alternatives"')
-      expect(text).not.toContain('decision_type')
+      const e = jsonOf(r)
+      expect(e.type).toBe('decision')
+      expect(e.scope).toBe('entity.bob')
+      expect(e.properties.alternatives).toEqual(['test alternative'])
+      expect(e.ingestion_method).toBe('mcp')
+      expect(e.harness).toBe('e2e-test-client')
+      expect(typeof e.session_id).toBe('string')
     })
 
-    it('eml_decide (v0.15): no decision_type param; rationale + ≥ 1 alternative required', async () => {
+    it('eml_decide: rationale + ≥ 1 alternative required; core rejects blank ones', async () => {
       const { tools } = await mcpClient.listTools()
       const decide = tools.find(t => t.name === 'eml_decide')!
-      const props = decide.inputSchema.properties as Record<string, unknown>
-      expect(props.decision_type).toBeUndefined()
-      expect(decide.inputSchema.required).toEqual(expect.arrayContaining(['rationale', 'alternatives']))
-
-      const noAlts = await mcpClient.callTool({
-        name: 'eml_decide',
-        arguments: validDecideArgs({ scope: 'entity.bob', alternatives: [] }),
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(noAlts.isError).toBe(true)
-      expect(textOf(noAlts)).toContain('Invalid engram: a decision needs at least one alternative that was considered and rejected.')
-
-      const noRationale = await mcpClient.callTool({
-        name: 'eml_decide',
-        arguments: validDecideArgs({ scope: 'entity.bob', rationale: undefined }),
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(noRationale.isError).toBe(true)
-      expect(textOf(noRationale)).toContain('Invalid engram: a decision needs a rationale — why this option won.')
-
-      const blankAlt = await mcpClient.callTool({
-        name: 'eml_decide',
-        arguments: validDecideArgs({ scope: 'entity.bob', alternatives: ['  '] }),
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(blankAlt.isError).toBe(true)
-      expect(textOf(blankAlt)).toContain('Invalid engram: a decision needs at least one alternative')
+      expect(decide.inputSchema.required).toEqual(expect.arrayContaining(['rationale', 'alternatives', 'title']))
+      expect((await call('eml_decide', validDecideArgs({ title: 'no-alts', alternatives: [] }))).isError).toBe(true)
+      expect((await call('eml_decide', validDecideArgs({ title: 'no-rat', rationale: undefined }))).isError).toBe(true)
+      const blank = await call('eml_decide', validDecideArgs({ title: 'blank-alt', alternatives: ['  '] }))
+      expect(blank.isError).toBe(true)
+      expect(textOf(blank)).toContain('Invalid engram')
     })
 
     it('eml_list with a type filter finds the decision', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_list',
-        arguments: { type: 'decision', limit: 10 },
-      }) as { content: Array<{ type: string, text?: string }> }
-      expect(textOf(r)).toContain('mcp-wrapper')
+      expect(textOf(await call('eml_list', { type: 'decision', limit: 10 }))).toContain('mcp-wrapper')
     })
 
-    it('eml_relate draws a directed edge (idempotent); eml_note [[wikilink]] auto-links', async () => {
-      // a typed write may prepend an advisory banner before the JSON → parse from the first '{'.
-      const parseWrite = (t: string) => JSON.parse(t.slice(t.indexOf('{')))
-      const mk = async (title: string, content: string) => parseWrite(textOf(await mcpClient.callTool({
-        name: 'eml_note', arguments: { content, scope: 'global', title },
-      }) as { content: Array<{ text?: string }> }))
-      const aId = (await mk('rel-a', 'relate source')).id as string
-      const bId = (await mk('rel-b', 'relate target')).id as string
-
-      const rel = await mcpClient.callTool({
-        name: 'eml_relate', arguments: { source_id: aId, target_id: bId, relation: 'supports', explanation: 'a backs b' },
-      }) as { content: Array<{ text?: string }>, isError?: boolean }
-      expect(rel.isError).toBeFalsy()
-      expect(textOf(rel)).toContain('"created": true')
-
-      // wikilink from a NEW note to rel-a's title → related_to edge, seen via eml_get
-      const wId = (await mk('rel-w', 'see [[rel-a]] for context')).id as string
-      const got = await mcpClient.callTool({
-        name: 'eml_get', arguments: { id: wId, with_relations: true },
-      }) as { content: Array<{ text?: string }> }
-      expect(textOf(got)).toContain('related_to')
-      expect(textOf(got)).toContain(aId)
+    it('eml_set_status: transition banner, status_tracks shown, later the previous state', async () => {
+      const first = await call('eml_set_status', { scope: 'project.eml', state: 'schema 18', content: 'first status' })
+      expect(first.isError).toBeFalsy()
+      expect(textOf(first)).toContain('status (first) → schema 18')
+      expect(textOf(first)).toContain("this scope's status tracks: brain schema version")
+      const second = await call('eml_set_status', { scope: 'project.eml', state: 'schema 19', content: 'migrated' })
+      expect(textOf(second)).toContain('status schema 18 → schema 19')
+      expect(jsonOf(second).superseded).toHaveLength(1)
     })
 
-    it('v0.15 tasks: eml_track_task stage/parent_id/outcome, eml_task_entry, entries on eml_get, eml_list stage=', async () => {
-      type R = { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      const call = async (name: string, args: Record<string, unknown>) =>
-        await mcpClient.callTool({ name, arguments: args }) as R
-      const parseWrite = (t: string) => JSON.parse(t.slice(t.indexOf('{')))
+    it('eml_set_status on an entity without status_tracks asks for it', async () => {
+      const r = await call('eml_set_status', { scope: 'entity.bob', state: 'onboarded', content: 'Bob is in' })
+      expect(textOf(r)).toContain('entity.bob has no status_tracks yet')
+      expect(textOf(r)).toContain('eml_update_object(object=entity, id=bob')
+    })
 
-      const parent = parseWrite(textOf(await call('eml_track_task',
-        validTaskArgs({ content: 'Ship the task hub', title: 'mcp-hub-parent', status: 'active', stage: 'planning' }))))
-      expect(parent.properties.stage).toBe('planning')
-      const child = parseWrite(textOf(await call('eml_track_task',
-        validTaskArgs({ content: 'Write the migration', title: 'mcp-hub-child', parent_id: parent.id }))))
+    it('eml_create_task + eml_track_task: progress, stage, sub-task, close with keep, reopen', async () => {
+      const parent = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'build-v019', stage: 'planning', priority: 'high' })))
+      expect(parent.status).toBe('planned')
+      const child = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'child', parent_id: parent.id })))
+      const d = jsonOf(await call('eml_decide', validDecideArgs({ scope: 'project.eml', title: 'keep-me', task_id: parent.id, binding: 'task' })))
+      const n = jsonOf(await call('eml_note', { scope: 'project.eml', title: 'plan', content: 'the plan', task_id: parent.id, binding: 'task' }))
 
-      // resolving the parent while the child is open fails and names the child
-      const blocked = await call('eml_update', { id: parent.id, patch: { status: 'resolved', properties: { outcome: 'done' } } })
-      expect(blocked.isError).toBe(true)
-      expect(textOf(blocked)).toContain(`has open sub-tasks: ${child.id} mcp-hub-child`)
+      const progress = await call('eml_track_task', { task_id: parent.id, text: 'options settled', stage: 'ready' })
+      expect(progress.isError).toBeFalsy()
+      expect(jsonOf(progress).properties.stage).toBe('ready')
 
-      // a stage change rides on the entry
-      const entry = await call('eml_task_entry', { task_id: parent.id, text: 'options settled, plan next', stage: 'ready' })
-      expect(entry.isError).toBeFalsy()
-      expect(textOf(entry)).toContain('"stage": "ready"')
+      const noText = await call('eml_track_task', { task_id: parent.id, stage: 'implementation' })
+      expect(noText.isError).toBe(true)
+      expect(textOf(noText)).toContain('needs text')
 
-      const got = textOf(await call('eml_get', { id: parent.id }))
-      expect(got).toContain('options settled, plan next')
-      expect(got).toContain('"stage": "ready"')
+      // the open sub-task blocks resolving
+      expect((await call('eml_track_task', { task_id: parent.id, status: 'resolved', outcome: 'done', text: 'x', keep: [] })).isError).toBe(true)
+      expect((await call('eml_track_task', { task_id: child.id, status: 'resolved', outcome: 'done', text: 'child done' })).isError).toBeFalsy()
 
-      const listed = textOf(await call('eml_list', { type: 'task', stage: 'ready' }))
-      expect(listed).toContain('mcp-hub-parent')
-      expect(listed).not.toContain('mcp-hub-child')
+      const noKeep = await call('eml_track_task', { task_id: parent.id, status: 'resolved', outcome: 'released', text: 'shipped' })
+      expect(noKeep.isError).toBe(true)
+      expect(textOf(noKeep)).toContain('keep=')
 
-      // created closed → outcome comes from the helper; without it → error
-      const closed = await call('eml_track_task', validTaskArgs({ content: 'Already done', status: 'resolved' }))
-      expect(closed.isError).toBeFalsy()
-      expect(textOf(closed)).toContain('"outcome": "test outcome"')
-      const noOutcome = await call('eml_track_task', { content: 'Already done', scope: 'global', status: 'resolved' })
-      expect(noOutcome.isError).toBe(true)
-      expect(textOf(noOutcome)).toContain('Invalid engram: closing a task (resolved/invalidated) needs an outcome.')
+      const close = await call('eml_track_task', { task_id: parent.id, status: 'resolved', outcome: 'released', text: 'shipped', keep: [d.id] })
+      expect(close.isError).toBeFalsy()
+      expect(textOf(close)).toContain('kept as standing:')
+      expect(textOf(close)).toContain('closed with the task:')
 
-      // eml_task_entry on an unknown id fails instead of creating anything
-      const ghost = await call('eml_task_entry', { task_id: 'no-such-task', text: 'x' })
+      const reopen = await call('eml_track_task', { task_id: parent.id, status: 'active', text: 'one more fix' })
+      expect(textOf(reopen)).toContain('reactivate the ones that hold again')
+      expect(textOf(reopen)).toContain(n.id)
+
+      const got = jsonOf(await call('eml_get', { id: parent.id }))
+      expect(got.entries.some((e: any) => e.kind === 'change')).toBe(true)
+      const notesOnly = jsonOf(await call('eml_get', { id: parent.id, notes_only: true }))
+      expect(notesOnly.entries.every((e: any) => e.kind === 'note')).toBe(true)
+
+      const listed = await call('eml_list', { task_id: parent.id })
+      expect(textOf(listed)).toContain(d.id)
+
+      const ghost = await call('eml_track_task', { task_id: 'no-such-task', text: 'x' })
       expect(ghost.isError).toBe(true)
     })
 
-    it('v0.15: eml_decide / eml_note with task_id link to the task and add entries', async () => {
-      type R = { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      const parseWrite = (t: string) => JSON.parse(t.slice(t.indexOf('{')))
-      const task = parseWrite(textOf(await mcpClient.callTool({ name: 'eml_track_task',
-        arguments: validTaskArgs({ content: 'Pick the queue', title: 'mcp-link-hub', stage: 'planning' }) }) as R))
-
-      const d = await mcpClient.callTool({ name: 'eml_decide',
-        arguments: validDecideArgs({ content: 'Use SQLite as the queue', title: 'mcp-link-decision', task_id: task.id }) }) as R
-      expect(d.isError).toBeFalsy()
-      const plan = await mcpClient.callTool({ name: 'eml_note',
-        arguments: { content: 'Plan: table, worker, retries.', scope: 'global', title: 'mcp-link-plan', task_id: task.id } }) as R
-      expect(plan.isError).toBeFalsy()
-
-      const got = textOf(await mcpClient.callTool({ name: 'eml_get', arguments: { id: task.id, with_relations: true } }) as R)
-      expect(got).toContain('decision taken: mcp-link-decision')
-      expect(got).toContain('note written: mcp-link-plan')
-      expect(got).toContain('"derived_from"')
-      expect(got).toContain('"refines"')
-      expect(got).toContain('"stage": "planning"')   // not advanced
-
-      const bad = await mcpClient.callTool({ name: 'eml_decide',
-        arguments: validDecideArgs({ content: 'orphan', task_id: 'no-such-task' }) }) as R
-      expect(bad.isError).toBe(true)
-      expect(textOf(bad)).toContain('Invalid engram: task_id no-such-task is not a task.')
+    it('eml_create_task supersedes: open sub-tasks banner points to eml_track_task parent_id', async () => {
+      const old = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'old-parent' })))
+      await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'old-child', parent_id: old.id }))
+      const r = await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'new-parent', supersedes: [old.id] }))
+      expect(textOf(r)).toContain('open sub-task')
+      expect(textOf(r)).toContain('eml_track_task(<sub-task id>, parent_id=<new task id>)')
     })
 
-    it('v0.15: eml_decide supersedes flips the old decision and draws the edge in one call', async () => {
-      type R = { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      const parseWrite = (t: string) => JSON.parse(t.slice(t.indexOf('{')))
-      const old = parseWrite(textOf(await mcpClient.callTool({ name: 'eml_decide',
-        arguments: validDecideArgs({ content: 'Queue on Redis', title: 'mcp-queue' }) }) as R))
-      const next = parseWrite(textOf(await mcpClient.callTool({ name: 'eml_decide',
-        arguments: validDecideArgs({ content: 'Queue on SQLite', title: 'mcp-queue', supersedes: [old.id] }) }) as R))
-
-      const got = textOf(await mcpClient.callTool({ name: 'eml_get', arguments: { id: old.id, with_relations: true } }) as R)
-      expect(got).toContain('"status": "superseded"')
-      expect(got).toContain('"relation": "supersedes"')
-      expect(got).toContain(next.id)
+    it('eml_note with a [[wikilink]] and a subject; eml_relate draws an edge', async () => {
+      const target = jsonOf(await call('eml_note', { scope: 'global', title: 'wl-target', content: 'target note' }))
+      const src = jsonOf(await call('eml_note', { scope: 'global', title: 'wl-source', content: 'see [[wl-target]]', subjects: ['v0-19-build'], tags: ['deploy'] }))
+      expect(src.subjects).toEqual(['v0-19-build'])
+      const rel = await call('eml_relate', { source_id: src.id, target_id: target.id, relation: 'supports', explanation: 'test' })
+      expect(rel.isError).toBeFalsy()
+      expect(textOf(await call('eml_list', { subject: 'v0-19-build' }))).toContain('wl-source')
     })
 
-    it('v0.15: superseding a parent task prints the open sub-tasks banner', async () => {
-      type R = { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      const parseWrite = (t: string) => JSON.parse(t.slice(t.indexOf('{')))
-      const parent = parseWrite(textOf(await mcpClient.callTool({ name: 'eml_track_task',
-        arguments: validTaskArgs({ content: 'Old plan', title: 'mcp-old-plan' }) }) as R))
-      await mcpClient.callTool({ name: 'eml_track_task',
-        arguments: validTaskArgs({ content: 'Leftover step', title: 'mcp-leftover', parent_id: parent.id }) })
-      const r = await mcpClient.callTool({ name: 'eml_update', arguments: { id: parent.id, patch: { status: 'superseded' } } }) as R
-      expect(r.isError).toBeFalsy()
-      expect(textOf(r)).toContain('open sub-task of the superseded task stays open')
-      expect(textOf(r)).toContain('mcp-leftover')
+    it('eml_relate offers no supersedes / part_of', async () => {
+      const { tools } = await mcpClient.listTools()
+      const relate = tools.find(t => t.name === 'eml_relate')!
+      const verbs = ((relate.inputSchema.properties as any).relation.enum) as string[]
+      expect(verbs).not.toContain('supersedes')
+      expect(verbs).not.toContain('part_of')
+      expect(verbs).toEqual(expect.arrayContaining(['supports', 'contradicts', 'derived_from', 'refines', 'related_to', 'blocks']))
     })
 
-    it('eml_subject_create + assign via eml_note, then eml_list subject= filters to it', async () => {
-      const created = await mcpClient.callTool({
-        name: 'eml_subject_create',
-        arguments: { name: 'MCP E2E Subject', description: 'a strand for the e2e run' },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(created.isError).toBeFalsy()
-      expect(textOf(created)).toContain('"id": "mcp-e2e-subject"')
+    it('eml_rule, eml_event, eml_reference, eml_profile, eml_log create their types', async () => {
+      const rule = await call('eml_rule', { scope: 'agent.mcp', title: 'ask-first', content: 'Ask before pushing.', applies: 'situational', trigger: 'before a push', why: 'user wants it', agreed: 'ja' })
+      expect(rule.isError).toBeFalsy()
+      expect(jsonOf(rule).type).toBe('rule')
+      const noAgreed = await call('eml_rule', { scope: 'agent.mcp', title: 'x', content: 'x', applies: 'always', why: 'w' })
+      expect(noAgreed.isError).toBe(true)
 
-      const wrote = await mcpClient.callTool({
-        name: 'eml_note',
-        arguments: { content: 'engram in the e2e subject', scope: 'entity.bob', subjects: ['mcp-e2e-subject'] },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(wrote.isError).toBeFalsy()
-      expect(textOf(wrote)).toContain('"mcp-e2e-subject"')
+      const ev = await call('eml_event', { scope: 'global', title: 'release-1', content: 'released', change_type: 'released', occurred_at: '2026-10-19T10:00:00Z' })
+      expect(jsonOf(ev).type).toBe('event')
+      const ref = await call('eml_reference', { scope: 'global', title: 'docs', content: 'the docs', source: 'https://example.org' })
+      expect(jsonOf(ref).properties.source).toBe('https://example.org')
+      const prof = await call('eml_profile', { scope: 'agent.mcp', title: 'mcp-travel', content: 'likes trains' })
+      expect(jsonOf(prof).type).toBe('profile')
+      const badProf = await call('eml_profile', { scope: 'global', title: 'g', content: 'x' })
+      expect(badProf.isError).toBe(true)
 
-      const listed = await mcpClient.callTool({
-        name: 'eml_list',
-        arguments: { subject: 'mcp-e2e-subject', limit: 10 },
-      }) as { content: Array<{ type: string, text?: string }> }
-      expect(textOf(listed)).toContain('engram in the e2e subject')
+      const log = await call('eml_log', { scope: 'global', title: 'session-e2e', what: 'w', landed: 'l', next: 'n' })
+      expect(jsonOf(log).content).toContain('**NEXT:** n')
+      const second = await call('eml_log', { scope: 'global', title: 'session-e2e-2', what: 'w', landed: 'l', next: 'n' })
+      expect(second.isError).toBe(true)
+      expect(textOf(second)).toContain('this session already has a log')
     })
 
-    it('eml_set_status writes a status with auto-supersede', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_set_status',
-        arguments: {
-          content: 'MCP wrapper phase 1 running',
-          scope: 'entity.bob',
-          state: 'in-progress',
-          next_step: 'tool tests green',
-        },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(r.isError).toBeFalsy()
-      expect(textOf(r)).toContain('"type": "status"')
-      expect(textOf(r)).toContain('"state": "in-progress"')
+    it('eml_learning: create, topic match writes nothing, ripe after a second session', async () => {
+      const first = await call('eml_learning', { scope: 'user.mcp', title: 'confirm-before-push', content: 'Confirm before pushing.', source: 'user', happened: 'pushed unasked', quote: 'frag erst' })
+      expect(first.isError).toBeFalsy()
+      const learning = jsonOf(first).engram
+      const dup = await call('eml_learning', { scope: 'user.mcp', title: 'confirm-before-pushing', content: 'Confirm before pushing code.', source: 'self', happened: 'again' })
+      expect(textOf(dup)).toContain('nothing written')
+      expect(textOf(dup)).toContain(learning.id)
+      // the same session counts once: still collecting
+      const again = await call('eml_learning', { id: learning.id, source: 'observed', happened: 'frowned' })
+      expect(jsonOf(again).learning.state).toBe('collecting')
+      // evidence from another session (written over REST with another session header) makes it ripe
+      const ripe = await httpPostWith(port, '/learning', { id: learning.id, source: 'self', happened: 'third time' }, prov.tokenPlaintext, { 'X-EML-Session': 'other-session' }) as any
+      expect(ripe.learning.state).toBe('ripe')
+      const list = await call('eml_list', { type: 'learning', state: 'ripe' })
+      expect(textOf(list)).toContain(learning.id)
+      const show = await call('eml_show', { scope: 'user.mcp' })
+      expect(textOf(show)).not.toContain('confirm-before-push')
     })
 
-    it('eml_track_task writes a task with priority', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_track_task',
-        arguments: validTaskArgs({
-          content: 'Review the tool suite',
-          scope: 'entity.bob',
-          priority: 'high',
-          due_date: '2026-06-01',
-        }),
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(r.isError).toBeFalsy()
-      expect(textOf(r)).toContain('"type": "task"')
-      expect(textOf(r)).toContain('"priority": "high"')
+    it('eml_update: a typed field, null clears, supersedes after the fact, tasks rejected', async () => {
+      const ref = jsonOf(await call('eml_reference', { scope: 'global', title: 'old-ref', content: 'a synthesis', source: 'n/a', source_name: 'x' }))
+      const upd = await call('eml_update', { id: ref.id, source_name: null, checked_at: '2026-10-19' })
+      expect(upd.isError).toBeFalsy()
+      const u = jsonOf(upd)
+      expect(u.properties.source_name).toBeUndefined()
+      expect(u.diff.checked_at).toEqual([null, '2026-10-19'])
+
+      const note = jsonOf(await call('eml_note', { scope: 'global', title: 'old-ref-as-note', content: 'a synthesis' }))
+      const sup = await call('eml_update', { id: note.id, supersedes: [ref.id] })
+      expect(jsonOf(sup).superseded).toEqual([ref.id])
+      expect(jsonOf(await call('eml_get', { id: ref.id })).status).toBe('superseded')
+
+      const wrongField = await call('eml_update', { id: note.id, rationale: 'x' })
+      expect(wrongField.isError).toBe(true)
+      expect(textOf(wrongField)).toContain('unknown field rationale for a note')
+
+      const task = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'global', title: 'not-via-update' })))
+      const t = await call('eml_update', { id: task.id, content: 'x' })
+      expect(t.isError).toBe(true)
+      expect(textOf(t)).toContain('eml_track_task')
     })
 
-    it('eml_note(kind=event) writes an event engram', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_note',
-        arguments: {
-          kind: 'event',
-          content: 'MCP E2E green',
-          scope: 'global',
-          properties: { occurred_at: '2026-05-10T12:00:00Z', change_type: 'completed' },
-        },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(r.isError).toBeFalsy()
-      expect(textOf(r)).toContain('"type": "event"')
+    it('conflict banner points to eml_update(new, supersedes)', async () => {
+      await call('eml_note', { scope: 'global', title: 'brand-one', content: 'Brand name is Engram Protocol with domain engramprotocol.io canonical naming' })
+      const r = await call('eml_note', { scope: 'global', title: 'brand-two', content: 'Brand name is Engram Protocol with domain engramprotocol.io canonical naming choice' })
+      expect(textOf(r)).toContain('eml_update(<new id>, supersedes=[<old id>])')
     })
 
     it('eml_show(scope) returns the brain state', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_show',
-        arguments: { scope: 'entity.bob' },
-      }) as { content: Array<{ type: string, text?: string }> }
-      const text = textOf(r)
-      // v0.10.5: eml_show returns a compact markdown dashboard, not the full JSON state.
-      expect(text).toContain('"scope": "entity.bob"')
-      expect(text).toContain('entity.bob — brain state')
-      expect(text).toContain('## Status')
+      const text = textOf(await call('eml_show', { scope: 'project.eml' }))
+      expect(text).toContain('project.eml — brain state')
+      expect(text).toContain('_tracks: brain schema version_')
       expect(text).toContain('## Open tasks')
     })
 
-    it('eml_entities lists entities', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_entities',
-        arguments: {},
-      }) as { content: Array<{ type: string, text?: string }> }
-      expect(textOf(r)).toContain('bob')
-    })
-
-    it('eml_project_create + eml_projects + eml_project_update', async () => {
-      const create = await mcpClient.callTool({
-        name: 'eml_project_create',
-        arguments: { id: 'eml', name: 'EML', goal: 'memory layer' },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(create.isError).toBeFalsy()
-
-      const list = await mcpClient.callTool({
-        name: 'eml_projects',
-        arguments: {},
-      }) as { content: Array<{ type: string, text?: string }> }
-      expect(textOf(list)).toContain('"id": "eml"')
-
-      const update = await mcpClient.callTool({
-        name: 'eml_project_update',
-        arguments: { id: 'eml', goal: 'engram protocol' },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
-      expect(update.isError).toBeFalsy()
-      expect(textOf(update)).toContain('engram protocol')
-    })
-
     it('eml_stats returns brain counts', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_stats',
-        arguments: {},
-      }) as { content: Array<{ type: string, text?: string }> }
-      const text = textOf(r)
+      const text = textOf(await call('eml_stats', {}))
       expect(text).toContain('"total_engrams"')
       expect(text).toContain('"by_type"')
-      expect(text).toContain('"by_scope"')
     })
 
     it('eml_recall finds the decision via full-text search', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_recall',
-        arguments: { query: 'mcp wrapper', limit: 5 },
-      }) as { content: Array<{ type: string, text?: string }> }
-      expect(textOf(r)).toContain('mcp-wrapper')
+      expect(textOf(await call('eml_recall', { query: 'mcp wrapper', limit: 5 }))).toContain('mcp-wrapper')
     })
 
     it('eml_boot returns markdown', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_boot',
-        arguments: { agent: 'default' },
-      }) as { content: Array<{ type: string, text?: string }> }
-      const text = textOf(r)
+      const text = textOf(await call('eml_boot', { agent: 'mcp' }))
       expect(text).toContain('"agent"')
       expect(text).toContain('"markdown"')
     })
@@ -459,39 +414,30 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
 
   describe('error handling — isError:true for backend errors', () => {
     it('eml_get with an unknown ID → isError:true with a clear message', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_get',
-        arguments: { id: 'no-such-id-12345' },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
+      const r = await call('eml_get', { id: 'no-such-id-12345' })
       expect(r.isError).toBe(true)
       expect(textOf(r)).toContain('EML API error')
       expect(textOf(r)).toMatch(/HTTP 404|HTTP 400/)
     })
 
     it('eml_update with an unknown ID → isError:true', async () => {
-      const r = await mcpClient.callTool({
-        name: 'eml_update',
-        arguments: {
-          id: 'no-such-id-12345',
-          patch: { content: 'irrelevant' },
-        },
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
+      const r = await call('eml_update', { id: 'no-such-id-12345', content: 'irrelevant' })
       expect(r.isError).toBe(true)
       expect(textOf(r)).toContain('EML API error')
+    })
+
+    it('a removed REST route answers 410 with the upgrade hint (old clients)', async () => {
+      await expect(httpPost(port, '/context', { type: 'note', content: 'x', scope: 'global' }, prov.tokenPlaintext))
+        .rejects.toThrow(/410.*upgrade @engramprotocol\/mcp-server/)
     })
   })
 
   describe('revoked token', () => {
     it('after revoke: every tool call → isError:true (HTTP 401)', async () => {
-      // Revoke the token outside the MCP channel
       const control = initControlDatabase(join(tmpDir, 'control.db'))
       revokeToken(control, prov.tokenId)
       control.close()
-
-      const r = await mcpClient.callTool({
-        name: 'eml_boot',
-        arguments: {},
-      }) as { content: Array<{ type: string, text?: string }>, isError?: boolean }
+      const r = await call('eml_boot', {})
       expect(r.isError).toBe(true)
       expect(textOf(r)).toContain('HTTP 401')
     })

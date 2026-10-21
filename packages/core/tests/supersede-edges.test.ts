@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
-import { extractSupersedesIds } from '../src/engrams'
 import { validDecision } from './fixtures'
 
-// v0.13: store() honours `properties.supersedes` for ANY type. On a write that
-// declares it, each prior engram is flipped to 'superseded' AND a 'supersedes'
-// relation edge (new → old) is materialised — the status-type auto-supersede
-// mechanism, generalised to decision/rule/profile via the explicit declaration.
-// Before this, non-status supersession set only the status field (via a separate
-// eml_update) and never drew the graph edge.
+// v0.13: a write that declares supersedes flips each prior engram to
+// 'superseded' AND draws a 'supersedes' edge (new → old) — the status-type
+// auto-supersede, generalised via the explicit declaration. v0.19: supersedes
+// is a write parameter (was properties.supersedes), and an unknown id is an error.
 
 describe('explicit supersede edges (v0.13)', () => {
   let eml: EML
@@ -28,12 +25,12 @@ describe('explicit supersede edges (v0.13)', () => {
   const statusOf = (id: string): string =>
     (rawDb().prepare('SELECT status FROM engrams WHERE id = ?').get(id) as { status: string }).status
 
-  const decision = (title: string, content: string, props?: Record<string, unknown>) =>
-    eml.engrams.store(validDecision({ scope: 'project.eml', title, content, properties: props }))
+  const decision = (title: string, content: string, supersedes?: string[]) =>
+    eml.engrams.store(validDecision({ scope: 'project.eml', title, content, supersedes }))
 
   it('flips the prior engram AND draws the supersedes edge', () => {
     const old = decision('comm', 'v1')
-    const next = decision('comm', 'v2', { supersedes: [old.id] })
+    const next = decision('comm', 'v2', [old.id])
 
     expect(statusOf(old.id)).toBe('superseded')
     expect(statusOf(next.id)).toBe('active')
@@ -57,7 +54,7 @@ describe('explicit supersede edges (v0.13)', () => {
   it('supersedes multiple priors in a single write', () => {
     const a = decision('a', 'a')
     const b = decision('b', 'b')
-    const merged = decision('merged', 'merged', { supersedes: [a.id, b.id] })
+    const merged = decision('merged', 'merged', [a.id, b.id])
 
     expect(statusOf(a.id)).toBe('superseded')
     expect(statusOf(b.id)).toBe('superseded')
@@ -65,16 +62,9 @@ describe('explicit supersede edges (v0.13)', () => {
     expect(edge(merged.id, b.id)).toBeTruthy()
   })
 
-  it('skips a non-existent supersedes id (no dangling edge)', () => {
-    const r = decision('y', 'y', { supersedes: ['does-not-exist'] })
-    expect(edge(r.id, 'does-not-exist')).toBeUndefined()
-    expect(statusOf(r.id)).toBe('active')
-  })
-
-  it('extractSupersedesIds tolerates absent / malformed shapes', () => {
-    expect(extractSupersedesIds(undefined)).toEqual([])
-    expect(extractSupersedesIds({})).toEqual([])
-    expect(extractSupersedesIds({ supersedes: 'not-an-array' })).toEqual([])
-    expect(extractSupersedesIds({ supersedes: ['a', 2, '', 'b'] })).toEqual(['a', 'b'])
+  it('rejects a non-existent supersedes id and writes nothing (no dangling edge)', () => {
+    expect(() => decision('y', 'y', ['does-not-exist'])).toThrow('Invalid engram: supersedes does-not-exist — no such engram.')
+    expect(rawDb().prepare(`SELECT COUNT(*) AS n FROM engrams WHERE title = 'y'`).get().n).toBe(0)
+    expect(rawDb().prepare(`SELECT COUNT(*) AS n FROM relations WHERE target_id = 'does-not-exist'`).get().n).toBe(0)
   })
 })
