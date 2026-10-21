@@ -25,7 +25,7 @@ export const tags = () => z.array(z.string()).optional().describe(
 export const subjects = () => z.array(z.string()).optional().describe(
   'Registered subject ids — the strand it BELONGS TO (eml_read_object object=subject lists them).',
 )
-export const supersedes = (what = 'Ids of engrams this one replaces; each is set to superseded and linked.') =>
+export const supersedes = (what = 'Ids of engrams this one replaces: an open one is set to superseded, a closed one keeps its status; each is linked.') =>
   z.array(z.string()).optional().describe(what)
 export const taskId = (what = 'The task this was done in; noted in the task\'s journal.') =>
   z.string().optional().describe(what)

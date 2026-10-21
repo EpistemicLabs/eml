@@ -28,7 +28,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       title: z.string().optional().describe('Rename the recall anchor (sparingly — breaks title threads).'),
       scope: z.string().optional().describe('Re-scope (e.g. saved global but really project-bound).'),
       status: z.enum(['invalidated', 'expired', 'active']).optional().describe('invalidated · expired · active (reactivation, e.g. after a mistaken invalidate). Superseded comes only from supersedes.'),
-      supersedes: z.array(z.string()).optional().describe('Ids of engrams this one replaces (also across types, e.g. a reference re-filed as this note); each is set to superseded and linked.'),
+      supersedes: z.array(z.string()).optional().describe('Ids of engrams this one replaces (also across types, e.g. a reference re-filed as this note): an open one is set to superseded, a closed one keeps its status; each is linked.'),
       review_note: z.string().optional().describe('Decision, rule, profile only: confirms in a review that it still holds unchanged, and why.'),
       // typed fields — each only for the types that have it
       rationale: z.string().optional().describe('decision.'),
