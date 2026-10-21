@@ -8,7 +8,7 @@ import { readQuestions, runRetrieval, summarize, RECALL_K, type RetrievalSummary
 import { runAgent, summarizeAgent, measureSurface, type AgentOptions, type AgentSummary, type Surface } from './agent'
 import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummary } from './scenarios'
 import { ARMS, type Arm } from './arms'
-import { RESULTS_DIR, fixtureHash, findBaseline, retrievalRegressions } from './baseline'
+import { RESULTS_DIR, fixtureHash, findBaseline, knownHashes, retrievalRegressions } from './baseline'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
@@ -168,8 +168,17 @@ async function check(args: string[]): Promise<void> {
   const hash = m.result.fixture_hash as string
   const baseline = findBaseline(m.version, hash, true)
   if (!baseline) {
+    const known = knownHashes()
     console.log(`\nno baseline: no checked-in result on this fixture (${hash}) up to ${m.version}.`)
-    console.log('Measure the last release with `eml-bench release` on its checkout and commit results/<version>.json.')
+    console.log('Measure the last release with `eml-bench release --eml <its checkout>` and commit results/<version>.json.')
+    // Results exist, just none on this fixture: the fixture or the questions
+    // changed without a renewed baseline. Passing here would switch the gate off
+    // without anyone noticing, so it fails. Only a repository without any
+    // result yet passes without one.
+    if (known.length) {
+      console.log(`\nFAIL — the checked-in results are on another fixture (${known.join(', ')}); renew the baseline in the same change.`)
+      process.exitCode = 1
+    }
     return
   }
   console.log(`\nbaseline: ${path.relative(process.cwd(), baseline.file)}\n`)

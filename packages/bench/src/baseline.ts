@@ -55,6 +55,15 @@ export function findBaseline(version: string, hash: string, inclusive: boolean, 
   return candidates[0] ?? null
 }
 
+/** The fixture hashes of all checked-in results — empty in a repository that has none yet. */
+export function knownHashes(dir = RESULTS_DIR): string[] {
+  if (!fs.existsSync(dir)) return []
+  const hashes = fs.readdirSync(dir)
+    .filter(f => /^\d+\.\d+\.\d+\.json$/.test(f))
+    .map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).fixture_hash as string)
+  return [...new Set(hashes)]
+}
+
 /**
  * Stage-1 regressions of b against a. Stage 1 is deterministic: on the same
  * fixture any drop is a real change in what the agent gets to read.

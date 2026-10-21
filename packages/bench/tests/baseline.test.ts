@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { describe, it, expect } from 'vitest'
-import { compareVersions, findBaseline, retrievalRegressions } from '../src/baseline'
+import { compareVersions, findBaseline, knownHashes, retrievalRegressions } from '../src/baseline'
 import type { RetrievalSummary } from '../src/retrieval'
 
 describe('compareVersions', () => {
@@ -28,6 +28,11 @@ describe('findBaseline', () => {
 
   it('includes the version itself for a branch on top of a release', () => {
     expect(findBaseline('0.18.3', 'h1', true, dir)?.data.version).toBe('0.18.3')
+  })
+
+  it('lists the fixtures results exist for, none for an empty or missing dir', () => {
+    expect(knownHashes(dir).sort()).toEqual(['h1', 'h2'])
+    expect(knownHashes(path.join(dir, 'missing'))).toEqual([])
   })
 
   it('skips results on another fixture', () => {
