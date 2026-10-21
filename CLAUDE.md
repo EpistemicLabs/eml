@@ -10,6 +10,7 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `README.md` — overview and quick start; `cockpit/README.md` — cockpit architecture, dev setup, what it touches.
 - `packages/core/migrations/brain/` — `v0.<N>.sql` (fresh-brain schema) + `v0.<N>_migrate.sql` (one step each, from v0.13).
 - `packages/mcp-server/README.md` — MCP tool inventory and hooks.
+- `packages/bench/README.md` — the release benchmark (stage 1 is a CI gate against the last release's result).
 - `scripts/bump-version.sh` — the one version bump; `scripts/pack-release.sh` — release assets (tarballs + SHA256SUMS) for the GitHub release the updater reads; `scripts/install-app.sh` — install a release as the app.
 
 ## Conventions
@@ -33,7 +34,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 
 1. Branch `vX.Y.Z` from `main`; `bash scripts/bump-version.sh X.Y.Z`.
 2. Test the release on the dev cockpit; `cockpit/scripts/dev-refresh-brain.sh` loads a copy of the
-   production brain into it first.
+   production brain into it first. Measure it: `node packages/bench/dist/cli.js release --eml .`
+   writes `packages/bench/results/X.Y.Z.json` (commit it) and prints the change from the previous
+   release for the release notes.
 3. PR `vX.Y.Z` → `main` with the release notes as description; CI green; merge with a merge commit.
 4. Tag the merge commit on `main`: `git tag vX.Y.Z && git push origin refs/tags/vX.Y.Z` (the branch
    has the same name, so push the tag by its full ref).
