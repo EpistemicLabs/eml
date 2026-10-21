@@ -133,7 +133,7 @@ export function judge(ws: Workspace, opts: AgentOptions, prompt: string, label: 
 // Write on CLAUDE.md) changes the memory.
 const READ_TOOLS = new Set([
   'eml_boot', 'eml_recall', 'eml_get', 'eml_list', 'eml_show', 'eml_stats',
-  'eml_projects', 'eml_entities', 'eml_tags', 'eml_subjects', 'eml_search', 'Read',
+  'eml_projects', 'eml_entities', 'eml_tags', 'eml_subjects', 'eml_search', 'eml_read_object', 'Read',
 ])
 
 export function countWrites(a: Answer): number {
