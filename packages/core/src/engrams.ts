@@ -23,7 +23,7 @@ import { EntityStore } from './entities'
 import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
 import { hydrateEngramLabels, slugifyLabel } from './labels'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL } from './open-tasks'
 
 // v0.9 Cluster 1: namespace concept removed entirely (Phase 1.3 code, Phase 1.4 DB).
 
@@ -118,6 +118,12 @@ export const EVENT_DUPLICATE_WINDOW_MS = 36 * 3600_000
 export const CONFLICT_COVERAGE_THRESHOLD = 0.5
 /** Over-fetch generously, THEN filter, THEN cap — never SQL limit:N then post-filter (the C0 bug class). */
 export const CONFLICT_CANDIDATE_LIMIT = 25
+/**
+ * v0.19: a candidate also shares at least this many salient terms with the
+ * write. Coverage alone is a share: a write of three or four words reached
+ * 50–75 % against any long note that happened to use two of them.
+ */
+export const CONFLICT_MIN_SHARED_TERMS = 3
 /** Backstop cap on survivors. The real precision lever is the coverage gate. */
 export const CONFLICT_MAX = 3
 
@@ -1088,9 +1094,16 @@ export class EngramStore {
     })
 
     const props = (engram.properties ?? {}) as Record<string, unknown>
+    // v0.19: what the write is deliberately tied to (its parent, the task it is
+    // bound to, what it supersedes) is not a conflict of it.
+    const linked = new Set((this.db.prepare(`
+      SELECT target_id AS id FROM relations WHERE source_id = ? AND relation IN ('part_of', 'derived_from', 'refines', 'supersedes')
+      UNION SELECT source_id FROM relations WHERE target_id = ? AND relation IN ('part_of', 'derived_from', 'refines', 'supersedes')
+    `).all(engram.id, engram.id) as Array<{ id: string }>).map(r => r.id))
     const survivors: ConflictCandidate[] = []
     for (const c of candidates) {
       if (c.id === engram.id) continue                                   // self
+      if (linked.has(c.id)) continue                                     // tied to the write on purpose
       if (c.status === 'planned' && c.type !== 'task') continue          // only tasks are open while planned
       if (c.title !== null && c.title === engram.title) continue   // same-title (thread, not conflict)
       if (c.type === 'log' || c.type === 'learning') continue            // never a supersede/merge target
@@ -1102,6 +1115,7 @@ export class EngramStore {
       }
       const coverage = termCoverage(salient, `${c.title ?? ''} ${c.content}`)
       if (coverage < CONFLICT_COVERAGE_THRESHOLD) continue               // the load-bearing gate
+      if (Math.round(coverage * salient.length) < CONFLICT_MIN_SHARED_TERMS) continue  // a short write needs real overlap
       survivors.push({
         id: c.id,
         type: c.type,
@@ -2214,6 +2228,7 @@ export class EngramStore {
     `, [scope])
 
     const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
 
     // v0.10.5: recency, not significance — orientation wants the decisions that
     // are live in current work, not the biggest strategic ones (titles-only in render).
@@ -2257,7 +2272,7 @@ export class EngramStore {
       ? this.db.prepare(`SELECT status_tracks, metadata FROM ${m[1] === 'project' ? 'projects' : 'entities'} WHERE id = ?`).get(m[2]) as { status_tracks: string | null, metadata: string | null } | undefined
       : undefined
     return {
-      scope, current_status, open_tasks, recent_decisions, recent_logs, rules, pending_reviews,
+      scope, current_status, open_tasks, open_tasks_total, recent_decisions, recent_logs, rules, pending_reviews,
       status_tracks: object?.status_tracks ?? null,
       metadata: object?.metadata ? JSON.parse(object.metadata) : null,
     }

@@ -70,7 +70,7 @@ export { bucketByRelevance, BM25_RELEVANCE_EPS, extractWikilinkTargets } from '.
 export {
   extractSalientTerms, termCoverage,
   CONFLICT_TYPES, CONFLICT_COVERAGE_THRESHOLD,
-  CONFLICT_CANDIDATE_LIMIT, CONFLICT_MAX,
+  CONFLICT_CANDIDATE_LIMIT, CONFLICT_MAX, CONFLICT_MIN_SHARED_TERMS,
   REVIEW_LABEL, REVIEWABLE_TYPES,
 } from './engrams'
 export {

@@ -4,6 +4,11 @@
 // then due date, then last activity — the newer of the task's own update and
 // its latest journal entry, most recent first (v0.18.3: was age, oldest first,
 // which put the oldest tasks on top since most tasks share priority normal).
+/** How many open tasks a scope has (the list above stops at 10). */
+export const OPEN_TASKS_COUNT_SQL = `
+  SELECT COUNT(*) AS n FROM engrams WHERE scope = ? AND type = 'task' AND status IN ('planned', 'active')
+`
+
 export const OPEN_TASKS_IN_SCOPE_SQL = `
   SELECT e.* FROM engrams e
   WHERE e.scope = ? AND e.type = 'task'

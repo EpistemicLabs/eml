@@ -6,7 +6,7 @@ import {
 import { hydrateEngramTags } from './tags'
 import { hydrateEngramLabels } from './labels'
 import { hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
@@ -115,6 +115,7 @@ export class ProjectStore {
     `, [scope])
 
     const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
 
     const recent_decisions = this.queryEngrams(`
       SELECT * FROM engrams
@@ -146,7 +147,7 @@ export class ProjectStore {
       ORDER BY r.created_at DESC LIMIT 20
     `).all(scope, scope) as any[]).map(r => this.rowToRelation(r))
 
-    return { project, scope, current_status, open_tasks, recent_decisions, recent_logs, relations }
+    return { project, scope, current_status, open_tasks, open_tasks_total, recent_decisions, recent_logs, relations }
   }
 
   // === Private ===

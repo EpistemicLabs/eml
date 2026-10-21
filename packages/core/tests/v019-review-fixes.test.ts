@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, learningState, LEARNING_STALE_DAYS, type WriteContext } from '../src'
+import { EML, hygieneCheck, learningState, LEARNING_STALE_DAYS, renderBrainStateMarkdown, type WriteContext } from '../src'
 import { validDecision, validTask, validNote, validEvent, validLog, validProfile, validStatus, closedTask } from './fixtures'
 
 // v0.19 — fixes from the review of the write model (note v0.19-review-triage,
@@ -381,6 +381,47 @@ describe('v0.19 review fixes', () => {
       mk('normal-one', 'normal', '2026-02-01T00:00:00.000Z')
       const order = eml.engrams.buildBrainState('project.p').open_tasks.map(t => t.title)
       expect(order).toEqual(['normal-one', 'none-one', 'low-one'])
+    })
+  })
+
+  // Dev smoke test of the release candidate (2026-10-21).
+  describe('smoke-test findings', () => {
+    const conflictIds = (r: any) => (r.potential_conflicts ?? []).map((c: any) => c.id)
+    const long = 'Build the intent driven test suite for the cockpit with one test file per user facing area: sessions, panes, desks, windows, sidebar, spaces and providers.'
+
+    it('eml_show counts every open task and names the rest after the first ten', () => {
+      for (let i = 0; i < 12; i++) eml.engrams.store(validTask({ title: `t${i}`, scope: 'project.p' }))
+      const state = eml.engrams.buildBrainState('project.p')
+      expect(state.open_tasks).toHaveLength(10)
+      expect(state.open_tasks_total).toBe(12)
+      const md = renderBrainStateMarkdown(state)
+      expect(md).toContain('## Open tasks (12)')
+      expect(md).toContain('- 2 more open tasks — eml_list type=task scope=project.p status=planned (or active)')
+      const few = renderBrainStateMarkdown(eml.engrams.buildBrainState('project.q'))
+      expect(few).toContain('## Open tasks (0)')
+      expect(few).not.toContain('more open tasks')
+    })
+
+    it('the conflict check skips what the write is tied to: its parent and its bound task', () => {
+      const parent = eml.engrams.store(validTask({ title: 'suite', scope: 'project.p', content: long }))
+      const child = eml.engrams.store(validTask({ title: 'suite-sessions', scope: 'project.p', parent_id: parent.id, content: long }))
+      expect(conflictIds(child)).not.toContain(parent.id)
+      const bound = eml.engrams.store(validDecision({ scope: 'project.p', task_id: child.id, properties: { binding: 'task' }, content: long }))
+      expect(conflictIds(bound)).not.toContain(child.id)
+      // an unrelated task with the same words is still reported
+      expect(conflictIds(bound)).toContain(parent.id)
+    })
+
+    it('a short write needs three shared terms, not just a high share', () => {
+      eml.engrams.store(validNote({ title: 'intent-suite-notes', scope: 'project.p', content: long }))
+      // two shared words of three: 67 %, but no real overlap
+      const short = eml.engrams.store(validNote({ title: 'x', scope: 'project.p', content: 'Cockpit sessions.' }))
+      expect(conflictIds(short)).toEqual([])
+      // three shared words are enough, however short the write
+      const three = eml.engrams.store(validNote({ title: 'z', scope: 'project.p', content: 'Cockpit intent suite.' }))
+      expect(conflictIds(three)).toHaveLength(1)
+      const longer = eml.engrams.store(validNote({ title: 'y', scope: 'project.p', content: 'Cockpit intent suite: sessions, panes and sidebar get a test file.' }))
+      expect(conflictIds(longer)).toHaveLength(1)
     })
   })
 })
