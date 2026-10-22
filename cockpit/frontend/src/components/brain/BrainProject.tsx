@@ -6,7 +6,7 @@
 // The graph lenses (timeline / tags / relations) sit between the status
 // banner and the columns (./GraphPanel.tsx).
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { ApiError } from "@/lib/api";
 import { useEngramPanel } from "@/lib/engram-panel";

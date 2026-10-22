@@ -1,6 +1,5 @@
 import type Database from 'better-sqlite3'
-import { randomBytes, createHash, timingSafeEqual } from 'crypto'
-import { v4 as uuidv4 } from 'uuid'
+import { randomBytes, randomUUID as uuidv4, createHash, timingSafeEqual } from 'crypto'
 
 /**
  * Token-Format: `eml_<prefix><secret>` (8 + 32 hex chars).

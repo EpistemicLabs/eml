@@ -1,0 +1,23 @@
+# Weekly version updates, grouped so a week is one PR per ecosystem instead of
+# one per package. Security fixes come as their own PRs as soon as an alert
+# opens (repository setting "Dependabot security updates"), not on this schedule.
+version: 2
+updates:
+  # One entry covers the whole pnpm workspace: Dependabot reads
+  # pnpm-workspace.yaml and updates pnpm-lock.yaml.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflows pin actions to commit SHAs; this keeps the pins current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

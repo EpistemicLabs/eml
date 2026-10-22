@@ -122,11 +122,11 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
   return (
     // The page behind stays as it is — no dimming, no blur — and
     // stays clickable: only the drawer takes pointer events.
-    <div className="pointer-events-none fixed inset-0 z-50">
+    <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden">
       <aside
         ref={asideRef}
         tabIndex={-1}
-        className={`absolute top-[3.25rem] right-2 bottom-2 flex w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-2xl outline-none transition-transform duration-200 sm:w-[min(600px,70vw)] ${entered ? "pointer-events-auto translate-x-0" : "translate-x-[calc(100%+1rem)]"}`}
+        className={`absolute top-2 right-2 bottom-2 flex w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-2xl outline-none transition-transform duration-200 sm:w-[min(600px,70vw)] ${entered ? "pointer-events-auto translate-x-0" : "translate-x-[calc(100%+1rem)]"}`}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2">

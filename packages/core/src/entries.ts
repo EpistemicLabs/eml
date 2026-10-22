@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { v4 as uuid } from 'uuid'
+import { randomUUID as uuid } from 'crypto'
 
 // --- Entries (v0.19, was task_entries) -------------------------------------------
 //

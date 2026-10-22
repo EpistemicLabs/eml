@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { TypeBadge, ReviewFlag } from "@/components/ui/badge";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { REVIEW_LABEL, taskStage, type Engram } from "@/lib/types";

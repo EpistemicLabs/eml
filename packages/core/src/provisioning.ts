@@ -1,7 +1,7 @@
 import path from 'path'
 import { rmSync, mkdirSync } from 'fs'
 import type Database from 'better-sqlite3'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID as uuidv4 } from 'crypto'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { seedDefaultBrain } from './default-brain'
 import { issueToken } from './tokens'
