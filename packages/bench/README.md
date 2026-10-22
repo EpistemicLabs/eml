@@ -78,8 +78,10 @@ Does an update make things better or worse? Two commands, both on the version in
   prints the change from the previous release for the release notes. Not a gate: the agent stage is
   sampled, so read the per-run spread before reading one question's change.
 
-Each result carries a hash of the fixture; only results on the same fixture are compared. After
-changing the fixture or the questions, or after an intended stage-1 change, renew the baseline:
+Each result carries a hash of the fixture; only results on the same fixture are compared, and
+`check` fails when the checked-in results are all on another fixture — a fixture change without a
+renewed baseline would otherwise switch the gate off unnoticed. After changing the fixture or the
+questions, or after an intended stage-1 change, renew the baseline in the same change:
 `eml-bench release --eml <checkout of the last release>` (`--no-agent` for stage 1 only) and commit
 the result.
 
