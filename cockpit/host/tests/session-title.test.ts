@@ -33,8 +33,8 @@ describe('session title', () => {
 
   it('knows the greeting by the ledger, and by its text for sessions from before', () => {
     expect(greeting.firstPromptIsGreeting(true, 'anything')).toBe(true)
-    expect(greeting.firstPromptIsGreeting(false, greeting.GREETING_PROMPT)).toBe(false)
-    expect(greeting.firstPromptIsGreeting(null, greeting.GREETING_PROMPT)).toBe(true)
+    expect(greeting.firstPromptIsGreeting(false, greeting.greetingPrompt())).toBe(false)
+    expect(greeting.firstPromptIsGreeting(null, greeting.greetingPrompt())).toBe(true)
     // The v0.18.3 wording.
     expect(greeting.firstPromptIsGreeting(null, 'Session start: greet me briefly, say which project this session is in and where it stands (status, next step, open tasks).')).toBe(true)
     expect(greeting.firstPromptIsGreeting(null, 'Fix the session titles')).toBe(false)
@@ -56,7 +56,7 @@ describe('session title', () => {
     }
 
     it('drops the title Claude Code made from the greeting and summarises the user\'s first prompt', () => {
-      write('greeted', greeting.GREETING_PROMPT)
+      write('greeted', greeting.greetingPrompt())
       expect(readSessionSummary(project, 'greeted', true)).toMatchObject({
         aiTitle: null, summary: 'seit der Umstellung sind die Session-Titel falsch', messageCount: 3,
       })

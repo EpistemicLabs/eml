@@ -21,6 +21,7 @@ describe('brain spaces', () => {
     openBrainSpace: typeof import('../src/brain-space.js')['openBrainSpace']
     BrainSpaces: typeof import('../src/brain-space.js')['BrainSpaces']
     shellLine: typeof import('../src/infrastructure/providers/shared.js')['shellLine']
+    TITLE_COMMAND: string
     CONFIG_DIR: string
     EML_HOOK_DIR: string
   }
@@ -30,7 +31,8 @@ describe('brain spaces', () => {
     const space = await import('../src/brain-space.js')
     const paths = await import('../src/paths.js')
     const { shellLine } = await import('../src/infrastructure/providers/shared.js')
-    mods = { ...isolation, ...space, shellLine, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
+    const { TITLE_COMMAND } = await import('../src/session-greeting.js')
+    mods = { ...isolation, ...space, shellLine, TITLE_COMMAND, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -124,6 +126,9 @@ describe('brain spaces', () => {
     expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
     expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)
+
+    // A greeted session names itself without a permission prompt: exactly the greeting's command is allowed.
+    expect(JSON.parse(settings).permissions.allow).toEqual([`Bash(${mods.TITLE_COMMAND} *)`])
   })
 
   it('resolves a space by id and falls back to main', () => {

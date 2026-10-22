@@ -1,3 +1,5 @@
+import { SESSION_TITLE_CLI_JS } from './paths.js'
+
 /**
  * The first prompt of a plain new session when the greeting is on (Settings ›
  * Preferences › Sessions). It shows in the terminal as the user's message, so
@@ -10,12 +12,23 @@
  * and the first-prompt summary skip it (session-summary.ts per provider), and
  * the agent names the session itself once the user's reply shows what it is
  * about (session-title-cli.ts).
+ *
+ * The naming command carries the CLI's real path, not $COCKPIT_TITLE_JS: Claude Code can't
+ * match a command with a variable against an allow rule and always asks. With the literal path
+ * the space's settings allow exactly this command (claude/isolation.ts), so it never asks. The
+ * title goes in single quotes, so nothing from the user's words is expanded by the shell.
  */
-export const GREETING_PROMPT =
-  'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
-  'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
-  'instead of searching. Then ask what I want to work on. Answer in my preferred language. ' +
-  'Once my reply shows what this session is about, name it in a few words: node "$COCKPIT_TITLE_JS" "<title>".'
+export function greetingPrompt(): string {
+  return 'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
+    'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
+    'instead of searching. Then ask what I want to work on. Answer in my preferred language. ' +
+    `Once my reply shows what this session is about, name it in a few words: ${TITLE_COMMAND} '<title>'.`
+}
+
+const singleQuoted = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+
+/** How a session runs the naming CLI; the allow rule in the space settings matches it. */
+export const TITLE_COMMAND = `node ${singleQuoted(SESSION_TITLE_CLI_JS)}`
 
 /** Every greeting so far starts with this; it identifies one in a session from before the ledger recorded it. */
 const GREETING_START = 'Session start: greet me briefly'
@@ -35,5 +48,5 @@ export function firstPromptIsGreeting(greeted: boolean | null, firstPrompt: stri
  * worker — and only when the user turned it on.
  */
 export function greetingFor(start: { resume: boolean, initialPrompt: string | null, greet: boolean, worker: boolean }): string | null {
-  return start.greet && !start.resume && start.initialPrompt === null && !start.worker ? GREETING_PROMPT : null
+  return start.greet && !start.resume && start.initialPrompt === null && !start.worker ? greetingPrompt() : null
 }
