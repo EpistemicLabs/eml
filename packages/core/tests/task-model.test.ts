@@ -5,7 +5,7 @@ import { validTask, validNote } from './fixtures'
 // The task model (v0.15; v0.19: every change goes through trackTask): stage
 // (optional maturity, frozen while closed), outcome on the transition into
 // resolved/invalidated, part_of parent/child (tasks only, acyclic, one parent,
-// resolve guard, invalidate cascade, supersede lists open children), the
+// close guard, supersede lists open children), the
 // append-only journal (note + change entries), and the inactivity review.
 
 describe('task model', () => {
@@ -163,22 +163,16 @@ describe('task model', () => {
       expect(close(parent.id, 'resolved', 'all done').status).toBe('resolved')
     })
 
-    it('invalidating a parent invalidates its open sub-tasks, grandchildren included', () => {
+    it('a parent cannot be invalidated while a sub-task is open either — close or move it first', () => {
       const parent = task('parent')
       const child = task('child', { parent_id: parent.id, status: 'active' })
-      const grandchild = task('grandchild', { parent_id: child.id })
-      const closed = task('closed-child', { parent_id: parent.id })
-      close(closed.id, 'resolved', 'shipped')
-
-      close(parent.id, 'invalidated', 'dropped')
-
-      for (const id of [child.id, grandchild.id]) {
-        expect(statusOf(id)).toBe('invalidated')
-        expect(propsOf(id).outcome).toBe('parent invalidated')
-        expect(eml.engrams.entries(id, ['change']).pop()!.text).toBe('invalidated: parent invalidated')
-      }
-      expect(statusOf(closed.id)).toBe('resolved')
-      expect(propsOf(closed.id).outcome).toBe('shipped')
+      const moved = task('moved', { parent_id: parent.id })
+      expect(() => close(parent.id, 'invalidated', 'dropped')).toThrow(`has open sub-tasks: ${child.id} child, ${moved.id} moved`)
+      expect(statusOf(child.id)).toBe('active')
+      close(child.id, 'invalidated', 'dropped')
+      eml.engrams.trackTask(moved.id, { parent_id: null })
+      expect(close(parent.id, 'invalidated', 'dropped').status).toBe('invalidated')
+      expect(statusOf(moved.id)).toBe('planned')
     })
 
     it('superseding a parent (create_task supersedes) does not cascade — the open sub-tasks are listed', () => {

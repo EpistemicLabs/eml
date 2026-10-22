@@ -38,7 +38,6 @@ export function registerLearningTool(server: McpServer, http: HttpClient): void 
       stance: z.enum(['supports', 'contradicts', 'declined']).optional().describe('supports (default) · contradicts (this incident speaks against the lesson) · declined (the user said no to making it a rule).'),
       new_topic: z.boolean().optional().describe('true = create a new learning although the server found a similar one.'),
       rule_id: z.string().optional().describe('The incident concerns an existing rule (violated or not fitting); input for that rule\'s review.'),
-      task_id: z.string().optional().describe('Noted in the task\'s journal.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),
