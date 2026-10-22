@@ -88,13 +88,21 @@ export interface SessionRef {
   providerSessionId: string | null
   /** The session's project folder; null for a project without one. */
   projectPath: string | null
+  /**
+   * The first prompt is the cockpit's greeting, not the user's (session-greeting.ts);
+   * null when the ledger does not know (an entry from before it recorded this).
+   */
+  greeted: boolean | null
 }
 
 /** Best-effort display data for the sidebar, read from the provider's transcript. */
 export interface SessionSummary {
-  /** The first user prompt, shortened. */
+  /** The first user prompt, shortened; the cockpit's greeting does not count. */
   summary: string | null
-  /** The title the provider generates for the session itself; null when it has none. */
+  /**
+   * The title the provider generates for the session itself; null when it has
+   * none, or when it was made from the greeting.
+   */
   aiTitle: string | null
   lastActivity: string | null
   messageCount: number

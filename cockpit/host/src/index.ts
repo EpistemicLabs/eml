@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -149,6 +149,8 @@ async function main() {
     COCKPIT_URL: `http://127.0.0.1:${hostPort}`,
     COCKPIT_SPAWN_TOKEN: spawnToken,
     COCKPIT_SPAWN_JS: SPAWN_CLI_JS,
+    // A greeted session names itself once it knows what it is about (session-greeting.ts).
+    COCKPIT_TITLE_JS: SESSION_TITLE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,

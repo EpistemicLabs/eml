@@ -152,9 +152,10 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
   return {
     id: entry.sessionId,
     projectId: entry.projectId,
-    // `summary` is the display name. A user-chosen title wins,
-    // then Claude Code's own session title, then the first user prompt.
-    summary: entry.title ?? summary.aiTitle ?? summary.summary ?? '',
+    // `summary` is the display name. A user-chosen title wins, then the
+    // title the agent gave the session, then Claude Code's own session
+    // title, then the first user prompt.
+    summary: entry.title ?? entry.agentTitle ?? summary.aiTitle ?? summary.summary ?? '',
     title: entry.title,
     createdAt: entry.createdAt,
     lastActivity,

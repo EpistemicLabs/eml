@@ -140,7 +140,7 @@ class ClaudeProvider implements AgentProvider {
   }
 
   summary(session: SessionRef): SessionSummary {
-    return readSessionSummary(session.projectPath, transcriptId(session))
+    return readSessionSummary(session.projectPath, transcriptId(session), session.greeted)
   }
 
   deleteTranscript(session: SessionRef): void {

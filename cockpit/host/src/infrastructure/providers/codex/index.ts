@@ -285,7 +285,7 @@ class CodexProvider implements AgentProvider {
   }
 
   summary(session: SessionRef): SessionSummary {
-    return readRolloutSummary(session.providerSessionId ? findRollout(session.providerSessionId) : null)
+    return readRolloutSummary(session.providerSessionId ? findRollout(session.providerSessionId) : null, session.greeted)
   }
 
   deleteTranscript(session: SessionRef): void {

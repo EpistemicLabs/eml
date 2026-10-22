@@ -14,6 +14,7 @@ import type { AgentProvider } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
+import { greetingFor } from './session-greeting.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
@@ -47,27 +48,6 @@ const require = createRequire(import.meta.url)
 // reliably under NodeNext ESM. Typings stay via type-only imports.
 const { Terminal: HeadlessTerminal } = require('@xterm/headless') as typeof import('@xterm/headless')
 const { SerializeAddon } = require('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize')
-
-/**
- * The first prompt of a plain new session when the greeting is on (Settings ›
- * Preferences › Sessions). It shows in the terminal as the user's message, so
- * it is short and reads as one; the reply follows the user's preferred
- * language from their profile. A folder project, or a brain project that no
- * longer exists, has no project block: the agent says so instead of searching.
- */
-export const GREETING_PROMPT =
-  'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
-  'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
-  'instead of searching. Then ask what I want to work on. Answer in my preferred language.'
-
-/**
- * Only a plain new session opens with the greeting: not a resume, not one with
- * its own first prompt (task run, hygiene, onboarding, spawned work), not a
- * worker — and only when the user turned it on.
- */
-export function greetingFor(start: { resume: boolean, initialPrompt: string | null, greet: boolean, worker: boolean }): string | null {
-  return start.greet && !start.resume && start.initialPrompt === null && !start.worker ? GREETING_PROMPT : null
-}
 
 type ShellIncomingMessage = {
   type?: string
@@ -729,7 +709,7 @@ export class PtyBridge {
             replayToken: null,
             wiggleRestore: null,
           })
-          this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, readString(data.taskId) || null, space.ledgerKey)
+          this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, readString(data.taskId) || null, space.ledgerKey, greeting !== null)
           this.wireProcess(key, proc)
           this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})`)
           return

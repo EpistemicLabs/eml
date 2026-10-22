@@ -72,7 +72,7 @@ describe('Claude Code provider', () => {
   })
 
   it('can resume only once Claude Code wrote a transcript', () => {
-    const session = { sessionId: 'abc-4', providerSessionId: null, projectPath: null }
+    const session = { sessionId: 'abc-4', providerSessionId: null, projectPath: null, greeted: null }
     expect(provider.canResume(session)).toBe(false)
     mkdirSync(join(configDir, 'projects', '-some-project'), { recursive: true })
     writeFileSync(join(configDir, 'projects', '-some-project', 'abc-4.jsonl'), '')

@@ -221,7 +221,7 @@ describe('Codex provider', () => {
   })
 
   it('resumes by the id Codex assigned, once its rollout exists', () => {
-    const session = { sessionId: 'c-3', providerSessionId: '01a1-codex-id', projectPath: null }
+    const session = { sessionId: 'c-3', providerSessionId: '01a1-codex-id', projectPath: null, greeted: null }
     expect(provider.canResume({ ...session, providerSessionId: null })).toBe(false)
     expect(provider.canResume(session)).toBe(false)
     mkdirSync(join(codexHome, 'sessions', '2026', '10', '12'), { recursive: true })
@@ -266,11 +266,26 @@ describe('Codex rollout summary', () => {
       'not json',
       '',
     ].join('\n'))
-    expect(readRolloutSummary(file)).toMatchObject({
+    expect(readRolloutSummary(file, false)).toMatchObject({
       summary: 'Fix the login bug', aiTitle: null, messageCount: 2,
       lastMessageAt: '2026-10-12T04:00:05.000Z', model: 'some-model', contextTokens: 16557,
     })
-    expect(readRolloutSummary(null).messageCount).toBe(0)
-    expect(readRolloutSummary(join(dir, 'missing.jsonl')).summary).toBeNull()
+    expect(readRolloutSummary(null, false).messageCount).toBe(0)
+    expect(readRolloutSummary(join(dir, 'missing.jsonl'), false).summary).toBeNull()
+  })
+
+  it('skips the cockpit\'s greeting: the summary is the user\'s first prompt after it', async () => {
+    const { readRolloutSummary } = await import('../src/infrastructure/providers/codex/session-summary.js')
+    const { GREETING_PROMPT } = await import('../src/session-greeting.js')
+    const file = join(dir, 'rollout-2026-10-22T12-00-00-greeted.jsonl')
+    writeFileSync(file, [
+      message('2026-10-22T04:00:01.000Z', 'user', '<environment_context>\n  <cwd>/x</cwd>'),
+      message('2026-10-22T04:00:02.000Z', 'user', GREETING_PROMPT),
+      message('2026-10-22T04:00:03.000Z', 'assistant', 'Hi — what are we working on?'),
+      message('2026-10-22T04:00:04.000Z', 'user', 'Fix the session titles'),
+    ].join('\n'))
+    expect(readRolloutSummary(file, true)).toMatchObject({ summary: 'Fix the session titles', messageCount: 3 })
+    // A session from before the ledger recorded the greeting: recognised by its text.
+    expect(readRolloutSummary(file, null).summary).toBe('Fix the session titles')
   })
 })
