@@ -73,7 +73,7 @@ Does an update make things better or worse? Two commands, both on the version in
   the newest checked-in result on the same fixture, up to this version; fails if any stage-1 number
   got worse. Stage 1 is deterministic (two runs give identical results), so a drop is a real change
   in what the agent reads, not noise.
-- `eml-bench release --eml .` — **release step.** Stage 1, surface and the agent stage on the eml
+- `eml-bench release --eml .` — **release step** for a release with a brain schema change. Stage 1, surface and the agent stage on the eml
   arm with three runs per question. Writes `results/<version>.json` (commit it with the release) and
   prints the change from the previous release for the release notes. Not a gate: the agent stage is
   sampled, so read the per-run spread before reading one question's change.
