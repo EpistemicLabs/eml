@@ -133,7 +133,7 @@ export type TaskStage = typeof TASK_STAGES[number]
 export const TASK_OPEN_STATUSES: readonly EngramStatus[] = ['planned', 'active']
 /** v0.15: task statuses that close a task with a result — the transition needs an outcome. */
 export const TASK_OUTCOME_STATUSES: readonly EngramStatus[] = ['resolved', 'invalidated']
-/** v0.15: an open task without movement (patch or entry) for this long gets the review label. */
+/** v0.15: an active task without movement (patch or entry) for this long gets the review label; v0.19.1: a planned one is backlog. */
 export const TASK_INACTIVITY_DAYS = 30
 
 export interface TaskProperties {
@@ -495,7 +495,8 @@ export interface ScopedBrainState {
   scope: string
   current_status: Engram[]        // top 3 status engrams in the scope, by updated_at DESC
   open_tasks: Engram[]            // tasks with status in (planned, active), sorted priority DESC, due_date ASC, last activity DESC; limit 10
-  open_tasks_total?: number       // all open tasks in the scope (open_tasks shows the first 10)
+  open_tasks_total?: number       // all open tasks in the scope outside the backlog (open_tasks shows the first 10)
+  backlog_tasks?: number          // v0.19.1: planned tasks without movement for TASK_INACTIVITY_DAYS (open-tasks.ts)
   recent_decisions: Engram[]      // top 5 decisions by created_at DESC (engrams.buildBrainState: recency)
   recent_logs: Engram[]           // recent logs by created_at DESC
   // The two brain-state builders fill these differently (tracked for convergence):
