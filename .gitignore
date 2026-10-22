@@ -4,6 +4,7 @@ dist/
 # eml-cockpit build artifacts (cockpit/host/scripts/build.mjs)
 cockpit/host/ui/
 cockpit/host/migrations/
+cockpit/host/THIRD_PARTY_LICENSES.md
 # packed tarballs (pnpm pack)
 *.tgz
 # local data — never commit a brain

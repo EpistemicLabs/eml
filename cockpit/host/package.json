@@ -15,7 +15,8 @@
     "skills",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md"
   ],
   "engines": {
     "node": ">=22"
