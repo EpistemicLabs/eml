@@ -9,12 +9,14 @@ import { NET_RETRY, downloadTo, fetchText } from '../src/infrastructure/provider
 /**
  * fetchText and downloadTo against a local server that fails the first requests of a path
  * the way release CDNs do: 429 (with and without Retry-After), 503, a connection cut off
- * mid-body. Transient failures are retried; a 404 fails at once.
+ * mid-body, a request that never gets an answer. Transient failures are retried; a 404 fails
+ * at once.
  */
 
 type Step = (res: ServerResponse) => void
 const ok = (body: string): Step => (res) => res.end(body)
 const status = (code: number, headers: Record<string, string> = {}): Step => (res) => { res.writeHead(code, headers); res.end() }
+const silent: Step = () => {}
 const cutOff: Step = (res) => {
   res.writeHead(200, { 'content-length': '1000' })
   res.write('partial')
@@ -29,7 +31,7 @@ const root = mkdtempSync(join(tmpdir(), 'cockpit-download-retry-test-'))
 const saved = { ...NET_RETRY }
 
 beforeAll(async () => {
-  Object.assign(NET_RETRY, { baseDelayMs: 1, maxDelayMs: 50 })
+  Object.assign(NET_RETRY, { baseDelayMs: 1, maxDelayMs: 50, textTimeoutMs: 200, downloadTimeoutMs: 200 })
   server = createServer((req, res) => {
     const n = hits.get(req.url!) ?? 0
     hits.set(req.url!, n + 1)
@@ -41,6 +43,7 @@ beforeAll(async () => {
 })
 afterAll(() => {
   Object.assign(NET_RETRY, saved)
+  server.closeAllConnections()
   server.close()
   rmSync(root, { recursive: true, force: true })
 })
@@ -65,6 +68,14 @@ describe('runtime downloads retry transient failures', () => {
     await downloadTo(`${base}/bin`, file)
     expect(readFileSync(file, 'utf8')).toBe('the whole binary')
     expect(hits.get('/bin')).toBe(2)
+  })
+
+  it('retries a request that stalls past its timeout', async () => {
+    scripts.set('/stall', [silent, ok('late but there')])
+    expect(await fetchText(`${base}/stall`)).toBe('late but there')
+    scripts.set('/stall-bin', [silent, ok('binary')])
+    await downloadTo(`${base}/stall-bin`, join(root, 'stall-bin'))
+    expect(readFileSync(join(root, 'stall-bin'), 'utf8')).toBe('binary')
   })
 
   it('fails at once on a 404', async () => {
