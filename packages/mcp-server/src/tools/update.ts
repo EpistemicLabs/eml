@@ -35,7 +35,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       alternatives: z.array(z.string()).optional().describe('decision.'),
       binding: z.enum(BINDINGS).optional().describe('decision, note: task · standing.'),
       expires_at: nullable('decision: ISO date.'),
-      review_due_at: nullable('decision, rule, profile: ISO date.'),
+      review_due_at: nullable('decision, rule, profile: ISO date; null restarts it from the type\'s default.'),
       why: z.string().optional().describe('rule.'),
       agreed: z.string().optional().describe('rule: the user\'s agreement, verbatim where possible.'),
       trigger: nullable('rule: the situation, at most 80 characters.'),

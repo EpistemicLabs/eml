@@ -20,8 +20,8 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       'happened and why; no date (entries are timestamped). For attribute edits only (priority, assignee, tags …) ' +
       'text is optional.\n\n' +
       'Closing: status=resolved (done) or invalidated (dropped) + outcome (one line, shown in task lists) + text ' +
-      '(the story: what happened, what stays open). A parent can\'t be resolved while sub-tasks are open; ' +
-      'invalidating it invalidates them. Decisions and notes bound to the task close with it; before closing, ' +
+      '(the story: what happened, what stays open). A parent can\'t be closed while sub-tasks are open: ' +
+      'close each or move it to another parent first. Decisions and notes bound to the task close with it; before closing, ' +
       'check them: any that still hold once the task is done → keep (they become standing), and say why in text; ' +
       'keep=[] closes them all.\n\n' +
       'Reopening a closed task (status planned or active) needs text; the stage can change again. A closed task is ' +
