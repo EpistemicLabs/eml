@@ -1189,13 +1189,16 @@ describe('EML v0.2', () => {
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
 
-    it('recent_decisions sorted by significance DESC', () => {
-      // read path: significance as an older brain holds it (no longer written)
-      eml.engrams.store(validDecision({ content: 'normal', scope: 'project.eml' }))
-      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'critical', scope: 'project.eml' })).id, 'critical')
-      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'high', scope: 'project.eml' })).id, 'high')
+    it('recent_decisions newest first, whatever significance an older brain holds', () => {
+      const raw = (eml as any).db
+      const at = (id: string, iso: string) => raw.prepare('UPDATE engrams SET created_at = ? WHERE id = ?').run(iso, id)
+      const old = eml.engrams.store(validDecision({ content: 'old critical', scope: 'project.eml' }))
+      plantSignificance(eml, old.id, 'critical')
+      at(old.id, '2026-01-01T00:00:00.000Z')
+      at(eml.engrams.store(validDecision({ content: 'newer', scope: 'project.eml' })).id, '2026-03-01T00:00:00.000Z')
+      at(eml.engrams.store(validDecision({ content: 'newest', scope: 'project.eml' })).id, '2026-05-01T00:00:00.000Z')
       const state = eml.projects.getBrainState('eml')!
-      expect(state.recent_decisions.map(d => d.content)).toEqual(['critical', 'high', 'normal'])
+      expect(state.recent_decisions.map(d => d.content)).toEqual(['newest', 'newer', 'old critical'])
     })
 
     // v0.9.1 Cluster 1: namespace filter removed from BrainState — the corresponding test is obsolete.
