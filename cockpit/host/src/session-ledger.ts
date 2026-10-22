@@ -18,7 +18,8 @@ import { PROVIDER_IDS, type ProviderId, type SessionRef } from './domain/agent-p
  * first hook. A provider that starts under the cockpit's id reports the same.
  *
  * The ledger also carries what the sidebar shows per session: the owning
- * project, a user-chosen title, the pinned flag. Persisted as
+ * project, a user-chosen title, the title the agent gave the session, the
+ * pinned flag. Persisted as
  * ~/.eml-cockpit/sessions.json (ids + metadata only, no content), chmod
  * 600 like the rest of the cockpit home.
  */
@@ -36,6 +37,13 @@ export interface LedgerEntry {
   paneId: string | null
   spawnCount: number
   title: string | null
+  /** The title the agent gave the session itself (session-title-cli.ts); a user-chosen title wins. */
+  agentTitle: string | null
+  /**
+   * The session opened with the cockpit's greeting as its first prompt
+   * (session-greeting.ts); null for an entry from before this was recorded.
+   */
+  greeted: boolean | null
   pinned: boolean
   /** Opened by another session (spawn-session) — always runs in auto mode. */
   worker: boolean
@@ -71,6 +79,8 @@ function load(): LedgerFile {
           paneId: typeof entry.paneId === 'string' ? entry.paneId : null,
           spawnCount: typeof entry.spawnCount === 'number' ? entry.spawnCount : 1,
           title: typeof entry.title === 'string' && entry.title ? entry.title : null,
+          agentTitle: typeof entry.agentTitle === 'string' && entry.agentTitle ? entry.agentTitle : null,
+          greeted: typeof entry.greeted === 'boolean' ? entry.greeted : null,
           pinned: entry.pinned === true,
           worker: entry.worker === true,
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
@@ -97,13 +107,14 @@ export class SessionLedger {
 
   /** What a provider needs to find this session's conversation. */
   ref(sessionId: string, projectPath: string | null): SessionRef {
-    return { sessionId, providerSessionId: this.data.sessions[sessionId]?.providerSessionId ?? null, projectPath }
+    const entry = this.data.sessions[sessionId]
+    return { sessionId, providerSessionId: entry?.providerSessionId ?? null, projectPath, greeted: entry?.greeted ?? null }
   }
 
   /**
    * Record a spawn (new or resumed) for `sessionId` bound to `paneId` in
-   * `projectId` of `spaceId` (null = main). `provider` applies to a session's
-   * first spawn only.
+   * `projectId` of `spaceId` (null = main). `provider` and `greeted` apply
+   * to a session's first spawn only.
    */
   recordSpawn(
     sessionId: string,
@@ -113,6 +124,7 @@ export class SessionLedger {
     worker = false,
     taskId: string | null = null,
     spaceId: string | null = null,
+    greeted = false,
   ): void {
     const now = new Date().toISOString()
     const prev = this.data.sessions[sessionId]
@@ -125,6 +137,8 @@ export class SessionLedger {
       paneId,
       spawnCount: (prev?.spawnCount ?? 0) + 1,
       title: prev?.title ?? null,
+      agentTitle: prev?.agentTitle ?? null,
+      greeted: prev ? prev.greeted : greeted,
       pinned: prev?.pinned ?? false,
       worker: worker || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
@@ -159,6 +173,15 @@ export class SessionLedger {
       entry.title = trimmed || null
     }
     if (patch.pinned !== undefined) entry.pinned = patch.pinned
+    this.persist()
+    return entry
+  }
+
+  /** The agent names its session (session-title-cli.ts); an empty title clears it. */
+  setAgentTitle(sessionId: string, title: string): LedgerEntry | undefined {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return undefined
+    entry.agentTitle = title.trim() || null
     this.persist()
     return entry
   }

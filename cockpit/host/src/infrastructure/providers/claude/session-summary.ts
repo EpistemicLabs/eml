@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CONFIG_DIR } from '../../../paths.js'
+import { firstPromptIsGreeting } from '../../../session-greeting.js'
 import type { SessionSummary } from '../../../domain/agent-provider.js'
 
 /**
@@ -8,8 +9,11 @@ import type { SessionSummary } from '../../../domain/agent-provider.js'
  * Code keeps in the ISOLATED config dir: `projects/<cwd with "/"→"-">/<id>.jsonl`.
  *
  * It yields `session.summary` (the first user prompt) and `lastActivity`
- * (file mtime), plus the title Claude
- * Code writes for the session itself. It is display-only:
+ * (file mtime), plus the title Claude Code writes for the session itself.
+ * Claude Code makes that title from the first prompt once and keeps it; when
+ * the first prompt is the cockpit's greeting, the title says nothing about the
+ * session and is dropped, and the summary is the user's first prompt after
+ * it. It is display-only:
  * spawn/resume decisions never depend on this path convention (decision
  * cockpit-session-resume-strategy) — if the layout changes, the sidebar
  * shows "New Session" and the ledger's timestamps, nothing breaks.
@@ -20,7 +24,7 @@ const EMPTY: SessionSummary = {
   summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, model: null, contextTokens: null,
 }
 
-const cache = new Map<string, { mtimeMs: number; value: SessionSummary }>()
+const cache = new Map<string, { mtimeMs: number; greeted: boolean | null; value: SessionSummary }>()
 
 // Claude Code names the per-project transcript directory after the cwd with
 // every character that is not a letter or digit turned into '-', so
@@ -47,7 +51,7 @@ function extractText(content: unknown): string | null {
   return null
 }
 
-export function readSessionSummary(projectPath: string | null, sessionId: string): SessionSummary {
+export function readSessionSummary(projectPath: string | null, sessionId: string, greeted: boolean | null): SessionSummary {
   if (!projectPath) return EMPTY
   const file = transcriptPathFor(projectPath, sessionId)
   let stats: fs.Stats
@@ -57,10 +61,12 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
     return EMPTY
   }
   const cached = cache.get(file)
-  if (cached && cached.mtimeMs === stats.mtimeMs) return cached.value
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.greeted === greeted) return cached.value
 
   let summary: string | null = null
   let aiTitle: string | null = null
+  // null until the first user prompt is read.
+  let openedWithGreeting: boolean | null = null
   let messageCount = 0
   let lastMessageAt: string | null = null
   let model: string | null = null
@@ -102,6 +108,10 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
       if (summary === null && record.type === 'user' && !record.isMeta) {
         const text = extractText(record.message?.content)
         if (text && !text.startsWith('<')) {
+          if (openedWithGreeting === null) {
+            openedWithGreeting = firstPromptIsGreeting(greeted, text)
+            if (openedWithGreeting) continue
+          }
           const firstLine = text.trim().split('\n')[0]
           summary = firstLine.length > SUMMARY_MAX ? `${firstLine.slice(0, SUMMARY_MAX - 1)}…` : firstLine
         }
@@ -110,10 +120,11 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
   } catch {
     return EMPTY
   }
+  if (openedWithGreeting) aiTitle = null
   const value: SessionSummary = {
     summary, aiTitle, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, model, contextTokens,
   }
-  cache.set(file, { mtimeMs: stats.mtimeMs, value })
+  cache.set(file, { mtimeMs: stats.mtimeMs, greeted, value })
   return value
 }
 

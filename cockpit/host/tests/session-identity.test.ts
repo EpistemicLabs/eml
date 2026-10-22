@@ -53,7 +53,21 @@ describe('session identity', () => {
     const ledger = new SessionLedger()
     expect(ledger.get('legacy')).toMatchObject({ provider: 'claude', providerSessionId: null, projectId: 'p1' })
     expect(ledger.get('odd')?.provider).toBe('claude')
-    expect(ledger.ref('legacy', '/some/path')).toEqual({ sessionId: 'legacy', providerSessionId: null, projectPath: '/some/path' })
+    expect(ledger.ref('legacy', '/some/path')).toEqual({ sessionId: 'legacy', providerSessionId: null, projectPath: '/some/path', greeted: null })
+  })
+
+  it('records the greeting on the first spawn only, and keeps the agent\'s title apart from the user\'s', () => {
+    const ledger = new SessionLedger()
+    ledger.recordSpawn('s-greet', 'pane-1', 'p1', 'claude', false, null, null, true)
+    // The resume-fallback respawn passes no greeting: the first spawn's answer stays.
+    ledger.recordSpawn('s-greet', 'pane-1', 'p1', 'claude')
+    expect(ledger.setAgentTitle('s-greet', '  Session titles after the greeting ')?.agentTitle).toBe('Session titles after the greeting')
+    ledger.update('s-greet', { title: 'Mine' })
+    expect(new SessionLedger().get('s-greet')).toMatchObject({ greeted: true, agentTitle: 'Session titles after the greeting', title: 'Mine' })
+    expect(ledger.ref('s-greet', null).greeted).toBe(true)
+    ledger.recordSpawn('s-plain', null, 'p1', 'claude')
+    expect(ledger.get('s-plain')).toMatchObject({ greeted: false, agentTitle: null })
+    expect(ledger.setAgentTitle('nope', 'x')).toBeUndefined()
   })
 
   it('keeps the provider and its session id across later spawns', () => {

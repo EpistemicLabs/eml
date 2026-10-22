@@ -8,10 +8,10 @@ const home = mkdtempSync(join(tmpdir(), 'cockpit-session-greeting-test-'))
 process.env.EML_COCKPIT_HOME = home
 
 describe('session greeting', () => {
-  let bridge: typeof import('../src/pty-bridge.js')
+  let bridge: typeof import('../src/session-greeting.js')
   const plain = { resume: false, initialPrompt: null, greet: true, worker: false }
 
-  beforeAll(async () => { bridge = await import('../src/pty-bridge.js') })
+  beforeAll(async () => { bridge = await import('../src/session-greeting.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   it('opens a plain new session with the greeting when it is on', () => {

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import type { SessionSummary } from '../../../domain/agent-provider.js'
+import { firstPromptIsGreeting } from '../../../session-greeting.js'
 
 /**
  * Best-effort display data for a Codex session, read from its rollout file
@@ -13,7 +14,8 @@ import type { SessionSummary } from '../../../domain/agent-provider.js'
  *   turn_context              the turn's model
  *   event_msg / token_count   info.last_token_usage.input_tokens — what the
  *                             model had in context for that request
- * Codex generates no session title of its own, so aiTitle stays null.
+ * Codex generates no session title of its own, so aiTitle stays null. The
+ * cockpit's greeting is not the user's first prompt: the summary skips it.
  */
 
 const SUMMARY_MAX = 120
@@ -21,7 +23,7 @@ const EMPTY: SessionSummary = {
   summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, model: null, contextTokens: null,
 }
 
-const cache = new Map<string, { mtimeMs: number; value: SessionSummary }>()
+const cache = new Map<string, { mtimeMs: number; greeted: boolean | null; value: SessionSummary }>()
 
 function messageText(content: unknown): string | null {
   if (!Array.isArray(content)) return null
@@ -32,7 +34,7 @@ function messageText(content: unknown): string | null {
   return null
 }
 
-export function readRolloutSummary(file: string | null): SessionSummary {
+export function readRolloutSummary(file: string | null, greeted: boolean | null): SessionSummary {
   if (!file) return EMPTY
   let stats: fs.Stats
   try {
@@ -41,9 +43,10 @@ export function readRolloutSummary(file: string | null): SessionSummary {
     return EMPTY
   }
   const cached = cache.get(file)
-  if (cached && cached.mtimeMs === stats.mtimeMs) return cached.value
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.greeted === greeted) return cached.value
 
   let summary: string | null = null
+  let firstPromptRead = false
   let messageCount = 0
   let lastMessageAt: string | null = null
   let model: string | null = null
@@ -66,6 +69,10 @@ export function readRolloutSummary(file: string | null): SessionSummary {
         if (!text || (payload.role === 'user' && text.trimStart().startsWith('<'))) continue
         messageCount++
         if (typeof record.timestamp === 'string') lastMessageAt = record.timestamp
+        if (payload.role === 'user' && !firstPromptRead) {
+          firstPromptRead = true
+          if (firstPromptIsGreeting(greeted, text)) continue
+        }
         if (payload.role === 'user' && summary === null) {
           const firstLine = text.trim().split('\n')[0]
           summary = firstLine.length > SUMMARY_MAX ? `${firstLine.slice(0, SUMMARY_MAX - 1)}…` : firstLine
@@ -78,6 +85,6 @@ export function readRolloutSummary(file: string | null): SessionSummary {
   const value: SessionSummary = {
     summary, aiTitle: null, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, model, contextTokens,
   }
-  cache.set(file, { mtimeMs: stats.mtimeMs, value })
+  cache.set(file, { mtimeMs: stats.mtimeMs, greeted, value })
   return value
 }

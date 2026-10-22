@@ -16,6 +16,9 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
  *                                http.ts); the first tab wins and opens the pane
  * plus the `spawns` / `spawn` / `claimed` events on /api/events.
+ *
+ * The same token and inbox carry a session naming itself (session-title-cli.ts):
+ *   PUT /api/session-title/<id> body: title — or the inbox request with kind 'session-title'.
  */
 
 export interface SpawnDeps {
@@ -29,6 +32,7 @@ export interface SpawnDeps {
 }
 
 const MAX_PROMPT = 50_000
+const MAX_TITLE = 60
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
 type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
@@ -88,6 +92,20 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   return { status: 202, payload: { id: request.id, projectId, queued: true } }
 }
 
+/**
+ * A session names itself — the one rule for both ways a request arrives (PUT
+ * /api/session-title/<id>, the spawn inbox). The caller has checked the token.
+ * The title goes into the ledger's agentTitle; a title the user chose wins.
+ */
+export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string } } {
+  const fail = (status: number, code: string, message: string): SpawnOutcome => ({ status, payload: { error: { code, message } } })
+  const title = typeof body.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : ''
+  if (!title || title.length > MAX_TITLE) return fail(400, 'INVALID_TITLE', `title is required (max ${MAX_TITLE} chars)`)
+  const entry = typeof sessionId === 'string' && sessionId ? ledger.setAgentTitle(sessionId, title) : undefined
+  if (!entry) return fail(404, 'NOT_FOUND', 'Session not found')
+  return { status: 200, payload: { title } }
+}
+
 export async function handleSpawnApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -103,6 +121,17 @@ export async function handleSpawnApi(
       return true
     }
     const result = await requestSpawn(deps, await readJson(req))
+    json(res, result.status, result.payload)
+    return true
+  }
+
+  const named = pathname.match(/^\/api\/session-title\/([0-9a-f-]{36})$/)
+  if (named && method === 'PUT') {
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can name itself' } })
+      return true
+    }
+    const result = requestSessionTitle(deps.ledger, named[1], await readJson(req))
     json(res, result.status, result.payload)
     return true
   }

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { SPAWN_INBOX_DIR } from './paths.js'
-import { requestSpawn, type SpawnDeps, type SpawnOutcome } from './spawn-api.js'
+import { requestSessionTitle, requestSpawn, type SpawnDeps } from './spawn-api.js'
 
 /**
  * Worker requests as files. A session whose sandbox has no network (Codex)
@@ -9,6 +9,9 @@ import { requestSpawn, type SpawnDeps, type SpawnOutcome } from './spawn-api.js'
  * `cockpit-spawn` drops <id>.json here, the host reads and deletes it, handles
  * it exactly like the HTTP request, and answers in <id>.result.json for the
  * CLI to pick up.
+ *
+ * A request with kind 'session-title' is a session naming itself (session-title-cli.ts),
+ * handled like PUT /api/session-title/<id>.
  *
  * Same guard as the HTTP way: the request carries the per-boot spawn token
  * from the session's env. The folder is owner-only; a request file exists for
@@ -32,9 +35,11 @@ async function handle(deps: SpawnDeps, id: string): Promise<void> {
   } finally {
     fs.rmSync(file, { force: true })
   }
-  const outcome: SpawnOutcome = body.token === deps.spawnToken
-    ? await requestSpawn(deps, body)
-    : { status: 403, payload: { error: { code: 'FORBIDDEN', message: 'Spawning is only possible from a cockpit session' } } }
+  const outcome = body.token !== deps.spawnToken
+    ? { status: 403, payload: { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can send requests' } } }
+    : body.kind === 'session-title'
+      ? requestSessionTitle(deps.ledger, body.session, body)
+      : await requestSpawn(deps, body)
   const result = path.join(SPAWN_INBOX_DIR, `${id}.result.json`)
   fs.writeFileSync(`${result}.tmp`, JSON.stringify(outcome), { mode: 0o600 })
   fs.renameSync(`${result}.tmp`, result)
