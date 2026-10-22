@@ -8,6 +8,9 @@ licensed under the MIT License (see packages/mcp-server/LICENSE).
 Third-party code
 ----------------
 
+The eml-cockpit package also ships THIRD_PARTY_LICENSES.md, generated at build
+time, with the licences of the npm packages bundled into its dist/ and ui/.
+
 shadcn/ui (https://github.com/shadcn-ui/ui)
 
   Some UI components in cockpit/frontend are based on shadcn/ui,
