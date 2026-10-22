@@ -134,7 +134,9 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
     detect(eml, now) {
       const reviewable = REVIEWABLE_TYPES as readonly string[]
       return (eml.engrams.query({ limit: 10000, status: 'active' }) as EngramRow[])
-        .filter((c) => reviewable.includes(c.type) && parseDue(c.properties?.review_due_at) < now.getTime())
+        // a task-bound decision is not reviewed; its task covers it
+        .filter((c) => reviewable.includes(c.type) && (c.properties?.binding ?? 'standing') === 'standing'
+          && parseDue(c.properties?.review_due_at) < now.getTime())
         .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
     },
   },
@@ -187,27 +189,6 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
     },
   },
   {
-    id: 'superseded-without-successor',
-    kind: 'migration',
-    decides: 'agent',
-    since_schema: 19,
-    what:
-      'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
-      'supersedes set the status without the edge, so the history ends there.',
-    how:
-      'Find the successor: a `superseded_by:` line in detail names it (the migration kept the old hint there); ' +
-      'else the same title thread, the newer engram on the topic. Link it: eml_update(<successor id>, ' +
-      'supersedes=[<this id>]), or eml_track_task(<successor id>, supersedes=[<this id>]) when the successor is a ' +
-      'task. This only draws the missing edge — the successor may be of another type and closed itself. A status ' +
-      'is linked to the next status of its scope by the migration; one without is the scope\'s latest and stays. ' +
-      'No successor exists → leave it; do not invent one.',
-    detect(eml) {
-      const rows = eml.engrams.query({ limit: 100000, status: 'superseded' }) as EngramRow[]
-      const linked = new Set(eml.engrams.supersededWithEdge())
-      return rows.filter(c => !linked.has(c.id)).map(c => finding(c, 'superseded, no supersedes edge.'))
-    },
-  },
-  {
     id: 'rule-without-why',
     kind: 'migration',
     decides: 'agent',
@@ -235,7 +216,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'their answer does not except → eml_update(agreed=<their answer>). Each exception: no longer wanted → ' +
       'eml_update(status=invalidated); one incident, not a rule yet → a learning (eml_learning: the rule as the ' +
       'lesson, the incident as evidence), then eml_update(<learning id>, supersedes=[<rule id>]); wanted but ' +
-      'changed → new content and agreed in one call. rule-without-why runs first.',
+      'changed → new content (≤ 200 chars) and agreed in one call. rule-without-why runs first.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && (typeof c.properties?.agreed !== 'string' || c.properties.agreed.trim() === ''))
@@ -287,11 +268,8 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
 // --- Learnings (recurring) ----------------------------------------------------------
 //
 // A learning is never binding, so nothing forces a look at it: an unclear one
-// (open contradiction) waits for the user's word, a stale one (a single
-// supporting session, long ago) for the agent's.
-
-/** A learning with one supporting session older than this is stale. */
-export const LEARNING_STALE_DAYS = 90
+// (open contradiction) waits for the user's word. Age alone is no reason to
+// look — the agent keeps its learnings itself (decision review-per-type).
 
 const LEARNING_CHECKS: readonly HygieneCheck[] = [
   {
@@ -309,26 +287,6 @@ const LEARNING_CHECKS: readonly HygieneCheck[] = [
       return ACTIVE(eml)
         .filter(c => c.type === 'learning' && eml.engrams.learningStateOf(c.id).state === 'unclear')
         .map(c => finding(c, 'contradicting evidence is open.'))
-    },
-  },
-  {
-    id: 'learning-stale',
-    kind: 'review',
-    decides: 'agent',
-    what:
-      `A learning that rests on a single incident for more than ${LEARNING_STALE_DAYS} days has not recurred. ` +
-      'Either the lesson was learned, or it was a one-off.',
-    how:
-      'Still relevant (the situation can come up again) → leave it; it costs nothing. A one-off, or already how ' +
-      'you work → eml_update(status=invalidated). Never make it a rule from here — that takes recurrence and the ' +
-      'user\'s yes.',
-    detect(eml, now) {
-      const cutoff = now.getTime() - LEARNING_STALE_DAYS * 86400_000
-      return ACTIVE(eml)
-        .filter(c => c.type === 'learning')
-        .map(c => ({ c, state: eml.engrams.learningStateOf(c.id), last: eml.engrams.entries(c.id, ['evidence']).map(e => Date.parse(e.at)).pop() ?? Date.parse(c.created_at) }))
-        .filter(({ state, last }) => state.state === 'collecting' && state.supporting_sessions <= 1 && last < cutoff)
-        .map(({ c, last }) => finding(c, `one incident, last on ${new Date(last).toISOString().slice(0, 10)}.`))
     },
   },
 ]

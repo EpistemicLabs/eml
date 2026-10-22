@@ -22,8 +22,8 @@ function lastMovement(engram: Engram): { at: number; what: string } {
 //                   retire once the task is done
 // v0.15 for a task (flagged after 30 days without movement): "Still relevant"
 // counts as a movement; Retire invalidates it with outcome "retired in review"
-// (open sub-tasks and bound decisions/notes close with it — keep: [], the
-// core cascade).
+// (bound decisions/notes close with it — keep: []; core refuses while a
+// sub-task is open).
 export function ReviewActions({ engram }: { engram: Engram }) {
   const isTask = engram.type === "task";
   const confirm = useConfirmReview();
@@ -104,7 +104,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           disabled={busy}
           title={
             isTask
-              ? "Drop it — invalidated with outcome “retired in review”; open sub-tasks and bound decisions and notes close with it"
+              ? "Drop it — invalidated with outcome “retired in review”; bound decisions and notes close with it. Open sub-tasks have to be closed or moved first"
               : "Outdated — marks the engram expired and drops the flag"
           }
           className={action}

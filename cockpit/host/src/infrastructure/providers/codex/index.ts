@@ -38,7 +38,8 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  *     per trusted folder. Codex keeps its own state in the same file, so only
  *     these tables are replaced. No token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
- *   - hooks.json: turn state to the host, and the EML hooks (boot, reminder, consolidate at stop).
+ *   - hooks.json: turn state to the host, and the EML hooks (boot, project block, reminder,
+ *     consolidate at stop).
  *     Codex runs a hook only after the user trusted it; it asks once, in the
  *     first session, and again whenever a hook's text changes — which is why
  *     nothing per boot or per space is in the hook text.
@@ -56,7 +57,8 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
 
 /**
  * Codex cuts a hook's context off at about 2,500 tokens unless the hook raises
- * the limit. The boot context of a grown brain is larger than that.
+ * the limit. The boot context of a grown brain is larger than that, and so is
+ * a full project block.
  */
 const BOOT_CONTEXT_LIMIT = 20_000
 
@@ -171,14 +173,20 @@ class CodexProvider implements AgentProvider {
     // env (EML_HOOK_CONFIG_ENV, one hooks file for every space). Codex reads
     // hook output that starts with "[" as JSON — the reminder does — so both
     // come in the JSON envelope.
-    const eml = (hook: Parameters<typeof emlHookCommand>[0], json: boolean, options: Record<string, unknown> = {}) =>
-      entry(emlHookCommand(hook, undefined, json), { ...EML_HOOK_OPTIONS, ...options })
+    const eml = (hook: Parameters<typeof emlHookCommand>[0], json: boolean, options: Record<string, unknown> = {}, flags: string[] = []) =>
+      entry(emlHookCommand(hook, undefined, json, flags), { ...EML_HOOK_OPTIONS, ...options })
     fs.writeFileSync(
       HOOKS_JSON,
       JSON.stringify({
         hooks: {
-          SessionStart: [eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT })],
-          UserPromptSubmit: [turn, eml('user-prompt-submit', true)],
+          // The project block (mcp-server hooks/project-block.ts), as for Claude: a second
+          // SessionStart command; it brings the session's project, so the reminder drops
+          // its guess from the working directory.
+          SessionStart: [
+            eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+            eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+          ],
+          UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],
           PermissionRequest: [turn],
           // Back to "working" once an approved tool ran — Codex has no other signal for it.
           PostToolUse: [turn],

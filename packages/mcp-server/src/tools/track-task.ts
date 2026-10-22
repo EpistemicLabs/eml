@@ -20,8 +20,8 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       'happened and why; no date (entries are timestamped). For attribute edits only (priority, assignee, tags …) ' +
       'text is optional.\n\n' +
       'Closing: status=resolved (done) or invalidated (dropped) + outcome (one line, shown in task lists) + text ' +
-      '(the story: what happened, what stays open). A parent can\'t be resolved while sub-tasks are open; ' +
-      'invalidating it invalidates them. Decisions and notes bound to the task close with it; before closing, ' +
+      '(the story: what happened, what stays open). A parent can\'t be closed while sub-tasks are open: ' +
+      'close each or move it to another parent first. Decisions and notes bound to the task close with it; before closing, ' +
       'check them: any that still hold once the task is done → keep (they become standing), and say why in text; ' +
       'keep=[] closes them all.\n\n' +
       'Reopening a closed task (status planned or active) needs text; the stage can change again. A closed task is ' +
@@ -44,7 +44,7 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       blockers: z.array(z.string()).nullable().optional().describe('Replaces the list; [] or null clears.'),
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),
       scope: z.string().optional().describe('Move the task to another scope (project.<id> …); sub-tasks and bound items keep theirs.'),
-      supersedes: z.array(z.string()).optional().describe('Ids of open tasks this one replaces: they are closed as superseded and their bound decisions and notes move here.'),
+      supersedes: z.array(z.string()).optional().describe('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),

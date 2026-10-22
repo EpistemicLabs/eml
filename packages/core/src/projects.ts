@@ -6,7 +6,7 @@ import {
 import { hydrateEngramTags } from './tags'
 import { hydrateEngramLabels } from './labels'
 import { hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
@@ -116,6 +116,7 @@ export class ProjectStore {
 
     const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope])
     const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
 
     // v0.19.1: recency, as eml_show (engrams.buildBrainState) — significance is no
     // longer written, and old high/critical decisions stayed on top.
@@ -141,7 +142,7 @@ export class ProjectStore {
       ORDER BY r.created_at DESC LIMIT 20
     `).all(scope, scope) as any[]).map(r => this.rowToRelation(r))
 
-    return { project, scope, current_status, open_tasks, open_tasks_total, recent_decisions, recent_logs, relations }
+    return { project, scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, relations }
   }
 
   // === Private ===
