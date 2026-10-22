@@ -187,27 +187,6 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
     },
   },
   {
-    id: 'superseded-without-successor',
-    kind: 'migration',
-    decides: 'agent',
-    since_schema: 19,
-    what:
-      'A superseded engram has a successor: the engram that replaced it, linked by a supersedes edge. Older ' +
-      'supersedes set the status without the edge, so the history ends there.',
-    how:
-      'Find the successor: a `superseded_by:` line in detail names it (the migration kept the old hint there); ' +
-      'else the same title thread, the newer engram on the topic. Link it: eml_update(<successor id>, ' +
-      'supersedes=[<this id>]), or eml_track_task(<successor id>, supersedes=[<this id>]) when the successor is a ' +
-      'task. This only draws the missing edge — the successor may be of another type and closed itself. A status ' +
-      'is linked to the next status of its scope by the migration; one without is the scope\'s latest and stays. ' +
-      'No successor exists → leave it; do not invent one.',
-    detect(eml) {
-      const rows = eml.engrams.query({ limit: 100000, status: 'superseded' }) as EngramRow[]
-      const linked = new Set(eml.engrams.supersededWithEdge())
-      return rows.filter(c => !linked.has(c.id)).map(c => finding(c, 'superseded, no supersedes edge.'))
-    },
-  },
-  {
     id: 'rule-without-why',
     kind: 'migration',
     decides: 'agent',
