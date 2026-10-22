@@ -12,5 +12,9 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     pool: 'forks',
+    // The migration tests run the real forward-migration pipeline on brain
+    // files; on Windows CI runners one test takes 10-15s. vitest 4 fails a
+    // synchronous test that overruns, vitest 1 did not.
+    testTimeout: 60_000,
   },
 })
