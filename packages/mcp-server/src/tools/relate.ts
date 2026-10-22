@@ -27,7 +27,7 @@ export function registerRelateTool(server: McpServer, http: HttpClient): void {
         'must already exist. Use for explicit threading the write path cannot infer; a plain ' +
         '"see also" is better written as a [[title-or-id]] wikilink in content (auto-' +
         'materializes a related_to edge). A replacement is supersedes on the new engram (on create, ' +
-        'or eml_update(new_id, supersedes=[old_id]) when both exist); a sub-task is parent_id on ' +
+        'or eml_update(new_id, supersedes=[old_id]) when both exist — eml_track_task for a task); a sub-task is parent_id on ' +
         'eml_create_task / eml_track_task. Verbs: supports / contradicts / derived_from / refines / ' +
         'related_to / blocks.',
       inputSchema: z.object({

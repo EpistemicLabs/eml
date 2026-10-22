@@ -3,8 +3,8 @@ import Database from 'better-sqlite3'
 import type Database_t from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '@engramprotocol/core'
 
-/** The sweep reads tables from the current schema (labels since 13, task_entries
- *  since 15), so it only touches brains that are fully migrated. A brain left on
+/** The sweep reads tables from the current schema (labels since 13, entries
+ *  since 19), so it only touches brains that are fully migrated. A brain left on
  *  an older schema by a failed migration stays untouched, as the pipeline promises. */
 const SWEEP_MIN_SCHEMA = CURRENT_BRAIN_SCHEMA_VERSION
 

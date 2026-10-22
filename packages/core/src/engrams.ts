@@ -1834,7 +1834,7 @@ export class EngramStore {
       const arriving = existing.status !== 'active' || (patch.scope !== undefined && patch.scope !== existing.scope)
       const other = arriving ? this.activeCoreProfileIn(newScope, id) : null
       if (other) {
-        throw new Error(`Invalid engram: scope ${newScope} already has a core profile (${other}) — invalidate it first, or write the new identity with core=true so it replaces the current one.`)
+        throw new Error(`Invalid engram: scope ${newScope} already has a core profile (${other}) — invalidate it first, or write the identity as a new profile with core=true (eml_profile), which replaces the current one.`)
       }
     }
     const formatTouched = (patch.content !== undefined && patch.content !== existing.content)
@@ -2101,7 +2101,7 @@ export class EngramStore {
     if (input.relation === 'supersedes' || input.relation === 'part_of') {
       throw new Error(
         input.relation === 'supersedes'
-          ? 'Invalid engram: supersedes is drawn by a write — eml_update(new_id, supersedes=[old_id]) or supersedes on create.'
+          ? 'Invalid engram: supersedes is drawn by a write — supersedes on the new engram when you create it, or after the fact eml_update(new_id, supersedes=[old_id]); a task: eml_track_task(new_id, supersedes=[old_id]); a status replaces the previous one by itself.'
           : 'Invalid engram: part_of comes from a task\'s parent — eml_create_task(parent_id) or eml_track_task(parent_id).',
       )
     }

@@ -216,7 +216,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'their answer does not except → eml_update(agreed=<their answer>). Each exception: no longer wanted → ' +
       'eml_update(status=invalidated); one incident, not a rule yet → a learning (eml_learning: the rule as the ' +
       'lesson, the incident as evidence), then eml_update(<learning id>, supersedes=[<rule id>]); wanted but ' +
-      'changed → new content and agreed in one call. rule-without-why runs first.',
+      'changed → new content (≤ 200 chars) and agreed in one call. rule-without-why runs first.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && (typeof c.properties?.agreed !== 'string' || c.properties.agreed.trim() === ''))
