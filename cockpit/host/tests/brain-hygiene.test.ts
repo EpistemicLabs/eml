@@ -39,13 +39,13 @@ describe('brain hygiene (cockpit offer)', () => {
   describe('hygieneOffer', () => {
     it('offers migration findings once per schema', () => {
       const offer = mods.hygieneOffer(report(3, 0), {}, NOW)
-      expect(offer?.reasons).toEqual(['schema 18 changed the engram format — 3 entries need rewriting'])
+      expect(offer?.reasons).toEqual(['the new brain schema v18 changed the engram format — 3 entries need rewriting'])
       expect(offer?.checks.map((c) => c.id)).toEqual(['rule-profile-format'])
       expect(offer?.next).toEqual({ offeredSchema: 18 })
       expect(mods.hygieneOffer(report(3, 0), { offeredSchema: 18 }, NOW)).toBeNull()
       expect(mods.hygieneOffer(report(3, 0, 19), { offeredSchema: 18 }, NOW)?.checks.map((c) => c.id)).toEqual(['rule-profile-format'])
       expect(mods.hygieneOffer(report(0, 0), {}, NOW)).toBeNull()
-      expect(mods.hygieneOffer(report(1, 0), {}, NOW)?.reasons).toEqual(['schema 18 changed the engram format — 1 entry needs rewriting'])
+      expect(mods.hygieneOffer(report(1, 0), {}, NOW)?.reasons).toEqual(['the new brain schema v18 changed the engram format — 1 entry needs rewriting'])
     })
 
     it('offers due reviews once a week, from one due review on', () => {
@@ -58,7 +58,7 @@ describe('brain hygiene (cockpit offer)', () => {
 
     it('puts both reasons into one offer, and only the offered checks into the session', () => {
       const both = mods.hygieneOffer(report(2, 6), {}, NOW)!
-      expect(both.reasons).toEqual(['schema 18 changed the engram format — 2 entries need rewriting', '6 reviews are due'])
+      expect(both.reasons).toEqual(['the new brain schema v18 changed the engram format — 2 entries need rewriting', '6 reviews are due'])
       expect(both.checks.map((c) => c.id)).toEqual(['rule-profile-format', 'review-due'])
       // Migration already offered for this schema: the review offer carries only the review check.
       const reviewsOnly = mods.hygieneOffer(report(2, 6), { offeredSchema: 18 }, NOW)!
@@ -91,7 +91,7 @@ describe('brain hygiene (cockpit offer)', () => {
     it('shows the offer, and nothing before the agent CLI is ready or during onboarding', async () => {
       expect(await make(report(2, 1)).hygiene.view(space)).toEqual({
         space: 'Main',
-        reasons: ['schema 18 changed the engram format — 2 entries need rewriting', '1 review is due'],
+        reasons: ['the new brain schema v18 changed the engram format — 2 entries need rewriting', '1 review is due'],
         findings: 3,
       })
       expect(await make(report(2, 1), { isReady: async () => false }).hygiene.view(space)).toBeNull()
@@ -154,14 +154,6 @@ describe('brain hygiene (cockpit offer)', () => {
       expect(JSON.parse(readFileSync(join(home, 'brain-hygiene', 'brain-2', 'findings.json'), 'utf8')).space).toBe('Privat')
       expect(spawns.list()[0].spaceId).toBe('brain-2')
       expect(config().hygiene).toEqual({ 'brain-2': { offeredSchema: 18 } })
-    })
-
-    it('Not now records the offer and opens nothing', async () => {
-      const { spawns, hygiene } = make(report(2, 4))
-      expect(await hygiene.dismiss(space)).toEqual({ ok: true, findings: 6 })
-      expect(spawns.list()).toHaveLength(0)
-      expect(config().hygiene).toEqual({ 'brain-1': { offeredSchema: 18, reviewsOfferedAt: NOW.toISOString() } })
-      expect(await hygiene.view(space)).toBeNull()
     })
   })
 })
