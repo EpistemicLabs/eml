@@ -374,14 +374,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
 
     // Brain hygiene of this space: GET = the banner's offer (null = none),
-    // POST start = findings.json + a session, POST dismiss = Not now.
+    // POST start = findings.json + a session. The banner stays until started.
     if (resource === 'brain-hygiene') {
       if (!id && method === 'GET') {
         json(res, 200, { offer: await deps.hygiene.view(space) })
         return true
       }
-      if ((id === 'start' || id === 'dismiss') && method === 'POST') {
-        json(res, 200, id === 'start' ? await deps.hygiene.start(space) : await deps.hygiene.dismiss(space))
+      if (id === 'start' && method === 'POST') {
+        json(res, 200, await deps.hygiene.start(space))
         return true
       }
     }
@@ -425,10 +425,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Update banner (v0.14 Cluster 0): the newest brain-migration report.
-    // Dismissing a failure is refused until the brain has caught up.
+    // Update banner (v0.14 Cluster 0): the newest brain-migration report and
+    // the in-app update this host runs. Dismissing a failure is refused until
+    // the brain has caught up.
     if (resource === 'update-status' && !id && method === 'GET') {
-      json(res, 200, readUpdateStatus())
+      json(res, 200, readUpdateStatus((brainId) => deps.spaces.get(brainId)?.name))
       return true
     }
     if (resource === 'update-status' && id === 'ack' && method === 'POST') {

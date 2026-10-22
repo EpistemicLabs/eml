@@ -29,7 +29,7 @@ export interface CockpitConfig {
   hygiene?: Record<string, HygieneState>
 }
 
-/** When the hygiene banner was last started or dismissed for one brain. */
+/** When the hygiene banner was last started for one brain. */
 export interface HygieneState {
   /** The brain schema whose migration findings were offered. */
   offeredSchema?: number

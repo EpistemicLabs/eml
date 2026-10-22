@@ -17,8 +17,8 @@ import type { SpawnQueue } from './spawn-queue.js'
  * Offered once per space:
  *   - migration: once per brain schema, when a migration check has findings;
  *   - review: once a week, when any review is due.
- * Start and Not now both count as offered (config.hygiene, per brain id). The
- * host opening the session by itself is a later step.
+ * Start counts as offered (config.hygiene, per brain id); until then the
+ * banner stays. The host opening the session by itself is a later step.
  */
 
 export const HYGIENE_DIR = path.join(COCKPIT_HOME, 'brain-hygiene')
@@ -45,7 +45,7 @@ export interface HygieneOffer {
   reasons: string[]
   /** The checks with findings the session gets. */
   checks: HygieneCheckResult[]
-  /** Written when the offer is started or dismissed. */
+  /** Written when the offer is started. */
   next: HygieneState
 }
 
@@ -61,7 +61,7 @@ export function hygieneOffer(report: HygieneReport, state: HygieneState, now: Da
   const migration = withFindings.filter((c) => c.kind === 'migration')
   if (migration.length > 0 && (state.offeredSchema ?? 0) < report.schema) {
     const n = count(migration)
-    reasons.push(`schema ${report.schema} changed the engram format — ${n} ${n === 1 ? 'entry needs' : 'entries need'} rewriting`)
+    reasons.push(`the new brain schema v${report.schema} changed the engram format — ${n} ${n === 1 ? 'entry needs' : 'entries need'} rewriting`)
     checks.push(...migration)
     next.offeredSchema = report.schema
   }
@@ -113,8 +113,8 @@ export type HygieneBannerView = { space: string; reasons: string[]; findings: nu
 export type HygieneActResult = { ok: true; findings: number } | { ok: false; reason: 'nothing-due' | 'pending' }
 
 /**
- * The offer of this host, per space. One start or dismiss at a time per space:
- * a second click while the first is under way gets `pending`.
+ * The offer of this host, per space. One start at a time per space: a second
+ * click while the first is under way gets `pending`.
  */
 export class BrainHygiene {
   private readonly busy = new Set<string>()
@@ -168,11 +168,6 @@ export class BrainHygiene {
       })
       this.deps.log?.(`brain hygiene: session queued for ${space.name} (${offer.reasons.join('; ')})`)
     })
-  }
-
-  /** Not now: the offer is recorded, nothing opens. */
-  async dismiss(space: BrainSpace): Promise<HygieneActResult> {
-    return this.once(space, () => {}, () => {})
   }
 
   /** One act per space at a time: prepare, record the offer, then follow up. */
