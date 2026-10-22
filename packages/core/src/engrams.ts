@@ -543,7 +543,8 @@ export class EngramStore {
       if (oldId === next.id) throw new Error('Invalid engram: an engram cannot supersede itself.')
       const old = this.db.prepare('SELECT type, status FROM engrams WHERE id = ?').get(oldId) as { type: string, status: string } | undefined
       if (!old) throw new Error(`Invalid engram: supersedes ${oldId} — no such engram.`)
-      const by = this.successorOf(oldId)
+      // one successor that holds: an invalidated one (an undone supersede) is history
+      const by = this.liveSuccessorOf(oldId)
       if (by) throw new Error(`Invalid engram: ${oldId} is already superseded by ${by} — continue on that one.`)
       if (next.id && this.isOlderThan(next.id, oldId)) {
         throw new Error(`Invalid engram: ${next.id} is already in the supersedes chain of ${oldId} — superseding it would close a loop.`)
@@ -870,6 +871,8 @@ export class EngramStore {
     if (existing.status === 'superseded' && statusChanged) {
       throw new Error('Invalid engram: a superseded task stays superseded — continue on its successor.')
     }
+    // a closed task replaced by another one reopens only once its successor is invalidated
+    if (reopening) this.assertNoLiveSuccessor(id)
     // closed → closed is not a close: the outcome changes by reopening and closing
     // again (both in the journal). The current status repeated without an outcome
     // is a no-op. Checked before the field rules, so the answer names the state.
@@ -1007,7 +1010,11 @@ export class EngramStore {
         written.push(...r.entries)
       }
       // what a reopen may bring back: the bound items that closed with it (an offer, never automatic)
-      if (reopening) reopenCandidates = this.closedWithTask(id)
+      if (reopening) {
+        // the supersede is undone: its edge goes, so the task can be replaced again
+        this.db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
+        reopenCandidates = this.closedWithTask(id)
+      }
       // any movement clears the inactivity review
       this.stripReviewLabel(id)
     })()
@@ -1035,9 +1042,27 @@ export class EngramStore {
   private closedWithTask(taskId: string): BoundItem[] {
     const marker = `${CLOSED_WITH_TASK} ${taskId}`
     return this.boundItems(taskId, ['resolved', 'invalidated']).filter(item => {
+      if (this.liveSuccessorOf(item.id) !== undefined) return false  // replaced since: its successor holds
       const changes = this.entries(item.id, ['change'])
       return changes[changes.length - 1]?.text === marker
     })
+  }
+
+  /** A successor of `id` that still holds (any status but invalidated). */
+  private liveSuccessorOf(id: string): string | undefined {
+    return (this.db.prepare(`
+      SELECT r.source_id FROM relations r JOIN engrams e ON e.id = r.source_id
+      WHERE r.target_id = ? AND r.relation = 'supersedes' AND e.status != 'invalidated'
+      ORDER BY r.created_at ASC LIMIT 1
+    `).get(id) as { source_id: string } | undefined)?.source_id
+  }
+
+  /** Reactivating or reopening `id` needs every successor invalidated. */
+  private assertNoLiveSuccessor(id: string): void {
+    const successor = this.liveSuccessorOf(id)
+    if (successor !== undefined) {
+      throw new Error(`Invalid engram: ${id} is replaced by ${successor} — it is reactivated only once its successor is invalidated; until then the successor holds.`)
+    }
   }
 
   private parentOf(id: string): string | undefined {
@@ -1404,9 +1429,11 @@ export class EngramStore {
    * that isn't already flagged. Pure date-compare — NO LLM. Idempotent
    * (INSERT OR IGNORE + NOT EXISTS guard), so re-running is a cheap no-op.
    *
-   * ADD-ONLY by design: it never strips a label, so a future manually-set flag (or
-   * a not-yet-due engram) is safe from the sweep. Removal is explicit — see
-   * stripReviewLabel (confirmReview + status transitions off 'active').
+   * ADD-ONLY for engrams that can be due: it never strips their label, so a
+   * manually-set flag (or a not-yet-due engram) is safe from the sweep. Removal
+   * is explicit — see stripReviewLabel (confirmReview + status transitions off
+   * 'active'). v0.19.1: the one strip — a planned task loses the label (it is
+   * backlog, not reviewed).
    *
    * v0.15: second criterion for open tasks — inactivity, not a due date (see
    * below). Tasks have no review_due_at.
@@ -1735,17 +1762,11 @@ export class EngramStore {
           'Superseded comes from supersedes on the new engram.',
         )
       }
-      if (patch.status === 'active' && existing.status === 'superseded') {
-        // Reactivating is the undo of a supersede (e.g. a hygiene refile): only once
-        // no successor holds any more (decision hygiene-agent-decides-by-check).
-        const successors = this.db.prepare(`
-          SELECT e.status FROM relations r JOIN engrams e ON e.id = r.source_id
-          WHERE r.target_id = ? AND r.relation = 'supersedes'
-        `).all(id) as Array<{ status: string }>
-        if (successors.length === 0 || successors.some(r => r.status !== 'invalidated')) {
-          throw new Error('Invalid engram: a superseded engram is reactivated only once its successor is invalidated — until then the successor holds.')
-        }
-        reactivatesSuperseded = true
+      if (patch.status === 'active' && existing.status !== 'active') {
+        // An engram with a successor — superseded, or closed and only linked —
+        // comes back only once no successor holds any more; that undoes the supersede.
+        this.assertNoLiveSuccessor(id)
+        reactivatesSuperseded = this.successorOf(id) !== undefined
       }
       // An expiry that has passed would expire it again in the next sweep.
       if (patch.status === 'active' && existing.status !== 'active') {
