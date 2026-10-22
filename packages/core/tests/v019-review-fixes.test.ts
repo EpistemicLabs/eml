@@ -60,12 +60,15 @@ describe('v0.19 review fixes', () => {
       expect(journal(next.id)).toContain(`change:supersedes ${old.id}`)
     })
 
-    it('track_task supersedes takes only open tasks, from an open task, and re-links an already superseded one', () => {
+    it('track_task supersedes takes only tasks, replaces from an open task, and re-links an already superseded one', () => {
       const next = eml.engrams.store(validTask({ title: 'next' }), ctx())
       const note = eml.engrams.store(validNote())
       expect(() => eml.engrams.trackTask(next.id, { supersedes: [note.id] })).toThrow(/is a note — a task replaces a task/)
       const done = closedTask(eml, { title: 'done' })
-      expect(() => eml.engrams.trackTask(next.id, { supersedes: [done.id] })).toThrow(/is resolved — a closed task stays as it ended/)
+      // a closed task keeps how it ended and only gets the edge (decision supersede-rules)
+      eml.engrams.trackTask(next.id, { supersedes: [done.id] }, ctx())
+      expect(statusOf(done.id)).toBe('resolved')
+      expect(edge(next.id, done.id, 'supersedes')).toBeTruthy()
       const orphan = eml.engrams.store(validTask({ title: 'orphan' }), ctx())
       rawDb().prepare(`UPDATE engrams SET status = 'superseded' WHERE id = ?`).run(orphan.id)
       eml.engrams.trackTask(next.id, { supersedes: [orphan.id] }, ctx())
@@ -75,12 +78,14 @@ describe('v0.19 review fixes', () => {
       expect(() => eml.engrams.trackTask(closed.id, { supersedes: [eml.engrams.store(validTask()).id] })).toThrow(/only an open task replaces another/)
     })
 
-    it('create_task supersedes writes the journal entry on the old task and refuses a closed one', () => {
+    it('create_task supersedes writes the journal entry on the old task; a closed one keeps its status', () => {
       const old = eml.engrams.store(validTask({ title: 'old' }), ctx())
       const next = eml.engrams.store(validTask({ title: 'next', supersedes: [old.id] }), ctx())
       expect(journal(old.id).at(-1)).toBe(`change:superseded by ${next.id}`)
       const done = closedTask(eml)
-      expect(() => eml.engrams.store(validTask({ supersedes: [done.id] }))).toThrow(/a closed task stays as it ended/)
+      const after = eml.engrams.store(validTask({ supersedes: [done.id] }), ctx())
+      expect(statusOf(done.id)).toBe('resolved')
+      expect(journal(done.id).at(-1)).toBe(`change:superseded by ${after.id}`)
     })
 
     it('only an active engram supersedes another after the fact', () => {
@@ -304,40 +309,6 @@ describe('v0.19 review fixes', () => {
       const d3 = eml.engrams.store(validDecision())
       expect(() => eml.engrams.update(d3.id, { supersedes: [d1.id] })).toThrow(`already superseded by ${d2.id}`)
       expect(rawDb().prepare(`SELECT COUNT(*) AS n FROM relations WHERE target_id = ? AND relation = 'supersedes'`).get(d1.id).n).toBe(1)
-    })
-
-    it('B5: the hygiene repair draws only the missing edge — any successor type and state', () => {
-      const plantSuperseded = (e: { id: string }) => rawDb().prepare(`UPDATE engrams SET status = 'superseded' WHERE id = ?`).run(e.id)
-      // decision successor no longer active
-      const old1 = eml.engrams.store(validDecision()); plantSuperseded(old1)
-      const succ1 = eml.engrams.store(validDecision())
-      eml.engrams.update(succ1.id, { status: 'invalidated' })
-      eml.engrams.update(succ1.id, { supersedes: [old1.id] })
-      expect(edge(succ1.id, old1.id, 'supersedes')).toBeTruthy()
-      expect(statusOf(succ1.id)).toBe('invalidated')
-      // a legacy task replaced by a note
-      const oldTask = eml.engrams.store(validTask({ title: 'legacy' })); plantSuperseded(oldTask)
-      const note = eml.engrams.store(validNote())
-      eml.engrams.update(note.id, { supersedes: [oldTask.id] })
-      expect(edge(note.id, oldTask.id, 'supersedes')).toBeTruthy()
-      expect(journal(oldTask.id)).toContain(`change:superseded by ${note.id}`)
-      // a closed task successor
-      const oldTask2 = eml.engrams.store(validTask({ title: 'legacy2' })); plantSuperseded(oldTask2)
-      const done = closedTask(eml, { title: 'done' })
-      eml.engrams.trackTask(done.id, { supersedes: [oldTask2.id], text: 'the successor of legacy2' })
-      expect(edge(done.id, oldTask2.id, 'supersedes')).toBeTruthy()
-      expect(statusOf(done.id)).toBe('resolved')
-      expect(journal(done.id)).toContain(`change:supersedes ${oldTask2.id}`)
-      // and the findings are gone (an unrepaired one stays, as the control)
-      const control = eml.engrams.store(validDecision()); plantSuperseded(control)
-      const found = hygieneCheck(eml, { since: 18 }).checks.find(c => c.id === 'superseded-without-successor')!
-      expect(found.findings.map(f => f.id)).not.toContain(old1.id)
-      expect(found.findings.map(f => f.id)).not.toContain(oldTask.id)
-      expect(found.findings.map(f => f.id)).not.toContain(oldTask2.id)
-      expect(found.findings.map(f => f.id)).toContain(control.id)
-      // a live engram is still replaced only by a live successor
-      const live = eml.engrams.store(validDecision())
-      expect(() => eml.engrams.update(succ1.id, { supersedes: [live.id] })).toThrow(/only an active engram supersedes another/)
     })
 
     it('B7: a task without priority sorts as normal', () => {

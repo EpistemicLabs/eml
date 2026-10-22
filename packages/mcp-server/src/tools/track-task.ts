@@ -44,7 +44,7 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       blockers: z.array(z.string()).nullable().optional().describe('Replaces the list; [] or null clears.'),
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),
       scope: z.string().optional().describe('Move the task to another scope (project.<id> …); sub-tasks and bound items keep theirs.'),
-      supersedes: z.array(z.string()).optional().describe('Ids of open tasks this one replaces: they are closed as superseded and their bound decisions and notes move here.'),
+      supersedes: z.array(z.string()).optional().describe('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),
