@@ -23,7 +23,7 @@ import { EntityStore } from './entities'
 import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
 import { hydrateEngramLabels, slugifyLabel } from './labels'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 // v0.9 Cluster 1: namespace concept removed entirely (Phase 1.3 code, Phase 1.4 DB).
 
@@ -1456,15 +1456,19 @@ export class EngramStore {
         )
     `).run(REVIEW_LABEL, ...REVIEWABLE_TYPES, now, REVIEW_LABEL)
 
-    // v0.15: open tasks by INACTIVITY — last movement (the later of updated_at
+    // v0.15: active tasks by INACTIVITY — last movement (the later of updated_at
     // and the newest entry) older than TASK_INACTIVITY_DAYS. Covers legacy tasks
-    // without touching them; any movement strips the label again.
-    const openPlaceholders = TASK_OPEN_STATUSES.map(() => '?').join(', ')
+    // without touching them; any movement strips the label again. v0.19.1: a
+    // planned task is not reviewed — idle, it is backlog (open-tasks.ts).
+    this.db.prepare(`
+      DELETE FROM engram_labels WHERE label_id = ?
+        AND engram_id IN (SELECT id FROM engrams WHERE type = 'task' AND status = 'planned')
+    `).run(REVIEW_LABEL)
     const tasks = this.db.prepare(`
       INSERT OR IGNORE INTO engram_labels (engram_id, label_id)
       SELECT c.id, ? FROM engrams c
       WHERE c.type = 'task'
-        AND c.status IN (${openPlaceholders})
+        AND c.status = 'active'
         AND MAX(
           datetime(c.updated_at),
           COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = c.id)), datetime(c.updated_at))
@@ -1473,7 +1477,7 @@ export class EngramStore {
           SELECT 1 FROM engram_labels el
           WHERE el.engram_id = c.id AND el.label_id = ?
         )
-    `).run(REVIEW_LABEL, ...TASK_OPEN_STATUSES, now, `-${TASK_INACTIVITY_DAYS} days`, REVIEW_LABEL)
+    `).run(REVIEW_LABEL, now, `-${TASK_INACTIVITY_DAYS} days`, REVIEW_LABEL)
     return res.changes + tasks.changes
   }
 
@@ -2229,6 +2233,7 @@ export class EngramStore {
 
     const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope])
     const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
 
     // v0.10.5: recency, not significance — orientation wants the decisions that
     // are live in current work, not the biggest strategic ones (titles-only in render).
@@ -2272,7 +2277,7 @@ export class EngramStore {
       ? this.db.prepare(`SELECT status_tracks, metadata FROM ${m[1] === 'project' ? 'projects' : 'entities'} WHERE id = ?`).get(m[2]) as { status_tracks: string | null, metadata: string | null } | undefined
       : undefined
     return {
-      scope, current_status, open_tasks, open_tasks_total, recent_decisions, recent_logs, rules, pending_reviews,
+      scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, rules, pending_reviews,
       status_tracks: object?.status_tracks ?? null,
       metadata: object?.metadata ? JSON.parse(object.metadata) : null,
     }

@@ -1,4 +1,5 @@
 import type { Engram, ScopedBrainState } from './types'
+import { backlogLine } from './open-tasks'
 
 /** v0.10.5 DISPLAY: content-preview caps (characters). */
 export const RECALL_PREVIEW_CHARS = 200
@@ -59,7 +60,7 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
 
   const openTotal = Math.max(state.open_tasks_total ?? 0, state.open_tasks.length)
   lines.push(`## Open tasks (${openTotal})`)
-  if (state.open_tasks.length === 0) lines.push('_none_')
+  if (state.open_tasks.length === 0 && !state.backlog_tasks) lines.push('_none_')
   for (const t of state.open_tasks) {
     const prio = (t.properties?.priority as string) ?? 'normal'
     // v0.11 team-brains: show assignee handle when present (who owns this task).
@@ -71,6 +72,7 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   // the list stops at 10; the rest as a count with the call that lists them (as the project block does)
   const moreTasks = openTotal - state.open_tasks.length
   if (moreTasks > 0) lines.push(`- ${moreTasks} more open tasks — eml_list type=task scope=${state.scope} status=planned (or active)`)
+  if (state.backlog_tasks) lines.push(backlogLine(state.backlog_tasks, state.scope))
   lines.push('')
 
   if (state.recent_logs.length > 0) {
