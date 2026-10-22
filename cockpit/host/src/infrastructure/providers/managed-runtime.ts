@@ -102,9 +102,13 @@ export function maxVersion(versions: Array<string | null | undefined>): string |
  * error (fetch rejects, or the body stream breaks off — undici raises both as TypeError), or a
  * request that stalls past its timeout (the same day: a Codex registry request on CI).
  * Anything else fails at once: another HTTP status, a bad checksum later on.
+ *
+ * The CDN's 429 phases outlast a few seconds and come without Retry-After (a burst lasted over
+ * 30 s on CI), so the backoff runs about 5, 10, 20, 40, 60 s: some two minutes before giving
+ * up. An install runs in the background; waiting that long beats failing a first install.
  */
 export const NET_RETRY = {
-  attempts: 4, baseDelayMs: 2_000, maxDelayMs: 60_000,
+  attempts: 6, baseDelayMs: 5_000, maxDelayMs: 60_000,
   textTimeoutMs: 30_000, downloadTimeoutMs: 15 * 60_000,
 }
 
