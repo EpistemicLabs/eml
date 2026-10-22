@@ -152,13 +152,11 @@ with any MCP client.
       this computer. If yes, ask them to link it now with the project's folder
       button in the sidebar, and wait until they say it's done. If not, the
       cockpit makes one.
-   2. **Consolidate.** Run the `consolidate` skill in auto mode — they are new
-      to this, so don't ask them to approve a diff, and skip its report
-      format (no "approve · edit · undo" line). Instead say in plain words what
-      you stored and what it is for, e.g. "a log: a short summary of this
-      session, which the next session reads to pick up where we left off".
-      If consolidate held something back, ask about it in plain words instead
-      of showing its HELD BACK list.
+   2. **Consolidate.** Run the `consolidate` skill — they are new to this, so
+      skip its report format (no "undo · change" line). Instead say in plain
+      words what you stored and what it is for, e.g. "a log: a short summary of
+      this session, which the next session reads to pick up where we left off".
+      If consolidate left a question, ask it in plain words.
    3. **Hand over.** With the `spawn-session` skill, open a session in the
       project (`--project <id>`, the project's name as title) with this
       prompt: "Load the brain for project <id> (eml_show project.<id>). Say in

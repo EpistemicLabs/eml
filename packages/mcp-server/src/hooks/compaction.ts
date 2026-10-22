@@ -6,8 +6,7 @@ import * as path from 'path'
  * consolidate-before-compact.md). A compaction replaces the conversation with
  * a summary written to continue the task, not to keep what belongs in the
  * brain. No hook can run a skill, and a PreCompact hook cannot put text into
- * the context — so two hooks ask the agent for the consolidate skill's auto
- * mode:
+ * the context — so two hooks ask the agent to run the consolidate skill:
  *
  *   - stopHook (Stop): when the agent ends a turn and the context has grown by
  *     GROWTH_STEP_TOKENS since the session's last save point, the hook blocks
@@ -28,9 +27,10 @@ import * as path from 'path'
 /**
  * A step, not a share of the window: no hook input carries the window size,
  * and a compaction has no fixed trigger point (one session was compacted at
- * about 307k and at about 595k tokens).
+ * about 307k and at about 595k tokens). v0.19.1: 150k, so a model with a
+ * 200k window gets a save point before its first compaction more often.
  */
-export const GROWTH_STEP_TOKENS = 250_000
+export const GROWTH_STEP_TOKENS = 150_000
 
 /** Enough for the last responses; a transcript grows to many megabytes. */
 const TAIL_BYTES = 1024 * 1024
@@ -100,7 +100,7 @@ export function contextTokens(transcriptPath: string): number | null {
 
 export function consolidateReason(grownBy: number): string {
   return `[EML] This session has grown by about ${Math.round(grownBy / 1000)}k tokens since its last save point and may be compacted soon. ` +
-    'Before you stop, run the consolidate skill in auto mode and end with its short report. ' +
+    'Before you stop, run the consolidate skill and end with its short report. ' +
     'If nothing store-worthy happened since the last save point, say so in one line and stop.'
 }
 
@@ -144,6 +144,6 @@ export function compactionNote(input: CompactionInput): string {
   const transcript = input.transcript_path ? ` The full transcript is at ${input.transcript_path}.` : ''
   return '## Context was compacted\n' +
     `The conversation before this point is a summary now.${transcript}\n` +
-    'If the compacted part held real work that was not consolidated, run the consolidate skill in auto mode at the next natural stop, ' +
+    'If the compacted part held real work that was not consolidated, run the consolidate skill at the next natural stop, ' +
     'not in the middle of a running task: work from the summary and read the transcript where the summary is too thin.'
 }
