@@ -203,10 +203,10 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
     const legacyShown = all.filter(legacy).length
     const footer: string[] = []
     if (leftOut.size > 0 && overflow > 0) {
-      footer.push(`${overflow} entries listed by title only and ${leftOut.size} left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule for the ones left out.`)
+      footer.push(`${overflow} entries listed by title only and ${leftOut.size} left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule or type=profile for the ones left out.`)
     } else if (leftOut.size > 0) {
       // Only legacy entries gave way (they are title-only already): no "0 listed by title only".
-      footer.push(`${leftOut.size} entries left out to fit the boot's size budget — eml_list type=rule for the ones left out.`)
+      footer.push(`${leftOut.size} entries left out to fit the boot's size budget — eml_list type=rule or type=profile for the ones left out.`)
     } else if (overflow > 0) {
       footer.push(`${overflow} entries listed by title only to fit the boot's size budget — eml_get <id> for the full text.`)
     }
