@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 // The engram detail lives in a right-side drawer driven by a `?engram=<id>` query
 // param. Ported from packages/web/lib/engram-panel.ts, rewritten on react-router

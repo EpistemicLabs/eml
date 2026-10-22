@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { engramQuery, useAddTaskEntry } from "@/lib/queries";
 import { TypeBadge, TYPE_COLORS, withAlpha } from "@/components/ui/badge";
