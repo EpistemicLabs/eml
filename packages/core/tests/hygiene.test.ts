@@ -118,8 +118,8 @@ describe('hygieneCheck()', () => {
         'reference-without-source', 'profile-scope',
         'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
       ])
-      // the recurring checks come last: review-due, then the learning checks
-      expect(r.checks.slice(-3).map(c => c.id)).toEqual(['review-due', 'learning-unclear', 'learning-stale'])
+      // the recurring checks come last: review-due, then the learning check
+      expect(r.checks.slice(-2).map(c => c.id)).toEqual(['review-due', 'learning-unclear'])
     })
 
     it('reference-without-source: active references without source', () => {

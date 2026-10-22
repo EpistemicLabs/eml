@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, learningState, LEARNING_STALE_DAYS, renderBrainStateMarkdown, type WriteContext } from '../src'
+import { EML, hygieneCheck, renderBrainStateMarkdown, type WriteContext } from '../src'
 import { validDecision, validTask, validNote, validEvent, validLog, validProfile, validStatus, closedTask } from './fixtures'
 
 // v0.19 — fixes from the review of the write model (note v0.19-review-triage,
@@ -168,7 +168,7 @@ describe('v0.19 review fixes', () => {
       expect(() => eml.engrams.update(d.id, { review_note: 'x' })).toThrow(/is invalidated — a review confirms an active engram/)
       expect(() => eml.engrams.confirmReview(d.id, 'x')).toThrow(/is invalidated — a review confirms an active engram/)
       expect(() => eml.engrams.confirmReview(closedTask(eml).id, 'x')).toThrow(/an open task/)
-      expect(eml.engrams.entries(d.id)).toEqual([])
+      expect(eml.engrams.entries(d.id, ['review'])).toEqual([])
     })
 
     it('a content rewrite through track_task draws wikilinks', () => {
@@ -216,16 +216,6 @@ describe('v0.19 review fixes', () => {
       expect(eml.engrams.trackTask(t.id, { status: 'invalidated', outcome: 'other', text: 'x', keep: [] }, ctx())!.status).toBe('invalidated')
     })
 
-    it('reopening a parent offers the sub-tasks its invalidation took down, next to the bound items', () => {
-      const parent = eml.engrams.store(validTask({ title: 'parent' }), ctx())
-      const child = eml.engrams.store(validTask({ title: 'child', parent_id: parent.id }), ctx())
-      const bound = eml.engrams.store(validNote({ task_id: parent.id, properties: { binding: 'task' } }), ctx())
-      eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'dropped', text: 'x', keep: [] }, ctx())
-      expect(statusOf(child.id)).toBe('invalidated')
-      const r = eml.engrams.trackTask(parent.id, { status: 'planned', text: 'back on' }, ctx())!
-      expect(r.reopen_candidates!.map(c => `${c.type}:${c.id}`)).toEqual([`note:${bound.id}`, `task:${child.id}`])
-      expect(statusOf(child.id)).toBe('invalidated')
-    })
 
     it('decision-without-rationale: active decisions missing rationale or alternatives', () => {
       const d = eml.engrams.store(validDecision({ title: 'bare' }))
@@ -238,7 +228,7 @@ describe('v0.19 review fixes', () => {
       expect(check.findings.map(f => `${f.title}: ${f.reason}`).sort()).toEqual(['bare: no rationale, no alternatives.', 'half: no alternatives.'])
     })
 
-    it('learning-unclear and learning-stale: the recurring learning checks', () => {
+    it('learning-unclear: the recurring learning check (no age check)', () => {
       const unclear = eml.engrams.learn({ scope: 'user.ada', title: 'u', content: 'Do U.', source: 'user', happened: 'h', quote: 'q' }, ctx('s1'))
       if (!unclear.written) throw new Error('not written')
       eml.engrams.learn({ id: unclear.engram.id, source: 'observed', happened: 'did not hold', stance: 'contradicts' }, ctx('s2'))
@@ -246,15 +236,14 @@ describe('v0.19 review fixes', () => {
       if (!stale.written) throw new Error('not written')
       const fresh = eml.engrams.learn({ scope: 'user.ada', title: 'f', content: 'Do F.', source: 'observed', happened: 'once' }, ctx('s1'))
       if (!fresh.written) throw new Error('not written')
-      const later = new Date(Date.now() + (LEARNING_STALE_DAYS + 1) * 86400_000)
-      rawDb().prepare(`UPDATE entries SET at = ? WHERE engram_id = ?`).run(new Date(later.getTime() - 86400_000).toISOString(), fresh.engram.id)
+      const later = new Date(Date.now() + 365 * 86400_000)
       const r = hygieneCheck(eml, { now: later })
       const byId = (id: string) => r.checks.find(c => c.id === id)!
       expect(byId('learning-unclear')).toMatchObject({ kind: 'review', decides: 'user' })
       expect(byId('learning-unclear').findings.map(f => f.id)).toEqual([unclear.engram.id])
-      expect(byId('learning-stale')).toMatchObject({ kind: 'review', decides: 'agent' })
-      expect(byId('learning-stale').findings.map(f => f.id)).toEqual([stale.engram.id])
-      expect(learningState(eml.engrams.entries(stale.engram.id)).state).toBe('collecting')
+      expect(r.checks.find(c => c.id === 'learning-stale')).toBeUndefined()
+      expect(r.checks.flatMap(c => c.findings.map(f => f.id))).not.toContain(stale.engram.id)
+      expect(r.checks.flatMap(c => c.findings.map(f => f.id))).not.toContain(fresh.engram.id)
     })
   })
 
@@ -297,22 +286,6 @@ describe('v0.19 review fixes', () => {
   describe('second-session review', () => {
     const relate = (s: string, t: string, relation: 'derived_from' | 'refines' | 'related_to') =>
       eml.engrams.relate({ source_id: s, target_id: t, relation, detection_method: 'agent_declared' })
-
-    it('A2: invalidating a parent asks for keep on its sub-tasks\' bound items and reports them', () => {
-      const parent = eml.engrams.store(validTask({ title: 'parent' }))
-      const child = eml.engrams.store(validTask({ title: 'child', parent_id: parent.id }))
-      const d = eml.engrams.store(validDecision({ task_id: child.id, properties: { binding: 'task' } }))
-      const n = eml.engrams.store(validNote({ task_id: child.id, properties: { binding: 'task' } }))
-      expect(() => eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'x', text: 'x' }))
-        .toThrow(/bound to its open sub-tasks, which are invalidated with it: decision/)
-      const r = eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'x', text: 'x', keep: [n.id] }) as any
-      expect(r.closed_with_task.map((i: any) => i.id)).toEqual([d.id])
-      expect(r.kept.map((i: any) => i.id)).toEqual([n.id])
-      expect(statusOf(d.id)).toBe('invalidated')
-      expect(statusOf(n.id)).toBe('active')
-      expect(propsOf(n.id).binding).toBe('standing')
-      expect(statusOf(child.id)).toBe('invalidated')
-    })
 
     it('A3: a bound item belongs to one task; relate does not draw a second binding edge', () => {
       const t1 = eml.engrams.store(validTask({ title: 't1' }))

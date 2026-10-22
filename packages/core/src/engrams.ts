@@ -29,6 +29,8 @@ import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL } from './open-tasks'
 
 /** v0.13: the staleness-review label id — member #1 of the labels axis. */
 export const REVIEW_LABEL = 'review'
+/** v0.19.1: the change entry on a bound item that closed with its task (followed by the task id). */
+const CLOSED_WITH_TASK = 'closed with task'
 /**
  * v0.13: engram types eligible for the review sweep = the keys of
  * TYPE_REVIEW_DEFAULTS. Single source of truth — adding a reviewable type there
@@ -233,13 +235,12 @@ export interface LearnInput {
   stance?: string
   new_topic?: boolean
   rule_id?: string
-  task_id?: string
   tags?: string[]
   subjects?: string[]
 }
 const LEARN_KEYS: ReadonlySet<string> = new Set([
   'id', 'content', 'scope', 'title', 'source', 'happened', 'quote', 'stance', 'new_topic',
-  'rule_id', 'task_id', 'tags', 'subjects',
+  'rule_id', 'tags', 'subjects',
 ])
 
 export type LearnResult =
@@ -754,36 +755,6 @@ export class EngramStore {
     return rows.map(r => ({ parent_id: parentId, id: r.id, title: r.title }))
   }
 
-  /**
-   * Invalidating a parent invalidates its open sub-tasks, recursively, with
-   * outcome "parent invalidated". Raw writes (no re-validation) inside the
-   * caller's transaction; each child loses its review label like any closed task.
-   */
-  private cascadeInvalidate(parentId: string, stamp: EntryStamp = {}, keep: readonly string[] = []): { closed: BoundItem[], kept: BoundItem[] } {
-    const closed: BoundItem[] = []
-    const kept: BoundItem[] = []
-    for (const child of this.openSubtasksOf(parentId)) {
-      const props = this.propsOf(child.id)
-      props.outcome = 'parent invalidated'
-      this.db.prepare(`
-        UPDATE engrams SET status = 'invalidated', properties = ?, updated_at = datetime('now') WHERE id = ?
-      `).run(JSON.stringify(props), child.id)
-      this.stripReviewLabel(child.id)
-      this.appendTaskChange(child.id, 'invalidated: parent invalidated', stamp)
-      // v0.19: the sub-task's bound items close with it, under the parent's keep (S2)
-      const r = this.closeBoundItems(child.id, 'invalidated', keep, stamp)
-      const deeper = this.cascadeInvalidate(child.id, stamp, keep)
-      closed.push(...r.closed, ...deeper.closed)
-      kept.push(...r.kept, ...deeper.kept)
-    }
-    return { closed, kept }
-  }
-
-  /** The bound items of a task's open sub-tasks, all levels down (they close when the task is invalidated). */
-  private subtaskBoundItems(parentId: string): BoundItem[] {
-    return this.openSubtasksOf(parentId).flatMap(c => [...this.boundItems(c.id), ...this.subtaskBoundItems(c.id)])
-  }
-
   // === v0.19: the task lifecycle (eml_track_task) ===
 
   /** A server-written change entry in a task's journal (at the task's current stage). */
@@ -840,6 +811,9 @@ export class EngramStore {
       const props = this.propsOf(item.id)
       if (keep.includes(item.id)) {
         props.binding = 'standing'
+        // a task-bound decision is not reviewed; as standing it starts its review clock now
+        const reviewDays = TYPE_REVIEW_DEFAULTS[item.type as EngramType]
+        if (reviewDays !== undefined) props.review_due_at = new Date(Date.now() + reviewDays * 86400_000).toISOString()
         this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = datetime('now') WHERE id = ?`).run(JSON.stringify(props), item.id)
         entries.push(this.appendTaskChange(taskId, `kept as standing: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
         kept.push({ ...item })
@@ -847,6 +821,8 @@ export class EngramStore {
         const status = item.type === 'decision' ? taskStatus : 'invalidated'
         this.db.prepare(`UPDATE engrams SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, item.id)
         this.stripReviewLabel(item.id)
+        // the item's own journal says why it closed; a reopen of the task offers it back by this entry
+        appendEntry(this.db, item.id, { kind: 'change', text: `${CLOSED_WITH_TASK} ${taskId}` }, stamp)
         entries.push(this.appendTaskChange(taskId, `closed with the task: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
         closed.push({ ...item, status })
       }
@@ -867,8 +843,7 @@ export class EngramStore {
    * closing needs an outcome and an open task (closed → closed is reopen +
    * close); bound decisions and notes close with the task unless kept (an
    * absent `keep` with bound items errors with their list); a parent can't be
-   * resolved while a sub-task is open; invalidating a parent invalidates its
-   * open sub-tasks. `supersedes` replaces other open tasks by this one (their
+   * closed while a sub-task is open. `supersedes` replaces other open tasks by this one (their
    * bound items move here); `scope` moves the task. Returns null for an
    * unknown id.
    */
@@ -935,23 +910,18 @@ export class EngramStore {
       throw new Error('Invalid engram: closing a task needs an outcome — one line, shown in task lists.')
     }
     if (input.keep !== undefined && !closing) throw new Error('Invalid engram: keep is only for closing a task.')
-    if (closing && newStatus === 'resolved') {
+    if (closing) {
       const open = this.openSubtasksOf(id)
       if (open.length > 0) {
         throw new Error(`Invalid engram: task ${id} has open sub-tasks: ${open.map(c => `${c.id} ${c.title ?? '(no title)'}`).join(', ')} — close each or move it (eml_track_task(<sub-task id>, parent_id=…)) first.`)
       }
     }
     if (closing) {
-      const own = this.boundItems(id)
-      // invalidating cascades to the open sub-tasks, and their bound items close too
-      const viaSubtasks = newStatus === 'invalidated' ? this.subtaskBoundItems(id) : []
-      const bound = [...own, ...viaSubtasks]
+      const bound = this.boundItems(id)
       if (bound.length > 0 && input.keep === undefined) {
-        const show = (items: BoundItem[]) => items.map(b => `${b.type} ${b.title ?? '(no title)'} (${b.id})`).join('; ')
         throw new Error(
           `Invalid engram: ${bound.length} ${bound.length > 1 ? 'items are' : 'item is'} bound to this task and close${bound.length > 1 ? '' : 's'} with it: ` +
-          [own.length > 0 ? show(own) : '', viaSubtasks.length > 0 ? `bound to its open sub-tasks, which are invalidated with it: ${show(viaSubtasks)}` : '']
-            .filter(Boolean).join('; ') + '. ' +
+          bound.map(b => `${b.type} ${b.title ?? '(no title)'} (${b.id})`).join('; ') + '. ' +
           'Pass keep=[ids] for the ones that still hold once the task is done (they become standing; say why in text), or keep=[] to close them all.',
         )
       }
@@ -1035,15 +1005,9 @@ export class EngramStore {
         closedWith = r.closed
         kept = r.kept
         written.push(...r.entries)
-        if (newStatus === 'invalidated') {
-          const c = this.cascadeInvalidate(id, stamp, input.keep ?? [])
-          closedWith = [...closedWith, ...c.closed]
-          kept = [...kept, ...c.kept]
-        }
       }
-      // what a reopen may bring back: the bound items that closed with it, and
-      // the sub-tasks the invalidate cascade took down (an offer, never automatic)
-      if (reopening) reopenCandidates = [...this.boundItems(id, ['resolved', 'invalidated']), ...this.cascadedSubtasksOf(id)]
+      // what a reopen may bring back: the bound items that closed with it (an offer, never automatic)
+      if (reopening) reopenCandidates = this.closedWithTask(id)
       // any movement clears the inactivity review
       this.stripReviewLabel(id)
     })()
@@ -1064,15 +1028,16 @@ export class EngramStore {
     }
   }
 
-  /** Direct sub-tasks the invalidate cascade closed (outcome "parent invalidated"). */
-  private cascadedSubtasksOf(parentId: string): BoundItem[] {
-    return this.db.prepare(`
-      SELECT e.id, e.type, e.title, e.status FROM relations r
-      JOIN engrams e ON e.id = r.source_id
-      WHERE r.target_id = ? AND r.relation = 'part_of' AND e.type = 'task' AND e.status = 'invalidated'
-        AND json_extract(e.properties, '$.outcome') = 'parent invalidated'
-      ORDER BY e.created_at ASC
-    `).all(parentId) as BoundItem[]
+  /**
+   * The bound items that closed with this task and stayed closed since: their
+   * last change entry is that close. One closed by hand never carries it.
+   */
+  private closedWithTask(taskId: string): BoundItem[] {
+    const marker = `${CLOSED_WITH_TASK} ${taskId}`
+    return this.boundItems(taskId, ['resolved', 'invalidated']).filter(item => {
+      const changes = this.entries(item.id, ['change'])
+      return changes[changes.length - 1]?.text === marker
+    })
   }
 
   private parentOf(id: string): string | undefined {
@@ -1463,6 +1428,8 @@ export class EngramStore {
         AND c.status = 'active'
         AND json_extract(c.properties, '$.review_due_at') IS NOT NULL
         AND datetime(json_extract(c.properties, '$.review_due_at')) < datetime(?)
+        -- v0.19.1: a task-bound decision is not reviewed; its task covers it
+        AND coalesce(json_extract(c.properties, '$.binding'), 'standing') = 'standing'
         AND NOT EXISTS (
           SELECT 1 FROM engram_labels el
           WHERE el.engram_id = c.id AND el.label_id = ?
@@ -1930,6 +1897,10 @@ export class EngramStore {
       if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope)
       superseded.push(...this.applySupersedes(id, supersedePlan, stamp).superseded)
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
+      // a decision's or note's status change goes into its journal (a reopen of its task reads the last one)
+      if ((type === 'decision' || type === 'note') && newStatus !== existing.status) {
+        appendEntry(this.db, id, { kind: 'change', text: `status ${existing.status} → ${newStatus}` }, stamp)
+      }
       // the supersede is undone: its edge goes, so the engram can be superseded again
       if (reactivatesSuperseded) this.db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
       if (logCorrection) appendEntry(this.db, id, { kind: 'change', text: logCorrection }, stamp)
@@ -2040,10 +2011,6 @@ export class EngramStore {
       const r = this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(input.rule_id) as { type: string } | undefined
       if (r?.type !== 'rule') throw new Error(`Invalid engram: rule_id ${input.rule_id} is not a rule.`)
     }
-    if (input.task_id !== undefined) {
-      const t = this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(input.task_id) as { type: string } | undefined
-      if (t?.type !== 'task') throw new Error(`Invalid engram: task_id ${input.task_id} is not a task.`)
-    }
     const evidence: EntryInput = {
       kind: 'evidence', text: input.happened, source: input.source as EvidenceSource, stance: stance as EvidenceStance,
       ...(input.quote !== undefined ? { quote: input.quote } : {}),
@@ -2057,7 +2024,7 @@ export class EngramStore {
       if (existing.type !== 'learning') throw new Error(`Invalid engram: ${input.id} is a ${existing.type}, not a learning.`)
       if (existing.status !== 'active') throw new Error(`Invalid engram: learning ${input.id} is ${existing.status} — evidence goes to an active learning.`)
       const extra = ['scope', 'title', 'new_topic', 'tags', 'subjects'].filter(k => (input as unknown as Record<string, unknown>)[k] !== undefined)
-      if (extra.length > 0) throw new Error(`Invalid engram: ${extra.join(', ')} only on create — adding evidence takes source, happened, quote, stance, rule_id, task_id (and content to sharpen the lesson).`)
+      if (extra.length > 0) throw new Error(`Invalid engram: ${extra.join(', ')} only on create — adding evidence takes source, happened, quote, stance, rule_id (and content to sharpen the lesson).`)
       this.db.transaction(() => {
         appendEntry(this.db, input.id!, evidence, stamp)
         if (input.content !== undefined && input.content !== existing.content) {
@@ -2068,7 +2035,6 @@ export class EngramStore {
         } else {
           this.db.prepare(`UPDATE engrams SET updated_at = datetime('now') WHERE id = ?`).run(input.id)
         }
-        if (input.task_id !== undefined) this.appendTaskChange(input.task_id, `learning evidence added: ${existing.title ?? input.id} (${input.id})`, stamp)
       })()
       const engram = this.getRaw(input.id)!
       return { written: true, engram, learning: learningState(this.entries(input.id)) }
@@ -2097,14 +2063,6 @@ export class EngramStore {
         ctx.session_id ?? null, ctx.model ?? null, ctx.harness ?? null, now, now)
       this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)
       appendEntry(this.db, id, evidence, stamp)
-      if (input.task_id !== undefined) {
-        this.db.prepare(`
-          INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-          VALUES (?, ?, ?, 'refines', 'agent_declared', 1.0, datetime('now'))
-          ON CONFLICT(source_id, target_id, relation) DO NOTHING
-        `).run(uuid(), id, input.task_id)
-        this.appendTaskChange(input.task_id, `learning written: ${input.title} (${id})`, stamp)
-      }
       if (tagSlugs && tagSlugs.length > 0) this.insertEngramTags(id, tagSlugs)
       if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs)
       this.materializeWikilinks(id, input.content!, input.scope!)

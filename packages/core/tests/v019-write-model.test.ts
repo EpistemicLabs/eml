@@ -197,15 +197,6 @@ describe('v0.19 write model', () => {
       expect(() => eml.engrams.trackTask(t.id, { status: 'superseded', text: 'x' })).toThrow(/planned, active, resolved or invalidated/)
     })
 
-    it('invalidating a parent closes the bound items of its sub-tasks too', () => {
-      const parent = hub()
-      const child = eml.engrams.store(validTask({ scope: 'project.p', title: 'child', parent_id: parent.id }))
-      const d = bound(child.id, 'decision', 'child-approach')
-      eml.engrams.trackTask(parent.id, { status: 'invalidated', outcome: 'dropped', text: 'stop', keep: [] })
-      expect(statusOf(child.id)).toBe('invalidated')
-      expect(statusOf(d.id)).toBe('invalidated')
-    })
-
     it('a task superseded by create_task hands its bound items to the successor', () => {
       const old = hub()
       const d = bound(old.id, 'decision', 'approach')
