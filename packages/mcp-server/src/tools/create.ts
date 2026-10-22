@@ -99,7 +99,7 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),
-      supersedes: supersedes('Ids of tasks this one replaces; they are closed as superseded and their bound decisions and notes move here.'),
+      supersedes: supersedes('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),

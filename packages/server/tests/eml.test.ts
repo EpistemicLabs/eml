@@ -1174,28 +1174,33 @@ describe('EML v0.2', () => {
     it('open_tasks of one priority: last activity first (task update or journal entry)', () => {
       const raw = (eml as any).db
       const task = (content: string, updatedAt: string) => {
-        const t = eml.engrams.store(validTask({ content, scope: 'project.eml', properties: { priority: 'normal' } }))
+        const t = eml.engrams.store(validTask({ content, scope: 'project.eml', status: 'active', properties: { priority: 'normal' } }))
         raw.prepare('UPDATE engrams SET updated_at = ?, created_at = ? WHERE id = ?').run(updatedAt, updatedAt, t.id)
         // the created entry carries the real time; move it back with the task
         raw.prepare('UPDATE entries SET at = ? WHERE engram_id = ?').run(updatedAt, t.id)
         return t
       }
-      const old = task('old, but a journal entry today', '2026-01-01T00:00:00.000Z')
-      task('touched in march', '2026-03-01T00:00:00.000Z')
-      task('touched in february', '2026-02-01T00:00:00.000Z')
+      // active: an idle planned task would be backlog and leave the list
+      const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString()
+      const old = task('old, but a journal entry today', ago(90))
+      task('touched in march', ago(10))
+      task('touched in february', ago(20))
       // a journal entry alone (the task row untouched) counts as activity
       appendEntry(raw, old.id, { kind: 'note', text: 'worked on it' })
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
 
-    it('recent_decisions sorted by significance DESC', () => {
-      // read path: significance as an older brain holds it (no longer written)
-      eml.engrams.store(validDecision({ content: 'normal', scope: 'project.eml' }))
-      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'critical', scope: 'project.eml' })).id, 'critical')
-      plantSignificance(eml, eml.engrams.store(validDecision({ content: 'high', scope: 'project.eml' })).id, 'high')
+    it('recent_decisions newest first, whatever significance an older brain holds', () => {
+      const raw = (eml as any).db
+      const at = (id: string, iso: string) => raw.prepare('UPDATE engrams SET created_at = ? WHERE id = ?').run(iso, id)
+      const old = eml.engrams.store(validDecision({ content: 'old critical', scope: 'project.eml' }))
+      plantSignificance(eml, old.id, 'critical')
+      at(old.id, '2026-01-01T00:00:00.000Z')
+      at(eml.engrams.store(validDecision({ content: 'newer', scope: 'project.eml' })).id, '2026-03-01T00:00:00.000Z')
+      at(eml.engrams.store(validDecision({ content: 'newest', scope: 'project.eml' })).id, '2026-05-01T00:00:00.000Z')
       const state = eml.projects.getBrainState('eml')!
-      expect(state.recent_decisions.map(d => d.content)).toEqual(['critical', 'high', 'normal'])
+      expect(state.recent_decisions.map(d => d.content)).toEqual(['newest', 'newer', 'old critical'])
     })
 
     // v0.9.1 Cluster 1: namespace filter removed from BrainState — the corresponding test is obsolete.

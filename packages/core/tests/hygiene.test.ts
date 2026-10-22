@@ -115,11 +115,11 @@ describe('hygieneCheck()', () => {
       const r = hygieneCheck(eml)
       const nineteen = r.checks.filter(c => c.since_schema === 19).map(c => c.id)
       expect(nineteen).toEqual([
-        'reference-without-source', 'profile-scope', 'superseded-without-successor',
+        'reference-without-source', 'profile-scope',
         'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
       ])
-      // the recurring checks come last: review-due, then the learning checks
-      expect(r.checks.slice(-3).map(c => c.id)).toEqual(['review-due', 'learning-unclear', 'learning-stale'])
+      // the recurring checks come last: review-due, then the learning check
+      expect(r.checks.slice(-2).map(c => c.id)).toEqual(['review-due', 'learning-unclear'])
     })
 
     it('reference-without-source: active references without source', () => {
@@ -135,17 +135,6 @@ describe('hygieneCheck()', () => {
       ;(eml as any).db.prepare(`UPDATE engrams SET scope = 'global' WHERE id = ?`).run(p.id)
       eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'fine', content: 'a facet' })
       expect(ids('profile-scope')).toEqual([p.id])
-    })
-
-    it('superseded-without-successor: superseded rows without an incoming supersedes edge; B1 links them', () => {
-      const a = eml.engrams.store({ type: 'note', scope: 'global', title: 'a', content: 'old' })
-      ;(eml as any).db.prepare(`UPDATE engrams SET status = 'superseded' WHERE id = ?`).run(a.id)
-      const b = eml.engrams.store({ type: 'note', scope: 'global', title: 'b', content: 'older' })
-      eml.engrams.store({ type: 'note', scope: 'global', title: 'b2', content: 'newer', supersedes: [b.id] })
-      expect(ids('superseded-without-successor')).toEqual([a.id])
-      const successor = eml.engrams.store({ type: 'note', scope: 'global', title: 'a2', content: 'new' })
-      eml.engrams.update(successor.id, { supersedes: [a.id] }, ctx)
-      expect(ids('superseded-without-successor')).toEqual([])
     })
 
     it('rule-without-why and rule-without-agreement: older rules', () => {

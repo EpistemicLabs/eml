@@ -1,12 +1,12 @@
 ---
 name: consolidate
-description: End-of-session brain consolidation. Scans the current session for store-worthy moments (decisions, status changes, tasks, events, learnings, loose ends), reconciles existing open tasks against what happened, recalls against the EML brain to dedup, and proposes an approve-before-write engram diff. In auto mode — asked for by an EML hint or another skill, not by the user — it writes additions without asking and reports them. Invoke at session end, at a handoff to a fresh session, or when the user says "consolidate" / "wrap up" / "update the brain" / "konsolidieren".
+description: Consolidation of the session into the EML brain. Scans the current session for store-worthy moments (decisions, status changes, tasks, events, learnings, loose ends), reconciles existing open tasks against what happened, recalls against the EML brain to dedup, writes what holds and reports it with an undo. Only a new rule waits for the user. Invoke at session end, at a handoff to a fresh session, when an EML hint asks for it, or when the user says "consolidate" / "wrap up" / "update the brain" / "konsolidieren".
 ---
 <!-- managed-by: engramprotocol-setup -->
 
 # consolidate
 
-Turn a finished session into durable brain writes — without duplicating what's
+Turn a finished session into durable EML brain writes — without duplicating what's
 already there and without promoting noise. This is the *save* half of the session
 lifecycle (boot is the *load* half).
 
@@ -14,30 +14,16 @@ The judgment, not the capture, is the hard part. Most of what happened this
 session should NOT become an engram. Promote only what will change a future
 action or answer.
 
-This skill is the single end-of-session ritual: write the session log, turn
-status changes into a new status, open todos into tasks, done todos into
-resolved tasks.
+You write on your own and report what you wrote; the user can undo any of it.
+Only a new rule is a question — it needs the user's yes.
 
 ## When to invoke
 
 - The user says "consolidate", "wrap up", "update the brain".
 - At a handoff to a fresh session (log first, so the next session can dock on;
   step 7 then hands over).
-- Before context gets compacted, if the session did real work.
-- An EML hint in the context asks for it "in auto mode" (the session grew a lot,
-  or the context was just compacted).
-
-## Modes
-
-- **Default** — the user invoked the skill or asked for it in their own words.
-  Present the diff and write only after approval (steps 5 and 6).
-- **Auto** — an EML hint, or a skill that runs consolidate as one of its steps
-  (getting-started at its close), asked for "consolidate in auto mode", and the
-  user did not ask themselves. Nobody may be there to approve, so write what only adds
-  and hold back what closes or replaces (step 5a).
-
-Steps 1–4 are the same in both modes. When in doubt which mode applies, it is
-the default.
+- An EML hint asks for it (the session grew a lot, or the context was just
+  compacted), or another skill runs it as a step (getting-started at its close).
 
 **After a compaction** the session before it is a summary. Take the candidates
 from the summary; read the transcript the hint names only where the summary is
@@ -81,117 +67,91 @@ Scan THIS session's conversation for store-worthy moments, grouped by type:
   session docks on. Consolidated before in this session? Then update that log
   (eml_update — the eml_log error names it) instead of writing a second one.
 
-### 2. Reconcile open tasks (the closing side of the lifecycle)
+### 2. Reconcile open tasks
 Load the **open** tasks (planned + active) for each scope the session touched
 (`eml_show <scope>`, or `eml_list type=task` with `status=planned` and
 `status=active`). For each, check it against what actually happened this
 session:
-- Got finished → **RESOLVE** (status=resolved + outcome + text (the story);
-  with bound decisions/notes keep=[ids that outlive the task] or keep=[] to
-  close them all). Abandoned → **INVALIDATE** (status=invalidated + outcome
-  (why) + text; with bound decisions/notes keep=[ids that outlive the task]
-  or keep=[] to close them all). Decisions and notes bound to the task close
-  with it: check them (eml_get on the task lists them) and keep the ones that
-  still hold. Don't let done work stay open.
+- Got finished → **RESOLVE** (status=resolved + outcome + text). Abandoned →
+  **INVALIDATE** (status=invalidated + outcome (why) + text). Decisions and
+  notes bound to the task close with it: check them (eml_get on the task lists
+  them) and pass keep=[ids that still hold] or keep=[]. A parent closes only
+  once its sub-tasks are closed or moved.
 - Started this session → **ADVANCE** (status=active).
-- Progress worth keeping → **ENTRY** on the task (eml_track_task with text),
-  not a content rewrite.
-- Stage moved (e.g. planning → ready) → **STAGE** (eml_track_task with stage
-  and text).
-- Decisions taken or a plan written inside the task → write them with task_id
-  and binding (they link to the task and note themselves in its journal).
+- Progress worth keeping → **ENTRY** (eml_track_task with text).
+- Stage moved → **STAGE** (eml_track_task with stage and text).
 - Newly blocked → set blockers; the status stays planned. Scope changed
-  materially → **UPDATE** (eml_track_task with content and text).
+  materially → eml_track_task with content and text.
 - Untouched → leave it.
 
 Also look for ripe learnings (`eml_list type=learning state=ripe`): each is a
-question for the user — **RULE?** in the diff — never a rule written by you.
-Step 1 opens/creates, step 2 closes/advances. Skipping it lets
-resolved-but-still-open tasks accumulate.
+**RULE?** question for the user, never a rule written by you.
 
-### 3. Recall-before-write (per new candidate)
+### 3. Recall before write (per new candidate)
 For each candidate from step 1 call `eml_recall <topic>` (or `eml_list` with
 filters).
 - Matching active engram, same state → **SKIP** (don't duplicate).
-- Matching but outdated → **SUPERSEDE** candidate: the new engram replaces it
-  (supersedes=[old id] on the write).
-- No match → **NEW** candidate.
+- Matching but outdated → **SUPERSEDE**: the new engram replaces it
+  (supersedes=[old id] on the write). A task is not replaced here: close the
+  old one (RESOLVE / INVALIDATE) and open the new one.
+- No match → **NEW**.
 - A learning candidate needs no recall of its own: eml_learning checks the
   topic and names the existing learning to add to.
-Never skip this step — duplication is the #1 failure mode of auto-consolidation.
+Never skip this step — duplication is the #1 failure mode of consolidation.
 
 ### 4. Classify
-Type-route and scope-route each NEW/SUPERSEDE candidate per the brain's system
-rules (scope follows the engram's *content*, not who reported it). Enforce
-one-topic-one-engram: never store the same thing as decision + log + status.
-Drop anything that fails the "will this change a future action?" test.
+Type-route and scope-route each candidate per the brain's system rules (scope
+follows the engram's *content*, not who reported it). One topic, one engram:
+never the same thing as decision + log + status. Drop anything that fails the
+"will this change a future action?" test, and anything whose type, scope or
+truth the session does not settle — that is a question for the user, not a
+write.
 
-### 5. Present the diff (BEFORE writing anything)
-Show the user a structured diff and stop:
-
-    ## Consolidation diff — <date>
-
-    NEW (n)
-      [type] scope / title
-        "one-line content preview"
-    SUPERSEDE (n)
-      [type] scope / title  —  <old state> → <new state>  (id: <short>)
-    RESOLVE (n)
-      [task] scope / title  —  active → resolved · outcome "…"  (id: <short>)
-    INVALIDATE (n)
-      [task] scope / title  —  planned → invalidated · outcome "…"  (id: <short>)
-    ADVANCE (n)
-      [task] scope / title  —  planned → active  (id: <short>)
-    ENTRY (n)
-      [entry] scope / title  —  "one-line entry"  (id: <short>)
-    STAGE (n)
-      [stage] scope / title  —  planning → ready  (id: <short>)
-    LEARNING (n)
-      [learning] scope / title  —  new | + evidence (source)  ·  ripe?  (id: <short>)
-    RULE? — ask the user (n)
-      "the way of working" — from: the user's words | ripe learning <short>
-    SKIP — already covered (n)
-      [type] scope / title  —  active, unchanged
-
-    → approve all · edit <#> · drop <#>
-
-### 5a. Auto mode: write additions, hold back the rest
-Instead of steps 5 and 6:
-
-- **Write without asking:** NEW engrams, ENTRY, STAGE, ADVANCE and LEARNING.
-  A new status counts as NEW; it supersedes the prior one by itself and the
-  prior one stays in the history.
-- **Do not write:** SUPERSEDE, RESOLVE and INVALIDATE, and any candidate whose
-  type, scope or truth the session does not settle. They close or replace
-  something that exists, or need the user's knowledge. A rule is never written
-  in auto mode: RULE? items stay questions.
-
-Then report in the diff format above, under the heading
-`## Consolidated (auto) — <date>`, with the id of every written engram, the
-held-back items under `HELD BACK — needs you (n)`, and this last line:
-
-    → approve <#> · edit <#> · undo <#>
-
-Keep the report short and go on with what the user asked for. On "approve"
-write the held-back item; on "edit" correct the engram (`eml_update`, a task
-`eml_track_task`); on "undo" invalidate it (`eml_update status=invalidated`; a
-task you created: `eml_track_task` status=invalidated, outcome "undone", text
-"undone", keep=[]; an advanced task goes back to its former status with
-`eml_track_task`).
-
-### 6. Write on approval only
-After the user approves/edits, write with the create tool of each type
-(`eml_decide` / `eml_set_status` / `eml_create_task` / `eml_note` / `eml_event` /
+### 5. Write
+Write every candidate with the create tool of its type (`eml_decide` /
+`eml_set_status` / `eml_create_task` / `eml_note` / `eml_event` /
 `eml_reference` / `eml_learning` / `eml_log`; decisions and plans from a task
 with `task_id` and `binding`; a replacement with `supersedes`), everything
-about an existing task with `eml_track_task` (ENTRY / STAGE / ADVANCE /
-RESOLVE / INVALIDATE), and corrections of other engrams with `eml_update`.
+about an existing task with `eml_track_task`, and corrections of other engrams
+with `eml_update`. A new status supersedes the prior one by itself.
+
+Keep, for the report, what each write changed: the new id, or the status or
+stage the engram had before.
+
+### 6. Report, with undo
+End with a short report and go on with what the user asked for:
+
+    ## Consolidated — <date>
+    <#>. NEW [type] scope / title  (id: <short>)
+    <#>. SUPERSEDE [type] title  (id: <short>) — replaces <old short>
+    <#>. RESOLVE | INVALIDATE | ADVANCE [task] title — <before> → <after>  (id: <short>)
+    <#>. STAGE [task] title — <before> → <after>  (id: <short>)
+    <#>. ENTRY [task] title — "one line"  (id: <short>)
+    <#>. LEARNING [learning] title — new | + evidence  (id: <short>)
+    QUESTIONS (n)
+    <#>. RULE? "the way of working" — from: the user's words | ripe learning <short>
+    <#>. <anything you did not settle> — <what is open>
+    Dropped as ephemeral: …
+
+    → undo <#> · change <#>
+
+**undo** takes back one write of this run:
+- NEW, LEARNING new → `eml_update status=invalidated`; a task you created →
+  `eml_track_task` status=invalidated, outcome "undone", text "undone", keep=[].
+- SUPERSEDE → invalidate the new engram, then reactivate the old one
+  (`eml_update status=active`).
+- RESOLVE, INVALIDATE, ADVANCE, STAGE → back to what it was before
+  (`eml_track_task` with status or stage and text "undone"); a reopen lists the
+  items that closed with the task — reactivate them.
+- ENTRY, `+ evidence` → a journal only grows; the entry stays. Say so.
+
+**change** corrects the engram (`eml_update`, a task `eml_track_task`).
+
 A RULE? the user said yes to → `eml_rule` with `title`, `applies` (plus
 `trigger` when situational), `content` (what to do, ≤ 200 chars), `agreed`
 (their words) and `why`; from a ripe learning with `from_learning`. A no to a
 ripe learning → `eml_learning` on it with its `id`, `source=user`, `happened`,
 `quote` (the user's words) and stance declined.
-A new status supersedes the prior one by itself — do not patch the old one.
 
 ### 7. Hand over, if this was a handoff
 Only when the consolidation is the first half of a move to a fresh session —
@@ -210,13 +170,11 @@ Then end your turn with one line on where the work continues. Do not start the
 next task in this session.
 
 ## Guardrails
-- Default mode: nothing is written before explicit approval. The diff is a
-  proposal; only the reads in steps 2–3 run automatically.
-- Auto mode never closes, invalidates or supersedes an engram, and never skips
-  the recall in step 3.
+- A rule is never written without the user's yes.
+- Never skip the recall in step 3.
 - Who wrote it, in which session and with which model is stamped by the
   server; write only the fields the tool lists.
 - project.<id> / entity.<id> scope must already exist — create first if not.
-- If a candidate is borderline, default to DROP and mention it in the diff
-  footer ("dropped as ephemeral: …") so the user can pull it back.
+- If a candidate is borderline, drop it and name it in the report's "Dropped"
+  line so the user can pull it back.
 - Engram content is English (conversation language independent).

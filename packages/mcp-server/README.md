@@ -53,10 +53,10 @@ eml-mcp-server hook stop               [--config <path>]
   cut mid-text. Register it as a second `SessionStart` command without a matcher: it prints on
   every source (startup, resume, compact, clear), so the block is current after a compaction or a
   resume and the hook keeps no state. A project the brain does not know gets no block.
-- **stop** asks for the `consolidate` skill's auto mode before the context is compacted, because a
+- **stop** asks for the `consolidate` skill before the context is compacted, because a
   compaction summary is written to continue the task, not to keep what belongs in the brain. When
   the agent ends a turn, the hook reads the context size from the transcript named in the hook
-  input (Claude Code's and Codex's formats). Has the session grown by 250,000 tokens since its last
+  input (Claude Code's and Codex's formats). Has the session grown by 150,000 tokens since its last
   save point, it blocks the stop once (`{"decision":"block","reason"}`), and the agent consolidates
   in the same turn — before the session goes idle, where it can be compacted with nobody there to
   give the agent a turn. A turn continued this way (`stop_hook_active`) is let through. With an

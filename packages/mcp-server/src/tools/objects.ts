@@ -16,7 +16,7 @@ const OBJECTS = ['project', 'entity', 'tag', 'subject'] as const
 const FIELDS =
   'Fields per object (anything else errors with the list):\n' +
   '- project (internal work: a codebase or undertaking): name, id (optional, else the slug of name; used as ' +
-  'project.<id>), status active · paused · archived, goal (one line: what done looks like), description (1-2 ' +
+  'project.<id>), status active · paused (archived: eml_update_object, sets its end date), goal (one line: what done looks like), description (1-2 ' +
   'sentences), owner, parent_project, started_at, status_tracks (what the project\'s status is about), metadata ' +
   '(flat text map: repo, infra, url …)\n' +
   '- entity (an external person, org or asset): name, id, kind (required) person · org · asset, status active · archived, ' +

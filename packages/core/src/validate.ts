@@ -178,7 +178,7 @@ export function validateScopeExists(scope: string, stores: ScopeStores): void {
     if (!store.exists(id)) {
       // v0.19: projects and entities are objects (eml_create_object); users and agents come from setup / the cockpit.
       const hint = label === 'project' || label === 'entity'
-        ? `Create it first with eml_create_object(object=${label}, name=…, id=${id}).`
+        ? `Create it first with eml_create_object(object=${label}, name=…, id=${id}${label === 'entity' ? ', kind=person|org|asset' : ''}).`
         : `Users and agents are set up by the cockpit, not by a write.`
       throw new Error(`Scope "${scope}" references unknown ${label} "${id}". ${hint}`)
     }
