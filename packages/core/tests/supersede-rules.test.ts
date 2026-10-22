@@ -70,9 +70,9 @@ describe('supersede rules', () => {
       const a = eml.engrams.store(validNote({ title: 'a' }))
       eml.engrams.update(a.id, { status: 'invalidated' })
       const b = eml.engrams.store(validNote({ title: 'b', supersedes: [a.id] }))
-      // a keeps its status under b; reactivated, it still cannot take b as its predecessor
-      eml.engrams.update(a.id, { status: 'active' })
-      expect(() => eml.engrams.update(a.id, { supersedes: [b.id] })).toThrow(`${a.id} is already in the supersedes chain of ${b.id} — superseding it would close a loop`)
+      // a keeps its status under b and cannot come back while b holds, so it can't take b as its predecessor
+      expect(() => eml.engrams.update(a.id, { status: 'active' })).toThrow(`${a.id} is replaced by ${b.id}`)
+      expect(() => eml.engrams.update(a.id, { supersedes: [b.id] })).toThrow(/only an active engram supersedes another/)
       expect(statusOf(b.id)).toBe('active')
     })
   })
@@ -88,6 +88,52 @@ describe('supersede rules', () => {
       const right = eml.engrams.store(validNote({ title: 'right', supersedes: [old.id] }))
       expect(statusOf(old.id)).toBe('superseded')
       expect(edge(right.id, old.id)).toBeTruthy()
+    })
+  })
+
+  describe('a closed engram with a successor stays closed', () => {
+    it('R1: a decision closed and only linked comes back only once its successor is invalidated', () => {
+      const d1 = eml.engrams.store(validDecision({ title: 'd1' }))
+      eml.engrams.update(d1.id, { status: 'invalidated' })
+      const d2 = eml.engrams.store(validDecision({ title: 'd2', supersedes: [d1.id] }))
+      expect(() => eml.engrams.update(d1.id, { status: 'active' })).toThrow(`${d1.id} is replaced by ${d2.id} — it is reactivated only once its successor is invalidated`)
+      expect(statusOf(d1.id)).toBe('invalidated')
+      eml.engrams.update(d2.id, { status: 'invalidated' })
+      eml.engrams.update(d1.id, { status: 'active' })
+      expect(edge(d2.id, d1.id)).toBeFalsy()
+      const d3 = eml.engrams.store(validDecision({ title: 'd3', supersedes: [d1.id] }))
+      expect(statusOf(d1.id)).toBe('superseded')
+      expect(edge(d3.id, d1.id)).toBeTruthy()
+    })
+
+    it('an invalidated successor is history: the closed engram can be superseded again', () => {
+      const old = eml.engrams.store(validNote({ title: 'old' }))
+      eml.engrams.update(old.id, { status: 'expired' })
+      const undone = eml.engrams.store(validNote({ title: 'undone', supersedes: [old.id] }))
+      eml.engrams.update(undone.id, { status: 'invalidated' })
+      const next = eml.engrams.store(validNote({ title: 'next', supersedes: [old.id] }))
+      expect(edge(next.id, old.id)).toBeTruthy()
+      expect(statusOf(old.id)).toBe('expired')
+    })
+
+    it('R3: a resolved task with a successor reopens only once its successor is invalidated', () => {
+      const done = eml.engrams.store(validTask({ title: 'done' }))
+      eml.engrams.trackTask(done.id, { status: 'resolved', outcome: 'shipped', text: 'done', keep: [] })
+      const next = eml.engrams.store(validTask({ title: 'next', supersedes: [done.id] }))
+      expect(() => eml.engrams.trackTask(done.id, { status: 'active', text: 'again' })).toThrow(`${done.id} is replaced by ${next.id}`)
+      eml.engrams.trackTask(next.id, { status: 'invalidated', outcome: 'undone', text: 'undone', keep: [] })
+      expect(eml.engrams.trackTask(done.id, { status: 'active', text: 'again' })!.status).toBe('active')
+      expect(edge(next.id, done.id)).toBeFalsy()
+    })
+
+    it('R2: a reopen does not offer a bound item that was replaced since', () => {
+      const task = eml.engrams.store(validTask({ title: 'work' }))
+      const d = eml.engrams.store(validDecision({ task_id: task.id, properties: { binding: 'task' } }))
+      const kept = eml.engrams.store(validDecision({ title: 'kept-out', task_id: task.id, properties: { binding: 'task' } }))
+      eml.engrams.trackTask(task.id, { status: 'resolved', outcome: 'done', text: 'done', keep: [] })
+      eml.engrams.store(validDecision({ title: 'replacement', supersedes: [d.id] }))
+      const r = eml.engrams.trackTask(task.id, { status: 'active', text: 'back' })!
+      expect((r.reopen_candidates ?? []).map(c => c.id)).toEqual([kept.id])
     })
   })
 

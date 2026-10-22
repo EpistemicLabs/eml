@@ -136,10 +136,12 @@ End with a short report and go on with what the user asked for:
     → undo <#> · change <#>
 
 **undo** takes back one write of this run:
-- NEW, LEARNING new → `eml_update status=invalidated`; a task you created →
+- NEW, LEARNING new → `eml_update status=invalidated` (a new status: see below); a task you created →
   `eml_track_task` status=invalidated, outcome "undone", text "undone", keep=[].
-- SUPERSEDE → invalidate the new engram, then reactivate the old one
-  (`eml_update status=active`).
+- SUPERSEDE → invalidate the new engram; if the old one was open before this
+  run, reactivate it (`eml_update status=active`).
+- a new status → set the previous state again (`eml_set_status`), so the scope
+  keeps a current status.
 - RESOLVE, INVALIDATE, ADVANCE, STAGE → back to what it was before
   (`eml_track_task` with status or stage and text "undone"); a reopen lists the
   items that closed with the task — reactivate them.
