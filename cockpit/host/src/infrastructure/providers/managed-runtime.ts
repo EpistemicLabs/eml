@@ -95,16 +95,68 @@ export function maxVersion(versions: Array<string | null | undefined>): string |
   return versions.filter(isVersion).sort(compareVersions).pop() ?? null
 }
 
-export async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-  if (!res.ok) throw new Error(`GET ${url} → HTTP ${res.status}`)
-  return (await res.text()).trim()
+/**
+ * Release CDNs and the npm registry answer bursts with 429 and drop a connection now and then
+ * (2026-10-22, CI smoke runs: "HTTP 429", "terminated"). Such a failure is retried with an
+ * exponential, jittered backoff that honours Retry-After: a 408/429/5xx answer, a network
+ * error (fetch rejects, or the body stream breaks off — undici raises both as TypeError), or a
+ * request that stalls past its timeout (the same day: a Codex registry request on CI).
+ * Anything else fails at once: another HTTP status, a bad checksum later on.
+ */
+export const NET_RETRY = {
+  attempts: 4, baseDelayMs: 2_000, maxDelayMs: 60_000,
+  textTimeoutMs: 30_000, downloadTimeoutMs: 15 * 60_000,
 }
 
+class HttpError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfter: string | null) { super(message) }
+}
+
+// Only our own AbortSignal.timeout aborts these requests, so an AbortError is a timeout too.
+const transient = (e: unknown) =>
+  e instanceof HttpError
+    ? e.status === 408 || e.status === 429 || e.status >= 500
+    : e instanceof TypeError || ['TimeoutError', 'AbortError'].includes((e as Error)?.name)
+
+/** Retry-After in ms (seconds or an HTTP date), else the backoff for this attempt. */
+function retryDelay(e: unknown, attempt: number): number {
+  const header = e instanceof HttpError ? e.retryAfter : null
+  const asked = header === null ? NaN : /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now()
+  const delay = Number.isFinite(asked) ? Math.max(0, asked) : NET_RETRY.baseDelayMs * 2 ** attempt * (0.5 + Math.random())
+  return Math.min(delay, NET_RETRY.maxDelayMs)
+}
+
+async function withRetry<T>(request: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request()
+    } catch (e) {
+      if (attempt + 1 >= NET_RETRY.attempts || !transient(e)) {
+        throw attempt > 0 ? new Error(`${(e as Error).message} (after ${attempt + 1} attempts)`, { cause: e }) : e
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelay(e, attempt)))
+    }
+  }
+}
+
+const httpError = (what: string, res: Response) =>
+  new HttpError(`${what} → HTTP ${res.status}`, res.status, res.headers.get('retry-after'))
+
+export async function fetchText(url: string): Promise<string> {
+  return withRetry(async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(NET_RETRY.textTimeoutMs) })
+    if (!res.ok) throw httpError(`GET ${url}`, res)
+    return (await res.text()).trim()
+  })
+}
+
+/** A retry starts the file over: createWriteStream truncates what an aborted attempt left. */
 export async function downloadTo(url: string, file: string, mode = 0o644): Promise<void> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15 * 60_000) })
-  if (!res.ok || !res.body) throw new Error(`download → HTTP ${res.status}`)
-  await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), fs.createWriteStream(file, { mode }))
+  await withRetry(async () => {
+    const res = await fetch(url, { signal: AbortSignal.timeout(NET_RETRY.downloadTimeoutMs) })
+    if (!res.ok || !res.body) throw httpError('download', res)
+    await pipeline(Readable.fromWeb(res.body as import('node:stream/web').ReadableStream), fs.createWriteStream(file, { mode }))
+  })
 }
 
 /** Run a binary with a clean env; `timeoutMs` for anything longer than a version check (unpacking a few hundred MB). */

@@ -33,6 +33,8 @@ const WINDOWS = process.platform === 'win32'
 const step = (s) => console.log(`\n▶ ${s}`)
 const ok = (s) => console.log(`  ✓ ${s}`)
 const fail = (s) => { throw new Error(s) }
+// Ends an until() at once: a probe that sees a final failure must not wait out the timeout.
+const fatal = (s) => { throw Object.assign(new Error(s), { fatal: true }) }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function freePort() {
@@ -47,7 +49,7 @@ async function until(what, timeoutMs, probe) {
   const end = Date.now() + timeoutMs
   let last
   while (Date.now() < end) {
-    try { const value = await probe(); if (value) return value } catch (e) { last = e }
+    try { const value = await probe(); if (value) return value } catch (e) { if (e.fatal) throw e; last = e }
     await sleep(1000)
   }
   fail(`timed out waiting for ${what}${last ? ` (${last.message})` : ''}`)
@@ -157,7 +159,7 @@ try {
     const provider = (await api('/api/providers')).body?.providers?.find((p) => p.id === id)
     if (provider?.version) return provider.version
     const result = provider?.runtime?.lastResult
-    if (result?.outcome === 'failed') fail(`${id} install failed: ${result.error}`)
+    if (result?.outcome === 'failed') fatal(`${id} install failed: ${result.error}`)
     return null
   }
 
