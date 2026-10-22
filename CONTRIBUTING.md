@@ -26,5 +26,7 @@ Never develop against your real cockpit home (`~/.eml-cockpit`): `cockpit:dev` u
 
 ## License
 
-By contributing you agree that your contribution is licensed under the repository's license
-(AGPL-3.0-only; `packages/mcp-server`: MIT).
+The repository is licensed under AGPL-3.0-only (`packages/mcp-server`: MIT). Before a pull request can be
+merged, every commit author signs the [Contributor License Agreement](CLA.md) once: the CLA check on the
+pull request posts a comment with the sentence to reply with. You keep the copyright in your work; the CLA
+lets the maintainers also offer the project under other licences.

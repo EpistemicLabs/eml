@@ -1,0 +1,39 @@
+name: CLA
+
+# Checks that every commit author of a pull request has signed CLA.md (see .github/scripts/cla.cjs).
+# pull_request_target runs this workflow from the default branch with a write token, also for pull
+# requests from forks. It checks out only the default branch's .github/scripts, never the pull
+# request's code.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write # signatures.json on the cla-signatures branch
+  pull-requests: write
+  statuses: write
+
+# Per pull request: GitHub keeps only one pending run per group, so a shared group would drop events.
+# Concurrent signatures from different pull requests are handled by a retry in cla.cjs.
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const cla = require('./.github/scripts/cla.cjs')
+            await cla({ github, context, core })
