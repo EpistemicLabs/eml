@@ -13,12 +13,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@engramprotocol/core": "workspace:*",
-    "uuid": "^9.0.1"
+    "@engramprotocol/core": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/uuid": "^9.0.8",
     "better-sqlite3": "^13.0.3"
   }
 }

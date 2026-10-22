@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { v4 as uuid } from 'uuid'
+import { randomUUID as uuid } from 'crypto'
 import {
   Engram, EngramInput, EngramQuery, EngramWithRelations,
   Relation, RelationWithTarget, RelationInput, ScopedBrainState,
