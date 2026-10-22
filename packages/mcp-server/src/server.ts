@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { HttpClient } from './http-client'
+import { Provenance } from './provenance'
 import { registerAllTools } from './tools'
 
 /**
@@ -22,12 +23,15 @@ export interface McpServerOptions {
 }
 
 export async function startMcpServer(opts: McpServerOptions): Promise<void> {
-  const httpClient = new HttpClient({ url: opts.url, token: opts.token })
+  // v0.19: every write carries the session, harness and model (provenance.ts).
+  const provenance = new Provenance()
+  const httpClient = new HttpClient({ url: opts.url, token: opts.token, writeHeaders: () => provenance.headers() })
 
   const server = new McpServer({
     name: opts.clientName ?? 'eml-mcp-server',
     version: opts.serverVersion ?? '0.9.0',
   })
+  server.server.oninitialized = () => provenance.setHarness(server.server.getClientVersion()?.name)
 
   registerAllTools(server, httpClient)
 

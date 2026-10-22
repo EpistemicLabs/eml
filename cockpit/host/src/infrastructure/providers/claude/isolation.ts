@@ -1,10 +1,14 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_HOOK_CURL_CONFIG, COCKPIT_SKILLS_DIR, CONFIG_DIR, LEGACY_EML_HOOK_CONFIG, MCP_SKILLS_DIR, spaceConfigDir, spaceEmlDir } from '../../../paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_SKILLS_DIR, CONFIG_DIR, LEGACY_EML_HOOK_CONFIG, MCP_SKILLS_DIR, spaceConfigDir, spaceEmlDir } from '../../../paths.js'
 import { currentVersion } from './runtime.js'
 import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
-import { brainMcpServer, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry, installManagedSkills, quote, writeEmlHookConfig } from '../shared.js'
+import {
+  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
+  installManagedSkills, quote, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
+} from '../shared.js'
+import { platform } from '../../platform/index.js'
 
 /**
  * The app's own Claude environment (decision cockpit-isolation-scope-clarified):
@@ -17,8 +21,8 @@ import { brainMcpServer, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry
  * .claude.json, claude.ai connectors, plugins, project .mcp.json) load alongside.
  *
  * Files written here, shared by every brain space (writeIsolationFiles):
- *   - hook-curl.conf (chmod 600): the per-boot hook token as a curl header for
- *     the turn-state hooks, so it stays out of the hook command line.
+ *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state
+ *     hook (turn-hook.ts), so the token stays out of the hook command line.
  *   - skills/<name>/SKILL.md: the EML skills (consolidate, checkpoint, getting-started) from the
  *     bundled mcp-server plus the cockpit's own (spawn-session), refreshed each
  *     boot; a skill of the same name without the managed marker is left alone.
@@ -45,8 +49,8 @@ import { brainMcpServer, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry
 /** The shared isolation files of this boot; a space's own files are SpaceFiles. */
 export interface IsolationFiles {
   configDir: string
-  /** curl config (-K) carrying the per-boot hook token for the turn-state hooks. */
-  curlConfig: string
+  /** The turn-state hook's config (URL + per-boot token, shared.ts writeTurnHookConfig). */
+  turnHookConfig: string
 }
 
 const CLAUDE_JSON = path.join(CONFIG_DIR, '.claude.json')
@@ -123,7 +127,7 @@ export function ensureProjectTrusted(projectPath: string): void {
   writeClaudeJson({ ...existing, projects })
 }
 
-export { HOOK_TOKEN_HEADER, brainMcpServer, hookCurlConfig, hookEntry }
+export { HOOK_TOKEN_HEADER, brainMcpServer }
 
 /** The files a brain space's sessions start with (brain-space.ts). */
 export interface SpaceFiles {
@@ -143,8 +147,7 @@ export function writeSpaceFiles(
   spaceId: string,
   loopbackUrl: string,
   brainToken: string,
-  hookUrl: string,
-  curlConfig: string,
+  turnHookConfig: string,
 ): SpaceFiles {
   const dir = spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -160,18 +163,26 @@ export function writeSpaceFiles(
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)
+  const entry = (cmd: HookCommand, options: Record<string, unknown>) => ({ hooks: [claudeHook(cmd, platform.os, options)] })
+  const turn = entry(turnHookCommand(turnHookConfig), TURN_HOOK_OPTIONS)
+  const eml = (hook: Parameters<typeof emlHookCommand>[0], flags: string[] = []) =>
+    entry(emlHookCommand(hook, emlConfig, false, flags), EML_HOOK_OPTIONS)
+  // The project block (mcp-server hooks/project-block.ts): a second SessionStart
+  // command, so its own output limit, on every source (startup, resume,
+  // compact, clear). It brings the session's project, so the reminder drops
+  // its guess from the working directory.
   fs.writeFileSync(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
       hooks: {
-        SessionStart: [emlHookEntry('session-start', quote(emlConfig))],
-        UserPromptSubmit: [hookEntry(hookUrl, curlConfig), emlHookEntry('user-prompt-submit', quote(emlConfig))],
+        SessionStart: [eml('session-start'), eml('project-block')],
+        UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
         // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
-        Stop: [hookEntry(hookUrl, curlConfig), emlHookEntry('stop', quote(emlConfig))],
+        Stop: [turn, eml('stop')],
         // Every notification type reaches the host; turn-state.ts decides which
         // mean "waiting" and logs the others, so a new type shows up in host.log.
-        Notification: [hookEntry(hookUrl, curlConfig)],
+        Notification: [turn],
       },
     }, null, 2),
     { mode: 0o600 },
@@ -181,28 +192,27 @@ export function writeSpaceFiles(
 }
 
 /**
- * Write the files every space shares: the curl config with the hook token,
+ * Write the files every space shares: the turn-hook config with the token,
  * the skills, the seeded .claude.json. The per-space files (mcp.json,
  * settings.json, EML hook config) follow in writeSpaceFiles.
  */
-export function writeIsolationFiles(hookToken: string): IsolationFiles {
+export function writeIsolationFiles(hookUrl: string, hookToken: string): IsolationFiles {
   fs.mkdirSync(CONFIG_DIR, { recursive: true })
   ensureHookNode()
   installManagedSkills([MCP_SKILLS_DIR, COCKPIT_SKILLS_DIR], CONFIG_DIR)
 
-  const curlConfig = CLAUDE_HOOK_CURL_CONFIG
-  fs.writeFileSync(curlConfig, hookCurlConfig(hookToken), { mode: 0o600 })
-  fs.chmodSync(curlConfig, 0o600)
+  writeTurnHookConfig(CLAUDE_TURN_HOOK_CONFIG, hookUrl, hookToken)
   seedClaudeJson()
 
   // Before spaces, mcp.json and eml/config sat here carrying the brain token
   // — stale copies of a secret, so they go.
-  for (const legacy of [path.join(CONFIG_DIR, 'mcp.json'), LEGACY_EML_HOOK_CONFIG]) {
+  // So did the curl config of the turn-state hooks up to 0.17.19.
+  for (const legacy of [path.join(CONFIG_DIR, 'mcp.json'), LEGACY_EML_HOOK_CONFIG, path.join(CONFIG_DIR, LEGACY_CURL_CONFIG)]) {
     fs.rmSync(legacy, { force: true })
   }
   removeLegacyHostHooks(path.join(CONFIG_DIR, 'settings.json'))
 
-  return { configDir: CONFIG_DIR, curlConfig }
+  return { configDir: CONFIG_DIR, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG }
 }
 
 /**

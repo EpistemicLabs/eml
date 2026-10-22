@@ -14,6 +14,8 @@ export interface HttpClientOptions {
   url: string                              // e.g. http://localhost:3117
   token: string                            // Bearer secret without the "Bearer " prefix
   timeoutMs?: number                       // default 30s
+  /** v0.19: extra headers for every write (POST/PUT) — the provenance stamp (provenance.ts). */
+  writeHeaders?: () => Promise<Record<string, string>>
 }
 
 export class EmlApiError extends Error {
@@ -31,6 +33,7 @@ export class HttpClient {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
   private readonly timeoutMs: number
+  private readonly writeHeaders?: () => Promise<Record<string, string>>
 
   constructor(opts: HttpClientOptions) {
     this.baseUrl = opts.url.replace(/\/+$/, '')
@@ -39,6 +42,7 @@ export class HttpClient {
       'Content-Type': 'application/json',
     }
     this.timeoutMs = opts.timeoutMs ?? 30_000
+    this.writeHeaders = opts.writeHeaders
   }
 
   async get(path: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
@@ -64,12 +68,16 @@ export class HttpClient {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    // The provenance headers belong to writes only; a read POST (/boot,
+    // /recall) goes without them. Built before the timer starts: the
+    // headers' own lookup must not eat into the request's time budget.
+    const extra = isWrite(method, path) && this.writeHeaders ? await this.writeHeaders().catch(() => ({})) : {}
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: this.headers,
+        headers: { ...this.headers, ...extra },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       })
@@ -94,6 +102,14 @@ export class HttpClient {
       clearTimeout(timer)
     }
   }
+}
+
+/** POST routes that read (server.ts): the boot and a recall query. */
+const READ_POST_ROUTES = new Set(['/boot', '/recall'])
+
+function isWrite(method: string, path: string): boolean {
+  if (method === 'GET') return false
+  return !(method === 'POST' && READ_POST_ROUTES.has(path.split('?')[0]))
 }
 
 function extractErrorMessage(body: unknown): string | null {

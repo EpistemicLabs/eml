@@ -56,7 +56,7 @@ export class BrainProjectsClient {
    * answer and the fetch error when the brain is unreachable.
    */
   async rename(id: string, name: string): Promise<void> {
-    const res = await fetch(`${this.loopbackUrl}/project/${encodeURIComponent(id)}`, {
+    const res = await fetch(`${this.loopbackUrl}/object/project/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ name }),

@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
-import { validDecision, validTask } from './fixtures'
+import { validDecision, validTask, validNote, validEvent, validLog, validReference, validRule, validStatus } from './fixtures'
 
-// v0.15 Cluster C — task-linked writes. A decision or note written with
-// task_id gets, in ONE transaction: the engram, the edge to the task
-// (decision derived_from task, note refines task) and a task entry authored by
-// the caller. The stage is not advanced. A bad task_id writes nothing.
+// Task-linked writes (v0.15, v0.19). A decision, note, event, log or reference
+// written with task_id gets, in ONE transaction: the engram, the edge to the
+// task (decision derived_from task, the others refine it) and a change entry in
+// the task's journal authored by the caller. The stage is not advanced. A bad
+// task_id writes nothing. v0.19: rule and profile take no task_id; a decision or
+// note with task_id needs binding.
 
-describe('task-linked writes (v0.15)', () => {
+describe('task-linked writes', () => {
   let eml: EML
 
   beforeEach(() => {
@@ -22,55 +24,72 @@ describe('task-linked writes (v0.15)', () => {
   const edge = (from: string, to: string, relation: string) =>
     rawDb().prepare(`SELECT * FROM relations WHERE source_id = ? AND target_id = ? AND relation = ?`).get(from, to, relation)
   const hub = () => eml.engrams.store(validTask({ scope: 'project.eml', title: 'hub', content: 'the hub task', properties: { stage: 'planning' } }))
+  const changes = (taskId: string) => eml.engrams.entries(taskId, ['change'])
 
-  it('a decision with task_id: derived_from edge + entry by the caller; stage unchanged', () => {
+  it('a decision with task_id: derived_from edge + change entry by the caller; stage unchanged', () => {
     const task = hub()
-    const d = eml.engrams.store(validDecision({ scope: 'project.eml', title: 'pick-db', content: 'use sqlite', task_id: task.id }), 'assistant')
+    const d = eml.engrams.store(validDecision({ scope: 'project.eml', title: 'pick-db', content: 'use sqlite', task_id: task.id, properties: { binding: 'standing' } }), 'assistant')
 
     expect(edge(d.id, task.id, 'derived_from')).toBeTruthy()
-    const entries = eml.engrams.get(task.id)!.entries!
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({ author: 'assistant', stage: 'planning', text: `decision taken: pick-db (${d.id})` })
+    const entries = changes(task.id)
+    expect(entries.map(e => e.text)).toEqual(['created (planned · stage planning)', `decision taken: pick-db (${d.id})`])
+    expect(entries[1]).toMatchObject({ kind: 'change', author: 'assistant', stage: 'planning' })
     expect((eml.engrams.get(task.id)!.properties as Record<string, unknown>).stage).toBe('planning')
   })
 
-  it('a note with task_id: refines edge + entry; without a title the entry quotes the content', () => {
+  it('a note with task_id: refines edge + entry; without a title (an app note) the entry quotes the content', () => {
     const task = hub()
-    const plan = eml.engrams.store({ type: 'note', scope: 'project.eml', content: 'Plan: migrate, then rebuild the index.', task_id: task.id })
+    const plan = eml.engrams.store({
+      type: 'note', scope: 'project.eml', content: 'Plan: migrate, then rebuild the index.', task_id: task.id,
+      origin: 'cockpit-notes', properties: { binding: 'task' },
+    })
     expect(edge(plan.id, task.id, 'refines')).toBeTruthy()
-    expect(eml.engrams.get(task.id)!.entries![0].text)
-      .toBe(`note written: Plan: migrate, then rebuild the index. (${plan.id})`)
+    expect(changes(task.id).pop()!.text).toBe(`note written: Plan: migrate, then rebuild the index. (${plan.id})`)
   })
 
-  it('a rule written from a task refines it too', () => {
+  it('an event, a log and a reference refine the task and are noted in its journal', () => {
     const task = hub()
-    const r = eml.engrams.store({ type: 'rule', scope: 'project.eml', title: 'r', content: 'when X, do Y', properties: { applies: 'always' }, task_id: task.id })
-    expect(edge(r.id, task.id, 'refines')).toBeTruthy()
+    const ev = eml.engrams.store(validEvent({ scope: 'project.eml', title: 'deploy', task_id: task.id }))
+    const log = eml.engrams.store(validLog({ scope: 'project.eml', title: 'session-1', task_id: task.id }))
+    const ref = eml.engrams.store(validReference({ scope: 'project.eml', title: 'doc', task_id: task.id }))
+    for (const e of [ev, log, ref]) expect(edge(e.id, task.id, 'refines')).toBeTruthy()
+    expect(changes(task.id).slice(1).map(e => e.text)).toEqual([
+      `event recorded: deploy (${ev.id})`, `log written: session-1 (${log.id})`, `reference written: doc (${ref.id})`,
+    ])
+  })
+
+  it('a decision or note with task_id needs binding; binding task without task_id is rejected', () => {
+    const task = hub()
+    expect(() => eml.engrams.store(validDecision({ task_id: task.id }))).toThrow(/a decision with task_id needs binding/)
+    expect(() => eml.engrams.store(validNote({ task_id: task.id }))).toThrow(/a note with task_id needs binding/)
+    expect(() => eml.engrams.store(validDecision({ properties: { binding: 'task' } }))).toThrow(/binding task needs task_id/)
   })
 
   it('a bad task_id writes nothing: unknown id, a non-task, a type that takes no task_id', () => {
     const task = hub()
-    const note = eml.engrams.store({ type: 'note', scope: 'global', content: 'a note' })
-    const before = { engrams: count('engrams'), relations: count('relations'), entries: count('task_entries') }
+    const note = eml.engrams.store(validNote({ scope: 'global', content: 'a note' }))
+    const before = { engrams: count('engrams'), relations: count('relations'), entries: count('entries') }
 
-    expect(() => eml.engrams.store(validDecision({ task_id: 'no-such-id' })))
+    expect(() => eml.engrams.store(validDecision({ task_id: 'no-such-id', properties: { binding: 'task' } })))
       .toThrow('Invalid engram: task_id no-such-id is not a task.')
-    expect(() => eml.engrams.store(validDecision({ task_id: note.id })))
+    expect(() => eml.engrams.store(validDecision({ task_id: note.id, properties: { binding: 'task' } })))
       .toThrow(`Invalid engram: task_id ${note.id} is not a task.`)
     expect(() => eml.engrams.store(validTask({ task_id: task.id })))
-      .toThrow('Invalid engram: task_id links a decision or note to a task — not available for type task.')
-    expect(() => eml.engrams.store({ type: 'status', scope: 'global', content: 's', properties: { state: 'x' }, task_id: task.id }))
+      .toThrow('Invalid engram: task_id is not available for type task.')
+    expect(() => eml.engrams.store(validStatus({ task_id: task.id })))
       .toThrow(/not available for type status/)
+    expect(() => eml.engrams.store(validRule({ scope: 'project.eml', task_id: task.id })))
+      .toThrow(/not available for type rule/)
 
-    expect({ engrams: count('engrams'), relations: count('relations'), entries: count('task_entries') }).toEqual(before)
+    expect({ engrams: count('engrams'), relations: count('relations'), entries: count('entries') }).toEqual(before)
   })
 
   it('atomic: if the entry cannot be written, the decision and its edge roll back', () => {
     const task = hub()
-    rawDb().exec(`CREATE TRIGGER fail_entry BEFORE INSERT ON task_entries BEGIN SELECT RAISE(ABORT, 'entry write failed'); END`)
+    rawDb().exec(`CREATE TRIGGER fail_entry BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'entry write failed'); END`)
     const before = { engrams: count('engrams'), relations: count('relations') }
 
-    expect(() => eml.engrams.store(validDecision({ scope: 'project.eml', content: 'doomed', task_id: task.id })))
+    expect(() => eml.engrams.store(validDecision({ scope: 'project.eml', content: 'doomed', task_id: task.id, properties: { binding: 'task' } })))
       .toThrow('entry write failed')
     expect({ engrams: count('engrams'), relations: count('relations') }).toEqual(before)
     expect(rawDb().prepare(`SELECT 1 FROM engrams_fts WHERE content = 'doomed'`).get()).toBeUndefined()
@@ -78,8 +97,9 @@ describe('task-linked writes (v0.15)', () => {
 
   it('the decision rules still apply first (no entry for a rejected decision)', () => {
     const task = hub()
-    expect(() => eml.engrams.store({ type: 'decision', scope: 'project.eml', content: 'no alternatives', task_id: task.id }))
+    const before = count('entries')
+    expect(() => eml.engrams.store({ type: 'decision', scope: 'project.eml', title: 'x', content: 'no alternatives', task_id: task.id, properties: { binding: 'task' } }))
       .toThrow(/^Invalid engram: a decision needs/)
-    expect(count('task_entries')).toBe(0)
+    expect(count('entries')).toBe(before)
   })
 })

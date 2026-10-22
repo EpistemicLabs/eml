@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BACKUPS_DIR, COCKPIT_HOME, DATA_DIR } from './paths.js'
+import { platform } from './infrastructure/platform/index.js'
 
 /**
  * Settings › Brain: what the local brain is (file, id, schema, identity) and
@@ -112,14 +112,9 @@ export function readBrainInfo(token: string): BrainInfo {
   return info
 }
 
-/** Show the brain file in the OS file manager (macOS selects it). */
+/** Show the brain file in the OS file manager (selected where the OS can). */
 export function revealBrainFile(file: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const [cmd, args] = process.platform === 'darwin'
-      ? ['open', ['-R', file]]
-      : ['xdg-open', [path.dirname(file)]]
-    execFile(cmd, args, (err) => (err ? reject(err) : resolve()))
-  })
+  return platform.revealFile(file)
 }
 
 export interface BrainBackup {

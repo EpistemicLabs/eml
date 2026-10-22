@@ -3,6 +3,7 @@ import * as path from 'path'
 import { EML_CONFIG, HOME_DIR, readConfig, type EmlConfig } from '../config'
 import { notesUpdate } from './notes'
 import { compactionNote, stopHook, type CompactionInput } from './compaction'
+import { projectBlockHook } from './project-block'
 
 /**
  * Claude Code hooks as CLI commands (no bash/curl/jq needed, so they run
@@ -10,7 +11,8 @@ import { compactionNote, stopHook, type CompactionInput } from './compaction'
  * their own config file:
  *
  *   eml-mcp-server hook session-start      [--config <path>] [--json]
- *   eml-mcp-server hook user-prompt-submit [--config <path>] [--json]
+ *   eml-mcp-server hook user-prompt-submit [--config <path>] [--json] [--no-cwd-nudge]
+ *   eml-mcp-server hook project-block      [--config <path>] [--json]
  *   eml-mcp-server hook stop               [--config <path>]
  *
  * --json prints the context as the hook JSON envelope
@@ -19,18 +21,18 @@ import { compactionNote, stopHook, type CompactionInput } from './compaction'
  * JSON, and the reminder starts with "[EML Reminder]". `stop` always prints
  * JSON (a block decision, or nothing): both CLIs read that form for Stop.
  *
- * --config defaults to ~/.eml/config. Logs and the reminder turn counters live
+ * --config defaults to $EML_HOOK_CONFIG, then ~/.eml/config. Logs and the reminder turn counters live
  * next to the config file (<dir>/logs, <dir>/state), so one config dir = one
  * isolated EML client. A hook never fails the session: every path exits 0.
  * stdout reaches the model's context; nothing else is printed there.
  */
 
 export const REMINDER_TEXT = `[EML Reminder]
-- Store-worthy moments (decisions, status changes, tasks, events, feedback rules) → use the matching typed tool (eml_decide / eml_set_status / eml_track_task / eml_note); progress on a task → eml_task_entry.
-- Question about customer / project / topic? eml_recall or eml_show first — don't guess from conversation memory.
-- Before write: matching active engram exists? skip, or supersede via eml_update (don't duplicate).
-- Routine updates: act + inform in 1-2 lines, no permission-asking.
-- EML brain is the canonical knowledge base — check it before falling back to conversation memory.`
+- Store-worthy moments (decisions, status changes, tasks, events) → the matching create tool (eml_decide / eml_set_status / eml_create_task / eml_event / eml_note); anything about an existing task → eml_track_task.
+- The user corrects you, turns down a proposal, or you notice your own mistake → eml_learning. A rule only with the user's yes.
+- The brain is the knowledge base: for a customer, project or topic, eml_recall or eml_show first — don't guess from conversation memory.
+- Before write: matching active engram exists? skip, correct it (eml_update), or replace it (supersedes=[id]) — don't duplicate.
+- Routine updates: act + inform in 1-2 lines, no permission-asking.`
 
 const PAUSE_MS = 60 * 60 * 1000
 const BOOT_TIMEOUT_MS = 8000
@@ -71,8 +73,11 @@ function logLine(ctx: HookContext, hook: string, line: string): void {
  * — the only consumer of --json today, through its own hook runner — has an
  * unmeasured limit. Both get this value until measured; a harness with a
  * smaller limit needs its own budget here, not a smaller boot in core.
+ *
+ * One character below the limit: runHook prints a newline after the output,
+ * and that newline counts toward the hook's stdout.
  */
-export const BOOT_BUDGET_CHARS = 10_000
+export const BOOT_BUDGET_CHARS = 10_000 - 1
 
 export interface BootResult {
   output: string
@@ -102,7 +107,16 @@ export async function sessionStart(
   let body: {
     markdown?: string
     version?: string
-    budget?: { limit: number; chars: number; rule_cap: number; rules_named_only: number; profiles_named_only: number; fits: boolean }
+    legacy?: number
+    budget?: {
+      limit: number
+      chars: number
+      situational_title_only: number
+      always_title_only?: number
+      profiles_title_only?: number
+      left_out?: number
+      fits: boolean
+    }
   } = {}
   try {
     const res = await fetchImpl(`${cfg.EML_URL}/boot`, {
@@ -136,13 +150,24 @@ export async function sessionStart(
   }
 
   // The log shows what the budget cost, so a shortened boot is visible without
-  // debugging: "trim=none" is the normal case.
+  // debugging: "trim=none" is the normal case, otherwise the entries listed by
+  // title only per kind and those left out (e.g. trim=situational:3,always:1).
+  // OVER-BUDGET means the system rules and the first two profiles alone exceed
+  // the limit. legacy = entries shown by title only until they are rewritten
+  // in the short format.
   const b = body.budget
-  const trim = !b ? 'trim=unknown'
+  const parts = b ? ([
+    ['situational', b.situational_title_only],
+    ['always', b.always_title_only],
+    ['profiles', b.profiles_title_only],
+    ['left_out', b.left_out],
+  ] as const).filter(([, n]) => typeof n === 'number' && n > 0).map(([k, n]) => `${k}:${n}`) : []
+  const trim = !b || typeof b.situational_title_only !== 'number' ? 'trim=unknown'
     : !b.fits ? `trim=OVER-BUDGET limit=${b.limit}`
-    : b.rule_cap >= 600 && b.rules_named_only === 0 && b.profiles_named_only === 0 ? 'trim=none'
-    : `trim=rule_cap:${b.rule_cap},named_only:${b.rules_named_only}+${b.profiles_named_only}`
-  return { output: body.markdown, log: `OK ver=${body.version ?? '?'} chars=${body.markdown.length} ${trim}` }
+    : parts.length === 0 ? 'trim=none'
+    : `trim=${parts.join(',')}`
+  const legacy = typeof body.legacy === 'number' ? ` legacy=${body.legacy}` : ''
+  return { output: body.markdown, log: `OK ver=${body.version ?? '?'} chars=${body.markdown.length} ${trim}${legacy}` }
 }
 
 // --- user-prompt-submit: periodic reminder + scope nudge ---------------------
@@ -152,10 +177,14 @@ export function shouldRemind(turn: number, msSinceLastTurn: number | null): bool
   return turn === 1 || turn % 5 === 0 || (msSinceLastTurn !== null && msSinceLastTurn > PAUSE_MS)
 }
 
-/** The reminder, plus a nudge naming the likely active project (basename(cwd) == project id). */
-export function reminderFor(cwd: string, home: string = HOME_DIR): string {
+/**
+ * The reminder, plus a nudge naming the likely active project (basename(cwd) ==
+ * project id). A host that delivers the project block (hook project-block)
+ * passes --no-cwd-nudge: the session then gets the project itself, not a guess.
+ */
+export function reminderFor(cwd: string, home: string = HOME_DIR, cwdNudge = true): string {
   const projectId = cwd ? path.basename(cwd) : ''
-  if (!cwd || cwd === home || !projectId) return REMINDER_TEXT
+  if (!cwdNudge || !cwd || cwd === home || !projectId) return REMINDER_TEXT
   return `${REMINDER_TEXT}\n- Active working dir: ${cwd} — if \`project.${projectId}\` is a tracked project, call \`eml_show project.${projectId}\` FIRST to load its status, open tasks and project-specific rules before editing code or making decisions in it.`
 }
 
@@ -165,6 +194,7 @@ export function userPromptSubmit(
   ctx: HookContext,
   input: { session_id?: string; cwd?: string },
   now: number = Date.now(),
+  cwdNudge = true,
 ): BootResult {
   const sessionId = input.session_id ?? ''
   const cwd = input.cwd || process.cwd()
@@ -185,7 +215,7 @@ export function userPromptSubmit(
   } catch { /* a lost counter only means an extra reminder */ }
 
   if (!shouldRemind(turn, msSinceLast)) return { output: '', log: `silent turn=${turn} sid=${sessionId}` }
-  return { output: reminderFor(cwd), log: `reminded turn=${turn} sid=${sessionId} cwd=${cwd}` }
+  return { output: reminderFor(cwd, HOME_DIR, cwdNudge), log: `reminded turn=${turn} sid=${sessionId} cwd=${cwd}` }
 }
 
 // --- CLI dispatch -------------------------------------------------------------
@@ -197,7 +227,7 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-const HOOK_EVENT = { 'session-start': 'SessionStart', 'user-prompt-submit': 'UserPromptSubmit' } as const
+const HOOK_EVENT = { 'session-start': 'SessionStart', 'user-prompt-submit': 'UserPromptSubmit', 'project-block': 'SessionStart' } as const
 
 /** What a hook prints: the context as it is, or wrapped in the hook JSON envelope. */
 export function formatHookOutput(hook: keyof typeof HOOK_EVENT, output: string, json: boolean): string {
@@ -209,7 +239,10 @@ export function formatHookOutput(hook: keyof typeof HOOK_EVENT, output: string, 
 export async function runHook(argv: string[]): Promise<void> {
   const name = argv[0]
   const configIdx = argv.indexOf('--config')
-  const configPath = configIdx >= 0 && argv[configIdx + 1] ? path.resolve(argv[configIdx + 1]) : EML_CONFIG
+  // Without --config: the path in EML_HOOK_CONFIG (a host that writes one
+  // hooks file for many brains sets it per session), else ~/.eml/config.
+  const configFile = configIdx >= 0 ? argv[configIdx + 1] : process.env.EML_HOOK_CONFIG
+  const configPath = configFile ? path.resolve(configFile) : EML_CONFIG
   const ctx = contextFor(configPath)
 
   let input: { session_id?: string; cwd?: string } & CompactionInput = {}
@@ -226,11 +259,14 @@ export async function runHook(argv: string[]): Promise<void> {
       result = await sessionStart(readConfig(configPath), configPath, fetch, BOOT_BUDGET_CHARS - (note ? note.length + 2 : 0))
       if (note) result = { output: `${note}\n\n${result.output}`, log: `${result.log} compact-note=${note.length}` }
     } else if (name === 'user-prompt-submit') {
-      result = userPromptSubmit(ctx, input)
+      result = userPromptSubmit(ctx, input, Date.now(), !argv.includes('--no-cwd-nudge'))
       // The user's note edits since the last prompt (hooks/notes.ts).
       const notes = await notesUpdate(readConfig(configPath), ctx.stateDir, input)
       logLine(ctx, name, notes.log)
       if (notes.output) result = { ...result, output: [result.output, notes.output].filter(Boolean).join('\n\n') }
+    } else if (name === 'project-block') {
+      // The project's context on every session start (hooks/project-block.ts).
+      result = await projectBlockHook(readConfig(configPath), input)
     } else if (name === 'stop') {
       // Consolidate before the session goes idle (hooks/compaction.ts). The
       // output is the block decision as JSON, the same for Claude Code and Codex.
@@ -239,7 +275,7 @@ export async function runHook(argv: string[]): Promise<void> {
       logLine(ctx, name, stop.log)
       return
     } else {
-      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit | hook stop [--config <path>] [--json]\n`)
+      process.stderr.write(`Unknown hook "${name ?? ''}". Use: hook session-start | hook user-prompt-submit | hook project-block | hook stop [--config <path>] [--json]\n`)
       return
     }
     if (result.output) process.stdout.write(formatHookOutput(name, result.output, argv.includes('--json')) + '\n')

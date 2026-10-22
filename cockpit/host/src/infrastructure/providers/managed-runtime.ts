@@ -5,6 +5,8 @@ import * as path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { AgentRuntime, RuntimeResult, RuntimeState } from '../../domain/agent-provider.js'
+import { platform } from '../platform/index.js'
+import { FS_RETRY, renameWithRetry } from '../../fs-retry.js'
 
 export type { RuntimeResult, RuntimeState }
 
@@ -17,8 +19,11 @@ export type { RuntimeResult, RuntimeState }
  *
  * Layout under the runtime dir:
  *   versions/<v>/…        one verified version, never modified after install
- *   current -> versions/<v>   the one thing an update switches (atomic rename)
- *   bin/<name> -> ../current/<entry>   what sessions run (also first on their PATH)
+ *   current -> versions/<v>   the one thing an update switches (atomic rename;
+ *                             a junction on Windows)
+ *   bin/<name> -> ../current/<entry>   what sessions run (also first on their PATH);
+ *                             on Windows, where a file link needs admin rights,
+ *                             sessions run current/<entry> itself
  *   runtime.json          active/previous version, last check, last result
  *
  * Where a version comes from and how its origin is checked is the source's
@@ -42,7 +47,7 @@ export interface RuntimeSource {
   logTag: string
   /** The channel a fresh home follows. */
   channel: string
-  /** The executable inside a version dir, e.g. "claude" or "bin/codex". */
+  /** The executable inside a version dir, e.g. "claude" or "bin/codex" (with .exe on Windows). */
   entry: string
   /** The version the channel currently names. */
   latestVersion(channel: string): Promise<string>
@@ -54,6 +59,8 @@ export interface RuntimeSource {
   fetch(version: string, dir: string, log: (line: string) => void): Promise<void>
   /** Environment for the --version self-test: neutral, the app's own config dir, updater off. */
   selfTestEnv(): NodeJS.ProcessEnv
+  /** Arguments of the self-test; `--version` unless the source says otherwise. */
+  selfTestArgs?: string[]
   /** The version in the --version output. */
   reportedVersion(stdout: string): string
   /** The newest version this home's config has already run — no automatic install below it. */
@@ -117,28 +124,6 @@ export async function fileDigest(file: string, algorithm: 'sha256' | 'sha512', e
   return hash.digest(encoding)
 }
 
-/** macOS: the binary's code signature is valid and the publisher's. Elsewhere the checksum is the check. */
-export async function verifyTeamSignature(bin: string, teamId: string, publisher: string): Promise<void> {
-  if (process.platform !== 'darwin') return
-  const verify = await run('/usr/bin/codesign', ['--verify', '--strict', bin])
-  if (verify.code !== 0) throw new Error(`code signature invalid: ${verify.stderr.trim().slice(0, 200)}`)
-  const info = await run('/usr/bin/codesign', ['-dv', bin])
-  if (!info.stderr.includes(`TeamIdentifier=${teamId}`)) throw new Error(`binary is not signed by ${publisher}`)
-}
-
-/** `darwin-arm64`, `linux-x64`, … — with `-musl` on a musl Linux when `musl` is asked for. */
-export function platformKey(musl = false): string {
-  const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : null
-  if (!arch) throw new Error(`unsupported architecture: ${process.arch}`)
-  if (process.platform === 'darwin') return `darwin-${arch}`
-  if (process.platform === 'linux') {
-    let isMusl = false
-    if (musl) try { isMusl = fs.readdirSync('/lib').some((n) => n.startsWith('ld-musl')) } catch { /* glibc */ }
-    return `linux-${arch}${isMusl ? '-musl' : ''}`
-  }
-  throw new Error(`unsupported platform: ${process.platform}`)
-}
-
 // --- the runtime ----------------------------------------------------------------
 
 export class ManagedRuntime {
@@ -148,7 +133,7 @@ export class ManagedRuntime {
   private readonly lockFile: string
   /** Prepended to every session's PATH, so the CLI typed inside a session is the cockpit's too. */
   readonly binDir: string
-  /** What sessions run. A symlink chain into versions/<current>. */
+  /** What sessions run: a link chain into versions/<current> (Windows: through the current junction). */
   readonly bin: string
   private inFlight: Promise<RuntimeState> | null = null
 
@@ -160,8 +145,13 @@ export class ManagedRuntime {
   ) {
     this.versionsDir = path.join(dir, 'versions')
     this.currentLink = path.join(dir, 'current')
-    this.binDir = path.join(dir, 'bin')
-    this.bin = path.join(this.binDir, binName)
+    if (platform.linksFiles) {
+      this.binDir = path.join(dir, 'bin')
+      this.bin = path.join(this.binDir, platform.exe(binName))
+    } else {
+      this.bin = path.join(this.currentLink, source.entry)
+      this.binDir = path.dirname(this.bin)
+    }
     this.stateFile = path.join(dir, 'runtime.json')
     this.lockFile = path.join(dir, '.lock')
   }
@@ -205,7 +195,7 @@ export class ManagedRuntime {
 
   /** The binary answers --version with exactly the version it claims to be. */
   private async selfTest(bin: string, version: string): Promise<void> {
-    const { code, stdout } = await run(bin, ['--version'], this.source.selfTestEnv())
+    const { code, stdout } = await run(bin, this.source.selfTestArgs ?? ['--version'], this.source.selfTestEnv())
     if (code !== 0 || this.source.reportedVersion(stdout) !== version) {
       throw new Error(`self-test failed: --version gave '${stdout.trim().slice(0, 80)}' (exit ${code}), expected ${version}`)
     }
@@ -228,19 +218,18 @@ export class ManagedRuntime {
     try {
       await this.source.fetch(version, staging, (line) => this.log(line))
       await this.selfTest(path.join(staging, this.source.entry), version)
-      fs.rmSync(target, { recursive: true, force: true })
-      fs.renameSync(staging, target)
+      fs.rmSync(target, { recursive: true, force: true, ...FS_RETRY })
+      await renameWithRetry(staging, target)
       this.log(`${this.source.label} ${version} verified and installed`)
     } finally {
-      fs.rmSync(staging, { recursive: true, force: true })
+      fs.rmSync(staging, { recursive: true, force: true, ...FS_RETRY })
     }
   }
 
-  /** Point `current` at versions/<v> — one atomic rename, never a missing link. */
+  /** Point `current` at versions/<v> (platform.switchDirLink), and bin/ at current. */
   private switchCurrent(version: string): void {
-    const tmp = path.join(this.dir, `.current-${randomBytes(4).toString('hex')}`)
-    fs.symlinkSync(path.join('versions', version), tmp)
-    fs.renameSync(tmp, this.currentLink)
+    platform.switchDirLink(path.join(this.versionsDir, version), this.currentLink)
+    if (!platform.linksFiles) return
     fs.mkdirSync(this.binDir, { recursive: true })
     if (!fs.existsSync(this.bin)) {
       try { fs.unlinkSync(this.bin) } catch { /* not there */ }
@@ -248,12 +237,20 @@ export class ManagedRuntime {
     }
   }
 
-  /** Keep the active and the previous version (rollback); drop older ones and stale staging dirs. */
+  /**
+   * Keep the active and the previous version (rollback); drop older ones and
+   * stale staging dirs. A version a running session still executes can't be
+   * deleted on Windows: it stays until a later prune.
+   */
   private prune(state: RuntimeState): void {
     const keep = new Set([state.current, state.previous].filter(Boolean) as string[])
     for (const name of fs.readdirSync(this.versionsDir)) {
       if (keep.has(name)) continue
-      fs.rmSync(path.join(this.versionsDir, name), { recursive: true, force: true })
+      try {
+        fs.rmSync(path.join(this.versionsDir, name), { recursive: true, force: true })
+      } catch (e) {
+        this.log(`could not remove ${name} yet: ${(e as Error).message}`)
+      }
     }
   }
 

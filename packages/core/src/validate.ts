@@ -1,4 +1,4 @@
-import { EngramType, EngramStatus, ENGRAM_TYPES, TASK_STAGES, TASK_OUTCOME_STATUSES } from './types'
+import { EngramType, ENGRAM_TYPES } from './types'
 
 /**
  * An engram type must be one of ENGRAM_TYPES — a readable 400 instead of the
@@ -23,118 +23,94 @@ export function validateNoTemplateLeak(content: string | undefined | null): void
   if (!content) return
   if (/<parameter\s+name=/i.test(content)) {
     throw new Error(
-      'content contains tool-call template syntax (`<parameter name=...`) — ' +
+      'Invalid engram: content contains tool-call template syntax (`<parameter name=...`) — ' +
       'this is almost always an XML escaping bug. Closing tags use `</parameter>`, ' +
       'not `</field-name>`. Re-check your tool-call structure.'
     )
   }
 }
 
+// v0.19: the per-type field rules moved to fields.ts (TYPE_FIELDS, validateFields);
+// the write paths in engrams.ts check the conditional ones (binding with
+// task_id, a task's outcome on close, …).
+
+// --- Rule and profile format -------------------------------------------------
+//
+// Rules and profiles are short at the source, so the boot can carry them whole
+// (note rule-delivery-model-draft): a rule's content says only what to do, the
+// rationale goes to `why` and playbook or examples to `detail`; a situational
+// rule names its situation in `trigger`, which the boot lists in its index. Entries written before the format (legacy) stay valid —
+// the boot shows them by title only and counts them in its footer.
+
+export const RULE_CONTENT_MAX_CHARS = 200
+export const PROFILE_CONTENT_MAX_CHARS = 400
+export const RULE_TRIGGER_MAX_CHARS = 80
+
 /**
- * Validate required properties for an engram type.
- * Throws on missing required fields.
- *
- * v0.15: `opts.create` gates the requirements that only hold for NEW engrams
- * (decision: rationale + ≥ 1 alternative), so legacy data stays patchable and
- * supersedable. `opts.prevStatus` is the stored status on update, for checks that
- * fire on a status TRANSITION only. Errors from these checks start with
- * `Invalid engram:` (one prefix for the server's 400 mapping).
+ * What keeps a rule or profile from the current format — empty when it fits
+ * (and for every other type). One sentence per problem, ready for an error.
  */
-export function validateProperties(
-  type: EngramType,
+export function formatProblems(
+  type: string,
+  content: string | null | undefined,
   properties: Record<string, unknown> | null | undefined,
-  status?: EngramStatus,
-  opts: { create: boolean; prevStatus?: EngramStatus } = { create: false }
-): void {
+): string[] {
   const p = properties ?? {}
-  const errors: string[] = []
-
-  function require(field: string) {
-    if (p[field] === undefined || p[field] === null) {
-      errors.push(field)
+  const len = (content ?? '').length
+  const out: string[] = []
+  if (type === 'rule') {
+    if (len > RULE_CONTENT_MAX_CHARS) {
+      out.push(
+        `a rule's content is at most ${RULE_CONTENT_MAX_CHARS} characters (got ${len}) — state only what to do. ` +
+        'Put the rationale in why and playbook or examples in detail.',
+      )
+    }
+    if (p.applies === 'situational') {
+      const trigger = p.trigger
+      if (typeof trigger !== 'string' || trigger.trim() === '') {
+        out.push(
+          'a situational rule needs trigger — the situation it applies in, ' +
+          `at most ${RULE_TRIGGER_MAX_CHARS} characters. Don't repeat it in content.`,
+        )
+      } else if (trigger.length > RULE_TRIGGER_MAX_CHARS) {
+        out.push(`trigger is at most ${RULE_TRIGGER_MAX_CHARS} characters (got ${trigger.length}).`)
+      }
+    }
+  } else if (type === 'profile') {
+    if (len > PROFILE_CONTENT_MAX_CHARS) {
+      out.push(
+        `a profile's content is at most ${PROFILE_CONTENT_MAX_CHARS} characters (got ${len}) — keep the core facts; ` +
+        'put the rest in detail or a separate profile.',
+      )
     }
   }
+  return out
+}
 
-  switch (type) {
-    case 'decision': {
-      // v0.15: a decision is a choice between real alternatives, with a rationale.
-      // Create only — legacy decisions without them stay patchable/supersedable.
-      if (!opts.create) break
-      const missing: string[] = []
-      const alts = p.alternatives
-      if (!Array.isArray(alts) || !alts.some(a => typeof a === 'string' && a.trim() !== '')) {
-        missing.push('a decision needs at least one alternative that was considered and rejected.')
-      }
-      if (typeof p.rationale !== 'string' || p.rationale.trim() === '') {
-        missing.push('a decision needs a rationale — why this option won.')
-      }
-      if (missing.length > 0) {
-        const sentences = missing.map((m, i) => i === 0 ? m : m[0].toUpperCase() + m.slice(1))
-        throw new Error(`Invalid engram: ${sentences.join(' ')}`)
-      }
-      break
-    }
+/** True when a rule or profile does not fit the current format (a legacy entry). */
+export function isLegacyFormat(
+  type: string,
+  content: string | null | undefined,
+  properties: Record<string, unknown> | null | undefined,
+): boolean {
+  return formatProblems(type, content, properties).length > 0
+}
 
-    case 'rule':
-      // v0.10.8: `applies` (always|situational) replaces `enforcement`. Required +
-      // enum-validated here so direct library/CLI/SDK writes can't inject off-schema
-      // values that bypass the MCP gate (the gap that let `always`/`must` in pre-0.10.8).
-      require('applies')
-      if (p.applies !== undefined && p.applies !== null
-        && p.applies !== 'always' && p.applies !== 'situational') {
-        errors.push(`applies (must be 'always' or 'situational', got '${String(p.applies)}')`)
-      }
-      break
-
-    case 'profile':
-      // v0.5: ProfileType removed entirely. Core identity data lives in the
-      // users/agents tables; profile engrams no longer have required properties.
-      break
-
-    case 'status':
-      // v0.8 C7: status_type/subject_state/phase gone; state required.
-      require('state')
-      break
-
-    case 'task': {
-      // v0.15: stage is an optional enum (a property, so the DB does not guard it).
-      if (p.stage !== undefined && p.stage !== null && !(TASK_STAGES as readonly unknown[]).includes(p.stage)) {
-        throw new Error(`Invalid engram: stage must be one of ${TASK_STAGES.join(', ')}.`)
-      }
-      // v0.15: closing a task with a result needs an outcome — on the TRANSITION
-      // into resolved/invalidated only (a create counts as one). A legacy closed
-      // task without outcome stays patchable.
-      const entering = status !== undefined && TASK_OUTCOME_STATUSES.includes(status)
-        && (opts.create || opts.prevStatus !== status)
-      if (entering && (typeof p.outcome !== 'string' || p.outcome.trim() === '')) {
-        throw new Error('Invalid engram: closing a task (resolved/invalidated) needs an outcome.')
-      }
-      break
-    }
-
-    case 'event':
-      require('occurred_at')
-      require('change_type')
-      break
-
-    case 'log':
-      // No required fields — log can minimally have only content
-      break
-
-    case 'reference':
-      // v0.7: No required fields — substance lives in content + title +
-      // source_url/source_name (core engram columns). ReferenceProperties
-      // (reference_type, accessed_at, notes) are all optional.
-      break
-
-    case 'note':
-      // v0.14: No typed properties — a note is its content.
-      break
-  }
-
-  if (errors.length > 0) {
-    throw new Error(`Missing required properties for ${type}: ${errors.join(', ')}`)
-  }
+/**
+ * Enforce the rule/profile format on a write. Callers run it on create and on
+ * an update that changes content, trigger, applies or type; status-only and
+ * review changes skip it, so legacy entries stay patchable (like legacy
+ * decisions, validateProperties create=false).
+ */
+export function validateFormat(
+  type: string,
+  content: string | null | undefined,
+  properties: Record<string, unknown> | null | undefined,
+): void {
+  const problems = formatProblems(type, content, properties)
+  if (problems.length === 0) return
+  const sentences = problems.map((m, i) => i === 0 ? m : m[0].toUpperCase() + m.slice(1))
+  throw new Error(`Invalid engram: ${sentences.join(' ')}`)
 }
 
 // v0.9.1 Cluster 1: validateSourceType removed — source_id/source_type were
@@ -200,10 +176,11 @@ export function validateScopeExists(scope: string, stores: ScopeStores): void {
       throw new Error(`Invalid scope "${scope}": empty ${label} id after "${prefix}".`)
     }
     if (!store.exists(id)) {
-      throw new Error(
-        `Scope "${scope}" references unknown ${label} "${id}". ` +
-        `Create the ${label} via POST /${label}.`
-      )
+      // v0.19: projects and entities are objects (eml_create_object); users and agents come from setup / the cockpit.
+      const hint = label === 'project' || label === 'entity'
+        ? `Create it first with eml_create_object(object=${label}, name=…, id=${id}${label === 'entity' ? ', kind=person|org|asset' : ''}).`
+        : `Users and agents are set up by the cockpit, not by a write.`
+      throw new Error(`Scope "${scope}" references unknown ${label} "${id}". ${hint}`)
     }
     return
   }

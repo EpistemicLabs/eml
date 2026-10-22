@@ -1,44 +1,79 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { HOOK_MCP_CLI_JS, HOOK_NODE, MCP_CLI_JS } from '../../paths.js'
-import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from '../../domain/agent-provider.js'
+import { HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_TURN_JS, MCP_CLI_JS } from '../../paths.js'
+import type { PlatformOs } from '../../domain/platform.js'
+import { platform } from '../platform/index.js'
 
 /**
  * What every provider's isolated config is built from: the brain MCP server,
- * the turn-state hook, and the EML hooks (boot + reminder) with their config.
+ * the turn-state hook, and the EML hooks (boot + reminder) with their config,
+ * each hook as a HookCommand rendered per provider and OS.
  */
+
+/**
+ * A hook as data: the program and its arguments, no shell syntax. Everything
+ * a hook needs at run time (token, URL, the session's ids and files) it reads
+ * from a file or the session's env, so one command works in every shell an
+ * agent CLI may run it in. The providers render it (claudeHook, codexHook).
+ */
+export interface HookCommand {
+  program: string
+  args: string[]
+}
 
 /** Quote for a POSIX shell command line. */
 export const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 
+/** Quote for PowerShell: a single-quoted string is literal, '' is a quote. */
+const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`
+
+/** The command as a POSIX shell line; a word with nothing the shell reads stays bare. */
+export const shellLine = (cmd: HookCommand) => [cmd.program, ...cmd.args].map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : quote(w))).join(' ')
+
+/** The command as a PowerShell line: a quoted program needs the call operator. */
+export const powershellLine = (cmd: HookCommand) => `& ${[cmd.program, ...cmd.args].map(psQuote).join(' ')}`
+
 /**
- * curl config (-K) holding the hook token, so the token never appears in the
- * hook command line — command lines are visible to every local user via ps.
+ * A Claude Code hook. On Windows in exec form (command + args): Claude Code
+ * spawns it without a shell, so it runs with or without Git Bash. Elsewhere a
+ * shell line, which every Claude Code version reads.
  */
-export function hookCurlConfig(hookToken: string): string {
-  return `# Cockpit turn-state hooks — rewritten on every boot.\nheader = "${HOOK_TOKEN_HEADER}: ${hookToken}"\n`
+export function claudeHook(cmd: HookCommand, os: PlatformOs, extra: Record<string, unknown> = {}) {
+  const command = os === 'win32' ? { command: cmd.program, args: cmd.args } : { command: shellLine(cmd) }
+  return { type: 'command', ...command, ...extra }
+}
+
+/** A Codex hook: Codex has no exec form and runs hooks through PowerShell on Windows, sh elsewhere. */
+export function codexHook(cmd: HookCommand, os: PlatformOs, extra: Record<string, unknown> = {}) {
+  return { type: 'command', command: os === 'win32' ? powershellLine(cmd) : shellLine(cmd), ...extra }
 }
 
 /**
- * A hook entry that reports turn state to the host (turn-state.ts) — the
- * shape Claude Code and Codex share. curl streams the hook's stdin JSON to
- * POST /api/hook; the token comes from the curl config file, the cockpit's
- * session id from the session's env. `async` so the CLI never waits on us,
- * `|| true` so a host hiccup can't surface as a hook error. The command holds
- * nothing that changes between boots: Codex asks the user to trust a hook
- * again whenever its text changes.
+ * The turn-state hook's config: where to POST and the per-boot token, in an
+ * owner-only file, so the token never appears in the hook command line —
+ * command lines are visible to every local user via ps. Rewritten on every
+ * boot; the command naming it stays the same (Codex asks the user to trust a
+ * hook again whenever its text changes).
  */
-export function hookEntry(hookUrl: string, curlConfig: string, matcher?: string) {
-  return {
-    ...(matcher ? { matcher } : {}),
-    hooks: [{
-      type: 'command',
-      command: `curl -sS -m 3 -K ${quote(curlConfig)} -X POST -H 'Content-Type: application/json' -H "${HOOK_SESSION_HEADER}: $COCKPIT_SESSION_ID" --data-binary @- ${quote(hookUrl)} >/dev/null 2>&1 || true`,
-      timeout: 5,
-      async: true,
-    }],
-  }
+export function writeTurnHookConfig(file: string, hookUrl: string, hookToken: string): void {
+  fs.writeFileSync(file, JSON.stringify({ url: hookUrl, token: hookToken }) + '\n', { mode: 0o600 })
+  fs.chmodSync(file, 0o600)
 }
+
+/**
+ * The hook that reports turn state to the host (turn-state.ts, turn-hook.ts):
+ * it streams the hook's stdin JSON to POST /api/hook, never fails the CLI's
+ * turn, and is run async by the providers so the CLI never waits on it.
+ */
+export function turnHookCommand(configFile: string): HookCommand {
+  return { program: hookNode(), args: [HOOK_TURN_JS, configFile] }
+}
+
+/** The turn hook's own options, the same for Claude Code and Codex. */
+export const TURN_HOOK_OPTIONS = { timeout: 5, async: true }
+
+/** The turn hook read its token from this curl config up to 0.17.19; the file carries the token and goes on boot. */
+export const LEGACY_CURL_CONFIG = 'hook-curl.conf'
 
 /** How the brain MCP server (the bundled mcp-server CLI) is started; it reads URL and token from its environment. */
 export const BRAIN_MCP_COMMAND = { command: 'node', args: [MCP_CLI_JS] }
@@ -61,28 +96,42 @@ export function brainMcpServer(loopbackUrl: string, brainToken: string) {
 
 /**
  * Name of the session environment variable that holds the path of the
- * session's EML hook config (its space's). A provider with one hooks file for
- * every space (Codex) points its EML hooks at `"$EML_HOOK_CONFIG"` and the
- * shell fills in the path — the hook text stays the same across spaces and boots.
+ * session's EML hook config (its space's). The mcp-server hook reads it when
+ * the command names no --config: a provider with one hooks file for every
+ * space (Codex) leaves it out, and the hook text stays the same across spaces
+ * and boots.
  */
 export const EML_HOOK_CONFIG_ENV = 'EML_HOOK_CONFIG'
 
 /**
- * The mcp-server's node hooks (no bash/jq). `configArg` is the --config
- * argument as it goes on the command line: the quoted path of a space's EML
- * config (Claude Code: one settings.json per space), or `"$EML_HOOK_CONFIG"`
- * (see EML_HOOK_CONFIG_ENV). `json`: print the context in the hook JSON
- * envelope (Codex).
+ * The mcp-server's node hooks (no bash/jq). `configFile`: the space's EML
+ * config (Claude Code: one settings.json per space); without it the hook reads
+ * the path from EML_HOOK_CONFIG_ENV. `json`: print the context in the hook
+ * JSON envelope (Codex).
  */
-export function emlHookEntry(hook: 'session-start' | 'user-prompt-submit' | 'stop', configArg: string, json = false) {
+export function emlHookCommand(
+  hook: 'session-start' | 'user-prompt-submit' | 'project-block' | 'stop',
+  configFile?: string,
+  json = false,
+  flags: string[] = [],
+): HookCommand {
+  // Stable text (paths.ts): node through the host's link, the CLI through app/current.
   return {
-    hooks: [{
-      type: 'command',
-      // Stable text (paths.ts): node through the host's link, the CLI through app/current.
-      command: `${quote(HOOK_NODE)} ${quote(HOOK_MCP_CLI_JS)} hook ${hook} --config ${configArg}${json ? ' --json' : ''}`,
-      timeout: 15,
-    }],
+    program: hookNode(),
+    args: [HOOK_MCP_CLI_JS, 'hook', hook, ...(configFile ? ['--config', configFile] : []), ...(json ? ['--json'] : []), ...flags],
   }
+}
+
+/** The EML hooks' own options. */
+export const EML_HOOK_OPTIONS = { timeout: 15 }
+
+/**
+ * The node the hooks run with. macOS, Linux: <home>/bin/node, a link to this
+ * host's node (ensureHookNode). Windows: node itself — a link there needs admin
+ * rights or Developer Mode; a node upgrade then changes the hook text once.
+ */
+export function hookNode(): string {
+  return platform.os === 'win32' ? process.execPath : HOOK_NODE
 }
 
 /**
@@ -93,6 +142,7 @@ export function emlHookEntry(hook: 'session-start' | 'user-prompt-submit' | 'sto
  * boot; call before writing a provider's hooks.
  */
 export function ensureHookNode(): string {
+  if (platform.os === 'win32') return hookNode()
   fs.mkdirSync(path.dirname(HOOK_NODE), { recursive: true, mode: 0o700 })
   try {
     if (fs.readlinkSync(HOOK_NODE) === process.execPath) return HOOK_NODE

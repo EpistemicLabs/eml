@@ -4,13 +4,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
 import { EML } from '../src'
+import { validLog } from './fixtures'
 
 // v0.14 Cluster B — the subjects axis (the "heavy facet", spec §B.3): a registry
 // with description + lifecycle status, and an engram_subjects junction.
 
 const MIGRATIONS = join(__dirname, '..', 'migrations', 'brain')
 const V12_FIXTURE = join(__dirname, 'fixtures', 'brain-v12.sql')
-const SRC = { source_id: 'x', source_type: 'agent' } as const
 
 describe('v0.14 subjects', () => {
   let dir: string
@@ -29,7 +29,7 @@ describe('v0.14 subjects', () => {
   })
 
   const note = (scope: string, content: string, extra: Record<string, unknown> = {}) =>
-    eml.engrams.store({ type: 'note', scope, content, properties: { ...SRC }, ...extra })
+    eml.engrams.store({ type: 'note', scope, title: 'n', content, ...extra })
 
   it('SubjectStore.create slugifies, starts active, and dedups without overwriting', () => {
     const t = eml.subjects.create({ name: 'Norway Trip', description: 'summer 2026' })
@@ -49,9 +49,7 @@ describe('v0.14 subjects', () => {
     expect(e.subjects).toEqual(['v0-14-planning'])
     expect(eml.engrams.getRaw(e.id)!.subjects).toEqual(['v0-14-planning'])
     expect(eml.engrams.query({ scope: 'project.a' })[0].subjects).toEqual(['v0-14-planning'])
-    eml.engrams.store({
-      type: 'log', scope: 'project.a', content: 'session', subjects: ['v0-14-planning'], properties: { ...SRC },
-    })
+    eml.engrams.store(validLog({ scope: 'project.a', content: 'session', subjects: ['v0-14-planning'] }))
     expect(eml.projects.getBrainState('a')!.recent_logs[0].subjects).toEqual(['v0-14-planning'])
   })
 

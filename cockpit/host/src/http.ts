@@ -35,6 +35,7 @@ import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, write
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
+import type { BrainHygiene } from './brain-hygiene.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -77,13 +78,14 @@ export interface HostDeps {
   providers: ProviderRegistry
   /** Per-boot secret the session hooks send (HOOK_TOKEN_HEADER) — POST /api/hook requires it. */
   hookToken: string
-  /** POST /api/hook of this boot + the curl config carrying hookToken — a new space's session files need them. */
-  hookUrl: string
-  curlConfig: string
+  /** The turn-state hook's config of this boot — a new space's session files name it. */
+  turnHookConfig: string
   /** Worker-session requests from sessions (spawn-api.ts). */
   spawns: SpawnQueue
   /** Per-boot secret sessions send with POST /api/spawn. */
   spawnToken: string
+  /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
+  hygiene: BrainHygiene
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -293,7 +295,7 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
     userName: info.users.find((u) => u.id === userId)?.name ?? userId,
   })
   const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, hookUrl: deps.hookUrl, curlConfig: deps.curlConfig,
+    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
   })
   deps.spaces.add(space)
   return { space }
@@ -306,6 +308,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
   if (await handleSpawnApi(req, res, { spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+
+  // v0.19: the model a cockpit session runs on, for the EML MCP server's
+  // provenance stamp (it calls this per write, /model can switch mid-session).
+  // Same token as spawning: only sessions of this cockpit carry it.
+  if (resource === 'session-model' && id && method === 'GET') {
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can ask for its model' } })
+      return true
+    }
+    const entry = deps.bridge.ledger.get(id)
+    if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
+    const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+    const summary = deps.providers.forSession(id).summary(deps.bridge.ledger.ref(id, project?.path ?? null))
+    json(res, 200, { model: summary.model, provider: entry.provider })
+    return true
+  }
 
   // Spaces: the list, and a new local one (Settings › Brain).
   if (resource === 'spaces' && !id && method === 'GET') {
@@ -355,6 +373,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
+    // Brain hygiene of this space: GET = the banner's offer (null = none),
+    // POST start = findings.json + a session. The banner stays until started.
+    if (resource === 'brain-hygiene') {
+      if (!id && method === 'GET') {
+        json(res, 200, { offer: await deps.hygiene.view(space) })
+        return true
+      }
+      if (id === 'start' && method === 'POST') {
+        json(res, 200, await deps.hygiene.start(space))
+        return true
+      }
+    }
+
     if (resource === 'about' && !id && method === 'GET') {
       json(res, 200, { ...ABOUT, claudeVersion: claudeVersion() })
       return true
@@ -394,10 +425,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Update banner (v0.14 Cluster 0): the newest brain-migration report.
-    // Dismissing a failure is refused until the brain has caught up.
+    // Update banner (v0.14 Cluster 0): the newest brain-migration report and
+    // the in-app update this host runs. Dismissing a failure is refused until
+    // the brain has caught up.
     if (resource === 'update-status' && !id && method === 'GET') {
-      json(res, 200, readUpdateStatus())
+      json(res, 200, readUpdateStatus((brainId) => deps.spaces.get(brainId)?.name))
       return true
     }
     if (resource === 'update-status' && id === 'ack' && method === 'POST') {
@@ -530,7 +562,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
     }
 
-    // Session hook → turn state (see turn-state.ts). curl from the agent CLI,
+    // Session hook → turn state (see turn-state.ts). turn-hook.ts from the agent CLI,
     // no Origin; the per-boot token in the hook header is the guard.
     if (resource === 'hook' && !id && method === 'POST') {
       if (req.headers[HOOK_TOKEN_HEADER] !== deps.hookToken) {
@@ -733,8 +765,10 @@ async function proxyBrain(req: http.IncomingMessage, res: http.ServerResponse, d
     const text = await upstream.text()
     // A project created/patched through the proxy must show up in the next
     // GET /api/projects, not after the 5s cache lapses (a new project used to
-    // appear only after a reload).
-    if (upstream.ok && method !== 'GET' && method !== 'HEAD' && /^\/projects?(\/|\?|$)/.test(rel)) {
+    // appear only after a reload). v0.19: the wizard creates and the detail
+    // updates through /object/project (POST, PUT /object/project/:id) — those
+    // invalidate too.
+    if (upstream.ok && method !== 'GET' && method !== 'HEAD' && /^\/(object\/)?projects?(\/|\?|$)/.test(rel)) {
       space.projects.invalidate()
     }
     res.writeHead(upstream.status, {

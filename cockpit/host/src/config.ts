@@ -25,6 +25,16 @@ export interface CockpitConfig {
    * which brain a token belongs to comes from control.db at boot. Absent = main only.
    */
   spaces?: Array<{ token: string; name?: string }>
+  /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
+  hygiene?: Record<string, HygieneState>
+}
+
+/** When the hygiene banner was last started for one brain. */
+export interface HygieneState {
+  /** The brain schema whose migration findings were offered. */
+  offeredSchema?: number
+  /** When due reviews were last offered (ISO). */
+  reviewsOfferedAt?: string
 }
 
 export async function readCockpitConfig(): Promise<CockpitConfig | null> {
@@ -42,11 +52,26 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(spaces.length ? { spaces } : {}),
+      ...(readHygiene(parsed.hygiene) ?? {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
+}
+
+function readHygiene(raw: unknown): { hygiene: Record<string, HygieneState> } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: Record<string, HygieneState> = {}
+  for (const [brainId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue
+    const { offeredSchema, reviewsOfferedAt } = value as Record<string, unknown>
+    out[brainId] = {
+      ...(typeof offeredSchema === 'number' && Number.isInteger(offeredSchema) ? { offeredSchema } : {}),
+      ...(typeof reviewsOfferedAt === 'string' ? { reviewsOfferedAt } : {}),
+    }
+  }
+  return Object.keys(out).length ? { hygiene: out } : null
 }
 
 // Every write goes through one chain, so a read-modify-write (updateCockpitConfig)

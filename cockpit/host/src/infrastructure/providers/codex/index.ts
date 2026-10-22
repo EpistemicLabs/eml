@@ -5,7 +5,11 @@ import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionRef, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
-import { BRAIN_MCP_COMMAND, BRAIN_MCP_ENV_VARS, EML_HOOK_CONFIG_ENV, emlHookEntry, ensureHookNode, hookCurlConfig, hookEntry, installManagedSkills } from '../shared.js'
+import {
+  BRAIN_MCP_COMMAND, BRAIN_MCP_ENV_VARS, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, TURN_HOOK_OPTIONS, codexHook,
+  emlHookCommand, ensureHookNode, installManagedSkills, turnHookCommand, writeTurnHookConfig, type HookCommand,
+} from '../shared.js'
+import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { codexRuntime } from './runtime.js'
@@ -25,7 +29,7 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  * EML_API_URL + EML_API_TOKEN, which Codex forwards to the brain MCP server
  * (`env_vars` in config.toml — an MCP server otherwise sees a minimal env),
  * and EML_HOOK_CONFIG, the path of the space's EML hook config, which the
- * hook commands read through the shell (see shared.ts, EML_HOOK_CONFIG_ENV).
+ * EML hooks read themselves (see shared.ts, EML_HOOK_CONFIG_ENV).
  *
  * Files written here:
  *   - config.toml: Codex's own update check off; the brain MCP server (eml_brain)
@@ -33,8 +37,9 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  *     fails the call where nobody can answer); one `projects."<path>"` table
  *     per trusted folder. Codex keeps its own state in the same file, so only
  *     these tables are replaced. No token in it.
- *   - hook-curl.conf (chmod 600): the per-boot hook token as a curl header.
- *   - hooks.json: turn state to the host, and the EML hooks (boot, reminder, consolidate at stop).
+ *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
+ *   - hooks.json: turn state to the host, and the EML hooks (boot, project block, reminder,
+ *     consolidate at stop).
  *     Codex runs a hook only after the user trusted it; it asks once, in the
  *     first session, and again whenever a hook's text changes — which is why
  *     nothing per boot or per space is in the hook text.
@@ -52,7 +57,8 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
 
 /**
  * Codex cuts a hook's context off at about 2,500 tokens unless the hook raises
- * the limit. The boot context of a grown brain is larger than that.
+ * the limit. The boot context of a grown brain is larger than that, and so is
+ * a full project block.
  */
 const BOOT_CONTEXT_LIMIT = 20_000
 
@@ -64,7 +70,7 @@ const REVIEW_SETTLE_MS = 12_000
 
 const CONFIG_TOML = path.join(CODEX_CONFIG_DIR, 'config.toml')
 const HOOKS_JSON = path.join(CODEX_CONFIG_DIR, 'hooks.json')
-const CURL_CONFIG = path.join(CODEX_CONFIG_DIR, 'hook-curl.conf')
+const TURN_HOOK_CONFIG = path.join(CODEX_CONFIG_DIR, 'turn-hook.json')
 
 function readConfig(): string {
   try { return fs.readFileSync(CONFIG_TOML, 'utf8') } catch { return '' }
@@ -158,25 +164,34 @@ class CodexProvider implements AgentProvider {
       },
     ]))
 
-    fs.writeFileSync(CURL_CONFIG, hookCurlConfig(ctx.hookToken), { mode: 0o600 })
-    fs.chmodSync(CURL_CONFIG, 0o600)
-    const turn = hookEntry(ctx.hookUrl, CURL_CONFIG)
-    // The EML hooks read the space's config from the session's env (one hooks
-    // file for every space). Codex reads hook output that starts with "[" as
-    // JSON — the reminder does — so both come in the JSON envelope.
-    const emlConfigArg = `"$${EML_HOOK_CONFIG_ENV}"`
-    const boot = emlHookEntry('session-start', emlConfigArg, true)
+    writeTurnHookConfig(TURN_HOOK_CONFIG, ctx.hookUrl, ctx.hookToken)
+    // Up to 0.17.19 the turn hook read its token from a curl config.
+    fs.rmSync(path.join(CODEX_CONFIG_DIR, LEGACY_CURL_CONFIG), { force: true })
+    const entry = (cmd: HookCommand, options: Record<string, unknown>) => ({ hooks: [codexHook(cmd, platform.os, options)] })
+    const turn = entry(turnHookCommand(TURN_HOOK_CONFIG), TURN_HOOK_OPTIONS)
+    // The EML hooks name no config: they read the space's from the session's
+    // env (EML_HOOK_CONFIG_ENV, one hooks file for every space). Codex reads
+    // hook output that starts with "[" as JSON — the reminder does — so both
+    // come in the JSON envelope.
+    const eml = (hook: Parameters<typeof emlHookCommand>[0], json: boolean, options: Record<string, unknown> = {}, flags: string[] = []) =>
+      entry(emlHookCommand(hook, undefined, json, flags), { ...EML_HOOK_OPTIONS, ...options })
     fs.writeFileSync(
       HOOKS_JSON,
       JSON.stringify({
         hooks: {
-          SessionStart: [{ hooks: boot.hooks.map((hook) => ({ ...hook, additionalContextLimit: BOOT_CONTEXT_LIMIT })) }],
-          UserPromptSubmit: [turn, emlHookEntry('user-prompt-submit', emlConfigArg, true)],
+          // The project block (mcp-server hooks/project-block.ts), as for Claude: a second
+          // SessionStart command; it brings the session's project, so the reminder drops
+          // its guess from the working directory.
+          SessionStart: [
+            eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+            eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+          ],
+          UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],
           PermissionRequest: [turn],
           // Back to "working" once an approved tool ran — Codex has no other signal for it.
           PostToolUse: [turn],
           // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
-          Stop: [turn, emlHookEntry('stop', emlConfigArg)],
+          Stop: [turn, eml('stop', false)],
         },
       }, null, 2),
       { mode: 0o600 },
@@ -229,7 +244,7 @@ class CodexProvider implements AgentProvider {
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
         // First on the session's PATH. Codex runs shell commands in a login shell,
         // which builds its own PATH — a `codex` typed there can still be the user's.
-        PATH: [codexRuntime.binDir, process.env.PATH].filter(Boolean).join(':'),
+        PATH: [codexRuntime.binDir, process.env.PATH].filter(Boolean).join(path.delimiter),
       },
     }
   }

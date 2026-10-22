@@ -5,7 +5,7 @@ You don't need a GitHub account, and you don't need to download this repository.
 
 **What you need**
 
-- A Mac (the installer is macOS only for now)
+- A Mac. On Windows, see [Installing on Windows (beta)](#installing-on-windows-beta) at the end.
 - A Claude subscription. Your agent runs on it. You sign in on the first start.
 
 ## 1. Install Node.js
@@ -73,7 +73,15 @@ Everything stays on your computer. Your brain (what your agent learns) lives in 
 | The browser says the page can't be reached | Wait a few seconds and reload. If it stays like that, log out of your Mac and back in. |
 
 Still stuck? [Open an issue](https://github.com/EpistemicLabs/eml/issues) and paste what the Terminal
-shows. Leave out anything personal.
+shows. Leave out anything personal. The cockpit can add what we need to look into it, with your folders,
+project names and keys already taken out — paste its output into the issue too:
+
+```bash
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js diagnose
+```
+
+If the cockpit runs, it is easier from inside a session: type `/report-issue` and your agent writes the
+issue with you, diagnostics included.
 
 ## Uninstalling
 
@@ -89,3 +97,42 @@ To remove the brain too, delete that folder. **This deletes everything your agen
 be undone.** If you might want it later, back it up first: Settings › Brain › **Back up now**, then copy
 the backup out of `~/.eml-cockpit/backups` (for example into your Documents folder). The backups live
 inside the folder you are about to delete.
+
+## Installing on Windows (beta)
+
+The cockpit runs on Windows 10 and 11 (64-bit) too. It is new there: it is tested automatically on every
+change, but few people have used it yet. If something looks wrong, tell us: inside a session, type
+`/report-issue`.
+
+**What you need:** a Claude subscription. Nothing else has to be installed first, and no admin rights are
+needed: the installer brings the Node.js the cockpit runs on into the cockpit's own folder. Recommended:
+[Git for Windows](https://git-scm.com/download/win) (default options), because Claude Code runs its shell
+commands in Git Bash when it is there and in PowerShell when it is not.
+
+1. Download the installer:
+   **[install-eml-cockpit.cmd](https://github.com/EpistemicLabs/eml/releases/latest/download/install-eml-cockpit.cmd)**
+2. Open the downloaded file. Windows warns that it protected your PC, because the file comes from the
+   internet and is not signed. Click **More info**, then **Run anyway**.
+3. A window shows the installation. When it says **Done**, your browser opens the cockpit at
+   [http://127.0.0.1:4317](http://127.0.0.1:4317). Press a key to close the window.
+
+The installer checks every file against its published checksum and installs the cockpit and its Node.js
+into `.eml-cockpit` in your user folder. Your own Node.js, if you have one, is not touched. From then on
+the cockpit starts on its own when you log in (a PowerShell window may flash up for a moment) and updates
+itself through the banner, as on a Mac.
+
+> **Prefer PowerShell?** The same installer as one line: open PowerShell and paste
+> `irm https://github.com/EpistemicLabs/eml/releases/latest/download/install.ps1 | iex`
+
+To uninstall, paste this into PowerShell. Your brain stays in `.eml-cockpit`, as on a Mac:
+
+```powershell
+& "$env:USERPROFILE\.eml-cockpit\node\current\node.exe" "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" service uninstall
+```
+
+If the cockpit does not start, this prints what we need to look into it (folders, names and keys taken
+out). Paste it into an issue:
+
+```powershell
+& "$env:USERPROFILE\.eml-cockpit\node\current\node.exe" "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" diagnose
+```

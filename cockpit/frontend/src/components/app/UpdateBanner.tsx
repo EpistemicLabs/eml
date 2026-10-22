@@ -1,10 +1,15 @@
-// Update banner (v0.14 Cluster 0, decision app-update-flow): the outcome of
-// the last brain-schema update, from the host (GET /api/update-status).
-// Success is green and can be dismissed. Failure is red and stays until the
-// brain has caught up: it is the only place that says why the brain is
-// offline. Later the same strip announces "update available".
+// The update banner (decision app-update-flow): one strip for the whole
+// update, from "available" through installing and restarting to its outcome.
+// "Available" comes from GET /api/app-update and stays until the update is
+// installed; the outcome from GET /api/update-status — the in-app update this
+// host runs and the last brain-schema migration. Success is green and can be
+// dismissed. A failed migration is red and stays until the brain has caught up:
+// it is the only place that says why the brain is offline.
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, FolderSearch, X, XCircle } from 'lucide-react';
+import { ArrowUpCircle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FolderSearch, XCircle } from 'lucide-react';
+
+import { useAppUpdate } from '@/hooks/useAppUpdate';
+import { Banner, BannerButton, BannerLink } from './Banner';
 
 type MigrationReport = {
   brainId: string;
@@ -21,8 +26,11 @@ type MigrationReport = {
 
 type UpdateStatus = {
   report: MigrationReport | null;
+  /** The report's brain by its space's name. */
+  brain: string | null;
   acknowledged: boolean;
   resolved: boolean;
+  updated: { outcome: 'updated' | 'rolled_back'; from: string; to: string } | null;
 };
 
 const POLL_MS = 60_000;
@@ -33,12 +41,11 @@ const FAILURE_STATE: Record<Exclude<MigrationReport['outcome'], 'migrated'>, str
   backup_failed: 'was not changed (no backup could be taken)',
   restored: 'was restored from the backup',
   brain_missing: 'has no data file on disk',
-  restore_failed: 'could NOT be restored automatically — restore it from the backup below',
+  restore_failed: 'could NOT be restored automatically — restore it from the backup',
 };
 
-export default function UpdateBanner() {
+function useUpdateStatus() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
-  const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -57,63 +64,97 @@ export default function UpdateBanner() {
     };
   }, [load]);
 
-  const report = status?.report;
-  if (!status || !report || status.acknowledged) return null;
-  // A failure that has since been fixed (a later start migrated the brain) is
-  // superseded by that start's own report; nothing to show for it here.
-  if (report.outcome !== 'migrated' && status.resolved) return null;
-
-  const ok = report.outcome === 'migrated';
-  const failureState = report.outcome === 'migrated' ? '' : FAILURE_STATE[report.outcome];
-  const version = report.codeVersion && report.codeVersion !== '0.0.0' ? ` to ${report.codeVersion}` : '';
-
-  const dismiss = async () => {
+  const dismiss = useCallback(async () => {
     const res = await fetch('/api/update-status/ack', { method: 'POST' });
-    if (res.ok) setStatus({ ...status, acknowledged: true });
-  };
-  const revealBackup = () => void fetch('/api/update-status/reveal-backup', { method: 'POST' });
+    if (res.ok) setStatus((s) => s && { ...s, acknowledged: true, updated: null });
+  }, []);
+
+  return { status, dismiss };
+}
+
+const knownVersion = (v?: string) => (v && v !== '0.0.0' ? v : null);
+
+export default function UpdateBanner() {
+  const app = useAppUpdate();
+  const { status, dismiss } = useUpdateStatus();
+  const [open, setOpen] = useState(false);
+
+  const report = status?.report ?? null;
+  const brain = status?.brain ?? report?.brainName;
+  const failure = report && report.outcome !== 'migrated' && !status?.resolved ? report.outcome : null;
+  const migrated = report?.outcome === 'migrated' && !status?.acknowledged ? report : null;
+  const updated = status?.updated ?? null;
+
+  const latest = app.status?.latest;
+  const busy = app.phase === 'installing' || app.phase === 'restarting';
+  const offer = !!latest && (busy || app.phase === 'installed-restart-needed' || !!app.status?.available);
+
+  // The outcome: the update this host runs, and the migration it brought along.
+  let outcome: string | null = null;
+  if (!failure && (updated || migrated)) {
+    const version = updated?.to ?? knownVersion(migrated?.codeVersion);
+    const head = !version ? '' : updated?.outcome === 'rolled_back' ? `Rolled back to v${version}.` : `Updated to v${version}.`;
+    const brainLine = migrated ? `Your brain “${brain}” successfully migrated from schema v${migrated.from} to v${migrated.to}.` : '';
+    outcome = [head, brainLine].filter(Boolean).join(' ');
+  }
 
   return (
-    <div
-      role={ok ? 'status' : 'alert'}
-      className={`flex-shrink-0 border-b px-3 py-2 text-[13px] ${
-        ok
-          ? 'border-success/30 bg-success/10 text-success'
-          : 'border-destructive/40 bg-destructive/10 text-destructive'
-      }`}
-    >
-      <div className="flex items-start gap-2.5">
-        {ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />}
-        <div className="min-w-0 flex-1">
-          <div className="font-medium">
-            {ok
-              ? `Updated${version} — brain “${report.brainName}” migrated v${report.from} → v${report.to}.`
-              : `Brain update failed — “${report.brainName}” is still on v${report.from} and ${failureState}. The brain is offline until the update succeeds.`}
-          </div>
-          {!ok && report.error && <div className="mt-0.5 break-words font-mono text-xs opacity-90">Reason: {report.error}</div>}
-          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-90">
-            <button type="button" className="inline-flex items-center gap-1 hover:underline" onClick={() => setOpen((v) => !v)}>
-              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              {open ? 'Hide report' : 'Show report'}
-            </button>
-            {report.backupPath && (
-              <button type="button" className="inline-flex items-center gap-1 hover:underline" onClick={revealBackup}>
-                <FolderSearch className="h-3 w-3" /> Reveal backup
-              </button>
-            )}
-          </div>
-          {open && (
+    <>
+      {failure && report && (
+        <Banner
+          tone="destructive"
+          icon={XCircle}
+          detail={report.error && `Reason: ${report.error}`}
+          actions={
+            <>
+              <BannerLink icon={open ? ChevronDown : ChevronRight} onClick={() => setOpen((v) => !v)}>
+                {open ? 'Hide report' : 'Show report'}
+              </BannerLink>
+              {report.backupPath && (
+                <BannerLink icon={FolderSearch} onClick={() => void fetch('/api/update-status/reveal-backup', { method: 'POST' })}>
+                  Reveal backup
+                </BannerLink>
+              )}
+            </>
+          }
+          below={open && (
             <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-background/70 p-2 font-mono text-[11px] text-foreground">
               {JSON.stringify(report, null, 2)}
             </pre>
           )}
-        </div>
-        {ok && (
-          <button type="button" aria-label="Dismiss" className="rounded p-0.5 hover:bg-foreground/10" onClick={() => void dismiss()}>
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-    </div>
+        >
+          {`Update${knownVersion(report.codeVersion) ? ` to v${report.codeVersion}` : ''} failed: your brain “${brain}” is still on schema v${report.from} and ${FAILURE_STATE[failure]}. The brain is offline until the update succeeds.`}
+        </Banner>
+      )}
+
+      {offer && latest && (
+        <Banner
+          tone="info"
+          icon={ArrowUpCircle}
+          busy={busy}
+          detail={app.error}
+          actions={app.phase === 'idle' && (
+            <>
+              {latest.url && <BannerLink href={latest.url} icon={ExternalLink}>Release notes</BannerLink>}
+              <BannerButton onClick={() => void app.apply(latest.version)}>Update</BannerButton>
+            </>
+          )}
+        >
+          {app.phase === 'installing'
+            ? `Installing v${latest.version}…`
+            : app.phase === 'restarting'
+              ? `Restarting into v${latest.version} — the page reloads when it's back.`
+              : app.phase === 'installed-restart-needed'
+                ? `v${latest.version} is installed — restart the cockpit to use it.`
+                : `EML Cockpit v${latest.version} is available — you have v${app.status?.current}.`}
+        </Banner>
+      )}
+
+      {outcome && !busy && (
+        <Banner tone="success" icon={CheckCircle2} onDismiss={() => void dismiss()}>
+          {outcome}
+        </Banner>
+      )}
+    </>
   );
 }

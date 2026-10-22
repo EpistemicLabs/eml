@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Tag, TagInput, Engram } from './types'
+import { Tag, TagInput, TagUpdate, Engram } from './types'
 
 /**
  * v0.12: batch-load registered tag ids onto a set of engrams IN PLACE — ONE query
@@ -69,13 +69,51 @@ export class TagStore {
   }
 
   get(id: string): Tag | null {
-    const row = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(id) as any
+    const row = this.db.prepare(`
+      SELECT t.*, (SELECT COUNT(*) FROM engram_tags et WHERE et.tag_id = t.id) AS engram_count
+      FROM tags t WHERE t.id = ?
+    `).get(id) as any
     return row ? this.rowToTag(row) : null
   }
 
-  list(): Tag[] {
-    const rows = this.db.prepare('SELECT * FROM tags ORDER BY id ASC').all() as any[]
+  /** The registered tags (v0.19: active only unless a status is asked for), with their usage. */
+  list(status?: 'active' | 'archived'): Tag[] {
+    const rows = this.db.prepare(`
+      SELECT t.*, (SELECT COUNT(*) FROM engram_tags et WHERE et.tag_id = t.id) AS engram_count
+      FROM tags t ${status ? 'WHERE t.status = ?' : ''} ORDER BY t.id ASC
+    `).all(...(status ? [status] : [])) as any[]
     return rows.map(r => this.rowToTag(r))
+  }
+
+  /**
+   * v0.19: rename (the id stays), describe, archive or restore. An archived tag
+   * stays on the engrams that carry it but cannot be assigned anew.
+   */
+  update(id: string, patch: TagUpdate): Tag | null {
+    if (!this.exists(id)) return null
+    const fields: string[] = []
+    const params: unknown[] = []
+    if (patch.name !== undefined) {
+      if (!patch.name.trim()) throw new Error('invalid tag name — must not be empty')
+      fields.push('name = ?'); params.push(patch.name.trim())
+    }
+    if (patch.description !== undefined) { fields.push('description = ?'); params.push(patch.description) }
+    if (patch.status !== undefined) {
+      if (patch.status !== 'active' && patch.status !== 'archived') throw new Error('invalid tag status — active or archived')
+      fields.push('status = ?'); params.push(patch.status)
+    }
+    if (fields.length > 0) this.db.prepare(`UPDATE tags SET ${fields.join(', ')} WHERE id = ?`).run(...params, id)
+    return this.get(id)
+  }
+
+  /** The archived ones among the given ids. */
+  archivedIds(ids: string[]): Set<string> {
+    const uniq = [...new Set(ids)]
+    if (uniq.length === 0) return new Set()
+    const rows = this.db.prepare(
+      `SELECT id FROM tags WHERE status = 'archived' AND id IN (${uniq.map(() => '?').join(',')})`,
+    ).all(...uniq) as Array<{ id: string }>
+    return new Set(rows.map(r => r.id))
   }
 
   exists(id: string): boolean {
@@ -98,6 +136,8 @@ export class TagStore {
       id: row.id,
       name: row.name,
       description: row.description ?? null,
+      status: row.status ?? 'active',
+      engram_count: row.engram_count ?? 0,
       created_at: row.created_at,
     }
   }

@@ -39,5 +39,5 @@ if (!existsSync(path.join(uiDist, 'index.html'))) throw new Error(`frontend not 
 cpSync(uiDist, path.join(HOST, 'ui'), { recursive: true })
 cpSync(path.join(core, 'migrations'), path.join(HOST, 'migrations'), { recursive: true })
 
-execFileSync(require.resolve('typescript/bin/tsc'), ['-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
+execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
 console.log('eml-cockpit: dist/ ui/ migrations/ ready')

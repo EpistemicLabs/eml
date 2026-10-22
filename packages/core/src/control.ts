@@ -30,9 +30,15 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  * v0.15: relations rebuilt for the `part_of` verb (relation CHECK); task_entries.
  * v0.16: epistemic mode removed — engrams rebuilt without `mode` and the five
  *   epistemic types (old rows become notes), relations without `evaluates`.
+ * v0.18: no table change — the engram model changes (short rule/profile format,
+ *   trigger for situational rules); unchanged default-brain seed rules are rewritten.
+ * v0.19: the tool surface rework — engrams rebuilt for the `learning` type and
+ *   the provenance columns origin / model / harness; task_entries → entries
+ *   (journal, evidence, review); tag / entity status, status_tracks; free
+ *   properties folded into the typed fields.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 17
+export const CURRENT_BRAIN_SCHEMA_VERSION = 19
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or

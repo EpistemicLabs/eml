@@ -71,7 +71,7 @@ node. (Linux `systemd --user` is not built yet.)
 
 - Open the cockpit in **one** browser tab. A second tab takes over the running sessions, and the
   first one shows "Connect".
-- The login service is macOS-only for now (Linux `systemd --user` is not built yet).
+- The login service runs on macOS (launchd) and Windows (the user's Run key with a small supervisor); Linux `systemd --user` is not built yet.
 
 ## Architecture
 

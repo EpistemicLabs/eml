@@ -1,0 +1,214 @@
+{
+  "about": "Synthetic brain of a fictional solo maker who runs a small online ceramics shop. No real person, company or infrastructure. Each engram has a stable `key` the questions refer to; `age_days` sets its creation time relative to the run; `supersedes` names keys of earlier engrams it replaces.",
+  "agent": "assistant",
+  "user": "alex",
+  "projects": [
+    { "id": "shop", "name": "Ceramics shop", "goal": "Sell handmade ceramics online" },
+    { "id": "app", "name": "Companion app", "goal": "Mobile app for orders and new collections" },
+    { "id": "infra", "name": "Hosting", "goal": "Servers, backups and monitoring" },
+    { "id": "blog", "name": "Blog and newsletter", "goal": "Studio stories and a monthly newsletter" }
+  ],
+  "engrams": [
+    {
+      "key": "r-tests-before-push", "type": "rule", "scope": "user.alex", "title": "tests-before-push", "age_days": 120,
+      "content": "Run the full test suite before every push; never push with failing tests.",
+      "properties": { "applies": "always", "why": "A failing build reached the shop once and took an evening to roll back.", "agreed": "Alex, when the brain was set up" }
+    },
+    {
+      "key": "r-commit-english", "type": "rule", "scope": "global", "title": "commit-messages-english", "age_days": 110,
+      "content": "Write commit messages in English, imperative mood, one change per commit.",
+      "properties": { "applies": "always", "why": "The repository is shared with a freelance developer who reads English.", "agreed": "Alex, when the brain was set up" }
+    },
+    {
+      "key": "r-no-friday-deploys", "type": "rule", "scope": "global", "title": "no-friday-deploys", "age_days": 90,
+      "content": "No production deploys on Fridays after 14:00; wait until Monday morning.",
+      "properties": { "applies": "situational", "trigger": "deploying anything to production", "why": "A Friday deploy broke checkout once and nobody was around to fix it over the weekend.", "agreed": "Alex, after that weekend" }
+    },
+    {
+      "key": "r-backup-before-migration", "type": "rule", "scope": "project.shop", "title": "snapshot-before-migration", "age_days": 70,
+      "content": "Take a database snapshot before running any migration or bulk import on shop data.",
+      "properties": { "applies": "situational", "trigger": "running a migration or bulk import", "why": "A migration once went wrong and the data had to be restored by hand.", "agreed": "Alex, after that restore" }
+    },
+    {
+      "key": "r-ask-before-email", "type": "rule", "scope": "user.alex", "title": "approve-customer-emails", "age_days": 60,
+      "content": "Never send an email to customers without Alex approving the exact text first.",
+      "properties": { "applies": "situational", "trigger": "sending email to customers", "why": "Customers got an email with a wrong date once; Alex wants to see every text first.", "agreed": "Alex, when the brain was set up" }
+    },
+    {
+      "key": "r-app-test-device", "type": "rule", "scope": "project.app", "title": "test-on-oldest-device", "age_days": 50,
+      "content": "Test every app build on the oldest supported device (iPhone SE 2nd gen) before it goes out.",
+      "properties": { "applies": "situational", "trigger": "releasing a new app build", "why": "A build that crashed on the oldest phones reached customers once.", "agreed": "Alex, after the build 9 crash reports" }
+    },
+
+    {
+      "key": "s-shop-old", "type": "status", "scope": "project.shop", "title": "shop", "age_days": 40, "properties": { "state": "live, slow checkout" },
+      "content": "Shop runs on WooCommerce on shared hosting. Checkout takes about 4 seconds; customers complain."
+    },
+    {
+      "key": "d-platform-old", "type": "decision", "scope": "project.shop", "title": "shop-platform", "age_days": 60,
+      "content": "Keep the shop on WooCommerce and tune the shared hosting instead of switching platforms.",
+      "properties": { "rationale": "Switching costs a lot of time; caching might fix the slow checkout.", "alternatives": ["Shopify", "Shopware"] }
+    },
+    {
+      "key": "d-platform-new", "type": "decision", "scope": "project.shop", "title": "shop-platform", "age_days": 30,
+      "content": "Move the shop from WooCommerce to Shopify.",
+      "properties": { "rationale": "Caching did not fix checkout; hosting maintenance eats the time meant for pottery.", "alternatives": ["Stay on WooCommerce", "Shopware"] },
+      "supersedes": ["d-platform-old"]
+    },
+    {
+      "key": "d-payment", "type": "decision", "scope": "project.shop", "title": "payment-provider", "age_days": 50,
+      "content": "Use Stripe for card payments and PayPal as the second option.",
+      "properties": { "rationale": "Stripe has the lowest fees for small baskets; PayPal is what older customers expect.", "alternatives": ["Mollie", "Adyen"] }
+    },
+    {
+      "key": "d-shipping-old", "type": "decision", "scope": "project.shop", "title": "shipping-carrier", "age_days": 70,
+      "content": "Ship all parcels with DHL.",
+      "properties": { "rationale": "One carrier keeps the packing station simple.", "alternatives": ["Hermes", "DPD"] }
+    },
+    {
+      "key": "d-shipping-new", "type": "decision", "scope": "project.shop", "title": "shipping-carrier", "age_days": 20,
+      "content": "Ship small parcels up to 1 kg with Deutsche Post Warenpost; fragile and larger parcels stay with DHL.",
+      "properties": { "rationale": "Warenpost halves the cost for single mugs; DHL insurance is still needed for fragile items.", "alternatives": ["DHL for everything", "DPD"] },
+      "supersedes": ["d-shipping-old"]
+    },
+    {
+      "key": "n-pricing", "type": "note", "scope": "project.shop", "title": "pricing-formula", "age_days": 25,
+      "content": "Price formula: material cost x 2.5 plus 12 EUR handling. Glazed items get a 15 % surcharge on top of that."
+    },
+    {
+      "key": "n-returns", "type": "note", "scope": "project.shop", "title": "returns-policy", "age_days": 35,
+      "content": "Returns are accepted within 30 days. The customer pays return shipping, unless the item arrived broken: then a photo is enough and they get a full refund without sending it back."
+    },
+    {
+      "key": "n-supplier", "type": "note", "scope": "project.shop", "title": "clay-supplier", "age_days": 90,
+      "content": "Clay comes from a supplier in the Westerwald region. Order every six weeks, minimum order 200 kg, delivery takes about ten days."
+    },
+    {
+      "key": "n-shop-theme-deploy", "type": "note", "scope": "project.shop", "title": "theme-deploy", "age_days": 18,
+      "content": "Shop theme changes are deployed with the Shopify CLI (shopify theme push) from the theme repository. Always push to the preview theme first and check checkout on mobile."
+    },
+    {
+      "key": "t-import", "type": "task", "scope": "project.shop", "title": "product-import", "age_days": 28, "status": "resolved",
+      "content": "Import all products with images and variants from WooCommerce into Shopify.",
+      "properties": { "outcome": "imported 214 products; 6 variants fixed by hand" }
+    },
+    {
+      "key": "t-photos", "type": "task", "scope": "project.shop", "title": "product-photos", "age_days": 10,
+      "content": "Reshoot the product photos for the spring collection with the daylight setup."
+    },
+    {
+      "key": "t-seo", "type": "task", "scope": "project.shop", "title": "seo-category-texts", "age_days": 8, "status": "active",
+      "content": "Write category texts for mugs, bowls and vases (150 to 200 words each) for search engines."
+    },
+    {
+      "key": "s-shop-new", "type": "status", "scope": "project.shop", "title": "shop", "age_days": 5, "properties": { "state": "live on Shopify" },
+      "content": "Shop is live on Shopify; the old WooCommerce site redirects. Checkout now loads in under one second."
+    },
+    {
+      "key": "e-go-live", "type": "event", "scope": "project.shop", "title": "shopify-go-live", "age_days": 6,
+      "content": "The Shopify shop went live; DNS switched over in the morning, first order 40 minutes later.",
+      "properties": { "change_type": "deployed" }
+    },
+
+    {
+      "key": "d-app-framework", "type": "decision", "scope": "project.app", "title": "app-framework", "age_days": 80,
+      "content": "Build the app with React Native and Expo.",
+      "properties": { "rationale": "Same TypeScript stack as the rest; one codebase for iOS and Android.", "alternatives": ["Flutter", "Native Swift and Kotlin"] }
+    },
+    {
+      "key": "d-app-backend-old", "type": "decision", "scope": "project.app", "title": "app-backend", "age_days": 75,
+      "content": "The app talks to a small own Node API on the VPS, which reads orders and products from WooCommerce.",
+      "properties": { "rationale": "The WooCommerce REST API is too slow to call from the phone.", "alternatives": ["Call the WooCommerce REST API directly"] }
+    },
+    {
+      "key": "d-app-backend-new", "type": "decision", "scope": "project.app", "title": "app-backend", "age_days": 25,
+      "content": "The app reads products and orders directly from the Shopify Storefront API; the own Node API is shut down.",
+      "properties": { "rationale": "Shopify's Storefront API is fast enough; one server less to run.", "alternatives": ["Keep the own Node API in front of Shopify"] },
+      "supersedes": ["d-app-backend-old"]
+    },
+    {
+      "key": "n-app-release", "type": "note", "scope": "project.app", "title": "app-release-process", "age_days": 22,
+      "content": "App release: bump the version, run an EAS build, submit with EAS submit. iOS goes to TestFlight first, Android to the internal testing track."
+    },
+    {
+      "key": "n-beta-feedback", "type": "note", "scope": "project.app", "title": "beta-feedback", "age_days": 9,
+      "content": "Beta tester feedback round one: the magic-link login confuses people (12 mentions), they want order tracking in the app, and the app crashes on iPad in split view."
+    },
+    {
+      "key": "t-push", "type": "task", "scope": "project.app", "title": "android-push", "age_days": 14,
+      "content": "Set up Firebase Cloud Messaging so the Android build can receive push notifications."
+    },
+    {
+      "key": "t-store-review", "type": "task", "scope": "project.app", "title": "app-store-submission", "age_days": 7,
+      "content": "Submit the iOS app for App Store review once the second beta feedback round is done."
+    },
+    {
+      "key": "s-app", "type": "status", "scope": "project.app", "title": "app", "age_days": 12, "properties": { "state": "beta" },
+      "content": "App is in TestFlight beta with 40 testers. The Android build is blocked on the push notification setup."
+    },
+
+    {
+      "key": "s-infra-old", "type": "status", "scope": "project.infra", "title": "infra", "age_days": 50, "properties": { "state": "shared hosting + VPS" },
+      "content": "Shared hosting for the shop, one VPS for the blog and the app API."
+    },
+    {
+      "key": "d-backups", "type": "decision", "scope": "project.infra", "title": "backup-strategy", "age_days": 40,
+      "content": "Back up the VPS every night with restic to object storage, keep 30 days.",
+      "properties": { "rationale": "Provider snapshots alone are not off-site and not restorable file by file.", "alternatives": ["Provider snapshots only"] }
+    },
+    {
+      "key": "n-server-access", "type": "note", "scope": "project.infra", "title": "server-access", "age_days": 60,
+      "content": "Server access is by SSH key only; port 22 is closed to the internet and reachable through WireGuard."
+    },
+    {
+      "key": "t-tls", "type": "task", "scope": "project.infra", "title": "tls-renewal", "age_days": 55, "status": "resolved",
+      "content": "Automate TLS certificate renewal for blog and API.",
+      "properties": { "outcome": "Caddy renews certificates on its own" }
+    },
+    {
+      "key": "t-monitoring", "type": "task", "scope": "project.infra", "title": "uptime-monitoring", "age_days": 15,
+      "content": "Set up uptime monitoring for shop, blog and newsletter with alerts to the phone."
+    },
+    {
+      "key": "e-outage", "type": "event", "scope": "project.infra", "title": "blog-outage", "age_days": 15,
+      "content": "The blog was down for three hours because the disk filled up with logs; fixed by adding log rotation.",
+      "properties": { "change_type": "failed" }
+    },
+    {
+      "key": "s-infra-new", "type": "status", "scope": "project.infra", "title": "infra", "age_days": 4, "properties": { "state": "one VPS" },
+      "content": "One VPS left; it hosts the blog and the newsletter. The WooCommerce shared hosting is cancelled at the end of the month."
+    },
+
+    {
+      "key": "s-blog", "type": "status", "scope": "project.blog", "title": "blog", "age_days": 20, "properties": { "state": "running" },
+      "content": "Blog runs on Ghost, two posts per month, the newsletter has about 600 subscribers."
+    },
+    {
+      "key": "d-newsletter", "type": "decision", "scope": "project.blog", "title": "newsletter-tool", "age_days": 30,
+      "content": "Send the newsletter with Ghost's built-in newsletter feature.",
+      "properties": { "rationale": "Already part of the blog; no second tool and no second subscriber list.", "alternatives": ["Mailchimp", "Buttondown"] }
+    },
+    {
+      "key": "n-blog-deploy", "type": "note", "scope": "project.blog", "title": "blog-theme-deploy", "age_days": 45,
+      "content": "The Ghost theme is deployed by uploading the zip in the Ghost admin; CI builds the zip on every push to main."
+    },
+    {
+      "key": "n-content-plan", "type": "note", "scope": "project.blog", "title": "content-plan", "age_days": 16,
+      "content": "Blog topics this quarter: the glazing process, a studio tour, a gift guide (must be out before 1 December), care instructions for glazed pieces."
+    },
+    {
+      "key": "t-glazing-post", "type": "task", "scope": "project.blog", "title": "post-glazing-process", "age_days": 6, "status": "active",
+      "content": "Write the blog post about the glazing process, with photos from the last firing."
+    },
+
+    {
+      "key": "n-tax", "type": "note", "scope": "global", "title": "tax-setup", "age_days": 100,
+      "content": "The business is VAT-exempt as a small business until yearly revenue passes 22,000 EUR; then VAT has to be charged. Revenue so far this year: about 18,000 EUR."
+    },
+    {
+      "key": "d-accounting", "type": "decision", "scope": "global", "title": "accounting-tool", "age_days": 95,
+      "content": "Do the bookkeeping in lexoffice.",
+      "properties": { "rationale": "Bank sync and receipts from the phone; the tax advisor works with it.", "alternatives": ["A spreadsheet", "sevDesk"] }
+    }
+  ]
+}

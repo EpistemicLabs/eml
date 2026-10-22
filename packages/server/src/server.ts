@@ -13,23 +13,24 @@
  *
  * Endpoints:
  *   POST /boot              { agent?: string, budget?: number }      → Boot identity load (budget = max chars)
+ *   POST /project-block     { scope: project.<id>, budget?: number } → Project block for a session (404: no such project)
  *   POST /recall            { query: string, limit? }                → Recall
- *   POST /store             { content, type, scope, ... }            → DEPRECATED v0.7 — use /context
- *   POST /context           { content, type, scope, ... }            → Store an engram (v0.7)
- *   POST /update            { id, patch }                            → Update engram (v0.4)
- *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent)
- *   GET  /list              ?type=&scope=&limit=&search=&tag=&label=&subject= → List engrams (v0.7 strict params; label v0.13.x, subject v0.14)
- *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7)
- *   POST /project           { id, name, goal?, ... }                 → Create project (v0.4)
+ *   POST /engram/:type      { content, scope, title?, <type fields> } → Create an engram (v0.19; core enforces the type's fields)
+ *   POST /task/:id/track    { text?, status?, outcome?, keep?, … }   → Everything about an existing task (v0.19)
+ *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
+ *   POST /update            { id, patch }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
+ *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
+ *   GET  /list              ?type=&scope=&limit=&search=&tag=&label=&subject=&binding=&task_id=&origin=&session_id= → List engrams
+ *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
+ *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject), or one (v0.19; kind: entities)
+ *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
+ *   POST /object/:object    { name, … }                              → Create an object (v0.19)
+ *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)
  *   GET  /projects          ?status=                                 → List projects (v0.4)
- *   POST /tag               { name, description? }                   → Register a tag (v0.12)
  *   GET  /tags                                                       → List registered tags (v0.12)
- *   POST /subject             { name, description? }                   → Register a subject (v0.14)
  *   GET  /subjects            ?status=                                 → List subjects with status + member count (v0.14)
- *   PUT  /subject/:id         { name?, description?, status? }         → Update / close / reopen a subject (v0.14)
  *   GET  /project/:id                                                → Curated brain state (v0.4)
  *   GET  /project/:id/engrams  ?type=&status=&limit=&offset=         → Paginated engram list (v0.4, v0.7 caller-aware)
- *   PUT  /project/:id       { name?, status?, ... }                  → Update project (v0.4)
  *   POST /user              { id, name, email?, ... }                → Create user (v0.5)
  *   GET  /users                                                      → List users (v0.5)
  *   GET  /user/:id                                                   → Get user (v0.5)
@@ -38,13 +39,21 @@
  *   GET  /agents                                                     → List agents (v0.5)
  *   GET  /agent/:id                                                  → Get agent (v0.5)
  *   PUT  /agent/:id         { name?, parent_id?, ... }               → Update agent (v0.5)
- *   POST /engram/:id/confirm-review                                   → Confirm a review (v0.8 C9; v0.15: tasks too)
- *   POST /task/:id/entry    { text, stage? }                         → Append a task entry (v0.15)
- *   POST /entity            { id, name, kind, description? }         → Create entity (v0.8 C6)
+ *   POST /engram/:id/confirm-review { text }                          → Confirm a review (v0.8 C9; v0.15: tasks too; v0.19: a review entry)
  *   GET  /entities          ?kind=                                   → List entities (v0.8 C6)
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
- *   PUT  /entity/:id        { name?, kind?, description? }           → Update entity (v0.8 C6)
+ *
+ * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
+ * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
+ * POST /tag, POST /subject, PUT /subject/:id, POST /entity, PUT /entity/:id.
+ *
+ * Provenance (v0.19): the MCP server sends X-EML-Session, X-EML-Model,
+ * X-EML-Harness and X-EML-Ingestion; the server stamps them on every write
+ * together with the token's handle. Other callers write as 'direct'. The
+ * headers are taken as sent: they are attribution, not access control — the
+ * token decides what a caller may do.
  *   GET  /stats                                                      → DB statistics
+ *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
  *   GET  /health                                                     → Health check
  */
 
@@ -58,16 +67,28 @@ import {
   initControlDatabase,
   runForwardMigrations,
   boot,
+  projectBlock,
+  inheritedRules,
+  hygieneCheck,
   renderRecallMarkdown,
   renderBrainStateMarkdown,
-  slugifySubject,
   ALL_RULES,
+  ENGRAM_TYPES,
+  UPGRADE_HINT,
+  splitFields,
+  unknownFieldsError,
+  readObject,
+  createObject,
+  updateObject,
+  SEED_ORIGIN,
+  type WriteContext,
   type EngramType,
   type EngramStatus,
   type Significance,
   type EntityKind,
   type ProjectStatus,
   type SubjectStatus,
+  type EngramInput,
 } from '@engramprotocol/core'
 import { ConnectionPool } from './pool'
 import { startReviewSweepScheduler } from './review-sweep'
@@ -237,10 +258,14 @@ function respond(
 // v0.9.1 Cluster 1: `caller` and `namespace` removed from all param whitelists.
 // v0.14 Cluster C: the relation verbs the DB CHECK accepts — validated in the
 // /relate route so a bad verb is a 400, not a CHECK-constraint 500.
+// v0.19: supersedes and part_of are no longer drawn by hand (core rejects them
+// with a pointer to supersedes on a write and a task's parent_id).
 const RELATION_VERBS = new Set([
-  'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks',
-  'part_of', // v0.15: child task → parent task (tasks only, acyclic, one parent — enforced in core)
+  'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks', 'part_of',
 ])
+
+const LEARNING_STATES = ['ripe', 'unclear', 'collecting', 'paused']
+const BINDINGS = ['task', 'standing']
 
 const ALLOWED_LIST_PARAMS = new Set([
   'type', 'scope', 'title',
@@ -251,6 +276,8 @@ const ALLOWED_LIST_PARAMS = new Set([
   'label',    // v0.13.x: filter engrams by label id (e.g. review)
   'subject',    // v0.14: filter engrams by subject id (cross-scope strand)
   'stage',    // v0.15: filter tasks by stage
+  'binding', 'task_id', 'origin', 'session_id', // v0.19
+  'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -289,12 +316,28 @@ function rejectUnknownParams(
   return false
 }
 
-const STORE_DEPRECATION_HEADERS = {
-  // RFC 8594 — HTTP-Date format (RFC 7231).
-  'Deprecation': 'Tue, 28 Apr 2026 00:00:00 GMT',
-  'Sunset': 'Sun, 28 Feb 2027 00:00:00 GMT',
-  'Link': '</context>; rel="successor-version"',
-  'Warning': '299 - "POST /store is deprecated. Use POST /context."',
+/** v0.19: routes an older client still calls — answered with the upgrade hint. */
+function removedRoute(url: string, method: string | undefined): boolean {
+  if (method === 'POST' && (url === '/store' || url === '/context' || /^\/task\/[^/]+\/entry$/.test(url))) return true
+  if (method === 'POST' && (url === '/project' || url === '/tag' || url === '/subject' || url === '/entity')) return true
+  if (method === 'PUT' && /^\/(project|subject|entity)\/[^/]+$/.test(url)) return true
+  return false
+}
+
+/**
+ * v0.19: the body is flat — a nested `properties` object comes from an older
+ * client and would otherwise be dropped (create) or passed through (update).
+ */
+function rejectNestedProperties(type: EngramType, body: RequestBody): void {
+  if (body && typeof body === 'object' && 'properties' in body) {
+    throw unknownFieldsError(type, ['properties'], ['the type\'s fields, flat in the body'])
+  }
+}
+
+const header = (req: IncomingMessage, name: string): string | null => {
+  const v = req.headers[name]
+  const s = Array.isArray(v) ? v[0] : v
+  return typeof s === 'string' && s.trim() !== '' ? s.trim().slice(0, 200) : null
 }
 
 // --- Recall logic (v0.9.1: 1 user = 1 brain, no namespace filter) ---
@@ -383,36 +426,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, result)
     }
 
-    // v0.7/v0.8: shared store logic for /store, /epistemic, /context.
-    // v0.9.1 Cluster 1: no namespace/caller resolution anymore. The body is
-    // passed 1:1 to EngramStore.store() — scope/properties come straight
-    // from the client body.
-    // v0.15: no default type — every store route requires `type` (a defaulted
-    // `decision` would fail the create-time decision validation anyway).
-    function buildStoreInput(body: RequestBody) {
-      const scope = body.scope ?? 'global'
-      const properties: Record<string, any> = { ...(body.properties ?? {}) }
-
-      return {
-        content: body.content,
-        type: body.type,
-        scope,
-        title: body.title,
-        status: body.status,
-        significance: body.significance,
-        properties: Object.keys(properties).length > 0 ? properties : undefined,
-        ingestion_method: body.ingestion_method,
-        session_id: body.session_id,
-        // v0.12: registered tag ids; validated against the tag registry in core.
-        tags: body.tags,
-        // v0.14: registered subject ids; validated against the subject registry in core.
-        subjects: body.subjects,
-        // v0.15: parent task of a new task (part_of, atomic with the insert in core).
-        parent_id: body.parent_id,
-        // v0.15: task this decision/note was written in — edge + task entry in the
-        // same core transaction; the entry's author is the caller (authCtx.caller).
-        task_id: body.task_id,
-      }
+    // v0.19: who writes. The token gives the handle; the MCP server adds the
+    // session, model and harness it runs in. Other callers write as 'direct'.
+    const writeCtx: WriteContext = {
+      caller: authCtx.caller,
+      session_id: header(req, 'x-eml-session'),
+      model: header(req, 'x-eml-model'),
+      harness: header(req, 'x-eml-harness'),
+      ingestion_method: header(req, 'x-eml-ingestion') === 'mcp' ? 'mcp' : 'direct',
     }
 
     // v0.14: filing into a CLOSED subject is allowed (late filing) — but say so,
@@ -425,35 +446,57 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return closed.length > 0 ? { ...engram, closed_subjects: closed } : engram
     }
 
-    // POST /store — DEPRECATED v0.7 (sunset v0.11). Still works.
-    if (url === '/store' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.content) return json(res, 400, { error: 'content required' })
-      if (!body.type) return json(res, 400, { error: 'type required' })
-
-      console.warn(
-        `[WARN] POST /store called (deprecated since v0.7) — token=${authCtx.tokenId}, ` +
-        `type=${body.type}. Migrate to /context.`
-      )
-
-      const engram = eml.engrams.store(buildStoreInput(body), authCtx.caller)
-      return respond(res, 201, withClosedSubjectNotice(engram, body.subjects), STORE_DEPRECATION_HEADERS)
+    // v0.19: removed write routes — an older client gets the upgrade hint, not a half-state.
+    if (removedRoute(url, method)) {
+      return json(res, 410, { error: `${method} ${url} was removed in EML v0.19. ${UPGRADE_HINT}` })
     }
 
-    // POST /context — the write path (MCP tools, cockpit).
-    if (url === '/context' && method === 'POST') {
+    // POST /engram/:type — create an engram. The body is flat: the universal
+    // fields plus the type's own; core splits and checks them (fields.ts).
+    const createMatch = /^\/engram\/([a-z]+)$/.exec(url)
+    if (createMatch && method === 'POST' && (ENGRAM_TYPES as readonly string[]).includes(createMatch[1])) {
+      const type = createMatch[1] as EngramType
       const body = await readBody(req)
-      if (!body.content) return json(res, 400, { error: 'content required' })
-      if (!body.type) return json(res, 400, { error: 'type required' })
-
-      const engram = eml.engrams.store(buildStoreInput(body), authCtx.caller)
+      rejectNestedProperties(type, body)
+      // The default-brain seeds are written in-process only; over HTTP that origin
+      // would skip a rule's agreement (decision v0.19-seed-rules-agreement).
+      if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
+      const { fields, rest } = splitFields(type, body)
+      const input = { ...rest, type, properties: fields } as unknown as EngramInput
+      const engram = eml.engrams.store(input, writeCtx)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
+    }
+
+    // POST /task/:id/track — everything that happens to an existing task.
+    const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
+    if (trackMatch && method === 'POST') {
+      const body = await readBody(req)
+      const task = eml.engrams.trackTask(trackMatch[1], body, writeCtx)
+      if (!task) return json(res, 404, { error: 'task not found' })
+      return json(res, 200, withClosedSubjectNotice(task, body.subjects))
+    }
+
+    // POST /learning — a new learning (topic check first) or evidence for one (id).
+    if (url === '/learning' && method === 'POST') {
+      const body = await readBody(req)
+      const result = eml.engrams.learn(body as never, writeCtx)
+      return json(res, result.written ? 201 : 200, result)
     }
 
     // GET /list — v0.9.1 Cluster 1: no namespace filter anymore (1 user = 1 brain).
     if (url === '/list' && method === 'GET') {
       const q = parseQuery(req.url)
       if (rejectUnknownParams(res, q, ALLOWED_LIST_PARAMS)) return
+      if (q.state !== undefined && !LEARNING_STATES.includes(q.state)) {
+        return json(res, 400, { error: `state is one of ${LEARNING_STATES.join(', ')} (learnings)` })
+      }
+      // An unknown type or binding used to answer 200 with an empty list.
+      if (q.type !== undefined && !(ENGRAM_TYPES as readonly string[]).includes(q.type)) {
+        return json(res, 400, { error: `type is one of ${ENGRAM_TYPES.join(', ')}` })
+      }
+      if (q.binding !== undefined && !BINDINGS.includes(q.binding)) {
+        return json(res, 400, { error: `binding is one of ${BINDINGS.join(', ')}` })
+      }
 
       const results = eml.engrams.query({
         type: q.type as EngramType | undefined,
@@ -471,6 +514,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         label: q.label,
         subject: q.subject,
         stage: q.stage,
+        binding: q.binding as 'task' | 'standing' | undefined,
+        task_id: q.task_id,
+        origin: q.origin,
+        session_id: q.session_id,
+        learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
       })
       return json(res, 200, { count: results.length, engrams: results })
     }
@@ -496,41 +544,57 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, rest)
     }
 
-    // POST /update — engram update.
-    // v0.9.1 Cluster 1: no namespace check anymore — all engrams in the brain
-    // belong to its one user.
+    // POST /update { id, patch } — correct or retire an engram that is not a
+    // task. The patch is flat (content, title, …, the type's own fields,
+    // supersedes, review_note); core splits it by the engram's type.
     if (url === '/update' && method === 'POST') {
       const body = await readBody(req)
       if (!body.id) return json(res, 400, { error: 'id required' })
       if (!body.patch || typeof body.patch !== 'object') return json(res, 400, { error: 'patch object required' })
-
-      const engram = eml.engrams.update(body.id, body.patch)
+      const current = eml.engrams.get(body.id)
+      if (!current) return json(res, 404, { error: 'engram not found' })
+      rejectNestedProperties(current.type, body.patch)
+      const { fields, rest } = splitFields(current.type, body.patch)
+      const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
+      const engram = eml.engrams.update(body.id, patch as never, writeCtx)
       if (!engram) return json(res, 404, { error: 'engram not found' })
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
-    // v0.15: POST /task/:id/entry { text, stage? } — append to a task's journal.
-    // The author is the token's handle; unknown id → 404, not a task → 400 (core).
-    if (url.match(/^\/task\/[^/]+\/entry$/) && method === 'POST') {
-      const id = url.slice('/task/'.length, -'/entry'.length)
-      const body = await readBody(req)
-      if (!body.text) return json(res, 400, { error: 'text required' })
-      const entry = eml.engrams.appendTaskEntry(id, { text: body.text, stage: body.stage }, authCtx.caller)
-      if (!entry) return json(res, 404, { error: 'engram not found' })
-      return json(res, 201, { entry })
-    }
-
-    // v0.8 C9: POST /engram/:id/confirm-review
-    // Sets review_due_at = now() + default days[type] (decision/rule/profile);
-    // v0.15: for a task it counts as a movement (updated_at bumped, label cleared).
+    // POST /engram/:id/confirm-review { text } — still holds: a review entry
+    // (why), a new review_due_at, the label cleared. For a task a movement.
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
-      try {
-        const engram = eml.engrams.confirmReview(id)
-        if (!engram) return json(res, 404, { error: 'engram not found' })
-        return json(res, 200, { engram })
-      } catch (err: unknown) { const e = err as Error;
-        return json(res, 400, { error: e.message })
+      const body = await readBody(req)
+      const engram = eml.engrams.confirmReview(id, typeof body.text === 'string' ? body.text : undefined, writeCtx)
+      if (!engram) return json(res, 404, { error: 'engram not found' })
+      return json(res, 200, { engram })
+    }
+
+    // === v0.19: objects (project · entity · tag · subject) ===
+    const objectMatch = /^\/object\/([a-z]+)(?:\/([^/]+))?$/.exec(url)
+    if (objectMatch) {
+      const object = objectMatch[1]
+      const id = objectMatch[2] !== undefined ? decodeURIComponent(objectMatch[2]) : undefined
+      if (method === 'GET') {
+        const q = parseQuery(req.url)
+        if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
+        // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
+        const wanted = id ?? q.id
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind })
+        if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
+        return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
+      }
+      if (method === 'POST' && id === undefined) {
+        const body = await readBody(req)
+        const result = createObject(eml, object, body)
+        return json(res, 201, result)
+      }
+      if (method === 'PUT' && id !== undefined) {
+        const body = await readBody(req)
+        const result = updateObject(eml, object, id, body)
+        if (!result) return json(res, 404, { error: `${object} "${id}" not found` })
+        return json(res, 200, result)
       }
     }
 
@@ -566,35 +630,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // === v0.12: Tags (registered facet vocabulary) ===
 
-    // POST /tag — register a tag. id is the normalized slug of name; re-creating
-    // an existing slug is a no-op returning the existing tag (reuse, not dup).
-    if (url === '/tag' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.name) return json(res, 400, { error: 'name required' })
-      const tag = eml.tags.create({ name: body.name, description: body.description })
-      return json(res, 201, { tag })
-    }
-
     // GET /tags — list the registered tag vocabulary (the recall-first surface).
     if (url === '/tags' && method === 'GET') {
-      const tags = eml.tags.list()
+      const q = parseQuery(req.url)
+      const tags = eml.tags.list(q.status === 'archived' ? 'archived' : q.status === 'all' ? undefined : 'active')
       return json(res, 200, { count: tags.length, tags })
     }
 
     // === v0.14: Subjects (the "heavy facet": registry with description + lifecycle) ===
-
-    // POST /subject — register a subject. id is the normalized slug of name;
-    // re-creating an existing slug is a no-op returning the existing subject.
-    if (url === '/subject' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.name) return json(res, 400, { error: 'name required' })
-      // v0.14: signal whether this registered a NEW subject or returned an existing
-      // one (create is a no-op on an existing slug — description is NOT overwritten,
-      // so the caller must know its description didn't take). Mirrors /relate's { created }.
-      const created = !eml.subjects.exists(slugifySubject(body.name))
-      const subject = eml.subjects.create({ name: body.name, description: body.description })
-      return json(res, 201, { subject, created })
-    }
 
     // GET /subjects — the subject registry with status + member count (recall-first surface).
     if (url === '/subjects' && method === 'GET') {
@@ -606,48 +649,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, { count: subjects.length, subjects })
     }
 
-    // PUT /subject/:id — rename, edit the description, close or reopen.
-    if (url.startsWith('/subject/') && method === 'PUT') {
-      const id = decodeURIComponent(url.slice('/subject/'.length).split('/')[0])
-      if (!id) return json(res, 400, { error: 'subject id required' })
-      const body = await readBody(req)
-      if (!eml.subjects.get(id)) return json(res, 404, { error: `subject "${id}" not found` })
-      const subject = eml.subjects.update(id, {
-        name: body.name,
-        description: body.description,
-        status: body.status,
-      })
-      return json(res, 200, { subject })
-    }
-
     // === v0.4: Projects (First-Class Entity) ===
-
-    // POST /project — create project
-    if (url === '/project' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.id || !body.name) return json(res, 400, { error: 'id and name required' })
-      try {
-        const project = eml.projects.create({
-          id: body.id,
-          name: body.name,
-          status: body.status,
-          goal: body.goal,
-          description: body.description,
-          owner: body.owner,
-          parent_project: body.parent_project,
-          tags: body.tags,
-          started_at: body.started_at,
-          ended_at: body.ended_at,
-          metadata: body.metadata,
-        })
-        return json(res, 201, { project })
-      } catch (err: unknown) { const e = err as Error;
-        if (String(e.message).includes('UNIQUE')) {
-          return json(res, 409, { error: `project "${body.id}" already exists` })
-        }
-        throw err
-      }
-    }
 
     // GET /projects — list projects
     if (url === '/projects' && method === 'GET') {
@@ -702,16 +704,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const state = eml.projects.getBrainState(id)
       if (!state) return json(res, 404, { error: `project "${id}" not found` })
       return json(res, 200, state)
-    }
-
-    // PUT /project/:id — update
-    if (url.startsWith('/project/') && method === 'PUT') {
-      const id = url.slice('/project/'.length).split('/')[0]
-      if (!id) return json(res, 400, { error: 'project id required' })
-      const body = await readBody(req)
-      const project = eml.projects.update(id, body)
-      if (!project) return json(res, 404, { error: `project "${id}" not found` })
-      return json(res, 200, { project })
     }
 
     // === v0.5: Users (First-Class Entity) ===
@@ -813,31 +805,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // === v0.8 C6: Entities (First-Class) ===
 
-    // POST /entity — create entity
-    if (url === '/entity' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.id || !body.name || !body.kind) {
-        return json(res, 400, { error: 'id, name and kind required' })
-      }
-      try {
-        const entity = eml.entities.create({
-          id: body.id,
-          name: body.name,
-          kind: body.kind,
-          description: body.description,
-        })
-        return json(res, 201, { entity })
-      } catch (err: unknown) { const e = err as Error;
-        if (String(e.message).includes('UNIQUE')) {
-          return json(res, 409, { error: `entity "${body.id}" already exists` })
-        }
-        if (String(e.message).includes('CHECK')) {
-          return json(res, 400, { error: 'invalid kind (allowed: person, org, asset)' })
-        }
-        throw err
-      }
-    }
-
     // GET /entities — list entities (?kind=...)
     if (url === '/entities' && method === 'GET') {
       const q = parseQuery(req.url)
@@ -855,23 +822,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, { entity })
     }
 
-    // PUT /entity/:id — update
-    if (url.startsWith('/entity/') && method === 'PUT') {
-      const id = url.slice('/entity/'.length).split('/')[0]
-      if (!id) return json(res, 400, { error: 'entity id required' })
-      const body = await readBody(req)
-      try {
-        const entity = eml.entities.update(id, body)
-        if (!entity) return json(res, 404, { error: `entity "${id}" not found` })
-        return json(res, 200, { entity })
-      } catch (err: unknown) { const e = err as Error;
-        if (String(e.message).includes('CHECK')) {
-          return json(res, 400, { error: 'invalid kind (allowed: person, org, asset)' })
-        }
-        throw err
-      }
-    }
-
     // GET /brain-state?scope=<scope> — generic BrainState (v0.9 Cluster 4).
     // Works for any scope pattern: global / project.X / entity.X /
     // agent.X / user.X. Returns a curated snapshot (status/tasks/decisions/logs/relations).
@@ -883,7 +833,30 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // v0.10.5: return the compact dashboard markdown, not the full structured state
       // (callTool stringifies the whole response → full engrams would blow the budget).
       const state = eml.engrams.buildBrainState(q.scope)
+      // A project's dashboard shows its parents' rules too, marked inherited.
+      state.rules = [...(state.rules ?? []), ...inheritedRules(eml, q.scope)]
       return json(res, 200, { scope: q.scope, markdown: renderBrainStateMarkdown(state) })
+    }
+
+    // POST /project-block — the project context a host injects into a session
+    // that works in one project (core/project-block.ts). budget: the caller's
+    // hard cap for the markdown, in characters, as for /boot.
+    if (url === '/project-block' && method === 'POST') {
+      const body = await readBody(req)
+      const scope = typeof body.scope === 'string' ? body.scope : ''
+      if (!scope.startsWith('project.')) return json(res, 400, { error: 'scope project.<id> required' })
+      const budget = typeof body.budget === 'number' && Number.isFinite(body.budget) && body.budget > 0
+        ? Math.floor(body.budget) : undefined
+      const result = projectBlock(eml, scope.slice('project.'.length), budget !== undefined ? { budget } : {})
+      if (!result) return json(res, 404, { error: `project "${scope}" not found` })
+      return json(res, 200, result)
+    }
+
+    // GET /hygiene — every hygiene check with what it requires, how to fix an
+    // entry, and its findings (core hygiene.ts). Read by the cockpit, which
+    // offers a brain-hygiene session when a check has findings.
+    if (url === '/hygiene' && method === 'GET') {
+      return json(res, 200, hygieneCheck(eml))
     }
 
     // GET /stats
@@ -919,7 +892,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.15: all new validation errors share the `Invalid engram:` prefix.
     const msg = String(e.message || '')
     if (
+      msg === 'Invalid JSON' ||              // readBody: an unparseable request body
       msg.startsWith('Invalid engram:') ||
+      msg.startsWith('Invalid object:') ||  // v0.19: object field errors
       msg.startsWith('Invalid scope') ||
       msg.startsWith('Scope ') ||
       msg.startsWith('Missing required properties') ||

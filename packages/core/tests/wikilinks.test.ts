@@ -31,7 +31,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
       `SELECT * FROM relations WHERE source_id = ? AND target_id = ? AND relation = 'related_to'`,
     ).get(from, to)
   const note = (title: string, content: string) =>
-    eml.engrams.store({ type: 'note', scope: 'project.eml', title, content, properties: { source_id: 'x', source_type: 'agent' } })
+    eml.engrams.store({ type: 'note', scope: 'project.eml', title, content })
 
   it('resolves a [[title-slug]] on create → related_to edge (agent_declared)', () => {
     const target = note('the-target', 'target body')
@@ -62,7 +62,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
 
   it('prefers the active engram when a title slug threads several', () => {
     const old = note('threaded', 'v1')
-    eml.engrams.update(old.id, { status: 'superseded' })
+    eml.engrams.update(old.id, { status: 'invalidated' })
     const active = note('threaded', 'v2')
     const src = note('src4', 'link to [[threaded]]')
     expect(relatedTo(src.id, active.id)).toBeTruthy()
@@ -113,7 +113,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
   it('prefers the source engram\'s own scope on a cross-scope title collision', () => {
     eml.projects.create({ id: 'other', name: 'Other' })
     const local = note('dup', 'in eml')                                   // scope project.eml
-    const foreign = eml.engrams.store({ type: 'note', scope: 'project.other', title: 'dup', content: 'in other', properties: { source_id: 'x', source_type: 'agent' } })
+    const foreign = eml.engrams.store({ type: 'note', scope: 'project.other', title: 'dup', content: 'in other' })
     const src = note('picks-local', 'link [[dup]]')                       // written in project.eml
     expect(relatedTo(src.id, local.id)).toBeTruthy()
     expect(relatedTo(src.id, foreign.id)).toBeFalsy()
@@ -122,7 +122,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
   it('warns on a cross-scope-ambiguous wikilink but still resolves (own scope first)', () => {
     eml.projects.create({ id: 'other', name: 'Other' })
     note('amb', 'in eml')
-    eml.engrams.store({ type: 'note', scope: 'project.other', title: 'amb', content: 'in other', properties: { source_id: 'x', source_type: 'agent' } })
+    eml.engrams.store({ type: 'note', scope: 'project.other', title: 'amb', content: 'in other' })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     note('amb-src', 'link [[amb]]')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ambiguous wikilink [[amb]]'))
@@ -138,23 +138,22 @@ describe('wikilink edges are only the fallback (v0.17)', () => {
   })
   afterEach(() => eml.close())
 
-  const SRC = { source_id: 'x', source_type: 'agent' } as const
   const edges = (from: string, to: string): string[] =>
     ((eml.engrams as any).db.prepare(
       `SELECT relation FROM relations WHERE source_id = ? AND target_id = ? ORDER BY relation`,
     ).all(from, to) as Array<{ relation: string }>).map(r => r.relation)
-  const task = () => eml.engrams.store({ type: 'task', scope: 'project.eml', title: 'the-task', content: 'do it', properties: { ...SRC } })
+  const task = () => eml.engrams.store({ type: 'task', scope: 'project.eml', title: 'the-task', content: 'do it' })
 
   it('a note with task_id and a [[link]] to the same task gets only the refines edge', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plan', content: 'plan for [[the-task]]', task_id: t.id, properties: { ...SRC } })
+    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plan', content: 'plan for [[the-task]]', task_id: t.id, properties: { binding: 'task' } })
     expect(edges(n.id, t.id)).toEqual(['refines'])
     expect(n.unresolved_links).toBeUndefined()
   })
 
   it('a typed edge drawn later replaces the wikilink related_to', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'thought', content: 'about [[the-task]]', properties: { ...SRC } })
+    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'thought', content: 'about [[the-task]]' })
     expect(edges(n.id, t.id)).toEqual(['related_to'])
     eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'agent_declared' })
     expect(edges(n.id, t.id)).toEqual(['supports'])
@@ -165,7 +164,7 @@ describe('wikilink edges are only the fallback (v0.17)', () => {
 
   it('an explicitly drawn related_to stays next to a typed edge', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plain', content: 'no link', properties: { ...SRC } })
+    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plain', content: 'no link' })
     eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'related_to', detection_method: 'manual' })
     eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
     expect(edges(n.id, t.id)).toEqual(['related_to', 'supports'])

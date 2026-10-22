@@ -14,11 +14,11 @@ export function registerBootTool(server: McpServer, http: HttpClient): void {
         'fires automatically); use only after a major mid-session brain mutation, a ' +
         'suspected incomplete boot, or to inspect a different agent. For "refresh my ' +
         'memory" use eml_recall / eml_show — boot is identity, not topic lookup.',
-      inputSchema: {
+      inputSchema: z.object({
         agent: z.string().optional().describe(
           'Agent ID. Omit for the brain default; set only to inspect a different agent.',
         ),
-      },
+      }).strict(),
     },
     async (args) => callTool(() => http.post('/boot', { agent: args.agent })),
   )

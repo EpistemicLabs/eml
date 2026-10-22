@@ -5,20 +5,23 @@ import * as path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { APP_DIR, COCKPIT_HOME, HOST_ROOT } from './paths.js'
+import { platform } from './infrastructure/platform/index.js'
+import { SERVICE_ENV } from './domain/autostart.js'
+import { FS_RETRY, renameWithRetry } from './fs-retry.js'
 
 /**
  * The cockpit's own updater (decisions app-update-flow, cockpit-update-source).
  * An installed cockpit lives in its home:
  *
  *   <home>/app/versions/<v>/node_modules/eml-cockpit   an installed release, never modified
- *   <home>/app/current -> versions/<v>                 what the launchd service runs
+ *   <home>/app/current -> versions/<v>                 what the service runs (a junction on Windows)
  *   <home>/app/update.json                             current/previous, last check, last result
  *
  * Releases come from GitHub Releases (tag v<X.Y.Z>; assets: the eml-cockpit and
  * mcp-server tarballs + SHA256SUMS). Nothing installs on its own: the host only
  * checks; the user clicks Update. An update downloads and verifies both
  * tarballs, installs them into their own version folder, switches `current` in
- * one rename and exits — launchd starts the new version, whose brain server
+ * one rename and exits — the service starts the new version, whose brain server
  * migrates the brain through the safety pipeline. The previous version stays
  * for "go back" (refused across a schema minor: the brain has moved on).
  *
@@ -144,7 +147,7 @@ function writeState(patch: Partial<UpdateState>): UpdateState {
 
 function run(file: string, args: string[], opts: { cwd?: string; timeout?: number } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? ''}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` }
+    const env = { ...process.env, PATH: [path.dirname(process.execPath), process.env.PATH, ...platform.toolDirs].filter(Boolean).join(path.delimiter) }
     execFile(file, args, { cwd: opts.cwd, env, timeout: opts.timeout ?? 30_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = !err ? 0 : typeof err.code === 'number' ? err.code : 1
       resolve({ code, stdout: String(stdout), stderr: String(stderr) })
@@ -293,11 +296,9 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 
 // --- install ----------------------------------------------------------------------
 
-/** Point `current` at versions/<v> — one atomic rename, never a missing link. */
+/** Point `current` at versions/<v> (platform.switchDirLink: a symlink, a junction on Windows). */
 function switchCurrent(version: string): void {
-  const tmp = path.join(APP_DIR, `.current-${randomBytes(4).toString('hex')}`)
-  fs.symlinkSync(path.join('versions', version), tmp)
-  fs.renameSync(tmp, CURRENT_LINK)
+  platform.switchDirLink(path.join(VERSIONS_DIR, version), CURRENT_LINK)
 }
 
 /** Keep the running version and the one to go back to; drop older ones and stale staging dirs. */
@@ -337,8 +338,8 @@ async function installRelease(release: Release, token: string | null): Promise<v
     }
 
     fs.writeFileSync(path.join(staging, 'package.json'), JSON.stringify({ name: 'eml-cockpit-app', private: true }, null, 2) + '\n')
-    const npm = fs.existsSync(path.join(path.dirname(process.execPath), 'npm')) ? path.join(path.dirname(process.execPath), 'npm') : 'npm'
-    const res = await run(npm, ['install', '--no-fund', '--no-audit', '--omit=dev', `./tarballs/${want[1]}`, `./tarballs/${want[0]}`], { cwd: staging, timeout: 10 * 60_000 })
+    const npm = platform.npm()
+    const res = await run(npm.program, [...npm.args, 'install', '--no-fund', '--no-audit', '--omit=dev', `./tarballs/${want[1]}`, `./tarballs/${want[0]}`], { cwd: staging, timeout: 10 * 60_000 })
     if (res.code !== 0) throw new Error(`npm install failed: ${(res.stderr || res.stdout).trim().split('\n').slice(-3).join(' ')}`)
 
     const installed = JSON.parse(fs.readFileSync(path.join(staging, 'node_modules', 'eml-cockpit', 'package.json'), 'utf8')) as { version?: string }
@@ -347,22 +348,26 @@ async function installRelease(release: Release, token: string | null): Promise<v
 
     const target = path.join(VERSIONS_DIR, v)
     fs.mkdirSync(VERSIONS_DIR, { recursive: true })
-    fs.rmSync(target, { recursive: true, force: true })
-    fs.renameSync(staging, target)
+    fs.rmSync(target, { recursive: true, force: true, ...FS_RETRY })
+    await renameWithRetry(staging, target)
   } catch (err) {
-    fs.rmSync(staging, { recursive: true, force: true })
+    fs.rmSync(staging, { recursive: true, force: true, ...FS_RETRY })
     throw err
   }
 }
 
-/** Exit so launchd starts the version `current` now points at. */
+/** Exit so the service (launchd, the Windows supervisor) starts the version `current` now points at. */
 function restartSoon(): void {
   setTimeout(() => process.exit(0), 750).unref()
 }
 
-/** Under launchd (the service) a plain exit restarts the host; otherwise the user restarts it. */
+/**
+ * Under the autostart service (service.ts) a plain exit restarts the host;
+ * otherwise the user restarts it. Services installed before SERVICE_ENV are
+ * known by their launchd label.
+ */
 function serviceManaged(): boolean {
-  return (process.env.XPC_SERVICE_NAME ?? '').startsWith('io.engramprotocol.cockpit.')
+  return process.env[SERVICE_ENV] === '1' || (process.env.XPC_SERVICE_NAME ?? '').startsWith('io.engramprotocol.cockpit.')
 }
 
 // --- public API -----------------------------------------------------------------

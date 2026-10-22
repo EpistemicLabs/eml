@@ -9,7 +9,7 @@ import type { EmlConfig } from '../config'
  * sees what changed in the notes of its project since its last prompt.
  *
  * Only the user's edits are shown. A note pane stamps
- * properties.user_content_hash on every save; an agent edit (eml_update)
+ * properties.app.user_content_hash on every save; an agent edit (eml_update)
  * replaces the content but not the stamp, so a mismatch means the agent wrote
  * last — its own edit, which it already knows. Those only move the snapshot.
  *
@@ -24,13 +24,14 @@ const MAX_OUTPUT = 2500
 const MAX_NEW_NOTE_LINES = 15
 const SAFE_SESSION_ID = /^[A-Za-z0-9_.-]+$/
 const SAFE_SCOPE = /^project\.[A-Za-z0-9_.-]+$/
-/** Notes written in the cockpit notes pane carry this source_id (cockpit notes-api). */
-const PANE_SOURCE_ID = 'cockpit-notes'
+/** Notes written in the cockpit notes pane carry this origin (cockpit notes-api; v0.19, was properties.source_id). */
+const PANE_ORIGIN = 'cockpit-notes'
 
 interface NoteEngram {
   id: string
   content: string
-  properties?: Record<string, unknown>
+  origin?: string | null
+  properties?: { app?: { user_content_hash?: string } } & Record<string, unknown>
 }
 
 type Snapshot = Record<string, { title: string; content: string }>
@@ -126,7 +127,7 @@ export async function notesUpdate(
 
   let notes: NoteEngram[]
   try {
-    const q = new URLSearchParams({ type: 'note', scope, status: 'active', order_by: 'updated_at', limit: '50' })
+    const q = new URLSearchParams({ type: 'note', scope, status: 'active', origin: PANE_ORIGIN, order_by: 'updated_at', limit: '50' })
     const res = await fetchImpl(`${cfg.EML_URL}/list?${q}`, {
       headers: { Authorization: `Bearer ${cfg.EML_API_TOKEN}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(NOTES_TIMEOUT_MS),
@@ -136,7 +137,7 @@ export async function notesUpdate(
     // Only the user's notes from the cockpit notes pane — agent-written notes
     // (task plans, re-filed decisions) are not the user's.
     notes = (((await res.json()) as { engrams?: NoteEngram[] }).engrams ?? [])
-      .filter((n) => n.properties?.source_id === PANE_SOURCE_ID)
+      .filter((n) => n.origin === PANE_ORIGIN)
   } catch (err) {
     return { output: '', log: `notes: unreachable ${(err as Error).message}` }
   }
@@ -165,7 +166,7 @@ export async function notesUpdate(
   for (const n of notes) {
     const prev = before[n.id]
     if (prev?.content === n.content) continue
-    if (n.properties?.user_content_hash !== contentHash(n.content)) continue // the agent wrote last
+    if (n.properties?.app?.user_content_hash !== contentHash(n.content)) continue // the agent wrote last
     const title = noteTitle(n.content)
     if (!prev) {
       const lines = n.content.split('\n').filter((l) => l.trim())

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { EML } from '../src'
+import { EML, boot, formatProblems } from '../src'
 import {
   seedDefaultBrain,
   slugifyIdentityName,
@@ -54,14 +54,35 @@ describe('seedDefaultBrain', () => {
       }
     })
 
-    it('persists provenance fields (source_id=eml-default-brain, source_type=system)', () => {
+    it('marks every seed with origin eml-default-brain (v0.19: was properties.source_id)', () => {
       seedDefaultBrain(brainPath)
       const eml = new EML({ dbPath: brainPath, namespace: DEFAULT_BRAIN_AGENT_ID })
       try {
         for (const engram of eml.engrams.query({})) {
           const props = engram.properties as Record<string, unknown>
-          expect(props.source_id).toBe('eml-default-brain')
-          expect(props.source_type).toBe('system')
+          expect(engram.origin).toBe('eml-default-brain')
+          expect(engram.ingestion_method).toBe('direct')
+          expect(engram.significance).toBe('normal')
+          expect(props.source_id).toBeUndefined()
+          expect(props.source_type).toBeUndefined()
+        }
+      } finally {
+        eml.close()
+      }
+    })
+
+    it('the identity profiles are the core profiles; the rules carry why and wait for the user agreement', () => {
+      seedDefaultBrain(brainPath)
+      const eml = new EML({ dbPath: brainPath, namespace: DEFAULT_BRAIN_AGENT_ID })
+      try {
+        const profiles = eml.engrams.query({ type: 'profile' })
+        expect(profiles).toHaveLength(2)
+        for (const p of profiles) expect((p.properties as Record<string, unknown>).core).toBe(true)
+        for (const r of eml.engrams.query({ type: 'rule' })) {
+          const props = r.properties as Record<string, unknown>
+          expect(typeof props.why).toBe('string')
+          expect(props.agreed).toBeUndefined()
+          expect(props.boot).toBeUndefined()
         }
       } finally {
         eml.close()
@@ -107,15 +128,19 @@ describe('seedDefaultBrain', () => {
       }
     })
 
-    it('substitutes <agent> in boot-tag for agent-scoped, keeps wildcard for user-scoped', () => {
+    it('seeds the short format without a boot flag, and the boot carries every template whole', () => {
       seedDefaultBrain(brainPath, 'assistant', 'alice')
       const eml = new EML({ dbPath: brainPath, namespace: 'assistant' })
       try {
         const engrams = eml.engrams.query({})
-        const agentIdentity = engrams.find(e => e.title === 'assistant-identity')
-        const userIdentity = engrams.find(e => e.title === 'alice-identity')
-        expect((agentIdentity?.properties as Record<string, unknown>).boot).toEqual(['assistant'])
-        expect((userIdentity?.properties as Record<string, unknown>).boot).toEqual(['*'])
+        for (const e of engrams) {
+          expect((e.properties as Record<string, unknown>).boot).toBeUndefined()
+          expect(formatProblems(e.type, e.content, e.properties as Record<string, unknown>)).toEqual([])
+        }
+        const r = boot(eml, 'assistant')
+        expect(r.engrams).toBe(5)
+        expect(r.legacy).toBe(0)
+        for (const e of engrams) expect(r.markdown).toContain(e.content)
       } finally {
         eml.close()
       }
@@ -142,12 +167,11 @@ describe('seedDefaultBrain', () => {
         const agentIdentity = engrams.find(e => e.title === 'juno-identity')
         const userIdentity = engrams.find(e => e.title === 'alex-doe-identity')
         expect(agentIdentity?.scope).toBe('agent.juno')
-        expect(agentIdentity?.content).toContain('I am Juno.')
-        expect(agentIdentity?.content).toContain('for Alex Doe.')
+        expect(agentIdentity?.content).toContain('I am Juno,')
+        expect(agentIdentity?.content).toContain('for Alex Doe —')
         expect(agentIdentity?.content).toContain('makes me Juno across')
         expect(userIdentity?.scope).toBe('user.alex-doe')
         expect(userIdentity?.content).toMatch(/^Alex Doe — the human/)
-        expect((agentIdentity?.properties as Record<string, unknown>).boot).toEqual(['juno'])
         expect(eml.agents.get('juno')?.name).toBe('Juno')
         expect(eml.users.get('alex-doe')?.name).toBe('Alex Doe')
       } finally {

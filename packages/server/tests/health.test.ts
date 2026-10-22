@@ -79,8 +79,9 @@ describe('/health endpoint', () => {
     await waitForReady(port)
   }, 10000)
 
-  afterAll(() => {
-    if (serverProc && !serverProc.killed) serverProc.kill('SIGTERM')
+  afterAll(async () => {
+    // Wait for the exit: Windows can't delete the brain files while the server holds them open.
+    if (serverProc && serverProc.exitCode === null) await new Promise((resolve) => { serverProc.once('exit', resolve); serverProc.kill('SIGTERM') })
     rmSync(tmpDir, { recursive: true, force: true })
   })
 

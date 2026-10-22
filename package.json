@@ -1,6 +1,6 @@
 {
   "name": "eml",
-  "version": "0.17.19",
+  "version": "0.19.1",
   "private": true,
   "description": "EML — a typed memory for AI agents, with the EML Cockpit (local web app for Claude Code sessions next to your brain)",
   "license": "AGPL-3.0-only",
@@ -21,9 +21,11 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild",
       "node-pty"
+    ],
+    "ignoredBuiltDependencies": [
+      "better-sqlite3"
     ]
   },
   "repository": {

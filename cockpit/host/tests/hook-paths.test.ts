@@ -38,7 +38,7 @@ describe('hook paths', () => {
     expect(paths.stableAppPath(join(versions, '0.17.6'))).toBe(join(versions, '0.17.6'))
   })
 
-  it('keeps <home>/bin/node pointing at this host\'s node, and names it in the hook command', () => {
+  it.skipIf(process.platform === 'win32')('keeps <home>/bin/node pointing at this host\'s node, and names it in the hook command', () => {
     const link = shared.ensureHookNode()
     expect(link).toBe(join(home, 'bin', 'node'))
     expect(readlinkSync(link)).toBe(process.execPath)
@@ -48,9 +48,18 @@ describe('hook paths', () => {
     shared.ensureHookNode()
     expect(readlinkSync(link)).toBe(process.execPath)
 
-    const command = shared.emlHookEntry('session-start', "'/x/config'").hooks[0].command
-    expect(command.startsWith(`'${link}' `)).toBe(true)
+    const command = shared.shellLine(shared.emlHookCommand('session-start', '/x/config'))
+    expect(command.startsWith(`${shared.shellLine({ program: link, args: [] })} `)).toBe(true)
     expect(command).not.toContain(process.execPath)
-    expect(command).toContain(`'${paths.HOOK_MCP_CLI_JS}' hook session-start --config '/x/config'`)
+    expect(command).toContain(`${shared.shellLine({ program: paths.HOOK_MCP_CLI_JS, args: [] })} hook session-start --config /x/config`)
+  })
+
+  // A link needs admin rights or Developer Mode on Windows: the hooks name node itself.
+  it.runIf(process.platform === 'win32')('names this host\'s node in the hook command on Windows', () => {
+    expect(shared.ensureHookNode()).toBe(process.execPath)
+    expect(shared.emlHookCommand('session-start', 'C:\\x\\config')).toEqual({
+      program: process.execPath,
+      args: [paths.HOOK_MCP_CLI_JS, 'hook', 'session-start', '--config', 'C:\\x\\config'],
+    })
   })
 })

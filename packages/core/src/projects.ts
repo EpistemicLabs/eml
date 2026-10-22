@@ -6,7 +6,7 @@ import {
 import { hydrateEngramTags } from './tags'
 import { hydrateEngramLabels } from './labels'
 import { hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
@@ -20,7 +20,7 @@ export class ProjectStore {
     this.db.prepare(`
       INSERT INTO projects (
         id, name, status, goal, description, owner,
-        parent_project, tags, started_at, ended_at, metadata,
+        parent_project, started_at, ended_at, metadata, status_tracks,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(
@@ -31,10 +31,10 @@ export class ProjectStore {
       input.description ?? null,
       input.owner ?? null,
       input.parent_project ?? null,
-      input.tags ? JSON.stringify(input.tags) : null,
       input.started_at ?? null,
       input.ended_at ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      input.status_tracks ?? null,
     )
     return this.get(input.id)!
   }
@@ -73,10 +73,10 @@ export class ProjectStore {
     if (patch.description !== undefined)    { fields.push('description = ?');    params.push(patch.description) }
     if (patch.owner !== undefined)          { fields.push('owner = ?');          params.push(patch.owner) }
     if (patch.parent_project !== undefined) { fields.push('parent_project = ?'); params.push(patch.parent_project) }
-    if (patch.tags !== undefined)           { fields.push('tags = ?');           params.push(JSON.stringify(patch.tags)) }
     if (patch.started_at !== undefined)     { fields.push('started_at = ?');     params.push(patch.started_at) }
     if (patch.ended_at !== undefined)       { fields.push('ended_at = ?');       params.push(patch.ended_at) }
-    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(JSON.stringify(patch.metadata)) }
+    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
+    if (patch.status_tracks !== undefined)  { fields.push('status_tracks = ?');  params.push(patch.status_tracks) }
 
     if (fields.length === 0) return this.rowToProject(existing)
 
@@ -96,7 +96,7 @@ export class ProjectStore {
    * v0.9.1 Cluster 1: namespace filter removed — 1 user = 1 brain.
    *
    * - current_status: type=status, scope=project.<id>, top 3 by updated_at DESC
-   * - open_tasks: tasks with status in (planned,active), sorted priority DESC, due_date ASC, limit 10
+   * - open_tasks: tasks with status in (planned,active), sorted priority DESC, due_date ASC, last activity DESC, limit 10
    * - recent_decisions: top 5 decisions by significance DESC, created_at DESC
    * - recent_logs: top 3 logs by created_at DESC
    * - relations: relations where source or target has scope=project.<id>, limit 20
@@ -115,19 +115,15 @@ export class ProjectStore {
     `, [scope])
 
     const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
 
+    // v0.19.1: recency, as eml_show (engrams.buildBrainState) — significance is no
+    // longer written, and old high/critical decisions stayed on top.
     const recent_decisions = this.queryEngrams(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'decision'
-      ORDER BY
-        CASE significance
-          WHEN 'critical' THEN 5
-          WHEN 'high'     THEN 4
-          WHEN 'normal'   THEN 3
-          WHEN 'low'      THEN 2
-          WHEN 'trivial'  THEN 1
-        END DESC,
-        created_at DESC
+      ORDER BY created_at DESC
       LIMIT 5
     `, [scope])
 
@@ -146,7 +142,7 @@ export class ProjectStore {
       ORDER BY r.created_at DESC LIMIT 20
     `).all(scope, scope) as any[]).map(r => this.rowToRelation(r))
 
-    return { project, scope, current_status, open_tasks, recent_decisions, recent_logs, relations }
+    return { project, scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, relations }
   }
 
   // === Private ===
@@ -192,10 +188,10 @@ export class ProjectStore {
       description: row.description ?? null,
       owner: row.owner ?? null,
       parent_project: row.parent_project ?? null,
-      tags: row.tags ? JSON.parse(row.tags) : null,
       started_at: row.started_at ?? null,
       ended_at: row.ended_at ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
+      status_tracks: row.status_tracks ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
     }
