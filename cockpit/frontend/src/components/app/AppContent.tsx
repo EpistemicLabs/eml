@@ -297,7 +297,7 @@ function AppContentInner() {
       <UpdateBanner />
       <BrainHygieneBanner />
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
           renders the icon rail plus a hover overlay that must extend past
           this wrapper — overflow-hidden here would clip it. z-40 lifts the
@@ -360,8 +360,10 @@ function AppContentInner() {
             })}
         </div>
       </div>
-      </div>
+      {/* Inside the row, not on the viewport: the drawer starts and ends
+          where the sidebar does, under the header and any banner. */}
       <EngramDrawer projects={projects} />
+      </div>
 
       {folderTarget && (
         <ProjectFolderDialog
