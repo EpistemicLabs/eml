@@ -97,9 +97,14 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
  * /api/session-title/<id>, the spawn inbox). The caller has checked the token.
  * The title goes into the ledger's agentTitle; a title the user chose wins.
  */
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g
+
 export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string } } {
   const fail = (status: number, code: string, message: string): SpawnOutcome => ({ status, payload: { error: { code, message } } })
-  const title = typeof body.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : ''
+  // Control characters and bidi overrides would let a title disguise itself in the sidebar.
+  const title = typeof body.title === 'string'
+    ? body.title.replace(/\s+/g, ' ').replace(INVISIBLE, '').trim()
+    : ''
   if (!title || title.length > MAX_TITLE) return fail(400, 'INVALID_TITLE', `title is required (max ${MAX_TITLE} chars)`)
   const entry = typeof sessionId === 'string' && sessionId ? ledger.setAgentTitle(sessionId, title) : undefined
   if (!entry) return fail(404, 'NOT_FOUND', 'Session not found')
