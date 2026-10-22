@@ -320,9 +320,11 @@ describe('v0.19 review fixes', () => {
         raw.prepare('UPDATE entries SET at = ? WHERE engram_id = ?').run(at, t.id)
         return t
       }
-      mk('low-one', 'low', '2026-03-01T00:00:00.000Z')
-      mk('none-one', undefined, '2026-01-01T00:00:00.000Z')
-      mk('normal-one', 'normal', '2026-02-01T00:00:00.000Z')
+      // recent movement, so none of them is backlog
+      const ago = (days: number) => new Date(Date.now() - days * 86400_000).toISOString()
+      mk('low-one', 'low', ago(1))
+      mk('none-one', undefined, ago(3))
+      mk('normal-one', 'normal', ago(2))
       const order = eml.engrams.buildBrainState('project.p').open_tasks.map(t => t.title)
       expect(order).toEqual(['normal-one', 'none-one', 'low-one'])
     })
