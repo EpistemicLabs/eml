@@ -3,6 +3,7 @@ import type { Engram } from './types'
 import { REVIEW_LABEL } from './engrams'
 import { previewText, SHOW_PREVIEW_CHARS } from './render'
 import { isLegacyFormat } from './validate'
+import { backlogLine } from './open-tasks'
 
 // --- The project block ---------------------------------------------------------
 //
@@ -15,7 +16,7 @@ import { isLegacyFormat } from './validate'
 //
 //   Status        — the active status: state, preview, next step.
 //   Open tasks    — the first TASKS_SHOWN by priority, title + preview; the rest
-//                   as a count.
+//                   as a count, the backlog (open-tasks.ts) as a count of its own.
 //   Latest session — the newest log: title + id.
 //   Rules situational — title + trigger + id; eml_get when the trigger applies.
 //   Rules always  — in full, last, so they sit right before the prompt.
@@ -117,7 +118,8 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
   const scope = `project.${projectId}`
   const state = eml.engrams.buildBrainState(scope)
 
-  const openTasks = eml.engrams.query({ type: 'task', scope, statuses: ['planned', 'active'], limit: 10000 }).length
+  const openTasks = state.open_tasks_total ?? 0
+  const backlog = state.backlog_tasks ?? 0
   const tasks = (state.open_tasks as Row[]).slice(0, TASKS_SHOWN)
   const log = state.recent_logs[0] as Row | undefined
   const pendingReviews = eml.engrams
@@ -152,13 +154,14 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
     if (statusLines.length > 0) lines.push('## Status', ...statusLines, '')
 
     const shownTasks = tasks.slice(0, tasks.length - k.tasksLeftOut)
-    if (openTasks > 0) {
+    if (openTasks > 0 || backlog > 0) {
       lines.push(`## Open tasks (${openTasks})`)
       shownTasks.forEach((t, i) => lines.push(i >= shownTasks.length - k.tasksTitleOnly
         ? `${taskMeta(t)} · ${t.id}`
         : `${taskMeta(t)} — ${previewText(t.content, TASK_PREVIEW_CHARS)} · ${t.id}`))
       const more = openTasks - shownTasks.length
       if (more > 0) lines.push(`- ${more} ${shownTasks.length > 0 ? 'more ' : ''}open tasks — eml_list type=task scope=${scope} status=planned (or active)`)
+      if (backlog > 0) lines.push(backlogLine(backlog, scope))
       lines.push('')
     }
 

@@ -49,9 +49,9 @@ const systemSection = (md: string) => {
   return md.slice(from, to < 0 ? undefined : to).trimEnd()
 }
 const OVERFLOW_LINE = /\n---\n(\d+) entries listed by title only to fit the boot's size budget — eml_get <id> for the full text\.$/
-const LEFT_OUT_LINE = /\n---\n(\d+) entries listed by title only and (\d+) left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule for the ones left out\.(\n|$)/
+const LEFT_OUT_LINE = /\n---\n(\d+) entries listed by title only and (\d+) left out to fit the boot's size budget — eml_get <id> for the full text, eml_list type=rule or type=profile for the ones left out\.(\n|$)/
 
-const LEGACY_LEFT_OUT_LINE = /\n---\n(\d+) entries left out to fit the boot's size budget — eml_list type=rule for the ones left out\.\n/
+const LEGACY_LEFT_OUT_LINE = /\n---\n(\d+) entries left out to fit the boot's size budget — eml_list type=rule or type=profile for the ones left out\.\n/
 
 /** The largest budget at which entries are left out or `pred` holds (it must fail for large budgets). */
 function largestBudget(eml: EML, pred: (b: NonNullable<ReturnType<typeof boot>['budget']>) => boolean): number {

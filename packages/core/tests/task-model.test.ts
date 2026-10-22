@@ -5,7 +5,7 @@ import { validTask, validNote } from './fixtures'
 // The task model (v0.15; v0.19: every change goes through trackTask): stage
 // (optional maturity, frozen while closed), outcome on the transition into
 // resolved/invalidated, part_of parent/child (tasks only, acyclic, one parent,
-// resolve guard, invalidate cascade, supersede lists open children), the
+// close guard, supersede lists open children), the
 // append-only journal (note + change entries), and the inactivity review.
 
 describe('task model', () => {
@@ -163,22 +163,16 @@ describe('task model', () => {
       expect(close(parent.id, 'resolved', 'all done').status).toBe('resolved')
     })
 
-    it('invalidating a parent invalidates its open sub-tasks, grandchildren included', () => {
+    it('a parent cannot be invalidated while a sub-task is open either — close or move it first', () => {
       const parent = task('parent')
       const child = task('child', { parent_id: parent.id, status: 'active' })
-      const grandchild = task('grandchild', { parent_id: child.id })
-      const closed = task('closed-child', { parent_id: parent.id })
-      close(closed.id, 'resolved', 'shipped')
-
-      close(parent.id, 'invalidated', 'dropped')
-
-      for (const id of [child.id, grandchild.id]) {
-        expect(statusOf(id)).toBe('invalidated')
-        expect(propsOf(id).outcome).toBe('parent invalidated')
-        expect(eml.engrams.entries(id, ['change']).pop()!.text).toBe('invalidated: parent invalidated')
-      }
-      expect(statusOf(closed.id)).toBe('resolved')
-      expect(propsOf(closed.id).outcome).toBe('shipped')
+      const moved = task('moved', { parent_id: parent.id })
+      expect(() => close(parent.id, 'invalidated', 'dropped')).toThrow(`has open sub-tasks: ${child.id} child, ${moved.id} moved`)
+      expect(statusOf(child.id)).toBe('active')
+      close(child.id, 'invalidated', 'dropped')
+      eml.engrams.trackTask(moved.id, { parent_id: null })
+      expect(close(parent.id, 'invalidated', 'dropped').status).toBe('invalidated')
+      expect(statusOf(moved.id)).toBe('planned')
     })
 
     it('superseding a parent (create_task supersedes) does not cascade — the open sub-tasks are listed', () => {
@@ -249,22 +243,22 @@ describe('task model', () => {
   })
 
   describe('inactivity review', () => {
-    it(`stamps open tasks without movement for ${TASK_INACTIVITY_DAYS} days, not recent or closed ones`, () => {
-      const stale = task('stale'); age(stale.id, TASK_INACTIVITY_DAYS + 1)
-      const staleActive = task('stale-active', { status: 'active' }); age(staleActive.id, 90)
-      const fresh = task('fresh'); age(fresh.id, TASK_INACTIVITY_DAYS - 1)
+    it(`stamps active tasks without movement for ${TASK_INACTIVITY_DAYS} days, not planned, recent or closed ones`, () => {
+      const stale = task('stale', { status: 'active' }); age(stale.id, TASK_INACTIVITY_DAYS + 1)
+      const stalePlanned = task('stale-planned'); age(stalePlanned.id, 90)
+      const fresh = task('fresh', { status: 'active' }); age(fresh.id, TASK_INACTIVITY_DAYS - 1)
       const closed = task('closed'); close(closed.id); age(closed.id, 90)
 
-      expect(eml.engrams.stampDueReviewLabels()).toBe(2)
+      expect(eml.engrams.stampDueReviewLabels()).toBe(1)
       expect(labels(stale.id)).toContain('review')
-      expect(labels(staleActive.id)).toContain('review')
+      expect(labels(stalePlanned.id)).not.toContain('review')
       expect(labels(fresh.id)).not.toContain('review')
       expect(labels(closed.id)).not.toContain('review')
       expect(eml.engrams.stampDueReviewLabels()).toBe(0)   // idempotent
     })
 
     it('a recent entry counts as movement even when updated_at is old', () => {
-      const t = task('journaled')
+      const t = task('journaled', { status: 'active' })
       age(t.id, 60)
       eml.engrams.trackTask(t.id, { text: 'still on it' })
       rawDb().prepare(`UPDATE engrams SET updated_at = datetime('now', '-60 days') WHERE id = ?`).run(t.id)
@@ -276,7 +270,7 @@ describe('task model', () => {
     })
 
     it('any movement clears the label: a field change, a note, a confirm', () => {
-      const ids = ['by-field', 'by-note', 'by-confirm'].map(s => { const t = task(s); age(t.id, 40); return t.id })
+      const ids = ['by-field', 'by-note', 'by-confirm'].map(s => { const t = task(s, { status: 'active' }); age(t.id, 40); return t.id })
       eml.engrams.stampDueReviewLabels()
       expect(ids.every(id => labels(id).includes('review'))).toBe(true)
 
@@ -289,10 +283,17 @@ describe('task model', () => {
       expect(eml.engrams.stampDueReviewLabels()).toBe(0)
     })
 
-    it('a flagged planned task shows up in the scope\'s pending reviews', () => {
-      const t = task('parked'); age(t.id, 40)
+    it('a flagged active task shows up in the scope\'s pending reviews', () => {
+      const t = task('stuck', { status: 'active' }); age(t.id, 40)
       eml.engrams.stampDueReviewLabels()
       expect(eml.engrams.buildBrainState('project.eml').pending_reviews.map(e => e.id)).toContain(t.id)
+    })
+
+    it('a planned task loses a review label from before: idle, it is backlog', () => {
+      const t = task('parked'); age(t.id, 40)
+      rawDb().prepare(`INSERT INTO engram_labels (engram_id, label_id) VALUES (?, 'review')`).run(t.id)
+      eml.engrams.stampDueReviewLabels()
+      expect(labels(t.id)).toEqual([])
     })
   })
 })
