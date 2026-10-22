@@ -77,6 +77,20 @@ describe('supersede rules', () => {
     })
   })
 
+  describe('undo', () => {
+    it('reactivating a superseded engram removes the edge, so it can be superseded again', () => {
+      const old = eml.engrams.store(validNote({ title: 'old' }))
+      const wrong = eml.engrams.store(validNote({ title: 'wrong', supersedes: [old.id] }))
+      eml.engrams.update(wrong.id, { status: 'invalidated' })
+      eml.engrams.update(old.id, { status: 'active' })
+      expect(statusOf(old.id)).toBe('active')
+      expect(edge(wrong.id, old.id)).toBeFalsy()
+      const right = eml.engrams.store(validNote({ title: 'right', supersedes: [old.id] }))
+      expect(statusOf(old.id)).toBe('superseded')
+      expect(edge(right.id, old.id)).toBeTruthy()
+    })
+  })
+
   describe('no supersede along a part_of line', () => {
     it('a sub-task does not replace its parent or grandparent', () => {
       const top = eml.engrams.store(validTask({ title: 'top' }))

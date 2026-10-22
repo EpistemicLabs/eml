@@ -1756,6 +1756,7 @@ export class EngramStore {
     if (reviewDefault !== undefined && fieldPatch.review_due_at === null) delete fieldPatch.review_due_at
     validateFields(type, fieldPatch, 'update')
 
+    let reactivatesSuperseded = false
     if (patch.status !== undefined) {
       if (!(['invalidated', 'expired', 'active'] as string[]).includes(patch.status)) {
         throw new Error(
@@ -1773,6 +1774,7 @@ export class EngramStore {
         if (successors.length === 0 || successors.some(r => r.status !== 'invalidated')) {
           throw new Error('Invalid engram: a superseded engram is reactivated only once its successor is invalidated — until then the successor holds.')
         }
+        reactivatesSuperseded = true
       }
       // An expiry that has passed would expire it again in the next sweep.
       if (patch.status === 'active' && existing.status !== 'active') {
@@ -1928,6 +1930,8 @@ export class EngramStore {
       if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope)
       superseded.push(...this.applySupersedes(id, supersedePlan, stamp).superseded)
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
+      // the supersede is undone: its edge goes, so the engram can be superseded again
+      if (reactivatesSuperseded) this.db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
       if (logCorrection) appendEntry(this.db, id, { kind: 'change', text: logCorrection }, stamp)
       if (type === 'learning' && patch.content !== undefined && patch.content !== existing.content) {
         appendEntry(this.db, id, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
