@@ -119,12 +119,16 @@ function AppContentInner() {
     // host (first run: sign-in, getting started): claim each one — only one tab
     // gets it — and open its pane on the requester's desk. A project the page
     // doesn't know yet (just made by the host) is loaded first: a pane with an
-    // unknown project counts as empty and would drop its first message.
+    // unknown project counts as empty and would drop its first message. Only
+    // for the open space — the projects list holds just its projects, so a
+    // worker of another space would wait out the whole loop (minutes in a
+    // background tab, where the browser throttles the timers).
     const knownProject = (projectId: string) => projectsRef.current.some((project) => project.projectId === projectId);
     const openWorker = async (request: SpawnRequest) => {
       // Decided before loading the project — that can auto-select it into the empty pane.
       const replacePaneId = request.placement === 'replace-empty-desk' ? paneStore.findEmptyDeskPane() : null;
-      if (!knownProject(request.projectId)) {
+      const inOpenSpace = (request.spaceId ?? null) === paneStore.getActiveSpaceId();
+      if (inOpenSpace && !knownProject(request.projectId)) {
         await refreshProjectsRef.current();
         for (let i = 0; i < 40 && !knownProject(request.projectId); i++) await new Promise((r) => setTimeout(r, 50));
       }
