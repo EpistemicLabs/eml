@@ -16,21 +16,6 @@ const CLOSED_OK = TYPE_COLORS.status;
 const GREY = "var(--color-muted-foreground)";
 const OPEN = new Set(["planned", "active"]);
 
-const STATUS_LABEL: Record<string, string> = {
-  planned: "planned · open",
-  active: "active · in progress",
-  resolved: "resolved · closed",
-  invalidated: "invalidated · closed",
-  superseded: "superseded · closed",
-  expired: "expired · closed",
-};
-
-function statusColor(status: string): string {
-  if (status === "active") return TASK;
-  if (status === "resolved") return CLOSED_OK;
-  return GREY;
-}
-
 function label(e: Engram): string {
   if (e.title) return e.title;
   const line = e.content.split("\n").find((l) => l.trim());
@@ -39,15 +24,6 @@ function label(e: Engram): string {
 
 function CardTitle({ children }: { children: React.ReactNode }) {
   return <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">{children}</div>;
-}
-
-function StatusChip({ status }: { status: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-caption text-foreground">
-      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: statusColor(status) }} />
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
 }
 
 export function StageChip({ stage, move = false }: { stage: TaskStage; move?: boolean }) {
@@ -61,15 +37,14 @@ export function StageChip({ stage, move = false }: { stage: TaskStage; move?: bo
   );
 }
 
-/** Stage stepper + status. Grey once the task is closed (the stage is frozen). */
+/** Stage stepper (the status is in the drawer's header). Grey once the task is closed (the stage is frozen). */
 export function TaskStageCard({ engram }: { engram: Engram }) {
   const stage = taskStage(engram);
   const closed = !OPEN.has(engram.status);
   if (!stage) {
     return (
-      <BrainCard className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+      <BrainCard className="px-4 py-2.5">
         <span className="text-ui text-muted-foreground">No stage — a plain task</span>
-        <StatusChip status={engram.status} />
       </BrainCard>
     );
   }
@@ -77,10 +52,7 @@ export function TaskStageCard({ engram }: { engram: Engram }) {
   const on = closed ? GREY : TASK;
   return (
     <BrainCard className="px-4 py-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <CardTitle>{closed ? "Stage · frozen" : "Stage"}</CardTitle>
-        <StatusChip status={engram.status} />
-      </div>
+      <CardTitle>{closed ? "Stage · frozen" : "Stage"}</CardTitle>
       <div className="flex flex-wrap gap-1" aria-label={`Stage: ${stage}`}>
         {TASK_STAGES.map((s, i) => (
           <div key={s} className="flex min-w-16 flex-1 flex-col gap-1">
@@ -266,9 +238,10 @@ function formatAt(iso: string): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** The task's append-only journal, oldest first, plus a one-line composer. */
+/** The task's append-only journal, newest first, under a one-line composer. */
 export function TaskJournal({ engram, relationHref }: { engram: Engram; relationHref: (otherId: string) => string }) {
-  const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change");
+  // newest first: where the task stands is the latest entry
+  const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change").reverse();
   const add = useAddTaskEntry();
   const [text, setText] = useState("");
   const [stage, setStage] = useState<TaskStage | "">("");
@@ -289,17 +262,45 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
       <CardTitle>
         Journal{" "}
         <span className="font-normal tracking-normal normal-case">
-          · {entries.length} {entries.length === 1 ? "entry" : "entries"}, oldest first
+          · {entries.length} {entries.length === 1 ? "entry" : "entries"}, newest first
         </span>
       </CardTitle>
+      <form onSubmit={submit} className="mb-3 flex flex-wrap gap-2">
+        <input
+          aria-label="New journal entry"
+          value={text}
+          onChange={(ev) => setText(ev.target.value)}
+          placeholder="Add an entry — what happened, what's next"
+          className="h-7 min-w-0 flex-1 rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 text-ui text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
+        />
+        {!closed && (
+          <select
+            aria-label="Stage change"
+            value={stage}
+            onChange={(ev) => setStage(ev.target.value as TaskStage | "")}
+            className="h-7 rounded-md border border-foreground/15 bg-foreground/[0.04] px-1.5 text-ui text-muted-foreground outline-none focus:border-foreground/30"
+          >
+            <option value="">stage —</option>
+            {TASK_STAGES.map((s) => <option key={s} value={s} title={TASK_STAGE_HINTS[s]}>{s}</option>)}
+          </select>
+        )}
+        <button
+          type="submit"
+          disabled={!text.trim() || add.isPending}
+          className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+        >
+          {add.isPending ? "Adding…" : "Add"}
+        </button>
+      </form>
+      {add.error && <p className="-mt-1 mb-3 text-caption text-destructive">{(add.error as Error).message}</p>}
       {entries.length === 0 ? (
-        <p className="mb-2 text-caption text-muted-foreground">No entries yet.</p>
+        <p className="text-caption text-muted-foreground">No entries yet.</p>
       ) : (
-        <ol className="mb-2 flex flex-col">
+        <ol className="flex flex-col">
           {entries.map((e, i) => {
-            // A stage change is only visible against the previous entry — the
-            // first entry just carries the stage the task had then.
-            const moved = i > 0 && e.stage !== null && e.stage !== entries[i - 1].stage;
+            // A stage change is only visible against the entry before it in time
+            // (the next one down) — the oldest entry just carries the stage the task had then.
+            const moved = i < entries.length - 1 && e.stage !== null && e.stage !== entries[i + 1].stage;
             const change = e.kind === "change";
             const linked = change ? TRAILING_ID.exec(e.text) : null;
             return (
@@ -336,34 +337,6 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
           })}
         </ol>
       )}
-      <form onSubmit={submit} className="flex flex-wrap gap-2">
-        <input
-          aria-label="New journal entry"
-          value={text}
-          onChange={(ev) => setText(ev.target.value)}
-          placeholder="Add an entry — what happened, what's next"
-          className="h-7 min-w-0 flex-1 rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 text-ui text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
-        />
-        {!closed && (
-          <select
-            aria-label="Stage change"
-            value={stage}
-            onChange={(ev) => setStage(ev.target.value as TaskStage | "")}
-            className="h-7 rounded-md border border-foreground/15 bg-foreground/[0.04] px-1.5 text-ui text-muted-foreground outline-none focus:border-foreground/30"
-          >
-            <option value="">stage —</option>
-            {TASK_STAGES.map((s) => <option key={s} value={s} title={TASK_STAGE_HINTS[s]}>{s}</option>)}
-          </select>
-        )}
-        <button
-          type="submit"
-          disabled={!text.trim() || add.isPending}
-          className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
-        >
-          {add.isPending ? "Adding…" : "Add"}
-        </button>
-      </form>
-      {add.error && <p className="mt-2 text-caption text-destructive">{(add.error as Error).message}</p>}
     </BrainCard>
   );
 }
