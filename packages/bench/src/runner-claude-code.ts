@@ -36,6 +36,10 @@ export interface SessionSpec {
    * Default: the label (a fresh config dir).
    */
   configKey?: string
+  /** the agent's situation, if not the fixture's (arms.ts situation()) — e.g. a public benchmark's */
+  system?: string
+  /** default opts.maxTurns */
+  maxTurns?: number
 }
 
 export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: SessionSpec): Promise<Answer> {
@@ -45,8 +49,8 @@ export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: Ses
     '--model', opts.model,
     '--effort', opts.effort,
     '--permission-mode', 'dontAsk',
-    '--max-turns', String(opts.maxTurns),
-    '--append-system-prompt', situation(ws.arm),
+    '--max-turns', String(spec.maxTurns ?? opts.maxTurns),
+    '--append-system-prompt', spec.system ?? situation(ws.arm),
     '--no-session-persistence',
     '--strict-mcp-config',
   ]
@@ -115,6 +119,13 @@ export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: Ses
 }
 
 export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt: string, label: string): Promise<Verdict> {
+  const v = await judgeStructured(ws, opts, prompt, label, VERDICT_SCHEMA)
+  if (!v || typeof v.correct !== 'boolean') throw new Error('judge returned no verdict')
+  return v as Verdict
+}
+
+/** The judge model, no tools, answering in the given JSON schema; returns the structured output (or undefined). */
+export async function judgeStructured(ws: Workspace, opts: AgentOptions, prompt: string, label: string, schema: object): Promise<any> {
   const events = await claude(ws, opts, [
     '-p', prompt,
     '--output-format', 'json',
@@ -122,13 +133,11 @@ export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt:
     '--effort', 'low',
     '--tools', '',
     '--strict-mcp-config',
-    '--json-schema', JSON.stringify(VERDICT_SCHEMA),
+    '--json-schema', JSON.stringify(schema),
     '--settings', JSON.stringify({ autoMemoryEnabled: false }),
     '--no-session-persistence',
   ], label, label, true)
-  const v = events.find(ev => ev.type === 'result')?.structured_output
-  if (!v || typeof v.correct !== 'boolean') throw new Error('judge returned no verdict')
-  return v as Verdict
+  return events.find(ev => ev.type === 'result')?.structured_output
 }
 
 /** Runs `claude` isolated; returns the JSON events it printed. The judge runs outside the workspace (no CLAUDE.md). */

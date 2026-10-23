@@ -9,6 +9,7 @@ import { runAgent, summarizeAgent, measureSurface, type AgentOptions, type Agent
 import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummary } from './scenarios'
 import { ARMS, type Arm } from './arms'
 import { RESULTS_DIR, fixtureHash, findBaseline, retrievalRegressions } from './baseline'
+import { downloadLocomo, readLocomo, runLocomo, summarizeLocomo, printLocomoSummary, LOCOMO_DEFAULT_FILE, PUBLIC_ARMS, JUDGE_KINDS, type PublicArm, type JudgeKind, type LocomoOptions } from './locomo'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
@@ -52,6 +53,26 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
   eml-bench compare <a.json> <b.json>
       Prints the change from result a to result b.
+
+  eml-bench locomo-download [--data <file>]
+      Downloads the LoCoMo dataset (CC BY-NC 4.0, not part of this repository)
+      into the cache (default ${LOCOMO_DEFAULT_FILE}), checked against its hash.
+
+  eml-bench locomo --eml <checkout> [--conversations <id,id>] [--limit <n>] [--out <file>]
+      The public LoCoMo benchmark (categories 1–4), so EML can be placed next
+      to published memory systems. The eml arm builds one brain per
+      conversation from agent sessions (one per chat session); full-context
+      gets the whole conversation in the prompt. Scored with the published
+      judge prompts (paper: the Mem0 paper's J; mem0-2026: the lenient one of
+      mem0ai/memory-benchmarks). Takes the runner options above (claude-code
+      only) and:
+        --arms <a,b>        eml, full-context (default both)
+        --judges <a,b>      paper, mem0-2026 (default both)
+        --conversations     sample ids, e.g. conv-26 (default all ten)
+        --limit <n>         first n questions per conversation (default all)
+        --sessions <n>      first n chat sessions per conversation (a wiring
+                            check; the questions then reach beyond the memory)
+        --data <file>       the dataset (default the cache file)
 
   run writes its result into the work dir unless --out is given; only release
   writes to results/.
@@ -202,6 +223,61 @@ async function release(args: string[]): Promise<void> {
   if (regressions.length) console.log(`\nstage 1 got worse: ${regressions.join('; ')}`)
 }
 
+async function locomo(args: string[]): Promise<void> {
+  const emlPath = arg(args, 'eml')
+  if (!emlPath) throw new Error('--eml <checkout> is required')
+  const sut = openSut(emlPath)
+  const data = readLocomo(arg(args, 'data'))
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const workRoot = path.resolve(arg(args, 'work-dir') ?? path.join(os.tmpdir(), 'eml-bench'))
+  if (isInside(workRoot, sut.root) || isInside(workRoot, BENCH_DIR)) throw new Error(`--work-dir must lie outside the repository (${workRoot})`)
+  const workDir = path.join(workRoot, `locomo-${sut.version}-${stamp}`)
+  console.log(`work dir: ${workDir}`)
+
+  const arms = (arg(args, 'arms') ?? PUBLIC_ARMS.join(',')).split(',') as PublicArm[]
+  for (const a of arms) if (!PUBLIC_ARMS.includes(a)) throw new Error(`unknown arm ${a} (${PUBLIC_ARMS.join(', ')})`)
+  const judges = (arg(args, 'judges') ?? JUDGE_KINDS.join(',')).split(',') as JudgeKind[]
+  for (const j of judges) if (!JUDGE_KINDS.includes(j)) throw new Error(`unknown judge ${j} (${JUDGE_KINDS.join(', ')})`)
+  const tokenFile = arg(args, 'claude-token-file')
+  const opts: AgentOptions = {
+    runner: 'claude-code',
+    arms: [],
+    repeat: 1,
+    claudeToken: process.env.CLAUDE_CODE_OAUTH_TOKEN || (tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : undefined),
+    model: arg(args, 'model') ?? 'claude-sonnet-5-5',
+    judgeModel: arg(args, 'judge') ?? 'claude-opus-5-5',
+    effort: (arg(args, 'effort') ?? 'medium') as AgentOptions['effort'],
+    maxTurns: 12,
+    concurrency: parseInt(arg(args, 'concurrency') ?? '3', 10),
+  }
+  const lo: LocomoOptions = {
+    conversations: arg(args, 'conversations')?.split(',') ?? null,
+    arms,
+    judges,
+    limit: arg(args, 'limit') ? parseInt(arg(args, 'limit')!, 10) : null,
+    sessions: arg(args, 'sessions') ? parseInt(arg(args, 'sessions')!, 10) : null,
+    ingestTurns: 40,
+  }
+  console.log(`${sut.version} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel} · concurrency ${opts.concurrency}`)
+  const res = await runLocomo(sut, workDir, opts, lo, data)
+  const summary = summarizeLocomo(res, lo)
+  printLocomoSummary(summary, res, lo)
+  const harness = res.questions.find(q => q.harness)?.harness
+  writeResult(path.resolve(arg(args, 'out') ?? path.join(workDir, 'result.json')), {
+    benchmark: 'locomo',
+    version: sut.version,
+    measured_at: new Date().toISOString(),
+    model: opts.model,
+    judge_model: opts.judgeModel,
+    effort: opts.effort,
+    harness,
+    options: lo,
+    summary,
+    ingest: res.ingest,
+    questions: res.questions,
+  })
+}
+
 function isInside(dir: string, parent: string): boolean {
   const rel = path.relative(parent, dir)
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
@@ -332,6 +408,8 @@ async function main(): Promise<void> {
   if (cmd === 'check') return check(args)
   if (cmd === 'release') return release(args)
   if (cmd === 'compare' && args.length === 2) return compare(args[0], args[1])
+  if (cmd === 'locomo-download') return downloadLocomo(arg(args, 'data'))
+  if (cmd === 'locomo') return locomo(args)
   process.stdout.write(USAGE)
   process.exitCode = cmd ? 1 : 0
 }

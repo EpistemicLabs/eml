@@ -59,19 +59,25 @@ export function readFixture(): FixtureBrain {
 
 const DAY_MS = 86_400_000
 
-export async function buildBrain(base: Sut, dataDir: string): Promise<Brain> {
-  const fixture = readFixture()
+/** A fresh data dir with one user and their empty brain; returns the brain file and the API token. */
+export function provisionBrain(base: Sut, dataDir: string, user: string, agent: string): { brainFile: string; tokenPlaintext: string } {
   fs.mkdirSync(dataDir, { recursive: true })
   const core = sutCore(base)
   const control = core.initControlDatabase(path.join(dataDir, 'control.db'))
   const prov = core.provisionUser({
-    email: `${fixture.user}@example.invalid`,
-    agentId: fixture.agent,
-    userId: fixture.user,
+    email: `${user}@example.invalid`,
+    agentId: agent,
+    userId: user,
     control,
     dataDir,
   })
   control.close()
+  return prov
+}
+
+export async function buildBrain(base: Sut, dataDir: string): Promise<Brain> {
+  const fixture = readFixture()
+  const prov = provisionBrain(base, dataDir, fixture.user, fixture.agent)
 
   const server = await startServer(base, dataDir, path.join(dataDir, 'load.log'))
   const ids: Record<string, string> = {}
