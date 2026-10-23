@@ -9,9 +9,10 @@
 -- application, ISO-8601 UTC with milliseconds — no column defaults the clock
 -- would fill; the migration runner writes the ledger row. engrams.rev is the
 -- revision counter.
+--
+-- No BEGIN/COMMIT: the runner (database.ts) runs this file and the ledger row
+-- in one transaction.
 -- ============================================================
-
-BEGIN TRANSACTION;
 
 CREATE TABLE agents (
   id                  TEXT PRIMARY KEY,
@@ -216,5 +217,3 @@ CREATE TABLE _eml_migrations (
   name        TEXT NOT NULL,
   applied_at  TEXT NOT NULL
 );
-
-COMMIT;

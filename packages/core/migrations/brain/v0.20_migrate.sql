@@ -31,9 +31,11 @@
 -- database.ts runMigrateWithFkOff handle it): with FKs on, DROP TABLE engrams
 -- would cascade-delete every row that references it. engrams_fts is a
 -- standalone FTS5 table keyed by id; the rebuild leaves it as it is.
+--
+-- No BEGIN/COMMIT: from v0.20 on the runner runs a migrate file and its ledger
+-- row in one transaction (database.ts applyMigration), so a crash leaves the
+-- brain at 19 or at 20, never migrated without its row.
 -- ============================================================
-
-BEGIN TRANSACTION;
 
 -- ---------- agents ----------
 CREATE TABLE agents_v020 (
@@ -374,5 +376,3 @@ FROM _eml_migrations;
 
 DROP TABLE _eml_migrations;
 ALTER TABLE _eml_migrations_v020 RENAME TO _eml_migrations;
-
-COMMIT;

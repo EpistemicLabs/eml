@@ -156,6 +156,35 @@ describe('v0.20 migration — schema 20 on a seeded v0.19 brain', () => {
     expectMigrated(file, before)
   })
 
+  it('the migration and its ledger row commit together: a failure after the SQL leaves the brain at 19, untouched', () => {
+    const file = join(dir, 'v19.db')
+    createV19Brain(file)
+    const schemaOf = () => {
+      const db = new Database(file, { readonly: true })
+      try { return db.prepare(`SELECT type, name, sql FROM sqlite_master ORDER BY type, name`).all() } finally { db.close() }
+    }
+    const before = { schema: schemaOf(), counts: counts(file), due: reviewDueV19(file) }
+    // the clock is read for applied_at after the file ran, inside the transaction
+    expect(() => new EML({ namespace: 'test', dbPath: file, clock: () => { throw new Error('clock down') } })).toThrow('clock down')
+    const db = new Database(file, { readonly: true })
+    try {
+      expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(19)
+      expect(db.prepare(`SELECT status FROM engrams WHERE id = 'd-expired'`).get()).toEqual({ status: 'expired' })
+    } finally { db.close() }
+    expect(schemaOf()).toEqual(before.schema)
+    expect(counts(file)).toEqual(before.counts)
+    // and the next start migrates it
+    new EML({ namespace: 'test', dbPath: file }).close()
+    expectMigrated(file, before)
+  })
+
+  it('a fresh brain: schema and ledger row in one transaction', () => {
+    const file = join(dir, 'fresh.db')
+    expect(() => new EML({ namespace: 'test', dbPath: file, clock: () => { throw new Error('clock down') } })).toThrow('clock down')
+    const db = new Database(file, { readonly: true })
+    try { expect(db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table'`).get()).toEqual({ n: 0 }) } finally { db.close() }
+  })
+
   it('a migrated brain writes on: no clock default is needed', () => {
     const file = join(dir, 'v19.db')
     createV19Brain(file)

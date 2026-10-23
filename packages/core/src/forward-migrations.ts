@@ -3,7 +3,7 @@ import { readFileSync, existsSync, mkdirSync, copyFileSync, rmSync, readdirSync,
 import Database from 'better-sqlite3'
 import type Database_t from 'better-sqlite3'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
-import { recordMigration } from './database'
+import { applyMigration } from './database'
 import { type Clock, systemClock } from './env'
 
 /**
@@ -35,7 +35,8 @@ import { type Clock, systemClock } from './env'
  *     cases that need a human.
  *
  * Tracking per brain (two records, by design): the runner writes the brain's
- * _eml_migrations row after each file (files up to v0.19 also write their own),
+ * _eml_migrations row with each file, in its transaction from v0.20 on
+ * (database.ts applyMigration; files up to v0.19 also write their own),
  * and brain_migrations + brains.schema_version in control after success.
  */
 
@@ -317,8 +318,7 @@ function applyFiles(db: Database_t.Database, files: MigrationFile[], at: string)
   try {
     for (const f of files) {
       try {
-        db.exec(f.sql)
-        recordMigration(db, f.version, at)
+        applyMigration(db, f.version, f.sql, () => at)
       } catch (err) {
         throw new Error(`v0.${f.version}_migrate.sql: ${errorText(err)}`)
       }
