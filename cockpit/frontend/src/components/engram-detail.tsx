@@ -6,7 +6,7 @@ import { ReviewActions } from "@/components/review-actions";
 import { BrainCard } from "@/components/brain/ui";
 import { SUBJECT_STATUS_COLOR } from "@/lib/subject-graph";
 import { withAlpha } from "@/components/ui/badge";
-import { REVIEW_LABEL, TYPE_FIELD_ORDER, type Engram, type Entry, type LearningState, type Relation, type Subject } from "@/lib/types";
+import { TYPE_FIELD_ORDER, type Engram, type Entry, type LearningState, type Relation, type Subject } from "@/lib/types";
 import { TaskHubBlocks, TaskJournal, TaskOutcome, TaskStageCard, useTaskHub } from "@/components/task-sections";
 import { TaskRunCard } from "@/components/task-run";
 import type { Project } from "@/types/app";
@@ -195,7 +195,7 @@ export function EngramDetail({
       <div className="flex flex-wrap items-center gap-3">
         <TypeBadge type={engram.type} />
         <h1 className="text-heading font-semibold tracking-tight text-foreground">{engram.title ?? engram.type}</h1>
-        {engram.labels?.includes(REVIEW_LABEL) && <ReviewFlag />}
+        {engram.review_due && <ReviewFlag />}
         {engram.learning && <LearningBadge state={engram.learning} />}
       </div>
 
@@ -207,7 +207,7 @@ export function EngramDetail({
       </div>
       <Provenance engram={engram} />
 
-      {engram.labels?.includes(REVIEW_LABEL) && <ReviewActions engram={engram} />}
+      {engram.review_due && <ReviewActions engram={engram} />}
 
       {engram.subjects && engram.subjects.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -316,7 +316,7 @@ function EngramTail({ engram, relationHref }: { engram: Engram; relationHref: (o
 // v0.19: one row per field, in the given order.
 const FIELD_LABELS: Record<string, string> = {
   next_step: "next step", assignee_id: "assignee", due_date: "due", review_due_at: "review due",
-  expires_at: "expires", occurred_at: "occurred", change_type: "change", source_url: "source url",
+  occurred_at: "occurred", change_type: "change", source_url: "source url",
   source_name: "source name", checked_at: "checked", rule_type: "rule type", open_threads: "open threads",
 };
 

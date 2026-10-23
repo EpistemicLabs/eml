@@ -55,7 +55,7 @@ export class Provenance {
     return model
   }
 
-  /** The headers the EML API reads (server.ts writeCtx). */
+  /** The headers the EML API reads (server.ts: the actor of the write env). */
   async headers(): Promise<Record<string, string>> {
     const h: Record<string, string> = { 'X-EML-Session': this.sessionId, 'X-EML-Ingestion': 'mcp' }
     if (this.harnessName) h['X-EML-Harness'] = this.harnessName

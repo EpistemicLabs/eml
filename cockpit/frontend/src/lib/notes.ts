@@ -13,17 +13,17 @@ export type Note = {
   content: string;
   createdAt: string;
   updatedAt: string;
-  /** updated_at + content hash: what a save is checked against. */
-  version: string;
+  /** The engram's revision counter: what a save is checked against. */
+  rev: number;
   /** Who wrote the current content: the user in a note pane, or an agent. */
   lastEditor: 'user' | 'agent';
 };
 
 export type NotesChange = {
-  changed: Array<{ id: string; projectId: string; version: string | null; lastEditor: 'user' | 'agent' | null }>;
+  changed: Array<{ id: string; projectId: string; rev: number | null; lastEditor: 'user' | 'agent' | null }>;
 };
 
-/** 409 from PUT: someone else wrote since `baseVersion`; carries their version. */
+/** 409 from PUT: someone else wrote since `baseRev`; carries their version of the note. */
 export class NoteConflictError extends ApiError {
   constructor(public note: Note) {
     super(409, 'The note changed since you opened it');
@@ -74,11 +74,11 @@ export function useCreateNote() {
   });
 }
 
-/** `baseVersion` null overwrites whatever is there (keep mine after a conflict). */
-export function saveNote(id: string, content: string, baseVersion: string | null): Promise<Note> {
+/** `baseRev` null overwrites whatever is there (keep mine after a conflict). */
+export function saveNote(id: string, content: string, baseRev: number | null): Promise<Note> {
   return request<{ note: Note }>(`/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    body: JSON.stringify({ content, baseVersion }),
+    body: JSON.stringify({ content, baseRev }),
   }).then((r) => r.note);
 }
 
@@ -102,7 +102,7 @@ export function useRenameNote() {
     mutationFn: async ({ id, title }: { id: string; title: string }) => {
       // Rename against the latest content, checked like any pane save.
       const { note } = await request<{ note: Note }>(`/${encodeURIComponent(id)}`);
-      return saveNote(id, retitleContent(note.content, title), note.version);
+      return saveNote(id, retitleContent(note.content, title), note.rev);
     },
     onSuccess: (note) => {
       qc.setQueryData(noteKey(note.id), note);

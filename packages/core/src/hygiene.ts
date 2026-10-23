@@ -1,5 +1,5 @@
 import type { EML } from './index'
-import { REVIEWABLE_TYPES } from './engrams'
+import { REVIEWABLE_TYPES } from './review-due'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { formatProblems, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 
@@ -81,17 +81,6 @@ function finding(c: EngramRow, reason: string): HygieneFinding {
   return { id: c.id, type: c.type, scope: c.scope, title: c.title ?? null, reason }
 }
 
-/**
- * review_due_at as a timestamp, read the way the nightly sweep's SQLite
- * datetime() reads it: a value without a zone ('YYYY-MM-DD HH:MM[:SS]' from the
- * v0.8 backfill, or an ISO string without Z) is UTC, not local time.
- */
-function parseDue(value: unknown): number {
-  if (typeof value !== 'string') return NaN
-  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)
-  return Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)
-}
-
 const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-profile-format',
@@ -133,11 +122,10 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
       'eml_update(<that engram>, supersedes=[<this id>]). When unsure, ask the user instead of confirming.',
     detect(eml, now) {
       const reviewable = REVIEWABLE_TYPES as readonly string[]
-      return (eml.engrams.query({ limit: 10000, status: 'active' }) as EngramRow[])
-        // a task-bound decision is not reviewed; its task covers it
-        .filter((c) => reviewable.includes(c.type) && (c.properties?.binding ?? 'standing') === 'standing'
-          && parseDue(c.properties?.review_due_at) < now.getTime())
-        .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
+      // review_due (review-due.ts) also covers idle tasks; this check is about the dated types
+      return (eml.engrams.query({ limit: 10000, review_due: true, now: now.toISOString() }) as EngramRow[])
+        .filter((c) => reviewable.includes(c.type))
+        .map((c) => finding(c, `review due since ${String(c.properties.review_due_at).slice(0, 10)}.`))
     },
   },
 ]
@@ -301,7 +289,7 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
 
 /** Run every hygiene check against the brain. */
 export function hygieneCheck(eml: EML, opts: { now?: Date } = {}): HygieneReport {
-  const now = opts.now ?? new Date()
+  const now = opts.now ?? new Date(eml.now())
   const checks = HYGIENE_CHECKS.map(({ detect, ...meta }) => ({ ...meta, findings: detect(eml, now) }))
   return { schema: CURRENT_BRAIN_SCHEMA_VERSION, checks, total: checks.reduce((n, c) => n + c.findings.length, 0) }
 }

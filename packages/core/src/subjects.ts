@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Subject, SubjectInput, SubjectUpdate, SubjectStatus, Engram } from './types'
+import { Subject, SubjectStatus, Engram } from './types'
 import { slugifyTag } from './tags'
 
 /**
@@ -46,26 +46,6 @@ export function slugifySubject(name: string): string {
 export class SubjectStore {
   constructor(private db: Database.Database) {}
 
-  /**
-   * Register a subject. The slug id is derived from `name`. Re-creating an
-   * existing slug is a no-op that returns the existing subject (reuse, not
-   * duplicate) — it neither reopens a closed subject nor overwrites its description.
-   */
-  create(input: SubjectInput): Subject {
-    const id = slugifySubject(input.name)
-    if (!id) {
-      throw new Error(
-        `invalid subject name "${input.name}" — must contain at least one letter or digit`
-      )
-    }
-    const existing = this.get(id)
-    if (existing) return existing
-    this.db.prepare(
-      `INSERT INTO subjects (id, name, description) VALUES (?, ?, ?)`
-    ).run(id, input.name.trim(), input.description ?? null)
-    return this.get(id)!
-  }
-
   get(id: string): Subject | null {
     const row = this.db.prepare(`
       SELECT t.*, (SELECT COUNT(*) FROM engram_subjects et WHERE et.subject_id = t.id) AS engram_count
@@ -85,35 +65,6 @@ export class SubjectStore {
     return rows.map(r => this.rowToSubject(r))
   }
 
-  /**
-   * Update name / description / status (close or reopen). The id (slug) is
-   * stable — renaming changes the display name only, never the reference.
-   * Throws on an unknown subject.
-   */
-  update(id: string, patch: SubjectUpdate): Subject {
-    const slug = slugifySubject(id)
-    if (!this.exists(slug)) throw new Error(`subject "${id}" not found`)
-    const fields: string[] = []
-    const params: any[] = []
-    if (patch.name !== undefined) {
-      const name = patch.name.trim()
-      if (!name) throw new Error('subject name must not be empty')
-      fields.push('name = ?'); params.push(name)
-    }
-    if (patch.description !== undefined) { fields.push('description = ?'); params.push(patch.description) }
-    if (patch.status !== undefined) {
-      if (patch.status !== 'active' && patch.status !== 'closed') {
-        throw new Error(`invalid subject status "${patch.status}" — must be active or closed`)
-      }
-      fields.push('status = ?'); params.push(patch.status)
-    }
-    if (fields.length > 0) {
-      fields.push("updated_at = datetime('now')")
-      this.db.prepare(`UPDATE subjects SET ${fields.join(', ')} WHERE id = ?`).run(...params, slug)
-    }
-    return this.get(slug)!
-  }
-
   exists(id: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM subjects WHERE id = ?').get(id)
   }
@@ -129,7 +80,7 @@ export class SubjectStore {
     return new Map(rows.map(r => [r.id, r.status]))
   }
 
-  private rowToSubject(row: any): Subject {
+  rowToSubject(row: any): Subject {
     return {
       id: row.id,
       name: row.name,

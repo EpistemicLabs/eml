@@ -64,10 +64,9 @@ function read(file: string) {
     const v17 = !!db.prepare(`SELECT name FROM sqlite_master WHERE name = 'engram_subjects'`).get()
     const v19 = !!db.prepare(`SELECT name FROM sqlite_master WHERE name = 'entries'`).get()
     return {
-      engrams: db.prepare(`SELECT id, type, scope, ${v17 ? 'title' : 'subject'} AS title, content, status, significance, properties, created_at, updated_at FROM engrams ORDER BY id`).all() as any[],
+      engrams: db.prepare(`SELECT id, type, scope, ${v17 ? 'title' : 'subject'} AS title, content, status, significance, properties, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) AS updated_at FROM engrams ORDER BY id`).all() as any[],
       relations: db.prepare('SELECT id, source_id, target_id, relation, explanation FROM relations ORDER BY id').all() as any[],
       tags: db.prepare('SELECT engram_id, tag_id FROM engram_tags ORDER BY engram_id').all(),
-      labels: db.prepare('SELECT engram_id, label_id FROM engram_labels ORDER BY engram_id').all(),
       themes: db.prepare(v17
         ? 'SELECT engram_id, subject_id AS theme_id FROM engram_subjects ORDER BY engram_id'
         : 'SELECT engram_id, theme_id FROM engram_themes ORDER BY engram_id').all(),
@@ -130,7 +129,6 @@ function expectMigratedData(before: ReturnType<typeof read>, after: ReturnType<t
     { id: 'r-sup', source_id: 'e-hypothesis', target_id: 'd-1', relation: 'supports', explanation: 'kept as is' },
   ])
   expect(after.tags).toEqual(before.tags)
-  expect(after.labels).toEqual(before.labels)
   expect(after.themes).toEqual(before.themes)
   expect(after.entries).toEqual(before.entries)
 }
@@ -139,10 +137,10 @@ function expectMigratedData(before: ReturnType<typeof read>, after: ReturnType<t
 function expectChecks(file: string): void {
   const db = new Database(file)
   try {
-    const ins = db.prepare(`INSERT INTO engrams (id, type, scope, content) VALUES (?, ?, 'project.x', 'c')`)
+    const ins = db.prepare(`INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev) VALUES (?, ?, 'project.x', 'c', 'now', 'now', 1)`)
     expect(() => ins.run('n-new', 'note')).not.toThrow()
     for (const type of EPISTEMIC) expect(() => ins.run(`x-${type}`, type)).toThrow(/CHECK constraint failed/)
-    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method) VALUES (?, 't-1', 'd-1', ?, 'manual')`)
+    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 't-1', 'd-1', ?, 'manual', 'now')`)
     expect(() => rel.run('r-part', 'part_of')).not.toThrow()
     expect(() => rel.run('r-eval-new', 'evaluates')).toThrow(/CHECK constraint failed/)
   } finally { db.close() }
@@ -171,7 +169,7 @@ describe('v0.16 migration — epistemic mode removed on a seeded v0.15 brain', (
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 15)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19, 20] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 

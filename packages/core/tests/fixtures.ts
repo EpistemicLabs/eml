@@ -1,4 +1,4 @@
-import type { EngramInput, EML, StoredEngram, WriteContext } from '../src'
+import type { EngramInput, EML, StoredEngram, Env, LearnInput, LearnResult, RelationInput } from '../src'
 
 // Shared fixtures for engram writes in tests. v0.19: every type has required
 // fields (fields.ts) and a title (except status); tests that are not about those
@@ -67,8 +67,64 @@ export function closedTask(
   eml: EML,
   overrides: Overrides = {},
   status: 'resolved' | 'invalidated' = 'resolved',
-  ctx?: WriteContext | string | null,
+  ctx?: Env,
 ): StoredEngram {
-  const task = eml.engrams.store(validTask(overrides), ctx)
-  return eml.engrams.trackTask(task.id, { status, outcome: 'test outcome', text: 'closed in a test', keep: [] }, ctx)!
+  const task = writes(eml).store(validTask(overrides), ctx)
+  return writes(eml).trackTask(task.id, { status, outcome: 'test outcome', text: 'closed in a test', keep: [] }, ctx)!
+}
+
+// v0.20: every write goes through eml.apply(command, env). Tests that are not
+// about the command layer write through this facade, shaped like the store
+// methods it replaced: NOT_FOUND reads as null, a learning's topic match as
+// { written: false, matches }, an object write returns the object.
+type AnyFields = Record<string, unknown>
+
+function orNull<T>(f: () => T): T | null {
+  try { return f() } catch (e) {
+    if ((e as { code?: string })?.code === 'NOT_FOUND') return null
+    throw e
+  }
+}
+
+export function writes(eml: EML) {
+  const run = (name: string, input: unknown, env?: Env): any => eml.apply({ name, input } as never, env)
+  const object = (kind: string) => ({
+    create: (fields: AnyFields, env?: Env): any => run('object.create', { object: kind, fields }, env).object,
+    update: (id: string, patch: AnyFields, env?: Env): any => orNull(() => run('object.update', { object: kind, id, patch }, env).object),
+  })
+  const agent = object('agent')
+  return {
+    store: (input: EngramInput, env?: Env): StoredEngram & Record<string, any> => run('engram.create', input, env),
+    update: (id: string, patch: AnyFields, env?: Env): (StoredEngram & Record<string, any>) | null => orNull(() => run('engram.update', { id, patch }, env)),
+    trackTask: (id: string, input: AnyFields, env?: Env): (StoredEngram & Record<string, any>) | null => orNull(() => run('task.track', { ...input, id }, env)),
+    confirmReview: (id: string, text?: string, env?: Env): any => orNull(() => run('engram.confirm_review', { id, ...(text !== undefined ? { text } : {}) }, env)),
+    relate: (input: RelationInput, env?: Env): boolean => run('relation.create', input, env).created,
+    learn: (input: LearnInput, env?: Env): LearnResult => {
+      if (input.id !== undefined) return { written: true, ...run('learning.add_evidence', input, env) }
+      const { source, happened, quote, stance, rule_id, ...lesson } = input
+      const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
+      try {
+        const { learning, ...engram } = run('engram.create', { ...lesson, type: 'learning', evidence }, env)
+        return { written: true, engram, learning }
+      } catch (e) {
+        const err = e as { code?: string, data?: { matches: any } }
+        if (err?.code === 'TOPIC_EXISTS') return { written: false, matches: err.data!.matches }
+        throw e
+      }
+    },
+    projects: object('project'),
+    entities: object('entity'),
+    users: object('user'),
+    tags: object('tag'),
+    subjects: object('subject'),
+    agents: { store: agent.create, update: agent.update },
+  }
+}
+
+/** object.create / object.update in the shape of the v0.19 functions. */
+export function createObject(eml: EML, object: string, fields: AnyFields, env?: Env): { object: any, created: boolean } {
+  return eml.apply({ name: 'object.create', input: { object, fields } }, env) as never
+}
+export function updateObject(eml: EML, object: string, id: string, patch: AnyFields, env?: Env): { object: any, diff: Record<string, [unknown, unknown]> } | null {
+  return orNull(() => eml.apply({ name: 'object.update', input: { object, id, patch } }, env)) as never
 }

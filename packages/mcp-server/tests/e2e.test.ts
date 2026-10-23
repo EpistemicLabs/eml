@@ -281,6 +281,11 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
 
       const got = jsonOf(await call('eml_get', { id: parent.id }))
       expect(got.entries.some((e: any) => e.kind === 'change')).toBe(true)
+      // v0.20: rev is for the cockpit and the sync — tools neither show nor take it
+      expect(textOf(await call('eml_get', { id: parent.id }))).not.toMatch(/"rev"/)
+      expect(textOf(reopen)).not.toMatch(/"rev"/)
+      const withBase = await call('eml_track_task', { task_id: parent.id, text: 'x', base_rev: 1 })
+      expect(withBase.isError).toBe(true)
       const notesOnly = jsonOf(await call('eml_get', { id: parent.id, notes_only: true }))
       expect(notesOnly.entries.every((e: any) => e.kind === 'note')).toBe(true)
 

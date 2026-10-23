@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Tag, TagInput, TagUpdate, Engram } from './types'
+import { Tag, Engram } from './types'
 
 /**
  * v0.12: batch-load registered tag ids onto a set of engrams IN PLACE — ONE query
@@ -48,26 +48,6 @@ export function slugifyTag(name: string): string {
 export class TagStore {
   constructor(private db: Database.Database) {}
 
-  /**
-   * Register a tag. The slug id is derived from `name`. Re-creating an existing
-   * slug is a no-op that returns the existing tag (reuse, not duplicate) — this
-   * is what lets the write-side recall-first discipline stay cheap.
-   */
-  create(input: TagInput): Tag {
-    const id = slugifyTag(input.name)
-    if (!id) {
-      throw new Error(
-        `invalid tag name "${input.name}" — must contain at least one letter or digit`
-      )
-    }
-    const existing = this.get(id)
-    if (existing) return existing
-    this.db.prepare(
-      `INSERT INTO tags (id, name, description) VALUES (?, ?, ?)`
-    ).run(id, input.name.trim(), input.description ?? null)
-    return this.get(id)!
-  }
-
   get(id: string): Tag | null {
     const row = this.db.prepare(`
       SELECT t.*, (SELECT COUNT(*) FROM engram_tags et WHERE et.tag_id = t.id) AS engram_count
@@ -83,27 +63,6 @@ export class TagStore {
       FROM tags t ${status ? 'WHERE t.status = ?' : ''} ORDER BY t.id ASC
     `).all(...(status ? [status] : [])) as any[]
     return rows.map(r => this.rowToTag(r))
-  }
-
-  /**
-   * v0.19: rename (the id stays), describe, archive or restore. An archived tag
-   * stays on the engrams that carry it but cannot be assigned anew.
-   */
-  update(id: string, patch: TagUpdate): Tag | null {
-    if (!this.exists(id)) return null
-    const fields: string[] = []
-    const params: unknown[] = []
-    if (patch.name !== undefined) {
-      if (!patch.name.trim()) throw new Error('invalid tag name — must not be empty')
-      fields.push('name = ?'); params.push(patch.name.trim())
-    }
-    if (patch.description !== undefined) { fields.push('description = ?'); params.push(patch.description) }
-    if (patch.status !== undefined) {
-      if (patch.status !== 'active' && patch.status !== 'archived') throw new Error('invalid tag status — active or archived')
-      fields.push('status = ?'); params.push(patch.status)
-    }
-    if (fields.length > 0) this.db.prepare(`UPDATE tags SET ${fields.join(', ')} WHERE id = ?`).run(...params, id)
-    return this.get(id)
   }
 
   /** The archived ones among the given ids. */
@@ -131,7 +90,7 @@ export class TagStore {
     return new Set(rows.map(r => r.id))
   }
 
-  private rowToTag(row: any): Tag {
+  rowToTag(row: any): Tag {
     return {
       id: row.id,
       name: row.name,

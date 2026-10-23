@@ -42,7 +42,6 @@ export function registerDecideTool(server: McpServer, http: HttpClient): void {
       task_id: taskId('The task this decision was taken in; linked and noted in its journal.'),
       binding: z.enum(BINDINGS).optional().describe('Required with task_id: task · standing (see description).'),
       supersedes: supersedes('Ids of decisions this one replaces.'),
-      expires_at: optIsoDate('ISO date, hard expiry for a decision with a known end; it expires then.'),
       review_due_at: optIsoDate('ISO date, soft review reminder. Default 60 days; due ones come up in brain hygiene.'),
       detail: detail(),
       tags: tags(),

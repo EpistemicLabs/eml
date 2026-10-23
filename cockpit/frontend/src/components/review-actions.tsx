@@ -17,7 +17,7 @@ function lastMovement(engram: Engram): { at: number; what: string } {
 // the engram carries the `review` flag. Three outcomes:
 //   Still current → confirm-review with why it still holds (a review entry;
 //                   renews the clock, drops the flag) — v0.19
-//   Retire        → status = expired (drops the flag, moves to history)
+//   Retire        → status = invalidated (drops the flag, moves to history)
 //   New task      → follow-up task linked back; the flag stays — confirm or
 //                   retire once the task is done
 // v0.15 for a task (flagged after 30 days without movement): "Still relevant"
@@ -105,7 +105,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           title={
             isTask
               ? "Drop it — invalidated with outcome “retired in review”; bound decisions and notes close with it. Open sub-tasks have to be closed or moved first"
-              : "Outdated — marks the engram expired and drops the flag"
+              : "Outdated — marks the engram invalidated and drops the flag"
           }
           className={action}
         >

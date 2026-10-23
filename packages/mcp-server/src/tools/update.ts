@@ -20,21 +20,20 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       'supersedes=[old ids] here on the new one.\n\n' +
       'Only the fields of the engram\'s own type are accepted; the error lists them. null clears an optional ' +
       'field. If unsure of the current state, eml_get(id) first.\n\n' +
-      'Reviews: changing a decision, rule or profile restarts its review and clears the review flag. If it still ' +
+      'Reviews: changing a decision, rule or profile restarts its review, so it is no longer review_due. If it still ' +
       'holds unchanged, confirm it with review_note — why it still holds.',
     inputSchema: z.object({
       id: z.string().describe('Engram id; a task id errors with a pointer to eml_track_task.'),
       content: z.string().optional().describe('Wholesale replacement.'),
       title: z.string().optional().describe('Rename the recall anchor (sparingly — breaks title threads).'),
       scope: z.string().optional().describe('Re-scope (e.g. saved global but really project-bound).'),
-      status: z.enum(['invalidated', 'expired', 'active']).optional().describe('invalidated · expired · active (reactivation, e.g. after a mistaken invalidate). Superseded comes only from supersedes.'),
+      status: z.enum(['invalidated', 'active']).optional().describe('invalidated · active (reactivation, e.g. after a mistaken invalidate). Superseded comes only from supersedes.'),
       supersedes: z.array(z.string()).optional().describe('Ids of engrams this one replaces (also across types, e.g. a reference re-filed as this note): an open one is set to superseded, a closed one keeps its status; each is linked.'),
       review_note: z.string().optional().describe('Decision, rule, profile only: confirms in a review that it still holds unchanged, and why.'),
       // typed fields — each only for the types that have it
       rationale: z.string().optional().describe('decision.'),
       alternatives: z.array(z.string()).optional().describe('decision.'),
       binding: z.enum(BINDINGS).optional().describe('decision, note: task · standing.'),
-      expires_at: nullable('decision: ISO date.'),
       review_due_at: nullable('decision, rule, profile: ISO date; null restarts it from the type\'s default.'),
       why: z.string().optional().describe('rule.'),
       agreed: z.string().optional().describe('rule: the user\'s agreement, verbatim where possible.'),

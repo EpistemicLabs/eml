@@ -18,7 +18,6 @@ export type EngramStatus =
   | "active"
   | "superseded"
   | "invalidated"
-  | "expired"
   | "resolved";
 
 export type Significance = "critical" | "high" | "normal" | "low" | "trivial";
@@ -34,8 +33,6 @@ export type RelationType =
   | "part_of"; // v0.15: child task → parent task
 
 export type ProjectStatus = "active" | "paused" | "archived";
-
-export const REVIEW_LABEL = "review";
 
 export interface Engram {
   id: string;
@@ -56,7 +53,8 @@ export interface Engram {
   created_at: string;
   updated_at: string;
   tags: string[];
-  labels: string[];
+  /** v0.20: due for a review, computed by the brain at read time. */
+  review_due: boolean;
   /** v0.14: subject ids this engram belongs to (cross-scope strands). */
   subjects: string[];
   relations?: Relation[];
@@ -112,7 +110,7 @@ export interface LearningState {
  * TYPE_FIELDS). Anything else in properties is shown under "other".
  */
 export const TYPE_FIELD_ORDER: Record<EngramType, readonly string[]> = {
-  decision: ["rationale", "alternatives", "binding", "expires_at", "review_due_at", "detail"],
+  decision: ["rationale", "alternatives", "binding", "review_due_at", "detail"],
   rule: ["applies", "trigger", "why", "agreed", "rule_type", "detail", "review_due_at"],
   profile: ["core", "detail", "review_due_at"],
   status: ["state", "next_step", "blockers", "detail"],

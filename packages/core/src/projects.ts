@@ -1,43 +1,22 @@
 import Database from 'better-sqlite3'
 import {
-  Project, ProjectInput, ProjectUpdate, ProjectStatus, ProjectBrainState,
-  Engram, Relation
+  Project, ProjectStatus, ProjectBrainState,
+  Engram, Relation,
 } from './types'
 import { hydrateEngramTags } from './tags'
-import { hydrateEngramLabels } from './labels'
+import { hydrateReviewDue } from './review-due'
 import { hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
+import { type Env, DEFAULT_ENV } from './env'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL, inactivityCutoff } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
 export class ProjectStore {
-  constructor(private db: Database.Database) {}
-
-  create(input: ProjectInput): Project {
-    if (input.parent_project) {
-      this.assertNoCycle(input.id, input.parent_project)
-    }
-    this.db.prepare(`
-      INSERT INTO projects (
-        id, name, status, goal, description, owner,
-        parent_project, started_at, ended_at, metadata, status_tracks,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-    `).run(
-      input.id,
-      input.name,
-      input.status ?? 'active',
-      input.goal ?? null,
-      input.description ?? null,
-      input.owner ?? null,
-      input.parent_project ?? null,
-      input.started_at ?? null,
-      input.ended_at ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null,
-      input.status_tracks ?? null,
-    )
-    return this.get(input.id)!
-  }
+  constructor(
+    private db: Database.Database,
+    // v0.20: clock, ids and default actor (env.ts); reads use its clock for review_due.
+    private env: Env = DEFAULT_ENV,
+  ) {}
 
   get(id: string): Project | null {
     const row = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
@@ -54,36 +33,6 @@ export class ProjectStore {
     }
     sql += ' ORDER BY created_at DESC'
     return (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToProject(r))
-  }
-
-  update(id: string, patch: ProjectUpdate): Project | null {
-    const existing = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
-    if (!existing) return null
-
-    if (patch.parent_project !== undefined && patch.parent_project !== null) {
-      this.assertNoCycle(id, patch.parent_project)
-    }
-
-    const fields: string[] = []
-    const params: any[] = []
-
-    if (patch.name !== undefined)           { fields.push('name = ?');           params.push(patch.name) }
-    if (patch.status !== undefined)         { fields.push('status = ?');         params.push(patch.status) }
-    if (patch.goal !== undefined)           { fields.push('goal = ?');           params.push(patch.goal) }
-    if (patch.description !== undefined)    { fields.push('description = ?');    params.push(patch.description) }
-    if (patch.owner !== undefined)          { fields.push('owner = ?');          params.push(patch.owner) }
-    if (patch.parent_project !== undefined) { fields.push('parent_project = ?'); params.push(patch.parent_project) }
-    if (patch.started_at !== undefined)     { fields.push('started_at = ?');     params.push(patch.started_at) }
-    if (patch.ended_at !== undefined)       { fields.push('ended_at = ?');       params.push(patch.ended_at) }
-    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
-    if (patch.status_tracks !== undefined)  { fields.push('status_tracks = ?');  params.push(patch.status_tracks) }
-
-    if (fields.length === 0) return this.rowToProject(existing)
-
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
-    this.db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...params)
-    return this.get(id)
   }
 
   exists(id: string): boolean {
@@ -114,9 +63,11 @@ export class ProjectStore {
       ORDER BY updated_at DESC LIMIT 3
     `, [scope])
 
-    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope])
-    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
-    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
+    const now = this.env.now()
+    const cutoff = inactivityCutoff(now)
+    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope, cutoff])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, cutoff) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, cutoff) as { n: number }).n
 
     // v0.19.1: recency, as eml_show (engrams.buildBrainState) — significance is no
     // longer written, and old high/critical decisions stayed on top.
@@ -147,7 +98,7 @@ export class ProjectStore {
 
   // === Private ===
 
-  private assertNoCycle(childId: string, parentId: string): void {
+  assertNoCycle(childId: string, parentId: string): void {
     if (childId === parentId) {
       throw new Error(`Project cycle: ${childId} cannot be its own parent`)
     }
@@ -170,16 +121,17 @@ export class ProjectStore {
   }
 
   private queryEngrams(sql: string, params: any[]): Engram[] {
-    // v0.12/v0.13: hydrate tags + labels via the shared helpers (same as EngramStore)
-    // so brain-state snapshot engrams carry their facets too — batched, no N+1.
+    // v0.12/v0.14/v0.20: hydrate tags, subjects and review_due via the shared
+    // helpers (same as EngramStore) so brain-state snapshot engrams carry them
+    // too — batched, no N+1.
     const engrams = (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToEngram(r))
     hydrateEngramTags(this.db, engrams)
-    hydrateEngramLabels(this.db, engrams)
     hydrateEngramSubjects(this.db, engrams)
+    hydrateReviewDue(this.db, engrams, this.env.now())
     return engrams
   }
 
-  private rowToProject(row: any): Project {
+  rowToProject(row: any): Project {
     return {
       id: row.id,
       name: row.name,
@@ -197,7 +149,7 @@ export class ProjectStore {
     }
   }
 
-  private rowToEngram(row: any): Engram {
+  rowToEngram(row: any): Engram {
     // v0.9 Cluster 1: namespace column dropped.
     // v0.11 team-brains: ingested_by IS exposed (authorship handle) — kept in
     // lockstep with EngramStore.rowToEngram so project/brain-state read paths
@@ -205,14 +157,14 @@ export class ProjectStore {
     return {
       ...row,
       properties: row.properties ? JSON.parse(row.properties) : null,
-      // v0.12/v0.13/v0.14: default []; queryEngrams hydrates real tags + labels + subjects.
+      // v0.12/v0.14/v0.20: defaults; queryEngrams hydrates tags, subjects and review_due.
       tags: [],
-      labels: [],
       subjects: [],
+      review_due: false,
     }
   }
 
-  private rowToRelation(row: any): Relation {
+  rowToRelation(row: any): Relation {
     return {
       id: row.id,
       // v0.9.1 Cluster 1: namespace no longer in the TS output (DB column stays until Phase 1.4).
