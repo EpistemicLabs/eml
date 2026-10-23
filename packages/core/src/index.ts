@@ -84,11 +84,11 @@ export class EML {
     this.newId = opts.newId ?? randomId
     const env = this.env()
     this.projects = new ProjectStore(this.db, env)
-    this.users = new UserStore(this.db, env)
-    this.agents = new AgentStore(this.db, env)
-    this.entities = new EntityStore(this.db, env)
-    this.tags = new TagStore(this.db, env)
-    this.subjects = new SubjectStore(this.db, env)
+    this.users = new UserStore(this.db)
+    this.agents = new AgentStore(this.db)
+    this.entities = new EntityStore(this.db)
+    this.tags = new TagStore(this.db)
+    this.subjects = new SubjectStore(this.db)
     this.engrams = new EngramStore(
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
       this.tags, this.subjects, env,
@@ -169,7 +169,7 @@ export {
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
-export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, pinClock, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
+export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'
 export {

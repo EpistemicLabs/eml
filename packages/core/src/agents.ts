@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
-import { type Env, DEFAULT_ENV } from './env'
-import { Agent, AgentInput, AgentUpdate } from './types'
+import { Agent } from './types'
 
 // v0.9 Cluster 1: reserved-IDs list removed (master/global conflicts no longer
 // exist) and the default_namespace column removed from the code layer
@@ -8,7 +7,7 @@ import { Agent, AgentInput, AgentUpdate } from './types'
 // v0.9_migrate.sql.
 
 export class AgentStore {
-  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
+  constructor(private db: Database.Database) {}
 
   get(id: string): Agent | null {
     const row = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as any

@@ -1,27 +1,20 @@
 import Database from 'better-sqlite3'
 import {
-  Engram, EngramInput, EngramQuery, EngramWithRelations,
-  Relation, RelationWithTarget, RelationInput, ScopedBrainState,
-  TYPE_DEFAULT_STATUS, TYPE_REVIEW_DEFAULTS,
-  EngramType, ConflictCandidate, StoredEngram, DetectionMethod,
-  EngramStatus, OpenSubtask, BoundItem,
-  TASK_OPEN_STATUSES, TASK_LINK_RELATION,
+  Engram, EngramQuery, EngramWithRelations,
+  Relation, RelationWithTarget, ScopedBrainState,
+  EngramType, EngramStatus, BoundItem, TASK_LINK_RELATION,
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
-import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
-import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
-import {
-  appendEntry, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
-  type Entry, type EntryInput, type EntryKind, type EvidenceSource, type EvidenceStance,
-} from './entries'
-import { learningState, LEARNING_SHARPENED, type LearningState } from './learning'
+import { TYPE_FIELDS } from './fields'
+import { listEntries, type Entry, type EntryKind } from './entries'
+import { learningState, type LearningState } from './learning'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
 import { AgentStore } from './agents'
 import { EntityStore } from './entities'
 import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
-import { type Env, type Stamp, beginWrite, addDays, DEFAULT_ENV } from './env'
-import { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
+import { type Env, DEFAULT_ENV } from './env'
+import { reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
 import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL, inactivityCutoff } from './open-tasks'
 

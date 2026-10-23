@@ -1,13 +1,12 @@
 import Database from 'better-sqlite3'
-import { type Env, DEFAULT_ENV } from './env'
-import { Entity, EntityInput, EntityKind, EntityStatus, EntityUpdate } from './types'
+import { Entity, EntityKind, EntityStatus } from './types'
 
 // v0.8 C6: first-class entities table for external parties (people, orgs,
 // assets). Replaces the free-form `external.<x>` scope convention with
 // a typed existence check.
 
 export class EntityStore {
-  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
+  constructor(private db: Database.Database) {}
 
   get(id: string): Entity | null {
     const row = this.db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as any

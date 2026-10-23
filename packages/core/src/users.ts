@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
-import { type Env, DEFAULT_ENV } from './env'
-import { User, UserInput, UserUpdate } from './types'
+import { User } from './types'
 
 // v0.9 Cluster 1: reserved-IDs list removed (master/global conflicts no longer
 // exist) and the default_namespace column removed from the code layer
@@ -8,7 +7,7 @@ import { User, UserInput, UserUpdate } from './types'
 // v0.9_migrate.sql.
 
 export class UserStore {
-  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
+  constructor(private db: Database.Database) {}
 
   get(id: string): User | null {
     const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any

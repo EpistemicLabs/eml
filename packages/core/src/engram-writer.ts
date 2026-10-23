@@ -1,29 +1,21 @@
-import Database from 'better-sqlite3'
 import {
-  Engram, EngramInput, EngramQuery, EngramWithRelations,
-  Relation, RelationWithTarget, RelationInput, ScopedBrainState,
+  Engram, EngramInput, RelationInput,
   TYPE_DEFAULT_STATUS, TYPE_REVIEW_DEFAULTS,
   EngramType, ConflictCandidate, StoredEngram, DetectionMethod,
   EngramStatus, OpenSubtask, BoundItem,
   TASK_OPEN_STATUSES, TASK_LINK_RELATION,
 } from './types'
-import { significanceWeight, recencyBoost } from './decay'
 import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
 import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, normalizeTimestampFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
 import {
-  appendEntry, bumpRev, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
-  type Entry, type EntryInput, type EntryKind, type EvidenceSource, type EvidenceStance,
+  appendEntry, bumpRev, EVIDENCE_SOURCES, EVIDENCE_STANCES,
+  type Entry, type EntryInput, type EvidenceSource, type EvidenceStance,
 } from './entries'
-import { learningState, LEARNING_SHARPENED, type LearningState } from './learning'
-import { ProjectStore } from './projects'
-import { UserStore } from './users'
-import { AgentStore } from './agents'
-import { EntityStore } from './entities'
-import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
-import { type Env, type Stamp, beginWrite, addDays, DEFAULT_ENV } from './env'
-import { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
-import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
+import { learningState, LEARNING_SHARPENED } from './learning'
+import { slugifyTag } from './tags'
+import { type Stamp, addDays } from './env'
+import { REVIEWABLE_TYPES } from './review-due'
+import { slugifySubject } from './subjects'
 
 import { EngramStore, renderLogContent, hasStartHere, CONFLICT_TYPES, CONFLICT_CANDIDATE_LIMIT, CONFLICT_COVERAGE_THRESHOLD, CONFLICT_MAX, CONFLICT_MIN_SHARED_TERMS, EVENT_DUPLICATE_WINDOW_MS, CLOSED_WITH_TASK, STORE_INPUT_KEYS, createInputKeys, TRACK_TASK_KEYS, UPDATE_PATCH_KEYS, LEARN_KEYS, LEARNING_CONTENT_MAX_CHARS, extractSalientTerms, termCoverage, extractWikilinkTargets, type TrackTaskInput, type EngramPatch, type LearnInput, type LearnResult } from './engrams'
 

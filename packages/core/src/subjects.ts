@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3'
-import { Subject, SubjectInput, SubjectUpdate, SubjectStatus, Engram } from './types'
+import { Subject, SubjectStatus, Engram } from './types'
 import { slugifyTag } from './tags'
-import { type Env, DEFAULT_ENV } from './env'
 
 /**
  * v0.14: batch-load subject ids onto a set of engrams IN PLACE. Mirror of
@@ -45,7 +44,7 @@ export function slugifySubject(name: string): string {
 }
 
 export class SubjectStore {
-  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
+  constructor(private db: Database.Database) {}
 
   get(id: string): Subject | null {
     const row = this.db.prepare(`

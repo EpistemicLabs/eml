@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
-import { Tag, TagInput, TagUpdate, Engram } from './types'
-import { type Env, DEFAULT_ENV } from './env'
+import { Tag, Engram } from './types'
 
 /**
  * v0.12: batch-load registered tag ids onto a set of engrams IN PLACE — ONE query
@@ -47,7 +46,7 @@ export function slugifyTag(name: string): string {
 }
 
 export class TagStore {
-  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
+  constructor(private db: Database.Database) {}
 
   get(id: string): Tag | null {
     const row = this.db.prepare(`

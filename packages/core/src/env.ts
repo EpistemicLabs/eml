@@ -60,9 +60,3 @@ export function addDays(iso: string, days: number): string {
 
 /** The default env of a store built without one: system clock, random ids, no actor. */
 export const DEFAULT_ENV: Env = { now: systemClock, newId: randomId, actor: NO_ACTOR }
-
-/** `env` with its clock read once: a write made of several store calls keeps one timestamp. */
-export function pinClock(env: Env): Env {
-  const at = env.now()
-  return { ...env, now: () => at }
-}

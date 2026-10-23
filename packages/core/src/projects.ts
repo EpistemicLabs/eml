@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import {
-  Project, ProjectInput, ProjectUpdate, ProjectStatus, ProjectBrainState,
-  Engram, Relation
+  Project, ProjectStatus, ProjectBrainState,
+  Engram, Relation,
 } from './types'
 import { hydrateEngramTags } from './tags'
 import { hydrateReviewDue } from './review-due'
