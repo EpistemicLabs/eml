@@ -205,7 +205,6 @@ export function EngramDetail({
         {engram.ingested_by && <span>by {engram.ingested_by}</span>}
         <span>updated {engram.updated_at.slice(0, 10)}</span>
       </div>
-      <Provenance engram={engram} />
 
       {engram.review_due && <ReviewActions engram={engram} />}
 
@@ -253,6 +252,7 @@ export function EngramDetail({
       </BrainCard>
 
       <EngramTail engram={engram} relationHref={relationHref} />
+      <Provenance engram={engram} />
     </div>
   );
 }
@@ -346,7 +346,8 @@ function FieldsCard({ title, keys, props, relationHref }: {
 }
 
 // v0.19: who wrote it — the server stamps the author, session, model and harness;
-// origin names the software that wrote it.
+// origin names the software that wrote it. Shown at the very bottom of the
+// drawer: it matters less than the engram itself.
 function Provenance({ engram }: { engram: Engram }) {
   const parts = [
     engram.origin && `origin ${engram.origin}`,
@@ -356,7 +357,7 @@ function Provenance({ engram }: { engram: Engram }) {
   ].filter(Boolean) as string[];
   if (parts.length === 0) return null;
   return (
-    <div className="-mt-3 flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted-foreground/70">
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted-foreground/70">
       {parts.map((p) => <span key={p}>{p}</span>)}
     </div>
   );
@@ -394,9 +395,9 @@ function EntriesCard({ engram, entries }: { engram: Engram; entries: Entry[] }) 
   const title = engram.type === "learning" ? "Evidence" : entries.every((e) => e.kind === "review") ? "Reviews" : "Entries";
   return (
     <BrainCard className="px-4 py-3">
-      <CardTitle>{title} · {entries.length}, oldest first</CardTitle>
+      <CardTitle>{title} · {entries.length}, newest first</CardTitle>
       <ol className="flex flex-col gap-2.5">
-        {entries.map((e) => (
+        {[...entries].reverse().map((e) => (
           <li key={e.id} className="text-ui">
             <div className="flex flex-wrap items-center gap-x-2.5 text-caption text-muted-foreground">
               <span>{entryDate(e.at)}</span>

@@ -38,11 +38,7 @@ export function hydrateEngramTags(db: Database.Database, engrams: Engram[]): voi
  * EngramStore — NOT here, and deliberately separate from the `relations` table.
  */
 export function slugifyTag(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+  return name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-')
 }
 
 export class TagStore {

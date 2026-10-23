@@ -9,6 +9,8 @@ import { runAgent, summarizeAgent, measureSurface, type AgentOptions, type Agent
 import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummary } from './scenarios'
 import { ARMS, type Arm } from './arms'
 import { RESULTS_DIR, fixtureHash, findBaseline, retrievalRegressions } from './baseline'
+import { downloadLocomo, readLocomo, runLocomo, summarizeLocomo, printLocomoSummary, LOCOMO_DEFAULT_FILE, PUBLIC_ARMS, JUDGE_KINDS, type PublicArm, type JudgeKind, type LocomoOptions } from './locomo'
+import { prepareLongMemEval, loadLongMemEval, runLongMemEval, summarizeLongMemEval, printLongMemEvalSummary, LME_CACHE_DIR, LME_ARMS, type LmeOptions, type LmeVariant } from './longmemeval'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
@@ -52,6 +54,45 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
   eml-bench compare <a.json> <b.json>
       Prints the change from result a to result b.
+
+  eml-bench locomo-download [--data <file>]
+      Downloads the LoCoMo dataset (CC BY-NC 4.0, not part of this repository)
+      into the cache (default ${LOCOMO_DEFAULT_FILE}), checked against its hash.
+
+  eml-bench locomo --eml <checkout> [--conversations <id,id>] [--limit <n>] [--out <file>]
+      The public LoCoMo benchmark (categories 1–4), so EML can be placed next
+      to published memory systems. The eml arm builds one brain per
+      conversation from agent sessions (one per chat session); full-context
+      gets the whole conversation in the prompt. Scored with the published
+      judge prompts (paper: the Mem0 paper's J; mem0-2026: the lenient one of
+      mem0ai/memory-benchmarks). Takes the runner options above (claude-code
+      only) and:
+        --arms <a,b>        eml, full-context (default both)
+        --judges <a,b>      paper, mem0-2026 (default both)
+        --conversations     sample ids, e.g. conv-26 (default all ten)
+        --limit <n>         first n questions per conversation (default all)
+        --sessions <n>      first n chat sessions per conversation (a wiring
+                            check; the questions then reach beyond the memory)
+        --data <file>       the dataset (default the cache file)
+
+  eml-bench longmemeval-download [--variant s|m]
+      Downloads LongMemEval_S or _M (MIT) into the cache (${LME_CACHE_DIR}),
+      checks its hash and splits it into one file per question. A file already
+      there is not downloaded again.
+
+  eml-bench longmemeval --eml <checkout> [--variant s|m] [--per-type <n>] [--only <id,id>] [--out <file>]
+      The public LongMemEval benchmark on a stratified sample: n questions per
+      question type (default 10), picked by a hash of the question id (the same
+      ids in S and M). S has ~115k tokens of history per question, M ~1.5M. The
+      eml arm builds a fresh brain per question from agent sessions over the
+      history, several chat sessions per agent session (--batch-chars, default
+      100000). Baselines: full-context, the whole history in the prompt (S
+      only); recent-context, the newest sessions within --context-chars
+      (default 600000, ~150k tokens); bm25-context, the sessions a BM25 search
+      with the question ranks highest, within the same budget. Scored with the
+      official type-specific judge prompts. Takes the runner options above and
+      --arms (eml, full-context, recent-context, bm25-context; default eml +
+      full-context for S, eml + bm25-context + recent-context for M).
 
   run writes its result into the work dir unless --out is given; only release
   writes to results/.
@@ -202,6 +243,105 @@ async function release(args: string[]): Promise<void> {
   if (regressions.length) console.log(`\nstage 1 got worse: ${regressions.join('; ')}`)
 }
 
+/** What the public benchmarks share: the SUT, a work dir outside the repo, the arms and the runner options. */
+function publicSetup<A extends string>(args: string[], name: string, allowed: A[], defaultArms: A[]): { sut: ReturnType<typeof openSut>; workDir: string; arms: A[]; opts: AgentOptions } {
+  const emlPath = arg(args, 'eml')
+  if (!emlPath) throw new Error('--eml <checkout> is required')
+  const sut = openSut(emlPath)
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const workRoot = path.resolve(arg(args, 'work-dir') ?? path.join(os.tmpdir(), 'eml-bench'))
+  if (isInside(workRoot, sut.root) || isInside(workRoot, BENCH_DIR)) throw new Error(`--work-dir must lie outside the repository (${workRoot})`)
+  const workDir = path.join(workRoot, `${name}-${sut.version}-${stamp}`)
+  console.log(`work dir: ${workDir}`)
+  const arms = (arg(args, 'arms') ?? defaultArms.join(',')).split(',') as A[]
+  for (const a of arms) if (!allowed.includes(a)) throw new Error(`unknown arm ${a} (${allowed.join(', ')})`)
+  const tokenFile = arg(args, 'claude-token-file')
+  const opts: AgentOptions = {
+    runner: 'claude-code',
+    arms: [],
+    repeat: 1,
+    claudeToken: process.env.CLAUDE_CODE_OAUTH_TOKEN || (tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : undefined),
+    model: arg(args, 'model') ?? 'claude-sonnet-5-5',
+    judgeModel: arg(args, 'judge') ?? 'claude-opus-5-5',
+    effort: (arg(args, 'effort') ?? 'medium') as AgentOptions['effort'],
+    maxTurns: 12,
+    concurrency: parseInt(arg(args, 'concurrency') ?? '3', 10),
+  }
+  console.log(`${sut.version} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel} · concurrency ${opts.concurrency}`)
+  return { sut, workDir, arms, opts }
+}
+
+function lmeVariant(args: string[]): LmeVariant {
+  const v = arg(args, 'variant') ?? 's'
+  if (v !== 's' && v !== 'm') throw new Error(`unknown variant ${v} (s, m)`)
+  return v
+}
+
+async function longmemeval(args: string[]): Promise<void> {
+  const variant = lmeVariant(args)
+  const perType = parseInt(arg(args, 'per-type') ?? '10', 10)
+  const only = arg(args, 'only')?.split(',') ?? null
+  const questions = loadLongMemEval(variant, perType, only)
+  // M does not fit into a context window: its baselines are the sessions that do — the best-matching and the newest.
+  const { sut, workDir, arms, opts } = publicSetup(args, `longmemeval-${variant}`, LME_ARMS, variant === 's' ? ['eml', 'full-context'] : ['eml', 'bm25-context', 'recent-context'])
+  const lo: LmeOptions = {
+    variant,
+    arms,
+    perType,
+    only,
+    batchChars: parseInt(arg(args, 'batch-chars') ?? '100000', 10),
+    contextChars: parseInt(arg(args, 'context-chars') ?? '600000', 10),
+    ingestTurns: 40,
+  }
+  const results = await runLongMemEval(sut, workDir, opts, lo, questions)
+  const summary = summarizeLongMemEval(results, arms)
+  printLongMemEvalSummary(summary, variant)
+  writeResult(path.resolve(arg(args, 'out') ?? path.join(workDir, 'result.json')), {
+    benchmark: `longmemeval_${variant}`,
+    version: sut.version,
+    measured_at: new Date().toISOString(),
+    model: opts.model,
+    judge_model: opts.judgeModel,
+    effort: opts.effort,
+    harness: results.find(r => r.harness)?.harness,
+    options: lo,
+    summary,
+    results,
+  })
+}
+
+async function locomo(args: string[]): Promise<void> {
+  const data = readLocomo(arg(args, 'data'))
+  const { sut, workDir, arms, opts } = publicSetup(args, 'locomo', PUBLIC_ARMS, PUBLIC_ARMS)
+  const judges = (arg(args, 'judges') ?? JUDGE_KINDS.join(',')).split(',') as JudgeKind[]
+  for (const j of judges) if (!JUDGE_KINDS.includes(j)) throw new Error(`unknown judge ${j} (${JUDGE_KINDS.join(', ')})`)
+  const lo: LocomoOptions = {
+    conversations: arg(args, 'conversations')?.split(',') ?? null,
+    arms,
+    judges,
+    limit: arg(args, 'limit') ? parseInt(arg(args, 'limit')!, 10) : null,
+    sessions: arg(args, 'sessions') ? parseInt(arg(args, 'sessions')!, 10) : null,
+    ingestTurns: 40,
+  }
+  const res = await runLocomo(sut, workDir, opts, lo, data)
+  const summary = summarizeLocomo(res, lo)
+  printLocomoSummary(summary, res, lo)
+  const harness = res.questions.find(q => q.harness)?.harness
+  writeResult(path.resolve(arg(args, 'out') ?? path.join(workDir, 'result.json')), {
+    benchmark: 'locomo',
+    version: sut.version,
+    measured_at: new Date().toISOString(),
+    model: opts.model,
+    judge_model: opts.judgeModel,
+    effort: opts.effort,
+    harness,
+    options: lo,
+    summary,
+    ingest: res.ingest,
+    questions: res.questions,
+  })
+}
+
 function isInside(dir: string, parent: string): boolean {
   const rel = path.relative(parent, dir)
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
@@ -332,6 +472,10 @@ async function main(): Promise<void> {
   if (cmd === 'check') return check(args)
   if (cmd === 'release') return release(args)
   if (cmd === 'compare' && args.length === 2) return compare(args[0], args[1])
+  if (cmd === 'locomo-download') return downloadLocomo(arg(args, 'data'))
+  if (cmd === 'locomo') return locomo(args)
+  if (cmd === 'longmemeval-download') return prepareLongMemEval(lmeVariant(args))
+  if (cmd === 'longmemeval') return longmemeval(args)
   process.stdout.write(USAGE)
   process.exitCode = cmd ? 1 : 0
 }

@@ -36,7 +36,7 @@ describe('spawn inbox', () => {
       spawns, spawnToken: TOKEN,
       spaces: new BrainSpaces(main),
       ledger: new SessionLedger(),
-      providers: new ProviderRegistry({ providers: [{ id: 'claude' } as AgentProvider, { id: 'codex' } as AgentProvider] }),
+      providers: new ProviderRegistry({ providers: [{ id: 'claude', messaging: true } as AgentProvider, { id: 'codex', messaging: false } as AgentProvider] }),
     })
   })
   afterAll(() => {
@@ -63,6 +63,14 @@ describe('spawn inbox', () => {
     expect(outcome.status).toBe(202)
     expect(existsSync(join(inbox, `${id}.json`))).toBe(false)
     expect(spawns.list()).toMatchObject([{ prompt: 'Do the thing', title: 'Worker', provider: 'codex', fromSessionId: 's-1', projectId: outcome.payload.projectId }])
+    // A codex worker cannot be messaged — no address.
+    expect(outcome.payload).not.toHaveProperty('address')
+  })
+
+  it('answers with the address of a worker that can be messaged, derived from the request id', async () => {
+    const { outcome } = await request({ project: folder, prompt: 'Ask me back', provider: 'claude', token: TOKEN })
+    expect(outcome.status).toBe(202)
+    expect(outcome.payload.address).toBe(`session-${outcome.payload.id.replace(/-/g, '').slice(0, 8)}`)
   })
 
   it('refuses a request without the token, and says why a request is wrong', async () => {

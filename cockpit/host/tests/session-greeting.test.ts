@@ -18,6 +18,10 @@ describe('session greeting', () => {
     expect(bridge.greetingFor(plain)).toBe(bridge.GREETING_PROMPT)
   })
 
+  it('asks for the title in single quotes, so the shell expands nothing from the user\'s words', () => {
+    expect(bridge.GREETING_PROMPT).toMatch(/name it in a few words: node "\$COCKPIT_TITLE_JS" '<title>'\.$/)
+  })
+
   it('stays silent when it is off', () => {
     expect(bridge.greetingFor({ ...plain, greet: false })).toBeNull()
   })

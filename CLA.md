@@ -7,7 +7,8 @@ flexible (for example to offer it under additional licences) while you keep all 
 It is based on the Apache Individual Contributor License Agreement.
 
 You accept this agreement by posting the sentence given in the CLA check comment on your pull request.
-Your acceptance covers that pull request and all your later Contributions.
+Your acceptance covers that pull request and all your later Contributions under this version of the
+agreement; a new version asks you to accept it again.
 
 ## 1. Definitions
 

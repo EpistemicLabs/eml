@@ -163,10 +163,10 @@ describe('Codex provider', () => {
   })
 
   const launchArgs = (unattended: boolean, initialPrompt: string | null = null) =>
-    provider.launch({ sessionId: 'c-1', space, providerSessionId: null, resume: false, initialPrompt, unattended }).args
+    provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt, unattended }).args
 
   it('launches the cockpit\'s own binary in the isolated home, without a daemon, sandboxed with the reviewer', () => {
-    const launch = provider.launch({ sessionId: 'c-1', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
+    const launch = provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
     expect(launch.bin).toBe(platform.linksFiles ? join(home, 'codex', 'bin', 'codex') : join(home, 'codex', 'current', 'bin', 'codex.exe'))
     expect(launch.args).toEqual([
       '--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write',
@@ -179,7 +179,7 @@ describe('Codex provider', () => {
   })
 
   it('hands the session its space\'s brain through the environment', () => {
-    const { env } = provider.launch({ sessionId: 'c-1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
+    const { env } = provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
     expect(env.EML_API_URL).toBe(space.url)
     expect(env.EML_API_TOKEN).toBe(space.token)
     expect(env.EML_HOOK_CONFIG).toBe(space.files.emlConfig)
@@ -227,7 +227,7 @@ describe('Codex provider', () => {
     mkdirSync(join(codexHome, 'sessions', '2026', '10', '12'), { recursive: true })
     writeFileSync(join(codexHome, 'sessions', '2026', '10', '12', 'rollout-2026-10-12T12-00-00-01a1-codex-id.jsonl'), '')
     expect(provider.canResume(session)).toBe(true)
-    expect(provider.launch({ ...session, space, resume: true, initialPrompt: null, unattended: false }).args.slice(0, 2)).toEqual(['resume', '01a1-codex-id'])
+    expect(provider.launch({ ...session, address: 'x-c1', space, resume: true, initialPrompt: null, unattended: false }).args.slice(0, 2)).toEqual(['resume', '01a1-codex-id'])
     provider.deleteTranscript(session)
     expect(provider.canResume(session)).toBe(false)
   })

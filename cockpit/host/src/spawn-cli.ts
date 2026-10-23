@@ -11,7 +11,8 @@
  * opens as a new pane next to this session and starts with the prompt as its
  * first message. A prompt file keeps
  * multi-line prompts free of shell quoting. --provider picks the agent CLI the
- * worker runs with; without it the worker uses the cockpit's default.
+ * worker runs with; without it the worker uses the cockpit's default. For a
+ * worker that can message other sessions, the CLI prints its address.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   }
   if (!prompt?.trim()) fail(CLI, '--prompt-file or --prompt is required')
 
-  const answer = await requestHost<{ projectId?: string }>(CLI, { method: 'POST', path: '/api/spawn' }, {
+  const answer = await requestHost<{ projectId?: string; address?: string }>(CLI, { method: 'POST', path: '/api/spawn' }, {
     project,
     prompt,
     title: arg('title'),
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
   process.stdout.write(`Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session (or as soon as a cockpit tab is open).\n`)
+  if (answer.body.address) process.stdout.write(`Worker address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
 }
 
 void main()
