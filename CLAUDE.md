@@ -34,7 +34,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 
 1. Branch `vX.Y.Z` from `main`; `bash scripts/bump-version.sh X.Y.Z`.
 2. Test the release on the dev cockpit; `cockpit/scripts/dev-refresh-brain.sh` loads a copy of the
-   production brain into it first. A release with a brain schema change is also measured:
+   production brain into it first. A release whose migration updates data is audited before that:
+   `node scripts/audit-brain-migration.mjs <copy of the production brain>` migrates its own copy
+   and must pass. A release with a brain schema change is also measured:
    `node packages/bench/dist/cli.js release --eml .` writes `packages/bench/results/X.Y.Z.json`
    (commit it) and prints the change from the previous release for the release notes.
 3. PR `vX.Y.Z` → `main` with the release notes as description; CI green; merge with a merge commit.
