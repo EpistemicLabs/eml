@@ -11,7 +11,7 @@
 import { useMemo, useState } from "react";
 
 import { useProjectEngrams } from "@/lib/queries";
-import { REVIEW_LABEL, type EngramType } from "@/lib/types";
+import { type EngramType } from "@/lib/types";
 import { TagGraph } from "@/components/graph/tag-graph";
 import { SubjectGraph } from "@/components/graph/subject-graph";
 import { Timeline } from "@/components/timeline/timeline";
@@ -53,10 +53,10 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
   const [activeOnly, setActiveOnly] = useState(false);
   const [view, setView] = useState<ViewMode>("timeline");
 
-  // How many engrams the nightly sweep flagged for review — drives the ⚑ filter
+  // How many engrams are due for a review — drives the ⚑ filter
   // (shown only when there's something to filter to).
   const reviewCount = useMemo(
-    () => allEngrams.filter((e) => e.labels?.includes(REVIEW_LABEL)).length,
+    () => allEngrams.filter((e) => e.review_due).length,
     [allEngrams],
   );
 
@@ -65,7 +65,7 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
       allEngrams.filter(
         (e) =>
           activeTypes.has(e.type) &&
-          (!showReviewOnly || (e.labels?.includes(REVIEW_LABEL) ?? false)) &&
+          (!showReviewOnly || e.review_due) &&
           (!activeOnly || e.status === "active" || e.status === "planned"),
       ),
     [allEngrams, activeTypes, showReviewOnly, activeOnly],

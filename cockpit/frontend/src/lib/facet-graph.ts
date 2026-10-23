@@ -8,7 +8,7 @@ import {
   forceY,
   type SimulationNodeDatum,
 } from "d3-force";
-import { REVIEW_LABEL, type Engram, type EngramType } from "./types";
+import { type Engram, type EngramType } from "./types";
 import { CARD_W, CARD_H } from "./graph";
 
 // Pure facet-hub graph model (no React/xyflow) — shared by the "tags" lens and
@@ -37,7 +37,7 @@ export interface FacetEngramNode {
   facetCount: number;
   /** Carries none — sits on the outer ring. */
   unassigned: boolean;
-  /** Carries the `review` label — the nightly staleness flag (drives the ⚑). */
+  /** review_due — the staleness flag (drives the ⚑). */
   review: boolean;
   position: { x: number; y: number };
 }
@@ -162,7 +162,7 @@ export function buildFacetGraph(
       engramType: e.type,
       facetCount: ids(e).length,
       unassigned: false,
-      review: e.labels?.includes(REVIEW_LABEL) ?? false,
+      review: e.review_due,
       position: { x: (p.x ?? 0) - CARD_W / 2, y: (p.y ?? 0) - CARD_H / 2 },
     };
   });
@@ -187,7 +187,7 @@ export function buildFacetGraph(
       engramType: e.type,
       facetCount: 0,
       unassigned: true,
-      review: e.labels?.includes(REVIEW_LABEL) ?? false,
+      review: e.review_due,
       position: {
         x: Math.cos(angle) * ringR - CARD_W / 2,
         y: Math.sin(angle) * ringR - CARD_H / 2,

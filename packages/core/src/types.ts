@@ -132,7 +132,7 @@ export type TaskStage = typeof TASK_STAGES[number]
 export const TASK_OPEN_STATUSES: readonly EngramStatus[] = ['planned', 'active']
 /** v0.15: task statuses that close a task with a result — the transition needs an outcome. */
 export const TASK_OUTCOME_STATUSES: readonly EngramStatus[] = ['resolved', 'invalidated']
-/** v0.15: an active task without movement (patch or entry) for this long gets the review label; v0.19.1: a planned one is backlog. */
+/** v0.15: an active task without movement (patch or entry) for this long is review due; v0.19.1: a planned one is backlog. */
 export const TASK_INACTIVITY_DAYS = 30
 
 export interface TaskProperties {
@@ -325,10 +325,8 @@ export interface Engram {
   updated_at: string
   // v0.12: registered tag ids on this engram (always present; [] when none).
   tags: string[]
-  // v0.13: workflow/role label ids on this engram (always present; [] when none).
-  // Orthogonal to tags; drives surfacing + lifecycle (e.g. `review`). Stamped by
-  // the server sweep, not by the write path (MVP).
-  labels: string[]
+  // v0.20: due for a review, computed at read time (review-due.ts) — never stored.
+  review_due: boolean
   // v0.14: subject ids this engram belongs to (always present; [] when none).
   subjects: string[]
 }
@@ -355,22 +353,6 @@ export interface Tag {
   description: string | null
   status: TagStatus               // v0.19: archived = stays on engrams, not assignable anew
   engram_count: number            // v0.19: engrams carrying it (any status)
-  created_at: string
-}
-
-// v0.13: Labels — a registered, per-brain WORKFLOW/ROLE facet, orthogonal to
-// tags. Same shape as Tag (registry + engram_labels junction), but labels mark
-// what function an engram serves right now (e.g. `review`) rather than its subject.
-// See docs/specs/v0.13-PROPOSAL.md + decision labels-axis-review.
-export interface LabelInput {
-  name: string
-  description?: string
-}
-
-export interface Label {
-  id: string
-  name: string
-  description: string | null
   created_at: string
 }
 
@@ -503,7 +485,7 @@ export interface ScopedBrainState {
   // (project route + CLI) sets `relations`. Both optional so the shared type covers both.
   rules?: Engram[]                // v0.10.5: active rules in scope, name-only in render; limit 15
   relations?: Relation[]          // project brain-state: relations where source/target in scope
-  pending_reviews?: Engram[]      // v0.13: active decision/rule/profile carrying the `review` label (staleness flag)
+  pending_reviews?: Engram[]      // v0.13: engrams in scope that are review_due (staleness queue)
   // v0.19 (eml_show): what the scope's status is about and the object's stable
   // facts (project / entity). Ripe learnings: eml_list type=learning state=ripe.
   status_tracks?: string | null
@@ -586,10 +568,11 @@ export interface EngramQuery {
   has_relations?: boolean
   // v0.12: filter to engrams carrying this registered tag id (membership join).
   tag?: string
-  // v0.13.x: filter to engrams carrying this label id (membership join on
-  // engram_labels) — e.g. `review` for the staleness queue the nightly sweep
-  // stamps. Same shape as `tag`; labels are the workflow axis, tags the subject.
-  label?: string
+  // v0.20: filter on review_due (computed at read time, review-due.ts) — true =
+  // the staleness queue, false = everything not due.
+  review_due?: boolean
+  // v0.20: the read's clock (ISO) for review_due; default the store's clock.
+  now?: string
   // v0.14: filter to engrams belonging to this subject id (membership join on
   // engram_subjects) — cross-scope by nature.
   subject?: string
@@ -691,4 +674,7 @@ export interface EMLConfig {
   // identifier for logging/debugging. Fully replaced by brainId in v0.9.2+.
   namespace: string
   dbPath?: string
+  // v0.20: the read clock (ISO string) review_due is computed against; default
+  // the system clock. Lets tests fix the time.
+  clock?: () => string
 }

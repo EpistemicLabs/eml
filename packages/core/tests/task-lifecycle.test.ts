@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, REVIEW_LABEL } from '../src'
+import { EML, hygieneCheck } from '../src'
 import { validDecision, validTask, validNote } from './fixtures'
 
 // v0.19.1 — the task lifecycle simplified (decisions subtasks-close-before-parent,
@@ -58,9 +58,8 @@ describe('task lifecycle', () => {
       const taskBound = bound(task.id)
       const standing = eml.engrams.store(validDecision({ title: 'standing' }))
       const later = due(61)
-      eml.engrams.stampDueReviewLabels(later)
-      expect(eml.engrams.get(standing.id)!.labels).toContain(REVIEW_LABEL)
-      expect(eml.engrams.get(taskBound.id)!.labels).not.toContain(REVIEW_LABEL)
+      expect(eml.engrams.query({ review_due: true, now: later }).map(e => e.id)).toEqual([standing.id])
+      expect(eml.engrams.query({ type: 'decision', now: later }).find(e => e.id === taskBound.id)!.review_due).toBe(false)
       const findings = hygieneCheck(eml, { now: new Date(later) }).checks.find(c => c.id === 'review-due')!.findings
       expect(findings.map(f => f.id)).toEqual([standing.id])
     })

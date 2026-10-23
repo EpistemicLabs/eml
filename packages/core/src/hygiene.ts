@@ -1,5 +1,5 @@
 import type { EML } from './index'
-import { REVIEWABLE_TYPES } from './engrams'
+import { REVIEWABLE_TYPES } from './review-due'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { formatProblems, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 
@@ -82,8 +82,8 @@ function finding(c: EngramRow, reason: string): HygieneFinding {
 }
 
 /**
- * review_due_at as a timestamp, read the way the nightly sweep's SQLite
- * datetime() reads it: a value without a zone ('YYYY-MM-DD HH:MM[:SS]' from the
+ * review_due_at as a timestamp, read the way review_due's SQLite datetime()
+ * reads it: a value without a zone ('YYYY-MM-DD HH:MM[:SS]' from the
  * v0.8 backfill, or an ISO string without Z) is UTC, not local time.
  */
 function parseDue(value: unknown): number {
@@ -133,10 +133,9 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
       'eml_update(<that engram>, supersedes=[<this id>]). When unsure, ask the user instead of confirming.',
     detect(eml, now) {
       const reviewable = REVIEWABLE_TYPES as readonly string[]
-      return (eml.engrams.query({ limit: 10000, status: 'active' }) as EngramRow[])
-        // a task-bound decision is not reviewed; its task covers it
-        .filter((c) => reviewable.includes(c.type) && (c.properties?.binding ?? 'standing') === 'standing'
-          && parseDue(c.properties?.review_due_at) < now.getTime())
+      // review_due (review-due.ts) also covers idle tasks; this check is about the dated types
+      return (eml.engrams.query({ limit: 10000, review_due: true, now: now.toISOString() }) as EngramRow[])
+        .filter((c) => reviewable.includes(c.type))
         .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
     },
   },

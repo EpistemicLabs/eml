@@ -6,7 +6,7 @@ import {
   TYPE_DEFAULT_STATUS, TYPE_REVIEW_DEFAULTS,
   EngramType, ConflictCandidate, StoredEngram, DetectionMethod,
   EngramStatus, OpenSubtask, BoundItem, WriteContext,
-  TASK_OPEN_STATUSES, TASK_INACTIVITY_DAYS, TASK_LINK_RELATION,
+  TASK_OPEN_STATUSES, TASK_LINK_RELATION,
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
 import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
@@ -21,22 +21,14 @@ import { UserStore } from './users'
 import { AgentStore } from './agents'
 import { EntityStore } from './entities'
 import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
-import { hydrateEngramLabels, slugifyLabel } from './labels'
+import { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
 import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 // v0.9 Cluster 1: namespace concept removed entirely (Phase 1.3 code, Phase 1.4 DB).
 
-/** v0.13: the staleness-review label id — member #1 of the labels axis. */
-export const REVIEW_LABEL = 'review'
 /** v0.19.1: the change entry on a bound item that closed with its task (followed by the task id). */
 const CLOSED_WITH_TASK = 'closed with task'
-/**
- * v0.13: engram types eligible for the review sweep = the keys of
- * TYPE_REVIEW_DEFAULTS. Single source of truth — adding a reviewable type there
- * makes the sweep + pending_reviews pick it up, no SQL edit.
- */
-export const REVIEWABLE_TYPES = Object.keys(TYPE_REVIEW_DEFAULTS) as EngramType[]
 
 /**
  * v0.14 Cluster C: parse `[[target]]` wikilinks out of engram content into a
@@ -298,7 +290,9 @@ export class EngramStore {
     // v0.12: tag registry — used to validate that engram tags are registered.
     private tagStore?: TagStore,
     // v0.14: subject registry — used to validate that engram subjects are registered.
-    private subjectStore?: SubjectStore
+    private subjectStore?: SubjectStore,
+    // v0.20: the read clock (ISO) — review_due is computed against it.
+    private now: () => string = () => new Date().toISOString(),
   ) {}
 
   /**
@@ -630,10 +624,9 @@ export class EngramStore {
     return { superseded: [...plan.keys()], openSubtasks }
   }
 
-  /** Supersede one engram by another: status flip + edge, review label gone. Inside the caller's transaction. */
+  /** Supersede one engram by another: status flip + edge. Inside the caller's transaction. */
   private supersede(newId: string, oldId: string, stamp: EntryStamp): void {
     this.linkSupersede(newId, oldId, 'agent_declared')
-    this.stripReviewLabel(oldId)
     if ((this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(oldId) as { type: string }).type === 'task') {
       this.appendTaskChange(oldId, `superseded by ${newId}`, stamp)
     }
@@ -763,7 +756,6 @@ export class EngramStore {
     const row = this.db.prepare('SELECT properties FROM engrams WHERE id = ?').get(taskId) as { properties: string | null } | undefined
     const stage = row?.properties ? JSON.parse(row.properties).stage ?? null : null
     const entry = appendEntry(this.db, taskId, { kind: 'change', text, stage }, stamp)
-    this.stripReviewLabel(taskId)
     return entry
   }
 
@@ -821,7 +813,6 @@ export class EngramStore {
       } else {
         const status = item.type === 'decision' ? taskStatus : 'invalidated'
         this.db.prepare(`UPDATE engrams SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, item.id)
-        this.stripReviewLabel(item.id)
         // the item's own journal says why it closed; a reopen of the task offers it back by this entry
         appendEntry(this.db, item.id, { kind: 'change', text: `${CLOSED_WITH_TASK} ${taskId}` }, stamp)
         entries.push(this.appendTaskChange(taskId, `closed with the task: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
@@ -1015,8 +1006,6 @@ export class EngramStore {
         this.db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
         reopenCandidates = this.closedWithTask(id)
       }
-      // any movement clears the inactivity review
-      this.stripReviewLabel(id)
     })()
 
     if (wikilinks.unresolved.length > 0) {
@@ -1303,16 +1292,17 @@ export class EngramStore {
   }
 
   /**
-   * v0.12/v0.13/v0.14: batch-load registered facet ids (tags + labels + subjects) onto a set of
+   * v0.12/v0.14: batch-load registered facet ids (tags + subjects) onto a set of
    * engrams IN PLACE — ONE query per facet for the whole array, not one per engram
    * (rowToEngram stays pure). Called at every read boundary (query/get/getRaw/
-   * queryEngramsRaw) so all read paths expose tags AND labels without an N+1.
-   * Chunked to stay under SQLite's variable limit.
+   * queryEngramsRaw) so all read paths expose them without an N+1.
+   * Chunked to stay under SQLite's variable limit. v0.20: review_due, computed
+   * at `now` (the read's clock), rides along.
    */
-  private hydrateFacets(engrams: Engram[]): void {
+  private hydrateFacets(engrams: Engram[], now: string = this.now()): void {
     hydrateEngramTags(this.db, engrams)
-    hydrateEngramLabels(this.db, engrams)
     hydrateEngramSubjects(this.db, engrams)
+    hydrateReviewDue(this.db, engrams, now)
   }
 
   /**
@@ -1423,86 +1413,10 @@ export class EngramStore {
     this.insertEngramTags(engramId, tags)
   }
 
-  /**
-   * v0.13: deterministic staleness-review sweep (labels axis). Stamps the `review`
-   * label on every active decision/rule/profile whose review_due_at has passed and
-   * that isn't already flagged. Pure date-compare — NO LLM. Idempotent
-   * (INSERT OR IGNORE + NOT EXISTS guard), so re-running is a cheap no-op.
-   *
-   * ADD-ONLY for engrams that can be due: it never strips their label, so a
-   * manually-set flag (or a not-yet-due engram) is safe from the sweep. Removal
-   * is explicit — see stripReviewLabel (confirmReview + status transitions off
-   * 'active'). v0.19.1: the one strip — a planned task loses the label (it is
-   * backlog, not reviewed).
-   *
-   * v0.15: second criterion for open tasks — inactivity, not a due date (see
-   * below). Tasks have no review_due_at.
-   *
-   * This is the ONLY writer of the `review` label in the MVP. The server runs it
-   * on a nightly timer across all brains (packages/server review-sweep). Returns
-   * the count of newly-stamped engrams.
-   */
-  stampDueReviewLabels(now: string = new Date().toISOString()): number {
-    // datetime() normalizes BOTH the stored value and the cutoff, so the compare
-    // is correct across formats — v0.8 backfilled review_due_at as SQLite
-    // 'YYYY-MM-DD HH:MM:SS' while app writes are ISO-8601 '…T…Z'; a raw lexical
-    // `<` diverges on same-day values (space 0x20 < 'T' 0x54).
-    const typePlaceholders = REVIEWABLE_TYPES.map(() => '?').join(', ')
-    const res = this.db.prepare(`
-      INSERT OR IGNORE INTO engram_labels (engram_id, label_id)
-      SELECT c.id, ? FROM engrams c
-      WHERE c.type IN (${typePlaceholders})
-        AND c.status = 'active'
-        AND json_extract(c.properties, '$.review_due_at') IS NOT NULL
-        AND datetime(json_extract(c.properties, '$.review_due_at')) < datetime(?)
-        -- v0.19.1: a task-bound decision is not reviewed; its task covers it
-        AND coalesce(json_extract(c.properties, '$.binding'), 'standing') = 'standing'
-        AND NOT EXISTS (
-          SELECT 1 FROM engram_labels el
-          WHERE el.engram_id = c.id AND el.label_id = ?
-        )
-    `).run(REVIEW_LABEL, ...REVIEWABLE_TYPES, now, REVIEW_LABEL)
-
-    // v0.15: active tasks by INACTIVITY — last movement (the later of updated_at
-    // and the newest entry) older than TASK_INACTIVITY_DAYS. Covers legacy tasks
-    // without touching them; any movement strips the label again. v0.19.1: a
-    // planned task is not reviewed — idle, it is backlog (open-tasks.ts).
-    this.db.prepare(`
-      DELETE FROM engram_labels WHERE label_id = ?
-        AND engram_id IN (SELECT id FROM engrams WHERE type = 'task' AND status = 'planned')
-    `).run(REVIEW_LABEL)
-    const tasks = this.db.prepare(`
-      INSERT OR IGNORE INTO engram_labels (engram_id, label_id)
-      SELECT c.id, ? FROM engrams c
-      WHERE c.type = 'task'
-        AND c.status = 'active'
-        AND MAX(
-          datetime(c.updated_at),
-          COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = c.id)), datetime(c.updated_at))
-        ) < datetime(?, ?)
-        AND NOT EXISTS (
-          SELECT 1 FROM engram_labels el
-          WHERE el.engram_id = c.id AND el.label_id = ?
-        )
-    `).run(REVIEW_LABEL, now, `-${TASK_INACTIVITY_DAYS} days`, REVIEW_LABEL)
-    return res.changes + tasks.changes
-  }
-
-  /**
-   * v0.13: remove the `review` label from an engram — the explicit clear-path the
-   * add-only sweep deliberately does NOT do. Called when a review is resolved
-   * (confirmReview pushes review_due_at forward) or the engram leaves 'active'
-   * (supersede/invalidate — a dead engram needs no review). Idempotent.
-   */
-  private stripReviewLabel(id: string): void {
-    this.db.prepare(
-      `DELETE FROM engram_labels WHERE engram_id = ? AND label_id = ?`
-    ).run(id, REVIEW_LABEL)
-  }
-
   query(q: EngramQuery): Engram[] {
     const conditions: string[] = []
     const params: any[] = []
+    const now = q.now ?? this.now()
 
     // v0.9.1 Cluster 1: namespaces filter removed entirely — 1 user = 1 brain.
 
@@ -1623,12 +1537,11 @@ export class EngramStore {
       conditions.push('c.id IN (SELECT engram_id FROM engram_tags WHERE tag_id = ?)')
       params.push(slugifyTag(q.tag))
     }
-    if (q.label) {
-      // v0.13.x: membership filter on the labels axis (e.g. `review`) — the
-      // cockpit's pending-reviews queue and badge read this instead of paging
-      // /list and filtering labels client-side.
-      conditions.push('c.id IN (SELECT engram_id FROM engram_labels WHERE label_id = ?)')
-      params.push(slugifyLabel(q.label))
+    if (q.review_due !== undefined) {
+      // v0.20: review due, computed at read time (review-due.ts) — the cockpit's
+      // pending-reviews queue and badge, eml_list review_due=true, hygiene.
+      conditions.push(q.review_due ? reviewDueSql('c') : `NOT ${reviewDueSql('c')}`)
+      params.push(...reviewDueParams(now))
     }
     if (q.subject) {
       // v0.14: membership filter on the subjects axis (cross-scope strand)
@@ -1672,12 +1585,12 @@ export class EngramStore {
     // relevant hits by significance × recency (see the helper above).
     if (bm25Path) {
       const ranked = rows.map(r => ({ engram: this.rowToEngram(r), rank: r.bm25_rank as number }))
-      this.hydrateFacets(ranked.map(x => x.engram))
+      this.hydrateFacets(ranked.map(x => x.engram), now)
       return bucketByRelevance(ranked, e => this.score(e), BM25_RELEVANCE_EPS)
     }
 
     let engrams = rows.map(r => this.rowToEngram(r))
-    this.hydrateFacets(engrams)
+    this.hydrateFacets(engrams, now)
 
     // Post-query: score-based sorting (significance × recency) — the no-search
     // score path (e.g. recall with an empty query) keeps the original behaviour.
@@ -1910,8 +1823,6 @@ export class EngramStore {
     if (wikilinks.unresolved.length > 0) {
       console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
     }
-    // Leaving active, or a review, clears the review label.
-    if (reviewed || (patch.status !== undefined && newStatus !== 'active')) this.stripReviewLabel(id)
 
     const updated = this.getRaw(id)!
     return {
@@ -1940,7 +1851,7 @@ export class EngramStore {
    * Confirm in a review that an engram still holds. A decision, rule or
    * profile gets a review entry (why it still holds) and a new review_due_at;
    * a task is flagged for inactivity, so confirming it counts as a movement.
-   * Either way the review label goes.
+   * Either way it is no longer review_due.
    */
   confirmReview(id: string, text?: string, context?: WriteContext | string | null): Engram | null {
     const ctx = writeContext(context)
@@ -1955,7 +1866,6 @@ export class EngramStore {
           appendEntry(this.db, id, { kind: 'note', text, stage: this.propsOf(id).stage as string ?? null },
             { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null })
         }
-        this.stripReviewLabel(id)
       })()
       return this.getRaw(id)
     }
@@ -1969,7 +1879,6 @@ export class EngramStore {
       props.review_due_at = new Date(Date.now() + reviewDays * 86400_000).toISOString()
       this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = datetime('now') WHERE id = ?`).run(JSON.stringify(props), id)
       appendEntry(this.db, id, { kind: 'review', text: text! }, { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null })
-      this.stripReviewLabel(id)
     })()
     return this.getRaw(id)
   }
@@ -2205,18 +2114,17 @@ export class EngramStore {
       ORDER BY created_at DESC LIMIT 15
     `, [scope])
 
-    // v0.13: active decision/rule/profile in scope carrying the `review` label —
-    // the staleness queue. Kept SEPARATE from open_tasks so it never pollutes the
-    // real todo list. Intersect status='active' as a safety net (the sweep is
-    // add-only + strips on transition, but this guards a lingering row).
-    // v0.15: + open tasks flagged for inactivity (planned counts as open too).
+    // v0.13: engrams in scope that are review due (review-due.ts: standing
+    // decision/rule/profile past review_due_at, active task idle too long) —
+    // the staleness queue. Kept SEPARATE from open_tasks so it never pollutes
+    // the real todo list.
+    const now = this.now()
     const pending_reviews = this.queryEngramsRaw(`
       SELECT c.* FROM engrams c
-      JOIN engram_labels el ON el.engram_id = c.id AND el.label_id = ?
-      WHERE c.scope = ? AND (c.status = 'active' OR (c.type = 'task' AND c.status = 'planned'))
+      WHERE c.scope = ? AND ${reviewDueSql('c')}
       ORDER BY datetime(json_extract(c.properties, '$.review_due_at')) ASC
       LIMIT 15
-    `, [REVIEW_LABEL, scope])
+    `, [scope, ...reviewDueParams(now)], now)
 
     // v0.19: the scope's object (project / entity).
     const m = /^(project|entity)\.(.+)$/.exec(scope)
@@ -2232,9 +2140,9 @@ export class EngramStore {
 
   // === Private ===
 
-  private queryEngramsRaw(sql: string, params: any[]): Engram[] {
+  private queryEngramsRaw(sql: string, params: any[], now?: string): Engram[] {
     const engrams = (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToEngram(r))
-    this.hydrateFacets(engrams)
+    this.hydrateFacets(engrams, now)
     return engrams
   }
 
@@ -2280,12 +2188,12 @@ export class EngramStore {
     return {
       ...rest,
       properties: row.properties ? JSON.parse(row.properties) : null,
-      // v0.12/v0.13: tags AND labels are batch-hydrated at the read boundary
-      // (hydrateFacets) so the row mapper stays pure — no per-row query. Default
-      // [] until hydrated.
+      // v0.12/v0.14: tags, subjects and review_due are batch-hydrated at the
+      // read boundary (hydrateFacets) so the row mapper stays pure — no per-row
+      // query. Defaults until hydrated.
       tags: [],
-      labels: [],
       subjects: [],
+      review_due: false,
     }
   }
 

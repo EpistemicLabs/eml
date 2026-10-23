@@ -1,6 +1,7 @@
 import type { EML } from './index'
 import type { SystemRule } from './system-rules'
 import { isLegacyFormat } from './validate'
+import { REVIEWABLE_TYPES } from './review-due'
 
 type EngramRow = Record<string, any>
 
@@ -263,14 +264,10 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
     .query({ type: 'status', status: 'active', limit: 100 })
     .filter((s: EngramRow) => new Date(s.updated_at).getTime() < reviewThresholdMs)
 
-  const nowIso = new Date().toISOString()
+  // review_due (review-due.ts) also covers idle tasks; this counter is about the dated types
   const overdueReview = eml.engrams
-    .query({ limit: 1000, status: 'active' })
-    .filter((e: EngramRow) => {
-      if (!['decision', 'rule', 'profile'].includes(e.type)) return false
-      const due = e.properties && e.properties.review_due_at
-      return typeof due === 'string' && due < nowIso
-    })
+    .query({ limit: 1000, review_due: true })
+    .filter((e: EngramRow) => (REVIEWABLE_TYPES as readonly string[]).includes(e.type))
 
   const result: BootResult = {
     agent: agentId,

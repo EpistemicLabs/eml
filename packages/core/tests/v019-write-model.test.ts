@@ -307,7 +307,7 @@ describe('v0.19 write model', () => {
   })
 
   describe('supersede after the fact (B1)', () => {
-    it('across types: the new engram supersedes the old one, edge drawn, review label gone', () => {
+    it('across types: the new engram supersedes the old one, edge drawn', () => {
       const ref = eml.engrams.store(validReference({ title: 'synthesis' }))
       const note = eml.engrams.store(validNote({ title: 'synthesis-note' }))
       const r = eml.engrams.update(note.id, { supersedes: [ref.id] })!
@@ -359,11 +359,10 @@ describe('v0.19 write model', () => {
     it('review_note writes a review entry and restarts the review; only for decision/rule/profile', () => {
       const d = eml.engrams.store(validDecision())
       rawDb().prepare(`UPDATE engrams SET properties = json_set(properties, '$.review_due_at', '2020-01-01T00:00:00.000Z') WHERE id = ?`).run(d.id)
-      eml.engrams.stampDueReviewLabels()
-      expect(eml.engrams.get(d.id)!.labels).toContain('review')
+      expect(eml.engrams.get(d.id)!.review_due).toBe(true)
       eml.engrams.update(d.id, { review_note: 'still the right call' }, ctx())
       expect(Date.parse(propsOf(d.id).review_due_at as string)).toBeGreaterThan(Date.now() + 50 * 86400_000)
-      expect(eml.engrams.get(d.id)!.labels).not.toContain('review')
+      expect(eml.engrams.get(d.id)!.review_due).toBe(false)
       expect(eml.engrams.entries(d.id)).toMatchObject([{ kind: 'review', text: 'still the right call', author: 'juno' }])
       expect(() => eml.engrams.update(eml.engrams.store(validNote()).id, { review_note: 'x' })).toThrow(/review_note confirms a decision, rule or profile/)
       expect(() => eml.engrams.update(d.id, { review_note: '  ' })).toThrow(/review_note must say why it still holds/)

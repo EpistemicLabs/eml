@@ -1,6 +1,5 @@
 import type { EML } from './index'
 import type { Engram } from './types'
-import { REVIEW_LABEL } from './engrams'
 import { previewText, SHOW_PREVIEW_CHARS } from './render'
 import { isLegacyFormat } from './validate'
 import { backlogLine } from './open-tasks'
@@ -122,9 +121,7 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
   const backlog = state.backlog_tasks ?? 0
   const tasks = (state.open_tasks as Row[]).slice(0, TASKS_SHOWN)
   const log = state.recent_logs[0] as Row | undefined
-  const pendingReviews = eml.engrams
-    .query({ scope, label: REVIEW_LABEL, statuses: ['active', 'planned'], limit: 10000 })
-    .filter(e => e.status === 'active' || e.type === 'task').length
+  const pendingReviews = eml.engrams.query({ scope, review_due: true, limit: 10000 }).length
 
   const rules = projectScopeChain(eml, projectId).flatMap(rulesOf(eml))
   const always = rules.filter(r => fields.applies(r) === 'always')

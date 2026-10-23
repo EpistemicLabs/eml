@@ -25,7 +25,8 @@ describe('task model', () => {
     eml.engrams.store(validTask({ scope: 'project.eml', title, content: `task ${title}`, ...extra }))
   const close = (id: string, status: 'resolved' | 'invalidated' = 'resolved', outcome = 'ok') =>
     eml.engrams.trackTask(id, { status, outcome, text: 'closing', keep: [] })!
-  const labels = (id: string): string[] => eml.engrams.get(id)!.labels ?? []
+  const reviewDue = (id: string): boolean => eml.engrams.get(id)!.review_due
+  const dueIds = () => eml.engrams.query({ review_due: true, limit: 1000 }).map(e => e.id)
   /** Age a task: its last update and every entry (the creation entry counts as movement). */
   const age = (id: string, days: number) => {
     rawDb().prepare(`UPDATE engrams SET updated_at = datetime('now', ?) WHERE id = ?`).run(`-${days} days`, id)
@@ -243,18 +244,25 @@ describe('task model', () => {
   })
 
   describe('inactivity review', () => {
-    it(`stamps active tasks without movement for ${TASK_INACTIVITY_DAYS} days, not planned, recent or closed ones`, () => {
+    it(`is due for active tasks without movement for ${TASK_INACTIVITY_DAYS} days, not planned, recent or closed ones`, () => {
       const stale = task('stale', { status: 'active' }); age(stale.id, TASK_INACTIVITY_DAYS + 1)
       const stalePlanned = task('stale-planned'); age(stalePlanned.id, 90)
       const fresh = task('fresh', { status: 'active' }); age(fresh.id, TASK_INACTIVITY_DAYS - 1)
       const closed = task('closed'); close(closed.id); age(closed.id, 90)
 
-      expect(eml.engrams.stampDueReviewLabels()).toBe(1)
-      expect(labels(stale.id)).toContain('review')
-      expect(labels(stalePlanned.id)).not.toContain('review')
-      expect(labels(fresh.id)).not.toContain('review')
-      expect(labels(closed.id)).not.toContain('review')
-      expect(eml.engrams.stampDueReviewLabels()).toBe(0)   // idempotent
+      expect(dueIds()).toEqual([stale.id])
+      expect(reviewDue(stale.id)).toBe(true)
+      expect([stalePlanned, fresh, closed].map(t => reviewDue(t.id))).toEqual([false, false, false])
+      expect(eml.engrams.query({ review_due: false, type: 'task', limit: 1000 }).map(e => e.id)).not.toContain(stale.id)
+    })
+
+    it('is computed against the read clock', () => {
+      const t = task('later', { status: 'active' })
+      const later = new Date(Date.now() + (TASK_INACTIVITY_DAYS + 1) * 86400_000).toISOString()
+      expect(reviewDue(t.id)).toBe(false)
+      expect(eml.engrams.query({ review_due: true, now: later }).map(e => e.id)).toEqual([t.id])
+      const clocked = EML.fromConnection(rawDb(), 'test', { clock: () => later })
+      expect(clocked.engrams.get(t.id)!.review_due).toBe(true)
     })
 
     it('a recent entry counts as movement even when updated_at is old', () => {
@@ -262,38 +270,32 @@ describe('task model', () => {
       age(t.id, 60)
       eml.engrams.trackTask(t.id, { text: 'still on it' })
       rawDb().prepare(`UPDATE engrams SET updated_at = datetime('now', '-60 days') WHERE id = ?`).run(t.id)
-      expect(eml.engrams.stampDueReviewLabels()).toBe(0)
+      expect(reviewDue(t.id)).toBe(false)
 
       rawDb().prepare(`UPDATE entries SET at = ? WHERE engram_id = ?`)
         .run(new Date(Date.now() - 45 * 86400_000).toISOString(), t.id)
-      expect(eml.engrams.stampDueReviewLabels()).toBe(1)
+      expect(reviewDue(t.id)).toBe(true)
     })
 
-    it('any movement clears the label: a field change, a note, a confirm', () => {
+    it('any movement ends it: a field change, a note, a confirm', () => {
       const ids = ['by-field', 'by-note', 'by-confirm'].map(s => { const t = task(s, { status: 'active' }); age(t.id, 40); return t.id })
-      eml.engrams.stampDueReviewLabels()
-      expect(ids.every(id => labels(id).includes('review'))).toBe(true)
+      expect(ids.map(reviewDue)).toEqual([true, true, true])
 
       eml.engrams.trackTask(ids[0], { priority: 'high' })
       eml.engrams.trackTask(ids[1], { text: 'picked up again' })
       eml.engrams.confirmReview(ids[2])
-      expect(ids.map(labels)).toEqual([[], [], []])
-
-      // a confirm is a movement: it stays clear on the next sweep
-      expect(eml.engrams.stampDueReviewLabels()).toBe(0)
+      expect(ids.map(reviewDue)).toEqual([false, false, false])
     })
 
-    it('a flagged active task shows up in the scope\'s pending reviews', () => {
+    it('a review-due active task shows up in the scope\'s pending reviews', () => {
       const t = task('stuck', { status: 'active' }); age(t.id, 40)
-      eml.engrams.stampDueReviewLabels()
-      expect(eml.engrams.buildBrainState('project.eml').pending_reviews.map(e => e.id)).toContain(t.id)
+      expect(eml.engrams.buildBrainState('project.eml').pending_reviews!.map(e => e.id)).toContain(t.id)
     })
 
-    it('a planned task loses a review label from before: idle, it is backlog', () => {
+    it('a planned task is not review due: idle, it is backlog', () => {
       const t = task('parked'); age(t.id, 40)
-      rawDb().prepare(`INSERT INTO engram_labels (engram_id, label_id) VALUES (?, 'review')`).run(t.id)
-      eml.engrams.stampDueReviewLabels()
-      expect(labels(t.id)).toEqual([])
+      expect(reviewDue(t.id)).toBe(false)
+      expect(eml.engrams.buildBrainState('project.eml').pending_reviews!.map(e => e.id)).not.toContain(t.id)
     })
   })
 })

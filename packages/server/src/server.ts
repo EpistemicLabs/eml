@@ -91,7 +91,6 @@ import {
   type EngramInput,
 } from '@engramprotocol/core'
 import { ConnectionPool } from './pool'
-import { startReviewSweepScheduler } from './review-sweep'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
 
@@ -190,12 +189,14 @@ if (migrationReport.migratedCount > 0) {
   console.log(`[migrations] migrated ${migrationReport.migratedCount} brain(s)`)
 }
 
-// v0.13: nightly deterministic review-label sweep — stamps the `review` label on
-// active decision/rule/profile past their review_due_at. Runs once now (fresh
-// labels post-deploy) + daily. The ONLY writer of the `review` label (MVP).
-startReviewSweepScheduler({ control: controlDb, dataDir: DATA_DIR })
-
 // --- Helpers ---
+
+/** v0.20: the review_due list filter (true · false). */
+function reviewDueParam(q: Record<string, string | undefined>): boolean | undefined | Error {
+  if (q.review_due === undefined) return undefined
+  if (q.review_due === 'true' || q.review_due === 'false') return q.review_due === 'true'
+  return new Error('review_due is true or false')
+}
 function json(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data)
   res.writeHead(status, {
@@ -273,7 +274,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'search', 'order_by', 'limit', 'offset', 'has_relations',
   'assignee', // v0.11 team-brains: filter tasks by assignee handle (agent or user)
   'tag',      // v0.12: filter engrams by registered tag id
-  'label',    // v0.13.x: filter engrams by label id (e.g. review)
+  'review_due', // v0.20: review due, computed at read time (replaces label=review)
   'subject',    // v0.14: filter engrams by subject id (cross-scope strand)
   'stage',    // v0.15: filter tasks by stage
   'binding', 'task_id', 'origin', 'session_id', // v0.19
@@ -285,7 +286,7 @@ const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
   'title', 'order_by', 'limit', 'offset', 'has_relations',
   'assignee', // v0.11 team-brains
   'tag',      // v0.12: filter engrams by registered tag id
-  'label',    // v0.13.x: filter engrams by label id (e.g. review)
+  'review_due', // v0.20: review due, computed at read time (replaces label=review)
   'subject',    // v0.14: filter engrams by subject id (cross-scope strand)
   'stage',    // v0.15: filter tasks by stage
 ])
@@ -497,6 +498,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (q.binding !== undefined && !BINDINGS.includes(q.binding)) {
         return json(res, 400, { error: `binding is one of ${BINDINGS.join(', ')}` })
       }
+      const reviewDue = reviewDueParam(q)
+      if (reviewDue instanceof Error) return json(res, 400, { error: reviewDue.message })
 
       const results = eml.engrams.query({
         type: q.type as EngramType | undefined,
@@ -511,7 +514,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         order_by: (q.order_by as OrderBy) || 'updated_at',
         status: q.status as EngramStatus | undefined,
         assignee: q.assignee,
-        label: q.label,
+        review_due: reviewDue,
         subject: q.subject,
         stage: q.stage,
         binding: q.binding as 'task' | 'standing' | undefined,
@@ -670,6 +673,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         const project = eml.projects.get(id)
         if (!project) return json(res, 404, { error: `project "${id}" not found` })
 
+        const reviewDue = reviewDueParam(q)
+        if (reviewDue instanceof Error) return json(res, 400, { error: reviewDue.message })
         const engrams = eml.engrams.query({
           scope: `project.${id}`,
           type: q.type as EngramType | undefined,
@@ -682,7 +687,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           offset: q.offset ? parseInt(q.offset) : 0,
           order_by: (q.order_by as OrderBy) || 'updated_at',
           assignee: q.assignee,
-          label: q.label,
+          review_due: reviewDue,
           subject: q.subject,
           stage: q.stage,
         })

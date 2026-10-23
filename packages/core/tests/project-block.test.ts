@@ -92,7 +92,6 @@ describe('projectBlock()', () => {
 
   it('counts the engrams due for review', () => {
     eml.engrams.store(validDecision({ scope: 'project.app', title: 'stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
-    eml.engrams.stampDueReviewLabels()
     const r = projectBlock(eml, 'app')!
     expect(r.pending_reviews).toBe(1)
     expect(r.markdown).toContain('- 1 engrams in this project are due for review.')

@@ -83,7 +83,7 @@ All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is stric
 | `eml_boot` | `POST /boot` | Manual brain-reload (the SessionStart hook does this at session start) |
 | `eml_recall` | `POST /recall` | Topic search (FTS5 + recency) |
 | `eml_show` | `GET /brain-state?scope=` | Curated snapshot for a scope: status (+ what it tracks), open tasks, latest log and its next step, rules (situational with trigger), ripe learnings, metadata |
-| `eml_list` | `GET /list` | Filter-based engram list (type, scope, status, tag, subject, label, task_id, binding, …) |
+| `eml_list` | `GET /list` | Filter-based engram list (type, scope, status, tag, subject, review_due, task_id, binding, …) |
 | `eml_get` | `GET /engram/:id` | One engram with its entries: a task's journal and bound items, a learning's evidence and ripeness, review confirmations |
 | `eml_stats` | `GET /stats` | Brain stats (counts per type/scope, container counts) |
 
@@ -124,7 +124,7 @@ All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is stric
 
 **Relations.** Three write paths: (1) `supersedes` on a write (or `eml_update(new, supersedes=[old])` when both exist) draws a `supersedes` edge and flips the old engram; (2) a `[[title-or-id]]` wikilink in content materializes a `related_to` edge (add-only; unresolved targets come back as `unresolved_links`); (3) `eml_relate` for explicit typed edges. `part_of` comes only from a task's `parent_id`.
 
-**Tasks.** A task carries a piece of work end to end and acts as a hub. `status` says whether it is open, in progress or closed (planned · active · resolved / invalidated — closing needs an `outcome` and a `text`); the optional `stage` says how mature the work is and freezes while the task is closed. Decisions and notes written with `task_id` say whether they outlive the task (`binding: standing`) or close with it (`binding: task`); closing lists the bound ones and `keep` turns the ones that still hold into standing. The journal holds note entries (written by the agent) and change entries (one per field change, written by the server). An open task without movement for 30 days gets the `review` label.
+**Tasks.** A task carries a piece of work end to end and acts as a hub. `status` says whether it is open, in progress or closed (planned · active · resolved / invalidated — closing needs an `outcome` and a `text`); the optional `stage` says how mature the work is and freezes while the task is closed. Decisions and notes written with `task_id` say whether they outlive the task (`binding: standing`) or close with it (`binding: task`); closing lists the bound ones and `keep` turns the ones that still hold into standing. The journal holds note entries (written by the agent) and change entries (one per field change, written by the server). An active task without movement for 30 days is `review_due`; a planned one is backlog.
 
 **Learnings and rules.** A rule is only written with the user's yes (`agreed`). What the agent notices itself — a correction, a turned-down proposal, its own mistake — is a learning: one engram per topic, each incident an evidence entry. It is ripe with supporting evidence from two sessions, one of it from the user, and no open contradiction; then the agent asks the user whether to make it a rule (`eml_rule from_learning=[id]`).
 

@@ -321,6 +321,23 @@ describe('v0.19 REST', () => {
       expect(binding.body.error).toBe('binding is one of task, standing')
       expect((await get('/list?type=task&binding=task')).status).toBe(200)
     })
+
+    it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {
+      const stale = await create(validDecision({ title: 'rest-stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
+      const fresh = await create(validDecision({ title: 'rest-fresh' }))
+      const due = (await get('/list?review_due=true&limit=200')).body.engrams
+      expect(due.map((e: { id: string }) => e.id)).toContain(stale.body.id)
+      expect(due.every((e: { review_due: boolean }) => e.review_due === true)).toBe(true)
+      const notDue = (await get('/list?review_due=false&limit=200')).body.engrams.map((e: { id: string }) => e.id)
+      expect(notDue).toContain(fresh.body.id)
+      expect(notDue).not.toContain(stale.body.id)
+      expect((await get(`/engram/${stale.body.id}`)).body.review_due).toBe(true)
+      expect((await get('/list?review_due=yes')).body.error).toBe('review_due is true or false')
+      const label = await get('/list?label=review')
+      expect(label.status).toBe(400)
+      expect(label.body.unknown).toEqual(['label'])
+      expect(label.body.allowed).toContain('review_due')
+    })
   })
 
   describe('request body', () => {

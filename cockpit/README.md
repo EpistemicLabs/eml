@@ -212,7 +212,7 @@ opened from, resolved properties and relations, and the review triage bar (still
 new task) on flagged engrams. The `brain` pane-type (`BrainPane.tsx`) is the brain next to a
 terminal: timeline | list over recent engrams, live search, type chips — no graph at pane width,
 scoped to the pane's brain project (project | brain chip) or brain-wide in a folder-only project.
-Pending reviews and the tab's amber badge read the brain's `label=review` list filter.
+Pending reviews and the tab's amber badge read the brain's `review_due=true` list filter.
 
 ## Claude Code
 

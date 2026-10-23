@@ -34,8 +34,6 @@ export type RelationType =
 
 export type ProjectStatus = "active" | "paused" | "archived";
 
-export const REVIEW_LABEL = "review";
-
 export interface Engram {
   id: string;
   content: string;
@@ -55,7 +53,8 @@ export interface Engram {
   created_at: string;
   updated_at: string;
   tags: string[];
-  labels: string[];
+  /** v0.20: due for a review, computed by the brain at read time. */
+  review_due: boolean;
   /** v0.14: subject ids this engram belongs to (cross-scope strands). */
   subjects: string[];
   relations?: Relation[];

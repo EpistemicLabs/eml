@@ -20,7 +20,7 @@ export function registerUpdateTool(server: McpServer, http: HttpClient): void {
       'supersedes=[old ids] here on the new one.\n\n' +
       'Only the fields of the engram\'s own type are accepted; the error lists them. null clears an optional ' +
       'field. If unsure of the current state, eml_get(id) first.\n\n' +
-      'Reviews: changing a decision, rule or profile restarts its review and clears the review flag. If it still ' +
+      'Reviews: changing a decision, rule or profile restarts its review, so it is no longer review_due. If it still ' +
       'holds unchanged, confirm it with review_note — why it still holds.',
     inputSchema: z.object({
       id: z.string().describe('Engram id; a task id errors with a pointer to eml_track_task.'),

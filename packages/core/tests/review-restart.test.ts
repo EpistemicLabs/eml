@@ -14,21 +14,20 @@ describe('review cycle on update', () => {
   afterEach(() => { eml.close() })
 
   const due = (id: string) => eml.engrams.getRaw(id)!.properties!.review_due_at as string
-  const labels = (id: string) => eml.engrams.getRaw(id)!.labels
+  const reviewDue = (id: string) => eml.engrams.getRaw(id)!.review_due
   const makeDue = (id: string) => {
     const db = (eml as any).db
     const props = JSON.parse(db.prepare('SELECT properties FROM engrams WHERE id = ?').get(id).properties)
     db.prepare('UPDATE engrams SET properties = ? WHERE id = ?').run(JSON.stringify({ ...props, review_due_at: '2020-01-01T00:00:00.000Z' }), id)
-    eml.engrams.stampDueReviewLabels()
-    expect(labels(id)).toContain('review')
+    expect(reviewDue(id)).toBe(true)
   }
 
-  it('restarts on a content change: review_due_at moves forward, the review label goes', () => {
+  it('restarts on a content change: review_due_at moves forward, it is no longer review due', () => {
     const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z' })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now() + 80 * 86400_000)
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
   })
 
   it('restarts on a field change, on a review_note (a confirmation without a change) or a title change', () => {
@@ -36,15 +35,15 @@ describe('review cycle on update', () => {
     makeDue(r.id)
     eml.engrams.update(r.id, { properties: { detail: 'more' } })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now())
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
     makeDue(r.id)
     eml.engrams.update(r.id, { review_note: 'still holds' })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now())
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
     expect(eml.engrams.entries(r.id, ['review']).map(e => e.text)).toEqual(['still holds'])
     makeDue(r.id)
     eml.engrams.update(r.id, { title: 'r2' })
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
   })
 
   it('does not restart on tags or an unchanged content', () => {
@@ -54,15 +53,15 @@ describe('review cycle on update', () => {
     eml.engrams.update(r.id, { tags: ['ops'] })
     eml.engrams.update(r.id, { content: 'do Y' })
     expect(due(r.id)).toBe('2020-01-01T00:00:00.000Z')
-    expect(labels(r.id)).toContain('review')
+    expect(reviewDue(r.id)).toBe(true)
   })
 
-  it('keeps an explicit review_due_at from the patch, and still clears the review label', () => {
+  it('keeps an explicit review_due_at from the patch, and it is no longer review due', () => {
     const r = eml.engrams.store(validRule({ title: 'r', content: 'do Y' }))
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: '2030-05-05T00:00:00.000Z' } })
     expect(due(r.id)).toBe('2030-05-05T00:00:00.000Z')
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
   })
 
   // v0.19 (S7) makes null clear an optional field; v0.18 read review_due_at: null
@@ -74,7 +73,7 @@ describe('review cycle on update', () => {
     makeDue(r.id)
     eml.engrams.update(r.id, { content: 'do Z', properties: { review_due_at: null } })
     expect(Date.parse(due(r.id))).toBeGreaterThan(Date.now() + 80 * 86400_000)
-    expect(labels(r.id)).not.toContain('review')
+    expect(reviewDue(r.id)).toBe(false)
   })
 
   it('uses the type default: decision 60 days, profile 180 days; a title change restarts too', () => {

@@ -4,7 +4,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { brainGet, brainPost } from "./api";
-import { REVIEW_LABEL } from "./types";
 import type {
   Engram,
   EngramStatus,
@@ -88,7 +87,8 @@ export interface ProjectEngramFilters extends EngramFilters {
   has_relations?: "true" | "false";
   assignee?: string;
   tag?: string;
-  label?: string;
+  /** v0.20: the brain's review_due filter. */
+  review_due?: "true" | "false";
 }
 
 // GET /project/:id/engrams — scope-bound list with the project-engrams param
@@ -125,8 +125,8 @@ export interface ListFilters extends EngramFilters {
   scope?: string;
   search?: string;
   significance?: string;
-  /** v0.13.x server-side label filter (e.g. "review"). */
-  label?: string;
+  /** v0.20: the brain's review_due filter. */
+  review_due?: "true" | "false";
   /** v0.14 server-side subject filter (membership, cross-scope). */
   subject?: string;
 }
@@ -146,14 +146,13 @@ export function useSubjectMembers(subjectId: string, enabled = true) {
   return useList({ subject: subjectId, limit: 200, order_by: "updated_at" }, enabled && !!subjectId);
 }
 
-// v0.13: engrams currently flagged for review. One server call — the cockpit
-// host bundles a brain with the `label=` list filter (v0.13.x), so no paged
-// client-side scan as packages/web had to do.
+// v0.13: engrams currently due for a review. One server call — the brain's
+// review_due list filter (v0.20, computed at read time), no paged client-side scan.
 export function usePendingReviews() {
   return useQuery({
     queryKey: ["pending-reviews"] as const,
     queryFn: async () => {
-      const res = await brainGet<ListResponse>("/list", { label: REVIEW_LABEL, order_by: "created_at", limit: 200 });
+      const res = await brainGet<ListResponse>("/list", { review_due: "true", order_by: "created_at", limit: 200 });
       return res.engrams;
     },
   });
@@ -237,7 +236,7 @@ export function useRetireEngram() {
 
 // v0.15: append a task entry. v0.19: POST /task/:id/track with text (a note
 // entry); a stage rides along and is set on the task (a change entry). Any
-// entry is a movement — it also clears the review flag.
+// entry is a movement — the task is no longer review_due.
 export function useAddTaskEntry() {
   const qc = useQueryClient();
   return useMutation({
@@ -290,4 +289,3 @@ export function followUpTitle(content: string): string {
   return `${slug || "follow-up"}-${suffix}`;
 }
 
-export { REVIEW_LABEL };

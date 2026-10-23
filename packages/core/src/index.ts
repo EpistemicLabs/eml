@@ -7,7 +7,6 @@ import { ProjectStore } from './projects'
 import { UserStore } from './users'
 import { EntityStore } from './entities'
 import { TagStore } from './tags'
-import { LabelStore } from './labels'
 import { SubjectStore } from './subjects'
 
 export class EML {
@@ -17,7 +16,6 @@ export class EML {
   public users!: UserStore
   public entities!: EntityStore
   public tags!: TagStore
-  public labels!: LabelStore
   public subjects!: SubjectStore
   private db!: Database.Database
   private ownsConnection: boolean = true
@@ -25,7 +23,7 @@ export class EML {
   constructor(config: EMLConfig) {
     this.db = initDatabase(config.dbPath ?? ':memory:')
     this.ownsConnection = true
-    this.wireStores(config.namespace)
+    this.wireStores(config.namespace, config.clock)
   }
 
   /**
@@ -37,25 +35,24 @@ export class EML {
    * every request boundary would close the shared DB and break all other
    * requests.
    */
-  static fromConnection(db: Database.Database, namespace: string): EML {
+  static fromConnection(db: Database.Database, namespace: string, opts: { clock?: () => string } = {}): EML {
     const eml = Object.create(EML.prototype) as EML
     eml.db = db
     eml.ownsConnection = false
-    eml.wireStores(namespace)
+    eml.wireStores(namespace, opts.clock)
     return eml
   }
 
-  private wireStores(namespace: string): void {
-    this.projects = new ProjectStore(this.db)
+  private wireStores(namespace: string, clock: () => string = () => new Date().toISOString()): void {
+    this.projects = new ProjectStore(this.db, clock)
     this.users = new UserStore(this.db)
     this.agents = new AgentStore(this.db)
     this.entities = new EntityStore(this.db)
     this.tags = new TagStore(this.db)
-    this.labels = new LabelStore(this.db)
     this.subjects = new SubjectStore(this.db)
     this.engrams = new EngramStore(
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
-      this.tags, this.subjects,
+      this.tags, this.subjects, clock,
     )
   }
 
@@ -71,7 +68,6 @@ export {
   extractSalientTerms, termCoverage,
   CONFLICT_TYPES, CONFLICT_COVERAGE_THRESHOLD,
   CONFLICT_CANDIDATE_LIMIT, CONFLICT_MAX, CONFLICT_MIN_SHARED_TERMS,
-  REVIEW_LABEL, REVIEWABLE_TYPES,
 } from './engrams'
 export {
   renderRecallMarkdown, renderBrainStateMarkdown, previewText,
@@ -80,7 +76,7 @@ export {
 export { validateEngramType, validateNoTemplateLeak, validateFormat, formatProblems, isLegacyFormat, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 export { ProjectStore } from './projects'
 export { TagStore, slugifyTag } from './tags'
-export { LabelStore, slugifyLabel, hydrateEngramLabels } from './labels'
+export { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 export { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
 export { UserStore } from './users'
 export { AgentStore } from './agents'

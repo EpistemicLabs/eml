@@ -7,7 +7,7 @@ import {
   forceY,
   type SimulationNodeDatum,
 } from "d3-force";
-import { REVIEW_LABEL, type Engram, type EngramType, type Relation, type RelationType } from "./types";
+import { type Engram, type EngramType, type Relation, type RelationType } from "./types";
 
 // Pure graph model (no React/xyflow import) so it stays testable. Ported verbatim
 // from packages/web/lib/graph.ts. The graph is the RELATION network: nodes are
@@ -141,7 +141,7 @@ export function buildGraph(
       degree: deg,
       isolated: false,
       historyCount: historyById.get(id) ?? 0,
-      review: e.labels?.includes(REVIEW_LABEL) ?? false,
+      review: e.review_due,
       position: { x: (p.x ?? 0) - CARD_W / 2, y: (p.y ?? 0) - CARD_H / 2 },
     };
   });
@@ -166,7 +166,7 @@ export function buildGraph(
       degree: 0,
       isolated: true,
       historyCount: historyById.get(e.id) ?? 0,
-      review: e.labels?.includes(REVIEW_LABEL) ?? false,
+      review: e.review_due,
       position: { x: cx - CARD_W / 2, y: cy - CARD_H / 2 },
     };
   });

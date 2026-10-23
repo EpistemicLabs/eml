@@ -4,14 +4,18 @@ import {
   Engram, Relation
 } from './types'
 import { hydrateEngramTags } from './tags'
-import { hydrateEngramLabels } from './labels'
+import { hydrateReviewDue } from './review-due'
 import { hydrateEngramSubjects } from './subjects'
 import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
 export class ProjectStore {
-  constructor(private db: Database.Database) {}
+  constructor(
+    private db: Database.Database,
+    // v0.20: the read clock (ISO) — review_due is computed against it.
+    private now: () => string = () => new Date().toISOString(),
+  ) {}
 
   create(input: ProjectInput): Project {
     if (input.parent_project) {
@@ -170,12 +174,13 @@ export class ProjectStore {
   }
 
   private queryEngrams(sql: string, params: any[]): Engram[] {
-    // v0.12/v0.13: hydrate tags + labels via the shared helpers (same as EngramStore)
-    // so brain-state snapshot engrams carry their facets too — batched, no N+1.
+    // v0.12/v0.14/v0.20: hydrate tags, subjects and review_due via the shared
+    // helpers (same as EngramStore) so brain-state snapshot engrams carry them
+    // too — batched, no N+1.
     const engrams = (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToEngram(r))
     hydrateEngramTags(this.db, engrams)
-    hydrateEngramLabels(this.db, engrams)
     hydrateEngramSubjects(this.db, engrams)
+    hydrateReviewDue(this.db, engrams, this.now())
     return engrams
   }
 
@@ -205,10 +210,10 @@ export class ProjectStore {
     return {
       ...row,
       properties: row.properties ? JSON.parse(row.properties) : null,
-      // v0.12/v0.13/v0.14: default []; queryEngrams hydrates real tags + labels + subjects.
+      // v0.12/v0.14/v0.20: defaults; queryEngrams hydrates tags, subjects and review_due.
       tags: [],
-      labels: [],
       subjects: [],
+      review_due: false,
     }
   }
 

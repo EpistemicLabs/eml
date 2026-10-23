@@ -11,7 +11,7 @@ import { Link } from "react-router";
 import { ApiError } from "@/lib/api";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { useList, useProject, useProjectEngrams, useProjects } from "@/lib/queries";
-import { REVIEW_LABEL, type Engram, type EngramType } from "@/lib/types";
+import { type Engram, type EngramType } from "@/lib/types";
 import { EngramRow, formatDate } from "@/components/engram-row";
 import { TYPE_COLORS } from "@/components/ui/badge";
 import { Input } from "@/shared/view/ui";
@@ -150,7 +150,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
   const notes = useProjectEngrams(id, { type: "note", order_by: "created_at", limit: 25 }, live);
   const rules = useProjectEngrams(id, { type: "rule", limit: 25 }, live);
   const logs = useProjectEngrams(id, { type: "log", order_by: "created_at", limit: 25 }, live);
-  const reviews = useProjectEngrams(id, { label: REVIEW_LABEL, order_by: "created_at", limit: 50 }, live);
+  const reviews = useProjectEngrams(id, { review_due: "true", order_by: "created_at", limit: 50 }, live);
 
   const project = state.data?.project;
   const parentId = project?.parent_project ?? null;
