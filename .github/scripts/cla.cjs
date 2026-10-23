@@ -46,10 +46,14 @@ async function ensureSignatureBranch(github, repo) {
   }
 }
 
+// The version CLA.md declares ("Version 1.0"). A signature counts for that version only: a new
+// version needs a new signature, a wording fix that keeps the version line does not.
 async function claVersion(github, repo) {
   const { data: info } = await github.rest.repos.get(repo)
   const { data } = await github.rest.repos.getContent({ ...repo, path: CLA_FILE, ref: info.default_branch })
-  return data.sha
+  const version = /^Version (\S+)$/m.exec(Buffer.from(data.content, 'base64').toString('utf8'))?.[1]
+  if (!version) throw new Error(`${CLA_FILE} has no "Version <x>" line`)
+  return version
 }
 
 // Who has to sign for a pull request: the account that opened it — commits can carry anyone's
@@ -79,7 +83,9 @@ async function check(github, context, core, pullNumber) {
   const repo = context.repo
   const { data: pull } = await github.rest.pulls.get({ ...repo, pull_number: pullNumber })
   const { signatures } = await readSignatures(github, repo)
-  const signed = new Set(signatures.map((signature) => signature.id))
+  const version = await claVersion(github, repo)
+  const signed = new Set(signatures.filter((signature) => signature.cla_version === version).map((signature) => signature.id))
+  const signedBefore = new Set(signatures.map((signature) => signature.id))
   const { logins, unlinked } = await contributors(github, repo, pull)
   const missing = [...logins].filter(([login, id]) => !isAllowed(login) && !signed.has(id)).map(([login]) => login)
 
@@ -107,7 +113,10 @@ async function check(github, context, core, pullNumber) {
       '```',
       '',
     ]
-    if (missing.length) lines.push(`Not signed yet: ${missing.map((login) => `@${login}`).join(', ')}`)
+    const renew = missing.filter((login) => signedBefore.has(logins.get(login)))
+    const first = missing.filter((login) => !renew.includes(login))
+    if (first.length) lines.push(`Not signed yet: ${first.map((login) => `@${login}`).join(', ')}`)
+    if (renew.length) lines.push(`The agreement has a new version (${version}); please sign it again: ${renew.map((login) => `@${login}`).join(', ')}`)
     if (unlinked.length) {
       lines.push(
         `Commits by ${unlinked.map(codeSpan).join(', ')} use an e-mail address that is not linked to a GitHub account. ` +
@@ -135,7 +144,7 @@ async function sign(github, context, core, pullNumber) {
   // read again and retry.
   for (let attempt = 1; ; attempt++) {
     const { signatures, sha } = await readSignatures(github, repo)
-    if (signatures.some((signature) => signature.id === commenter.id)) return
+    if (signatures.some((signature) => signature.id === commenter.id && signature.cla_version === version)) return
     signatures.push({
       login: commenter.login,
       id: commenter.id,
