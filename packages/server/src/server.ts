@@ -16,7 +16,7 @@
  *   POST /project-block     { scope: project.<id>, budget?: number } → Project block for a session (404: no such project)
  *   POST /recall            { query: string, limit? }                → Recall
  *   POST /engram/:type      { content, scope, title?, <type fields> } → Create an engram (v0.19; core enforces the type's fields)
- *   POST /task/:id/track    { text?, status?, outcome?, keep?, … }   → Everything about an existing task (v0.19)
+ *   POST /task/:id/track    { text?, status?, outcome?, keep?, base_rev?, … } → Everything about an existing task (v0.19)
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
  *   POST /update            { id, patch, base_rev? }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
@@ -584,7 +584,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     }
 
     // POST /engram/:id/confirm-review { text } — still holds: a review entry
-    // (why), a new review_due_at, the label cleared. For a task a movement.
+    // (why) and a new review_due_at. For a task a movement.
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)

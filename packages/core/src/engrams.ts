@@ -94,7 +94,7 @@ export function bucketByRelevance<E>(
  * Written types that get a conflict scan. A log is the session's own narrative;
  * an event is only compared with events (v0.19: the same change_type, close in
  * time — the duplicate protection of eml_event). Learnings have their own
- * topic check (learn()), not this scan.
+ * topic check (engram.create with type learning), not this scan.
  */
 export const CONFLICT_TYPES: ReadonlySet<EngramType> = new Set<EngramType>([
   'decision', 'status', 'rule', 'reference', 'note', 'task', 'event', 'profile',
@@ -279,8 +279,8 @@ export class EngramStore {
     protected tagStore?: TagStore,
     // v0.14: subject registry — used to validate that engram subjects are registered.
     protected subjectStore?: SubjectStore,
-    // v0.20: clock, ids and default actor (env.ts). Writes take it as a
-    // parameter (default: this one, no actor); reads use its clock for review_due.
+    // v0.20: clock, ids and default actor (env.ts). Reads use its clock for
+    // review_due; a write takes a Stamp (its one time, ids, actor) from apply().
     protected env: Env = DEFAULT_ENV,
   ) {}
 

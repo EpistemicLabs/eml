@@ -42,7 +42,7 @@ export class EngramWriter extends EngramStore {
   }
 
   /**
-   * v0.19: create an engram of any type except learning (learn()) — the one
+   * v0.19: create an engram of any type except learning (createLearning) — the one
    * write path for MCP, REST and CLI. Strict: the input may carry only the
    * universal fields and the type's own fields (fields.ts); every rule of the
    * type is checked here, so no surface can skip it. Provenance comes from the
@@ -1313,12 +1313,11 @@ export class EngramWriter extends EngramStore {
   // === v0.19: learnings (eml_learning) ===
 
   /**
-   * Record a lesson (create) or add an incident to an existing one (id). Without
-   * id the topic is checked first: an active learning on the same topic in the
-   * scope or the session's agent/user scopes → nothing is written, the response
-   * names the match (pass its id, or new_topic=true for a different topic).
+   * v0.20: engram.create with type learning — a new lesson with its first
+   * evidence. The topic is checked first: an active learning on the same topic
+   * in the scope or the session's agent/user scopes → nothing is written, the
+   * response names the match (pass its id, or new_topic=true for a different topic).
    */
-  /** v0.20: engram.create with type learning — a new lesson with its first evidence, after the topic check. */
   createLearning(input: Omit<LearnInput, 'id'>, stamp: Stamp): LearnResult {
     if ((input as LearnInput).id !== undefined) throw new Error('Invalid engram: a new learning has no id — evidence for an existing one is learning.add_evidence.')
     return this.learn(input, stamp)

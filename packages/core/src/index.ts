@@ -66,7 +66,7 @@ export class EML {
    * engram.create · engram.update · task.track · learning.add_evidence ·
    * engram.confirm_review · relation.create · object.create · object.update —
    * in one transaction with one time from `env` (default: no actor). A
-   * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS) and
+   * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS · CONFLICT) and
    * writes nothing. Outside the set only engrams.delete writes (decision
    * no-delete-command).
    */
