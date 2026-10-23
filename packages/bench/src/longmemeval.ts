@@ -40,11 +40,25 @@ import { dumpBrain, type PublicArm } from './locomo'
 // longmemeval-download` puts it into a cache directory, checked against its hash.
 
 const LME_REVISION = '98d7416c24c778c2fee6e6f3006e7a073259d48f'
-const LME_URL = `https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/${LME_REVISION}/longmemeval_s_cleaned.json`
-const LME_SHA256 = 'd6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442'
-export const LME_DEFAULT_FILE = path.join(os.homedir(), '.cache', 'eml-bench', 'longmemeval', 'longmemeval_s_cleaned.json')
+export const LME_CACHE_DIR = path.join(os.homedir(), '.cache', 'eml-bench', 'longmemeval')
+
+/**
+ * S: ~48 sessions / ~115k tokens of history per question. M: ~500 sessions / ~1.5M
+ * tokens — more than any context window, so full-context is replaced by
+ * recent-context there. Both are one JSON array; M is 2.7 GB, too large to parse
+ * whole, so after the download each variant is split into one file per question.
+ */
+export type LmeVariant = 's' | 'm'
+const LME_FILES: Record<LmeVariant, { name: string; sha256: string }> = {
+  s: { name: 'longmemeval_s_cleaned.json', sha256: 'd6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442' },
+  m: { name: 'longmemeval_m_cleaned.json', sha256: '9d79e5524794a2e6900a3aa9cb7d9152c5a3e8319c9a87c25494ba1eacee495f' },
+}
 
 export const LME_TYPES = ['single-session-user', 'single-session-assistant', 'single-session-preference', 'multi-session', 'knowledge-update', 'temporal-reasoning']
+
+/** full-context: the whole history in the prompt (S). recent-context: the newest sessions that fit a budget (M). */
+export type LmeArm = PublicArm | 'recent-context'
+export const LME_ARMS: LmeArm[] = ['eml', 'full-context', 'recent-context']
 
 interface LmeTurn { role: 'user' | 'assistant'; content: string }
 export interface LmeQuestion {
@@ -57,28 +71,104 @@ export interface LmeQuestion {
   haystack_sessions: LmeTurn[][]
 }
 
-export async function downloadLongMemEval(file = LME_DEFAULT_FILE): Promise<void> {
-  const res = await fetch(LME_URL)
-  if (!res.ok) throw new Error(`download failed: ${res.status} ${LME_URL}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const sha = crypto.createHash('sha256').update(buf).digest('hex')
-  if (sha !== LME_SHA256) throw new Error(`longmemeval_s_cleaned.json: sha256 ${sha}, expected ${LME_SHA256}`)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, buf)
-  console.log(`LongMemEval_S (xiaowu0162/longmemeval-cleaned@${LME_REVISION.slice(0, 7)}, MIT) → ${file}`)
+interface IndexEntry { question_id: string; question_type: string }
+
+const splitDir = (v: LmeVariant, dir: string) => path.join(dir, v)
+
+/**
+ * Downloads the variant (unless the file is there), checks its hash and splits it
+ * into <dir>/<variant>/<question_id>.json plus index.json. Streams throughout: the
+ * M file does not fit into one string.
+ */
+export async function prepareLongMemEval(v: LmeVariant, dir = LME_CACHE_DIR): Promise<void> {
+  const { name, sha256 } = LME_FILES[v]
+  const file = path.join(dir, name)
+  fs.mkdirSync(dir, { recursive: true })
+  if (!fs.existsSync(file)) {
+    const url = `https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/${LME_REVISION}/${name}`
+    console.log(`downloading ${url}`)
+    const res = await fetch(url)
+    if (!res.ok || !res.body) throw new Error(`download failed: ${res.status} ${url}`)
+    const part = `${file}.part`
+    const out = fs.createWriteStream(part)
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      if (!out.write(chunk)) await new Promise<void>(r => out.once('drain', () => r()))
+    }
+    await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())))
+    fs.renameSync(part, file)
+  }
+  const target = splitDir(v, dir)
+  fs.rmSync(target, { recursive: true, force: true })
+  fs.mkdirSync(target, { recursive: true })
+  const hash = crypto.createHash('sha256')
+  const index: IndexEntry[] = []
+  await splitTopLevelObjects(file, hash, obj => {
+    const q = JSON.parse(obj.toString('utf8')) as LmeQuestion
+    fs.writeFileSync(path.join(target, `${q.question_id}.json`), obj)
+    index.push({ question_id: q.question_id, question_type: q.question_type })
+  })
+  const sha = hash.digest('hex')
+  if (sha !== sha256) {
+    fs.rmSync(target, { recursive: true, force: true })
+    throw new Error(`${file}: sha256 ${sha}, expected ${sha256} — delete it and download again`)
+  }
+  fs.writeFileSync(path.join(target, 'index.json'), JSON.stringify({ file: name, sha256, revision: LME_REVISION, questions: index }, null, 1))
+  console.log(`LongMemEval_${v.toUpperCase()} (xiaowu0162/longmemeval-cleaned@${LME_REVISION.slice(0, 7)}, MIT): ${index.length} questions → ${target}`)
 }
 
-export function readLongMemEval(file = LME_DEFAULT_FILE): LmeQuestion[] {
-  if (!fs.existsSync(file)) throw new Error(`${file} missing — run \`eml-bench longmemeval-download\` first`)
-  const buf = fs.readFileSync(file)
-  const sha = crypto.createHash('sha256').update(buf).digest('hex')
-  if (sha !== LME_SHA256) throw new Error(`${file}: sha256 ${sha}, expected ${LME_SHA256} — download it again`)
-  return JSON.parse(buf.toString('utf8'))
+/**
+ * Calls `each` with the bytes of every element of a top-level JSON array of
+ * objects, hashing the whole file on the way. Works on bytes: JSON's structural
+ * characters are ASCII, and no byte of a multi-byte UTF-8 character is.
+ */
+export async function splitTopLevelObjects(file: string, hash: crypto.Hash, each: (obj: Buffer) => void): Promise<void> {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  let parts: Buffer[] = []
+  for await (const chunk of fs.createReadStream(file, { highWaterMark: 1 << 22 }) as AsyncIterable<Buffer>) {
+    hash.update(chunk)
+    let start = depth >= 2 ? 0 : -1
+    for (let i = 0; i < chunk.length; i++) {
+      const c = chunk[i]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (c === 0x5c) escaped = true
+        else if (c === 0x22) inString = false
+        continue
+      }
+      if (c === 0x22) inString = true
+      else if (c === 0x7b || c === 0x5b) {
+        depth++
+        if (depth === 2) start = i
+      } else if (c === 0x7d || c === 0x5d) {
+        if (depth === 2) {
+          parts.push(chunk.subarray(start, i + 1))
+          each(Buffer.concat(parts))
+          parts = []
+          start = -1
+        }
+        depth--
+      }
+    }
+    if (depth >= 2 && start >= 0) parts.push(chunk.subarray(start))
+  }
+  if (depth !== 0) throw new Error(`${file}: unexpected end of the JSON array`)
 }
 
-/** n questions per type, picked by a hash of the question id (stable across runs and machines). */
-export function stratifiedSample(qs: LmeQuestion[], perType: number): LmeQuestion[] {
-  const key = (q: LmeQuestion) => crypto.createHash('sha256').update(`eml-bench:${q.question_id}`).digest('hex')
+/** The selected questions of a prepared variant: n per type (stratified), or the given ids. */
+export function loadLongMemEval(v: LmeVariant, perType: number, only: string[] | null, dir = LME_CACHE_DIR): LmeQuestion[] {
+  const target = splitDir(v, dir)
+  const indexFile = path.join(target, 'index.json')
+  if (!fs.existsSync(indexFile)) throw new Error(`${indexFile} missing — run \`eml-bench longmemeval-download --variant ${v}\` first`)
+  const index: IndexEntry[] = JSON.parse(fs.readFileSync(indexFile, 'utf8')).questions
+  const picked = only ? index.filter(e => only.includes(e.question_id)) : stratifiedSample(index, perType)
+  return picked.map(e => JSON.parse(fs.readFileSync(path.join(target, `${e.question_id}.json`), 'utf8')))
+}
+
+/** n questions per type, picked by a hash of the question id (stable across runs and machines, the same ids in S and M). */
+export function stratifiedSample<Q extends IndexEntry>(qs: Q[], perType: number): Q[] {
+  const key = (q: Q) => crypto.createHash('sha256').update(`eml-bench:${q.question_id}`).digest('hex')
   return LME_TYPES.flatMap(t => qs.filter(q => q.question_type === t).sort((a, b) => key(a).localeCompare(key(b))).slice(0, perType))
 }
 
@@ -88,38 +178,62 @@ function renderSession(turns: LmeTurn[], date: string): string {
   return `### Chat session, ${date}\n\n${turns.map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`).join('\n\n')}`
 }
 
-/** The history in order, cut into batches of about `chars` characters (a session is never split). */
+/**
+ * The history as rendered sessions, oldest first. The dataset does not keep the
+ * haystack in date order (about 40% of the S questions are shuffled), so it is
+ * sorted here; the date format ("2023/05/20 (Sat) 02:21") sorts as text.
+ */
+export function chronological(q: LmeQuestion): string[] {
+  return q.haystack_sessions
+    .map((s, i) => ({ date: q.haystack_dates[i], i }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.i - b.i)
+    .map(({ date, i }) => renderSession(q.haystack_sessions[i], date))
+}
+
+/** The history oldest first, cut into batches of about `chars` characters (a session is never split). */
 export function batches(q: LmeQuestion, chars: number): string[][] {
   const out: string[][] = []
   let cur: string[] = []
   let size = 0
-  q.haystack_sessions.forEach((s, i) => {
-    const text = renderSession(s, q.haystack_dates[i])
+  for (const text of chronological(q)) {
     if (cur.length && size + text.length > chars) { out.push(cur); cur = []; size = 0 }
     cur.push(text)
     size += text.length
-  })
+  }
   if (cur.length) out.push(cur)
   return out
 }
 
 // --- Prompts ------------------------------------------------------------------------
 
-function system(arm: PublicArm): string {
-  return arm === 'eml'
-    ? `You are the user's AI assistant, with a long-term memory reachable through the memory tools. You are shown your earlier chat sessions with the user, a few at a time and in order, and later answer the user's questions. Answer in plain text.`
-    : `You are the user's AI assistant. You are given your earlier chat sessions with the user and answer the user's questions. Answer in plain text.`
+/** The newest sessions whose text fits into `chars`, oldest first. */
+export function recentSessions(q: LmeQuestion, chars: number): string[] {
+  const all = chronological(q)
+  const out: string[] = []
+  let size = 0
+  for (let i = all.length - 1; i >= 0 && size + all[i].length <= chars; i--) {
+    out.unshift(all[i])
+    size += all[i].length
+  }
+  return out
+}
+
+function system(arm: LmeArm): string {
+  if (arm === 'eml') return `You are the user's AI assistant, with a long-term memory reachable through the memory tools. You are shown your earlier chat sessions with the user, a few at a time and in order, and later answer the user's questions. Answer in plain text.`
+  return `You are the user's AI assistant. You are given your earlier chat sessions with the user and answer the user's questions. Answer in plain text.`
 }
 
 function ingestPrompt(batch: string[], k: number, of: number): string {
   return `Earlier chat sessions with the user (part ${k} of ${of}):\n\n${batch.join('\n\n')}\n\nKeep in your memory what may matter later.`
 }
 
-function questionPrompt(arm: PublicArm, q: LmeQuestion): string {
+function questionPrompt(arm: LmeArm, q: LmeQuestion, recentChars: number): string {
   const ask = `Current date: ${q.question_date}\nThe user asks: ${q.question}`
   if (arm === 'eml') return ask
-  const all = q.haystack_sessions.map((s, i) => renderSession(s, q.haystack_dates[i])).join('\n\n')
-  return `Your earlier chat sessions with the user:\n\n${all}\n\n${ask}`
+  if (arm === 'recent-context') {
+    return `Your most recent chat sessions with the user (older ones do not fit and are left out):\n\n${recentSessions(q, recentChars).join('\n\n')}\n\n${ask}`
+  }
+  return `Your earlier chat sessions with the user:\n\n${chronological(q).join('\n\n')}\n\n${ask}`
 }
 
 // Verbatim from xiaowu0162/LongMemEval src/evaluation/evaluate_qa.py (d6dc8b5, MIT), get_anscheck_prompt.
@@ -152,11 +266,14 @@ const YES_NO_SCHEMA = {
 // --- Run ----------------------------------------------------------------------------
 
 export interface LmeOptions {
-  arms: PublicArm[]
+  variant: LmeVariant
+  arms: LmeArm[]
   perType: number
-  /** only these question ids (after sampling: from the whole set) */
+  /** only these question ids (instead of the sample) */
   only: string[] | null
   batchChars: number
+  /** recent-context: the history budget in characters */
+  recentChars: number
   ingestTurns: number
 }
 
@@ -166,7 +283,7 @@ export interface LmeResult {
   abstention: boolean
   question: string
   gold: string
-  arm: PublicArm
+  arm: LmeArm
   answer: string
   correct: boolean
   ingest?: { batches: number; writes: number; engrams: number; cost_usd: number; errors: number }
@@ -177,12 +294,11 @@ export interface LmeResult {
   error?: string
 }
 
-export async function runLongMemEval(sut: Sut, workDir: string, opts: AgentOptions, lo: LmeOptions, data: LmeQuestion[]): Promise<LmeResult[]> {
+export async function runLongMemEval(sut: Sut, workDir: string, opts: AgentOptions, lo: LmeOptions, qs: LmeQuestion[]): Promise<LmeResult[]> {
   if (opts.runner !== 'claude-code') throw new Error('longmemeval runs on the claude-code runner')
-  const qs = lo.only ? data.filter(q => lo.only!.includes(q.question_id)) : stratifiedSample(data, lo.perType)
   if (!qs.length) throw new Error('no question selected')
   const jobs = qs.flatMap(q => lo.arms.map(arm => ({ q, arm })))
-  console.log(`\nlongmemeval_s — ${qs.length} questions × ${lo.arms.join(', ')}`)
+  console.log(`\nlongmemeval_${lo.variant} — ${qs.length} questions × ${lo.arms.join(', ')}`)
   return pool(jobs, opts.concurrency, async ({ q, arm }) => {
     const r = await runOne(sut, q, arm, path.join(workDir, 'longmemeval', q.question_id, arm), opts, lo)
     const ing = r.ingest ? ` (${r.ingest.batches} batches, ${r.ingest.writes} writes, ${r.ingest.engrams} engrams)` : ''
@@ -191,7 +307,7 @@ export async function runLongMemEval(sut: Sut, workDir: string, opts: AgentOptio
   })
 }
 
-async function runOne(sut: Sut, q: LmeQuestion, arm: PublicArm, dir: string, opts: AgentOptions, lo: LmeOptions): Promise<LmeResult> {
+async function runOne(sut: Sut, q: LmeQuestion, arm: LmeArm, dir: string, opts: AgentOptions, lo: LmeOptions): Promise<LmeResult> {
   const r: LmeResult = {
     question_id: q.question_id, type: q.question_type, abstention: isAbstention(q), question: q.question, gold: String(q.answer), arm,
     answer: '', correct: false, tool_calls: 0, usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: null,
@@ -225,7 +341,7 @@ async function runOne(sut: Sut, q: LmeQuestion, arm: PublicArm, dir: string, opt
       brain = { ...empty, dataDir }
     }
     ws = await openWorkspace(arm === 'eml' ? 'eml' : 'none', sut, brain ?? ({} as Brain), path.join(dir, 'ask'))
-    const a = await askClaudeCode(ws, opts, { prompt: questionPrompt(arm, q), label: 'session', writable: false, system: system(arm) })
+    const a = await askClaudeCode(ws, opts, { prompt: questionPrompt(arm, q, lo.recentChars), label: 'session', writable: false, system: system(arm) })
     Object.assign(r, { answer: a.answer, tool_calls: a.tool_calls.length, usage: a.usage, cost_usd: a.cost_usd ?? null, harness: a.harness })
     if (a.error) r.error = a.error
     else if (!a.answer) r.error = 'no answer'
@@ -261,8 +377,8 @@ export interface LmeArmSummary {
   avg_engrams?: number
 }
 
-export function summarizeLongMemEval(rs: LmeResult[], arms: PublicArm[]): Partial<Record<PublicArm, LmeArmSummary>> {
-  const out: Partial<Record<PublicArm, LmeArmSummary>> = {}
+export function summarizeLongMemEval(rs: LmeResult[], arms: LmeArm[]): Partial<Record<LmeArm, LmeArmSummary>> {
+  const out: Partial<Record<LmeArm, LmeArmSummary>> = {}
   for (const arm of arms) {
     const xs = rs.filter(r => r.arm === arm)
     if (!xs.length) continue
@@ -293,10 +409,10 @@ export function summarizeLongMemEval(rs: LmeResult[], arms: PublicArm[]): Partia
   return out
 }
 
-export function printLongMemEvalSummary(s: Partial<Record<PublicArm, LmeArmSummary>>): void {
-  const arms = Object.keys(s) as PublicArm[]
+export function printLongMemEvalSummary(s: Partial<Record<LmeArm, LmeArmSummary>>, variant: LmeVariant): void {
+  const arms = Object.keys(s) as LmeArm[]
   const col = (f: (a: LmeArmSummary) => string) => arms.map(a => f(s[a]!).padStart(14)).join('')
-  console.log(`\nlongmemeval_s — sample`)
+  console.log(`\nlongmemeval_${variant} — sample`)
   console.log(`  ${''.padEnd(30)}${arms.map(a => a.padStart(14)).join('')}`)
   console.log(`  ${'questions'.padEnd(30)}${col(a => String(a.questions))}`)
   console.log(`  ${'accuracy'.padEnd(30)}${col(a => (a.accuracy * 100).toFixed(1))}`)
