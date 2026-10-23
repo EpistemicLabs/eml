@@ -64,8 +64,8 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
     return (
       <BrainCard className="px-4 py-3">
         <CardTitle>Task run</CardTitle>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-ui text-muted-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <span className="min-w-0 flex-1 text-ui text-muted-foreground">
             Runs in session <span className="text-foreground">{run.session.summary || run.session.id.slice(0, 8)}</span>
             {" · "}
             {run.project.displayName}
@@ -76,7 +76,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
               openInPane({ surface: "terminal", projectId: run.project.projectId, sessionId: run.session.id });
               onStarted?.();
             }}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-ui text-foreground transition-colors hover:bg-accent/60"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-ui text-foreground transition-colors hover:bg-accent/60"
           >
             <SquareTerminal className="h-3.5 w-3.5" />
             Open run
@@ -116,14 +116,15 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
     <BrainCard className="px-4 py-3">
       <CardTitle>Task run</CardTitle>
       {!open ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-ui text-muted-foreground">
+        // the button sits right of the description, so the card stays two lines high
+        <div className="flex items-center justify-between gap-3">
+          <span className="min-w-0 flex-1 text-ui text-muted-foreground">
             A session advances this task stage by stage and stops at a checkpoint after each.
           </span>
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90"
           >
             <Play className="h-3.5 w-3.5" />
             Advance task
