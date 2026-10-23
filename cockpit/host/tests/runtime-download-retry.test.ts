@@ -78,6 +78,13 @@ describe('runtime downloads retry transient failures', () => {
     expect(readFileSync(join(root, 'stall-bin'), 'utf8')).toBe('binary')
   })
 
+  it('fails at once on an error that is not a network error', async () => {
+    // An invalid URL raises a TypeError too, but not undici's 'fetch failed' or 'terminated'.
+    const error = await fetchText('not a url').catch((e: Error) => e)
+    expect(error).toBeInstanceOf(TypeError)
+    expect((error as Error).message).not.toMatch(/attempts/)
+  })
+
   it('fails at once on a 404', async () => {
     scripts.set('/missing', [status(404)])
     await expect(fetchText(`${base}/missing`)).rejects.toThrow(/HTTP 404$/)

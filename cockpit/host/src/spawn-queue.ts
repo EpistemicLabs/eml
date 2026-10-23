@@ -13,6 +13,7 @@ import type { ProviderId } from './domain/agent-provider.js'
  */
 
 export interface SpawnRequest {
+  /** Also the worker's session id: the page opens the pane under it (spawn-api.ts returns the worker's address from it). */
   id: string
   /** Registry project id the worker runs in (`bp-<brain id>` or a folder id). */
   projectId: string

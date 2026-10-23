@@ -65,7 +65,17 @@ export function initDatabase(dbPath: string, clock: Clock = systemClock): Databa
   // intentionally opens WITHOUT { fileMustExist: true } — unlike the
   // must-exist read/migrate paths (pool.ts, forward-migrations.ts).
   const db = new Database(dbPath)
+  try {
+    return createOrMigrate(db, clock)
+  } catch (err) {
+    // a failed create or migration must not keep the file open (on Windows the
+    // open handle locks it until the process exits)
+    if (db.open) db.close()
+    throw err
+  }
+}
 
+function createOrMigrate(db: Database.Database, clock: Clock): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
@@ -85,7 +95,6 @@ export function initDatabase(dbPath: string, clock: Clock = systemClock): Databa
     ? (db.prepare('SELECT MAX(version) as v FROM _eml_migrations').get() as { v: number | null }).v
     : null
   if (version === null || version < OLDEST_MIGRATABLE_BRAIN_SCHEMA) {
-    db.close()
     throw new Error(
       `Brain schema ${version ?? 'unknown'} is older than this release can migrate ` +
       `(oldest: ${OLDEST_MIGRATABLE_BRAIN_SCHEMA}). Migrate it with an earlier EML release first.`

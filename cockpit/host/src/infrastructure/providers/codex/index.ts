@@ -112,6 +112,7 @@ class CodexProvider implements AgentProvider {
   readonly label = 'Codex'
   /** Codex assigns the session id itself and reports it with the first hook. */
   readonly adoptsSessionId = false
+  readonly messaging = false
 
   readonly runtime = asAgentRuntime(codexRuntime, 'Settings › Models › Codex › "Set up now" installs it; then reopen this pane.')
   readonly settings = codexSettings

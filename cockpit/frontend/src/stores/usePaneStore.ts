@@ -136,11 +136,9 @@ interface PaneStoreSnapshot {
 
 const STORAGE_KEY = 'cockpit-pane-layout';
 
-const generateId = (): string =>
-  `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const generateId = (): string => `pane-${crypto.randomUUID()}`;
 
-const generateDeskId = (): string =>
-  `desk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const generateDeskId = (): string => `desk-${crypto.randomUUID()}`;
 
 // Every terminal pane mints its own session id at birth — the cockpit's id of
 // the session. Claude Code adopts it (--session-id); Codex assigns its own and
@@ -148,7 +146,7 @@ const generateDeskId = (): string =>
 export const newCliSessionId = (): string => crypto.randomUUID();
 
 const slugify = (input: string): string =>
-  input.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'desk';
+  input.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-') || 'desk';
 
 const TERMINAL_LABEL_RE = /^Terminal (\d+)$/;
 
@@ -1034,6 +1032,8 @@ export function addWorkerPane(opts: {
   /** The agent CLI the worker runs with; unset → the cockpit's default. */
   provider?: LLMProvider;
   replacePaneId?: string | null;
+  /** The worker's session id, when the host fixed it in advance (the spawn request id — host spawn-api.ts). */
+  sessionId?: string;
 }): string {
   const from = opts.fromSessionId
     ? snapshot.desks
@@ -1042,6 +1042,7 @@ export function addWorkerPane(opts: {
     : undefined;
   const newPane: PaneState = {
     ...createPane('terminal', opts.projectId),
+    ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.title ? { title: opts.title } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
     ...(opts.provider ? { provider: opts.provider } : {}),

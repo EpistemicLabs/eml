@@ -23,6 +23,7 @@ import { idsInOrder } from './retrieval'
 // Signs in with a Claude Code token (CLAUDE_CODE_OAUTH_TOKEN, `claude setup-token`).
 
 const MCP_NAME = 'eml_brain'
+const STDIN_PROMPT_CHARS = 100_000
 
 export interface SessionSpec {
   prompt: string
@@ -36,17 +37,24 @@ export interface SessionSpec {
    * Default: the label (a fresh config dir).
    */
   configKey?: string
+  /** the agent's situation, if not the fixture's (arms.ts situation()) — e.g. a public benchmark's */
+  system?: string
+  /** default opts.maxTurns */
+  maxTurns?: number
 }
 
 export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: SessionSpec): Promise<Answer> {
+  // A long prompt (a whole conversation history) goes in through stdin: the
+  // argument list has a size limit.
+  const viaStdin = spec.prompt.length > STDIN_PROMPT_CHARS
   const args = [
-    '-p', spec.prompt,
+    '-p', ...(viaStdin ? [] : [spec.prompt]),
     '--output-format', 'stream-json', '--verbose',
     '--model', opts.model,
     '--effort', opts.effort,
     '--permission-mode', 'dontAsk',
-    '--max-turns', String(opts.maxTurns),
-    '--append-system-prompt', situation(ws.arm),
+    '--max-turns', String(spec.maxTurns ?? opts.maxTurns),
+    '--append-system-prompt', spec.system ?? situation(ws.arm),
     '--no-session-persistence',
     '--strict-mcp-config',
   ]
@@ -75,7 +83,7 @@ export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: Ses
   fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2))
   args.push('--settings', settingsFile)
 
-  const events = await claude(ws, opts, args, spec.label, spec.configKey ?? spec.label)
+  const events = await claude(ws, opts, args, spec.label, spec.configKey ?? spec.label, false, viaStdin ? spec.prompt : undefined)
   const out: Answer = { answer: '', tool_calls: [], seen_ids: [], turns: 0, stop: '', usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 } }
   const seen = new Set<string>()
   for (const ev of events) {
@@ -115,6 +123,13 @@ export async function askClaudeCode(ws: Workspace, opts: AgentOptions, spec: Ses
 }
 
 export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt: string, label: string): Promise<Verdict> {
+  const v = await judgeStructured(ws, opts, prompt, label, VERDICT_SCHEMA)
+  if (!v || typeof v.correct !== 'boolean') throw new Error('judge returned no verdict')
+  return v as Verdict
+}
+
+/** The judge model, no tools, answering in the given JSON schema; returns the structured output (or undefined). */
+export async function judgeStructured(ws: Workspace, opts: AgentOptions, prompt: string, label: string, schema: object): Promise<any> {
   const events = await claude(ws, opts, [
     '-p', prompt,
     '--output-format', 'json',
@@ -122,13 +137,11 @@ export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt:
     '--effort', 'low',
     '--tools', '',
     '--strict-mcp-config',
-    '--json-schema', JSON.stringify(VERDICT_SCHEMA),
+    '--json-schema', JSON.stringify(schema),
     '--settings', JSON.stringify({ autoMemoryEnabled: false }),
     '--no-session-persistence',
   ], label, label, true)
-  const v = events.find(ev => ev.type === 'result')?.structured_output
-  if (!v || typeof v.correct !== 'boolean') throw new Error('judge returned no verdict')
-  return v as Verdict
+  return events.find(ev => ev.type === 'result')?.structured_output
 }
 
 /** Runs `claude` isolated; returns the JSON events it printed. The judge runs outside the workspace (no CLAUDE.md). */
@@ -137,9 +150,9 @@ export async function judgeClaudeCode(ws: Workspace, opts: AgentOptions, prompt:
 const RETRY_STATUS = new Set([429, 529])
 const RETRIES = 4
 
-async function claude(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge = false): Promise<any[]> {
+async function claude(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge = false, input?: string): Promise<any[]> {
   for (let attempt = 0; ; attempt++) {
-    const events = await claudeOnce(ws, opts, args, label, configKey, judge)
+    const events = await claudeOnce(ws, opts, args, label, configKey, judge, input)
     const result = events.find(ev => ev.type === 'result')
     // No result event: the process ended mid-stream (killed or crashed) — also worth one more try.
     const retry = result ? RETRY_STATUS.has(result.api_error_status) : true
@@ -151,7 +164,7 @@ async function claude(ws: Workspace, opts: AgentOptions, args: string[], label: 
   }
 }
 
-function claudeOnce(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge: boolean): Promise<any[]> {
+function claudeOnce(ws: Workspace, opts: AgentOptions, args: string[], label: string, configKey: string, judge: boolean, input?: string): Promise<any[]> {
   if (!opts.claudeToken) throw new Error('claude-code runner: no Claude Code token (CLAUDE_CODE_OAUTH_TOKEN or --claude-token-file)')
   const env = {
     ...ws.env,
@@ -162,11 +175,12 @@ function claudeOnce(ws: Workspace, opts: AgentOptions, args: string[], label: st
   fs.mkdirSync(cwd, { recursive: true })
   const logFile = path.join(ws.dir, `${label}.jsonl`)
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('claude', args, { cwd, env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] })
+    if (input !== undefined) child.stdin!.end(input)
     let stdout = ''
     let stderr = ''
-    child.stdout.on('data', d => { stdout += d })
-    child.stderr.on('data', d => { stderr += d })
+    child.stdout!.on('data', d => { stdout += d })
+    child.stderr!.on('data', d => { stderr += d })
     const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000)
     child.on('error', err => { clearTimeout(timer); reject(err) })
     child.on('close', () => {

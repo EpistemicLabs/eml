@@ -32,6 +32,7 @@ class ClaudeProvider implements AgentProvider {
   readonly id = 'claude' as const
   readonly label = 'Claude Code'
   readonly adoptsSessionId = true
+  readonly messaging = true
   private isolation: IsolationFiles | null = null
 
   readonly runtime = asAgentRuntime(claudeRuntime, 'Settings › Models › Claude Code › "Check now" sets it up; then reopen this pane.')
@@ -69,6 +70,8 @@ class ClaudeProvider implements AgentProvider {
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
       '--permission-mode', req.unattended ? 'auto' : readPermissionMode(),
+      // The address other sessions reach this one by (ListAgents / SendMessage) — not the sidebar title.
+      '--name', req.address,
       // Claude Code adopts the cockpit's id (--session-id), so both ids are the same.
       ...(req.resume ? ['--resume', req.providerSessionId ?? req.sessionId] : ['--session-id', req.sessionId]),
     ]
@@ -92,6 +95,8 @@ class ClaudeProvider implements AgentProvider {
         // `claude` typed inside a session is the cockpit's as well.
         PATH: [CLAUDE_BIN_DIR, process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
+        // The session knows its own address — a worker it spawns is told where to answer (skill spawn-session).
+        COCKPIT_SESSION_ADDRESS: req.address,
       },
     }
   }

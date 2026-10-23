@@ -133,7 +133,8 @@ function AppContentInner() {
         for (let i = 0; i < 40 && !knownProject(request.projectId); i++) await new Promise((r) => setTimeout(r, 50));
       }
       // The request names a further space by brain id; absent = main, which the pane store calls null.
-      paneStore.addWorkerPane({ ...request, spaceId: request.spaceId ?? null, replacePaneId });
+      // Its id is the worker's session id — the requester already got the worker's address from it.
+      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId });
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
