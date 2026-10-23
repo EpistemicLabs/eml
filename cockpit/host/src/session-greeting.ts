@@ -9,13 +9,14 @@
  * name the session: the provider's own title (taken from the first prompt)
  * and the first-prompt summary skip it (session-summary.ts per provider), and
  * the agent names the session itself once the user's reply shows what it is
- * about (session-title-cli.ts).
+ * about (session-title-cli.ts). The title goes in single quotes: the shell must not expand
+ * anything the agent takes from the user's words (in double quotes a "$(…)" ran).
  */
 export const GREETING_PROMPT =
   'Session start: greet me briefly, say which project this session is in and where it stands from the ' +
   'project block you were given (status, next step, open tasks); if there is none, say so in one line ' +
   'instead of searching. Then ask what I want to work on. Answer in my preferred language. ' +
-  'Once my reply shows what this session is about, name it in a few words: node "$COCKPIT_TITLE_JS" "<title>".'
+  'Once my reply shows what this session is about, name it in a few words: node "$COCKPIT_TITLE_JS" \'<title>\'.'
 
 /** Every greeting so far starts with this; it identifies one in a session from before the ledger recorded it. */
 const GREETING_START = 'Session start: greet me briefly'

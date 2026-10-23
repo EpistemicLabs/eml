@@ -16,9 +16,10 @@ const ALLOWED = new Set([
 ])
 const NOTICE_FILE = /^(licen[cs]e|copying|notice)([.-].*)?$/i
 
-// The package root of a file inside node_modules, or null for a file outside it.
+// The package root of a file inside node_modules, or null for a file outside it. Vite names
+// modules with forward slashes on every OS, esbuild with the OS separator: split on both.
 function packageRoot(file) {
-  const parts = file.split(path.sep)
+  const parts = file.split(/[\\/]/)
   const at = parts.lastIndexOf('node_modules')
   if (at < 0 || at + 1 >= parts.length) return null
   const depth = parts[at + 1].startsWith('@') ? 3 : 2

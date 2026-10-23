@@ -1,7 +1,7 @@
 /**
  * cockpit-session-title — a session names itself in the cockpit's sidebar.
  *
- *   node "$COCKPIT_TITLE_JS" "<a few words>"
+ *   node "$COCKPIT_TITLE_JS" '<a few words>'
  *
  * For a session that opened with the cockpit's greeting (session-greeting.ts):
  * the greeting says nothing about what the session is for, so the agent names
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const session = process.env.COCKPIT_SESSION_ID
   if (!session) fail(CLI, 'not inside a cockpit session (COCKPIT_SESSION_ID missing)')
   const title = process.argv.slice(2).join(' ').trim()
-  if (!title) fail(CLI, 'usage: node "$COCKPIT_TITLE_JS" "<title>"')
+  if (!title) fail(CLI, `usage: node "$COCKPIT_TITLE_JS" '<title>'`)
 
   const answer = await requestHost<{ title?: string }>(
     CLI,

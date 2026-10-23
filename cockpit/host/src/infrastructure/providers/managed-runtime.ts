@@ -38,7 +38,6 @@ export type { RuntimeResult, RuntimeState }
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 60 * 1000
-const LOCK_STALE_MS = 15 * 60 * 1000
 
 export interface RuntimeSource {
   /** Product name for logs and messages, e.g. "Claude Code". */
@@ -116,11 +115,21 @@ class HttpError extends Error {
   constructor(message: string, readonly status: number, readonly retryAfter: string | null) { super(message) }
 }
 
-// Only our own AbortSignal.timeout aborts these requests, so an AbortError is a timeout too.
+// undici's network errors: fetch rejects with 'fetch failed', a body stream that breaks off with
+// 'terminated'. Other TypeErrors are bugs and fail at once. Only our own AbortSignal.timeout
+// aborts these requests, so an AbortError is a timeout too.
+const NETWORK_ERRORS = new Set(['fetch failed', 'terminated'])
 const transient = (e: unknown) =>
   e instanceof HttpError
     ? e.status === 408 || e.status === 429 || e.status >= 500
-    : e instanceof TypeError || ['TimeoutError', 'AbortError'].includes((e as Error)?.name)
+    : (e instanceof TypeError && NETWORK_ERRORS.has(e.message)) || ['TimeoutError', 'AbortError'].includes((e as Error)?.name)
+
+/**
+ * A lock older than the longest possible install is stale even if its pid is alive (the pid
+ * may belong to another process by now): every download attempt at its timeout plus the
+ * longest backoff, and a margin for metadata, unpacking and the self-test.
+ */
+const lockStaleMs = () => NET_RETRY.attempts * (NET_RETRY.downloadTimeoutMs + NET_RETRY.maxDelayMs) + 15 * 60_000
 
 /** Retry-After in ms (seconds or an HTTP date), else the backoff for this attempt. */
 function retryDelay(e: unknown, attempt: number): number {
@@ -328,7 +337,7 @@ export class ManagedRuntime {
     fs.mkdirSync(this.dir, { recursive: true })
     try {
       const age = Date.now() - fs.statSync(this.lockFile).mtimeMs
-      if (age > LOCK_STALE_MS || !this.lockOwnerAlive()) fs.rmSync(this.lockFile, { force: true })
+      if (age > lockStaleMs() || !this.lockOwnerAlive()) fs.rmSync(this.lockFile, { force: true })
     } catch { /* no lock */ }
     let fd: number
     try {

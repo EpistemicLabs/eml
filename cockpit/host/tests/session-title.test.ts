@@ -89,6 +89,13 @@ describe('session title', () => {
       expect(ledger.get('s-named')?.agentTitle).toBe('Session titles')
     })
 
+    it('drops control characters and bidi overrides from the title', async () => {
+      const outcome = await request({ kind: 'session-title', session: 's-named', title: 'Release\u202e notes\u001b[31m v2', token: TOKEN })
+      expect(outcome).toEqual({ status: 200, payload: { title: 'Release notes[31m v2' } })
+      expect((await request({ kind: 'session-title', session: 's-named', title: '\u200b\u202e', token: TOKEN })).payload.error.code).toBe('INVALID_TITLE')
+      expect((await request({ kind: 'session-title', session: 's-named', title: 'Session titles', token: TOKEN })).status).toBe(200)
+    })
+
     it('refuses without the token, for an unknown session and without a title', async () => {
       expect((await request({ kind: 'session-title', session: 's-named', title: 'x', token: 'guess' })).status).toBe(403)
       expect((await request({ kind: 'session-title', session: 'nope', title: 'x', token: TOKEN })).status).toBe(404)
