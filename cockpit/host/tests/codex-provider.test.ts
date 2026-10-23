@@ -276,11 +276,11 @@ describe('Codex rollout summary', () => {
 
   it('skips the cockpit\'s greeting: the summary is the user\'s first prompt after it', async () => {
     const { readRolloutSummary } = await import('../src/infrastructure/providers/codex/session-summary.js')
-    const { greetingPrompt } = await import('../src/session-greeting.js')
+    const { GREETING_PROMPT } = await import('../src/session-greeting.js')
     const file = join(dir, 'rollout-2026-10-22T12-00-00-greeted.jsonl')
     writeFileSync(file, [
       message('2026-10-22T04:00:01.000Z', 'user', '<environment_context>\n  <cwd>/x</cwd>'),
-      message('2026-10-22T04:00:02.000Z', 'user', greetingPrompt()),
+      message('2026-10-22T04:00:02.000Z', 'user', GREETING_PROMPT),
       message('2026-10-22T04:00:03.000Z', 'assistant', 'Hi — what are we working on?'),
       message('2026-10-22T04:00:04.000Z', 'user', 'Fix the session titles'),
     ].join('\n'))

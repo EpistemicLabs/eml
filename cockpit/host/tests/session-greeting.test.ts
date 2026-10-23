@@ -9,23 +9,13 @@ process.env.EML_COCKPIT_HOME = home
 
 describe('session greeting', () => {
   let bridge: typeof import('../src/session-greeting.js')
-  let paths: typeof import('../src/paths.js')
   const plain = { resume: false, initialPrompt: null, greet: true, worker: false }
 
-  beforeAll(async () => {
-    bridge = await import('../src/session-greeting.js')
-    paths = await import('../src/paths.js')
-  })
+  beforeAll(async () => { bridge = await import('../src/session-greeting.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   it('opens a plain new session with the greeting when it is on', () => {
-    expect(bridge.greetingFor(plain)).toBe(bridge.greetingPrompt())
-  })
-
-  it('names the session with the CLI\'s real path and the title in single quotes', () => {
-    expect(bridge.TITLE_COMMAND).toBe(`node '${paths.SESSION_TITLE_CLI_JS}'`)
-    expect(bridge.greetingPrompt()).toMatch(/name it in a few words: node '[^']+session-title-cli\.js' '<title>'\.$/)
-    expect(bridge.greetingPrompt()).not.toContain('$COCKPIT_TITLE_JS')
+    expect(bridge.greetingFor(plain)).toBe(bridge.GREETING_PROMPT)
   })
 
   it('stays silent when it is off', () => {

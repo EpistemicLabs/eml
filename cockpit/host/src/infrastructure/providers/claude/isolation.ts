@@ -4,7 +4,6 @@ import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_SKILLS_DIR, CONFIG_DIR, LEGACY_EML_HOO
 import { currentVersion } from './runtime.js'
 import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
-import { TITLE_COMMAND } from '../../../session-greeting.js'
 import {
   EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
   installManagedSkills, quote, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
@@ -176,8 +175,6 @@ export function writeSpaceFiles(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
-      // A greeted session names itself (session-greeting.ts) without a permission prompt.
-      permissions: { allow: [`Bash(${TITLE_COMMAND} *)`] },
       hooks: {
         SessionStart: [eml('session-start'), eml('project-block')],
         UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
