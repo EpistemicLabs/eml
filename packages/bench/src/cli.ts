@@ -87,11 +87,12 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
       eml arm builds a fresh brain per question from agent sessions over the
       history, several chat sessions per agent session (--batch-chars, default
       100000). Baselines: full-context, the whole history in the prompt (S
-      only); recent-context, the newest sessions within --recent-chars
-      (default 600000, ~150k tokens). Scored with the official type-specific
-      judge prompts. Takes the runner options above and --arms (eml,
-      full-context, recent-context; default eml + full-context for S, eml +
-      recent-context for M).
+      only); recent-context, the newest sessions within --context-chars
+      (default 600000, ~150k tokens); bm25-context, the sessions a BM25 search
+      with the question ranks highest, within the same budget. Scored with the
+      official type-specific judge prompts. Takes the runner options above and
+      --arms (eml, full-context, recent-context, bm25-context; default eml +
+      full-context for S, eml + bm25-context + recent-context for M).
 
   run writes its result into the work dir unless --out is given; only release
   writes to results/.
@@ -281,15 +282,15 @@ async function longmemeval(args: string[]): Promise<void> {
   const perType = parseInt(arg(args, 'per-type') ?? '10', 10)
   const only = arg(args, 'only')?.split(',') ?? null
   const questions = loadLongMemEval(variant, perType, only)
-  // M does not fit into a context window: its baseline is the newest sessions that do.
-  const { sut, workDir, arms, opts } = publicSetup(args, `longmemeval-${variant}`, LME_ARMS, variant === 's' ? ['eml', 'full-context'] : ['eml', 'recent-context'])
+  // M does not fit into a context window: its baselines are the sessions that do — the best-matching and the newest.
+  const { sut, workDir, arms, opts } = publicSetup(args, `longmemeval-${variant}`, LME_ARMS, variant === 's' ? ['eml', 'full-context'] : ['eml', 'bm25-context', 'recent-context'])
   const lo: LmeOptions = {
     variant,
     arms,
     perType,
     only,
     batchChars: parseInt(arg(args, 'batch-chars') ?? '100000', 10),
-    recentChars: parseInt(arg(args, 'recent-chars') ?? '600000', 10),
+    contextChars: parseInt(arg(args, 'context-chars') ?? '600000', 10),
     ingestTurns: 40,
   }
   const results = await runLongMemEval(sut, workDir, opts, lo, questions)

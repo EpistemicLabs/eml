@@ -26,8 +26,14 @@ import { dumpBrain, type PublicArm } from './locomo'
 //                 chat session would mean ~50 per question. The agent decides what
 //                 to keep. Then the question in a fresh session.
 //   full-context  the whole history, with dates, in the prompt; no tools.
+//   recent-context  M only (its history fits no context window): the newest
+//                 sessions within a budget, in the prompt; no tools.
+//   bm25-context  M only: the sessions a BM25 search with the question ranks
+//                 highest, within the same budget, in date order in the prompt;
+//                 no tools. Search instead of memory — the retrieval baseline of
+//                 the LongMemEval paper, at session granularity.
 //
-// Both get the question's date ("current date"), as in the official reader.
+// All get the question's date ("current date"), as in the official reader.
 //
 // Sample: a stratified sample, the same n per question type, picked by a fixed hash
 // of the question id — reproducible, and reported as a sample.
@@ -56,9 +62,9 @@ const LME_FILES: Record<LmeVariant, { name: string; sha256: string }> = {
 
 export const LME_TYPES = ['single-session-user', 'single-session-assistant', 'single-session-preference', 'multi-session', 'knowledge-update', 'temporal-reasoning']
 
-/** full-context: the whole history in the prompt (S). recent-context: the newest sessions that fit a budget (M). */
-export type LmeArm = PublicArm | 'recent-context'
-export const LME_ARMS: LmeArm[] = ['eml', 'full-context', 'recent-context']
+/** full-context: the whole history in the prompt (S). recent-context / bm25-context: the newest / best-matching sessions that fit a budget (M). */
+export type LmeArm = PublicArm | 'recent-context' | 'bm25-context'
+export const LME_ARMS: LmeArm[] = ['eml', 'full-context', 'recent-context', 'bm25-context']
 
 interface LmeTurn { role: 'user' | 'assistant'; content: string }
 export interface LmeQuestion {
@@ -218,6 +224,43 @@ export function recentSessions(q: LmeQuestion, chars: number): string[] {
   return out
 }
 
+const BM25_K1 = 1.2
+const BM25_B = 0.75
+const terms = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+
+/**
+ * The sessions a BM25 search with the question ranks highest, as many as fit into
+ * `chars` (a session that does not fit is skipped, the next one tried), in date order.
+ */
+export function bm25Sessions(q: LmeQuestion, chars: number): string[] {
+  const all = chronological(q)
+  const docs = all.map(text => {
+    const tf = new Map<string, number>()
+    for (const t of terms(text)) tf.set(t, (tf.get(t) ?? 0) + 1)
+    return { tf, len: [...tf.values()].reduce((s, n) => s + n, 0) }
+  })
+  const avgLen = docs.reduce((s, d) => s + d.len, 0) / Math.max(docs.length, 1)
+  const df = new Map<string, number>()
+  for (const d of docs) for (const t of d.tf.keys()) df.set(t, (df.get(t) ?? 0) + 1)
+  const query = [...new Set(terms(q.question))]
+  const score = (d: (typeof docs)[number]) => query.reduce((s, t) => {
+    const f = d.tf.get(t)
+    if (!f) return s
+    const n = df.get(t)!
+    const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5))
+    return s + idf * (f * (BM25_K1 + 1)) / (f + BM25_K1 * (1 - BM25_B + BM25_B * d.len / avgLen))
+  }, 0)
+  const ranked = docs.map((d, i) => ({ i, s: score(d) })).sort((a, b) => b.s - a.s || b.i - a.i)
+  const picked: number[] = []
+  let size = 0
+  for (const { i } of ranked) {
+    if (size + all[i].length > chars) continue
+    picked.push(i)
+    size += all[i].length
+  }
+  return picked.sort((a, b) => a - b).map(i => all[i])
+}
+
 function system(arm: LmeArm): string {
   if (arm === 'eml') return `You are the user's AI assistant, with a long-term memory reachable through the memory tools. You are shown your earlier chat sessions with the user, a few at a time and in order, and later answer the user's questions. Answer in plain text.`
   return `You are the user's AI assistant. You are given your earlier chat sessions with the user and answer the user's questions. Answer in plain text.`
@@ -227,11 +270,14 @@ function ingestPrompt(batch: string[], k: number, of: number): string {
   return `Earlier chat sessions with the user (part ${k} of ${of}):\n\n${batch.join('\n\n')}\n\nKeep in your memory what may matter later.`
 }
 
-function questionPrompt(arm: LmeArm, q: LmeQuestion, recentChars: number): string {
+function questionPrompt(arm: LmeArm, q: LmeQuestion, contextChars: number): string {
   const ask = `Current date: ${q.question_date}\nThe user asks: ${q.question}`
   if (arm === 'eml') return ask
   if (arm === 'recent-context') {
-    return `Your most recent chat sessions with the user (older ones do not fit and are left out):\n\n${recentSessions(q, recentChars).join('\n\n')}\n\n${ask}`
+    return `Your most recent chat sessions with the user (older ones do not fit and are left out):\n\n${recentSessions(q, contextChars).join('\n\n')}\n\n${ask}`
+  }
+  if (arm === 'bm25-context') {
+    return `The chat sessions with the user that a search for the question found (the others do not fit and are left out):\n\n${bm25Sessions(q, contextChars).join('\n\n')}\n\n${ask}`
   }
   return `Your earlier chat sessions with the user:\n\n${chronological(q).join('\n\n')}\n\n${ask}`
 }
@@ -272,8 +318,8 @@ export interface LmeOptions {
   /** only these question ids (instead of the sample) */
   only: string[] | null
   batchChars: number
-  /** recent-context: the history budget in characters */
-  recentChars: number
+  /** recent-context, bm25-context: the history budget in characters */
+  contextChars: number
   ingestTurns: number
 }
 
@@ -341,7 +387,7 @@ async function runOne(sut: Sut, q: LmeQuestion, arm: LmeArm, dir: string, opts: 
       brain = { ...empty, dataDir }
     }
     ws = await openWorkspace(arm === 'eml' ? 'eml' : 'none', sut, brain ?? ({} as Brain), path.join(dir, 'ask'))
-    const a = await askClaudeCode(ws, opts, { prompt: questionPrompt(arm, q, lo.recentChars), label: 'session', writable: false, system: system(arm) })
+    const a = await askClaudeCode(ws, opts, { prompt: questionPrompt(arm, q, lo.contextChars), label: 'session', writable: false, system: system(arm) })
     Object.assign(r, { answer: a.answer, tool_calls: a.tool_calls.length, usage: a.usage, cost_usd: a.cost_usd ?? null, harness: a.harness })
     if (a.error) r.error = a.error
     else if (!a.answer) r.error = 'no answer'

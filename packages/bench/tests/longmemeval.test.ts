@@ -3,7 +3,7 @@ import os from 'os'
 import path from 'path'
 import crypto from 'crypto'
 import { describe, it, expect } from 'vitest'
-import { splitTopLevelObjects, chronological, batches, recentSessions, stratifiedSample, LME_TYPES, type LmeQuestion } from '../src/longmemeval'
+import { splitTopLevelObjects, chronological, batches, recentSessions, bm25Sessions, stratifiedSample, LME_TYPES, type LmeQuestion } from '../src/longmemeval'
 
 const question = (dates: string[]): LmeQuestion => ({
   question_id: 'q1', question_type: 'multi-session', question: '?', question_date: '2023/06/01 (Thu) 10:00', answer: 'a',
@@ -50,6 +50,20 @@ describe('history order', () => {
     const all = chronological(q)
     expect(recentSessions(q, all[1].length + all[2].length)).toEqual([all[1], all[2]])
     expect(recentSessions(q, 1)).toEqual([])
+  })
+
+  it('bm25-context keeps the best-matching sessions that fit, in date order', () => {
+    const hs = (contents: string[]): LmeQuestion => ({
+      ...question(contents.map((_, i) => `2023/05/0${i + 1} (Mon) 10:00`)),
+      question: 'Which guitar did I buy?',
+      haystack_sessions: contents.map(c => [{ role: 'user' as const, content: c }]),
+    })
+    const h = hs(['I bought a red guitar today', 'the weather is nice', 'my guitar teacher is great', 'we talked about soup'])
+    const all = chronological(h)
+    const both = all[0].length + all[2].length
+    expect(bm25Sessions(h, both)).toEqual([all[0], all[2]])
+    expect(bm25Sessions(h, all[0].length)).toEqual([all[0]])
+    expect(bm25Sessions(h, 1)).toEqual([])
   })
 })
 
