@@ -22,7 +22,21 @@ Visual Studio Code (https://github.com/microsoft/vscode)
   default terminal theme, Copyright (c) Microsoft Corporation, licensed under
   the MIT License (text below).
 
-MIT License text (applies to the shadcn/ui and VS Code portions above):
+Mem0 (https://github.com/mem0ai/mem0, https://github.com/mem0ai/memory-benchmarks)
+
+  The LoCoMo judge prompts in packages/bench/src/locomo.ts are taken verbatim
+  from mem0ai/mem0 (evaluation/metrics/llm_judge.py), Copyright 2023 Taranjeet
+  Singh, and from mem0ai/memory-benchmarks (benchmarks/locomo/prompts.py),
+  Copyright 2025 Mem0.ai, both licensed under the Apache License, Version 2.0
+  (text in packages/bench/licenses/Apache-2.0.txt).
+
+LongMemEval (https://github.com/xiaowu0162/LongMemEval)
+
+  The LongMemEval judge prompts in packages/bench/src/longmemeval.ts are taken
+  verbatim from src/evaluation/evaluate_qa.py, Copyright (c) 2024 Di Wu,
+  licensed under the MIT License (text below).
+
+MIT License text (applies to the shadcn/ui, VS Code and LongMemEval portions above):
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
