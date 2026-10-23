@@ -81,17 +81,6 @@ function finding(c: EngramRow, reason: string): HygieneFinding {
   return { id: c.id, type: c.type, scope: c.scope, title: c.title ?? null, reason }
 }
 
-/**
- * review_due_at as a timestamp, read the way review_due's SQLite datetime()
- * reads it: a value without a zone ('YYYY-MM-DD HH:MM[:SS]' from the
- * v0.8 backfill, or an ISO string without Z) is UTC, not local time.
- */
-function parseDue(value: unknown): number {
-  if (typeof value !== 'string') return NaN
-  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)
-  return Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)
-}
-
 const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'rule-profile-format',
@@ -136,7 +125,7 @@ const SCHEMA_18_CHECKS: readonly HygieneCheck[] = [
       // review_due (review-due.ts) also covers idle tasks; this check is about the dated types
       return (eml.engrams.query({ limit: 10000, review_due: true, now: now.toISOString() }) as EngramRow[])
         .filter((c) => reviewable.includes(c.type))
-        .map((c) => finding(c, `review due since ${new Date(parseDue(c.properties.review_due_at)).toISOString().slice(0, 10)}.`))
+        .map((c) => finding(c, `review due since ${String(c.properties.review_due_at).slice(0, 10)}.`))
     },
   },
 ]

@@ -52,7 +52,7 @@ function read(file: string) {
   const db = new Database(file, { readonly: true })
   try {
     return {
-      engrams: db.prepare('SELECT id, type, scope, title, content, created_at, updated_at FROM engrams ORDER BY id').all(),
+      engrams: db.prepare("SELECT id, type, scope, title, content, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) AS updated_at FROM engrams ORDER BY id").all(),
       subjects: db.prepare('SELECT id, name, description, status FROM subjects ORDER BY id').all(),
       members: db.prepare('SELECT engram_id, subject_id FROM engram_subjects ORDER BY engram_id').all(),
       entities: db.prepare('SELECT id, kind FROM entities ORDER BY id').all(),
@@ -70,9 +70,9 @@ function read(file: string) {
 function expectMigrated(file: string): void {
   expect(read(file)).toEqual({
     engrams: [
-      { id: 'd-1', type: 'decision', scope: 'project.x', title: 'pick-db', content: 'we chose sqlite', created_at: '2026-10-01 10:00:00', updated_at: '2026-10-02 10:00:00' },
-      { id: 'n-1', type: 'note', scope: 'project.x', title: null, content: 'a loose thought about sqlite', created_at: '2026-10-01 10:00:00', updated_at: '2026-10-02 10:00:00' },
-      { id: 't-1', type: 'task', scope: 'project.x', title: 'release-checklist', content: 'ship the release', created_at: '2026-10-01 10:00:00', updated_at: '2026-10-02 10:00:00' },
+      { id: 'd-1', type: 'decision', scope: 'project.x', title: 'pick-db', content: 'we chose sqlite', created_at: '2026-10-01T10:00:00.000Z', updated_at: '2026-10-02T10:00:00.000Z' },
+      { id: 'n-1', type: 'note', scope: 'project.x', title: null, content: 'a loose thought about sqlite', created_at: '2026-10-01T10:00:00.000Z', updated_at: '2026-10-02T10:00:00.000Z' },
+      { id: 't-1', type: 'task', scope: 'project.x', title: 'release-checklist', content: 'ship the release', created_at: '2026-10-01T10:00:00.000Z', updated_at: '2026-10-02T10:00:00.000Z' },
     ],
     subjects: [{ id: 'release-0-14', name: 'release 0.14', description: 'the 0.14 release', status: 'active' }],
     members: [{ engram_id: 'd-1', subject_id: 'release-0-14' }, { engram_id: 't-1', subject_id: 'release-0-14' }],
@@ -92,12 +92,12 @@ function expectChecks(file: string): void {
   const db = new Database(file)
   try {
     db.pragma('foreign_keys = ON')
-    const entity = db.prepare(`INSERT INTO entities (id, name, kind) VALUES (?, ?, ?)`)
+    const entity = db.prepare(`INSERT INTO entities (id, name, kind, created_at, updated_at) VALUES (?, ?, ?, 'now', 'now')`)
     expect(() => entity.run('x-1', 'x', 'person')).not.toThrow()
     expect(() => entity.run('x-2', 'x', 'subject')).toThrow(/CHECK constraint failed/)
-    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method) VALUES (?, 'd-1', 't-1', 'supports', ?)`)
+    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 'd-1', 't-1', 'supports', ?, 'now')`)
     expect(() => rel.run('r-new', 'auto_subject')).toThrow(/CHECK constraint failed/)
-    expect(() => db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id) VALUES ('n-1', 'missing')`).run()).toThrow(/FOREIGN KEY/)
+    expect(() => db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id, created_at) VALUES ('n-1', 'missing', 'now')`).run()).toThrow(/FOREIGN KEY/)
   } finally { db.close() }
 }
 

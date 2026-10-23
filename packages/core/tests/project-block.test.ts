@@ -77,7 +77,8 @@ describe('projectBlock()', () => {
     const r = projectBlock(eml, 'app')!
     expect(r.open_tasks).toBe(12)
     expect(r.markdown).toContain('## Open tasks (12)')
-    expect(r.markdown.indexOf('t11')).toBeLessThan(r.markdown.indexOf('t00'))
+    // urgent first; then the most recently moved (ms timestamps since v0.20 — t10 is the newest normal one)
+    expect(r.markdown.indexOf('t11')).toBeLessThan(r.markdown.indexOf('t10'))
     expect(r.markdown).toContain(`— ${'x'.repeat(100)}…`)
     expect(r.markdown).toContain('- 2 more open tasks — eml_list type=task scope=project.app')
   })

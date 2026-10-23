@@ -98,8 +98,8 @@ describe('task model', () => {
 
     it('a legacy closed task without outcome stays editable', () => {
       rawDb().prepare(
-        `INSERT INTO engrams (id, type, scope, title, content, status, properties)
-         VALUES ('legacy-task', 'task', 'project.eml', 'old', 'old task', 'resolved', '{}')`,
+        `INSERT INTO engrams (id, type, scope, title, content, status, properties, created_at, updated_at, rev)
+         VALUES ('legacy-task', 'task', 'project.eml', 'old', 'old task', 'resolved', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1)`,
       ).run()
       rawDb().prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES ('legacy-task', 'old task', 'project.eml', 'old')`).run()
       expect(writes(eml).trackTask('legacy-task', { content: 'old task, reworded', text: 'reworded' })!.content).toBe('old task, reworded')

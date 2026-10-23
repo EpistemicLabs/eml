@@ -1,4 +1,5 @@
 import { TASK_INACTIVITY_DAYS } from './types'
+import { addDays } from './env'
 
 // v0.15: the one definition of "open tasks in a scope" — boot/show dashboards
 // (EngramStore.buildBrainState) and the project brain-state (ProjectStore) both
@@ -12,16 +13,25 @@ import { TASK_INACTIVITY_DAYS } from './types'
 // the lists below leave it out and count it apart; search and eml_list still
 // find it, and any movement (a patch or an entry) brings it back.
 
-/** The last movement of task `e`: the later of its own update and its newest entry. */
-const LAST_MOVEMENT = `MAX(
-      datetime(e.updated_at),
-      COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = e.id)), datetime(e.updated_at))
-    )`
+/**
+ * The last movement of task `alias`: the later of its own update and its newest
+ * entry. v0.20: every timestamp is ISO-8601 UTC ms, so text order is time order.
+ */
+export function lastMovementSql(alias: string): string {
+  return `MAX(${alias}.updated_at, COALESCE((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = ${alias}.id), ${alias}.updated_at))`
+}
 
-/** Task `e` is backlog: planned and not moved for TASK_INACTIVITY_DAYS. Binds the read's clock (ISO). */
-export const BACKLOG_SQL = `(e.status = 'planned' AND ${LAST_MOVEMENT} < datetime(?, '-${TASK_INACTIVITY_DAYS} days'))`
+/** A task last moved before this is idle: the read's clock minus TASK_INACTIVITY_DAYS. */
+export function inactivityCutoff(now: string): string {
+  return addDays(now, -TASK_INACTIVITY_DAYS)
+}
 
-// The three queries below bind (scope, now): the scope, then the read's clock.
+const LAST_MOVEMENT = lastMovementSql('e')
+
+/** Task `e` is backlog: planned and not moved for TASK_INACTIVITY_DAYS. Binds inactivityCutoff(now). */
+export const BACKLOG_SQL = `(e.status = 'planned' AND ${LAST_MOVEMENT} < ?)`
+
+// The three queries below bind (scope, inactivityCutoff(now)).
 
 /** How many open tasks outside the backlog a scope has (the list below stops at 10). */
 export const OPEN_TASKS_COUNT_SQL = `

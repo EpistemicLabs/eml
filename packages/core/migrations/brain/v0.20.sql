@@ -4,6 +4,11 @@
 -- The complete schema a new brain starts with (schema 20). Existing brains
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
+--
+-- Schema 20 (sync-ready write path): every timestamp is written by the
+-- application, ISO-8601 UTC with milliseconds — no column defaults the clock
+-- would fill (only the migration ledger keeps one). engrams.rev is the
+-- revision counter.
 -- ============================================================
 
 BEGIN TRANSACTION;
@@ -15,7 +20,7 @@ CREATE TABLE agents (
   domains             TEXT,
   description         TEXT,
   metadata            TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at          TEXT NOT NULL
 );
 
 CREATE TABLE users (
@@ -24,8 +29,8 @@ CREATE TABLE users (
   email               TEXT,
   description         TEXT,
   metadata            TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
 );
 CREATE INDEX idx_users_email              ON users(email);
 
@@ -38,8 +43,8 @@ CREATE TABLE entities (
   description         TEXT,
   metadata            TEXT,
   status_tracks       TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
 );
 
 CREATE TABLE projects (
@@ -55,8 +60,8 @@ CREATE TABLE projects (
   ended_at            TEXT,
   metadata            TEXT,
   status_tracks       TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
 );
 CREATE INDEX idx_projects_status          ON projects(status);
 CREATE INDEX idx_projects_parent          ON projects(parent_project);
@@ -82,7 +87,7 @@ CREATE TABLE engrams (
 
   -- ============ Lifecycle ============
   status              TEXT NOT NULL DEFAULT 'active'
-                      CHECK(status IN ('planned','active','superseded','invalidated','expired','resolved')),
+                      CHECK(status IN ('planned','active','superseded','invalidated','resolved')),
   significance        TEXT NOT NULL DEFAULT 'normal'
                       CHECK(significance IN ('critical','high','normal','low','trivial')),
 
@@ -99,13 +104,13 @@ CREATE TABLE engrams (
   harness             TEXT,                   -- the MCP client (claude-code, codex, …)
 
   -- ============ Timestamps ============
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
 
   -- ============ Revision (v0.20) ============
   -- 1 on create, +1 on every write that changes the row; engram.update and
   -- task.track take an optional base_rev precondition (decision engram-revision-counter)
-  rev                 INTEGER NOT NULL DEFAULT 1
+  rev                 INTEGER NOT NULL
 );
 CREATE INDEX idx_engrams_scope            ON engrams(scope);
 CREATE INDEX idx_engrams_title            ON engrams(title);
@@ -135,7 +140,7 @@ CREATE TABLE relations (
   strength            REAL NOT NULL DEFAULT 1.0,
   explanation         TEXT,
   metadata            TEXT,
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at          TEXT NOT NULL,
   UNIQUE(source_id, target_id, relation)
 );
 CREATE INDEX idx_relations_source         ON relations(source_id);
@@ -155,48 +160,32 @@ CREATE TABLE tags (
   description   TEXT,
   status        TEXT NOT NULL DEFAULT 'active'
                   CHECK (status IN ('active','archived')),
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL
 );
 
 CREATE TABLE engram_tags (
   engram_id     TEXT NOT NULL REFERENCES engrams(id) ON DELETE CASCADE,
   tag_id        TEXT NOT NULL REFERENCES tags(id)     ON DELETE CASCADE,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at    TEXT NOT NULL,
   PRIMARY KEY (engram_id, tag_id)
 );
 CREATE INDEX idx_engram_tags_tag    ON engram_tags(tag_id);
 CREATE INDEX idx_engram_tags_engram ON engram_tags(engram_id);
 
-CREATE TABLE labels (
-  id            TEXT PRIMARY KEY,
-  name          TEXT NOT NULL,
-  description   TEXT,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE engram_labels (
-  engram_id     TEXT NOT NULL REFERENCES engrams(id) ON DELETE CASCADE,
-  label_id      TEXT NOT NULL REFERENCES labels(id)  ON DELETE CASCADE,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (engram_id, label_id)
-);
-CREATE INDEX idx_engram_labels_label  ON engram_labels(label_id);
-CREATE INDEX idx_engram_labels_engram ON engram_labels(engram_id);
-
 CREATE TABLE subjects (
-  id          TEXT PRIMARY KEY,               -- slug of name (same slugify as tags/labels)
+  id          TEXT PRIMARY KEY,               -- slug of name (same slugify as tags)
   name        TEXT NOT NULL,
   description TEXT,
   status      TEXT NOT NULL DEFAULT 'active'  -- 'active' | 'closed'
                 CHECK (status IN ('active','closed')),
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
 
 CREATE TABLE engram_subjects (
   engram_id   TEXT NOT NULL REFERENCES engrams(id) ON DELETE CASCADE,
   subject_id  TEXT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at  TEXT NOT NULL,
   PRIMARY KEY (engram_id, subject_id)
 );
 CREATE INDEX idx_engram_subjects_subject ON engram_subjects(subject_id);
@@ -227,8 +216,6 @@ CREATE TABLE _eml_migrations (
   name        TEXT NOT NULL,
   applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-INSERT INTO labels (id, name, description, created_at) VALUES ('review', 'review', 'Flagged for re-check: an active decision/rule/profile whose review_due_at has passed. Stamped by the nightly deterministic sweep; cleared on confirmReview / supersede / invalidate.', datetime('now'));
 
 INSERT INTO _eml_migrations (version, name) VALUES (20, '020_v0.20');
 

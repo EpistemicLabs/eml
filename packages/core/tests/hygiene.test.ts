@@ -82,15 +82,20 @@ describe('hygieneCheck()', () => {
       expect(c.findings.find(f => f.title === 'backfilled-due')!.reason).toBe('review due since 2020-02-01.')
     })
 
-    it('reads a due date without a zone as UTC, as review_due does', () => {
+    it('v0.20: a due date written without a zone is stored as UTC (ISO-8601 ms) and compared as such', () => {
       const now = new Date('2026-10-19T12:00:00.000Z')
       const soon = rule('global', 'due-in-30-min')
-      plant(soon.id, null, { applies: 'always', review_due_at: '2026-10-19 12:30:00' })
+      writes(eml).update(soon.id, { properties: { review_due_at: '2026-10-19 12:30:00' } })
       const isoSoon = rule('global', 'iso-due-in-30-min')
-      plant(isoSoon.id, null, { applies: 'always', review_due_at: '2026-10-19T12:30' })
+      writes(eml).update(isoSoon.id, { properties: { review_due_at: '2026-10-19T12:30' } })
       const past = rule('global', 'due-30-min-ago')
-      plant(past.id, null, { applies: 'always', review_due_at: '2026-10-19 11:30:00' })
-      expect(check('review-due', now).findings.map(f => f.title)).toEqual(['due-30-min-ago'])
+      writes(eml).update(past.id, { properties: { review_due_at: '2026-10-19 11:30:00' } })
+      const day = rule('global', 'due-today')
+      writes(eml).update(day.id, { properties: { review_due_at: '2026-10-19' } })
+      expect(eml.engrams.get(soon.id)!.properties!.review_due_at).toBe('2026-10-19T12:30:00.000Z')
+      expect(eml.engrams.get(isoSoon.id)!.properties!.review_due_at).toBe('2026-10-19T12:30:00.000Z')
+      expect(eml.engrams.get(day.id)!.properties!.review_due_at).toBe('2026-10-19T00:00:00.000Z')
+      expect(check('review-due', now).findings.map(f => f.title).sort()).toEqual(['due-30-min-ago', 'due-today'])
     })
 
     it('leaves tasks out, even when they are review due', () => {

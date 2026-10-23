@@ -1422,8 +1422,8 @@ describe('EML v0.2', () => {
       // v0.9 Cluster 1: namespace column dropped.
       const raw = (eml as any).db
       const stmt = raw.prepare(`
-        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at, rev)
+        VALUES (?, ?, ?, ?, ?, ?, '2026-10-23T00:00:00.000Z', '2026-10-23T00:00:00.000Z', 1)
       `)
       expect(() => stmt.run(
         'ref-test-id', 'raw insert', 'reference', 'global', 'active', 'normal'

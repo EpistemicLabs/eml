@@ -90,11 +90,11 @@ function writeEverything(eml: EML): void {
   updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
 }
 
-/** Every brain table as sorted JSON rows (FTS shadow tables, the dead labels table and the migration log aside). */
+/** Every brain table as sorted JSON rows (FTS shadow tables and the migration log aside). */
 function dump(eml: EML): Record<string, string[]> {
   const tables = (raw(eml).prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'engrams_fts_%' ORDER BY name`).all() as Array<{ name: string }>)
     .map(r => r.name)
-    .filter(n => n !== '_eml_migrations' && n !== 'labels')
+    .filter(n => n !== '_eml_migrations')
   return Object.fromEntries(tables.map(t => [t, (raw(eml).prepare(`SELECT * FROM ${t}`).all() as unknown[]).map(r => JSON.stringify(r)).sort()]))
 }
 

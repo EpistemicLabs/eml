@@ -23,7 +23,7 @@ import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
 import { type Env, type Stamp, beginWrite, addDays, DEFAULT_ENV } from './env'
 import { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL, inactivityCutoff } from './open-tasks'
 
 // v0.9 Cluster 1: namespace concept removed entirely (Phase 1.3 code, Phase 1.4 DB).
 
@@ -665,9 +665,10 @@ export class EngramStore {
     `, [scope])
 
     const now = this.env.now()
-    const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope, now], now)
-    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, now) as { n: number }).n
-    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, now) as { n: number }).n
+    const cutoff = inactivityCutoff(now)
+    const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope, cutoff], now)
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, cutoff) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, cutoff) as { n: number }).n
 
     // v0.10.5: recency, not significance — orientation wants the decisions that
     // are live in current work, not the biggest strategic ones (titles-only in render).
@@ -699,7 +700,7 @@ export class EngramStore {
     const pending_reviews = this.queryEngramsRaw(`
       SELECT c.* FROM engrams c
       WHERE c.scope = ? AND ${reviewDueSql('c')}
-      ORDER BY datetime(json_extract(c.properties, '$.review_due_at')) ASC
+      ORDER BY json_extract(c.properties, '$.review_due_at') ASC
       LIMIT 15
     `, [scope, ...reviewDueParams(now)], now)
 

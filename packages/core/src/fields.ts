@@ -137,6 +137,24 @@ function isIsoDate(v: string): boolean {
   return /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v.replace(' ', 'T')))
 }
 
+/**
+ * v0.20: a date field stored as a timestamp, ISO-8601 UTC with milliseconds —
+ * review_due_at, so it compares with the clock as text. A date alone is
+ * midnight UTC; a value without a zone is UTC (SQLite's own format).
+ */
+export function isoTimestamp(value: string): string {
+  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)
+  return new Date(Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)).toISOString()
+}
+
+/** The timestamp-valued date fields, normalized on every write (isoTimestamp). */
+export const TIMESTAMP_FIELDS: readonly string[] = ['review_due_at']
+
+/** Normalize the timestamp-valued fields of a properties object in place (after validateFields). */
+export function normalizeTimestampFields(props: Record<string, unknown>): void {
+  for (const k of TIMESTAMP_FIELDS) if (typeof props[k] === 'string') props[k] = isoTimestamp(props[k] as string)
+}
+
 /** One field's value against its spec; null is a clear (handled by the caller). Returns a problem or null. */
 export function fieldProblem(name: string, spec: FieldSpec, value: unknown): string | null {
   switch (spec.kind) {

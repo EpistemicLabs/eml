@@ -9,7 +9,7 @@ import {
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
 import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
-import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
+import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, normalizeTimestampFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
 import {
   appendEntry, bumpRev, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
   type Entry, type EntryInput, type EntryKind, type EvidenceSource, type EvidenceStance,
@@ -70,6 +70,7 @@ export class EngramWriter extends EngramStore {
     // A default-brain seed rule has no agreement yet: getting-started asks the
     // user and sets agreed with their words (decision v0.19-seed-rules-agreement).
     validateFields(type, props, 'create', type === 'rule' && input.origin === SEED_ORIGIN ? ['agreed'] : [])
+    normalizeTimestampFields(props)
 
     // --- universal rules ---
     if (type !== 'log' && isBlank(input.content)) throw new Error('Invalid engram: content must not be empty.')
@@ -1080,6 +1081,7 @@ export class EngramWriter extends EngramStore {
     const reviewDefault = TYPE_REVIEW_DEFAULTS[type]
     if (reviewDefault !== undefined && fieldPatch.review_due_at === null) delete fieldPatch.review_due_at
     validateFields(type, fieldPatch, 'update')
+    normalizeTimestampFields(fieldPatch)
 
     let reactivatesSuperseded = false
     if (patch.status !== undefined) {

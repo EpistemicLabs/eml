@@ -52,10 +52,9 @@ function snapshot(file: string) {
   const db = new Database(file, { readonly: true })
   try {
     return {
-      engrams: db.prepare('SELECT id, type, status, properties, created_at, updated_at FROM engrams ORDER BY id').all(),
-      relations: db.prepare('SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at FROM relations ORDER BY id').all(),
+      engrams: db.prepare("SELECT id, type, status, properties, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) AS updated_at FROM engrams ORDER BY id").all(),
+      relations: db.prepare("SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at FROM relations ORDER BY id").all(),
       tags: db.prepare('SELECT engram_id, tag_id FROM engram_tags ORDER BY engram_id').all(),
-      labels: db.prepare('SELECT engram_id, label_id FROM engram_labels ORDER BY engram_id').all(),
     }
   } finally { db.close() }
 }
@@ -83,7 +82,7 @@ const EXPECTED = {
 function expectRelationCheck(file: string): void {
   const db = new Database(file)
   try {
-    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method) VALUES (?, 't-child', 't-parent', ?, 'manual')`)
+    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 't-child', 't-parent', ?, 'manual', 'now')`)
     expect(() => ins.run('r-part', 'part_of')).not.toThrow()
     expect(() => ins.run('r-junk', 'belongs_to')).toThrow(/CHECK constraint failed/)
   } finally { db.close() }
@@ -136,7 +135,6 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
     const after = snapshot(brainFile)
     expect(after.relations.filter((r: any) => r.relation !== 'part_of')).toEqual(before.relations)
     expect(after.tags).toEqual(before.tags)
-    expect(after.labels).toEqual(before.labels)
     expect(schemaFacts(brainFile)).toMatchObject(EXPECTED)
   })
 

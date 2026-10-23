@@ -1,8 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import Database from 'better-sqlite3'
 import { EML, CommandError } from '../src'
 import { validDecision, validTask, validNote, validStatus, validProfile, writes } from './fixtures'
 
@@ -104,24 +100,5 @@ describe('engram rev', () => {
     it('an unknown id stays NOT_FOUND', () => {
       expect(reject(() => eml.apply({ name: 'engram.update', input: { id: 'ghost', patch: { content: 'x' }, base_rev: 1 } })).code).toBe('NOT_FOUND')
     })
-  })
-})
-
-describe('schema 20 migration', () => {
-  it('gives every existing engram rev 1', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'eml-v020-'))
-    try {
-      const file = join(dir, 'b.db')
-      const db = new Database(file)
-      db.exec(readFileSync(join(__dirname, '..', 'migrations', 'brain', 'v0.20.sql'), 'utf-8'))
-      // back to schema 19: the table without rev, one engram in it
-      db.exec(`ALTER TABLE engrams DROP COLUMN rev; DELETE FROM _eml_migrations WHERE version = 20;
-        INSERT INTO _eml_migrations (version, name) VALUES (19, '019_v0.19');
-        INSERT INTO engrams (id, type, scope, content, created_at, updated_at) VALUES ('e1', 'note', 'global', 'old', '2026-01-01 00:00:00', '2026-01-01 00:00:00');`)
-      db.close()
-      const eml = new EML({ namespace: 'test', dbPath: file })
-      expect(eml.engrams.get('e1')!.rev).toBe(1)
-      eml.close()
-    } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

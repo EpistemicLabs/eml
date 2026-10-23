@@ -19,6 +19,8 @@ import { runForwardMigrations } from '../src/forward-migrations'
 const MIGRATIONS = join(__dirname, '..', 'migrations', 'brain')
 const V12_FIXTURE = join(__dirname, 'fixtures', 'brain-v12.sql')
 const STAMP = '2026-10-02 10:00:00'
+// schema 20 rewrites every timestamp to ISO-8601 UTC ms
+const STAMP_ISO = '2026-10-02T10:00:00.000Z'
 
 type Row = {
   id: string, type: string, scope: string, title?: string, content?: string, status?: string, significance?: string,
@@ -203,8 +205,8 @@ function expectMigrated(file: string): void {
       `SELECT id, source_id, detection_method, strength, explanation, created_at FROM relations WHERE relation = 'supersedes' AND target_id = ? ORDER BY source_id`,
     ).all(target)
     expect(edges('d-old')).toEqual([
-      { id: 'd-new-supersedes-d-old', source_id: 'd-new', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.supersedes', created_at: STAMP },
-      { id: 'n-sup-title-supersedes-d-old', source_id: 'n-sup-title', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.supersedes', created_at: STAMP },
+      { id: 'd-new-supersedes-d-old', source_id: 'd-new', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.supersedes', created_at: STAMP_ISO },
+      { id: 'n-sup-title-supersedes-d-old', source_id: 'n-sup-title', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.supersedes', created_at: STAMP_ISO },
     ])
     expect(engram(db, 'd-new').properties).toEqual({ rationale: 'r', alternatives: ['x'] })
     expect(edges('r-old1').map(e => e.source_id)).toEqual(['r-new'])
@@ -217,7 +219,7 @@ function expectMigrated(file: string): void {
     expect(engram(db, 'n-sup-live').properties).toEqual({ detail: 'supersedes: d-alt' })
     // superseded_by: one id or a list, the edge points at the holder
     expect(edges('ref-old')).toEqual([
-      { id: 'ref-2-supersedes-ref-old', source_id: 'ref-2', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.superseded_by', created_at: STAMP },
+      { id: 'ref-2-supersedes-ref-old', source_id: 'ref-2', detection_method: 'agent_declared', strength: 1, explanation: 'v0.19 migration: from properties.superseded_by', created_at: STAMP_ISO },
     ])
     expect(engram(db, 'ref-old').properties).toEqual({ source: 'https://d.example' })
     expect(edges('n-old').map(e => e.source_id)).toEqual(['n-pane', 'n-session'])
@@ -227,7 +229,7 @@ function expectMigrated(file: string): void {
     expect(engram(db, 'l-old').properties).toEqual({ detail: 'superseded_by: 0f8fad5b' })
     // (h) status chain: the next newer status in the scope, unless an edge already says otherwise
     expect(edges('s-old-a')).toEqual([
-      { id: 's-old-c-supersedes-s-old-a', source_id: 's-old-c', detection_method: 'auto_temporal', strength: 1, explanation: 'v0.19 migration: the next newer status in the scope', created_at: '2026-09-05 10:00:00' },
+      { id: 's-old-c-supersedes-s-old-a', source_id: 's-old-c', detection_method: 'auto_temporal', strength: 1, explanation: 'v0.19 migration: the next newer status in the scope', created_at: '2026-09-05T10:00:00.000Z' },
     ])
     expect(edges('s-old-c').map(e => [e.source_id, e.detection_method])).toEqual([['s-1', 'agent_declared']])
     expect(edges('s-old-b').map(e => [e.source_id, e.detection_method])).toEqual([['s-1', 'auto_temporal']])

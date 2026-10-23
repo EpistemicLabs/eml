@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
-import { Engram, EngramType, TASK_INACTIVITY_DAYS, TYPE_REVIEW_DEFAULTS } from './types'
+import { Engram, EngramType, TYPE_REVIEW_DEFAULTS } from './types'
+import { lastMovementSql, inactivityCutoff } from './open-tasks'
 
 /**
  * v0.13: engram types that are reviewed by date = the keys of
@@ -16,28 +17,25 @@ export const REVIEWABLE_TYPES = Object.keys(TYPE_REVIEW_DEFAULTS) as EngramType[
  *  - an active task whose last movement (the later of its own update and its
  *    newest entry) is older than TASK_INACTIVITY_DAYS. A planned task is not
  *    reviewed: idle, it is backlog (open-tasks.ts).
- * datetime() normalizes stored values and the cutoff, so SQLite-format and ISO
- * timestamps compare correctly. Bind `now` (the read's clock) twice, in order.
+ * v0.20: timestamps and review_due_at are ISO-8601 UTC ms (schema 20, and
+ * normalized on write), so they compare as text. Bind reviewDueParams(now).
  */
 export function reviewDueSql(alias: string): string {
   const types = REVIEWABLE_TYPES.map(t => `'${t}'`).join(', ')
   return `(${alias}.status = 'active' AND (
     (${alias}.type IN (${types})
       AND json_extract(${alias}.properties, '$.review_due_at') IS NOT NULL
-      AND datetime(json_extract(${alias}.properties, '$.review_due_at')) < datetime(?)
+      AND json_extract(${alias}.properties, '$.review_due_at') < ?
       AND coalesce(json_extract(${alias}.properties, '$.binding'), 'standing') = 'standing')
     OR
     (${alias}.type = 'task'
-      AND MAX(
-        datetime(${alias}.updated_at),
-        COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = ${alias}.id)), datetime(${alias}.updated_at))
-      ) < datetime(?, '-${TASK_INACTIVITY_DAYS} days'))
+      AND ${lastMovementSql(alias)} < ?)
   ))`
 }
 
 /** The bound values for one reviewDueSql expression. */
 export function reviewDueParams(now: string): string[] {
-  return [now, now]
+  return [now, inactivityCutoff(now)]
 }
 
 /**

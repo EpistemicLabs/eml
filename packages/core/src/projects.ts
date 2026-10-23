@@ -7,7 +7,7 @@ import { hydrateEngramTags } from './tags'
 import { hydrateReviewDue } from './review-due'
 import { hydrateEngramSubjects } from './subjects'
 import { type Env, DEFAULT_ENV } from './env'
-import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
+import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL, inactivityCutoff } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
 
@@ -64,9 +64,10 @@ export class ProjectStore {
     `, [scope])
 
     const now = this.env.now()
-    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope, now])
-    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, now) as { n: number }).n
-    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, now) as { n: number }).n
+    const cutoff = inactivityCutoff(now)
+    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope, cutoff])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, cutoff) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, cutoff) as { n: number }).n
 
     // v0.19.1: recency, as eml_show (engrams.buildBrainState) — significance is no
     // longer written, and old high/critical decisions stayed on top.
