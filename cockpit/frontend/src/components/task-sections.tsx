@@ -403,7 +403,7 @@ export function TaskRow({
         <div className="flex items-center gap-2 text-sm">
           <span className="truncate">{label(task)}</span>
           {stage && <StageChip stage={stage} />}
-          {task.labels?.includes("review") && (
+          {task.review_due && (
             <span className="inline-flex shrink-0 items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-warning uppercase">
               review
             </span>

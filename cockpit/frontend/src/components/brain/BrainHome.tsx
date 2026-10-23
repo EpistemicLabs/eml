@@ -278,8 +278,8 @@ export default function BrainHome() {
             ))
           )}
         </ListPanel>
-        {/* v0.13: engrams the nightly sweep flagged as stale (review_due_at
-            passed; v0.15: open tasks without movement for 30 days). Amber, matches the ReviewFlag. */}
+        {/* v0.13: engrams due for a review (review_due_at passed; v0.15: active
+            tasks without movement for 30 days). Amber, matches the ReviewFlag. */}
         <ListPanel title="Pending reviews" accent={REVIEW_ACCENT} count={pendingReviewRows.length}>
           {pendingReviewRows.length === 0 ? (
             <EmptyNote>Nothing to review.</EmptyNote>

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, hygieneCheck, HYGIENE_CHECKS, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
+import { writes } from './fixtures'
 
 // The brain-hygiene check (hygiene.ts).
 describe('hygieneCheck()', () => {
@@ -7,8 +8,8 @@ describe('hygieneCheck()', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
-    eml.agents.store({ id: 'assistant', name: 'Assistant' })
-    eml.projects.create({ id: 'demo', name: 'Demo' })
+    writes(eml).agents.store({ id: 'assistant', name: 'Assistant' })
+    writes(eml).projects.create({ id: 'demo', name: 'Demo' })
   })
   afterEach(() => { eml.close() })
 
@@ -20,7 +21,7 @@ describe('hygieneCheck()', () => {
   }
   const check = (id: string, now?: Date) => hygieneCheck(eml, { now }).checks.find(c => c.id === id)!
   const rule = (scope: string, title: string, properties: Record<string, unknown> = { applies: 'always', why: 'w', agreed: 'yes' }) =>
-    eml.engrams.store({ type: 'rule', scope, title, content: 'do Y', properties })
+    writes(eml).store({ type: 'rule', scope, title, content: 'do Y', properties })
 
   it('lists every check with what and how, also without findings; migration checks name their schema', () => {
     const r = hygieneCheck(eml)
@@ -42,7 +43,7 @@ describe('hygieneCheck()', () => {
       plant(long.id, 'x'.repeat(250))
       const noTrigger = rule('global', 'no-trigger')
       plant(noTrigger.id, null, { applies: 'situational' })
-      const profile = eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'short', properties: { core: true } })
+      const profile = writes(eml).store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'short', properties: { core: true } })
       plant(profile.id, 'p'.repeat(500))
       rule('global', 'fine')
 
@@ -62,7 +63,7 @@ describe('hygieneCheck()', () => {
     it('ignores entries that are no longer active', () => {
       const old = rule('global', 'old')
       plant(old.id, 'x'.repeat(250))
-      eml.engrams.update(old.id, { status: 'invalidated' })
+      writes(eml).update(old.id, { status: 'invalidated' })
       expect(check('rule-profile-format').findings).toEqual([])
     })
   })
@@ -81,34 +82,40 @@ describe('hygieneCheck()', () => {
       expect(c.findings.find(f => f.title === 'backfilled-due')!.reason).toBe('review due since 2020-02-01.')
     })
 
-    it('reads a due date without a zone as UTC, as the nightly sweep does', () => {
+    it('v0.20: a due date written without a zone is stored as UTC (ISO-8601 ms) and compared as such', () => {
       const now = new Date('2026-10-19T12:00:00.000Z')
       const soon = rule('global', 'due-in-30-min')
-      plant(soon.id, null, { applies: 'always', review_due_at: '2026-10-19 12:30:00' })
+      writes(eml).update(soon.id, { properties: { review_due_at: '2026-10-19 12:30:00' } })
       const isoSoon = rule('global', 'iso-due-in-30-min')
-      plant(isoSoon.id, null, { applies: 'always', review_due_at: '2026-10-19T12:30' })
+      writes(eml).update(isoSoon.id, { properties: { review_due_at: '2026-10-19T12:30' } })
       const past = rule('global', 'due-30-min-ago')
-      plant(past.id, null, { applies: 'always', review_due_at: '2026-10-19 11:30:00' })
-      expect(check('review-due', now).findings.map(f => f.title)).toEqual(['due-30-min-ago'])
+      writes(eml).update(past.id, { properties: { review_due_at: '2026-10-19 11:30:00' } })
+      const day = rule('global', 'due-today')
+      writes(eml).update(day.id, { properties: { review_due_at: '2026-10-19' } })
+      expect(eml.engrams.get(soon.id)!.properties!.review_due_at).toBe('2026-10-19T12:30:00.000Z')
+      expect(eml.engrams.get(isoSoon.id)!.properties!.review_due_at).toBe('2026-10-19T12:30:00.000Z')
+      expect(eml.engrams.get(day.id)!.properties!.review_due_at).toBe('2026-10-19T00:00:00.000Z')
+      expect(check('review-due', now).findings.map(f => f.title).sort()).toEqual(['due-30-min-ago', 'due-today'])
     })
 
-    it('leaves tasks out, even when the sweep flagged them', () => {
-      const task = eml.engrams.store({ type: 'task', scope: 'project.demo', title: 'idle', content: 'x' })
+    it('leaves tasks out, even when they are review due', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'idle', content: 'x', status: 'active' })
       ;(eml as any).db.prepare(`UPDATE engrams SET updated_at = datetime('now', '-60 days') WHERE id = ?`).run(task.id)
-      eml.engrams.stampDueReviewLabels()
+      ;(eml as any).db.prepare(`UPDATE entries SET at = datetime('now', '-60 days') WHERE engram_id = ?`).run(task.id)
+      expect(eml.engrams.get(task.id)!.review_due).toBe(true)
       expect(check('review-due').findings).toEqual([])
     })
 
     it('ignores entries that are no longer active', () => {
       const old = rule('global', 'old-due')
       plant(old.id, null, { applies: 'always', review_due_at: '2020-01-01T00:00:00.000Z' })
-      eml.engrams.update(old.id, { status: 'invalidated' })
+      writes(eml).update(old.id, { status: 'invalidated' })
       expect(check('review-due').findings).toEqual([])
     })
   })
 
   describe('schema 19', () => {
-    const ctx = { caller: 'assistant' }
+    const ctx = () => eml.env({ handle: 'assistant' })
     const ids = (id: string) => check(id).findings.map(f => f.id).sort()
 
     it('all schema 19 checks are migration checks with since_schema 19, before the review check', () => {
@@ -123,17 +130,17 @@ describe('hygieneCheck()', () => {
     })
 
     it('reference-without-source: active references without source', () => {
-      const ok = eml.engrams.store({ type: 'reference', scope: 'global', title: 'ok', content: 'x', properties: { source: 'https://x' } })
-      const bare = eml.engrams.store({ type: 'reference', scope: 'global', title: 'bare', content: 'y', properties: { source: 'tmp' } })
+      const ok = writes(eml).store({ type: 'reference', scope: 'global', title: 'ok', content: 'x', properties: { source: 'https://x' } })
+      const bare = writes(eml).store({ type: 'reference', scope: 'global', title: 'bare', content: 'y', properties: { source: 'tmp' } })
       plant(bare.id, null, {})
       expect(ids('reference-without-source')).toEqual([bare.id])
       expect(ok.id).toBeDefined()
     })
 
     it('profile-scope: an active profile outside agent / user / entity', () => {
-      const p = eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'vps-access', content: 'how to reach the VPS' })
+      const p = writes(eml).store({ type: 'profile', scope: 'agent.assistant', title: 'vps-access', content: 'how to reach the VPS' })
       ;(eml as any).db.prepare(`UPDATE engrams SET scope = 'global' WHERE id = ?`).run(p.id)
-      eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'fine', content: 'a facet' })
+      writes(eml).store({ type: 'profile', scope: 'agent.assistant', title: 'fine', content: 'a facet' })
       expect(ids('profile-scope')).toEqual([p.id])
     })
 
@@ -150,21 +157,21 @@ describe('hygieneCheck()', () => {
     it('a single-incident rule is turned into a learning on the user\'s word', () => {
       const r = rule('agent.assistant', 'ask-first')
       plant(r.id, null, { applies: 'always', why: 'once' })
-      const l = eml.engrams.learn({ scope: 'agent.assistant', title: 'ask-first-learning', content: 'Ask first.', source: 'self', happened: 'once' }, ctx)
+      const l = writes(eml).learn({ scope: 'agent.assistant', title: 'ask-first-learning', content: 'Ask first.', source: 'self', happened: 'once' }, ctx())
       if (!l.written) throw new Error('not written')
-      eml.engrams.update(l.engram.id, { supersedes: [r.id] }, ctx)
+      writes(eml).update(l.engram.id, { supersedes: [r.id] }, ctx())
       expect(eml.engrams.get(r.id)!.status).toBe('superseded')
       expect(ids('rule-without-agreement')).toEqual([])
     })
 
     it('task-link-without-binding: task-linked decisions and notes without binding, with the task status', () => {
-      const task = eml.engrams.store({ type: 'task', scope: 'project.demo', title: 't', content: 'do' })
-      const d = eml.engrams.store({
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 't', content: 'do' })
+      const d = writes(eml).store({
         type: 'decision', scope: 'project.demo', title: 'd', content: 'pick', task_id: task.id,
         properties: { rationale: 'r', alternatives: ['x'], binding: 'standing' },
       })
       plant(d.id, null, { rationale: 'r', alternatives: ['x'] })
-      eml.engrams.store({
+      writes(eml).store({
         type: 'note', scope: 'project.demo', title: 'n', content: 'plan', task_id: task.id, properties: { binding: 'task' },
       })
       const c = check('task-link-without-binding')

@@ -23,6 +23,8 @@ const OLD_SEED_RULES = JSON.parse(
 const AGENT = 'juno'
 const DUE = '2027-01-01T00:00:00.000Z'
 const OLD_STAMP = '2026-10-02 10:00:00'
+// schema 20 rewrites every timestamp to ISO-8601 UTC ms
+const OLD_STAMP_ISO = '2026-10-02T10:00:00.000Z'
 const sub = (s: string) => s.replace(/<agent>/g, AGENT)
 
 /**
@@ -104,7 +106,7 @@ function expectMigrated(file: string, dir: string): void {
     const { source_id: _s, source_type: _t, agreed: _a, ...seedFields } = seed.properties
     expect(row.properties).toEqual({ ...seedFields, review_due_at: DUE })
     expect(row.properties.boot).toBeUndefined()
-    expect(row.updated_at).not.toBe(OLD_STAMP)
+    expect(row.updated_at).not.toBe(OLD_STAMP_ISO)
   })
   // Edited, unmarked, with a why of its own, or inactive: untouched.
   expect(after['c-1'].content).toBe(`${OLD_SEED_RULES[0].content} Always.`)
@@ -112,7 +114,7 @@ function expectMigrated(file: string, dir: string): void {
   expect(after['c-1'].properties.boot).toBeUndefined()
   for (const id of ['u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].content).toBe(OLD_SEED_RULES[0].content)
   expect(after['w-1'].properties.why).toBe('my own reason')
-  for (const id of ['c-1', 'u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP)
+  for (const id of ['c-1', 'u-1', 'w-1', 'd-1', 't-1', 'i-1']) expect(after[id].updated_at).toBe(OLD_STAMP_ISO)
 
   const db = new Database(file, { readonly: true })
   try {
@@ -157,7 +159,7 @@ describe('v0.18 migration — unchanged default-brain seed rules become the shor
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 17)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18, 19] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18, 19, 20] })
     } finally { control.close() }
 
     expectMigrated(brainFile, dir)

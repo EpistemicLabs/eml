@@ -281,6 +281,11 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
 
       const got = jsonOf(await call('eml_get', { id: parent.id }))
       expect(got.entries.some((e: any) => e.kind === 'change')).toBe(true)
+      // v0.20: rev is for the cockpit and the sync — tools neither show nor take it
+      expect(textOf(await call('eml_get', { id: parent.id }))).not.toMatch(/"rev"/)
+      expect(textOf(reopen)).not.toMatch(/"rev"/)
+      const withBase = await call('eml_track_task', { task_id: parent.id, text: 'x', base_rev: 1 })
+      expect(withBase.isError).toBe(true)
       const notesOnly = jsonOf(await call('eml_get', { id: parent.id, notes_only: true }))
       expect(notesOnly.entries.every((e: any) => e.kind === 'note')).toBe(true)
 
@@ -289,6 +294,15 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
 
       const ghost = await call('eml_track_task', { task_id: 'no-such-task', text: 'x' })
       expect(ghost.isError).toBe(true)
+    })
+
+    it('eml_create_task + eml_track_task carry the intent (set on create, changed and cleared on track)', async () => {
+      const t = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'why-task', intent: 'users see X' })))
+      expect(t.properties.intent).toBe('users see X')
+      const changed = await call('eml_track_task', { task_id: t.id, intent: 'users see X sooner' })
+      expect(changed.isError).toBeFalsy()
+      expect(jsonOf(changed).properties.intent).toBe('users see X sooner')
+      expect(jsonOf(await call('eml_track_task', { task_id: t.id, intent: null })).properties.intent).toBeUndefined()
     })
 
     it('eml_create_task supersedes: open sub-tasks banner points to eml_track_task parent_id', async () => {

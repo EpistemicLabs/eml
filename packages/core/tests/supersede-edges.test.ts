@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
-import { validDecision } from './fixtures'
+import {
+  validDecision, writes,
+} from './fixtures'
 
 // v0.13: a write that declares supersedes flips each prior engram to
 // 'superseded' AND draws a 'supersedes' edge (new → old) — the status-type
@@ -12,7 +14,7 @@ describe('explicit supersede edges (v0.13)', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
 
   afterEach(() => eml.close())
@@ -26,7 +28,7 @@ describe('explicit supersede edges (v0.13)', () => {
     (rawDb().prepare('SELECT status FROM engrams WHERE id = ?').get(id) as { status: string }).status
 
   const decision = (title: string, content: string, supersedes?: string[]) =>
-    eml.engrams.store(validDecision({ scope: 'project.eml', title, content, supersedes }))
+    writes(eml).store(validDecision({ scope: 'project.eml', title, content, supersedes }))
 
   it('flips the prior engram AND draws the supersedes edge', () => {
     const old = decision('comm', 'v1')

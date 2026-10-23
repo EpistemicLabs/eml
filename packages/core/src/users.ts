@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { User, UserInput, UserUpdate } from './types'
+import { User } from './types'
 
 // v0.9 Cluster 1: reserved-IDs list removed (master/global conflicts no longer
 // exist) and the default_namespace column removed from the code layer
@@ -8,22 +8,6 @@ import { User, UserInput, UserUpdate } from './types'
 
 export class UserStore {
   constructor(private db: Database.Database) {}
-
-  create(input: UserInput): User {
-    this.db.prepare(`
-      INSERT INTO users (
-        id, name, email, description, metadata,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-    `).run(
-      input.id,
-      input.name,
-      input.email ?? null,
-      input.description ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null
-    )
-    return this.get(input.id)!
-  }
 
   get(id: string): User | null {
     const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any
@@ -36,32 +20,12 @@ export class UserStore {
       .map(r => this.rowToUser(r))
   }
 
-  update(id: string, patch: UserUpdate): User | null {
-    const existing = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any
-    if (!existing) return null
-
-    const fields: string[] = []
-    const params: any[] = []
-
-    if (patch.name !== undefined)              { fields.push('name = ?');              params.push(patch.name) }
-    if (patch.email !== undefined)             { fields.push('email = ?');             params.push(patch.email) }
-    if (patch.description !== undefined)       { fields.push('description = ?');       params.push(patch.description) }
-    if (patch.metadata !== undefined)          { fields.push('metadata = ?');          params.push(JSON.stringify(patch.metadata)) }
-
-    if (fields.length === 0) return this.rowToUser(existing)
-
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
-    this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params)
-    return this.get(id)
-  }
-
   exists(id: string): boolean {
     const row = this.db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)
     return !!row
   }
 
-  private rowToUser(row: any): User {
+  rowToUser(row: any): User {
     return {
       id: row.id,
       name: row.name,

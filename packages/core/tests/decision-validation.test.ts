@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, validateFields } from '../src'
-import { validDecision } from './fixtures'
+import {
+  validDecision, writes,
+} from './fixtures'
 
 // A decision is a choice between real alternatives, with a rationale (v0.15).
 // v0.19: the requirement lives in the field model (fields.ts) — core rejects a
@@ -13,7 +15,7 @@ describe('decision validation', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
 
   afterEach(() => eml.close())
@@ -25,8 +27,8 @@ describe('decision validation', () => {
   /** A decision as written before v0.15: no alternatives, no rationale. */
   function legacyDecision(id: string, title: string): void {
     rawDb().prepare(
-      `INSERT INTO engrams (id, type, scope, title, content, properties)
-       VALUES (?, 'decision', 'project.eml', ?, 'legacy choice', '{"detail":"decision_type: architectural"}')`,
+      `INSERT INTO engrams (id, type, scope, title, content, properties, created_at, updated_at, rev)
+       VALUES (?, 'decision', 'project.eml', ?, 'legacy choice', '{"detail":"decision_type: architectural"}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1)`,
     ).run(id, title)
     rawDb().prepare(
       `INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, 'legacy choice', 'project.eml', ?)`,
@@ -35,7 +37,7 @@ describe('decision validation', () => {
 
   describe('on create', () => {
     it('rejects a decision without alternatives, naming only what is missing', () => {
-      expect(() => eml.engrams.store({
+      expect(() => writes(eml).store({
         type: 'decision', scope: 'project.eml', title: 'use-sqlite', content: 'use sqlite',
         properties: { rationale: 'one file, no server' },
       })).toThrow('Invalid engram: a decision needs alternatives.')
@@ -45,7 +47,7 @@ describe('decision validation', () => {
     it('rejects a decision without a rationale', () => {
       let msg = ''
       try {
-        eml.engrams.store({
+        writes(eml).store({
           type: 'decision', scope: 'project.eml', title: 'use-sqlite', content: 'use sqlite',
           properties: { alternatives: ['postgres'] },
         })
@@ -55,32 +57,32 @@ describe('decision validation', () => {
     })
 
     it('names both when both are missing', () => {
-      expect(() => eml.engrams.store({ type: 'decision', scope: 'project.eml', title: 'use-sqlite', content: 'use sqlite' }))
+      expect(() => writes(eml).store({ type: 'decision', scope: 'project.eml', title: 'use-sqlite', content: 'use sqlite' }))
         .toThrow('Invalid engram: a decision needs rationale. a decision needs alternatives.')
     })
 
     it('needs a title (the recall anchor)', () => {
-      expect(() => eml.engrams.store(validDecision({ title: undefined })))
+      expect(() => writes(eml).store(validDecision({ title: undefined })))
         .toThrow('Invalid engram: a decision needs a title')
     })
 
     it('treats an empty list, blank alternatives and a blank rationale as missing', () => {
-      expect(() => eml.engrams.store(validDecision({ properties: { alternatives: [] } })))
+      expect(() => writes(eml).store(validDecision({ properties: { alternatives: [] } })))
         .toThrow(/alternatives must not be empty/)
-      expect(() => eml.engrams.store(validDecision({ properties: { alternatives: ['  ', ''] } })))
+      expect(() => writes(eml).store(validDecision({ properties: { alternatives: ['  ', ''] } })))
         .toThrow(/alternatives must not be empty/)
-      expect(() => eml.engrams.store(validDecision({ properties: { rationale: '   ' } })))
+      expect(() => writes(eml).store(validDecision({ properties: { rationale: '   ' } })))
         .toThrow(/rationale must not be empty/)
       expect(count()).toBe(0)
     })
 
     it('rejects a status on create — a new decision is active', () => {
-      expect(() => eml.engrams.store(validDecision({ status: 'planned' })))
+      expect(() => writes(eml).store(validDecision({ status: 'planned' })))
         .toThrow('Invalid engram: status is not set on create — a new decision is active.')
     })
 
     it('accepts a decision with one alternative and a rationale', () => {
-      const d = eml.engrams.store({
+      const d = writes(eml).store({
         type: 'decision', scope: 'project.eml', title: 'use-sqlite', content: 'use sqlite',
         properties: { rationale: 'one file, no server', alternatives: ['postgres'] },
       })
@@ -93,16 +95,16 @@ describe('decision validation', () => {
   describe('legacy decisions (written before v0.15)', () => {
     it('stay patchable: content, fields and status', () => {
       legacyDecision('legacy-1', 'old-choice')
-      expect(eml.engrams.update('legacy-1', { content: 'legacy choice, reworded' })!.content)
+      expect(writes(eml).update('legacy-1', { content: 'legacy choice, reworded' })!.content)
         .toBe('legacy choice, reworded')
-      expect(eml.engrams.update('legacy-1', { properties: { review_due_at: '2027-01-01T00:00:00.000Z' } }))
+      expect(writes(eml).update('legacy-1', { properties: { review_due_at: '2027-01-01T00:00:00.000Z' } }))
         .toBeTruthy()
-      expect(eml.engrams.update('legacy-1', { status: 'invalidated' })!.status).toBe('invalidated')
+      expect(writes(eml).update('legacy-1', { status: 'invalidated' })!.status).toBe('invalidated')
     })
 
     it('stay supersedable by a new engram (supersedes)', () => {
       legacyDecision('legacy-2', 'old-choice')
-      const next = eml.engrams.store(validDecision({
+      const next = writes(eml).store(validDecision({
         scope: 'project.eml', title: 'old-choice', content: 'the new choice', supersedes: ['legacy-2'],
       }))
       expect(eml.engrams.get('legacy-2')!.status).toBe('superseded')

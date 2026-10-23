@@ -163,10 +163,29 @@ describe('v0.19 REST', () => {
       const userWithoutQuote = await post('/learning', { id: first.body.engram.id, source: 'user', happened: 'x' })
       expect(userWithoutQuote.status).toBe(400)
       expect(userWithoutQuote.body.error).toMatch(/needs quote/)
+
+      // v0.20: evidence for an unknown id is a 404
+      const ghost = await post('/learning', { id: 'ghost', source: 'self', happened: 'x' })
+      expect(ghost.status).toBe(404)
+      expect(ghost.body.error).toBe('learning not found')
     })
   })
 
   describe('POST /update (flat patch)', () => {
+    it('v0.20: rev on the engram; base_rev is a precondition — 409 with current_rev, nothing written', async () => {
+      const n = await create(validNote({ title: 'rev-note', content: 'v1' }))
+      expect(n.body.rev).toBe(1)
+      const ok = await post('/update', { id: n.body.id, patch: { content: 'v2' }, base_rev: 1 })
+      expect(ok.status).toBe(200)
+      expect(ok.body.rev).toBe(2)
+      const stale = await post('/update', { id: n.body.id, patch: { content: 'v3' }, base_rev: 1 })
+      expect(stale.status).toBe(409)
+      expect(stale.body).toMatchObject({ current_rev: 2 })
+      expect((await get(`/engram/${n.body.id}`)).body).toMatchObject({ content: 'v2', rev: 2 })
+      const task = await create(validTask({ title: 'rev-task' }))
+      expect((await post(`/task/${task.body.id}/track`, { text: 'x', base_rev: 5 })).status).toBe(409)
+    })
+
     it('typed fields flat, null clears, the diff comes back; a field of another type is a 400', async () => {
       const ref = await create(validReference({ properties: { source: 'https://a.example', source_name: 'A' } }))
       const r = await post('/update', { id: ref.body.id, patch: { source: 'https://b.example', source_name: null, checked_at: '2026-10-19' } })
@@ -294,8 +313,22 @@ describe('v0.19 REST', () => {
       }
     })
 
+    it('v0.20: the user and agent writes answer 410, pointing at /object; their reads stay', async () => {
+      for (const [method, path, kind] of [['POST', '/user', 'user'], ['PUT', '/user/default', 'user'], ['POST', '/agent', 'agent'], ['PUT', '/agent/default', 'agent']]) {
+        const r = await request(method, `${baseUrl}${path}`, auth(), JSON.stringify({ id: 'x', name: 'X' }))
+        expect(r.status, `${method} ${path}`).toBe(410)
+        expect(r.body.error).toContain(`removed in EML v0.20 — a ${kind} is an object: POST /object/${kind}`)
+      }
+      const created = await post('/object/agent', { id: 'scout', name: 'Scout', domains: ['btc'] })
+      expect(created.status).toBe(201)
+      expect(created.body).toMatchObject({ created: true, object: { id: 'scout', domains: ['btc'] } })
+      expect((await put('/object/user/default', { email: 'd@example.com' })).body.object.email).toBe('d@example.com')
+      expect((await get('/agent/scout')).body.agent.id).toBe('scout')
+      expect((await get('/users')).status).toBe(200)
+    })
+
     it('the read routes the cockpit uses stay', async () => {
-      for (const path of ['/projects', '/tags', '/subjects', '/entities']) expect((await get(path)).status, path).toBe(200)
+      for (const path of ['/projects', '/tags', '/subjects', '/entities', '/users', '/agents']) expect((await get(path)).status, path).toBe(200)
     })
   })
 
@@ -320,6 +353,23 @@ describe('v0.19 REST', () => {
       expect(binding.status).toBe(400)
       expect(binding.body.error).toBe('binding is one of task, standing')
       expect((await get('/list?type=task&binding=task')).status).toBe(200)
+    })
+
+    it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {
+      const stale = await create(validDecision({ title: 'rest-stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
+      const fresh = await create(validDecision({ title: 'rest-fresh' }))
+      const due = (await get('/list?review_due=true&limit=200')).body.engrams
+      expect(due.map((e: { id: string }) => e.id)).toContain(stale.body.id)
+      expect(due.every((e: { review_due: boolean }) => e.review_due === true)).toBe(true)
+      const notDue = (await get('/list?review_due=false&limit=200')).body.engrams.map((e: { id: string }) => e.id)
+      expect(notDue).toContain(fresh.body.id)
+      expect(notDue).not.toContain(stale.body.id)
+      expect((await get(`/engram/${stale.body.id}`)).body.review_due).toBe(true)
+      expect((await get('/list?review_due=yes')).body.error).toBe('review_due is true or false')
+      const label = await get('/list?label=review')
+      expect(label.status).toBe(400)
+      expect(label.body.unknown).toEqual(['label'])
+      expect(label.body.allowed).toContain('review_due')
     })
   })
 

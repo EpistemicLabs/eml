@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { TypeBadge, ReviewFlag } from "@/components/ui/badge";
 import { useEngramPanel } from "@/lib/engram-panel";
-import { REVIEW_LABEL, taskStage, type Engram } from "@/lib/types";
+import { taskStage, type Engram } from "@/lib/types";
 import { StageChip } from "@/components/task-sections";
 
 // Ported from packages/web/components/engram-row.tsx (next/link → react-router Link).
@@ -59,7 +59,7 @@ export function EngramRow({
               {subtasks.open}/{subtasks.total}
             </span>
           )}
-          {engram.labels?.includes(REVIEW_LABEL) && <ReviewFlag />}
+          {engram.review_due && <ReviewFlag />}
         </div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
           {[

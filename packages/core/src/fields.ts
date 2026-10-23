@@ -52,7 +52,6 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     rationale: text({ required: true }),
     alternatives: list({ required: true }),
     binding: oneOf(BINDINGS),
-    expires_at: date(),
     review_due_at: date(),
     detail: text(),
   },
@@ -77,6 +76,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     detail: text(),
   },
   task: {
+    intent: text(),
     context: text(),
     priority: oneOf(TASK_PRIORITIES),
     assignee_id: text(),
@@ -123,7 +123,7 @@ export const REMOVED_KEYS: ReadonlySet<string> = new Set([
 
 export const UPGRADE_HINT = 'This client predates EML v0.19 — upgrade @engramprotocol/mcp-server to ≥ 0.19.'
 
-const article = (type: string) => (/^[aeiou]/.test(type) ? 'an' : 'a')
+const article = (type: string) => (/^[aeio]/.test(type) ? 'an' : 'a')
 
 /** "Invalid engram: unknown field(s) … for a <type>. Allowed: …" (+ the upgrade hint for removed keys). */
 export function unknownFieldsError(type: string, unknown: string[], allowed: readonly string[]): Error {
@@ -136,6 +136,24 @@ export function unknownFieldsError(type: string, unknown: string[], allowed: rea
 
 function isIsoDate(v: string): boolean {
   return /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v.replace(' ', 'T')))
+}
+
+/**
+ * v0.20: a date field stored as a timestamp, ISO-8601 UTC with milliseconds —
+ * review_due_at, so it compares with the clock as text. A date alone is
+ * midnight UTC; a value without a zone is UTC (SQLite's own format).
+ */
+export function isoTimestamp(value: string): string {
+  const zoneless = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value)
+  return new Date(Date.parse(zoneless ? `${value.replace(' ', 'T')}Z` : value)).toISOString()
+}
+
+/** The timestamp-valued date fields, normalized on every write (isoTimestamp). */
+export const TIMESTAMP_FIELDS: readonly string[] = ['review_due_at']
+
+/** Normalize the timestamp-valued fields of a properties object in place (after validateFields). */
+export function normalizeTimestampFields(props: Record<string, unknown>): void {
+  for (const k of TIMESTAMP_FIELDS) if (typeof props[k] === 'string') props[k] = isoTimestamp(props[k] as string)
 }
 
 /** One field's value against its spec; null is a clear (handled by the caller). Returns a problem or null. */

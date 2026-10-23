@@ -1,6 +1,5 @@
 import type { EML } from './index'
 import type { Engram } from './types'
-import { REVIEW_LABEL } from './engrams'
 import { previewText, SHOW_PREVIEW_CHARS } from './render'
 import { isLegacyFormat } from './validate'
 import { backlogLine } from './open-tasks'
@@ -41,6 +40,7 @@ const fields = {
   trigger: (r: Row) => r.properties?.trigger as string | undefined,
   priority: (t: Row) => (t.properties?.priority as string | undefined) ?? 'normal',
   stage: (t: Row) => t.properties?.stage as string | undefined,
+  intent: (t: Row) => t.properties?.intent as string | undefined,
   assignee: (t: Row) => t.properties?.assignee_id as string | undefined,
   state: (s: Row) => s.properties?.state as string | undefined,
   nextStep: (s: Row) => s.properties?.next_step as string | undefined,
@@ -122,9 +122,7 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
   const backlog = state.backlog_tasks ?? 0
   const tasks = (state.open_tasks as Row[]).slice(0, TASKS_SHOWN)
   const log = state.recent_logs[0] as Row | undefined
-  const pendingReviews = eml.engrams
-    .query({ scope, label: REVIEW_LABEL, statuses: ['active', 'planned'], limit: 10000 })
-    .filter(e => e.status === 'active' || e.type === 'task').length
+  const pendingReviews = eml.engrams.query({ scope, review_due: true, limit: 10000 }).length
 
   const rules = projectScopeChain(eml, projectId).flatMap(rulesOf(eml))
   const always = rules.filter(r => fields.applies(r) === 'always')
@@ -139,6 +137,9 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
     const assignee = fields.assignee(t) ? ` → ${fields.assignee(t)}` : ''
     return `- [${fields.priority(t)}·${t.status}${stage}]${assignee} ${t.title ?? '(untitled)'}`
   }
+
+  // the intent goes with the preview: a title-only task line shows neither
+  const taskIntent = (t: Row) => fields.intent(t) ? ` · intent: ${previewText(fields.intent(t)!, TASK_PREVIEW_CHARS)}` : ''
 
   const header: string[] = [`# Project — ${scope} (${project.name})`, 'The rules below are binding while you work in this project.', '']
   const statusLines = (state.current_status as Row[]).map(s => {
@@ -158,7 +159,7 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
       lines.push(`## Open tasks (${openTasks})`)
       shownTasks.forEach((t, i) => lines.push(i >= shownTasks.length - k.tasksTitleOnly
         ? `${taskMeta(t)} · ${t.id}`
-        : `${taskMeta(t)} — ${previewText(t.content, TASK_PREVIEW_CHARS)} · ${t.id}`))
+        : `${taskMeta(t)} — ${previewText(t.content, TASK_PREVIEW_CHARS)}${taskIntent(t)} · ${t.id}`))
       const more = openTasks - shownTasks.length
       if (more > 0) lines.push(`- ${more} ${shownTasks.length > 0 ? 'more ' : ''}open tasks — eml_list type=task scope=${scope} status=planned (or active)`)
       if (backlog > 0) lines.push(backlogLine(backlog, scope))

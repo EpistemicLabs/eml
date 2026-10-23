@@ -10,9 +10,9 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
     {
       title: 'List Engrams',
       description:
-        'Lists engrams by structured filters (type / scope / status / tag / subject / label / task_id …), with ' +
+        'Lists engrams by structured filters (type / scope / status / tag / subject / review_due / task_id …), with ' +
         'optional FTS5 `search` to narrow further. The way to reach non-active engrams ' +
-        '(superseded / resolved / expired) and to run audit queries. For fuzzy topic ' +
+        '(superseded / invalidated / resolved) and to run audit queries. For fuzzy topic ' +
         'search use eml_recall; for a one-scope dashboard use eml_show; for counts use ' +
         'eml_stats.',
       inputSchema: z.object({
@@ -25,9 +25,9 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
         title: z.string().optional().describe(
           'Exact title slug — traces one anchor across status changes.',
         ),
-        status: z.enum(['planned', 'active', 'superseded', 'invalidated', 'expired', 'resolved']).optional().describe(
+        status: z.enum(['planned', 'active', 'superseded', 'invalidated', 'resolved']).optional().describe(
           'active (the usual; for a task = in progress — open tasks are planned + active) · ' +
-          'superseded/invalidated/expired/resolved for audits.',
+          'superseded/invalidated/resolved for audits.',
         ),
         assignee: z.string().optional().describe(
           'Filter tasks by assignee handle — an agent id (e.g. assistant) or a user/member handle ' +
@@ -40,8 +40,9 @@ export function registerListTool(server: McpServer, http: HttpClient): void {
         stage: z.enum(['ideation', 'planning', 'ready', 'implementation']).optional().describe(
           'Filter tasks by stage: ideation · planning · ready · implementation.',
         ),
-        label: z.string().optional().describe(
-          'Filter to engrams carrying this label, e.g. review (flagged for a re-check).',
+        review_due: z.boolean().optional().describe(
+          'true = due for a review: a standing decision, rule or profile past its review_due_at, or an active task ' +
+          'without movement for 30 days. Every engram carries review_due.',
         ),
         task_id: z.string().optional().describe(
           'Everything that hangs on this task: its decisions, notes, events, logs, references, learnings.',

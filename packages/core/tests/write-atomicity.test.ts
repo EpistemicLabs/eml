@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
-import { validDecision } from './fixtures'
+import {
+  validDecision, writes,
+} from './fixtures'
 
 // v0.10.10 L1: store() and update() wrap their row-write + FTS re-sync (+ the
 // status auto-supersede) in a single db.transaction(). A mid-write failure must
@@ -14,7 +16,7 @@ describe('write-path atomicity (v0.10.10 L1)', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
 
   afterEach(() => eml.close())
@@ -25,12 +27,12 @@ describe('write-path atomicity (v0.10.10 L1)', () => {
     (rawDb().prepare('SELECT count(*) AS c FROM engrams').get() as { c: number }).c
 
   it('store(): a failing FTS insert rolls back the engram row (no half-write)', () => {
-    eml.engrams.store(validDecision({ scope: 'project.eml', title: 'seed', content: 'alpha one' }))
+    writes(eml).store(validDecision({ scope: 'project.eml', title: 'seed', content: 'alpha one' }))
     const before = engramCount()
 
     rawDb().exec('DROP TABLE engrams_fts')   // next store()'s FTS insert will throw
 
-    expect(() => eml.engrams.store(validDecision({
+    expect(() => writes(eml).store(validDecision({
       scope: 'project.eml', title: 'doomed', content: 'beta two',
     }))).toThrow()
 
@@ -39,11 +41,11 @@ describe('write-path atomicity (v0.10.10 L1)', () => {
   })
 
   it('update(): a failing FTS re-sync rolls back the row update', () => {
-    const e = eml.engrams.store(validDecision({ scope: 'project.eml', title: 'orig', content: 'original content' }))
+    const e = writes(eml).store(validDecision({ scope: 'project.eml', title: 'orig', content: 'original content' }))
 
     rawDb().exec('DROP TABLE engrams_fts')   // update() re-syncs FTS on content change → throws
 
-    expect(() => eml.engrams.update(e.id, { content: 'mutated content' })).toThrow()
+    expect(() => writes(eml).update(e.id, { content: 'mutated content' })).toThrow()
 
     // the row must still carry the original content — UPDATE rolled back with the FTS failure
     const row = rawDb().prepare('SELECT content FROM engrams WHERE id = ?').get(e.id) as { content: string }

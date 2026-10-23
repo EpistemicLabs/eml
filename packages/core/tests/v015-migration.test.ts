@@ -6,6 +6,7 @@ import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { initControlDatabase } from '../src/control'
 import { runForwardMigrations } from '../src/forward-migrations'
+import { writes } from './fixtures'
 
 // v0.15 Cluster B — v0.15_migrate.sql rebuilds `relations` (the `part_of` verb
 // joins the CHECK) and adds the `task_entries` table. These tests take a seeded
@@ -51,10 +52,9 @@ function snapshot(file: string) {
   const db = new Database(file, { readonly: true })
   try {
     return {
-      engrams: db.prepare('SELECT id, type, status, properties, created_at, updated_at FROM engrams ORDER BY id').all(),
-      relations: db.prepare('SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at FROM relations ORDER BY id').all(),
+      engrams: db.prepare("SELECT id, type, status, properties, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) AS updated_at FROM engrams ORDER BY id").all(),
+      relations: db.prepare("SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at FROM relations ORDER BY id").all(),
       tags: db.prepare('SELECT engram_id, tag_id FROM engram_tags ORDER BY engram_id').all(),
-      labels: db.prepare('SELECT engram_id, label_id FROM engram_labels ORDER BY engram_id').all(),
     }
   } finally { db.close() }
 }
@@ -82,7 +82,7 @@ const EXPECTED = {
 function expectRelationCheck(file: string): void {
   const db = new Database(file)
   try {
-    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method) VALUES (?, 't-child', 't-parent', ?, 'manual')`)
+    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 't-child', 't-parent', ?, 'manual', 'now')`)
     expect(() => ins.run('r-part', 'part_of')).not.toThrow()
     expect(() => ins.run('r-junk', 'belongs_to')).toThrow(/CHECK constraint failed/)
   } finally { db.close() }
@@ -108,7 +108,7 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 14)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18, 19] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18, 19, 20] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 
@@ -127,15 +127,14 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
       // v0.19: part_of comes from a task's parent (trackTask), entries from trackTask text.
-      eml.engrams.trackTask('t-child', { parent_id: 't-parent' }, 'assistant')
-      const tracked = eml.engrams.trackTask('t-parent', { text: 'first entry after the update' }, 'assistant')!
+      writes(eml).trackTask('t-child', { parent_id: 't-parent' }, eml.env({ handle: 'assistant' }))
+      const tracked = writes(eml).trackTask('t-parent', { text: 'first entry after the update' }, eml.env({ handle: 'assistant' }))!
       expect(tracked.entries_written![0].author).toBe('assistant')
     } finally { eml.close() }
 
     const after = snapshot(brainFile)
     expect(after.relations.filter((r: any) => r.relation !== 'part_of')).toEqual(before.relations)
     expect(after.tags).toEqual(before.tags)
-    expect(after.labels).toEqual(before.labels)
     expect(schemaFacts(brainFile)).toMatchObject(EXPECTED)
   })
 

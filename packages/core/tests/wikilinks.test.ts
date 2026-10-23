@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { EML } from '../src'
 import { extractWikilinkTargets } from '../src/engrams'
+import { writes } from './fixtures'
 
 // v0.14 Cluster C: `[[target]]` in content auto-materializes an idempotent
 // related_to edge (detection_method 'agent_declared') to the resolved engram, on
@@ -21,7 +22,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
   let eml: EML
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
   afterEach(() => eml.close())
 
@@ -31,7 +32,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
       `SELECT * FROM relations WHERE source_id = ? AND target_id = ? AND relation = 'related_to'`,
     ).get(from, to)
   const note = (title: string, content: string) =>
-    eml.engrams.store({ type: 'note', scope: 'project.eml', title, content })
+    writes(eml).store({ type: 'note', scope: 'project.eml', title, content })
 
   it('resolves a [[title-slug]] on create → related_to edge (agent_declared)', () => {
     const target = note('the-target', 'target body')
@@ -62,7 +63,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
 
   it('prefers the active engram when a title slug threads several', () => {
     const old = note('threaded', 'v1')
-    eml.engrams.update(old.id, { status: 'invalidated' })
+    writes(eml).update(old.id, { status: 'invalidated' })
     const active = note('threaded', 'v2')
     const src = note('src4', 'link to [[threaded]]')
     expect(relatedTo(src.id, active.id)).toBeTruthy()
@@ -72,7 +73,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
   it('is idempotent — the same link written twice yields one edge', () => {
     const t = note('once', 'body')
     const src = note('twice', 'link [[once]]')
-    eml.engrams.update(src.id, { content: 'link [[once]] again [[once]]' })
+    writes(eml).update(src.id, { content: 'link [[once]] again [[once]]' })
     expect(rawDb().prepare(
       `SELECT COUNT(*) c FROM relations WHERE source_id = ? AND target_id = ? AND relation = 'related_to'`,
     ).get(src.id, t.id).c).toBe(1)
@@ -82,7 +83,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
     const t = note('added-later', 'body')
     const src = note('editme', 'no links yet')
     expect(relatedTo(src.id, t.id)).toBeFalsy()
-    const upd = eml.engrams.update(src.id, { content: 'now links [[added-later]]' })
+    const upd = writes(eml).update(src.id, { content: 'now links [[added-later]]' })
     expect(relatedTo(src.id, t.id)).toBeTruthy()
     expect(upd!.unresolved_links).toBeUndefined()
   })
@@ -91,7 +92,7 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
     const t = note('sticky', 'body')
     const src = note('editme2', 'links [[sticky]]')
     expect(relatedTo(src.id, t.id)).toBeTruthy()
-    eml.engrams.update(src.id, { content: 'link removed' })
+    writes(eml).update(src.id, { content: 'link removed' })
     expect(relatedTo(src.id, t.id)).toBeTruthy() // still there
   })
 
@@ -111,18 +112,18 @@ describe('wikilink materialize on write (v0.14 Cluster C)', () => {
   })
 
   it('prefers the source engram\'s own scope on a cross-scope title collision', () => {
-    eml.projects.create({ id: 'other', name: 'Other' })
+    writes(eml).projects.create({ id: 'other', name: 'Other' })
     const local = note('dup', 'in eml')                                   // scope project.eml
-    const foreign = eml.engrams.store({ type: 'note', scope: 'project.other', title: 'dup', content: 'in other' })
+    const foreign = writes(eml).store({ type: 'note', scope: 'project.other', title: 'dup', content: 'in other' })
     const src = note('picks-local', 'link [[dup]]')                       // written in project.eml
     expect(relatedTo(src.id, local.id)).toBeTruthy()
     expect(relatedTo(src.id, foreign.id)).toBeFalsy()
   })
 
   it('warns on a cross-scope-ambiguous wikilink but still resolves (own scope first)', () => {
-    eml.projects.create({ id: 'other', name: 'Other' })
+    writes(eml).projects.create({ id: 'other', name: 'Other' })
     note('amb', 'in eml')
-    eml.engrams.store({ type: 'note', scope: 'project.other', title: 'amb', content: 'in other' })
+    writes(eml).store({ type: 'note', scope: 'project.other', title: 'amb', content: 'in other' })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     note('amb-src', 'link [[amb]]')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ambiguous wikilink [[amb]]'))
@@ -134,7 +135,7 @@ describe('wikilink edges are only the fallback (v0.17)', () => {
   let eml: EML
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
   afterEach(() => eml.close())
 
@@ -142,31 +143,31 @@ describe('wikilink edges are only the fallback (v0.17)', () => {
     ((eml.engrams as any).db.prepare(
       `SELECT relation FROM relations WHERE source_id = ? AND target_id = ? ORDER BY relation`,
     ).all(from, to) as Array<{ relation: string }>).map(r => r.relation)
-  const task = () => eml.engrams.store({ type: 'task', scope: 'project.eml', title: 'the-task', content: 'do it' })
+  const task = () => writes(eml).store({ type: 'task', scope: 'project.eml', title: 'the-task', content: 'do it' })
 
   it('a note with task_id and a [[link]] to the same task gets only the refines edge', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plan', content: 'plan for [[the-task]]', task_id: t.id, properties: { binding: 'task' } })
+    const n = writes(eml).store({ type: 'note', scope: 'project.eml', title: 'plan', content: 'plan for [[the-task]]', task_id: t.id, properties: { binding: 'task' } })
     expect(edges(n.id, t.id)).toEqual(['refines'])
     expect(n.unresolved_links).toBeUndefined()
   })
 
   it('a typed edge drawn later replaces the wikilink related_to', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'thought', content: 'about [[the-task]]' })
+    const n = writes(eml).store({ type: 'note', scope: 'project.eml', title: 'thought', content: 'about [[the-task]]' })
     expect(edges(n.id, t.id)).toEqual(['related_to'])
-    eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'agent_declared' })
+    writes(eml).relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'agent_declared' })
     expect(edges(n.id, t.id)).toEqual(['supports'])
     // re-saving the content does not bring it back
-    eml.engrams.update(n.id, { content: 'still about [[the-task]]' })
+    writes(eml).update(n.id, { content: 'still about [[the-task]]' })
     expect(edges(n.id, t.id)).toEqual(['supports'])
   })
 
   it('an explicitly drawn related_to stays next to a typed edge', () => {
     const t = task()
-    const n = eml.engrams.store({ type: 'note', scope: 'project.eml', title: 'plain', content: 'no link' })
-    eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'related_to', detection_method: 'manual' })
-    eml.engrams.relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
+    const n = writes(eml).store({ type: 'note', scope: 'project.eml', title: 'plain', content: 'no link' })
+    writes(eml).relate({ source_id: n.id, target_id: t.id, relation: 'related_to', detection_method: 'manual' })
+    writes(eml).relate({ source_id: n.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
     expect(edges(n.id, t.id)).toEqual(['related_to', 'supports'])
   })
 })

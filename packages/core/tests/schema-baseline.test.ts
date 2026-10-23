@@ -32,12 +32,11 @@ function normalize(sql: string): string {
     .trim()
 }
 
-/** Seed rows, without timestamps (the migration ledger differs by design). */
+/** Seed rows, without timestamps (the migration ledger differs by design). v0.20: the labels seed is gone with its table. */
 function seedOf(file: string) {
   const db = new Database(file, { readonly: true })
   try {
     return {
-      labels: db.prepare('SELECT id, name, description FROM labels ORDER BY id').all(),
       version: (db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v,
     }
   } finally { db.close() }

@@ -6,6 +6,7 @@ import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { initControlDatabase } from '../src/control'
 import { runForwardMigrations } from '../src/forward-migrations'
+import { writes } from './fixtures'
 
 // v0.14 Cluster A — the `note` type (decision engram-type-check-in-db). The type
 // CHECK lives in the DB, so v0.14_migrate.sql rebuilds `engrams`; these tests
@@ -45,9 +46,8 @@ function snapshot(file: string) {
     // v0.17 renamed engrams.subject to title; the snapshot reads either.
     const titleCol = (db.prepare(`SELECT name FROM pragma_table_info('engrams') WHERE name IN ('subject', 'title')`).get() as { name: string }).name
     return {
-      engrams: db.prepare(`SELECT id, type, scope, ${titleCol} AS title, content, status, significance, properties, created_at, updated_at FROM engrams ORDER BY id`).all(),
+      engrams: db.prepare(`SELECT id, type, scope, ${titleCol} AS title, content, status, significance, properties, strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS created_at, strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) AS updated_at FROM engrams ORDER BY id`).all(),
       tags: db.prepare('SELECT engram_id, tag_id FROM engram_tags ORDER BY engram_id, tag_id').all(),
-      labels: db.prepare('SELECT engram_id, label_id FROM engram_labels ORDER BY engram_id').all(),
       relations: db.prepare('SELECT id, source_id, target_id, relation FROM relations ORDER BY id').all(),
       fts: db.prepare(`SELECT id FROM engrams_fts WHERE engrams_fts MATCH 'sqlite'`).all(),
     }
@@ -98,7 +98,7 @@ describe('v0.14 note type', () => {
   })
 
   it('stores a note: active, no review date', () => {
-    const e = eml.engrams.store({
+    const e = writes(eml).store({
       type: 'note', scope: 'global', title: 'thesis', content: 'subjects beat hand-drawn edges',
     })
     expect(e.type).toBe('note')
@@ -108,7 +108,7 @@ describe('v0.14 note type', () => {
   })
 
   it('reference is still a valid type', () => {
-    const e = eml.engrams.store({
+    const e = writes(eml).store({
       type: 'reference', scope: 'global', title: 'the-spec', content: 'the spec',
       properties: { source: 'https://example.org/spec' },
     })
@@ -119,7 +119,7 @@ describe('v0.14 note type', () => {
     const db = new Database(join(dir, 't.db'))
     try {
       expect(() => db.prepare(
-        `INSERT INTO engrams (id, type, scope, content) VALUES ('bad', 'bogus', 'global', 'x')`,
+        `INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev) VALUES ('bad', 'bogus', 'global', 'x', 'now', 'now', 1)`,
       ).run()).toThrow(/CHECK constraint failed/)
     } finally { db.close() }
   })
@@ -152,7 +152,6 @@ describe('v0.14 migration — engrams rebuild on a seeded v0.13 brain', () => {
 
     expect(snapshot(brainFile)).toEqual(before)
     expect(before.tags).toHaveLength(2)
-    expect(before.labels).toHaveLength(1)
     expect(before.fts).toEqual([{ id: 'e-decision' }])
 
     const facts = schemaFacts(brainFile)
@@ -161,7 +160,7 @@ describe('v0.14 migration — engrams rebuild on a seeded v0.13 brain', () => {
 
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
-      const n = eml.engrams.store({ type: 'note', scope: 'global', title: 'after-rebuild', content: 'a note after the rebuild' })
+      const n = writes(eml).store({ type: 'note', scope: 'global', title: 'after-rebuild', content: 'a note after the rebuild' })
       expect(n.type).toBe('note')
     } finally { eml.close() }
   })

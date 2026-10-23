@@ -113,7 +113,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   useNoteOpen(noteId);
 
   // What the editor content is based on; a save is checked against it.
-  const baseRef = useRef<string | null>(null);
+  const baseRef = useRef<number | null>(null);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -132,7 +132,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
     setSaveState('saving');
     try {
       const saved = await saveNote(noteId, editor.getMarkdown(), force ? null : baseRef.current);
-      baseRef.current = saved.version;
+      baseRef.current = saved.rev;
       qc.setQueryData(noteKey(noteId), saved);
       void qc.invalidateQueries({ queryKey: notesKey(saved.projectId) });
       setConflict(null);
@@ -175,20 +175,20 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   // First load and every change from outside (agent edit, another tab).
   const note = query.data;
   useEffect(() => {
-    if (!editor || !note || note.version === baseRef.current || savingRef.current) return;
+    if (!editor || !note || note.rev === baseRef.current || savingRef.current) return;
     if (baseRef.current === null) {
       editor.commands.setContent(note.content, { contentType: 'markdown', emitUpdate: false });
-      baseRef.current = note.version;
+      baseRef.current = note.rev;
       // A fresh note's placeholder is selected so typing replaces it.
       if (note.content === NEW_NOTE_CONTENT) editor.chain().focus().selectAll().run();
       else editor.commands.focus('end');
       return;
     }
     if (editor.getMarkdown() === note.content) {
-      baseRef.current = note.version;
+      baseRef.current = note.rev;
     } else if (!dirtyRef.current) {
       editor.commands.setContent(note.content, { contentType: 'markdown', emitUpdate: false });
-      baseRef.current = note.version;
+      baseRef.current = note.rev;
     } else {
       setConflict(note);
     }
@@ -200,7 +200,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   const takeTheirs = () => {
     if (!editor || !conflict) return;
     editor.commands.setContent(conflict.content, { contentType: 'markdown', emitUpdate: false });
-    baseRef.current = conflict.version;
+    baseRef.current = conflict.rev;
     dirtyRef.current = false;
     setConflict(null);
     setSaveState('saved');

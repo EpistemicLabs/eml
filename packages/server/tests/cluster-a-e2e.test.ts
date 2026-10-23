@@ -75,7 +75,7 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
   describe('cross-brain isolation', () => {
     it('token A writes an agent → token B does NOT see the agent', async () => {
       // Token A creates a unique agent in brain A
-      const created = await request('POST', `${baseUrl}/agent`,
+      const created = await request('POST', `${baseUrl}/object/agent`,
         { Authorization: `Bearer ${provA.tokenPlaintext}` },
         JSON.stringify({ id: 'alice-only-agent', name: 'Alice Only' }),
       )
@@ -328,6 +328,9 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       expect((await rel({ source_id: a.body.id, target_id: b.body.id, relation: 'nonsense' })).status).toBe(400)
       expect((await rel({ source_id: a.body.id, target_id: a.body.id, relation: 'related_to' })).status).toBe(400)
       expect((await rel({ source_id: a.body.id, target_id: 'ghost', relation: 'supports' })).status).toBe(404)
+      // v0.20: a closed payload — a bad detection_method or an unknown key is a 400, not a DB error
+      expect((await rel({ source_id: a.body.id, target_id: b.body.id, relation: 'supports', detection_method: 'bogus' })).status).toBe(400)
+      expect((await rel({ source_id: a.body.id, target_id: b.body.id, relation: 'supports', scope: 'global' })).status).toBe(400)
 
       const first = await rel({ source_id: a.body.id, target_id: b.body.id, relation: 'supports' })
       expect(first.status).toBe(201)

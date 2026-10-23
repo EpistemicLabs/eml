@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, projectBlock, renderBrainStateMarkdown, TASK_INACTIVITY_DAYS } from '../src'
-import { validTask } from './fixtures'
+import {
+  validTask, writes,
+} from './fixtures'
 
 // v0.19.1 — the task backlog (task task-backlog-computed): a planned task
 // without movement for TASK_INACTIVITY_DAYS leaves the open-task lists of the
@@ -13,13 +15,13 @@ describe('task backlog', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })
-    eml.agents.store({ id: 'juno', name: 'Juno' })
-    eml.projects.create({ id: 'p', name: 'P' })
+    writes(eml).agents.store({ id: 'juno', name: 'Juno' })
+    writes(eml).projects.create({ id: 'p', name: 'P' })
   })
   afterEach(() => { eml.close() })
 
   const rawDb = (): any => (eml.engrams as any).db
-  const task = (title: string, status: 'planned' | 'active' = 'planned') => eml.engrams.store(validTask({ title, scope, status }))
+  const task = (title: string, status: 'planned' | 'active' = 'planned') => writes(eml).store(validTask({ title, scope, status }))
   const age = (id: string, days: number) => {
     const at = new Date(Date.now() - days * 86400_000).toISOString()
     rawDb().prepare('UPDATE engrams SET updated_at = ? WHERE id = ?').run(at, id)
@@ -42,8 +44,8 @@ describe('task backlog', () => {
     const a = task('a'); age(a.id, 40)
     const b = task('b'); age(b.id, 40)
     expect(openTitles()).toEqual([])
-    eml.engrams.trackTask(a.id, { text: 'picked up again' })
-    eml.engrams.trackTask(b.id, { priority: 'high' })
+    writes(eml).trackTask(a.id, { text: 'picked up again' })
+    writes(eml).trackTask(b.id, { priority: 'high' })
     expect(openTitles().sort()).toEqual(['a', 'b'])
   })
 

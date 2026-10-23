@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { TYPE_COLORS } from "@/components/ui/badge";
-import { REVIEW_LABEL, type Engram } from "@/lib/types";
+import { type Engram } from "@/lib/types";
 
 // Ported from packages/web/components/timeline/timeline.tsx. Days become columns
 // (newest first); each engram is a card in its day's column.
@@ -82,7 +82,7 @@ export function Timeline({ engrams }: { engrams: Engram[] }) {
                       {e.type}
                     </div>
                     <div className="flex items-center gap-1">
-                      {e.labels?.includes(REVIEW_LABEL) && (
+                      {e.review_due && (
                         <span className="text-[10px] leading-none text-warning" title="Flagged for review">⚑</span>
                       )}
                       {!current && (

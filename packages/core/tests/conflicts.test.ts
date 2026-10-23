@@ -6,7 +6,9 @@ import {
   CONFLICT_COVERAGE_THRESHOLD,
   CONFLICT_MAX,
 } from '../src'
-import { validDecision, validLog } from './fixtures'
+import {
+  validDecision, validLog, writes,
+} from './fixtures'
 
 // v0.10.9 write-time conflict guardrail. Asserts the term-coverage gate at the
 // calibrated threshold (≈0.5): a vocabulary-overlapping re-write FIRES (candidate
@@ -56,7 +58,7 @@ describe('conflict guardrail — store() integration', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
 
   afterEach(() => {
@@ -64,13 +66,13 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('FIRES: a different-title re-decide that repeats the vocabulary surfaces the candidate (coverage ≥ 0.5)', () => {
-    const seed = eml.engrams.store(validDecision({
+    const seed = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-and-domain',
       content: 'Brand name is Engram Protocol, domain engramprotocol.io is the canonical naming choice.',
     }))
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-rename',
       content: 'Engram Protocol brand naming and domain choice canonical.',
@@ -86,13 +88,13 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('SILENT: a paraphrase without shared vocabulary stays empty (the accepted FTS/coverage miss)', () => {
-    eml.engrams.store(validDecision({
+    writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-and-domain',
       content: 'Brand name is Engram Protocol, domain engramprotocol.io is the canonical naming choice.',
     }))
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'product-public-identity',
       content: 'What we call the offering publicly, its market label and customer-facing handle.',
@@ -102,7 +104,7 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('SILENT: a clean novel write in an empty scope surfaces nothing', () => {
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'pick-ci-runner',
       content: 'Use GitHub Actions for continuous integration pipelines on pushes.',
@@ -111,13 +113,13 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('EXCLUDES same-title: an intentional thread/supersede lineage is never flagged as a conflict', () => {
-    eml.engrams.store(validDecision({
+    writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'persistence-sqlite',
       content: 'We use SQLite for persistence — single-file local database, deterministic.',
     }))
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'persistence-sqlite', // SAME title — heavy overlap but a deliberate lineage
       content: 'SQLite persistence single-file local database deterministic choice.',
@@ -127,13 +129,13 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('EXCLUDES log/event candidates: a heavily-overlapping log is never a supersede/merge target', () => {
-    eml.engrams.store(validLog({
+    writes(eml).store(validLog({
       scope: 'project.eml',
       title: 'session-brand-work',
       content: 'Brand name Engram Protocol, domain engramprotocol.io, canonical naming choice discussed.',
     }))
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-rename',
       content: 'Engram Protocol brand naming and domain choice canonical.',
@@ -144,14 +146,14 @@ describe('conflict guardrail — store() integration', () => {
 
   it('CAPS at N=3 survivors even when more candidates clear the gate', () => {
     for (let i = 0; i < 5; i++) {
-      eml.engrams.store(validDecision({
+      writes(eml).store(validDecision({
         scope: 'project.eml',
         title: `brand-variant-${i}`,
         content: 'Brand naming Engram Protocol domain canonical choice variant.',
       }))
     }
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-rename',
       content: 'Brand naming Engram Protocol domain canonical choice.',
@@ -166,7 +168,7 @@ describe('conflict guardrail — store() integration', () => {
     // ('rebrand', 'decision') → coverage ~0.67. They share enough vocabulary to be
     // retrieved alongside the true duplicate.
     for (let i = 0; i < 4; i++) {
-      eml.engrams.store(validDecision({
+      writes(eml).store(validDecision({
         scope: 'project.eml',
         title: `infra-note-${i}`,
         content: 'Brand naming Engram Protocol domain canonical filler.',
@@ -175,13 +177,13 @@ describe('conflict guardrail — store() integration', () => {
     // The true near-duplicate: covers every salient term except the title-only
     // 'rename' → strictly highest coverage. If the cap trimmed in retrieval order
     // instead of coverage order, this could be dropped past rank 3.
-    const dup = eml.engrams.store(validDecision({
+    const dup = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-and-domain',
       content: 'Brand naming Engram Protocol domain canonical rebrand decision.',
     }))
 
-    const res = eml.engrams.store(validDecision({
+    const res = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-rename',
       content: 'Brand naming Engram Protocol domain canonical rebrand decision.',
@@ -199,12 +201,12 @@ describe('conflict guardrail — store() integration', () => {
   })
 
   it('does not scan log/event WRITES (no potential_conflicts field for append-only types)', () => {
-    eml.engrams.store(validDecision({
+    writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'brand-and-domain',
       content: 'Brand name Engram Protocol domain canonical naming choice.',
     }))
-    const res = eml.engrams.store(validLog({
+    const res = writes(eml).store(validLog({
       scope: 'project.eml',
       title: 'session-recap',
       content: 'Brand Engram Protocol domain canonical naming choice recap.',

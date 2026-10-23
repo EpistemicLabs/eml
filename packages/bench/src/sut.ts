@@ -73,7 +73,7 @@ export async function startServer(sut: Sut, dataDir: string, logFile: string): P
   const log = fs.openSync(logFile, 'a')
   const child: ChildProcess = spawn(process.execPath, [sut.serverEntry, '--data-dir', dataDir, '--port', String(port)], {
     cwd: dataDir,
-    // No .env from the working directory, no review sweep surprises from the caller's env.
+    // No .env from the working directory and nothing from the caller's env.
     env: { PATH: process.env.PATH ?? '', EML_ENV_FILE: path.join(dataDir, 'no.env') },
     stdio: ['ignore', log, log],
   })
