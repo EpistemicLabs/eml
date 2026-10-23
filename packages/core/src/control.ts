@@ -37,9 +37,10 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  *   the provenance columns origin / model / harness; task_entries → entries
  *   (journal, evidence, review); tag / entity status, status_tracks; free
  *   properties folded into the typed fields.
+ * v0.20: the sync-ready write path — engrams.rev (revision counter).
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 19
+export const CURRENT_BRAIN_SCHEMA_VERSION = 20
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or

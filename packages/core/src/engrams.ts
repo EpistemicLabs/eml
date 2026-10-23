@@ -627,6 +627,11 @@ export class EngramStore {
   }
 
   /** How many engrams live in a scope (any type, any status) — object usage. */
+  /** v0.20: an engram's revision counter, or undefined for an unknown id. */
+  revOf(id: string): number | undefined {
+    return (this.db.prepare('SELECT rev FROM engrams WHERE id = ?').get(id) as { rev: number } | undefined)?.rev
+  }
+
   countInScope(scope: string): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM engrams WHERE scope = ?').get(scope) as { n: number }).n
   }

@@ -11,7 +11,7 @@ import { significanceWeight, recencyBoost } from './decay'
 import { validateEngramType, validateFormat, validateScopePattern, validateScopeExists, validateNoTemplateLeak } from './validate'
 import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
 import {
-  appendEntry, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
+  appendEntry, bumpRev, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
   type Entry, type EntryInput, type EntryKind, type EvidenceSource, type EvidenceStance,
 } from './entries'
 import { learningState, LEARNING_SHARPENED, type LearningState } from './learning'
@@ -171,13 +171,14 @@ export class EngramWriter extends EngramStore {
     // ingested_by is the caller the server derived from the token — never input.
     this.db.transaction(() => {
       // One core profile per scope (unique index): the old one goes first.
+      stamp.created.add(id)
       if (type === 'profile' && props.core === true) superseded.push(...this.autoSupersedeCoreProfile(id, input.scope, stamp))
       this.db.prepare(`
         INSERT INTO engrams (
           id, content, type, scope, title, status, significance, properties,
           origin, ingested_by, ingestion_method, session_id, model, harness,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, updated_at, rev
+        ) VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
       `).run(
         id, content, type, input.scope, input.title ?? null, status,
         JSON.stringify(input.app ? { ...props, app: input.app } : props),
@@ -489,6 +490,7 @@ export class EngramWriter extends EngramStore {
         VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
         ON CONFLICT(source_id, target_id, relation) DO NOTHING
       `).run(stamp.newId(), item.id, newTaskId, rel, stamp.at)
+      bumpRev(this.db, stamp, item.id)  // the item now belongs to another task
       this.appendTaskChange(newTaskId, `${item.type} moved here from ${oldTaskId}: ${item.title ?? item.id} (${item.id})`, stamp)
     }
   }
@@ -506,11 +508,13 @@ export class EngramWriter extends EngramStore {
         const reviewDays = TYPE_REVIEW_DEFAULTS[item.type as EngramType]
         if (reviewDays !== undefined) props.review_due_at = addDays(stamp.at, reviewDays)
         this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, item.id)
+        bumpRev(this.db, stamp, item.id)
         entries.push(this.appendTaskChange(taskId, `kept as standing: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
         kept.push({ ...item })
       } else {
         const status = item.type === 'decision' ? taskStatus : 'invalidated'
         this.db.prepare(`UPDATE engrams SET status = ?, updated_at = ? WHERE id = ?`).run(status, stamp.at, item.id)
+        bumpRev(this.db, stamp, item.id)
         // the item's own journal says why it closed; a reopen of the task offers it back by this entry
         appendEntry(this.db, item.id, { kind: 'change', text: `${CLOSED_WITH_TASK} ${taskId}` }, stamp)
         entries.push(this.appendTaskChange(taskId, `closed with the task: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
@@ -650,6 +654,7 @@ export class EngramWriter extends EngramStore {
       if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
       sets.push('updated_at = ?')
       this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
+      bumpRev(this.db, stamp, id)
       if (input.content !== undefined || input.title !== undefined || scopeChanged) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
         this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
@@ -926,6 +931,7 @@ export class EngramWriter extends EngramStore {
       UPDATE engrams SET status = 'superseded', updated_at = ?
       WHERE id = ? AND status IN ('active', 'planned')
     `).run(stamp.at, oldId)
+    bumpRev(this.db, stamp, oldId)
     this.db.prepare(`
       INSERT INTO relations (id, source_id, target_id,
         relation, detection_method, strength, created_at)
@@ -1226,6 +1232,7 @@ export class EngramWriter extends EngramStore {
       if (sets.length > 0 || tagSlugs !== undefined || subjectSlugs !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
         sets.push('updated_at = ?')
         this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
+        bumpRev(this.db, stamp, id)
       }
       if (newContent !== undefined || patch.scope !== undefined || patch.title !== undefined) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
@@ -1276,6 +1283,7 @@ export class EngramWriter extends EngramStore {
     if (existing.type === 'task') {
       this.db.transaction(() => {
         this.db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, id)
+        bumpRev(this.db, stamp, id)
         if (text && text.trim() !== '') {
           appendEntry(this.db, id, { kind: 'note', text, stage: this.propsOf(id).stage as string ?? null }, stamp)
         }
@@ -1291,6 +1299,7 @@ export class EngramWriter extends EngramStore {
       const props = existing.properties ? JSON.parse(existing.properties) : {}
       props.review_due_at = addDays(stamp.at, reviewDays)
       this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, id)
+      bumpRev(this.db, stamp, id)
       appendEntry(this.db, id, { kind: 'review', text: text! }, stamp)
     })()
     return this.getRaw(id)
@@ -1360,11 +1369,13 @@ export class EngramWriter extends EngramStore {
         appendEntry(this.db, input.id!, evidence, stamp)
         if (input.content !== undefined && input.content !== existing.content) {
           this.db.prepare(`UPDATE engrams SET content = ?, updated_at = ? WHERE id = ?`).run(input.content, stamp.at, input.id)
+          bumpRev(this.db, stamp, input.id!)
           this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(input.id)
           this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(input.id)
           appendEntry(this.db, input.id!, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
         } else {
           this.db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, input.id)
+          bumpRev(this.db, stamp, input.id!)
         }
       })()
       const engram = this.getRaw(input.id)!
@@ -1385,11 +1396,12 @@ export class EngramWriter extends EngramStore {
     const subjectSlugs = input.subjects !== undefined ? this.normalizeAndValidateSubjects(input.subjects) : undefined
     const id = stamp.newId()
     const now = stamp.at
+    stamp.created.add(id)
     this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO engrams (id, content, type, scope, title, status, significance, properties,
-          ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at)
-        VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?)
+          ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at, rev)
+        VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?, 1)
       `).run(id, input.content, input.scope, input.title, actor.handle, actor.ingestion_method,
         actor.session_id, actor.model, actor.harness, now, now)
       this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)

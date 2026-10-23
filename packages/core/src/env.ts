@@ -44,10 +44,13 @@ export interface Stamp {
   at: string
   newId(): string
   actor: Actor
+  /** Engrams this write created (rev 1) and the ones whose rev it already bumped — one bump per engram per write. */
+  created: Set<string>
+  touched: Set<string>
 }
 
 export function beginWrite(env: Env): Stamp {
-  return { at: env.now(), newId: () => env.newId(), actor: env.actor }
+  return { at: env.now(), newId: () => env.newId(), actor: env.actor, created: new Set(), touched: new Set() }
 }
 
 /** `iso` plus whole days, as ISO-8601 UTC with milliseconds. */

@@ -1,7 +1,7 @@
 -- ============================================================
--- EML brain schema v0.19 — fresh brain
+-- EML brain schema v0.20 — fresh brain
 --
--- The complete schema a new brain starts with (schema 19). Existing brains
+-- The complete schema a new brain starts with (schema 20). Existing brains
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
 -- ============================================================
@@ -100,7 +100,12 @@ CREATE TABLE engrams (
 
   -- ============ Timestamps ============
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+
+  -- ============ Revision (v0.20) ============
+  -- 1 on create, +1 on every write that changes the row; engram.update and
+  -- task.track take an optional base_rev precondition (decision engram-revision-counter)
+  rev                 INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_engrams_scope            ON engrams(scope);
 CREATE INDEX idx_engrams_title            ON engrams(title);
@@ -225,6 +230,6 @@ CREATE TABLE _eml_migrations (
 
 INSERT INTO labels (id, name, description, created_at) VALUES ('review', 'review', 'Flagged for re-check: an active decision/rule/profile whose review_due_at has passed. Stamped by the nightly deterministic sweep; cleared on confirmReview / supersede / invalidate.', datetime('now'));
 
-INSERT INTO _eml_migrations (version, name) VALUES (19, '019_v0.19');
+INSERT INTO _eml_migrations (version, name) VALUES (20, '020_v0.20');
 
 COMMIT;

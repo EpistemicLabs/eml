@@ -12,7 +12,7 @@ import type { Stamp } from '../env'
 // what the caller intends — never what the env provides (time, actor, ids the
 // brain draws).
 
-export type CommandErrorCode = 'INVALID' | 'NOT_FOUND' | 'TOPIC_EXISTS'
+export type CommandErrorCode = 'INVALID' | 'NOT_FOUND' | 'TOPIC_EXISTS' | 'CONFLICT'
 
 /** A rejected command. Nothing was written. */
 export class CommandError extends Error {
@@ -62,6 +62,27 @@ export function inputObject(command: string, input: unknown): Record<string, unk
     throw new CommandError('INVALID', `Invalid command: ${command} takes an object.`)
   }
   return input as Record<string, unknown>
+}
+
+/** base_rev, when given, is a non-negative integer. */
+export function checkBaseRev(input: Record<string, unknown>): void {
+  const v = input.base_rev
+  if (v !== undefined && !(typeof v === 'number' && Number.isInteger(v) && v >= 0)) {
+    throw new CommandError('INVALID', 'Invalid engram: base_rev must be the rev the engram had when it was read (an integer).')
+  }
+}
+
+/**
+ * v0.20: the base_rev precondition (decision engram-revision-counter) — the
+ * writer read the engram at base_rev; if it moved on since, nothing is written.
+ * An unknown id is left to the command (NOT_FOUND).
+ */
+export function assertBaseRev(ctx: CommandContext, id: string, baseRev: number | undefined): void {
+  if (baseRev === undefined) return
+  const current = ctx.eml.engrams.revOf(id)
+  if (current !== undefined && current !== baseRev) {
+    throw new CommandError('CONFLICT', `engram ${id} changed since rev ${baseRev}: it is at rev ${current}.`, { current_rev: current })
+  }
 }
 
 /** A required text field of the input, or INVALID with `message`. */

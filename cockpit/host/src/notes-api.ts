@@ -13,8 +13,8 @@ import { brainIdFromProjectId, projectIdForBrain } from './project-registry.js'
  *   GET    /api/notes?projectId=   the project's active notes, newest first
  *   POST   /api/notes              { projectId, content? } → new note
  *   GET    /api/notes/<id>         one note
- *   PUT    /api/notes/<id>         { content, baseVersion } → 409 + the current
- *                                  note when it changed since baseVersion
+ *   PUT    /api/notes/<id>         { content, baseRev } → 409 + the current
+ *                                  note when it changed since baseRev
  *   DELETE /api/notes/<id>         archive (status invalidated), no hard delete
  * plus the `notes` event on /api/events (NotesWatcher).
  *
@@ -37,11 +37,8 @@ export interface NoteView {
   content: string
   createdAt: string
   updatedAt: string
-  /**
-   * updated_at has one-second resolution, so two writes in the same second
-   * would look alike — the version adds the content hash.
-   */
-  version: string
+  /** The engram's revision counter (v0.20): any write moves it on; a save sends the rev it is based on. */
+  rev: number
   lastEditor: 'user' | 'agent'
 }
 
@@ -56,6 +53,7 @@ interface Engram {
   content: string
   created_at: string
   updated_at: string
+  rev: number
   origin?: string | null
   properties?: { app?: { user_content_hash?: string } } & Record<string, unknown>
 }
@@ -84,8 +82,6 @@ function projectForScope(scope: string): string | null {
   return scope.startsWith('project.') ? projectIdForBrain(scope.slice('project.'.length)) : null
 }
 
-const versionOf = (e: Engram) => `${e.updated_at}|${contentHash(e.content)}`
-
 function toView(e: Engram): NoteView | null {
   const projectId = projectForScope(e.scope)
   if (e.type !== 'note' || !projectId) return null
@@ -96,7 +92,7 @@ function toView(e: Engram): NoteView | null {
     content: e.content,
     createdAt: e.created_at,
     updatedAt: e.updated_at,
-    version: versionOf(e),
+    rev: e.rev,
     lastEditor: e.properties?.app?.user_content_hash === contentHash(e.content) ? 'user' : 'agent',
   }
 }
@@ -190,17 +186,20 @@ export async function handleNotesApi(
     const body = await readJson(req)
     if (typeof body.content !== 'string') { json(res, 400, { error: { code: 'INVALID_INPUT', message: 'content required' } }); return true }
     if (body.content.length > MAX_CONTENT) { json(res, 413, { error: { code: 'TOO_LARGE', message: 'Note too large' } }); return true }
-    // The brain has no compare-and-swap; check-then-write leaves a window of
-    // one round trip on loopback, which last-write-wins accepts. No
-    // baseVersion = overwrite on purpose ("keep mine" after a conflict).
-    if (typeof body.baseVersion === 'string' && body.baseVersion !== versionOf(current)) {
-      json(res, 409, { error: { code: 'CONFLICT', message: 'The note changed since you opened it' }, note: toView(current) })
-      return true
-    }
+    // The brain checks base_rev in the write itself (v0.20: compare-and-swap on
+    // the engram's rev). No baseRev = overwrite on purpose ("keep mine" after a conflict).
+    const baseRev = typeof body.baseRev === 'number' ? body.baseRev : undefined
     const content = body.content.trim() ? body.content : NEW_NOTE_CONTENT
     const { status, data } = await brain<Engram>(deps, '/update', {
       id, patch: { content, app: { user_content_hash: contentHash(content) } },
+      ...(baseRev !== undefined ? { base_rev: baseRev } : {}),
     })
+    if (status === 409) {
+      const now = await getNote(deps, id)
+      if (!now) { notFound(); return true }
+      json(res, 409, { error: { code: 'CONFLICT', message: 'The note changed since you opened it' }, note: toView(now) })
+      return true
+    }
     if (status !== 200) { json(res, 502, { error: { code: 'BRAIN_WRITE_FAILED', message: JSON.stringify(data) } }); return true }
     watcher.poke()
     json(res, 200, { note: toView(data) })
@@ -219,7 +218,7 @@ export async function handleNotesApi(
 
 export interface NotesChange {
   /** Notes whose content changed, appeared or were archived since the last poll. */
-  changed: Array<{ id: string; projectId: string; version: string | null; lastEditor: 'user' | 'agent' | null }>
+  changed: Array<{ id: string; projectId: string; rev: number | null; lastEditor: 'user' | 'agent' | null }>
 }
 
 /**
@@ -229,7 +228,7 @@ export interface NotesChange {
  * report at once instead of on the next tick.
  */
 export class NotesWatcher extends EventEmitter {
-  private known: Map<string, { version: string; projectId: string }> | null = null
+  private known: Map<string, { rev: number; projectId: string }> | null = null
   private timer: NodeJS.Timeout | null = null
   private listeners_ = 0
   private polling = false
@@ -266,16 +265,16 @@ export class NotesWatcher extends EventEmitter {
     this.polling = true
     try {
       const notes = await listNotes(this.deps)
-      const next = new Map(notes.map((n) => [n.id, { version: n.version, projectId: n.projectId }]))
+      const next = new Map(notes.map((n) => [n.id, { rev: n.rev, projectId: n.projectId }]))
       if (this.known) {
         const changed: NotesChange['changed'] = []
         for (const n of notes) {
-          if (this.known.get(n.id)?.version !== n.version) {
-            changed.push({ id: n.id, projectId: n.projectId, version: n.version, lastEditor: n.lastEditor })
+          if (this.known.get(n.id)?.rev !== n.rev) {
+            changed.push({ id: n.id, projectId: n.projectId, rev: n.rev, lastEditor: n.lastEditor })
           }
         }
         for (const [id, prev] of this.known) {
-          if (!next.has(id)) changed.push({ id, projectId: prev.projectId, version: null, lastEditor: null })
+          if (!next.has(id)) changed.push({ id, projectId: prev.projectId, rev: null, lastEditor: null })
         }
         if (changed.length) this.emit('notes', { changed } satisfies NotesChange)
       }

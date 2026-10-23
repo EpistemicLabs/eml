@@ -167,6 +167,20 @@ describe('v0.19 REST', () => {
   })
 
   describe('POST /update (flat patch)', () => {
+    it('v0.20: rev on the engram; base_rev is a precondition — 409 with current_rev, nothing written', async () => {
+      const n = await create(validNote({ title: 'rev-note', content: 'v1' }))
+      expect(n.body.rev).toBe(1)
+      const ok = await post('/update', { id: n.body.id, patch: { content: 'v2' }, base_rev: 1 })
+      expect(ok.status).toBe(200)
+      expect(ok.body.rev).toBe(2)
+      const stale = await post('/update', { id: n.body.id, patch: { content: 'v3' }, base_rev: 1 })
+      expect(stale.status).toBe(409)
+      expect(stale.body).toMatchObject({ current_rev: 2 })
+      expect((await get(`/engram/${n.body.id}`)).body).toMatchObject({ content: 'v2', rev: 2 })
+      const task = await create(validTask({ title: 'rev-task' }))
+      expect((await post(`/task/${task.body.id}/track`, { text: 'x', base_rev: 5 })).status).toBe(409)
+    })
+
     it('typed fields flat, null clears, the diff comes back; a field of another type is a 400', async () => {
       const ref = await create(validReference({ properties: { source: 'https://a.example', source_name: 'A' } }))
       const r = await post('/update', { id: ref.body.id, patch: { source: 'https://b.example', source_name: null, checked_at: '2026-10-19' } })

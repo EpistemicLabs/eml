@@ -44,7 +44,17 @@ export interface EntryInput {
   rule_id?: string
 }
 
-/** Append one entry, at the write's time and by its actor. Runs inside the caller's transaction when there is one. */
+/**
+ * v0.20: the write changed engram `id` — its rev goes up by one, once per write
+ * (decision engram-revision-counter). An engram the write created stays at 1.
+ */
+export function bumpRev(db: Database.Database, w: Stamp, id: string): void {
+  if (w.created.has(id) || w.touched.has(id)) return
+  w.touched.add(id)
+  db.prepare('UPDATE engrams SET rev = rev + 1 WHERE id = ?').run(id)
+}
+
+/** Append one entry, at the write's time and by its actor; an entry is a change of its engram (rev). Runs inside the caller's transaction when there is one. */
 export function appendEntry(db: Database.Database, engramId: string, input: EntryInput, w: Stamp): Entry {
   const entry: Entry = {
     id: w.newId(),
@@ -65,6 +75,7 @@ export function appendEntry(db: Database.Database, engramId: string, input: Entr
     INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id)
     VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id)
   `).run(entry)
+  bumpRev(db, w, engramId)
   return entry
 }
 

@@ -314,6 +314,8 @@ export interface Engram {
   tags: string[]
   // v0.20: due for a review, computed at read time (review-due.ts) — never stored.
   review_due: boolean
+  // v0.20: revision counter — 1 on create, +1 on every write that changes the engram.
+  rev: number
   // v0.14: subject ids this engram belongs to (always present; [] when none).
   subjects: string[]
 }

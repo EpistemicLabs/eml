@@ -10,6 +10,13 @@ import { EmlApiError } from '../http-client'
  * The CallToolResult type comes from the SDK; we just return the plain object —
  * no type assertion needed (registerTool handles that).
  */
+/**
+ * v0.20: an engram's rev is for the cockpit and the sync (base_rev); agents
+ * stay last-write-wins, so tool output leaves it out (decision
+ * engram-revision-counter).
+ */
+const withoutRev = (key: string, value: unknown) => (key === 'rev' ? undefined : value)
+
 export async function callTool<T>(
   fn: () => Promise<T>,
   // v0.10.9: optional prefix prepended to a successful result's rendered text
@@ -22,7 +29,7 @@ export async function callTool<T>(
   try {
     const result = await fn()
     const pre = opts?.prefix?.(result)
-    const body = JSON.stringify(result, null, 2)
+    const body = JSON.stringify(result, withoutRev, 2)
     return { content: [{ type: 'text', text: pre ? `${pre}\n\n${body}` : body }] }
   } catch (err: unknown) {
     if (err instanceof EmlApiError) {

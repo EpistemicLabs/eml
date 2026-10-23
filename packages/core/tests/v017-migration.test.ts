@@ -123,7 +123,7 @@ describe('v0.17 migration — subject → title, themes → subjects on a seeded
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 16)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [17, 18, 19] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [17, 18, 19, 20] })
     } finally { control.close() }
 
     expectMigrated(brainFile)

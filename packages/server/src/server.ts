@@ -18,7 +18,7 @@
  *   POST /engram/:type      { content, scope, title?, <type fields> } → Create an engram (v0.19; core enforces the type's fields)
  *   POST /task/:id/track    { text?, status?, outcome?, keep?, … }   → Everything about an existing task (v0.19)
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
- *   POST /update            { id, patch }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
+ *   POST /update            { id, patch, base_rev? }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
@@ -579,7 +579,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = eml.apply({ name: 'engram.update', input: { id: body.id, patch: patch as never } }, env)
+      const engram = eml.apply({ name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -824,6 +824,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   } catch (err: unknown) { const e = err as Error;
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
+      // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev
+      if (err.code === 'CONFLICT') return json(res, 409, { error: err.message, current_rev: err.data?.current_rev })
       return json(res, err.code === 'NOT_FOUND' ? 404 : err.code === 'TOPIC_EXISTS' ? 409 : 400, { error: err.message })
     }
     // v0.8: validation errors from validate.ts/engrams.ts are user-input
