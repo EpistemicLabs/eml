@@ -206,6 +206,7 @@ export interface TrackTaskInput {
   stage?: string | null
   content?: string
   title?: string
+  intent?: string | null
   context?: string | null
   priority?: string | null
   assignee_id?: string | null
@@ -219,7 +220,7 @@ export interface TrackTaskInput {
   subjects?: string[]
 }
 const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
-  'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'context', 'priority',
+  'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
   'assignee_id', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
 ])
 
@@ -887,7 +888,7 @@ export class EngramStore {
 
     // the typed fields this call sets (null clears an optional one)
     const fieldPatch: Record<string, unknown> = {}
-    for (const k of ['context', 'priority', 'assignee_id', 'due_date', 'blockers', 'stage'] as const) {
+    for (const k of ['intent', 'context', 'priority', 'assignee_id', 'due_date', 'blockers', 'stage'] as const) {
       if (input[k] !== undefined) fieldPatch[k] = input[k]
     }
     if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -984,6 +985,7 @@ export class EngramStore {
       if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
         change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
       }
+      if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
       if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
       if (contentChanged) change('content rewritten')
       if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)

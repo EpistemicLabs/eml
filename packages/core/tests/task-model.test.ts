@@ -68,6 +68,26 @@ describe('task model', () => {
     })
   })
 
+  describe('intent', () => {
+    it('is an optional free text, on create and on track', () => {
+      const t = task('why', { properties: { intent: 'Users see X; we notice by Y' } })
+      expect(propsOf(t.id).intent).toBe('Users see X; we notice by Y')
+      expect(task('plain-intent').properties).toEqual({})
+      expect(() => task('bad-intent', { properties: { intent: 42 as never } })).toThrow(/intent/)
+    })
+
+    it('set, changed and cleared through trackTask — each with a change entry, no text needed', () => {
+      const t = task('evolving')
+      const changes = () => eml.engrams.entries(t.id, ['change']).map(e => e.text)
+      eml.engrams.trackTask(t.id, { intent: 'first' })
+      eml.engrams.trackTask(t.id, { intent: 'sharper' })
+      eml.engrams.trackTask(t.id, { intent: 'sharper' })
+      eml.engrams.trackTask(t.id, { intent: null })
+      expect(propsOf(t.id).intent).toBeUndefined()
+      expect(changes().slice(1)).toEqual(['intent set', 'intent changed', 'intent cleared'])
+    })
+  })
+
   describe('outcome', () => {
     it('is required on the transition into resolved and invalidated', () => {
       const t = task('close-me', { status: 'active' })

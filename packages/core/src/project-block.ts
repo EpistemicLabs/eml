@@ -41,6 +41,7 @@ const fields = {
   trigger: (r: Row) => r.properties?.trigger as string | undefined,
   priority: (t: Row) => (t.properties?.priority as string | undefined) ?? 'normal',
   stage: (t: Row) => t.properties?.stage as string | undefined,
+  intent: (t: Row) => t.properties?.intent as string | undefined,
   assignee: (t: Row) => t.properties?.assignee_id as string | undefined,
   state: (s: Row) => s.properties?.state as string | undefined,
   nextStep: (s: Row) => s.properties?.next_step as string | undefined,
@@ -140,6 +141,9 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
     return `- [${fields.priority(t)}·${t.status}${stage}]${assignee} ${t.title ?? '(untitled)'}`
   }
 
+  // the intent goes with the preview: a title-only task line shows neither
+  const taskIntent = (t: Row) => fields.intent(t) ? ` · intent: ${previewText(fields.intent(t)!, TASK_PREVIEW_CHARS)}` : ''
+
   const header: string[] = [`# Project — ${scope} (${project.name})`, 'The rules below are binding while you work in this project.', '']
   const statusLines = (state.current_status as Row[]).map(s => {
     const st = fields.state(s) ? `[${fields.state(s)}] ` : ''
@@ -158,7 +162,7 @@ export function projectBlock(eml: EML, projectId: string, opts: ProjectBlockOpti
       lines.push(`## Open tasks (${openTasks})`)
       shownTasks.forEach((t, i) => lines.push(i >= shownTasks.length - k.tasksTitleOnly
         ? `${taskMeta(t)} · ${t.id}`
-        : `${taskMeta(t)} — ${previewText(t.content, TASK_PREVIEW_CHARS)} · ${t.id}`))
+        : `${taskMeta(t)} — ${previewText(t.content, TASK_PREVIEW_CHARS)}${taskIntent(t)} · ${t.id}`))
       const more = openTasks - shownTasks.length
       if (more > 0) lines.push(`- ${more} ${shownTasks.length > 0 ? 'more ' : ''}open tasks — eml_list type=task scope=${scope} status=planned (or active)`)
       if (backlog > 0) lines.push(backlogLine(backlog, scope))

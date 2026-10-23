@@ -57,6 +57,24 @@ describe('projectBlock()', () => {
     expect(md).not.toContain('did things')
   })
 
+  it('shows a task\'s intent after its preview; a title-only line shows neither', () => {
+    task('plain-task')
+    // long enough that dropping the preview outweighs the hint line it adds
+    const intent = `users see X ${'w'.repeat(120)}`
+    const t = eml.engrams.store(validTask({ scope: 'project.app', title: 'why-task', content: 'do it', properties: { intent } }))
+    const md = projectBlock(eml, 'app')!.markdown
+    expect(md).toContain('why-task — do it · intent: users see X w')
+    expect(md).toContain(`… · ${t.id}`)
+    expect(md).toMatch(/plain-task — plain-task work · [0-9a-f-]+$/m)
+    // the last task (the one with the intent) is the first to go title-only
+    let limit = md.length + 200
+    let r = projectBlock(eml, 'app', { budget: limit })!
+    while (r.budget!.tasks_title_only === 0 && r.budget!.tasks_left_out === 0) r = projectBlock(eml, 'app', { budget: --limit })!
+    expect(r.budget!.tasks_title_only).toBeGreaterThan(0)
+    expect(r.markdown).toContain(`- [normal·planned] why-task · ${t.id}`)
+    expect(r.markdown).not.toContain('intent:')
+  })
+
   it('carries the rules of parent projects, marked inherited', () => {
     rule('project.base', 'base-always', 'always')
     rule('project.base', 'base-when', 'situational')

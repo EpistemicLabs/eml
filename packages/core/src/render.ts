@@ -67,7 +67,9 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     const asg = t.properties?.assignee_id ? ` → ${t.properties.assignee_id as string}` : ''
     // v0.15: the task's stage, when set — [prio·status·stage]
     const stage = t.properties?.stage ? `·${t.properties.stage as string}` : ''
-    lines.push(`- [${prio}·${t.status}${stage}]${asg} ${t.title ?? '(no title)'} — ${previewText(t.content, SHOW_PREVIEW_CHARS)} · ${t.id}`)
+    // the task's intent, when set — the why next to the what
+    const intent = typeof t.properties?.intent === 'string' ? ` · intent: ${previewText(t.properties.intent, SHOW_PREVIEW_CHARS)}` : ''
+    lines.push(`- [${prio}·${t.status}${stage}]${asg} ${t.title ?? '(no title)'} — ${previewText(t.content, SHOW_PREVIEW_CHARS)}${intent} · ${t.id}`)
   }
   // the list stops at 10; the rest as a count with the call that lists them (as the project block does)
   const moreTasks = openTotal - state.open_tasks.length

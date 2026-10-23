@@ -50,4 +50,17 @@ describe('render — authorship + assignee surfacing', () => {
     expect(md).toContain('- [high·active·implementation] staged — staged task · t1')
     expect(md).toContain('- [low·active] plain — plain task · t2')
   })
+
+  it('show renders a task\'s intent after the content preview, omitted when unset', () => {
+    const base = { type: 'task', significance: 'normal', scope: 'project.x', status: 'active', ingested_by: null }
+    const md = renderBrainStateMarkdown({
+      scope: 'project.x', current_status: [], recent_decisions: [], recent_logs: [], rules: [], pending_reviews: [],
+      open_tasks: [
+        { ...base, id: 't1', title: 'why', content: 'do it', properties: { priority: 'high', intent: 'users see X' } },
+        { ...base, id: 't2', title: 'plain', content: 'plain task', properties: { priority: 'low' } },
+      ],
+    } as any)
+    expect(md).toContain('- [high·active] why — do it · intent: users see X · t1')
+    expect(md).toContain('- [low·active] plain — plain task · t2')
+  })
 })

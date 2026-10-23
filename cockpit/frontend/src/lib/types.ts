@@ -116,7 +116,7 @@ export const TYPE_FIELD_ORDER: Record<EngramType, readonly string[]> = {
   rule: ["applies", "trigger", "why", "agreed", "rule_type", "detail", "review_due_at"],
   profile: ["core", "detail", "review_due_at"],
   status: ["state", "next_step", "blockers", "detail"],
-  task: ["context", "priority", "assignee_id", "due_date", "blockers", "stage", "outcome"],
+  task: ["intent", "context", "priority", "assignee_id", "due_date", "blockers", "stage", "outcome"],
   event: ["occurred_at", "change_type", "source_url", "detail"],
   log: ["what", "landed", "next", "open_threads", "detail"],
   reference: ["source", "source_name", "checked_at", "detail"],

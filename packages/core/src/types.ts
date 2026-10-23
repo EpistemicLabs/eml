@@ -137,6 +137,7 @@ export const TASK_OUTCOME_STATUSES: readonly EngramStatus[] = ['resolved', 'inva
 export const TASK_INACTIVITY_DAYS = 30
 
 export interface TaskProperties {
+  intent?: string                 // what will be different, for whom, once done, and how we'll notice
   due_date?: string               // ISO date
   assignee_id?: string            // → agents.id; optional = unassigned
   priority?: TaskPriority         // execution urgency (≠ significance)
