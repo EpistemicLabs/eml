@@ -13,6 +13,7 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import type { AgentProvider } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
+import { sessionAddress } from './session-address.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
 import { greetingFor } from './session-greeting.js'
 
@@ -379,7 +380,7 @@ export class PtyBridge {
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
+      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
       space: { id: space.id, url: space.url, token: space.token, files: space.files },
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows

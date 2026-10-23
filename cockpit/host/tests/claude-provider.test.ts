@@ -31,13 +31,15 @@ describe('Claude Code provider', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   it('launches a new session under the cockpit session id, with its space\'s files, in the isolated config', () => {
-    const launch = provider.launch({ sessionId: 'abc-1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
+    const launch = provider.launch({ sessionId: 'abc-1', address: 'eml-abc1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
     expect(launch.args).toEqual([
       '--mcp-config', space.files.mcpConfig,
       '--settings', space.files.settings, '--setting-sources', 'user,project,local',
       '--permission-mode', 'auto',
+      '--name', 'eml-abc1',
       '--session-id', 'abc-1',
     ])
+    expect(launch.env.COCKPIT_SESSION_ADDRESS).toBe('eml-abc1')
     expect(launch.env.CLAUDE_CONFIG_DIR).toBe(configDir)
     expect(launch.env.DISABLE_AUTOUPDATER).toBe('1')
     // Windows has no file links: sessions run the binary through the current junction (managed-runtime.ts).
@@ -49,7 +51,7 @@ describe('Claude Code provider', () => {
   })
 
   it('resumes by id and hands an initial prompt over as the last argument', () => {
-    const base = { space, providerSessionId: null, initialPrompt: null, unattended: false }
+    const base = { address: 'eml-abc', space, providerSessionId: null, initialPrompt: null, unattended: false }
     expect(provider.launch({ ...base, sessionId: 'abc-1', resume: true }).args.slice(-2)).toEqual(['--resume', 'abc-1'])
     expect(provider.launch({ ...base, sessionId: 'abc-2', resume: false, initialPrompt: '/login', unattended: true }).args.slice(-3))
       .toEqual(['--session-id', 'abc-2', '/login'])
@@ -58,7 +60,7 @@ describe('Claude Code provider', () => {
   it('runs unattended sessions in auto whatever the user chose', () => {
     writeFileSync(join(home, 'agents.json'), JSON.stringify({ permissionMode: 'bypassPermissions' }))
     const mode = (unattended: boolean) => {
-      const { args } = provider.launch({ sessionId: 'abc-3', space, providerSessionId: null, resume: false, initialPrompt: null, unattended })
+      const { args } = provider.launch({ sessionId: 'abc-3', address: 'eml-abc3', space, providerSessionId: null, resume: false, initialPrompt: null, unattended })
       return args[args.indexOf('--permission-mode') + 1]
     }
     expect(mode(false)).toBe('bypassPermissions')
@@ -67,7 +69,7 @@ describe('Claude Code provider', () => {
 
   it('leaves the renderer to Claude Code once the pinned input is switched off', () => {
     writeFileSync(join(home, 'agents.json'), JSON.stringify({ renderer: 'default' }))
-    const launch = provider.launch({ sessionId: 'abc-5', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
+    const launch = provider.launch({ sessionId: 'abc-5', address: 'eml-abc5', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
     expect(launch.env).not.toHaveProperty('CLAUDE_CODE_NO_FLICKER')
   })
 

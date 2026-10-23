@@ -2,6 +2,7 @@ import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
 import { projectIdForBrain } from './project-registry.js'
+import { sessionAddress } from './session-address.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -14,7 +15,8 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *   <home>/spawn-inbox           the same request as a file, for sessions whose
  *                                sandbox has no network (spawn-inbox.ts)
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
- *                                http.ts); the first tab wins and opens the pane
+ *                                http.ts); the first tab wins and opens the pane,
+ *                                with the request id as the worker's session id
  * plus the `spawns` / `spawn` / `claimed` events on /api/events.
  *
  * The same token and inbox carry a session naming itself (session-title-cli.ts):
@@ -54,7 +56,8 @@ async function resolveProject(space: BrainSpace, input: string): Promise<string 
 
 export interface SpawnOutcome {
   status: number
-  payload: { id: string; projectId: string; queued: true } | { error: { code: string; message: string } }
+  /** `address`: the worker's address for SendMessage (session-address.ts) — absent when its provider has no such messaging. */
+  payload: { id: string; projectId: string; queued: true; address?: string } | { error: { code: string; message: string } }
 }
 
 /**
@@ -89,7 +92,10 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     // Named for a further space only; main is the default on both sides.
     ...(space.main ? {} : { spaceId: space.id }),
   })
-  return { status: 202, payload: { id: request.id, projectId, queued: true } }
+  // The request id becomes the worker's session id (the page opens the pane
+  // under it), so the requester learns the worker's address before it runs.
+  const messaging = (provider ?? deps.providers.default()).messaging
+  return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}) } }
 }
 
 /**

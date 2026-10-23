@@ -21,6 +21,7 @@ writeFileSync(join(home, 'sessions.json'), JSON.stringify({
 const fakeProvider = (adoptsSessionId: boolean): AgentProvider => ({
   id: 'claude' as ProviderId,
   adoptsSessionId,
+  messaging: false,
   runtime: { problem: () => null },
   turnSignal: (payload): TurnSignal | null =>
     typeof payload.id === 'string'

@@ -1032,6 +1032,8 @@ export function addWorkerPane(opts: {
   /** The agent CLI the worker runs with; unset → the cockpit's default. */
   provider?: LLMProvider;
   replacePaneId?: string | null;
+  /** The worker's session id, when the host fixed it in advance (the spawn request id — host spawn-api.ts). */
+  sessionId?: string;
 }): string {
   const from = opts.fromSessionId
     ? snapshot.desks
@@ -1040,6 +1042,7 @@ export function addWorkerPane(opts: {
     : undefined;
   const newPane: PaneState = {
     ...createPane('terminal', opts.projectId),
+    ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.title ? { title: opts.title } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
     ...(opts.provider ? { provider: opts.provider } : {}),

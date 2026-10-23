@@ -58,6 +58,8 @@ export interface SessionSpace {
 export interface LaunchRequest {
   /** The cockpit's id of the session; a provider that takes its ids from the caller starts under it. */
   sessionId: string
+  /** The session's address for cross-session messaging (session-address.ts); a provider without such messaging ignores it. */
+  address: string
   /** The brain space the session runs in. */
   space: SessionSpace
   /** The provider's own id of the conversation, once known (see SessionRef). */
@@ -193,6 +195,8 @@ export interface AgentProvider {
    * provider assigns its own and reports it with the session's first hook (false).
    */
   readonly adoptsSessionId: boolean
+  /** Whether sessions can message each other by their address (LaunchRequest.address) — Claude Code's SendMessage. */
+  readonly messaging: boolean
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */
