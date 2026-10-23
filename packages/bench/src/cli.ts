@@ -10,6 +10,7 @@ import { readScenarios, runScenarios, summarizeScenarios, type ScenarioArmSummar
 import { ARMS, type Arm } from './arms'
 import { RESULTS_DIR, fixtureHash, findBaseline, retrievalRegressions } from './baseline'
 import { downloadLocomo, readLocomo, runLocomo, summarizeLocomo, printLocomoSummary, LOCOMO_DEFAULT_FILE, PUBLIC_ARMS, JUDGE_KINDS, type PublicArm, type JudgeKind, type LocomoOptions } from './locomo'
+import { downloadLongMemEval, readLongMemEval, runLongMemEval, summarizeLongMemEval, printLongMemEvalSummary, LME_DEFAULT_FILE, type LmeOptions } from './longmemeval'
 
 const USAGE = `eml-bench — measure a build of EML against the fixture brain
 
@@ -73,6 +74,20 @@ const USAGE = `eml-bench — measure a build of EML against the fixture brain
         --sessions <n>      first n chat sessions per conversation (a wiring
                             check; the questions then reach beyond the memory)
         --data <file>       the dataset (default the cache file)
+
+  eml-bench longmemeval-download [--data <file>]
+      Downloads LongMemEval_S (MIT) into the cache (default ${LME_DEFAULT_FILE}),
+      checked against its hash.
+
+  eml-bench longmemeval --eml <checkout> [--per-type <n>] [--only <id,id>] [--out <file>]
+      The public LongMemEval benchmark, S variant (~115k tokens of history per
+      question), on a stratified sample: n questions per question type
+      (default 10), picked by a hash of the question id. The eml arm builds a
+      fresh brain per question from agent sessions over the history, several
+      chat sessions per agent session (--batch-chars, default 100000);
+      full-context gets the whole history in the prompt. Scored with the
+      official type-specific judge prompts. Takes the runner options above and
+      --arms (eml, full-context).
 
   run writes its result into the work dir unless --out is given; only release
   writes to results/.
@@ -223,21 +238,18 @@ async function release(args: string[]): Promise<void> {
   if (regressions.length) console.log(`\nstage 1 got worse: ${regressions.join('; ')}`)
 }
 
-async function locomo(args: string[]): Promise<void> {
+/** What the public benchmarks share: the SUT, a work dir outside the repo, the arms and the runner options. */
+function publicSetup(args: string[], name: string): { sut: ReturnType<typeof openSut>; workDir: string; arms: PublicArm[]; opts: AgentOptions } {
   const emlPath = arg(args, 'eml')
   if (!emlPath) throw new Error('--eml <checkout> is required')
   const sut = openSut(emlPath)
-  const data = readLocomo(arg(args, 'data'))
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const workRoot = path.resolve(arg(args, 'work-dir') ?? path.join(os.tmpdir(), 'eml-bench'))
   if (isInside(workRoot, sut.root) || isInside(workRoot, BENCH_DIR)) throw new Error(`--work-dir must lie outside the repository (${workRoot})`)
-  const workDir = path.join(workRoot, `locomo-${sut.version}-${stamp}`)
+  const workDir = path.join(workRoot, `${name}-${sut.version}-${stamp}`)
   console.log(`work dir: ${workDir}`)
-
   const arms = (arg(args, 'arms') ?? PUBLIC_ARMS.join(',')).split(',') as PublicArm[]
   for (const a of arms) if (!PUBLIC_ARMS.includes(a)) throw new Error(`unknown arm ${a} (${PUBLIC_ARMS.join(', ')})`)
-  const judges = (arg(args, 'judges') ?? JUDGE_KINDS.join(',')).split(',') as JudgeKind[]
-  for (const j of judges) if (!JUDGE_KINDS.includes(j)) throw new Error(`unknown judge ${j} (${JUDGE_KINDS.join(', ')})`)
   const tokenFile = arg(args, 'claude-token-file')
   const opts: AgentOptions = {
     runner: 'claude-code',
@@ -250,6 +262,42 @@ async function locomo(args: string[]): Promise<void> {
     maxTurns: 12,
     concurrency: parseInt(arg(args, 'concurrency') ?? '3', 10),
   }
+  console.log(`${sut.version} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel} · concurrency ${opts.concurrency}`)
+  return { sut, workDir, arms, opts }
+}
+
+async function longmemeval(args: string[]): Promise<void> {
+  const data = readLongMemEval(arg(args, 'data'))
+  const { sut, workDir, arms, opts } = publicSetup(args, 'longmemeval')
+  const lo: LmeOptions = {
+    arms,
+    perType: parseInt(arg(args, 'per-type') ?? '10', 10),
+    only: arg(args, 'only')?.split(',') ?? null,
+    batchChars: parseInt(arg(args, 'batch-chars') ?? '100000', 10),
+    ingestTurns: 40,
+  }
+  const results = await runLongMemEval(sut, workDir, opts, lo, data)
+  const summary = summarizeLongMemEval(results, arms)
+  printLongMemEvalSummary(summary)
+  writeResult(path.resolve(arg(args, 'out') ?? path.join(workDir, 'result.json')), {
+    benchmark: 'longmemeval_s',
+    version: sut.version,
+    measured_at: new Date().toISOString(),
+    model: opts.model,
+    judge_model: opts.judgeModel,
+    effort: opts.effort,
+    harness: results.find(r => r.harness)?.harness,
+    options: lo,
+    summary,
+    results,
+  })
+}
+
+async function locomo(args: string[]): Promise<void> {
+  const data = readLocomo(arg(args, 'data'))
+  const { sut, workDir, arms, opts } = publicSetup(args, 'locomo')
+  const judges = (arg(args, 'judges') ?? JUDGE_KINDS.join(',')).split(',') as JudgeKind[]
+  for (const j of judges) if (!JUDGE_KINDS.includes(j)) throw new Error(`unknown judge ${j} (${JUDGE_KINDS.join(', ')})`)
   const lo: LocomoOptions = {
     conversations: arg(args, 'conversations')?.split(',') ?? null,
     arms,
@@ -258,7 +306,6 @@ async function locomo(args: string[]): Promise<void> {
     sessions: arg(args, 'sessions') ? parseInt(arg(args, 'sessions')!, 10) : null,
     ingestTurns: 40,
   }
-  console.log(`${sut.version} · ${opts.model} (effort ${opts.effort}), judge ${opts.judgeModel} · concurrency ${opts.concurrency}`)
   const res = await runLocomo(sut, workDir, opts, lo, data)
   const summary = summarizeLocomo(res, lo)
   printLocomoSummary(summary, res, lo)
@@ -410,6 +457,8 @@ async function main(): Promise<void> {
   if (cmd === 'compare' && args.length === 2) return compare(args[0], args[1])
   if (cmd === 'locomo-download') return downloadLocomo(arg(args, 'data'))
   if (cmd === 'locomo') return locomo(args)
+  if (cmd === 'longmemeval-download') return downloadLongMemEval(arg(args, 'data'))
+  if (cmd === 'longmemeval') return longmemeval(args)
   process.stdout.write(USAGE)
   process.exitCode = cmd ? 1 : 0
 }

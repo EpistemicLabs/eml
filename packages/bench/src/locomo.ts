@@ -286,7 +286,7 @@ async function ingestConversation(sut: Sut, c: Conversation, dir: string, opts: 
 }
 
 /** Writes what the agent stored (for reading), returns the number of active engrams. */
-function dumpBrain(sut: Sut, brainFile: string, out: string): number {
+export function dumpBrain(sut: Sut, brainFile: string, out: string): number {
   const Database = sutSqlite(sut)
   const db = new Database(brainFile, { readonly: true })
   try {
