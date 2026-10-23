@@ -11,7 +11,9 @@
 --     DEFAULT (datetime('now')) — the application writes every timestamp —
 --     and its timestamps rewritten to ISO-8601 UTC with milliseconds
 --     (SQLite's 'YYYY-MM-DD HH:MM:SS' is UTC, so the rewrite is lossless);
---     entries.at is rewritten in place. The migration ledger keeps its default.
+--     entries.at is rewritten in place. The migration ledger loses its
+--     default too: from this step on the runner writes the row and its
+--     applied_at (database.ts recordMigration).
 --   - engrams: rev (revision counter, every engram at 1); the status
 --     `expired` is gone — expired engrams become invalidated (decision
 --     drop-expired-status); properties.expires_at removed;
@@ -20,7 +22,9 @@
 --   - labels and engram_labels dropped (decision drop-labels-axis): review_due
 --     is computed at read time.
 --
--- A value strftime() cannot read is kept as it was; the release audit
+-- Only a value that starts like a date (YYYY-MM-DD) is rewritten — strftime()
+-- would read 'now' as the current time and a number as a Julian day. Any other
+-- value, and one strftime() cannot read, is kept as it was; the release audit
 -- (scripts/audit-brain-migration.mjs) counts what is not ISO afterwards.
 --
 -- foreign_keys MUST be OFF while this runs (the forward-migration runner and
@@ -50,7 +54,7 @@ SELECT
   domains,
   description,
   metadata,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END
 FROM agents;
 
 DROP TABLE agents;
@@ -74,8 +78,8 @@ SELECT
   email,
   description,
   metadata,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at),
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END,
+  CASE WHEN updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at) ELSE updated_at END
 FROM users;
 
 DROP TABLE users;
@@ -105,8 +109,8 @@ SELECT
   description,
   metadata,
   status_tracks,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at),
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END,
+  CASE WHEN updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at) ELSE updated_at END
 FROM entities;
 
 DROP TABLE entities;
@@ -143,8 +147,8 @@ SELECT
   ended_at,
   metadata,
   status_tracks,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at),
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END,
+  CASE WHEN updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at) ELSE updated_at END
 FROM projects;
 
 DROP TABLE projects;
@@ -194,7 +198,7 @@ SELECT
   significance,
   CASE WHEN properties IS NULL OR NOT json_valid(properties) THEN properties
        ELSE json_remove(CASE WHEN json_type(properties, '$.review_due_at') = 'text'
-                 THEN json_set(properties, '$.review_due_at', COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(properties, '$.review_due_at')), json_extract(properties, '$.review_due_at')))
+                 THEN json_set(properties, '$.review_due_at', CASE WHEN json_extract(properties, '$.review_due_at') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(properties, '$.review_due_at')), json_extract(properties, '$.review_due_at')) ELSE json_extract(properties, '$.review_due_at') END)
                  ELSE properties END, '$.expires_at') END,
   origin,
   ingested_by,
@@ -202,8 +206,8 @@ SELECT
   session_id,
   model,
   harness,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at),
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at),
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END,
+  CASE WHEN updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at) ELSE updated_at END,
   1
 FROM engrams;
 
@@ -251,7 +255,7 @@ SELECT
   strength,
   explanation,
   metadata,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END
 FROM relations;
 
 DROP TABLE relations;
@@ -276,7 +280,7 @@ SELECT
   name,
   description,
   status,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END
 FROM tags;
 
 DROP TABLE tags;
@@ -294,7 +298,7 @@ INSERT INTO engram_tags_v020 (engram_id, tag_id, created_at)
 SELECT
   engram_id,
   tag_id,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END
 FROM engram_tags;
 
 DROP TABLE engram_tags;
@@ -319,8 +323,8 @@ SELECT
   name,
   description,
   status,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at),
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END,
+  CASE WHEN updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', updated_at), updated_at) ELSE updated_at END
 FROM subjects;
 
 DROP TABLE subjects;
@@ -338,7 +342,7 @@ INSERT INTO engram_subjects_v020 (engram_id, subject_id, created_at)
 SELECT
   engram_id,
   subject_id,
-  COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)
+  CASE WHEN created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at) ELSE created_at END
 FROM engram_subjects;
 
 DROP TABLE engram_subjects;
@@ -347,12 +351,28 @@ CREATE INDEX idx_engram_subjects_subject ON engram_subjects(subject_id);
 CREATE INDEX idx_engram_subjects_engram  ON engram_subjects(engram_id);
 
 -- ---------- entries: timestamps to ISO-8601 UTC ms (no default to drop) ----------
-UPDATE entries SET at = COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', at), at);
+UPDATE entries SET at = CASE WHEN at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', at), at) ELSE at END;
 
 -- ---------- labels axis gone ----------
 DROP TABLE engram_labels;
 DROP TABLE labels;
 
-INSERT OR IGNORE INTO _eml_migrations (version, name) VALUES (20, '020_v0.20');
+-- ---------- migration ledger: no clock default ----------
+-- The runner writes this step's row (and every later one) with its applied_at.
+CREATE TABLE _eml_migrations_v020 (
+  version     INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL,
+  applied_at  TEXT NOT NULL
+);
+
+INSERT INTO _eml_migrations_v020 (version, name, applied_at)
+SELECT
+  version,
+  name,
+  CASE WHEN applied_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', applied_at), applied_at) ELSE applied_at END
+FROM _eml_migrations;
+
+DROP TABLE _eml_migrations;
+ALTER TABLE _eml_migrations_v020 RENAME TO _eml_migrations;
 
 COMMIT;

@@ -3,6 +3,8 @@ import { readFileSync, existsSync, mkdirSync, copyFileSync, rmSync, readdirSync,
 import Database from 'better-sqlite3'
 import type Database_t from 'better-sqlite3'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
+import { recordMigration } from './database'
+import { type Clock, systemClock } from './env'
 
 /**
  * Forward migration runner (v0.9-PROPOSAL §5.8), made safe in v0.14 Cluster 0
@@ -32,9 +34,9 @@ import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './
  *   - brain_missing / restore_failed: status='needs_intervention' — the only
  *     cases that need a human.
  *
- * Tracking per brain (two records, by design): the SQL file writes its own
- * _eml_migrations row; the runner writes brain_migrations + brains.schema_version
- * in control after success.
+ * Tracking per brain (two records, by design): the runner writes the brain's
+ * _eml_migrations row after each file (files up to v0.19 also write their own),
+ * and brain_migrations + brains.schema_version in control after success.
  */
 
 export type MigrationOutcomeKind =
@@ -84,8 +86,9 @@ export interface MigrationReport {
 /** The four pipeline steps — injectable so tests can fail one on purpose. */
 export interface MigrationSteps {
   backup(brainPath: string, backupPath: string): void
-  preflight(backupPath: string, scratchPath: string, files: MigrationFile[]): void
-  applyLive(brainPath: string, files: MigrationFile[]): void
+  /** `at`: applied_at of the ledger rows the files get. */
+  preflight(backupPath: string, scratchPath: string, files: MigrationFile[], at: string): void
+  applyLive(brainPath: string, files: MigrationFile[], at: string): void
   restore(backupPath: string, brainPath: string): void
 }
 
@@ -107,6 +110,8 @@ export interface RunForwardMigrationsOptions {
   keepBackups?: number
   /** Version of the running code, recorded in the report. */
   codeVersion?: string
+  /** applied_at of the brain's ledger rows. Default the system clock. */
+  clock?: Clock
   /** Called with one line per brain before it is migrated (e.g. for a log). */
   onProgress?: (line: string) => void
   /** @internal tests only — replace pipeline steps. */
@@ -221,9 +226,10 @@ function migrateOne(args: RunForwardMigrationsOptions & {
     return fail('backup_failed', err)
   }
 
+  const at = (args.clock ?? systemClock)()
   const scratchPath = `${backupPath}.preflight`
   try {
-    steps.preflight(backupPath, scratchPath, files)
+    steps.preflight(backupPath, scratchPath, files, at)
   } catch (err) {
     return fail('preflight_failed', err, backupPath)
   } finally {
@@ -231,7 +237,7 @@ function migrateOne(args: RunForwardMigrationsOptions & {
   }
 
   try {
-    steps.applyLive(brainPath, files)
+    steps.applyLive(brainPath, files, at)
   } catch (liveErr) {
     try {
       steps.restore(backupPath, brainPath)
@@ -281,11 +287,11 @@ const DEFAULT_STEPS: MigrationSteps = {
     withDb(backupPath, db => assertIntegrity(db, 'backup'))
   },
 
-  preflight(backupPath, scratchPath, files) {
+  preflight(backupPath, scratchPath, files, at) {
     copyFileSync(backupPath, scratchPath)
     withDb(scratchPath, db => {
       const fkBefore = foreignKeyViolations(db)
-      applyFiles(db, files)
+      applyFiles(db, files, at)
       assertIntegrity(db, 'preflight')
       const fkAfter = foreignKeyViolations(db)
       if (fkAfter > fkBefore) {
@@ -294,8 +300,8 @@ const DEFAULT_STEPS: MigrationSteps = {
     })
   },
 
-  applyLive(brainPath, files) {
-    withDb(brainPath, db => applyFiles(db, files))
+  applyLive(brainPath, files, at) {
+    withDb(brainPath, db => applyFiles(db, files, at))
   },
 
   restore(backupPath, brainPath) {
@@ -306,12 +312,13 @@ const DEFAULT_STEPS: MigrationSteps = {
   },
 }
 
-function applyFiles(db: Database_t.Database, files: MigrationFile[]): void {
+function applyFiles(db: Database_t.Database, files: MigrationFile[], at: string): void {
   db.pragma('foreign_keys = OFF')
   try {
     for (const f of files) {
       try {
         db.exec(f.sql)
+        recordMigration(db, f.version, at)
       } catch (err) {
         throw new Error(`v0.${f.version}_migrate.sql: ${errorText(err)}`)
       }

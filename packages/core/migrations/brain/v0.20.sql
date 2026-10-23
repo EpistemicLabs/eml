@@ -7,7 +7,7 @@
 --
 -- Schema 20 (sync-ready write path): every timestamp is written by the
 -- application, ISO-8601 UTC with milliseconds — no column defaults the clock
--- would fill (only the migration ledger keeps one). engrams.rev is the
+-- would fill; the migration runner writes the ledger row. engrams.rev is the
 -- revision counter.
 -- ============================================================
 
@@ -214,9 +214,7 @@ CREATE INDEX idx_entries_engram ON entries(engram_id, at);
 CREATE TABLE _eml_migrations (
   version     INTEGER PRIMARY KEY,
   name        TEXT NOT NULL,
-  applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  applied_at  TEXT NOT NULL
 );
-
-INSERT INTO _eml_migrations (version, name) VALUES (20, '020_v0.20');
 
 COMMIT;

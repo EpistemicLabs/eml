@@ -30,7 +30,7 @@ export class EML {
   private objectWriter!: ObjectWriter
 
   constructor(config: EMLConfig) {
-    this.db = initDatabase(config.dbPath ?? ':memory:')
+    this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock)
     this.ownsConnection = true
     this.wireStores(config.namespace, config)
   }

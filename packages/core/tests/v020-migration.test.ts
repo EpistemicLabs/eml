@@ -15,7 +15,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const NOW = '2026-10-23T12:00:00.000Z'
 const TABLES = ['agents', 'users', 'entities', 'projects', 'engrams', 'relations', 'tags', 'engram_tags', 'subjects', 'engram_subjects', 'entries']
 
-/** A brain as v0.19 left it: SQLite-format and ISO timestamps mixed, expired rows, a review label, date-only review dates. */
+/** A brain as v0.19 left it: SQLite-format and ISO timestamps mixed, expired rows, a review label, date-only review dates, values that are not a date. */
 function createV19Brain(file: string): void {
   const db = new Database(file)
   db.exec(readFileSync(V19_FIXTURE, 'utf-8'))
@@ -37,7 +37,11 @@ function createV19Brain(file: string): void {
   engram.run('t-idle', 'task', 't-idle', 'an idle task', 'active', JSON.stringify({ stage: 'planning' }), '2026-07-01 10:00:00', '2026-07-01 10:00:00')
   engram.run('t-moving', 'task', 't-moving', 'a task with a recent entry', 'active', '{}', '2026-07-01 10:00:00', '2026-07-01 10:00:00')
   engram.run('n-offset', 'note', 'n-offset', 'a timestamp with an offset', 'active', null, '2026-08-01T12:00:00+02:00', '2026-08-01T12:00:00+02:00')
-  for (const id of ['d-sqlite', 'd-date', 'd-future', 'd-expired', 'r-expired', 't-idle', 't-moving', 'n-offset']) {
+  // not a date: strftime() would read 'now' as the current time and a number as a Julian day
+  engram.run('n-odd', 'note', 'n-odd', 'timestamps that are not a date', 'active', null, 'now', '2459000.5')
+  engram.run('d-odd', 'decision', 'd-odd', 'review dates that are not a date', 'invalidated', JSON.stringify({ rationale: 'r', alternatives: ['a'], review_due_at: 'now' }), '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z')
+  engram.run('d-julian', 'decision', 'd-julian', 'a numeric review date', 'invalidated', JSON.stringify({ rationale: 'r', alternatives: ['a'], review_due_at: '2459000.5' }), '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z')
+  for (const id of ['d-sqlite', 'd-date', 'd-future', 'd-expired', 'r-expired', 't-idle', 't-moving', 'n-offset', 'n-odd', 'd-odd', 'd-julian']) {
     db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
   }
   db.exec(`
@@ -47,6 +51,7 @@ function createV19Brain(file: string): void {
     INSERT INTO engram_labels (engram_id, label_id) VALUES ('d-sqlite', 'review');
     INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-1', 't-moving', 'note', '2026-10-20 10:00:00', 'still on it');
     INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-2', 't-idle', 'change', '2026-07-01T10:00:00.000Z', 'created (active)');
+    INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-odd', 'n-odd', 'note', 'now', 'not a date');
   `)
   db.close()
 }
@@ -89,7 +94,8 @@ function expectMigrated(file: string, before: { counts: Record<string, number>, 
       ['projects', ['created_at', 'updated_at']], ['engrams', ['created_at', 'updated_at']], ['relations', ['created_at']], ['tags', ['created_at']],
       ['engram_tags', ['created_at']], ['subjects', ['created_at', 'updated_at']], ['engram_subjects', ['created_at']], ['entries', ['at']]] as const) {
       for (const col of cols) {
-        for (const r of db.prepare(`SELECT ${col} AS v FROM ${table}`).all() as Array<{ v: string }>) expect(r.v, `${table}.${col}`).toMatch(ISO)
+        const rows = db.prepare(`SELECT ${col} AS v FROM ${table} WHERE ${table === 'engrams' || table === 'entries' ? `id NOT IN ('n-odd', 'e-odd')` : '1'}`).all() as Array<{ v: string }>
+        for (const r of rows) expect(r.v, `${table}.${col}`).toMatch(ISO)
       }
     }
     const engram = (id: string) => db.prepare('SELECT created_at, updated_at, properties, rev FROM engrams WHERE id = ?').get(id) as { created_at: string, updated_at: string, properties: string, rev: number }
@@ -97,6 +103,14 @@ function expectMigrated(file: string, before: { counts: Record<string, number>, 
     expect(engram('n-offset')).toMatchObject({ created_at: '2026-08-01T10:00:00.000Z' })
     expect((db.prepare(`SELECT updated_at FROM entities WHERE id = 'acme'`).get() as { updated_at: string }).updated_at).toBe('2026-08-02T09:00:00.123Z')
     expect((db.prepare(`SELECT at FROM entries WHERE id = 'e-1'`).get() as { at: string }).at).toBe('2026-10-20T10:00:00.000Z')
+    // a value that is not a date is kept as it was (the audit counts it as 'other')
+    expect(engram('n-odd')).toMatchObject({ created_at: 'now', updated_at: '2459000.5' })
+    expect((db.prepare(`SELECT at FROM entries WHERE id = 'e-odd'`).get() as { at: string }).at).toBe('now')
+    expect(JSON.parse(engram('d-odd').properties).review_due_at).toBe('now')
+    expect(JSON.parse(engram('d-julian').properties).review_due_at).toBe('2459000.5')
+    // the ledger: no clock default, every applied_at ISO
+    expect(db.prepare(`SELECT dflt_value FROM pragma_table_info('_eml_migrations') WHERE name = 'applied_at'`).get()).toEqual({ dflt_value: null })
+    for (const r of db.prepare('SELECT applied_at FROM _eml_migrations').all() as Array<{ applied_at: string }>) expect(r.applied_at).toMatch(ISO)
     // review_due_at normalized, the other fields untouched
     expect(JSON.parse(engram('d-sqlite').properties)).toEqual({ rationale: 'r', alternatives: ['a'], review_due_at: '2026-10-01T10:00:00.000Z' })
     expect(JSON.parse(engram('d-date').properties).review_due_at).toBe('2026-10-22T00:00:00.000Z')
@@ -151,5 +165,10 @@ describe('v0.20 migration — schema 20 on a seeded v0.19 brain', () => {
       expect(r).toMatchObject({ updated_at: NOW, rev: 2 })
       expect(eml.apply({ name: 'object.create', input: { object: 'tag', fields: { name: 'new-tag' } } }).object).toMatchObject({ created_at: NOW })
     } finally { eml.close() }
+    // the runner wrote the ledger row with the brain's clock
+    const db = new Database(file, { readonly: true })
+    try {
+      expect(db.prepare('SELECT name, applied_at FROM _eml_migrations WHERE version = 20').get()).toEqual({ name: '020_v0.20', applied_at: NOW })
+    } finally { db.close() }
   })
 })

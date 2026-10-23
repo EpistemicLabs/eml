@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
+import { type Clock, systemClock } from './env'
 
 // SQL files ship inside the package, next to src/ and dist/ — the same relative
 // location from a workspace checkout and from a bundled build (dist/server.cjs).
@@ -13,6 +14,16 @@ function runSchema(db: Database.Database, file: string): void {
 }
 
 /**
+ * v0.20: the migration ledger row for schema `version`, with `at` as applied_at
+ * (the ledger has no clock default since schema 20). Files up to v0.19 write
+ * their own row; for those this is a no-op.
+ */
+export function recordMigration(db: Database.Database, version: number, at: string): void {
+  db.prepare('INSERT OR IGNORE INTO _eml_migrations (version, name, applied_at) VALUES (?, ?, ?)')
+    .run(version, `${String(version).padStart(3, '0')}_v0.${version}`, at)
+}
+
+/**
  * Opens a brain, creating or migrating it to CURRENT_BRAIN_SCHEMA_VERSION.
  *
  * - Fresh file → the complete current schema from `v0.<N>.sql`.
@@ -21,11 +32,13 @@ function runSchema(db: Database.Database, file: string): void {
  *   An already-current brain is a no-op.
  * - Older brain → error; it has to be migrated with an earlier EML release.
  *
+ * Each step's ledger row is written here with `clock` as applied_at.
+ *
  * The server migrates registered brains eagerly through runForwardMigrations()
  * (backup, preflight, restore on failure); this in-process path keeps the
  * factory (index.ts, provisioning, tests) consistent with it.
  */
-export function initDatabase(dbPath: string): Database.Database {
+export function initDatabase(dbPath: string, clock: Clock = systemClock): Database.Database {
   // This is the CREATE path (fresh provisioning runs the schema below), so it
   // intentionally opens WITHOUT { fileMustExist: true } — unlike the
   // must-exist read/migrate paths (pool.ts, forward-migrations.ts).
@@ -40,6 +53,7 @@ export function initDatabase(dbPath: string): Database.Database {
 
   if (!hasEngrams) {
     runSchema(db, `v0.${CURRENT_BRAIN_SCHEMA_VERSION}.sql`)
+    recordMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, clock())
     return db
   }
 
@@ -62,6 +76,7 @@ export function initDatabase(dbPath: string): Database.Database {
   // the engram_tags / engram_subjects / entries rows (engram_labels up to schema 19).
   for (let v = version + 1; v <= CURRENT_BRAIN_SCHEMA_VERSION; v++) {
     runMigrateWithFkOff(db, `v0.${v}_migrate.sql`)
+    recordMigration(db, v, clock())
   }
   return db
 }
