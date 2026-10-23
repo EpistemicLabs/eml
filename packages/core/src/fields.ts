@@ -52,7 +52,6 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     rationale: text({ required: true }),
     alternatives: list({ required: true }),
     binding: oneOf(BINDINGS),
-    expires_at: date(),
     review_due_at: date(),
     detail: text(),
   },

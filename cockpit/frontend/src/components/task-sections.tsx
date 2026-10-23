@@ -22,7 +22,6 @@ const STATUS_LABEL: Record<string, string> = {
   resolved: "resolved · closed",
   invalidated: "invalidated · closed",
   superseded: "superseded · closed",
-  expired: "expired · closed",
 };
 
 function statusColor(status: string): string {

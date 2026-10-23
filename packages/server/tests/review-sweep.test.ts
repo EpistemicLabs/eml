@@ -69,21 +69,4 @@ describe('runReviewSweep', () => {
     expect(report.totalBrains).toBe(0)
     expect(report.stampedCount).toBe(0)
   })
-
-  it('v0.19: expires an active decision whose expires_at has passed, and reports it', () => {
-    const prov = provisionUser({ email: 'a@b.de', agentId: 'ag', userId: 'u', control, dataDir })
-    const eml = new EML({ namespace: 'test', dbPath: join(dataDir, prov.brainFile) })
-    const gone = eml.engrams.store(validDecision({ title: 'gone', properties: { expires_at: '2020-01-01' } }))
-    const live = eml.engrams.store(validDecision({ title: 'live', properties: { expires_at: '2999-01-01' } }))
-    eml.close()
-
-    const report = runReviewSweep({ control, dataDir })
-    expect(report.expiredCount).toBe(1)
-
-    const after = new EML({ namespace: 'test', dbPath: join(dataDir, prov.brainFile) })
-    expect(after.engrams.get(gone.id)!.status).toBe('expired')
-    expect(after.engrams.get(live.id)!.status).toBe('active')
-    after.close()
-    expect(runReviewSweep({ control, dataDir }).expiredCount).toBe(0)
-  })
 })

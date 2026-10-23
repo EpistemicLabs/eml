@@ -75,7 +75,7 @@ const ROOT_SEARCH_LIMIT = 8;
 const SEARCH_MIN_CHARS = 2;
 const BRAIN_DEBOUNCE_MS = 200;
 const BRAIN_LIMIT = 8;
-const HIDDEN_ENGRAM_STATUSES: ReadonlySet<EngramStatus> = new Set(['superseded', 'invalidated', 'expired']);
+const HIDDEN_ENGRAM_STATUSES: ReadonlySet<EngramStatus> = new Set(['superseded', 'invalidated']);
 
 const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: LucideIcon; view: PaneView }> = [
   { label: 'Go to Terminal', keywords: 'terminal shell console claude', icon: SquareTerminal, view: 'terminal' },

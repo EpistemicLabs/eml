@@ -1489,26 +1489,6 @@ export class EngramStore {
   }
 
   /**
-   * v0.19 (S12): expires_at is a hard expiry — an active decision whose
-   * expires_at has passed becomes expired (and leaves the review queue). Run by
-   * the nightly sweep with stampDueReviewLabels. Returns the count.
-   */
-  expireDue(now: string = new Date().toISOString()): number {
-    const rows = this.db.prepare(`
-      SELECT id FROM engrams
-      WHERE status = 'active' AND json_extract(properties, '$.expires_at') IS NOT NULL
-        AND datetime(json_extract(properties, '$.expires_at')) < datetime(?)
-    `).all(now) as Array<{ id: string }>
-    this.db.transaction(() => {
-      for (const r of rows) {
-        this.db.prepare(`UPDATE engrams SET status = 'expired', updated_at = datetime('now') WHERE id = ?`).run(r.id)
-        this.stripReviewLabel(r.id)
-      }
-    })()
-    return rows.length
-  }
-
-  /**
    * v0.13: remove the `review` label from an engram — the explicit clear-path the
    * add-only sweep deliberately does NOT do. Called when a review is resolved
    * (confirmReview pushes review_due_at forward) or the engram leaves 'active'
@@ -1711,7 +1691,7 @@ export class EngramStore {
   /**
    * v0.19: correct or retire an existing engram of any type except task
    * (trackTask). Only the universal fields and the type's own fields; a null
-   * clears an optional field. status: invalidated · expired · active (a
+   * clears an optional field. status: invalidated · active (a
    * reactivation); superseded comes only from supersedes. supersedes (B1):
    * this engram replaces the listed ones after the fact, across types. A status
    * engram takes only invalidated + tags/subjects; an event is corrected, never
@@ -1756,9 +1736,9 @@ export class EngramStore {
 
     let reactivatesSuperseded = false
     if (patch.status !== undefined) {
-      if (!(['invalidated', 'expired', 'active'] as string[]).includes(patch.status)) {
+      if (!(['invalidated', 'active'] as string[]).includes(patch.status)) {
         throw new Error(
-          'Invalid engram: status can be set to invalidated, expired or active (a reactivation). ' +
+          'Invalid engram: status can be set to invalidated or active (a reactivation). ' +
           'Superseded comes from supersedes on the new engram.',
         )
       }
@@ -1767,13 +1747,6 @@ export class EngramStore {
         // comes back only once no successor holds any more; that undoes the supersede.
         this.assertNoLiveSuccessor(id)
         reactivatesSuperseded = this.successorOf(id) !== undefined
-      }
-      // An expiry that has passed would expire it again in the next sweep.
-      if (patch.status === 'active' && existing.status !== 'active') {
-        const expiresAt = fieldPatch.expires_at === undefined ? (existing.properties ? JSON.parse(existing.properties).expires_at : undefined) : fieldPatch.expires_at
-        if (typeof expiresAt === 'string' && Date.parse(expiresAt) < Date.now()) {
-          throw new Error(`Invalid engram: expires_at ${expiresAt} has passed — reactivating needs a new expires_at (or null to clear it) in the same call.`)
-        }
       }
     }
     if (type === 'status') {

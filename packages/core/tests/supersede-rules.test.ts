@@ -24,7 +24,7 @@ describe('supersede rules', () => {
     rawDb().prepare(`SELECT 1 FROM relations WHERE source_id = ? AND target_id = ? AND relation = 'supersedes'`).get(from, to)
 
   describe('a closed target keeps how it ended', () => {
-    it('an invalidated or expired engram gets the edge, not a new status — on create and after the fact', () => {
+    it('an invalidated engram gets the edge, not a new status — on create and after the fact', () => {
       const wrong = eml.engrams.store(validDecision({ title: 'wrong' }))
       eml.engrams.update(wrong.id, { status: 'invalidated' })
       const next = eml.engrams.store(validDecision({ title: 'next', supersedes: [wrong.id] }))
@@ -33,10 +33,10 @@ describe('supersede rules', () => {
       expect(edge(next.id, wrong.id)).toBeTruthy()
 
       const old = eml.engrams.store(validNote({ title: 'old' }))
-      eml.engrams.update(old.id, { status: 'expired' })
+      eml.engrams.update(old.id, { status: 'invalidated' })
       const note = eml.engrams.store(validNote({ title: 'note' }))
       eml.engrams.update(note.id, { supersedes: [old.id] })
-      expect(statusOf(old.id)).toBe('expired')
+      expect(statusOf(old.id)).toBe('invalidated')
       expect(edge(note.id, old.id)).toBeTruthy()
     })
 
@@ -108,12 +108,12 @@ describe('supersede rules', () => {
 
     it('an invalidated successor is history: the closed engram can be superseded again', () => {
       const old = eml.engrams.store(validNote({ title: 'old' }))
-      eml.engrams.update(old.id, { status: 'expired' })
+      eml.engrams.update(old.id, { status: 'invalidated' })
       const undone = eml.engrams.store(validNote({ title: 'undone', supersedes: [old.id] }))
       eml.engrams.update(undone.id, { status: 'invalidated' })
       const next = eml.engrams.store(validNote({ title: 'next', supersedes: [old.id] }))
       expect(edge(next.id, old.id)).toBeTruthy()
-      expect(statusOf(old.id)).toBe('expired')
+      expect(statusOf(old.id)).toBe('invalidated')
     })
 
     it('R3: a resolved task with a successor reopens only once its successor is invalidated', () => {

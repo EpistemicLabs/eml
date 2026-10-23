@@ -37,7 +37,7 @@ describe('v0.19 write model', () => {
       let msg = ''
       try { eml.engrams.store({ ...validDecision(), significance: 'high' } as any) } catch (e) { msg = (e as Error).message }
       expect(msg).toMatch(/^Invalid engram: unknown field significance for a decision\. Allowed: content, scope, title, /)
-      expect(msg).toContain('rationale, alternatives, binding, expires_at, review_due_at, detail.')
+      expect(msg).toContain('rationale, alternatives, binding, review_due_at, detail.')
       expect(msg).toContain(UPGRADE_HINT)
       expect(msg).not.toMatch(/Allowed:.*\bstatus\b/)
 
@@ -227,10 +227,11 @@ describe('v0.19 write model', () => {
       expect(eml.engrams.update('nope', { content: 'x' })).toBeNull()
     })
 
-    it('status: invalidated, expired or active (reactivation); superseded is not settable', () => {
+    it('status: invalidated or active (reactivation); superseded and expired are not settable', () => {
       const n = eml.engrams.store(validNote())
       expect(() => eml.engrams.update(n.id, { status: 'superseded' })).toThrow(/Superseded comes from supersedes/)
-      expect(() => eml.engrams.update(n.id, { status: 'resolved' })).toThrow(/invalidated, expired or active/)
+      expect(() => eml.engrams.update(n.id, { status: 'resolved' })).toThrow(/invalidated or active/)
+      expect(() => eml.engrams.update(n.id, { status: 'expired' as any })).toThrow(/invalidated or active/)
       expect(eml.engrams.update(n.id, { status: 'invalidated' })!.status).toBe('invalidated')
       expect(eml.engrams.update(n.id, { status: 'active' })!.status).toBe('active')
       const next = eml.engrams.store(validNote({ supersedes: [n.id] }))
@@ -244,7 +245,7 @@ describe('v0.19 write model', () => {
     it('a status takes only status=invalidated, tags and subjects', () => {
       const s = eml.engrams.store(validStatus({ scope: 'project.p' }))
       expect(() => eml.engrams.update(s.id, { content: 'x' })).toThrow(/a status only takes status=invalidated, tags and subjects/)
-      expect(() => eml.engrams.update(s.id, { status: 'expired' })).toThrow(/a status only takes/)
+      expect(() => eml.engrams.update(s.id, { status: 'active' })).toThrow(/a status only takes/)
       expect(eml.engrams.update(s.id, { status: 'invalidated' })!.status).toBe('invalidated')
     })
 
@@ -272,11 +273,10 @@ describe('v0.19 write model', () => {
     })
 
     it('null clears an optional field, a required one cannot be cleared; the response carries the diff', () => {
-      const d = eml.engrams.store(validDecision({ properties: { detail: 'more', expires_at: '2030-01-01' } }))
-      const r = eml.engrams.update(d.id, { properties: { detail: null, expires_at: null } })!
+      const d = eml.engrams.store(validDecision({ properties: { detail: 'more', review_due_at: '2030-01-01' } }))
+      const r = eml.engrams.update(d.id, { properties: { detail: null } })!
       expect(r.properties!.detail).toBeUndefined()
-      expect(r.properties!.expires_at).toBeUndefined()
-      expect(r.diff).toMatchObject({ detail: ['more', null], expires_at: ['2030-01-01', null] })
+      expect(r.diff).toMatchObject({ detail: ['more', null] })
       expect(() => eml.engrams.update(d.id, { properties: { rationale: null } })).toThrow(/rationale is required and cannot be cleared/)
       expect(() => eml.engrams.update(d.id, { properties: { why: 'x' } })).toThrow(/unknown field why for a decision/)
     })
@@ -567,15 +567,10 @@ describe('v0.19 write model', () => {
   })
 
   describe('expiry, conflicts, filters', () => {
-    it('expireDue sets active engrams past expires_at to expired and clears their review label', () => {
-      const d = eml.engrams.store(validDecision({ properties: { expires_at: '2026-01-01' } }))
-      const later = eml.engrams.store(validDecision({ properties: { expires_at: '2099-01-01' } }))
-      eml.engrams.stampDueReviewLabels('2099-06-01T00:00:00Z')
-      expect(eml.engrams.expireDue('2026-06-01T00:00:00Z')).toBe(1)
-      expect(statusOf(d.id)).toBe('expired')
-      expect(eml.engrams.get(d.id)!.labels).not.toContain('review')
-      expect(statusOf(later.id)).toBe('active')
-      expect(eml.engrams.expireDue('2026-06-01T00:00:00Z')).toBe(0)
+    it('v0.20: a decision has no expires_at, on create and on update', () => {
+      expect(() => eml.engrams.store(validDecision({ properties: { expires_at: '2030-01-01' } as any }))).toThrow(/unknown field expires_at for a decision/)
+      const d = eml.engrams.store(validDecision())
+      expect(() => eml.engrams.update(d.id, { properties: { expires_at: '2030-01-01' } as any })).toThrow(/unknown field expires_at for a decision/)
     })
 
     it('an event is compared with events of the same change_type close in time, and nothing else', () => {

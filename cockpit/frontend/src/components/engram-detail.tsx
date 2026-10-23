@@ -316,7 +316,7 @@ function EngramTail({ engram, relationHref }: { engram: Engram; relationHref: (o
 // v0.19: one row per field, in the given order.
 const FIELD_LABELS: Record<string, string> = {
   next_step: "next step", assignee_id: "assignee", due_date: "due", review_due_at: "review due",
-  expires_at: "expires", occurred_at: "occurred", change_type: "change", source_url: "source url",
+  occurred_at: "occurred", change_type: "change", source_url: "source url",
   source_name: "source name", checked_at: "checked", rule_type: "rule type", open_threads: "open threads",
 };
 

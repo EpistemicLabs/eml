@@ -154,14 +154,6 @@ describe('v0.19 review fixes', () => {
       expect(() => eml.engrams.update(standing.id, { properties: { binding: 'task' } })).toThrow(/a note bound to it would close with it/)
     })
 
-    it('an expired decision is reactivated only with a new expires_at', () => {
-      const d = eml.engrams.store(validDecision({ properties: { expires_at: '2020-01-01' } }))
-      expect(eml.engrams.expireDue()).toBe(1)
-      expect(() => eml.engrams.update(d.id, { status: 'active' })).toThrow(/expires_at 2020-01-01 has passed/)
-      expect(eml.engrams.update(d.id, { status: 'active', properties: { expires_at: null } })!.status).toBe('active')
-      expect(propsOf(d.id).expires_at).toBeUndefined()
-    })
-
     it('a review confirms only an active engram (an open task)', () => {
       const d = eml.engrams.store(validDecision())
       eml.engrams.update(d.id, { status: 'invalidated' })

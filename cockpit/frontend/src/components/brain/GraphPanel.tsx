@@ -114,7 +114,7 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
           <ToggleChip
             active={activeOnly}
             onClick={() => setActiveOnly((v) => !v)}
-            title="Show only active / planned engrams — hide superseded, expired, invalidated, resolved"
+            title="Show only active / planned engrams — hide superseded, invalidated, resolved"
           >
             Active only
           </ToggleChip>

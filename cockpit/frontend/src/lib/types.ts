@@ -18,7 +18,6 @@ export type EngramStatus =
   | "active"
   | "superseded"
   | "invalidated"
-  | "expired"
   | "resolved";
 
 export type Significance = "critical" | "high" | "normal" | "low" | "trivial";
@@ -112,7 +111,7 @@ export interface LearningState {
  * TYPE_FIELDS). Anything else in properties is shown under "other".
  */
 export const TYPE_FIELD_ORDER: Record<EngramType, readonly string[]> = {
-  decision: ["rationale", "alternatives", "binding", "expires_at", "review_due_at", "detail"],
+  decision: ["rationale", "alternatives", "binding", "review_due_at", "detail"],
   rule: ["applies", "trigger", "why", "agreed", "rule_type", "detail", "review_due_at"],
   profile: ["core", "detail", "review_due_at"],
   status: ["state", "next_step", "blockers", "detail"],

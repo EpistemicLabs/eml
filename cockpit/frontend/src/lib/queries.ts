@@ -217,8 +217,8 @@ export function useConfirmReview() {
   });
 }
 
-// Retire: expired for decision/rule/profile; a task is invalidated with an
-// outcome instead (tasks don't expire — spec v0.15 decision 20).
+// Retire: invalidated for decision/rule/profile; a task is invalidated with an
+// outcome (spec v0.15 decision 20).
 export function useRetireEngram() {
   const qc = useQueryClient();
   return useMutation({
@@ -230,7 +230,7 @@ export function useRetireEngram() {
         ? brainPost<Engram>(`/task/${engram.id}/track`, {
           status: "invalidated", outcome: "retired in review", text: "Retired in the cockpit review.", keep: [],
         })
-        : brainPost<Engram>("/update", { id: engram.id, patch: { status: "expired" } }),
+        : brainPost<Engram>("/update", { id: engram.id, patch: { status: "invalidated" } }),
     onSuccess: () => invalidateReviewSurfaces(qc),
   });
 }

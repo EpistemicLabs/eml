@@ -16,7 +16,7 @@ export const ENGRAM_TYPES: readonly EngramType[] = [
   'decision', 'rule', 'profile', 'status', 'task', 'event', 'log', 'reference', 'note', 'learning',
 ]
 
-export type EngramStatus = 'planned' | 'active' | 'superseded' | 'invalidated' | 'expired' | 'resolved'
+export type EngramStatus = 'planned' | 'active' | 'superseded' | 'invalidated' | 'resolved'
 
 // v0.8 C9: brain hygiene review — default days until review_due_at for the
 // types that have no automatic lifecycle (decisions, rules, profiles).
@@ -73,7 +73,6 @@ export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'mcp' | 'other'
 export interface DecisionProperties {
   rationale?: string
   alternatives?: string[]
-  expires_at?: string             // hard lifecycle: obsolete from then on
   review_due_at?: string          // C9 soft review (default 60d)
 }
 
