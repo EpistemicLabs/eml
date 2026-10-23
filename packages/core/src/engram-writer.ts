@@ -230,7 +230,7 @@ export class EngramWriter extends EngramStore {
       console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
     }
 
-    const stored = this.getRaw(id)!
+    const stored = this.getRaw(id, stamp.at)!
     const extra: Partial<StoredEngram> = {}
     if (wikilinks.unresolved.length > 0) extra.unresolved_links = wikilinks.unresolved
     if (openSubtasks.length > 0) extra.open_subtasks = openSubtasks
@@ -244,7 +244,7 @@ export class EngramWriter extends EngramStore {
       }
     }
     if (CONFLICT_TYPES.has(type)) {
-      const potential_conflicts = this.findPotentialConflicts(stored)
+      const potential_conflicts = this.findPotentialConflicts(stored, stamp.at)
       if (potential_conflicts.length > 0) extra.potential_conflicts = potential_conflicts
     }
     return { ...stored, ...extra }
@@ -480,7 +480,7 @@ export class EngramWriter extends EngramStore {
     return entry
   }
 
-  /** A task superseded by a new one hands its bound items over (S2). */
+  /** A task superseded by a new one hands its bound items over (S2). Only the edge moves: no field of the item changes, so its rev stays. */
   private moveBoundItems(oldTaskId: string, newTaskId: string, stamp: Stamp): void {
     const items = this.boundItems(oldTaskId)
     for (const item of items) {
@@ -491,7 +491,6 @@ export class EngramWriter extends EngramStore {
         VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
         ON CONFLICT(source_id, target_id, relation) DO NOTHING
       `).run(stamp.newId(), item.id, newTaskId, rel, stamp.at)
-      bumpRev(this.db, stamp, item.id)  // the item now belongs to another task
       this.appendTaskChange(newTaskId, `${item.type} moved here from ${oldTaskId}: ${item.title ?? item.id} (${item.id})`, stamp)
     }
   }
@@ -713,7 +712,7 @@ export class EngramWriter extends EngramStore {
     if (wikilinks.unresolved.length > 0) {
       console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
     }
-    const updated = this.getRaw(id)!
+    const updated = this.getRaw(id, stamp.at)!
     return {
       ...updated,
       entries_written: written,
@@ -769,7 +768,7 @@ export class EngramWriter extends EngramStore {
    * at N=3. Filtering happens BEFORE the cap — never SQL limit:3 then post-filter,
    * which would let a real conflict at FTS-rank 4+ go unseen (the C0 bug class).
    */
-  private findPotentialConflicts(engram: Engram): ConflictCandidate[] {
+  private findPotentialConflicts(engram: Engram, now: string): ConflictCandidate[] {
     const salient = extractSalientTerms(engram.title, engram.content)
     if (salient.length === 0) return []
 
@@ -784,6 +783,7 @@ export class EngramWriter extends EngramStore {
       statuses: ['active', 'planned'],
       order_by: 'score',
       limit: CONFLICT_CANDIDATE_LIMIT,
+      now,
     })
 
     const props = (engram.properties ?? {}) as Record<string, unknown>
@@ -979,6 +979,10 @@ export class EngramWriter extends EngramStore {
 
   private tagsOf(id: string): string[] {
     return (this.db.prepare('SELECT tag_id FROM engram_tags WHERE engram_id = ?').all(id) as Array<{ tag_id: string }>).map(r => r.tag_id)
+  }
+
+  private subjectsOf(id: string): string[] {
+    return (this.db.prepare('SELECT subject_id FROM engram_subjects WHERE engram_id = ?').all(id) as Array<{ subject_id: string }>).map(r => r.subject_id)
   }
 
   private insertEngramTags(engramId: string, tags: string[], stamp: Stamp): void {
@@ -1197,7 +1201,7 @@ export class EngramWriter extends EngramStore {
     const substantive = (newContent !== undefined && newContent !== existing.content)
       || (patch.title !== undefined && patch.title !== existing.title)
       || (patch.scope !== undefined && patch.scope !== existing.scope)
-      || Object.keys(fieldPatch).some(k => k !== 'review_due_at')
+      || Object.keys(fieldPatch).some(k => k !== 'review_due_at' && JSON.stringify(newProps[k]) !== JSON.stringify(oldProps[k]))
     const restartAsked = (patch.properties as Record<string, unknown> | undefined)?.review_due_at === null
     const reviewed = reviewDays !== undefined && newStatus === 'active' && (substantive || restartAsked || patch.review_note !== undefined)
     if (reviewed && fieldPatch.review_due_at === undefined) {
@@ -1207,6 +1211,9 @@ export class EngramWriter extends EngramStore {
     if (patch.scope !== undefined && patch.scope !== existing.scope) this.validateScope(patch.scope)
     const tagSlugs = patch.tags !== undefined ? this.normalizeAndValidateTags(patch.tags, this.tagsOf(id)) : undefined
     const subjectSlugs = patch.subjects !== undefined ? this.normalizeAndValidateSubjects(patch.subjects) : undefined
+    // a set equal to the stored one is no change (no write, no rev)
+    const tagsChange = tagSlugs !== undefined && !sameSet(tagSlugs, this.tagsOf(id)) ? tagSlugs : undefined
+    const subjectsChange = subjectSlugs !== undefined && !sameSet(subjectSlugs, this.subjectsOf(id)) ? subjectSlugs : undefined
 
     // the diff (what the response shows)
     const diff: Record<string, [unknown, unknown]> = {}
@@ -1218,6 +1225,9 @@ export class EngramWriter extends EngramStore {
       if (JSON.stringify(oldProps[k]) !== JSON.stringify(newProps[k])) diff[k] = [oldProps[k] ?? null, newProps[k] ?? null]
     }
 
+    const contentChanged = newContent !== undefined && newContent !== existing.content
+    const titleChanged = patch.title !== undefined && patch.title !== existing.title
+    const scopeChanged = patch.scope !== undefined && patch.scope !== existing.scope
     const superseded: string[] = []
     let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
     this.db.transaction(() => {
@@ -1226,23 +1236,24 @@ export class EngramWriter extends EngramStore {
       }
       const sets: string[] = []
       const params: unknown[] = []
-      if (newContent !== undefined) { sets.push('content = ?'); params.push(newContent) }
-      if (patch.title !== undefined) { sets.push('title = ?'); params.push(patch.title) }
-      if (patch.scope !== undefined) { sets.push('scope = ?'); params.push(patch.scope) }
-      if (patch.status !== undefined) { sets.push('status = ?'); params.push(patch.status) }
+      // only what differs from the stored values: a patch that changes nothing writes nothing (no updated_at, no rev)
+      if (contentChanged) { sets.push('content = ?'); params.push(newContent) }
+      if (titleChanged) { sets.push('title = ?'); params.push(patch.title) }
+      if (scopeChanged) { sets.push('scope = ?'); params.push(patch.scope) }
+      if (patch.status !== undefined && patch.status !== existing.status) { sets.push('status = ?'); params.push(patch.status) }
       if (JSON.stringify(newProps) !== JSON.stringify(oldProps)) { sets.push('properties = ?'); params.push(JSON.stringify(newProps)) }
-      if (sets.length > 0 || tagSlugs !== undefined || subjectSlugs !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
+      if (sets.length > 0 || tagsChange !== undefined || subjectsChange !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
         sets.push('updated_at = ?')
         this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
         bumpRev(this.db, stamp, id)
       }
-      if (newContent !== undefined || patch.scope !== undefined || patch.title !== undefined) {
+      if (contentChanged || scopeChanged || titleChanged) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
         this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
       }
-      if (tagSlugs !== undefined) this.replaceEngramTags(id, tagSlugs, stamp)
-      if (subjectSlugs !== undefined) this.replaceEngramSubjects(id, subjectSlugs, stamp)
-      if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope, stamp)
+      if (tagsChange !== undefined) this.replaceEngramTags(id, tagsChange, stamp)
+      if (subjectsChange !== undefined) this.replaceEngramSubjects(id, subjectsChange, stamp)
+      if (contentChanged) wikilinks = this.materializeWikilinks(id, newContent!, newScope, stamp)
       superseded.push(...this.applySupersedes(id, supersedePlan, stamp).superseded)
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
       // a decision's or note's status change goes into its journal (a reopen of its task reads the last one)
@@ -1261,7 +1272,7 @@ export class EngramWriter extends EngramStore {
       console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
     }
 
-    const updated = this.getRaw(id)!
+    const updated = this.getRaw(id, stamp.at)!
     return {
       ...updated,
       diff,
@@ -1290,7 +1301,7 @@ export class EngramWriter extends EngramStore {
           appendEntry(this.db, id, { kind: 'note', text, stage: this.propsOf(id).stage as string ?? null }, stamp)
         }
       })()
-      return this.getRaw(id)
+      return this.getRaw(id, stamp.at)
     }
     const reviewDays = TYPE_REVIEW_DEFAULTS[existing.type as keyof typeof TYPE_REVIEW_DEFAULTS]
     if (reviewDays === undefined) {
@@ -1304,7 +1315,7 @@ export class EngramWriter extends EngramStore {
       bumpRev(this.db, stamp, id)
       appendEntry(this.db, id, { kind: 'review', text: text! }, stamp)
     })()
-    return this.getRaw(id)
+    return this.getRaw(id, stamp.at)
   }
 
   // === v0.19: learnings (eml_learning) ===
@@ -1362,7 +1373,6 @@ export class EngramWriter extends EngramStore {
     // --- add to an existing learning ---
     if (input.id !== undefined) {
       const existing = this.db.prepare('SELECT * FROM engrams WHERE id = ?').get(input.id) as any
-      if (!existing) throw new Error(`Invalid engram: learning ${input.id} not found.`)
       if (existing.type !== 'learning') throw new Error(`Invalid engram: ${input.id} is a ${existing.type}, not a learning.`)
       if (existing.status !== 'active') throw new Error(`Invalid engram: learning ${input.id} is ${existing.status} — evidence goes to an active learning.`)
       const extra = ['scope', 'title', 'new_topic', 'tags', 'subjects'].filter(k => (input as unknown as Record<string, unknown>)[k] !== undefined)
@@ -1380,7 +1390,7 @@ export class EngramWriter extends EngramStore {
           bumpRev(this.db, stamp, input.id!)
         }
       })()
-      const engram = this.getRaw(input.id)!
+      const engram = this.getRaw(input.id, stamp.at)!
       return { written: true, engram, learning: learningState(this.entries(input.id)) }
     }
 
@@ -1391,7 +1401,7 @@ export class EngramWriter extends EngramStore {
     if (isBlank(input.title)) throw new Error('Invalid engram: a new learning needs a title — the topic.')
     this.validateScope(input.scope!)
     if (!input.new_topic) {
-      const matches = this.findLearningTopic(input.title!, input.content!, input.scope!, actor.handle)
+      const matches = this.findLearningTopic(input.title!, input.content!, input.scope!, actor.handle, stamp.at)
       if (matches.length > 0) return { written: false, matches }
     }
     const tagSlugs = input.tags !== undefined ? this.normalizeAndValidateTags(input.tags) : undefined
@@ -1412,7 +1422,7 @@ export class EngramWriter extends EngramStore {
       if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs, stamp)
       this.materializeWikilinks(id, input.content!, input.scope!, stamp)
     })()
-    return { written: true, engram: this.getRaw(id)!, learning: learningState(this.entries(id)) }
+    return { written: true, engram: this.getRaw(id, stamp.at)!, learning: learningState(this.entries(id)) }
   }
 
   /**
@@ -1420,14 +1430,14 @@ export class EngramWriter extends EngramStore {
    * cover the new one's salient terms (the conflict gate, run on learnings
    * only), in the scope and the agent / user scopes of the session.
    */
-  private findLearningTopic(title: string, content: string, scope: string, caller: string | null): Array<{ id: string, scope: string, title: string | null, content: string, coverage: number }> {
+  private findLearningTopic(title: string, content: string, scope: string, caller: string | null, now: string): Array<{ id: string, scope: string, title: string | null, content: string, coverage: number }> {
     const salient = extractSalientTerms(title, content)
     if (salient.length === 0) return []
     const scopes = new Set<string>([scope])
     if (caller) scopes.add(`agent.${caller}`)
     for (const u of this.db.prepare('SELECT id FROM users').all() as Array<{ id: string }>) scopes.add(`user.${u.id}`)
     // the scope filter is part of the query, so the limit applies after it (the C0 bug class)
-    const candidates = this.query({ type: 'learning', scopes: [...scopes], search: salient.join(' '), search_mode: 'or', statuses: ['active'], order_by: 'score', limit: CONFLICT_CANDIDATE_LIMIT })
+    const candidates = this.query({ type: 'learning', scopes: [...scopes], search: salient.join(' '), search_mode: 'or', statuses: ['active'], order_by: 'score', limit: CONFLICT_CANDIDATE_LIMIT, now })
     return candidates
       .map(c => ({ id: c.id, scope: c.scope, title: c.title, content: c.content, coverage: Math.round(termCoverage(salient, `${c.title ?? ''} ${c.content}`) * 100) / 100 }))
       .filter(c => c.coverage >= CONFLICT_COVERAGE_THRESHOLD || (c.title !== null && c.title === title))
@@ -1477,4 +1487,10 @@ export class EngramWriter extends EngramStore {
     return info.changes > 0
   }
 
+}
+
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  const sa = new Set(a)
+  const sb = new Set(b)
+  return sa.size === sb.size && [...sa].every(x => sb.has(x))
 }

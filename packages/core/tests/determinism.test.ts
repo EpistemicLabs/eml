@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { EML, addDays, COMMAND_NAMES } from '../src'
+import { EML, addDays, COMMAND_NAMES, type Env } from '../src'
 import {
   validDecision, validTask, validNote, validRule, validProfile, validStatus, validEvent, validLog, validReference, writes, createObject, updateObject,
 } from './fixtures'
@@ -162,6 +162,35 @@ describe('deterministic writes', () => {
     ])).toEqual(new Set([t]))
     // kept as standing, its review clock starts at the same time
     expect(eml.engrams.get(stays.id)!.properties!.review_due_at).toBe(addDays(t, 60))
+    eml.close()
+  })
+
+  it('a write reads the clock once: the response (review_due, conflict and topic checks) uses the write\'s time', () => {
+    // the brain's one clock, counted: the write's env and the store reads both use it
+    let reads = 0
+    const env0 = fixedEnv()
+    const eml = new EML({ dbPath: ':memory:', namespace: 'test', newId: env0.newId, clock: () => { reads++; return env0.clock() } })
+    const once = <T>(f: (env: Env) => T): T => {
+      const env = eml.env({ handle: 'juno' })
+      reads = 0
+      const r = f(env)
+      expect(reads).toBe(1)
+      return r
+    }
+    once(env => writes(eml).projects.create({ id: 'p', name: 'P' }, env))
+    once(env => writes(eml).projects.update('p', { goal: 'ship' }, env))
+    const scope = 'project.p'
+    const d = once(env => writes(eml).store(validDecision({ scope, title: 'pick-sqlite', content: 'Use SQLite for the brain store.' }), env))
+    once(env => writes(eml).store(validDecision({ scope, title: 'pick-sqlite-again', content: 'Use SQLite for the brain store, again.' }), env))
+    once(env => writes(eml).update(d.id, { content: 'Use SQLite for the local brain store.' }, env))
+    once(env => writes(eml).confirmReview(d.id, 'still holds', env))
+    const t = once(env => writes(eml).store(validTask({ scope, title: 'hub', status: 'active' }), env))
+    once(env => writes(eml).trackTask(t.id, { text: 'progress' }, env))
+    once(env => writes(eml).relate({ source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' }, env))
+    const l = once(env => writes(eml).learn({ scope: 'global', title: 'ask-first', content: 'Ask before acting.', source: 'self', happened: 'once' }, env))
+    if (!l.written) throw new Error('not written')
+    once(env => writes(eml).learn({ scope: 'global', title: 'ask-first-again', content: 'Ask before acting.', source: 'self', happened: 'twice' }, env))
+    once(env => writes(eml).learn({ id: l.engram.id, source: 'observed', happened: 'again' }, env))
     eml.close()
   })
 })

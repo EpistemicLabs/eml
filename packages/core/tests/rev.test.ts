@@ -37,6 +37,25 @@ describe('engram rev', () => {
     expect([rev(n.id), rev(d.id)]).toEqual([1, 3])
   })
 
+  it('a patch that changes nothing writes nothing: no rev, no updated_at', () => {
+    let at = '2026-10-23T10:00:00.000Z'
+    const clocked = new EML({ dbPath: ':memory:', namespace: 'juno', clock: () => at })
+    try {
+      writes(clocked).projects.create({ id: 'p', name: 'P' })
+      writes(clocked).tags.create({ name: 'ops' })
+      const n = writes(clocked).store(validNote({ scope, title: 'n', content: 'same', tags: ['ops'] }))
+      at = '2026-10-23T11:00:00.000Z'
+      const r = clocked.apply({ name: 'engram.update', input: { id: n.id, patch: { content: 'same', title: 'n', scope, status: 'active', tags: ['ops'] } } })
+      expect(r).toMatchObject({ rev: 1, updated_at: '2026-10-23T10:00:00.000Z', diff: {} })
+      const d = writes(clocked).store(validDecision({ scope, title: 'd' }))
+      const props = clocked.engrams.get(d.id)!.properties as Record<string, unknown>
+      at = '2026-10-23T12:00:00.000Z'
+      const r2 = clocked.apply({ name: 'engram.update', input: { id: d.id, patch: { properties: { rationale: props.rationale } } } })
+      expect(r2).toMatchObject({ rev: 1, updated_at: '2026-10-23T11:00:00.000Z', diff: {} })
+      expect(clocked.engrams.get(d.id)!.properties).toEqual(props)   // review_due_at not restarted
+    } finally { clocked.close() }
+  })
+
   it('side effects on other engrams bump them too, once', () => {
     // supersede target, status and core-profile auto-supersede
     const old = w().store(validDecision({ scope, title: 'old' }))
@@ -56,12 +75,14 @@ describe('engram rev', () => {
     // closing: the task once, each bound item once (row + its own entry)
     w().trackTask(task.id, { status: 'resolved', outcome: 'done', text: 'done', keep: [stays.id] })
     expect([rev(task.id), rev(closes.id), rev(stays.id)]).toEqual([4, 2, 2])
-    // a task replaced by a task hands its bound items over: they move, and bump
+    // a task replaced by a task hands its bound items over: only their edge moves, an edge is not engram state
     const a = w().store(validTask({ scope, title: 'a', status: 'active' }))
     const item = w().store(validNote({ scope, title: 'item', task_id: a.id, properties: { binding: 'task' } }))
+    const itemAt = eml.engrams.get(item.id)!.updated_at
     const b = w().store(validTask({ scope, title: 'b', supersedes: [a.id] }))
     expect(b.rev).toBe(1)
-    expect([rev(a.id), rev(item.id)]).toEqual([3, 2])
+    expect([rev(a.id), rev(item.id)]).toEqual([3, 1])
+    expect(eml.engrams.get(item.id)!.updated_at).toBe(itemAt)
     // part_of: the child's own track bumps it, the parent stays
     const child = w().store(validTask({ scope, title: 'child' }))
     w().trackTask(child.id, { parent_id: b.id })

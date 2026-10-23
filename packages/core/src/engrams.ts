@@ -582,7 +582,7 @@ export class EngramStore {
     if (bm25Path) {
       const ranked = rows.map(r => ({ engram: this.rowToEngram(r), rank: r.bm25_rank as number }))
       this.hydrateFacets(ranked.map(x => x.engram), now)
-      return bucketByRelevance(ranked, e => this.score(e), BM25_RELEVANCE_EPS)
+      return bucketByRelevance(ranked, e => this.score(e, now), BM25_RELEVANCE_EPS)
     }
 
     let engrams = rows.map(r => this.rowToEngram(r))
@@ -591,7 +591,7 @@ export class EngramStore {
     // Post-query: score-based sorting (significance × recency) — the no-search
     // score path (e.g. recall with an empty query) keeps the original behaviour.
     if (q.order_by === 'score') {
-      engrams.sort((a, b) => this.score(b) - this.score(a))
+      engrams.sort((a, b) => this.score(b, now) - this.score(a, now))
     }
 
     return engrams
@@ -738,20 +738,21 @@ export class EngramStore {
     }
   }
 
-  protected getRaw(id: string): Engram | null {
+  /** `now`: the read's time — a write passes its stamp's, so the response reads no clock of its own. */
+  protected getRaw(id: string, now?: string): Engram | null {
     const row = this.db.prepare(
       'SELECT * FROM engrams WHERE id = ?'
     ).get(id) as any
     if (!row) return null
     const engram = this.rowToEngram(row)
-    this.hydrateFacets([engram])
+    this.hydrateFacets([engram], now)
     return engram
   }
 
-  protected score(engram: Engram): number {
+  protected score(engram: Engram, now: string): number {
     // v0.8 C7: no decay_factor on the engram anymore (decay mechanism not activated).
     const sig = significanceWeight(engram.significance)
-    const recency = recencyBoost(engram.created_at, Date.parse(this.env.now()))
+    const recency = recencyBoost(engram.created_at, Date.parse(now))
     return sig * recency
   }
 

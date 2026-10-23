@@ -163,6 +163,11 @@ describe('v0.19 REST', () => {
       const userWithoutQuote = await post('/learning', { id: first.body.engram.id, source: 'user', happened: 'x' })
       expect(userWithoutQuote.status).toBe(400)
       expect(userWithoutQuote.body.error).toMatch(/needs quote/)
+
+      // v0.20: evidence for an unknown id is a 404
+      const ghost = await post('/learning', { id: 'ghost', source: 'self', happened: 'x' })
+      expect(ghost.status).toBe(404)
+      expect(ghost.body.error).toBe('learning not found')
     })
   })
 

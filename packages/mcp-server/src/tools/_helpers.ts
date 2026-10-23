@@ -13,9 +13,14 @@ import { EmlApiError } from '../http-client'
 /**
  * v0.20: an engram's rev is for the cockpit and the sync (base_rev); agents
  * stay last-write-wins, so tool output leaves it out (decision
- * engram-revision-counter).
+ * engram-revision-counter). Only an engram's: the holder has a type and a
+ * scope — a rev key in a user's own metadata stays.
  */
-const withoutRev = (key: string, value: unknown) => (key === 'rev' ? undefined : value)
+function withoutRev(this: unknown, key: string, value: unknown): unknown {
+  if (key !== 'rev' || !this || typeof this !== 'object') return value
+  const holder = this as Record<string, unknown>
+  return typeof holder.type === 'string' && typeof holder.scope === 'string' ? undefined : value
+}
 
 export async function callTool<T>(
   fn: () => Promise<T>,

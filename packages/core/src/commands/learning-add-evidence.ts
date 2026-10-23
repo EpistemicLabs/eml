@@ -1,6 +1,6 @@
 import type { Engram } from '../types'
 import type { LearningState } from '../learning'
-import { inputObject, requireText, type CommandModule } from './types'
+import { CommandError, inputObject, requireText, type CommandModule } from './types'
 
 /** learning.add_evidence — an incident for an existing learning (and optionally a sharper lesson). */
 export interface LearningAddEvidenceInput {
@@ -22,6 +22,7 @@ export const learningAddEvidence: CommandModule<LearningAddEvidenceInput, { engr
     return o as unknown as LearningAddEvidenceInput
   },
   apply(ctx, input, stamp) {
+    if (!ctx.eml.engrams.exists(input.id)) throw new CommandError('NOT_FOUND', 'learning not found')
     const r = ctx.engrams.addEvidence(input, stamp)
     return { engram: r.engram, learning: r.learning }
   },

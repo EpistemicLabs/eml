@@ -110,6 +110,35 @@ describe('the command set', () => {
       expect(reject(() => eml.apply({ name: 'learning.add_evidence', input: { id: l.id, source: 'self', happened: 'x', scope: 'global' } as never })).message)
         .toMatch(/scope only on create/)
     })
+
+    it('learning.add_evidence: an unknown id is NOT_FOUND, an engram of another type INVALID', () => {
+      expect(reject(() => eml.apply({ name: 'learning.add_evidence', input: { id: 'ghost', source: 'self', happened: 'x' } })))
+        .toMatchObject({ code: 'NOT_FOUND', message: 'learning not found' })
+      const n = eml.apply({ name: 'engram.create', input: validNote({ title: 'n' }) })
+      expect(reject(() => eml.apply({ name: 'learning.add_evidence', input: { id: n.id, source: 'self', happened: 'x' } })))
+        .toMatchObject({ code: 'INVALID', message: `Invalid engram: ${n.id} is a note, not a learning.` })
+    })
+  })
+
+  describe('relation.create: a closed payload', () => {
+    it('takes only the relation fields; detection_method one of the four, strength a number', () => {
+      const a = eml.apply({ name: 'engram.create', input: validNote({ title: 'a' }) })
+      const b = eml.apply({ name: 'engram.create', input: validNote({ title: 'b' }) })
+      const rel = (extra: Record<string, unknown>) => ({ name: 'relation.create' as const, input: { source_id: a.id, target_id: b.id, relation: 'supports', ...extra } as never })
+      const before = count('relations')
+      expect(reject(() => eml.apply(rel({ scope: 'global', bogus: 1 })))).toMatchObject({
+        code: 'INVALID', message: 'unknown fields scope, bogus — a relation takes source_id, target_id, relation, detection_method, strength, explanation, metadata',
+      })
+      expect(reject(() => eml.apply(rel({ detection_method: 'bogus' })))).toMatchObject({
+        code: 'INVALID', message: 'invalid detection_method "bogus" — one of manual, agent_declared, auto_temporal, auto_semantic',
+      })
+      expect(reject(() => eml.apply(rel({ strength: 'high' })))).toMatchObject({ code: 'INVALID', message: 'strength must be a number' })
+      expect(reject(() => eml.apply(rel({ explanation: 42 })))).toMatchObject({ code: 'INVALID', message: 'explanation must be a string' })
+      expect(reject(() => eml.apply(rel({ metadata: 'x' })))).toMatchObject({ code: 'INVALID', message: 'metadata must be an object' })
+      expect(count('relations')).toBe(before)
+      expect(eml.apply(rel({ detection_method: 'agent_declared', strength: 0.5, explanation: 'why', metadata: { k: 'v' } }))).toEqual({ created: true })
+      expect(count('relations')).toBe(before + 1)
+    })
   })
 
   describe('users and agents are objects', () => {
