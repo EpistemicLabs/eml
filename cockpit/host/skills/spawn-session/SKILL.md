@@ -30,8 +30,20 @@ The worker has the brain, not this conversation. The prompt must stand alone:
    a session log's title, task titles), files and branches involved.
 3. **Constraints** — what not to touch, decisions already made, how the user
    wants to work (plan before build, commit rules).
-4. **Hand-back** — where the result goes (commit, brain status/log, a message
-   in its own pane) and that it stops and asks when it hits a real decision.
+4. **Hand-back** — where the result goes (commit, brain status/log) and how
+   the worker talks back. For a Claude worker, add this section with your own
+   address filled in (`echo "$COCKPIT_SESSION_ADDRESS"`):
+
+   > **Talking back:** You were started by the session `<your address>`.
+   > Reach it with SendMessage (`to: "<your address>"`). Ask it when you hit a
+   > real decision instead of guessing; it answers within the decisions
+   > already made or asks its user. When you are done, send it a summary
+   > (what changed, where the result is, what is open). The result itself goes
+   > to the commit or the brain, not into the message.
+
+   A Codex worker cannot send messages: its hand-back is its pane and the
+   brain only, so tell it to stop and wait in its pane when it hits a real
+   decision.
 
 ## Run it
 
@@ -48,11 +60,31 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
 - `--provider`: optional, `claude` or `codex` — the agent CLI the worker runs with. Leave it out
   unless the user asked for a specific one; the worker then uses the cockpit's default.
 
+For a worker that can message, the output ends with `Worker address: <address>`.
+
 If `COCKPIT_SPAWN_JS` is not set, this session is not running in the cockpit —
 say so instead of trying another way.
 
 ## After spawning
 
 Tell the user what the worker was asked to do and that its pane opened next to
-this one (or opens as soon as a cockpit tab is open). Don't wait for it; its
-results arrive through its own pane and the brain.
+this one (or opens as soon as a cockpit tab is open). Then keep working; don't
+wait for it.
+
+With a worker address:
+
+- Subscribe once: SendMessage with `to: "<worker address>"`,
+  `notify_when_idle: true` and no message. A notice arrives when the worker
+  goes idle — finished, or stuck without having written to you. The notice
+  is one-shot and also fires when the worker waits for your answer: after
+  answering, subscribe again.
+- A question from the worker arrives as a message from its address. Answer it
+  with SendMessage to that address when the answer follows from decisions
+  already made in this session or the brain; otherwise ask your user and pass
+  their answer on. Never pass on a permission or an approval — the worker's
+  permissions are its own.
+- Its summary tells you it is done: check the result where it says, then tell
+  your user.
+
+Without one (a Codex worker), its results arrive through its own pane and the
+brain.
