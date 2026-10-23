@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, readObject, createObject, type Env } from '../src'
+import { EML, readObject, type Env } from '../src'
 import { renderBrainStateMarkdown } from '../src/render'
-import { validDecision, validLog, validRule } from './fixtures'
+import {
+  validDecision, validLog, validRule, writes, createObject,
+} from './fixtures'
 import { hygieneCheck } from '../src/hygiene'
 
 // v0.19 — behaviour changes from the review of the agent-facing texts
@@ -14,18 +16,18 @@ describe('v0.19 review changes', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })
-    eml.agents.store({ id: 'juno', name: 'Juno' })
-    eml.users.create({ id: 'ada', name: 'Ada' })
-    eml.projects.create({ id: 'p', name: 'P' })
+    writes(eml).agents.store({ id: 'juno', name: 'Juno' })
+    writes(eml).users.create({ id: 'ada', name: 'Ada' })
+    writes(eml).projects.create({ id: 'p', name: 'P' })
   })
   afterEach(() => { eml.close() })
 
   describe('C1 eml_show: the last five logs, no decisions', () => {
     it('lists the five newest logs and no decisions section', () => {
       for (let i = 1; i <= 6; i++) {
-        eml.engrams.store(validLog({ scope: 'project.p', title: `session-${i}`, properties: { what: `what ${i}`, landed: 'l', next: `next ${i}` } }), ctx(`s${i}`))
+        writes(eml).store(validLog({ scope: 'project.p', title: `session-${i}`, properties: { what: `what ${i}`, landed: 'l', next: `next ${i}` } }), ctx(`s${i}`))
       }
-      eml.engrams.store(validDecision({ scope: 'project.p', title: 'some-choice' }), ctx())
+      writes(eml).store(validDecision({ scope: 'project.p', title: 'some-choice' }), ctx())
       const state = eml.engrams.buildBrainState('project.p')
       expect(state.recent_logs).toHaveLength(5)
       const md = renderBrainStateMarkdown(state)
@@ -51,12 +53,12 @@ describe('v0.19 review changes', () => {
 
   describe('C3 learnings: out of eml_show, eml_list state filter', () => {
     it('finds ripe learnings by state; eml_show no longer lists them', () => {
-      const a = eml.engrams.learn({ title: 'ask-before-push', content: 'Ask before pushing.', scope: 'user.ada', source: 'user', happened: 'pushed without asking', quote: 'ask first' }, ctx('s1'))
+      const a = writes(eml).learn({ title: 'ask-before-push', content: 'Ask before pushing.', scope: 'user.ada', source: 'user', happened: 'pushed without asking', quote: 'ask first' }, ctx('s1'))
       expect(a.written).toBe(true)
       const id = (a as { engram: { id: string } }).engram.id
       expect(eml.engrams.query({ learning_state: 'collecting' }).map(e => e.id)).toEqual([id])
       expect(eml.engrams.query({ learning_state: 'ripe' })).toEqual([])
-      eml.engrams.learn({ id, source: 'observed', happened: 'pushed again' }, ctx('s2'))
+      writes(eml).learn({ id, source: 'observed', happened: 'pushed again' }, ctx('s2'))
       expect(eml.engrams.query({ learning_state: 'ripe' }).map(e => e.id)).toEqual([id])
       expect(eml.engrams.query({ learning_state: 'ripe', scope: 'project.p' })).toEqual([])
       const state = eml.engrams.buildBrainState('user.ada') as unknown as Record<string, unknown>
@@ -69,8 +71,8 @@ describe('v0.19 review changes', () => {
     it('only a seed rule may be written without agreed; the hygiene check finds it', () => {
       const rule = validRule() as Record<string, any>
       const { agreed: _drop, ...props } = rule.properties
-      expect(() => eml.engrams.store({ ...rule, properties: props } as any)).toThrow('a rule needs agreed.')
-      const seed = eml.engrams.store({ ...rule, title: 'seed-rule', properties: props, origin: 'eml-default-brain' } as any)
+      expect(() => writes(eml).store({ ...rule, properties: props } as any)).toThrow('a rule needs agreed.')
+      const seed = writes(eml).store({ ...rule, title: 'seed-rule', properties: props, origin: 'eml-default-brain' } as any)
       expect((seed.properties as any).agreed).toBeUndefined()
       const check = hygieneCheck(eml).checks.find(c => c.id === 'rule-without-agreement')!
       expect(check.findings.map(f => f.id)).toContain(seed.id)

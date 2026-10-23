@@ -116,8 +116,8 @@ All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is stric
 
 | Tool | HTTP endpoint | Use case |
 |---|---|---|
-| `eml_read_object` | `GET /object/:object` | Projects, entities, tags or subjects with usage counts, or one by id |
-| `eml_create_object` | `POST /object/:object` | Register a project, entity (required before its scope), tag or subject |
+| `eml_read_object` | `GET /object/:object` | Projects, entities, tags, subjects, users or agents with usage counts, or one by id |
+| `eml_create_object` | `POST /object/:object` | Register a project, entity (required before its scope), tag, subject, user or agent |
 | `eml_update_object` | `PUT /object/:object/:id` | Patch one (status, status_tracks, metadata, archive a tag, close a subject …); the response shows the diff |
 
 **Tags and subjects.** A tag is what an engram is *about* (`architecture`, `deploy`) and never ends; a subject is the strand it *belongs to* (`v0.14-planning`) and closes when the strand is over. Both are registered objects (`eml_create_object`), listed with `eml_read_object`, applied via the `tags` / `subjects` params on the write tools; only registered ones are accepted. An archived tag stays on the engrams that carry it but is not assigned anew; filing into a closed subject still works and the response flags it (`closed_subjects`).

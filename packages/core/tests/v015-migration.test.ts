@@ -6,6 +6,7 @@ import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { initControlDatabase } from '../src/control'
 import { runForwardMigrations } from '../src/forward-migrations'
+import { writes } from './fixtures'
 
 // v0.15 Cluster B — v0.15_migrate.sql rebuilds `relations` (the `part_of` verb
 // joins the CHECK) and adds the `task_entries` table. These tests take a seeded
@@ -127,8 +128,8 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
       // v0.19: part_of comes from a task's parent (trackTask), entries from trackTask text.
-      eml.engrams.trackTask('t-child', { parent_id: 't-parent' }, eml.env({ handle: 'assistant' }))
-      const tracked = eml.engrams.trackTask('t-parent', { text: 'first entry after the update' }, eml.env({ handle: 'assistant' }))!
+      writes(eml).trackTask('t-child', { parent_id: 't-parent' }, eml.env({ handle: 'assistant' }))
+      const tracked = writes(eml).trackTask('t-parent', { text: 'first entry after the update' }, eml.env({ handle: 'assistant' }))!
       expect(tracked.entries_written![0].author).toBe('assistant')
     } finally { eml.close() }
 

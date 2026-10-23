@@ -2,6 +2,9 @@ import type Database from 'better-sqlite3'
 import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
+import { EngramWriter } from './engram-writer'
+import { ObjectWriter } from './object-writer'
+import { runCommand, type CommandMap, type CommandName } from './commands'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -22,6 +25,9 @@ export class EML {
   private ownsConnection: boolean = true
   private clock!: Clock
   private newId!: IdSource
+  // v0.20: the write side, internal — reached only through apply()
+  private engramWriter!: EngramWriter
+  private objectWriter!: ObjectWriter
 
   constructor(config: EMLConfig) {
     this.db = initDatabase(config.dbPath ?? ':memory:')
@@ -55,6 +61,19 @@ export class EML {
     return { now: this.clock, newId: this.newId, actor: { ...NO_ACTOR, ...actor } }
   }
 
+  /**
+   * v0.20: the one write entry (decision write-command-set). Runs a command —
+   * engram.create · engram.update · task.track · learning.add_evidence ·
+   * engram.confirm_review · relation.create · object.create · object.update —
+   * in one transaction with one time from `env` (default: no actor). A
+   * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS) and
+   * writes nothing. Outside the set only engrams.delete writes (decision
+   * no-delete-command).
+   */
+  apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
+    return runCommand(this.db, { eml: this, engrams: this.engramWriter, objects: this.objectWriter }, command, env)
+  }
+
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
   now(): string {
     return this.clock()
@@ -74,6 +93,11 @@ export class EML {
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
       this.tags, this.subjects, env,
     )
+    this.engramWriter = new EngramWriter(
+      this.db, namespace, this.projects, this.users, this.agents, this.entities,
+      this.tags, this.subjects, env,
+    )
+    this.objectWriter = new ObjectWriter(this.db, this.projects, this.entities, this.users, this.agents, this.tags, this.subjects)
   }
 
   close(): void {
@@ -144,11 +168,17 @@ export {
   TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
-export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
+export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, pinClock, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
-export { readObject, createObject, updateObject, OBJECT_KINDS, type ObjectKind } from './objects'
-export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type TrackTaskInput, type LearnInput, type LearnResult } from './engrams'
+export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'
+export {
+  CommandError, COMMAND_NAMES, isValidationMessage,
+  type Command, type CommandMap, type CommandName, type CommandErrorCode,
+  type EngramCreateInput, type EngramCreateResult, type LearningCreateInput, type EngramUpdateInput, type TaskTrackInput,
+  type LearningAddEvidenceInput, type EngramConfirmReviewInput, type ObjectCreateInput, type ObjectUpdateInput,
+} from './commands'
+export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type LearnInput, type LearnResult } from './engrams'
 export { projectBlock, projectScopeChain, inheritedRules, type ProjectBlockResult, type ProjectBlockOptions, type ProjectBlockBudgetReport } from './project-block'
 export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'

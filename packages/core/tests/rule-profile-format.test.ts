@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML } from '../src'
+import { writes } from './fixtures'
 
 // The short rule and profile format (validate.ts, formatProblems): enforced on
 // create and on updates that change content, trigger, applies or type; legacy
@@ -9,12 +10,12 @@ describe('rule and profile format', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
-    eml.agents.store({ id: 'assistant', name: 'Assistant' })
+    writes(eml).agents.store({ id: 'assistant', name: 'Assistant' })
   })
   afterEach(() => { eml.close() })
 
   const storeRule = (content: string, properties: Record<string, unknown>) =>
-    eml.engrams.store({ type: 'rule', scope: 'global', title: 'r', content, properties: { why: 'w', agreed: 'yes', ...properties } })
+    writes(eml).store({ type: 'rule', scope: 'global', title: 'r', content, properties: { why: 'w', agreed: 'yes', ...properties } })
 
   // A legacy entry as it sits in an existing brain (written before the format).
   const plantLegacy = (id: string, content: string, properties?: Record<string, unknown>) => {
@@ -54,7 +55,7 @@ describe('rule and profile format', () => {
     })
 
     it('accepts a profile of 400 chars and rejects 401', () => {
-      const store = (content: string) => eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'p', content })
+      const store = (content: string) => writes(eml).store({ type: 'profile', scope: 'agent.assistant', title: 'p', content })
       expect(() => store('x'.repeat(400))).not.toThrow()
       expect(() => store('x'.repeat(401))).toThrow(
         "Invalid engram: a profile's content is at most 400 characters (got 401) — keep the core facts; put the rest in detail or a separate profile.",
@@ -62,7 +63,7 @@ describe('rule and profile format', () => {
     })
 
     it('leaves other types alone', () => {
-      expect(() => eml.engrams.store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(5000) })).not.toThrow()
+      expect(() => writes(eml).store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(5000) })).not.toThrow()
     })
   })
 
@@ -74,33 +75,33 @@ describe('rule and profile format', () => {
     })
 
     it('allows status, title, tags and review changes', () => {
-      expect(() => eml.engrams.update(id, { title: 'renamed' })).not.toThrow()
-      expect(() => eml.engrams.update(id, { review_note: 'still holds' })).not.toThrow()
-      expect(() => eml.engrams.update(id, { properties: { review_due_at: '2027-01-01T00:00:00Z', why: 'because' } })).not.toThrow()
-      expect(() => eml.engrams.update(id, { status: 'invalidated' })).not.toThrow()
+      expect(() => writes(eml).update(id, { title: 'renamed' })).not.toThrow()
+      expect(() => writes(eml).update(id, { review_note: 'still holds' })).not.toThrow()
+      expect(() => writes(eml).update(id, { properties: { review_due_at: '2027-01-01T00:00:00Z', why: 'because' } })).not.toThrow()
+      expect(() => writes(eml).update(id, { status: 'invalidated' })).not.toThrow()
     })
 
     it('enforces the format when content, trigger or applies change', () => {
-      expect(() => eml.engrams.update(id, { content: 'y'.repeat(300) })).toThrow(/at most 200 characters \(got 300\)/)
-      expect(() => eml.engrams.update(id, { properties: { trigger: 'now' } })).toThrow(/at most 200 characters \(got 600\)/)
-      expect(() => eml.engrams.update(id, { properties: { applies: 'always' } })).toThrow(/at most 200 characters/)
+      expect(() => writes(eml).update(id, { content: 'y'.repeat(300) })).toThrow(/at most 200 characters \(got 300\)/)
+      expect(() => writes(eml).update(id, { properties: { trigger: 'now' } })).toThrow(/at most 200 characters \(got 600\)/)
+      expect(() => writes(eml).update(id, { properties: { applies: 'always' } })).toThrow(/at most 200 characters/)
     })
 
     it('accepts a migration to the short format', () => {
-      const r = eml.engrams.update(id, { content: 'Do Y.', properties: { trigger: 'when X happens', why: 'because', detail: 'x'.repeat(600) } })
+      const r = writes(eml).update(id, { content: 'Do Y.', properties: { trigger: 'when X happens', why: 'because', detail: 'x'.repeat(600) } })
       expect(r?.content).toBe('Do Y.')
     })
 
     it('a type never changes in place (v0.19: refile = new engram + supersedes)', () => {
-      const note = eml.engrams.store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(500) })
-      expect(() => eml.engrams.update(note.id, { type: 'profile' } as any)).toThrow(/does not change — write the new engram/)
+      const note = writes(eml).store({ type: 'note', scope: 'global', title: 'n', content: 'x'.repeat(500) })
+      expect(() => writes(eml).update(note.id, { type: 'profile' } as any)).toThrow(/does not change — write the new engram/)
     })
 
     it('applies to profiles the same way', () => {
-      const p = eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'p', content: 'short' })
+      const p = writes(eml).store({ type: 'profile', scope: 'agent.assistant', title: 'p', content: 'short' })
       plantLegacy(p.id, 'x'.repeat(700))
-      expect(() => eml.engrams.update(p.id, { properties: { review_due_at: '2027-01-01T00:00:00Z' } })).not.toThrow()
-      expect(() => eml.engrams.update(p.id, { content: 'x'.repeat(401) })).toThrow(/at most 400 characters \(got 401\)/)
+      expect(() => writes(eml).update(p.id, { properties: { review_due_at: '2027-01-01T00:00:00Z' } })).not.toThrow()
+      expect(() => writes(eml).update(p.id, { content: 'x'.repeat(401) })).toThrow(/at most 400 characters \(got 401\)/)
     })
   })
 })

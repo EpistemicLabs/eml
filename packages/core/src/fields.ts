@@ -122,7 +122,7 @@ export const REMOVED_KEYS: ReadonlySet<string> = new Set([
 
 export const UPGRADE_HINT = 'This client predates EML v0.19 — upgrade @engramprotocol/mcp-server to ≥ 0.19.'
 
-const article = (type: string) => (/^[aeiou]/.test(type) ? 'an' : 'a')
+const article = (type: string) => (/^[aeio]/.test(type) ? 'an' : 'a')
 
 /** "Invalid engram: unknown field(s) … for a <type>. Allowed: …" (+ the upgrade hint for removed keys). */
 export function unknownFieldsError(type: string, unknown: string[], allowed: readonly string[]): Error {

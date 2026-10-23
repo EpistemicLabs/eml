@@ -18,34 +18,6 @@ export class ProjectStore {
     private env: Env = DEFAULT_ENV,
   ) {}
 
-  create(input: ProjectInput, env: Env = this.env): Project {
-    const at = env.now()
-    if (input.parent_project) {
-      this.assertNoCycle(input.id, input.parent_project)
-    }
-    this.db.prepare(`
-      INSERT INTO projects (
-        id, name, status, goal, description, owner,
-        parent_project, started_at, ended_at, metadata, status_tracks,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.id,
-      input.name,
-      input.status ?? 'active',
-      input.goal ?? null,
-      input.description ?? null,
-      input.owner ?? null,
-      input.parent_project ?? null,
-      input.started_at ?? null,
-      input.ended_at ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null,
-      input.status_tracks ?? null,
-      at, at,
-    )
-    return this.get(input.id)!
-  }
-
   get(id: string): Project | null {
     const row = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
     if (!row) return null
@@ -61,37 +33,6 @@ export class ProjectStore {
     }
     sql += ' ORDER BY created_at DESC'
     return (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToProject(r))
-  }
-
-  update(id: string, patch: ProjectUpdate, env: Env = this.env): Project | null {
-    const at = env.now()
-    const existing = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
-    if (!existing) return null
-
-    if (patch.parent_project !== undefined && patch.parent_project !== null) {
-      this.assertNoCycle(id, patch.parent_project)
-    }
-
-    const fields: string[] = []
-    const params: any[] = []
-
-    if (patch.name !== undefined)           { fields.push('name = ?');           params.push(patch.name) }
-    if (patch.status !== undefined)         { fields.push('status = ?');         params.push(patch.status) }
-    if (patch.goal !== undefined)           { fields.push('goal = ?');           params.push(patch.goal) }
-    if (patch.description !== undefined)    { fields.push('description = ?');    params.push(patch.description) }
-    if (patch.owner !== undefined)          { fields.push('owner = ?');          params.push(patch.owner) }
-    if (patch.parent_project !== undefined) { fields.push('parent_project = ?'); params.push(patch.parent_project) }
-    if (patch.started_at !== undefined)     { fields.push('started_at = ?');     params.push(patch.started_at) }
-    if (patch.ended_at !== undefined)       { fields.push('ended_at = ?');       params.push(patch.ended_at) }
-    if (patch.metadata !== undefined)       { fields.push('metadata = ?');       params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
-    if (patch.status_tracks !== undefined)  { fields.push('status_tracks = ?');  params.push(patch.status_tracks) }
-
-    if (fields.length === 0) return this.rowToProject(existing)
-
-    fields.push('updated_at = ?')
-    params.push(at, id)
-    this.db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...params)
-    return this.get(id)
   }
 
   exists(id: string): boolean {
@@ -156,7 +97,7 @@ export class ProjectStore {
 
   // === Private ===
 
-  private assertNoCycle(childId: string, parentId: string): void {
+  assertNoCycle(childId: string, parentId: string): void {
     if (childId === parentId) {
       throw new Error(`Project cycle: ${childId} cannot be its own parent`)
     }
@@ -189,7 +130,7 @@ export class ProjectStore {
     return engrams
   }
 
-  private rowToProject(row: any): Project {
+  rowToProject(row: any): Project {
     return {
       id: row.id,
       name: row.name,
@@ -207,7 +148,7 @@ export class ProjectStore {
     }
   }
 
-  private rowToEngram(row: any): Engram {
+  rowToEngram(row: any): Engram {
     // v0.9 Cluster 1: namespace column dropped.
     // v0.11 team-brains: ingested_by IS exposed (authorship handle) — kept in
     // lockstep with EngramStore.rowToEngram so project/brain-state read paths
@@ -222,7 +163,7 @@ export class ProjectStore {
     }
   }
 
-  private rowToRelation(row: any): Relation {
+  rowToRelation(row: any): Relation {
     return {
       id: row.id,
       // v0.9.1 Cluster 1: namespace no longer in the TS output (DB column stays until Phase 1.4).

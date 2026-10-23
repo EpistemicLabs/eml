@@ -1,0 +1,70 @@
+import type Database from 'better-sqlite3'
+import type { StoredEngram, Engram, RelationInput } from '../types'
+import type { LearningState } from '../learning'
+import { beginWrite, type Env } from '../env'
+import { CommandError, isValidationMessage, type CommandContext, type CommandModule } from './types'
+import { engramCreate, type EngramCreateInput, type EngramCreateResult } from './engram-create'
+import { engramUpdate, type EngramUpdateInput } from './engram-update'
+import { taskTrack, type TaskTrackInput } from './task-track'
+import { learningAddEvidence, type LearningAddEvidenceInput } from './learning-add-evidence'
+import { engramConfirmReview, type EngramConfirmReviewInput } from './engram-confirm-review'
+import { relationCreate } from './relation-create'
+import { objectCreate, type ObjectCreateInput } from './object-create'
+import { objectUpdate, type ObjectUpdateInput } from './object-update'
+
+/** The closed command set: name → [input, result]. */
+export interface CommandMap {
+  'engram.create': [EngramCreateInput, EngramCreateResult]
+  'engram.update': [EngramUpdateInput, StoredEngram]
+  'task.track': [TaskTrackInput, StoredEngram]
+  'learning.add_evidence': [LearningAddEvidenceInput, { engram: Engram, learning: LearningState }]
+  'engram.confirm_review': [EngramConfirmReviewInput, Engram]
+  'relation.create': [RelationInput, { created: boolean }]
+  'object.create': [ObjectCreateInput, { object: unknown, created: boolean }]
+  'object.update': [ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }]
+}
+export type CommandName = keyof CommandMap
+export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] } }[CommandName]
+
+const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap[N][1]> } = {
+  'engram.create': engramCreate,
+  'engram.update': engramUpdate,
+  'task.track': taskTrack,
+  'learning.add_evidence': learningAddEvidence,
+  'engram.confirm_review': engramConfirmReview,
+  'relation.create': relationCreate,
+  'object.create': objectCreate,
+  'object.update': objectUpdate,
+}
+
+export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
+
+/**
+ * Run one command: validate its input and apply it in ONE transaction, with
+ * one Stamp (one time) from `env`. A rejection is a CommandError and leaves
+ * the brain as it was.
+ */
+export function runCommand<N extends CommandName>(db: Database.Database, ctx: CommandContext, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
+  const mod = COMMANDS[command?.name] as CommandModule<CommandMap[N][0], CommandMap[N][1]> | undefined
+  if (!mod) throw new CommandError('INVALID', `Invalid command: unknown command "${String(command?.name)}". One of ${COMMAND_NAMES.join(', ')}.`)
+  try {
+    return db.transaction(() => {
+      const input = mod.validate(command.input)
+      return mod.apply(ctx, input, beginWrite(env))
+    })()
+  } catch (err) {
+    if (err instanceof CommandError) throw err
+    const msg = String((err as Error)?.message ?? '')
+    if (isValidationMessage(msg)) throw new CommandError('INVALID', msg)
+    throw err
+  }
+}
+
+export { CommandError, isValidationMessage, type CommandErrorCode, type CommandContext } from './types'
+export type { EngramCreateInput, EngramCreateResult, LearningCreateInput } from './engram-create'
+export type { EngramUpdateInput } from './engram-update'
+export type { TaskTrackInput } from './task-track'
+export type { LearningAddEvidenceInput } from './learning-add-evidence'
+export type { EngramConfirmReviewInput } from './engram-confirm-review'
+export type { ObjectCreateInput } from './object-create'
+export type { ObjectUpdateInput } from './object-update'

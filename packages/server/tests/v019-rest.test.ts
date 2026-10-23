@@ -294,8 +294,22 @@ describe('v0.19 REST', () => {
       }
     })
 
+    it('v0.20: the user and agent writes answer 410, pointing at /object; their reads stay', async () => {
+      for (const [method, path, kind] of [['POST', '/user', 'user'], ['PUT', '/user/default', 'user'], ['POST', '/agent', 'agent'], ['PUT', '/agent/default', 'agent']]) {
+        const r = await request(method, `${baseUrl}${path}`, auth(), JSON.stringify({ id: 'x', name: 'X' }))
+        expect(r.status, `${method} ${path}`).toBe(410)
+        expect(r.body.error).toContain(`removed in EML v0.20 — a ${kind} is an object: POST /object/${kind}`)
+      }
+      const created = await post('/object/agent', { id: 'scout', name: 'Scout', domains: ['btc'] })
+      expect(created.status).toBe(201)
+      expect(created.body).toMatchObject({ created: true, object: { id: 'scout', domains: ['btc'] } })
+      expect((await put('/object/user/default', { email: 'd@example.com' })).body.object.email).toBe('d@example.com')
+      expect((await get('/agent/scout')).body.agent.id).toBe('scout')
+      expect((await get('/users')).status).toBe(200)
+    })
+
     it('the read routes the cockpit uses stay', async () => {
-      for (const path of ['/projects', '/tags', '/subjects', '/entities']) expect((await get(path)).status, path).toBe(200)
+      for (const path of ['/projects', '/tags', '/subjects', '/entities', '/users', '/agents']) expect((await get(path)).status, path).toBe(200)
     })
   })
 

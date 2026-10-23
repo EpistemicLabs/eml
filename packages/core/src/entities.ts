@@ -9,24 +9,6 @@ import { Entity, EntityInput, EntityKind, EntityStatus, EntityUpdate } from './t
 export class EntityStore {
   constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
-  create(input: EntityInput, env: Env = this.env): Entity {
-    const at = env.now()
-    this.db.prepare(`
-      INSERT INTO entities (id, name, kind, status, description, metadata, status_tracks, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.id,
-      input.name,
-      input.kind,
-      input.status ?? 'active',
-      input.description ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null,
-      input.status_tracks ?? null,
-      at, at,
-    )
-    return this.get(input.id)!
-  }
-
   get(id: string): Entity | null {
     const row = this.db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as any
     if (!row) return null
@@ -43,35 +25,12 @@ export class EntityStore {
     ).all(...params) as any[]).map(r => this.rowToEntity(r))
   }
 
-  update(id: string, patch: EntityUpdate, env: Env = this.env): Entity | null {
-    const at = env.now()
-    const existing = this.db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as any
-    if (!existing) return null
-
-    const fields: string[] = []
-    const params: any[] = []
-
-    if (patch.name !== undefined)        { fields.push('name = ?');        params.push(patch.name) }
-    if (patch.kind !== undefined)        { fields.push('kind = ?');        params.push(patch.kind) }
-    if (patch.description !== undefined) { fields.push('description = ?'); params.push(patch.description) }
-    if (patch.status !== undefined)      { fields.push('status = ?');      params.push(patch.status) }
-    if (patch.metadata !== undefined)    { fields.push('metadata = ?');    params.push(patch.metadata === null ? null : JSON.stringify(patch.metadata)) }
-    if (patch.status_tracks !== undefined) { fields.push('status_tracks = ?'); params.push(patch.status_tracks) }
-
-    if (fields.length === 0) return this.rowToEntity(existing)
-
-    fields.push('updated_at = ?')
-    params.push(at, id)
-    this.db.prepare(`UPDATE entities SET ${fields.join(', ')} WHERE id = ?`).run(...params)
-    return this.get(id)
-  }
-
   exists(id: string): boolean {
     const row = this.db.prepare('SELECT 1 FROM entities WHERE id = ?').get(id)
     return !!row
   }
 
-  private rowToEntity(row: any): Entity {
+  rowToEntity(row: any): Entity {
     return {
       id: row.id,
       name: row.name,

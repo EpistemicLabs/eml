@@ -20,9 +20,9 @@
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
  *   POST /update            { id, patch }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
- *   GET  /list              ?type=&scope=&limit=&search=&tag=&label=&subject=&binding=&task_id=&origin=&session_id= → List engrams
+ *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
- *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject), or one (v0.19; kind: entities)
+ *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent), or one (v0.19; kind: entities)
  *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
  *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)
@@ -31,14 +31,10 @@
  *   GET  /subjects            ?status=                                 → List subjects with status + member count (v0.14)
  *   GET  /project/:id                                                → Curated brain state (v0.4)
  *   GET  /project/:id/engrams  ?type=&status=&limit=&offset=         → Paginated engram list (v0.4, v0.7 caller-aware)
- *   POST /user              { id, name, email?, ... }                → Create user (v0.5)
  *   GET  /users                                                      → List users (v0.5)
  *   GET  /user/:id                                                   → Get user (v0.5)
- *   PUT  /user/:id          { name?, email?, ... }                   → Update user (v0.5)
- *   POST /agent             { id, name, parent_id?, ... }            → Create agent (v0.5)
  *   GET  /agents                                                     → List agents (v0.5)
  *   GET  /agent/:id                                                  → Get agent (v0.5)
- *   PUT  /agent/:id         { name?, parent_id?, ... }               → Update agent (v0.5)
  *   POST /engram/:id/confirm-review { text }                          → Confirm a review (v0.8 C9; v0.15: tasks too; v0.19: a review entry)
  *   GET  /entities          ?kind=                                   → List entities (v0.8 C6)
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
@@ -46,6 +42,12 @@
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
  * POST /tag, POST /subject, PUT /subject/:id, POST /entity, PUT /entity/:id.
+ * Removed in v0.20 (410): POST /user, PUT /user/:id, POST /agent, PUT /agent/:id —
+ * users and agents are objects (/object/user, /object/agent).
+ *
+ * v0.20: every write route decodes its request into one command and runs it
+ * with eml.apply(command, env) (core commands/); core validates, the routes
+ * keep only their query-string whitelists.
  *
  * Provenance (v0.19): the MCP server sends X-EML-Session, X-EML-Model,
  * X-EML-Harness and X-EML-Ingestion; the server stamps them on every write
@@ -78,8 +80,8 @@ import {
   splitFields,
   unknownFieldsError,
   readObject,
-  createObject,
-  updateObject,
+  CommandError,
+  isValidationMessage,
   SEED_ORIGIN,
   type EngramType,
   type EngramStatus,
@@ -256,13 +258,7 @@ function respond(
 // v0.8 C7: domain, source_id, source_type removed from the whitelist — the columns
 // are dropped; search via search/FTS or via the properties JSON.
 // v0.9.1 Cluster 1: `caller` and `namespace` removed from all param whitelists.
-// v0.14 Cluster C: the relation verbs the DB CHECK accepts — validated in the
-// /relate route so a bad verb is a 400, not a CHECK-constraint 500.
-// v0.19: supersedes and part_of are no longer drawn by hand (core rejects them
-// with a pointer to supersedes on a write and a task's parent_id).
-const RELATION_VERBS = new Set([
-  'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks', 'part_of',
-])
+// v0.20: the relation verbs are checked in core (relation.create).
 
 const LEARNING_STATES = ['ripe', 'unclear', 'collecting', 'paused']
 const BINDINGS = ['task', 'standing']
@@ -322,6 +318,14 @@ function removedRoute(url: string, method: string | undefined): boolean {
   if (method === 'POST' && (url === '/project' || url === '/tag' || url === '/subject' || url === '/entity')) return true
   if (method === 'PUT' && /^\/(project|subject|entity)\/[^/]+$/.test(url)) return true
   return false
+}
+
+/** v0.20: users and agents are objects — their own write routes are gone (decision write-command-set). */
+function removedInV020(url: string, method: string | undefined): 'user' | 'agent' | null {
+  const m = /^\/(user|agent)(?:\/[^/]+)?$/.exec(url)
+  if (!m) return null
+  const own = method === 'POST' ? url === `/${m[1]}` : method === 'PUT' ? url !== `/${m[1]}` : false
+  return own ? m[1] as 'user' | 'agent' : null
 }
 
 /**
@@ -451,6 +455,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (removedRoute(url, method)) {
       return json(res, 410, { error: `${method} ${url} was removed in EML v0.19. ${UPGRADE_HINT}` })
     }
+    const removedKind = removedInV020(url, method)
+    if (removedKind) {
+      return json(res, 410, { error: `${method} ${url} was removed in EML v0.20 — a ${removedKind} is an object: POST /object/${removedKind} to create, PUT /object/${removedKind}/<id> to update.` })
+    }
 
     // POST /engram/:type — create an engram. The body is flat: the universal
     // fields plus the type's own; core splits and checks them (fields.ts).
@@ -464,7 +472,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = eml.engrams.store(input, env)
+      const engram = eml.apply({ name: 'engram.create', input }, env)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -472,16 +480,28 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = eml.engrams.trackTask(trackMatch[1], body, env)
-      if (!task) return json(res, 404, { error: 'task not found' })
+      const task = eml.apply({ name: 'task.track', input: { ...body, id: trackMatch[1] } }, env)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
     // POST /learning — a new learning (topic check first) or evidence for one (id).
     if (url === '/learning' && method === 'POST') {
       const body = await readBody(req)
-      const result = eml.engrams.learn(body as never, env)
-      return json(res, result.written ? 201 : 200, result)
+      // id → learning.add_evidence; without → engram.create of a learning with its first evidence
+      if (body.id !== undefined) {
+        const r = eml.apply({ name: 'learning.add_evidence', input: body as never }, env)
+        return json(res, 201, { written: true, ...r })
+      }
+      const { source, happened, quote, stance, rule_id, ...lesson } = body
+      const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
+      try {
+        const { learning, ...engram } = eml.apply({ name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env)
+        return json(res, 201, { written: true, engram, learning })
+      } catch (err) {
+        // the topic check found a match: nothing written, the matches named (as since v0.19)
+        if (err instanceof CommandError && err.code === 'TOPIC_EXISTS') return json(res, 200, { written: false, matches: err.data?.matches })
+        throw err
+      }
     }
 
     // GET /list — v0.9.1 Cluster 1: no namespace filter anymore (1 user = 1 brain).
@@ -559,8 +579,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = eml.engrams.update(body.id, patch as never, env)
-      if (!engram) return json(res, 404, { error: 'engram not found' })
+      const engram = eml.apply({ name: 'engram.update', input: { id: body.id, patch: patch as never } }, env)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -569,8 +588,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = eml.engrams.confirmReview(id, typeof body.text === 'string' ? body.text : undefined, env)
-      if (!engram) return json(res, 404, { error: 'engram not found' })
+      const engram = eml.apply({ name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env)
       return json(res, 200, { engram })
     }
 
@@ -590,13 +608,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = createObject(eml, object, body, env)
+        const result = eml.apply({ name: 'object.create', input: { object, fields: body } }, env)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = updateObject(eml, object, id, body, env)
-        if (!result) return json(res, 404, { error: `${object} "${id}" not found` })
+        const result = eml.apply({ name: 'object.update', input: { object, id, patch: body } }, env)
         return json(res, 200, result)
       }
     }
@@ -605,29 +622,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      if (!body.source_id || !body.target_id || !body.relation) {
-        return json(res, 400, { error: 'source_id, target_id, relation required' })
-      }
-      if (!RELATION_VERBS.has(body.relation)) {
-        return json(res, 400, { error: `invalid relation "${body.relation}" — one of ${[...RELATION_VERBS].join(', ')}` })
-      }
-      // v0.14 Cluster C: validate both endpoints exist so eml_relate can't draw a
-      // dangling edge (relations has no FK). Self-links are meaningless → reject.
-      if (body.source_id === body.target_id) {
-        return json(res, 400, { error: 'source_id and target_id must differ' })
-      }
-      if (!eml.engrams.exists(body.source_id)) return json(res, 404, { error: `engram "${body.source_id}" not found` })
-      if (!eml.engrams.exists(body.target_id)) return json(res, 404, { error: `engram "${body.target_id}" not found` })
-
-      const created = eml.engrams.relate({
-        source_id: body.source_id,
-        target_id: body.target_id,
-        relation: body.relation,
-        detection_method: body.detection_method || 'manual',
-        strength: body.strength,
-        explanation: body.explanation,
-        metadata: body.metadata,
-      }, env)
+      const { created } = eml.apply({ name: 'relation.create', input: body as never }, env)
       return json(res, 201, { ok: true, created })
     }
 
@@ -713,27 +708,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // === v0.5: Users (First-Class Entity) ===
 
-    // POST /user — create user
-    if (url === '/user' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.id || !body.name) return json(res, 400, { error: 'id and name required' })
-      try {
-        const user = eml.users.create({
-          id: body.id,
-          name: body.name,
-          email: body.email,
-          description: body.description,
-          metadata: body.metadata,
-        }, env)
-        return json(res, 201, { user })
-      } catch (err: unknown) { const e = err as Error;
-        if (String(e.message).includes('UNIQUE')) {
-          return json(res, 409, { error: `user "${body.id}" already exists` })
-        }
-        throw err
-      }
-    }
-
     // GET /users — list users
     if (url === '/users' && method === 'GET') {
       const users = eml.users.list()
@@ -749,39 +723,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, { user })
     }
 
-    // PUT /user/:id — update
-    if (url.startsWith('/user/') && method === 'PUT') {
-      const id = url.slice('/user/'.length).split('/')[0]
-      if (!id) return json(res, 400, { error: 'user id required' })
-      const body = await readBody(req)
-      const user = eml.users.update(id, body, env)
-      if (!user) return json(res, 404, { error: `user "${id}" not found` })
-      return json(res, 200, { user })
-    }
-
     // === v0.5: Agents (First-Class Entity HTTP/CLI) ===
-
-    // POST /agent — create agent
-    if (url === '/agent' && method === 'POST') {
-      const body = await readBody(req)
-      if (!body.id || !body.name) return json(res, 400, { error: 'id and name required' })
-      try {
-        const agent = eml.agents.store({
-          id: body.id,
-          name: body.name,
-          parent_id: body.parent_id,
-          domains: body.domains,
-          description: body.description,
-          metadata: body.metadata,
-        }, env)
-        return json(res, 201, { agent })
-      } catch (err: unknown) { const e = err as Error;
-        if (String(e.message).includes('UNIQUE')) {
-          return json(res, 409, { error: `agent "${body.id}" already exists` })
-        }
-        throw err
-      }
-    }
 
     // GET /agents — list agents
     if (url === '/agents' && method === 'GET') {
@@ -794,16 +736,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const id = url.slice('/agent/'.length).split('/')[0]
       if (!id) return json(res, 400, { error: 'agent id required' })
       const agent = eml.agents.get(id)
-      if (!agent) return json(res, 404, { error: `agent "${id}" not found` })
-      return json(res, 200, { agent })
-    }
-
-    // PUT /agent/:id — update
-    if (url.startsWith('/agent/') && method === 'PUT') {
-      const id = url.slice('/agent/'.length).split('/')[0]
-      if (!id) return json(res, 400, { error: 'agent id required' })
-      const body = await readBody(req)
-      const agent = eml.agents.update(id, body)
       if (!agent) return json(res, 404, { error: `agent "${id}" not found` })
       return json(res, 200, { agent })
     }
@@ -890,26 +822,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     json(res, 404, { error: 'Not found' })
 
   } catch (err: unknown) { const e = err as Error;
+    // v0.20: a rejected command — nothing was written
+    if (err instanceof CommandError) {
+      return json(res, err.code === 'NOT_FOUND' ? 404 : err.code === 'TOPIC_EXISTS' ? 409 : 400, { error: err.message })
+    }
     // v0.8: validation errors from validate.ts/engrams.ts are user-input
     // errors — return them as 400 instead of 500. The patterns match the
     // throw strings in validate.ts (validateScopePattern,
     // validateScopeExists, validateProperties, validateSourceType).
     // v0.15: all new validation errors share the `Invalid engram:` prefix.
     const msg = String(e.message || '')
-    if (
-      msg === 'Invalid JSON' ||              // readBody: an unparseable request body
-      msg.startsWith('Invalid engram:') ||
-      msg.startsWith('Invalid object:') ||  // v0.19: object field errors
-      msg.startsWith('Invalid scope') ||
-      msg.startsWith('Scope ') ||
-      msg.startsWith('Missing required properties') ||
-      msg.startsWith('Invalid source_type') ||
-      msg.startsWith('tag "') ||           // v0.12: unknown tag on a write
-      msg.startsWith('invalid tag name') ||  // v0.12: unslugifiable tag name
-      msg.startsWith('subject "') ||           // v0.14: unknown subject on a write
-      msg.startsWith('invalid subject') ||     // v0.14: unslugifiable name / bad status
-      msg.startsWith('subject name must')      // v0.14: empty rename
-    ) {
+    // a read rejected by core's rules (core/commands/types.ts isValidationMessage), or an unparseable body
+    if (msg === 'Invalid JSON' || isValidationMessage(msg)) {
       return json(res, 400, { error: e.message })
     }
     json(res, 500, { error: e.message })

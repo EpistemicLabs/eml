@@ -132,14 +132,15 @@ export function seedDefaultBrain(
   const resolved = { agentName: names.agentName?.trim() || agentId, userName: names.userName?.trim() || userId }
   const eml = new EML({ dbPath: brainPath, namespace: agentId })
   try {
+    const env = eml.env({ ingestion_method: 'direct' })
     if (!eml.agents.exists(agentId)) {
-      eml.agents.store({ id: agentId, name: resolved.agentName })
+      eml.apply({ name: 'object.create', input: { object: 'agent', fields: { id: agentId, name: resolved.agentName } } }, env)
     }
     if (!eml.users.exists(userId)) {
-      eml.users.create({ id: userId, name: resolved.userName })
+      eml.apply({ name: 'object.create', input: { object: 'user', fields: { id: userId, name: resolved.userName } } }, env)
     }
     for (const template of DEFAULT_BRAIN_ENGRAM_TEMPLATES) {
-      eml.engrams.store(substitute(template, agentId, userId, resolved), eml.env({ ingestion_method: 'direct' }))
+      eml.apply({ name: 'engram.create', input: substitute(template, agentId, userId, resolved) }, env)
     }
   } finally {
     eml.close()

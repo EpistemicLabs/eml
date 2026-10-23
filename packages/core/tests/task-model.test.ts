@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, TASK_INACTIVITY_DAYS } from '../src'
-import { validTask, validNote } from './fixtures'
+import {
+  validTask, validNote, writes,
+} from './fixtures'
 
 // The task model (v0.15; v0.19: every change goes through trackTask): stage
 // (optional maturity, frozen while closed), outcome on the transition into
@@ -13,7 +15,7 @@ describe('task model', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    eml.projects.create({ id: 'eml', name: 'EML' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
   })
 
   afterEach(() => eml.close())
@@ -22,9 +24,9 @@ describe('task model', () => {
   const statusOf = (id: string): string => eml.engrams.get(id)!.status
   const propsOf = (id: string): Record<string, unknown> => (eml.engrams.get(id)!.properties ?? {}) as Record<string, unknown>
   const task = (title: string, extra: Parameters<typeof validTask>[0] = {}) =>
-    eml.engrams.store(validTask({ scope: 'project.eml', title, content: `task ${title}`, ...extra }))
+    writes(eml).store(validTask({ scope: 'project.eml', title, content: `task ${title}`, ...extra }))
   const close = (id: string, status: 'resolved' | 'invalidated' = 'resolved', outcome = 'ok') =>
-    eml.engrams.trackTask(id, { status, outcome, text: 'closing', keep: [] })!
+    writes(eml).trackTask(id, { status, outcome, text: 'closing', keep: [] })!
   const reviewDue = (id: string): boolean => eml.engrams.get(id)!.review_due
   const dueIds = () => eml.engrams.query({ review_due: true, limit: 1000 }).map(e => e.id)
   /** Age a task: its last update and every entry (the creation entry counts as movement). */
@@ -42,13 +44,13 @@ describe('task model', () => {
       expect(() => task('bad', { properties: { stage: 'done' } }))
         .toThrow('Invalid engram: stage must be one of ideation, planning, ready, implementation.')
       const t = task('later')
-      expect(() => eml.engrams.trackTask(t.id, { stage: 'planned', text: 'x' })).toThrow(/stage must be one of/)
+      expect(() => writes(eml).trackTask(t.id, { stage: 'planned', text: 'x' })).toThrow(/stage must be one of/)
     })
 
     it('is optional — a task without stage works as before', () => {
       const t = task('plain')
       expect(t.properties).toEqual({})
-      expect(eml.engrams.trackTask(t.id, { status: 'active' })!.status).toBe('active')
+      expect(writes(eml).trackTask(t.id, { status: 'active' })!.status).toBe('active')
     })
 
     it('filters via query({ stage })', () => {
@@ -61,10 +63,10 @@ describe('task model', () => {
     it('is frozen while the task is closed; reopening thaws it', () => {
       const t = task('frozen', { properties: { stage: 'implementation' } })
       close(t.id, 'invalidated', 'build abandoned')
-      expect(() => eml.engrams.trackTask(t.id, { stage: 'planning', text: 'back' }))
+      expect(() => writes(eml).trackTask(t.id, { stage: 'planning', text: 'back' }))
         .toThrow('Invalid engram: stage is frozen while a task is closed — reopen it first.')
-      expect(eml.engrams.trackTask(t.id, { content: 'reworded while closed', text: 'reworded' })).toBeTruthy()
-      eml.engrams.trackTask(t.id, { status: 'planned', stage: 'planning', text: 'picked up again' })
+      expect(writes(eml).trackTask(t.id, { content: 'reworded while closed', text: 'reworded' })).toBeTruthy()
+      writes(eml).trackTask(t.id, { status: 'planned', stage: 'planning', text: 'picked up again' })
       expect(propsOf(t.id).stage).toBe('planning')
     })
   })
@@ -72,26 +74,26 @@ describe('task model', () => {
   describe('outcome', () => {
     it('is required on the transition into resolved and invalidated', () => {
       const t = task('close-me', { status: 'active' })
-      expect(() => eml.engrams.trackTask(t.id, { status: 'resolved', text: 'done' }))
+      expect(() => writes(eml).trackTask(t.id, { status: 'resolved', text: 'done' }))
         .toThrow('Invalid engram: closing a task needs an outcome — one line, shown in task lists.')
-      expect(() => eml.engrams.trackTask(t.id, { status: 'invalidated', outcome: '  ', text: 'dropped' }))
+      expect(() => writes(eml).trackTask(t.id, { status: 'invalidated', outcome: '  ', text: 'dropped' }))
         .toThrow(/needs an outcome/)
       expect(statusOf(t.id)).toBe('active')
-      eml.engrams.trackTask(t.id, { status: 'resolved', outcome: 'deployed', text: 'shipped it' })
+      writes(eml).trackTask(t.id, { status: 'resolved', outcome: 'deployed', text: 'shipped it' })
       expect(statusOf(t.id)).toBe('resolved')
     })
 
     it('a task is never created closed', () => {
-      expect(() => eml.engrams.store(validTask({ status: 'resolved' })))
+      expect(() => writes(eml).store(validTask({ status: 'resolved' })))
         .toThrow(/a task is created planned or active/)
-      expect(() => eml.engrams.store(validTask({ properties: { outcome: 'x' } })))
+      expect(() => writes(eml).store(validTask({ properties: { outcome: 'x' } })))
         .toThrow(/outcome is set when the task closes/)
     })
 
     it('is not demanded by planned ↔ active', () => {
       const t = task('open')
-      expect(eml.engrams.trackTask(t.id, { status: 'active' })!.status).toBe('active')
-      expect(eml.engrams.trackTask(t.id, { status: 'planned' })!.status).toBe('planned')
+      expect(writes(eml).trackTask(t.id, { status: 'active' })!.status).toBe('active')
+      expect(writes(eml).trackTask(t.id, { status: 'planned' })!.status).toBe('planned')
     })
 
     it('a legacy closed task without outcome stays editable', () => {
@@ -100,9 +102,9 @@ describe('task model', () => {
          VALUES ('legacy-task', 'task', 'project.eml', 'old', 'old task', 'resolved', '{}')`,
       ).run()
       rawDb().prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES ('legacy-task', 'old task', 'project.eml', 'old')`).run()
-      expect(eml.engrams.trackTask('legacy-task', { content: 'old task, reworded', text: 'reworded' })!.content).toBe('old task, reworded')
-      expect(eml.engrams.trackTask('legacy-task', { context: 'x' })).toBeTruthy()
-      expect(eml.engrams.trackTask('legacy-task', { status: 'resolved', text: 'still' })!.status).toBe('resolved')  // no transition
+      expect(writes(eml).trackTask('legacy-task', { content: 'old task, reworded', text: 'reworded' })!.content).toBe('old task, reworded')
+      expect(writes(eml).trackTask('legacy-task', { context: 'x' })).toBeTruthy()
+      expect(writes(eml).trackTask('legacy-task', { status: 'resolved', text: 'still' })!.status).toBe('resolved')  // no transition
     })
   })
 
@@ -119,9 +121,9 @@ describe('task model', () => {
 
     it('rejects a non-task child, a non-task or unknown parent — and leaves no orphan', () => {
       const parent = task('parent')
-      const note = eml.engrams.store(validNote({ content: 'a note' }))
+      const note = writes(eml).store(validNote({ content: 'a note' }))
       const before = count()
-      expect(() => eml.engrams.store(validNote({ parent_id: parent.id })))
+      expect(() => writes(eml).store(validNote({ parent_id: parent.id })))
         .toThrow('Invalid engram: part_of needs two tasks.')
       expect(() => task('child', { parent_id: note.id })).toThrow('Invalid engram: part_of needs two tasks.')
       expect(() => task('child', { parent_id: 'no-such-id' })).toThrow('Invalid engram: part_of needs two tasks.')
@@ -130,23 +132,23 @@ describe('task model', () => {
 
     it('trackTask(parent_id): tasks only, no cycles; re-parenting moves the edge, null clears it', () => {
       const a = task('a'); const b = task('b'); const c = task('c')
-      const note = eml.engrams.store(validNote({ content: 'a note' }))
-      expect(() => eml.engrams.trackTask(b.id, { parent_id: note.id })).toThrow('Invalid engram: part_of needs two tasks.')
-      eml.engrams.trackTask(b.id, { parent_id: a.id })
-      eml.engrams.trackTask(c.id, { parent_id: b.id })                       // a ← b ← c
-      expect(() => eml.engrams.trackTask(a.id, { parent_id: c.id })).toThrow('Invalid engram: part_of would create a cycle.')
-      expect(() => eml.engrams.trackTask(a.id, { parent_id: a.id })).toThrow('Invalid engram: part_of would create a cycle.')
-      eml.engrams.trackTask(c.id, { parent_id: a.id })                       // re-parent: a ← c
+      const note = writes(eml).store(validNote({ content: 'a note' }))
+      expect(() => writes(eml).trackTask(b.id, { parent_id: note.id })).toThrow('Invalid engram: part_of needs two tasks.')
+      writes(eml).trackTask(b.id, { parent_id: a.id })
+      writes(eml).trackTask(c.id, { parent_id: b.id })                       // a ← b ← c
+      expect(() => writes(eml).trackTask(a.id, { parent_id: c.id })).toThrow('Invalid engram: part_of would create a cycle.')
+      expect(() => writes(eml).trackTask(a.id, { parent_id: a.id })).toThrow('Invalid engram: part_of would create a cycle.')
+      writes(eml).trackTask(c.id, { parent_id: a.id })                       // re-parent: a ← c
       expect(edge(c.id, b.id)).toBeUndefined()
       expect(edge(c.id, a.id)).toBeTruthy()
-      eml.engrams.trackTask(c.id, { parent_id: null })
+      writes(eml).trackTask(c.id, { parent_id: null })
       expect(edge(c.id, a.id)).toBeUndefined()
       expect(eml.engrams.entries(c.id, ['change']).map(e => e.text)).toContain(`parent ${b.id} → ${a.id}`)
     })
 
     it('relate() draws no part_of (it comes from parent_id)', () => {
       const a = task('a'); const b = task('b')
-      expect(() => eml.engrams.relate({ source_id: b.id, target_id: a.id, relation: 'part_of', detection_method: 'manual' }))
+      expect(() => writes(eml).relate({ source_id: b.id, target_id: a.id, relation: 'part_of', detection_method: 'manual' }))
         .toThrow(/part_of comes from a task's parent/)
     })
 
@@ -171,7 +173,7 @@ describe('task model', () => {
       expect(() => close(parent.id, 'invalidated', 'dropped')).toThrow(`has open sub-tasks: ${child.id} child, ${moved.id} moved`)
       expect(statusOf(child.id)).toBe('active')
       close(child.id, 'invalidated', 'dropped')
-      eml.engrams.trackTask(moved.id, { parent_id: null })
+      writes(eml).trackTask(moved.id, { parent_id: null })
       expect(close(parent.id, 'invalidated', 'dropped').status).toBe('invalidated')
       expect(statusOf(moved.id)).toBe('planned')
     })
@@ -183,7 +185,7 @@ describe('task model', () => {
       expect(statusOf(parent.id)).toBe('superseded')
       expect(statusOf(child.id)).toBe('planned')
       expect(successor.open_subtasks).toEqual([{ parent_id: parent.id, id: child.id, title: 'child' }])
-      expect(() => eml.engrams.trackTask(parent.id, { status: 'active', text: 'again' })).toThrow(/superseded task stays superseded/)
+      expect(() => writes(eml).trackTask(parent.id, { status: 'active', text: 'again' })).toThrow(/superseded task stays superseded/)
     })
 
     it('no open_subtasks field when there is nothing to list', () => {
@@ -195,9 +197,9 @@ describe('task model', () => {
   describe('entries', () => {
     it('a text becomes a note entry with time, author and the current stage; get returns all oldest first', () => {
       const t = task('journal', { properties: { stage: 'planning' } })
-      eml.engrams.trackTask(t.id, { text: 'first' }, eml.env({ handle: 'assistant' }))
-      eml.engrams.trackTask(t.id, { text: 'second' }, eml.env({ handle: 'bob' }))
-      eml.engrams.trackTask(t.id, { text: 'third' })
+      writes(eml).trackTask(t.id, { text: 'first' }, eml.env({ handle: 'assistant' }))
+      writes(eml).trackTask(t.id, { text: 'second' }, eml.env({ handle: 'bob' }))
+      writes(eml).trackTask(t.id, { text: 'third' })
 
       const entries = eml.engrams.get(t.id)!.entries!
       expect(entries.map(e => `${e.kind}:${e.text}`)).toEqual(['change:created (planned · stage planning)', 'note:first', 'note:second', 'note:third'])
@@ -208,36 +210,36 @@ describe('task model', () => {
 
     it('a stage change needs text; it sets the stage and writes a change entry', () => {
       const t = task('stepper', { properties: { stage: 'implementation' } })
-      expect(() => eml.engrams.trackTask(t.id, { stage: 'planning' })).toThrow('Invalid engram: a stage change needs text')
-      const r = eml.engrams.trackTask(t.id, { text: 'plan did not hold', stage: 'planning' })!
+      expect(() => writes(eml).trackTask(t.id, { stage: 'planning' })).toThrow('Invalid engram: a stage change needs text')
+      const r = writes(eml).trackTask(t.id, { text: 'plan did not hold', stage: 'planning' })!
       expect(propsOf(t.id).stage).toBe('planning')
       expect(r.entries_written!.map(e => `${e.kind}:${e.text}:${e.stage}`))
         .toEqual(['note:plan did not hold:planning', 'change:stage implementation → planning:planning'])
     })
 
     it('rejects a non-task, an empty call and an unknown stage; unknown id → null', () => {
-      const note = eml.engrams.store(validNote({ content: 'a note' }))
+      const note = writes(eml).store(validNote({ content: 'a note' }))
       const t = task('t')
-      expect(() => eml.engrams.trackTask(note.id, { text: 'x' })).toThrow(`Invalid engram: ${note.id} is a note, not a task — use eml_update.`)
-      expect(() => eml.engrams.trackTask(t.id, { text: '  ' })).toThrow('Invalid engram: nothing to track')
-      expect(() => eml.engrams.trackTask(t.id, { text: 'x', stage: 'done' })).toThrow(/stage must be one of/)
-      expect(eml.engrams.trackTask('no-such-id', { text: 'x' })).toBeNull()
+      expect(() => writes(eml).trackTask(note.id, { text: 'x' })).toThrow(`Invalid engram: ${note.id} is a note, not a task — use eml_update.`)
+      expect(() => writes(eml).trackTask(t.id, { text: '  ' })).toThrow('Invalid engram: nothing to track')
+      expect(() => writes(eml).trackTask(t.id, { text: 'x', stage: 'done' })).toThrow(/stage must be one of/)
+      expect(writes(eml).trackTask('no-such-id', { text: 'x' })).toBeNull()
       expect(notes(t.id)).toEqual([])
     })
 
     it('a closed task takes notes but no stage change (frozen) — and writes nothing then', () => {
       const t = task('closed', { properties: { stage: 'implementation' } })
       close(t.id, 'resolved', 'deployed')
-      eml.engrams.trackTask(t.id, { text: 'post-mortem note' })
+      writes(eml).trackTask(t.id, { text: 'post-mortem note' })
       expect(notes(t.id).pop()!.stage).toBe('implementation')
-      expect(() => eml.engrams.trackTask(t.id, { text: 'back to planning', stage: 'planning' })).toThrow(/frozen/)
+      expect(() => writes(eml).trackTask(t.id, { text: 'back to planning', stage: 'planning' })).toThrow(/frozen/)
       expect(notes(t.id).map(e => e.text)).toEqual(['closing', 'post-mortem note'])
     })
 
     it('update() does not touch a task; deleting a task deletes its entries', () => {
       const t = task('gone')
-      expect(() => eml.engrams.update(t.id, { content: 'x' })).toThrow(/is a task — everything about a task goes through eml_track_task/)
-      eml.engrams.trackTask(t.id, { text: 'x' })
+      expect(() => writes(eml).update(t.id, { content: 'x' })).toThrow(/is a task — everything about a task goes through eml_track_task/)
+      writes(eml).trackTask(t.id, { text: 'x' })
       eml.engrams.delete(t.id)
       expect((rawDb().prepare(`SELECT COUNT(*) AS n FROM entries`).get() as { n: number }).n).toBe(0)
     })
@@ -268,7 +270,7 @@ describe('task model', () => {
     it('a recent entry counts as movement even when updated_at is old', () => {
       const t = task('journaled', { status: 'active' })
       age(t.id, 60)
-      eml.engrams.trackTask(t.id, { text: 'still on it' })
+      writes(eml).trackTask(t.id, { text: 'still on it' })
       rawDb().prepare(`UPDATE engrams SET updated_at = datetime('now', '-60 days') WHERE id = ?`).run(t.id)
       expect(reviewDue(t.id)).toBe(false)
 
@@ -281,9 +283,9 @@ describe('task model', () => {
       const ids = ['by-field', 'by-note', 'by-confirm'].map(s => { const t = task(s, { status: 'active' }); age(t.id, 40); return t.id })
       expect(ids.map(reviewDue)).toEqual([true, true, true])
 
-      eml.engrams.trackTask(ids[0], { priority: 'high' })
-      eml.engrams.trackTask(ids[1], { text: 'picked up again' })
-      eml.engrams.confirmReview(ids[2])
+      writes(eml).trackTask(ids[0], { priority: 'high' })
+      writes(eml).trackTask(ids[1], { text: 'picked up again' })
+      writes(eml).confirmReview(ids[2])
       expect(ids.map(reviewDue)).toEqual([false, false, false])
     })
 

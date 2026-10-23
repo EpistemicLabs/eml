@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, boot, hygieneCheck, projectBlock, TASK_INACTIVITY_DAYS } from '../src'
-import { validDecision, validTask, validRule, validNote } from './fixtures'
+import {
+  validDecision, validTask, validRule, validNote, writes,
+} from './fixtures'
 
 // v0.20 (decision drop-labels-axis): review_due is computed at read time in one
 // place (review-due.ts) and every read path that lists, filters or renders review
@@ -20,27 +22,27 @@ describe('review_due on every read path', () => {
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
-    eml.agents.store({ id: 'assistant', name: 'Assistant' })
-    eml.projects.create({ id: 'app', name: 'App' })
-    const openTask = eml.engrams.store(validTask({ scope, title: 'open-task', status: 'active' }))
-    const idle = eml.engrams.store(validTask({ scope, title: 'idle-task', status: 'active' }))
+    writes(eml).agents.store({ id: 'assistant', name: 'Assistant' })
+    writes(eml).projects.create({ id: 'app', name: 'App' })
+    const openTask = writes(eml).store(validTask({ scope, title: 'open-task', status: 'active' }))
+    const idle = writes(eml).store(validTask({ scope, title: 'idle-task', status: 'active' }))
     age(idle.id, TASK_INACTIVITY_DAYS + 5)
-    const planned = eml.engrams.store(validTask({ scope, title: 'parked-task' }))
+    const planned = writes(eml).store(validTask({ scope, title: 'parked-task' }))
     age(planned.id, TASK_INACTIVITY_DAYS + 5)
-    const closed = eml.engrams.store(validTask({ scope, title: 'closed-task', status: 'active' }))
-    eml.engrams.trackTask(closed.id, { status: 'resolved', outcome: 'done', text: 'done' })
+    const closed = writes(eml).store(validTask({ scope, title: 'closed-task', status: 'active' }))
+    writes(eml).trackTask(closed.id, { status: 'resolved', outcome: 'done', text: 'done' })
     age(closed.id, TASK_INACTIVITY_DAYS + 5)
     due = {
-      decision: eml.engrams.store(validDecision({ scope, title: 'stale-decision', properties: pastReview })).id,
-      rule: eml.engrams.store(validRule({ scope, title: 'stale-rule', properties: { applies: 'always', ...pastReview } })).id,
+      decision: writes(eml).store(validDecision({ scope, title: 'stale-decision', properties: pastReview })).id,
+      rule: writes(eml).store(validRule({ scope, title: 'stale-rule', properties: { applies: 'always', ...pastReview } })).id,
       task: idle.id,
     }
     notDue = {
-      fresh: eml.engrams.store(validDecision({ scope, title: 'fresh-decision' })).id,
-      bound: eml.engrams.store(validDecision({ scope, title: 'bound-decision', task_id: openTask.id, properties: { binding: 'task', ...pastReview } })).id,
+      fresh: writes(eml).store(validDecision({ scope, title: 'fresh-decision' })).id,
+      bound: writes(eml).store(validDecision({ scope, title: 'bound-decision', task_id: openTask.id, properties: { binding: 'task', ...pastReview } })).id,
       planned: planned.id,
       closed: closed.id,
-      note: eml.engrams.store(validNote({ scope, title: 'a-note' })).id,
+      note: writes(eml).store(validNote({ scope, title: 'a-note' })).id,
     }
   })
   afterEach(() => eml.close())
@@ -100,9 +102,9 @@ describe('review_due on every read path', () => {
   })
 
   it('ends with the write that answers it, with no sweep in between', () => {
-    eml.engrams.confirmReview(due.decision, 'still holds')
-    eml.engrams.update(due.rule, { status: 'invalidated' })
-    eml.engrams.trackTask(due.task, { text: 'picked up again' })
+    writes(eml).confirmReview(due.decision, 'still holds')
+    writes(eml).update(due.rule, { status: 'invalidated' })
+    writes(eml).trackTask(due.task, { text: 'picked up again' })
     expect(eml.engrams.query({ scope, review_due: true, limit: 100 })).toEqual([])
   })
 })

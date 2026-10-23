@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, boot, ALL_RULES, type SystemRule } from '../src'
-import { validDecision, validTask, validNote, validStatus, validLog, closedTask } from './fixtures'
+import {
+  validDecision, validTask, validNote, validStatus, validLog, closedTask, writes,
+} from './fixtures'
 
 // Legacy entries (written before the short format) cannot be stored through
 // the store any more; tests plant them with a raw UPDATE, the way they sit in
@@ -15,20 +17,20 @@ describe('boot()', () => {
   let eml: EML
 
   const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`, trigger?: string) =>
-    eml.engrams.store({
+    writes(eml).store({
       type: 'rule', scope, title, content,
       properties: { applies, why: 'test why', agreed: 'yes', ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) },
     })
   // v0.19: the identity is the profile marked core (one per scope), not a title.
   const profile = (scope: string, title: string, content = `${title} facts`, core = true) =>
-    eml.engrams.store({ type: 'profile', scope, title, content, properties: core ? { core: true } : {} })
+    writes(eml).store({ type: 'profile', scope, title, content, properties: core ? { core: true } : {} })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
-    eml.agents.store({ id: 'assistant', name: 'Assistant' })
-    eml.agents.store({ id: 'atlas', name: 'Atlas' })
-    eml.users.create({ id: 'alice', name: 'Alice' })
-    eml.projects.create({ id: 'demo', name: 'Demo' })
+    writes(eml).agents.store({ id: 'assistant', name: 'Assistant' })
+    writes(eml).agents.store({ id: 'atlas', name: 'Atlas' })
+    writes(eml).users.create({ id: 'alice', name: 'Alice' })
+    writes(eml).projects.create({ id: 'demo', name: 'Demo' })
   })
 
   afterEach(() => {
@@ -66,7 +68,7 @@ describe('boot()', () => {
       rule('project.demo', 'p-rule', 'always')
       rule('agent.atlas', 'atlas-rule', 'always')
       const old = rule('global', 'old-rule', 'always', 'old')
-      eml.engrams.update(old.id, { status: 'invalidated' })
+      writes(eml).update(old.id, { status: 'invalidated' })
       const r = boot(eml, 'assistant')
       expect(r.engrams).toBe(0)
       expect(r.markdown).not.toContain('p-rule')
@@ -85,7 +87,7 @@ describe('boot()', () => {
     })
 
     it('opts.user narrows user.<self> to that user', () => {
-      eml.users.create({ id: 'bob', name: 'Bob' })
+      writes(eml).users.create({ id: 'bob', name: 'Bob' })
       rule('user.alice', 'alice-rule', 'always')
       rule('user.bob', 'bob-rule', 'always')
       expect(boot(eml, 'assistant').engrams).toBe(2)
@@ -95,11 +97,11 @@ describe('boot()', () => {
     })
 
     it('renders no other engram type', () => {
-      eml.engrams.store(validNote({ scope: 'global', content: 'note-content' }))
-      eml.engrams.store(validStatus({ scope: 'global', content: 'status-content', properties: { state: 'running' } }))
-      eml.engrams.store(validDecision({ scope: 'global', content: 'decision-content' }))
-      eml.engrams.store(validTask({ scope: 'global', content: 'task-content', status: 'active' }))
-      eml.engrams.store(validLog({ scope: 'global', content: 'log-content' }))
+      writes(eml).store(validNote({ scope: 'global', content: 'note-content' }))
+      writes(eml).store(validStatus({ scope: 'global', content: 'status-content', properties: { state: 'running' } }))
+      writes(eml).store(validDecision({ scope: 'global', content: 'decision-content' }))
+      writes(eml).store(validTask({ scope: 'global', content: 'task-content', status: 'active' }))
+      writes(eml).store(validLog({ scope: 'global', content: 'log-content' }))
       const md = boot(eml, 'assistant').markdown
       for (const t of ['note', 'status', 'decision', 'task', 'log']) expect(md).not.toContain(`${t}-content`)
     })
@@ -225,7 +227,7 @@ describe('boot()', () => {
     })
 
     it('does not render properties', () => {
-      eml.engrams.store({
+      writes(eml).store({
         type: 'rule', scope: 'global', title: 'r', content: 'body',
         properties: { applies: 'always', why: 'because-text', agreed: 'agreed-text', detail: 'detail-text', review_due_at: '2026-10-14' },
       })
@@ -246,10 +248,10 @@ describe('boot()', () => {
 
   describe('counters (not rendered)', () => {
     it('counts open tasks and recent logs without rendering them', () => {
-      eml.engrams.store(validTask({ scope: 'global', content: 'planned-task' }))
-      eml.engrams.store(validTask({ scope: 'global', content: 'active-task', status: 'active' }))
+      writes(eml).store(validTask({ scope: 'global', content: 'planned-task' }))
+      writes(eml).store(validTask({ scope: 'global', content: 'active-task', status: 'active' }))
       closedTask(eml, { scope: 'global', content: 'resolved-task' })
-      eml.engrams.store(validLog({ scope: 'global', content: 'session-summary-1' }))
+      writes(eml).store(validLog({ scope: 'global', content: 'session-summary-1' }))
       const result = boot(eml, 'assistant')
       expect(result.open_tasks).toBe(2)
       expect(result.recent_logs).toBe(1)
@@ -258,15 +260,15 @@ describe('boot()', () => {
     })
 
     it('counts stale status', () => {
-      eml.engrams.store(validStatus({ scope: 'global', content: 'long status body', properties: { state: 'running' } }))
+      writes(eml).store(validStatus({ scope: 'global', content: 'long status body', properties: { state: 'running' } }))
       expect(boot(eml, 'assistant', { reviewDays: -1 }).stale_status).toBe(1)
       expect(boot(eml, 'assistant', { reviewDays: 1000 }).stale_status).toBe(0)
     })
 
     it('counts overdue reviews of decisions/rules/profiles only, without a footer', () => {
-      eml.engrams.store(validDecision({ scope: 'global', title: 'old-decision', properties: { review_due_at: '2020-01-01T00:00:00Z' } }))
+      writes(eml).store(validDecision({ scope: 'global', title: 'old-decision', properties: { review_due_at: '2020-01-01T00:00:00Z' } }))
       // A task has no review_due_at (v0.19: no such field) — plant a legacy one raw.
-      const task = eml.engrams.store(validTask({ scope: 'global', content: 'task-with-due' }))
+      const task = writes(eml).store(validTask({ scope: 'global', content: 'task-with-due' }))
       makeLegacy(eml, task.id, 'task-with-due', { review_due_at: '2020-01-01T00:00:00Z' })
       const r = boot(eml, 'assistant')
       expect(r.overdue_review).toBe(1)

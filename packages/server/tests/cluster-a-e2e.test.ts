@@ -75,7 +75,7 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
   describe('cross-brain isolation', () => {
     it('token A writes an agent → token B does NOT see the agent', async () => {
       // Token A creates a unique agent in brain A
-      const created = await request('POST', `${baseUrl}/agent`,
+      const created = await request('POST', `${baseUrl}/object/agent`,
         { Authorization: `Bearer ${provA.tokenPlaintext}` },
         JSON.stringify({ id: 'alice-only-agent', name: 'Alice Only' }),
       )

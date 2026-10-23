@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { EML, initDatabase } from '../src'
-import { validDecision, validLog, validNote, validStatus } from './fixtures'
+import {
+  validDecision, validLog, validNote, validStatus, writes,
+} from './fixtures'
 
 describe('EML.fromConnection', () => {
   let dir: string
@@ -20,7 +22,7 @@ describe('EML.fromConnection', () => {
     const db = initDatabase(join(dir, 'test.db'))
     try {
       const eml = EML.fromConnection(db, 'tenant-x')
-      eml.agents.store({ id: 'foo', name: 'Foo' })
+      writes(eml).agents.store({ id: 'foo', name: 'Foo' })
       const got = eml.agents.get('foo')
       expect(got?.id).toBe('foo')
     } finally {
@@ -52,9 +54,9 @@ describe('EML.fromConnection', () => {
       const a = EML.fromConnection(db, 'tenant-shared')
       const b = EML.fromConnection(db, 'tenant-shared')
 
-      a.agents.store({ id: 'shared-agent', name: 'Shared' })
+      writes(a).agents.store({ id: 'shared-agent', name: 'Shared' })
       // Engram via a, lookup via b
-      a.engrams.store(validLog({ scope: `agent.shared-agent`, content: 'via instance a' }))
+      writes(a).store(validLog({ scope: `agent.shared-agent`, content: 'via instance a' }))
       const seenByB = b.engrams.query({})
       expect(seenByB).toHaveLength(1)
       expect(seenByB[0].content).toContain('via instance a')
@@ -71,9 +73,9 @@ describe('EML.fromConnection', () => {
       const a = EML.fromConnection(db, 'ns-a')
       const b = EML.fromConnection(db, 'ns-b')
 
-      a.agents.store({ id: 'agent-x', name: 'X' })
-      a.engrams.store(validNote({ scope: 'agent.agent-x', content: 'a-note' }))
-      b.engrams.store(validNote({ scope: 'agent.agent-x', content: 'b-note' }))
+      writes(a).agents.store({ id: 'agent-x', name: 'X' })
+      writes(a).store(validNote({ scope: 'agent.agent-x', content: 'a-note' }))
+      writes(b).store(validNote({ scope: 'agent.agent-x', content: 'b-note' }))
 
       const aResults = a.engrams.query({}).map(e => e.content).sort()
       const bResults = b.engrams.query({}).map(e => e.content).sort()
@@ -92,18 +94,18 @@ describe('EML.fromConnection', () => {
     try {
       const eml = EML.fromConnection(db, 'tenant-team')
 
-      const byCarol = eml.engrams.store(
+      const byCarol = writes(eml).store(
         validDecision({ scope: 'global', content: 'team decision' }),
         eml.env({ handle: 'carol' }),
       )
       expect(byCarol.ingested_by).toBe('carol')
       expect(eml.engrams.get(byCarol.id)?.ingested_by).toBe('carol')
 
-      const byDave = eml.engrams.store(validNote({ scope: 'global', content: 'team note' }), eml.env({ handle: 'dave' }))
+      const byDave = writes(eml).store(validNote({ scope: 'global', content: 'team note' }), eml.env({ handle: 'dave' }))
       expect(byDave.ingested_by).toBe('dave')
 
       // no caller (in-process / legacy path) → null, preserving prior behaviour
-      const anon = eml.engrams.store(validNote({ scope: 'global', content: 'anon' }))
+      const anon = writes(eml).store(validNote({ scope: 'global', content: 'anon' }))
       expect(anon.ingested_by).toBeNull()
     } finally {
       db.close()
@@ -117,8 +119,8 @@ describe('EML.fromConnection', () => {
     const db = initDatabase(join(dir, 'projstate.db'))
     try {
       const eml = EML.fromConnection(db, 'tenant-proj')
-      eml.projects.create({ id: 'teamco', name: 'TeamCo' })
-      eml.engrams.store(
+      writes(eml).projects.create({ id: 'teamco', name: 'TeamCo' })
+      writes(eml).store(
         validStatus({ scope: 'project.teamco', content: 'v1 live', properties: { state: 'live' } }),
         eml.env({ handle: 'carol' }),
       )

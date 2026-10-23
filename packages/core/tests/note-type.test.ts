@@ -6,6 +6,7 @@ import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { initControlDatabase } from '../src/control'
 import { runForwardMigrations } from '../src/forward-migrations'
+import { writes } from './fixtures'
 
 // v0.14 Cluster A — the `note` type (decision engram-type-check-in-db). The type
 // CHECK lives in the DB, so v0.14_migrate.sql rebuilds `engrams`; these tests
@@ -98,7 +99,7 @@ describe('v0.14 note type', () => {
   })
 
   it('stores a note: active, no review date', () => {
-    const e = eml.engrams.store({
+    const e = writes(eml).store({
       type: 'note', scope: 'global', title: 'thesis', content: 'subjects beat hand-drawn edges',
     })
     expect(e.type).toBe('note')
@@ -108,7 +109,7 @@ describe('v0.14 note type', () => {
   })
 
   it('reference is still a valid type', () => {
-    const e = eml.engrams.store({
+    const e = writes(eml).store({
       type: 'reference', scope: 'global', title: 'the-spec', content: 'the spec',
       properties: { source: 'https://example.org/spec' },
     })
@@ -161,7 +162,7 @@ describe('v0.14 migration — engrams rebuild on a seeded v0.13 brain', () => {
 
     const eml = new EML({ namespace: 'test', dbPath: brainFile })
     try {
-      const n = eml.engrams.store({ type: 'note', scope: 'global', title: 'after-rebuild', content: 'a note after the rebuild' })
+      const n = writes(eml).store({ type: 'note', scope: 'global', title: 'after-rebuild', content: 'a note after the rebuild' })
       expect(n.type).toBe('note')
     } finally { eml.close() }
   })
