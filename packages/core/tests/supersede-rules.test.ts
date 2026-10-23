@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, type WriteContext } from '../src'
+import { EML, type Env } from '../src'
 import { validDecision, validTask, validNote, validEvent, validLog, closedTask } from './fixtures'
 
 // v0.19.1 — the supersede rules, one check for every write path (decision
@@ -9,8 +9,8 @@ import { validDecision, validTask, validNote, validEvent, validLog, closedTask }
 
 describe('supersede rules', () => {
   let eml: EML
-  const ctx = (session = 's1'): WriteContext =>
-    ({ caller: 'juno', session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
+  const ctx = (session = 's1'): Env =>
+    eml.env({ handle: 'juno', session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })

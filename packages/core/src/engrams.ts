@@ -1,11 +1,10 @@
 import Database from 'better-sqlite3'
-import { randomUUID as uuid } from 'crypto'
 import {
   Engram, EngramInput, EngramQuery, EngramWithRelations,
   Relation, RelationWithTarget, RelationInput, ScopedBrainState,
   TYPE_DEFAULT_STATUS, TYPE_REVIEW_DEFAULTS,
   EngramType, ConflictCandidate, StoredEngram, DetectionMethod,
-  EngramStatus, OpenSubtask, BoundItem, WriteContext,
+  EngramStatus, OpenSubtask, BoundItem,
   TASK_OPEN_STATUSES, TASK_LINK_RELATION,
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
@@ -13,7 +12,7 @@ import { validateEngramType, validateFormat, validateScopePattern, validateScope
 import { TYPE_FIELDS, ORIGINS, SEED_ORIGIN, validateFields, fieldProblem, unknownFieldsError, isBlank } from './fields'
 import {
   appendEntry, listEntries, EVIDENCE_SOURCES, EVIDENCE_STANCES,
-  type Entry, type EntryInput, type EntryKind, type EntryStamp, type EvidenceSource, type EvidenceStance,
+  type Entry, type EntryInput, type EntryKind, type EvidenceSource, type EvidenceStance,
 } from './entries'
 import { learningState, LEARNING_SHARPENED, type LearningState } from './learning'
 import { ProjectStore } from './projects'
@@ -21,6 +20,7 @@ import { UserStore } from './users'
 import { AgentStore } from './agents'
 import { EntityStore } from './entities'
 import { TagStore, slugifyTag, hydrateEngramTags } from './tags'
+import { type Env, type Stamp, beginWrite, addDays, DEFAULT_ENV } from './env'
 import { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 import { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
 import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
@@ -254,11 +254,6 @@ function createInputKeys(type: EngramType): string[] {
   return keys.concat(Object.keys(TYPE_FIELDS[type]).filter(k => !(type === 'task' && k === 'outcome')))
 }
 
-function writeContext(context: WriteContext | string | null | undefined): WriteContext {
-  if (context === null || context === undefined) return {}
-  return typeof context === 'string' ? { caller: context } : context
-}
-
 /** A log's START HERE fields are all there (written by eml_log since v0.19). */
 function hasStartHere(p: Record<string, unknown>): boolean {
   return typeof p.what === 'string' && typeof p.landed === 'string' && typeof p.next === 'string'
@@ -291,8 +286,9 @@ export class EngramStore {
     private tagStore?: TagStore,
     // v0.14: subject registry — used to validate that engram subjects are registered.
     private subjectStore?: SubjectStore,
-    // v0.20: the read clock (ISO) — review_due is computed against it.
-    private now: () => string = () => new Date().toISOString(),
+    // v0.20: clock, ids and default actor (env.ts). Writes take it as a
+    // parameter (default: this one, no actor); reads use its clock for review_due.
+    private env: Env = DEFAULT_ENV,
   ) {}
 
   /**
@@ -316,10 +312,11 @@ export class EngramStore {
    * write path for MCP, REST and CLI. Strict: the input may carry only the
    * universal fields and the type's own fields (fields.ts); every rule of the
    * type is checked here, so no surface can skip it. Provenance comes from the
-   * WriteContext. Errors start with `Invalid engram:`.
+   * env's actor. Errors start with `Invalid engram:`.
    */
-  store(input: EngramInput, context?: WriteContext | string | null): StoredEngram {
-    const ctx = writeContext(context)
+  store(input: EngramInput, env: Env = this.env): StoredEngram {
+    const stamp = beginWrite(env)
+    const actor = stamp.actor
     validateEngramType(input.type)
     const type = input.type
     if (type === 'learning') {
@@ -403,13 +400,13 @@ export class EngramStore {
     // review_due_at default for decision / rule / profile
     const reviewDays = TYPE_REVIEW_DEFAULTS[type]
     if (reviewDays !== undefined && props.review_due_at === undefined) {
-      props.review_due_at = new Date(Date.now() + reviewDays * 86400_000).toISOString()
+      props.review_due_at = addDays(stamp.at, reviewDays)
     }
 
     // A log is one per session; its START HERE block is rendered from the fields.
     let content = input.content
     if (type === 'log') {
-      const existing = this.sessionLog(ctx.session_id ?? null)
+      const existing = this.sessionLog(actor.session_id)
       if (existing) {
         throw new Error(
           `Invalid engram: this session already has a log (${existing.id} ${existing.title ?? ''}) — update it with eml_update.`.replace(' )', ')'),
@@ -422,19 +419,18 @@ export class EngramStore {
     const tagSlugs = input.tags !== undefined ? this.normalizeAndValidateTags(input.tags) : undefined
     const subjectSlugs = input.subjects !== undefined ? this.normalizeAndValidateSubjects(input.subjects) : undefined
 
-    const id = uuid()
-    const now = new Date().toISOString()
+    const id = stamp.newId()
+    const now = stamp.at
     let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
     const openSubtasks: OpenSubtask[] = []
     const superseded: string[] = []
     let previousState: string | null | undefined
-    const stamp = { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null }
 
     // One transaction: the row, its search entry, every edge and entry it draws.
     // ingested_by is the caller the server derived from the token — never input.
     this.db.transaction(() => {
       // One core profile per scope (unique index): the old one goes first.
-      if (type === 'profile' && props.core === true) superseded.push(...this.autoSupersedeCoreProfile(id, input.scope))
+      if (type === 'profile' && props.core === true) superseded.push(...this.autoSupersedeCoreProfile(id, input.scope, stamp))
       this.db.prepare(`
         INSERT INTO engrams (
           id, content, type, scope, title, status, significance, properties,
@@ -444,8 +440,8 @@ export class EngramStore {
       `).run(
         id, content, type, input.scope, input.title ?? null, status,
         JSON.stringify(input.app ? { ...props, app: input.app } : props),
-        input.origin ?? null, ctx.caller ?? null, ctx.ingestion_method ?? null,
-        ctx.session_id ?? null, ctx.model ?? null, ctx.harness ?? null,
+        input.origin ?? null, actor.handle, actor.ingestion_method,
+        actor.session_id, actor.model, actor.harness,
         now, now,
       )
       this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
@@ -453,7 +449,7 @@ export class EngramStore {
 
       if (type === 'status') {
         previousState = this.activeStatusState(input.scope, id)
-        superseded.push(...this.autoSupersedeStatusEngrams(id, input.scope))
+        superseded.push(...this.autoSupersedeStatusEngrams(id, input.scope, stamp))
       }
       if (type === 'task') {
         const stage = typeof props.stage === 'string' ? ` · stage ${props.stage}` : ''
@@ -468,23 +464,23 @@ export class EngramStore {
         superseded.push(lid)
       }
 
-      if (input.parent_id !== undefined) this.linkPartOf(id, input.parent_id)
+      if (input.parent_id !== undefined) this.linkPartOf(id, input.parent_id, stamp)
 
       // A task-linked write: edge to the task + a change entry in its journal.
       if (input.task_id !== undefined && taskLink) {
         this.db.prepare(`
           INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-          VALUES (?, ?, ?, ?, 'agent_declared', 1.0, datetime('now'))
+          VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
           ON CONFLICT(source_id, target_id, relation) DO NOTHING
-        `).run(uuid(), id, input.task_id, taskLink)
+        `).run(stamp.newId(), id, input.task_id, taskLink, stamp.at)
         const label = input.title ?? (input.content.length > 80 ? `${input.content.slice(0, 80)}…` : input.content)
         const verb = type === 'decision' ? 'taken' : type === 'event' ? 'recorded' : 'written'
         this.appendTaskChange(input.task_id, `${type} ${verb}: ${label} (${id})`, stamp)
       }
 
-      if (tagSlugs && tagSlugs.length > 0) this.insertEngramTags(id, tagSlugs)
-      if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs)
-      wikilinks = this.materializeWikilinks(id, content, input.scope)
+      if (tagSlugs && tagSlugs.length > 0) this.insertEngramTags(id, tagSlugs, stamp)
+      if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs, stamp)
+      wikilinks = this.materializeWikilinks(id, content, input.scope, stamp)
     })()
 
     if (wikilinks.unresolved.length > 0) {
@@ -604,7 +600,7 @@ export class EngramStore {
    * open sub-tasks; a closed target only gets the edge. Journal entries on
    * the tasks of both sides.
    */
-  private applySupersedes(newId: string, plan: Map<string, 'replace' | 'edge'>, stamp: EntryStamp): { superseded: string[], openSubtasks: OpenSubtask[] } {
+  private applySupersedes(newId: string, plan: Map<string, 'replace' | 'edge'>, stamp: Stamp): { superseded: string[], openSubtasks: OpenSubtask[] } {
     const typeOf = (id: string) => (this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(id) as { type: string }).type
     const newIsTask = typeOf(newId) === 'task'
     const openSubtasks: OpenSubtask[] = []
@@ -612,7 +608,7 @@ export class EngramStore {
       const oldIsTask = typeOf(oldId) === 'task'
       if (mode === 'replace') this.supersede(newId, oldId, stamp)
       else {
-        this.linkSupersede(newId, oldId, 'agent_declared')
+        this.linkSupersede(newId, oldId, 'agent_declared', stamp)
         if (oldIsTask) this.appendTaskChange(oldId, `superseded by ${newId}`, stamp)
       }
       if (newIsTask) this.appendTaskChange(newId, `supersedes ${oldId}`, stamp)
@@ -625,8 +621,8 @@ export class EngramStore {
   }
 
   /** Supersede one engram by another: status flip + edge. Inside the caller's transaction. */
-  private supersede(newId: string, oldId: string, stamp: EntryStamp): void {
-    this.linkSupersede(newId, oldId, 'agent_declared')
+  private supersede(newId: string, oldId: string, stamp: Stamp): void {
+    this.linkSupersede(newId, oldId, 'agent_declared', stamp)
     if ((this.db.prepare('SELECT type FROM engrams WHERE id = ?').get(oldId) as { type: string }).type === 'task') {
       this.appendTaskChange(oldId, `superseded by ${newId}`, stamp)
     }
@@ -684,13 +680,13 @@ export class EngramStore {
   }
 
   /** A new core profile supersedes the scope's previous one (one core per scope). */
-  private autoSupersedeCoreProfile(newId: string, scope: string): string[] {
+  private autoSupersedeCoreProfile(newId: string, scope: string, stamp: Stamp): string[] {
     const rows = this.db.prepare(`
       SELECT id FROM engrams
       WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ?
         AND json_extract(properties, '$.core') = 1
     `).all(scope, newId) as { id: string }[]
-    for (const r of rows) this.linkSupersede(newId, r.id, 'manual')
+    for (const r of rows) this.linkSupersede(newId, r.id, 'manual', stamp)
     return rows.map(r => r.id)
   }
 
@@ -726,13 +722,13 @@ export class EngramStore {
   }
 
   /** Validate + draw child → parent. Returns true if the edge is new. */
-  private linkPartOf(childId: string, parentId: string): boolean {
+  private linkPartOf(childId: string, parentId: string, stamp: Stamp): boolean {
     this.assertPartOf(childId, parentId)
     const info = this.db.prepare(`
       INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-      VALUES (?, ?, ?, 'part_of', 'agent_declared', 1.0, datetime('now'))
+      VALUES (?, ?, ?, 'part_of', 'agent_declared', 1.0, ?)
       ON CONFLICT(source_id, target_id, relation) DO NOTHING
-    `).run(uuid(), childId, parentId)
+    `).run(stamp.newId(), childId, parentId, stamp.at)
     this.dropWikilinkEcho(childId, parentId)
     return info.changes > 0
   }
@@ -752,7 +748,7 @@ export class EngramStore {
   // === v0.19: the task lifecycle (eml_track_task) ===
 
   /** A server-written change entry in a task's journal (at the task's current stage). */
-  private appendTaskChange(taskId: string, text: string, stamp: EntryStamp): Entry {
+  private appendTaskChange(taskId: string, text: string, stamp: Stamp): Entry {
     const row = this.db.prepare('SELECT properties FROM engrams WHERE id = ?').get(taskId) as { properties: string | null } | undefined
     const stage = row?.properties ? JSON.parse(row.properties).stage ?? null : null
     const entry = appendEntry(this.db, taskId, { kind: 'change', text, stage }, stamp)
@@ -781,22 +777,22 @@ export class EngramStore {
   }
 
   /** A task superseded by a new one hands its bound items over (S2). */
-  private moveBoundItems(oldTaskId: string, newTaskId: string, stamp: EntryStamp): void {
+  private moveBoundItems(oldTaskId: string, newTaskId: string, stamp: Stamp): void {
     const items = this.boundItems(oldTaskId)
     for (const item of items) {
       const rel = item.type === 'decision' ? 'derived_from' : 'refines'
       this.db.prepare(`DELETE FROM relations WHERE source_id = ? AND target_id = ? AND relation = ?`).run(item.id, oldTaskId, rel)
       this.db.prepare(`
         INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-        VALUES (?, ?, ?, ?, 'agent_declared', 1.0, datetime('now'))
+        VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
         ON CONFLICT(source_id, target_id, relation) DO NOTHING
-      `).run(uuid(), item.id, newTaskId, rel)
+      `).run(stamp.newId(), item.id, newTaskId, rel, stamp.at)
       this.appendTaskChange(newTaskId, `${item.type} moved here from ${oldTaskId}: ${item.title ?? item.id} (${item.id})`, stamp)
     }
   }
 
   /** Close the bound items of a task with it (decisions follow the task's outcome, notes are invalidated). */
-  private closeBoundItems(taskId: string, taskStatus: 'resolved' | 'invalidated', keep: readonly string[], stamp: EntryStamp): { closed: BoundItem[], kept: BoundItem[], entries: Entry[] } {
+  private closeBoundItems(taskId: string, taskStatus: 'resolved' | 'invalidated', keep: readonly string[], stamp: Stamp): { closed: BoundItem[], kept: BoundItem[], entries: Entry[] } {
     const closed: BoundItem[] = []
     const kept: BoundItem[] = []
     const entries: Entry[] = []
@@ -806,13 +802,13 @@ export class EngramStore {
         props.binding = 'standing'
         // a task-bound decision is not reviewed; as standing it starts its review clock now
         const reviewDays = TYPE_REVIEW_DEFAULTS[item.type as EngramType]
-        if (reviewDays !== undefined) props.review_due_at = new Date(Date.now() + reviewDays * 86400_000).toISOString()
-        this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = datetime('now') WHERE id = ?`).run(JSON.stringify(props), item.id)
+        if (reviewDays !== undefined) props.review_due_at = addDays(stamp.at, reviewDays)
+        this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, item.id)
         entries.push(this.appendTaskChange(taskId, `kept as standing: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
         kept.push({ ...item })
       } else {
         const status = item.type === 'decision' ? taskStatus : 'invalidated'
-        this.db.prepare(`UPDATE engrams SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, item.id)
+        this.db.prepare(`UPDATE engrams SET status = ?, updated_at = ? WHERE id = ?`).run(status, stamp.at, item.id)
         // the item's own journal says why it closed; a reopen of the task offers it back by this entry
         appendEntry(this.db, item.id, { kind: 'change', text: `${CLOSED_WITH_TASK} ${taskId}` }, stamp)
         entries.push(this.appendTaskChange(taskId, `closed with the task: ${item.type} ${item.title ?? item.id} (${item.id})`, stamp))
@@ -839,9 +835,8 @@ export class EngramStore {
    * bound items move here); `scope` moves the task. Returns null for an
    * unknown id.
    */
-  trackTask(id: string, input: TrackTaskInput, context?: WriteContext | string | null): StoredEngram | null {
-    const ctx = writeContext(context)
-    const stamp = { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null }
+  trackTask(id: string, input: TrackTaskInput, env: Env = this.env): StoredEngram | null {
+    const stamp = beginWrite(env)
     const existing = this.db.prepare('SELECT * FROM engrams WHERE id = ?').get(id) as any
     if (!existing) return null
     if (existing.type !== 'task') throw new Error(`Invalid engram: ${id} is a ${existing.type}, not a task — use eml_update.`)
@@ -952,13 +947,13 @@ export class EngramStore {
       if (input.content !== undefined) { sets.push('content = ?'); params.push(input.content) }
       if (input.title !== undefined) { sets.push('title = ?'); params.push(input.title) }
       if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
-      sets.push("updated_at = datetime('now')")
-      this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
+      sets.push('updated_at = ?')
+      this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
       if (input.content !== undefined || input.title !== undefined || scopeChanged) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
         this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
       }
-      if (contentChanged) wikilinks = this.materializeWikilinks(id, input.content!, input.scope ?? existing.scope)
+      if (contentChanged) wikilinks = this.materializeWikilinks(id, input.content!, input.scope ?? existing.scope, stamp)
 
       if (text) written.push(appendEntry(this.db, id, { kind: 'note', text, stage: props.stage ?? null }, stamp))
       const change = (t: string) => written.push(this.appendTaskChange(id, t, stamp))
@@ -987,12 +982,12 @@ export class EngramStore {
         const current = this.parentOf(id)
         if ((input.parent_id ?? undefined) !== current) {
           if (current !== undefined) this.db.prepare(`DELETE FROM relations WHERE source_id = ? AND relation = 'part_of'`).run(id)
-          if (input.parent_id !== null) this.linkPartOf(id, input.parent_id)
+          if (input.parent_id !== null) this.linkPartOf(id, input.parent_id, stamp)
           change(`parent ${current ?? 'none'} → ${input.parent_id ?? 'none'}`)
         }
       }
-      if (tagSlugs !== undefined) { this.replaceEngramTags(id, tagSlugs); change(`tags → ${show(tagSlugs)}`) }
-      if (subjectSlugs !== undefined) { this.replaceEngramSubjects(id, subjectSlugs); change(`subjects → ${show(subjectSlugs)}`) }
+      if (tagSlugs !== undefined) { this.replaceEngramTags(id, tagSlugs, stamp); change(`tags → ${show(tagSlugs)}`) }
+      if (subjectSlugs !== undefined) { this.replaceEngramSubjects(id, subjectSlugs, stamp); change(`subjects → ${show(subjectSlugs)}`) }
 
       if (closing) {
         const r = this.closeBoundItems(id, newStatus as 'resolved' | 'invalidated', input.keep ?? [], stamp)
@@ -1130,7 +1125,7 @@ export class EngramStore {
    * v0.8 C1: auto-supersede.
    * v0.9.1 Cluster 1: match key is just (scope) now, namespace is gone.
    */
-  private autoSupersedeStatusEngrams(newId: string, scope: string): string[] {
+  private autoSupersedeStatusEngrams(newId: string, scope: string, stamp: Stamp): string[] {
     const oldRows = this.db.prepare(`
       SELECT id FROM engrams
       WHERE scope = ?
@@ -1138,7 +1133,7 @@ export class EngramStore {
         AND id != ?
     `).all(scope, newId) as { id: string }[]
 
-    for (const old of oldRows) this.linkSupersede(newId, old.id, 'manual')
+    for (const old of oldRows) this.linkSupersede(newId, old.id, 'manual', stamp)
     return oldRows.map(r => r.id)
   }
 
@@ -1176,12 +1171,12 @@ export class EngramStore {
    * targets (unresolved are logged + surfaced on the write response, never dropped;
    * a cross-scope-ambiguous resolution is warned).
    */
-  private materializeWikilinks(sourceId: string, content: string, sourceScope: string): { resolved: string[]; unresolved: string[] } {
+  private materializeWikilinks(sourceId: string, content: string, sourceScope: string, stamp: Stamp): { resolved: string[]; unresolved: string[] } {
     const resolved: string[] = []
     const unresolved: string[] = []
     const ins = this.db.prepare(`
       INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, metadata, created_at)
-      VALUES (?, ?, ?, 'related_to', 'agent_declared', 1.0, ?, datetime('now'))
+      VALUES (?, ?, ?, 'related_to', 'agent_declared', 1.0, ?, ?)
       ON CONFLICT(source_id, target_id, relation) DO NOTHING
     `)
     // v0.17: related_to is only the fallback — a link to an engram this one is
@@ -1198,7 +1193,7 @@ export class EngramStore {
       if (ambiguous) {
         console.warn(`[EML] ambiguous wikilink [[${target}]] in engram ${sourceId} → ${targetId} (matches span multiple scopes; use an id to disambiguate)`)
       }
-      if (!typed.get(sourceId, targetId)) ins.run(uuid(), sourceId, targetId, META)
+      if (!typed.get(sourceId, targetId)) ins.run(stamp.newId(), sourceId, targetId, META, stamp.at)
       resolved.push(targetId)
     }
     return { resolved, unresolved }
@@ -1225,17 +1220,17 @@ export class EngramStore {
    * supersede-rules); the edge INSERT is idempotent via ON CONFLICT. MUST run inside
    * store()'s transaction so the flip + edge commit atomically with the new row.
    */
-  private linkSupersede(newId: string, oldId: string, detection: DetectionMethod): void {
+  private linkSupersede(newId: string, oldId: string, detection: DetectionMethod, stamp: Stamp): void {
     this.db.prepare(`
-      UPDATE engrams SET status = 'superseded', updated_at = datetime('now')
+      UPDATE engrams SET status = 'superseded', updated_at = ?
       WHERE id = ? AND status IN ('active', 'planned')
-    `).run(oldId)
+    `).run(stamp.at, oldId)
     this.db.prepare(`
       INSERT INTO relations (id, source_id, target_id,
         relation, detection_method, strength, created_at)
-      VALUES (?, ?, ?, 'supersedes', ?, 1.0, datetime('now'))
+      VALUES (?, ?, ?, 'supersedes', ?, 1.0, ?)
       ON CONFLICT(source_id, target_id, relation) DO NOTHING
-    `).run(uuid(), newId, oldId, detection)
+    `).run(stamp.newId(), newId, oldId, detection, stamp.at)
     this.dropWikilinkEcho(newId, oldId)
   }
 
@@ -1299,7 +1294,7 @@ export class EngramStore {
    * Chunked to stay under SQLite's variable limit. v0.20: review_due, computed
    * at `now` (the read's clock), rides along.
    */
-  private hydrateFacets(engrams: Engram[], now: string = this.now()): void {
+  private hydrateFacets(engrams: Engram[], now: string = this.env.now()): void {
     hydrateEngramTags(this.db, engrams)
     hydrateEngramSubjects(this.db, engrams)
     hydrateReviewDue(this.db, engrams, now)
@@ -1357,11 +1352,11 @@ export class EngramStore {
     return (this.db.prepare('SELECT tag_id FROM engram_tags WHERE engram_id = ?').all(id) as Array<{ tag_id: string }>).map(r => r.tag_id)
   }
 
-  private insertEngramTags(engramId: string, tags: string[]): void {
+  private insertEngramTags(engramId: string, tags: string[], stamp: Stamp): void {
     const ins = this.db.prepare(
-      'INSERT OR IGNORE INTO engram_tags (engram_id, tag_id) VALUES (?, ?)'
+      'INSERT OR IGNORE INTO engram_tags (engram_id, tag_id, created_at) VALUES (?, ?, ?)'
     )
-    for (const t of tags) ins.run(engramId, t)
+    for (const t of tags) ins.run(engramId, t, stamp.at)
   }
 
   /**
@@ -1394,29 +1389,29 @@ export class EngramStore {
     return [...new Set(slugs)]
   }
 
-  private insertEngramSubjects(engramId: string, subjects: string[]): void {
+  private insertEngramSubjects(engramId: string, subjects: string[], stamp: Stamp): void {
     const ins = this.db.prepare(
-      'INSERT OR IGNORE INTO engram_subjects (engram_id, subject_id) VALUES (?, ?)'
+      'INSERT OR IGNORE INTO engram_subjects (engram_id, subject_id, created_at) VALUES (?, ?, ?)'
     )
-    for (const t of subjects) ins.run(engramId, t)
+    for (const t of subjects) ins.run(engramId, t, stamp.at)
   }
 
   /** v0.14: full-set replace of an engram's subject memberships (update semantics). */
-  private replaceEngramSubjects(engramId: string, subjects: string[]): void {
+  private replaceEngramSubjects(engramId: string, subjects: string[], stamp: Stamp): void {
     this.db.prepare('DELETE FROM engram_subjects WHERE engram_id = ?').run(engramId)
-    this.insertEngramSubjects(engramId, subjects)
+    this.insertEngramSubjects(engramId, subjects, stamp)
   }
 
   /** v0.12: full-set replace of an engram's tag memberships (update semantics). */
-  private replaceEngramTags(engramId: string, tags: string[]): void {
+  private replaceEngramTags(engramId: string, tags: string[], stamp: Stamp): void {
     this.db.prepare('DELETE FROM engram_tags WHERE engram_id = ?').run(engramId)
-    this.insertEngramTags(engramId, tags)
+    this.insertEngramTags(engramId, tags, stamp)
   }
 
   query(q: EngramQuery): Engram[] {
     const conditions: string[] = []
     const params: any[] = []
-    const now = q.now ?? this.now()
+    const now = q.now ?? this.env.now()
 
     // v0.9.1 Cluster 1: namespaces filter removed entirely — 1 user = 1 brain.
 
@@ -1613,9 +1608,9 @@ export class EngramStore {
    * review_note confirms a decision, rule or profile in a review (a review
    * entry). Returns the engram with the diff, or null for an unknown id.
    */
-  update(id: string, patch: EngramPatch, context?: WriteContext | string | null): StoredEngram | null {
-    const ctx = writeContext(context)
-    const stamp = { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null }
+  update(id: string, patch: EngramPatch, env: Env = this.env): StoredEngram | null {
+    const stamp = beginWrite(env)
+    const actor = stamp.actor
     const existing = this.db.prepare('SELECT * FROM engrams WHERE id = ?').get(id) as any
     if (!existing) return null
     const type = existing.type as EngramType
@@ -1689,10 +1684,10 @@ export class EngramStore {
     // from another session is noted on the log (decision v0.19-log-corrections-any-session).
     let logCorrection: string | null = null
     if (type === 'log') {
-      const own = !!ctx.session_id && ctx.session_id === existing.session_id
+      const own = !!actor.session_id && actor.session_id === existing.session_id
       const startHere = ['what', 'landed', 'next', 'open_threads'].filter(k => fieldPatch[k] !== undefined)
       if (startHere.length > 0 && !own) {
-        logCorrection = `${startHere.join(', ')} corrected from session ${ctx.session_id ?? '(unknown)'}`
+        logCorrection = `${startHere.join(', ')} corrected from session ${actor.session_id ?? '(unknown)'}`
       }
     }
     if (patch.content !== undefined) {
@@ -1765,7 +1760,7 @@ export class EngramStore {
     const restartAsked = (patch.properties as Record<string, unknown> | undefined)?.review_due_at === null
     const reviewed = reviewDays !== undefined && newStatus === 'active' && (substantive || restartAsked || patch.review_note !== undefined)
     if (reviewed && fieldPatch.review_due_at === undefined) {
-      newProps = { ...newProps, review_due_at: new Date(Date.now() + reviewDays! * 86400_000).toISOString() }
+      newProps = { ...newProps, review_due_at: addDays(stamp.at, reviewDays!) }
     }
 
     if (patch.scope !== undefined && patch.scope !== existing.scope) this.validateScope(patch.scope)
@@ -1786,7 +1781,7 @@ export class EngramStore {
     let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
     this.db.transaction(() => {
       if (type === 'profile' && newProps.core === true && oldProps.core !== true && newStatus === 'active') {
-        superseded.push(...this.autoSupersedeCoreProfile(id, newScope))
+        superseded.push(...this.autoSupersedeCoreProfile(id, newScope, stamp))
       }
       const sets: string[] = []
       const params: unknown[] = []
@@ -1796,16 +1791,16 @@ export class EngramStore {
       if (patch.status !== undefined) { sets.push('status = ?'); params.push(patch.status) }
       if (JSON.stringify(newProps) !== JSON.stringify(oldProps)) { sets.push('properties = ?'); params.push(JSON.stringify(newProps)) }
       if (sets.length > 0 || tagSlugs !== undefined || subjectSlugs !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
-        sets.push("updated_at = datetime('now')")
-        this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
+        sets.push('updated_at = ?')
+        this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
       }
       if (newContent !== undefined || patch.scope !== undefined || patch.title !== undefined) {
         this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
         this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
       }
-      if (tagSlugs !== undefined) this.replaceEngramTags(id, tagSlugs)
-      if (subjectSlugs !== undefined) this.replaceEngramSubjects(id, subjectSlugs)
-      if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope)
+      if (tagSlugs !== undefined) this.replaceEngramTags(id, tagSlugs, stamp)
+      if (subjectSlugs !== undefined) this.replaceEngramSubjects(id, subjectSlugs, stamp)
+      if (newContent !== undefined) wikilinks = this.materializeWikilinks(id, newContent, newScope, stamp)
       superseded.push(...this.applySupersedes(id, supersedePlan, stamp).superseded)
       if (patch.review_note !== undefined) appendEntry(this.db, id, { kind: 'review', text: patch.review_note }, stamp)
       // a decision's or note's status change goes into its journal (a reopen of its task reads the last one)
@@ -1853,18 +1848,17 @@ export class EngramStore {
    * a task is flagged for inactivity, so confirming it counts as a movement.
    * Either way it is no longer review_due.
    */
-  confirmReview(id: string, text?: string, context?: WriteContext | string | null): Engram | null {
-    const ctx = writeContext(context)
+  confirmReview(id: string, text?: string, env: Env = this.env): Engram | null {
+    const stamp = beginWrite(env)
     const existing = this.db.prepare('SELECT * FROM engrams WHERE id = ?').get(id) as any
     if (!existing) return null
     const live = existing.type === 'task' ? (TASK_OPEN_STATUSES as readonly string[]).includes(existing.status) : existing.status === 'active'
     if (!live) throw new Error(`Invalid engram: ${id} is ${existing.status} — a review confirms an active engram${existing.type === 'task' ? ' (an open task)' : ''}.`)
     if (existing.type === 'task') {
       this.db.transaction(() => {
-        this.db.prepare(`UPDATE engrams SET updated_at = datetime('now') WHERE id = ?`).run(id)
+        this.db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, id)
         if (text && text.trim() !== '') {
-          appendEntry(this.db, id, { kind: 'note', text, stage: this.propsOf(id).stage as string ?? null },
-            { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null })
+          appendEntry(this.db, id, { kind: 'note', text, stage: this.propsOf(id).stage as string ?? null }, stamp)
         }
       })()
       return this.getRaw(id)
@@ -1876,9 +1870,9 @@ export class EngramStore {
     if (isBlank(text)) throw new Error('Invalid engram: confirming a review needs text — why it still holds.')
     this.db.transaction(() => {
       const props = existing.properties ? JSON.parse(existing.properties) : {}
-      props.review_due_at = new Date(Date.now() + reviewDays * 86400_000).toISOString()
-      this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = datetime('now') WHERE id = ?`).run(JSON.stringify(props), id)
-      appendEntry(this.db, id, { kind: 'review', text: text! }, { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null })
+      props.review_due_at = addDays(stamp.at, reviewDays)
+      this.db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, id)
+      appendEntry(this.db, id, { kind: 'review', text: text! }, stamp)
     })()
     return this.getRaw(id)
   }
@@ -1891,9 +1885,9 @@ export class EngramStore {
    * scope or the session's agent/user scopes → nothing is written, the response
    * names the match (pass its id, or new_topic=true for a different topic).
    */
-  learn(input: LearnInput, context?: WriteContext | string | null): LearnResult {
-    const ctx = writeContext(context)
-    const stamp = { author: ctx.caller ?? null, session_id: ctx.session_id ?? null, model: ctx.model ?? null }
+  learn(input: LearnInput, env: Env = this.env): LearnResult {
+    const stamp = beginWrite(env)
+    const actor = stamp.actor
     const unknown = Object.keys(input).filter(k => !LEARN_KEYS.has(k) && (input as unknown as Record<string, unknown>)[k] !== undefined)
     if (unknown.length > 0) throw unknownFieldsError('learning', unknown, [...LEARN_KEYS])
     if (!(EVIDENCE_SOURCES as readonly string[]).includes(input.source as string)) {
@@ -1935,12 +1929,12 @@ export class EngramStore {
       this.db.transaction(() => {
         appendEntry(this.db, input.id!, evidence, stamp)
         if (input.content !== undefined && input.content !== existing.content) {
-          this.db.prepare(`UPDATE engrams SET content = ?, updated_at = datetime('now') WHERE id = ?`).run(input.content, input.id)
+          this.db.prepare(`UPDATE engrams SET content = ?, updated_at = ? WHERE id = ?`).run(input.content, stamp.at, input.id)
           this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(input.id)
           this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(input.id)
           appendEntry(this.db, input.id!, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
         } else {
-          this.db.prepare(`UPDATE engrams SET updated_at = datetime('now') WHERE id = ?`).run(input.id)
+          this.db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, input.id)
         }
       })()
       const engram = this.getRaw(input.id)!
@@ -1954,25 +1948,25 @@ export class EngramStore {
     if (isBlank(input.title)) throw new Error('Invalid engram: a new learning needs a title — the topic.')
     this.validateScope(input.scope!)
     if (!input.new_topic) {
-      const matches = this.findLearningTopic(input.title!, input.content!, input.scope!, ctx.caller ?? null)
+      const matches = this.findLearningTopic(input.title!, input.content!, input.scope!, actor.handle)
       if (matches.length > 0) return { written: false, matches }
     }
     const tagSlugs = input.tags !== undefined ? this.normalizeAndValidateTags(input.tags) : undefined
     const subjectSlugs = input.subjects !== undefined ? this.normalizeAndValidateSubjects(input.subjects) : undefined
-    const id = uuid()
-    const now = new Date().toISOString()
+    const id = stamp.newId()
+    const now = stamp.at
     this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO engrams (id, content, type, scope, title, status, significance, properties,
           ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at)
         VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, input.content, input.scope, input.title, ctx.caller ?? null, ctx.ingestion_method ?? null,
-        ctx.session_id ?? null, ctx.model ?? null, ctx.harness ?? null, now, now)
+      `).run(id, input.content, input.scope, input.title, actor.handle, actor.ingestion_method,
+        actor.session_id, actor.model, actor.harness, now, now)
       this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)
       appendEntry(this.db, id, evidence, stamp)
-      if (tagSlugs && tagSlugs.length > 0) this.insertEngramTags(id, tagSlugs)
-      if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs)
-      this.materializeWikilinks(id, input.content!, input.scope!)
+      if (tagSlugs && tagSlugs.length > 0) this.insertEngramTags(id, tagSlugs, stamp)
+      if (subjectSlugs && subjectSlugs.length > 0) this.insertEngramSubjects(id, subjectSlugs, stamp)
+      this.materializeWikilinks(id, input.content!, input.scope!, stamp)
     })()
     return { written: true, engram: this.getRaw(id)!, learning: learningState(this.entries(id)) }
   }
@@ -1998,7 +1992,8 @@ export class EngramStore {
   }
 
   /** Returns true if a new edge was inserted, false if it already existed (idempotent). */
-  relate(input: RelationInput): boolean {
+  relate(input: RelationInput, env: Env = this.env): boolean {
+    const stamp = beginWrite(env)
     // v0.19: supersedes and part_of are not drawn by hand — they come from
     // supersedes on a write and from a task's parent_id.
     if (input.relation === 'supersedes' || input.relation === 'part_of') {
@@ -2024,15 +2019,16 @@ export class EngramStore {
     const info = this.db.prepare(`
       INSERT INTO relations (id, source_id, target_id,
         relation, detection_method, strength, explanation, metadata, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source_id, target_id, relation) DO NOTHING
     `).run(
-      uuid(),
+      stamp.newId(),
       input.source_id, input.target_id,
       input.relation, input.detection_method,
       input.strength ?? 1.0,
       input.explanation ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      stamp.at,
     )
     if (input.relation !== 'related_to') this.dropWikilinkEcho(input.source_id, input.target_id)
     return info.changes > 0
@@ -2087,9 +2083,10 @@ export class EngramStore {
       ORDER BY updated_at DESC LIMIT 3
     `, [scope])
 
-    const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope])
-    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
-    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
+    const now = this.env.now()
+    const open_tasks = this.queryEngramsRaw(OPEN_TASKS_IN_SCOPE_SQL, [scope, now], now)
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, now) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, now) as { n: number }).n
 
     // v0.10.5: recency, not significance — orientation wants the decisions that
     // are live in current work, not the biggest strategic ones (titles-only in render).
@@ -2118,7 +2115,6 @@ export class EngramStore {
     // decision/rule/profile past review_due_at, active task idle too long) —
     // the staleness queue. Kept SEPARATE from open_tasks so it never pollutes
     // the real todo list.
-    const now = this.now()
     const pending_reviews = this.queryEngramsRaw(`
       SELECT c.* FROM engrams c
       WHERE c.scope = ? AND ${reviewDueSql('c')}
@@ -2173,7 +2169,7 @@ export class EngramStore {
   private score(engram: Engram): number {
     // v0.8 C7: no decay_factor on the engram anymore (decay mechanism not activated).
     const sig = significanceWeight(engram.significance)
-    const recency = recencyBoost(engram.created_at)
+    const recency = recencyBoost(engram.created_at, Date.parse(this.env.now()))
     return sig * recency
   }
 

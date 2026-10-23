@@ -94,12 +94,12 @@ describe('EML.fromConnection', () => {
 
       const byCarol = eml.engrams.store(
         validDecision({ scope: 'global', content: 'team decision' }),
-        'carol',
+        eml.env({ handle: 'carol' }),
       )
       expect(byCarol.ingested_by).toBe('carol')
       expect(eml.engrams.get(byCarol.id)?.ingested_by).toBe('carol')
 
-      const byDave = eml.engrams.store(validNote({ scope: 'global', content: 'team note' }), 'dave')
+      const byDave = eml.engrams.store(validNote({ scope: 'global', content: 'team note' }), eml.env({ handle: 'dave' }))
       expect(byDave.ingested_by).toBe('dave')
 
       // no caller (in-process / legacy path) → null, preserving prior behaviour
@@ -120,7 +120,7 @@ describe('EML.fromConnection', () => {
       eml.projects.create({ id: 'teamco', name: 'TeamCo' })
       eml.engrams.store(
         validStatus({ scope: 'project.teamco', content: 'v1 live', properties: { state: 'live' } }),
-        'carol',
+        eml.env({ handle: 'carol' }),
       )
       const state = eml.projects.getBrainState('teamco')
       expect(state?.current_status[0]?.ingested_by).toBe('carol')

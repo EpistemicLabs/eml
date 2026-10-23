@@ -195,8 +195,8 @@ describe('task model', () => {
   describe('entries', () => {
     it('a text becomes a note entry with time, author and the current stage; get returns all oldest first', () => {
       const t = task('journal', { properties: { stage: 'planning' } })
-      eml.engrams.trackTask(t.id, { text: 'first' }, 'assistant')
-      eml.engrams.trackTask(t.id, { text: 'second' }, 'bob')
+      eml.engrams.trackTask(t.id, { text: 'first' }, eml.env({ handle: 'assistant' }))
+      eml.engrams.trackTask(t.id, { text: 'second' }, eml.env({ handle: 'bob' }))
       eml.engrams.trackTask(t.id, { text: 'third' })
 
       const entries = eml.engrams.get(t.id)!.entries!

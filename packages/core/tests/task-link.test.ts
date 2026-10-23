@@ -28,7 +28,7 @@ describe('task-linked writes', () => {
 
   it('a decision with task_id: derived_from edge + change entry by the caller; stage unchanged', () => {
     const task = hub()
-    const d = eml.engrams.store(validDecision({ scope: 'project.eml', title: 'pick-db', content: 'use sqlite', task_id: task.id, properties: { binding: 'standing' } }), 'assistant')
+    const d = eml.engrams.store(validDecision({ scope: 'project.eml', title: 'pick-db', content: 'use sqlite', task_id: task.id, properties: { binding: 'standing' } }), eml.env({ handle: 'assistant' }))
 
     expect(edge(d.id, task.id, 'derived_from')).toBeTruthy()
     const entries = changes(task.id)

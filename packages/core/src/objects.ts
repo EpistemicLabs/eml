@@ -2,6 +2,7 @@ import type { EML } from './index'
 import { slugifyTag } from './tags'
 import { slugifySubject } from './subjects'
 import { fieldProblem, unknownFieldsError } from './fields'
+import { type Env, pinClock } from './env'
 
 // --- Objects (v0.19): project · entity · tag · subject ---------------------------
 //
@@ -136,7 +137,8 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
 }
 
 /** Create an object; only the kind's fields. A project's or entity's id defaults to the slug of its name. */
-export function createObject(eml: EML, object: unknown, input: Record<string, unknown>): { object: unknown, created: boolean } {
+export function createObject(eml: EML, object: unknown, input: Record<string, unknown>, env: Env = eml.env()): { object: unknown, created: boolean } {
+  const w = pinClock(env)
   assertObject(object)
   checkFields(object, input, 'create')
   if (typeof input.name !== 'string' || input.name.trim() === '') throw new Error(`Invalid object: a ${object} needs a name.`)
@@ -152,7 +154,7 @@ export function createObject(eml: EML, object: unknown, input: Record<string, un
         description: input.description as string | undefined, owner: input.owner as string | undefined,
         parent_project: input.parent_project as string | undefined, started_at: input.started_at as string | undefined,
         status_tracks: input.status_tracks as string | undefined, metadata: input.metadata as Record<string, string> | undefined,
-      })
+      }, w)
       return { object: project, created: true }
     }
     case 'entity': {
@@ -164,26 +166,27 @@ export function createObject(eml: EML, object: unknown, input: Record<string, un
         id, name, kind: input.kind as 'person', status: input.status as 'active' | undefined,
         description: input.description as string | undefined, status_tracks: input.status_tracks as string | undefined,
         metadata: input.metadata as Record<string, string> | undefined,
-      })
+      }, w)
       return { object: entity, created: true }
     }
     case 'tag': {
       const created = !eml.tags.exists(slugifyTag(name))
-      const tag = eml.tags.create({ name, description: input.description as string | undefined })
+      const tag = eml.tags.create({ name, description: input.description as string | undefined }, w)
       if (created && input.status === 'archived') eml.tags.update(tag.id, { status: 'archived' })
       return { object: eml.tags.get(tag.id), created }
     }
     case 'subject': {
       const created = !eml.subjects.exists(slugifySubject(name))
-      const subject = eml.subjects.create({ name, description: input.description as string | undefined })
-      if (created && input.status === 'closed') eml.subjects.update(subject.id, { status: 'closed' })
+      const subject = eml.subjects.create({ name, description: input.description as string | undefined }, w)
+      if (created && input.status === 'closed') eml.subjects.update(subject.id, { status: 'closed' }, w)
       return { object: eml.subjects.get(subject.id), created }
     }
   }
 }
 
 /** Update an object; only the kind's fields; null clears an optional one. Returns the object and the diff, or null. */
-export function updateObject(eml: EML, object: unknown, id: string, patch: Record<string, unknown>): { object: unknown, diff: Record<string, [unknown, unknown]> } | null {
+export function updateObject(eml: EML, object: unknown, id: string, patch: Record<string, unknown>, env: Env = eml.env()): { object: unknown, diff: Record<string, [unknown, unknown]> } | null {
+  const w = pinClock(env)
   assertObject(object)
   checkFields(object, patch, 'update')
   switch (object) {
@@ -191,18 +194,18 @@ export function updateObject(eml: EML, object: unknown, id: string, patch: Recor
       const before = eml.projects.get(id)
       if (!before) return null
       // archiving sets ended_at; leaving archived clears it
-      const ended = patch.status === 'archived' && before.status !== 'archived' ? new Date().toISOString().slice(0, 10)
+      const ended = patch.status === 'archived' && before.status !== 'archived' ? w.now().slice(0, 10)
         : patch.status !== undefined && patch.status !== 'archived' && before.status === 'archived' ? null : undefined
       const after = eml.projects.update(id, {
         ...(patch as object),
         ...(ended !== undefined ? { ended_at: ended as string } : {}),
-      } as never)!
+      } as never, w)!
       return { object: after, diff: diffOf(before as never, after as never) }
     }
     case 'entity': {
       const before = eml.entities.get(id)
       if (!before) return null
-      const after = eml.entities.update(id, patch as never)!
+      const after = eml.entities.update(id, patch as never, w)!
       return { object: after, diff: diffOf(before as never, after as never) }
     }
     case 'tag': {
@@ -215,7 +218,7 @@ export function updateObject(eml: EML, object: unknown, id: string, patch: Recor
     case 'subject': {
       const before = eml.subjects.get(id)
       if (!before) return null
-      const after = eml.subjects.update(id, patch as never)
+      const after = eml.subjects.update(id, patch as never, w)
       return { object: after, diff: diffOf(before as never, after as never) }
     }
   }

@@ -139,7 +139,7 @@ export function seedDefaultBrain(
       eml.users.create({ id: userId, name: resolved.userName })
     }
     for (const template of DEFAULT_BRAIN_ENGRAM_TEMPLATES) {
-      eml.engrams.store(substitute(template, agentId, userId, resolved), { ingestion_method: 'direct' })
+      eml.engrams.store(substitute(template, agentId, userId, resolved), eml.env({ ingestion_method: 'direct' }))
     }
   } finally {
     eml.close()

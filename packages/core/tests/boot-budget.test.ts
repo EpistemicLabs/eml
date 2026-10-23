@@ -13,7 +13,8 @@ const SYSTEM_RULES_BUDGET = 5900
 // `users` users, `always` always-rules (200) and `situational` situational
 // rules (200 + an 80-char trigger).
 function brainWith(always: number, situational: number, users = 1): EML {
-  const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
+  // one fixed time: the users tie on created_at, so the boot lists them in creation order
+  const eml = new EML({ dbPath: ':memory:', namespace: 'test', clock: () => '2026-10-23T00:00:00.000Z' })
   eml.agents.store({ id: 'assistant', name: 'Assistant' })
   eml.engrams.store({ type: 'profile', scope: 'agent.assistant', title: 'assistant', content: 'A'.repeat(400), properties: { core: true } })
   for (let u = 0; u < users; u++) {

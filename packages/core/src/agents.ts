@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { type Env, DEFAULT_ENV } from './env'
 import { Agent, AgentInput, AgentUpdate } from './types'
 
 // v0.9 Cluster 1: reserved-IDs list removed (master/global conflicts no longer
@@ -7,21 +8,23 @@ import { Agent, AgentInput, AgentUpdate } from './types'
 // v0.9_migrate.sql.
 
 export class AgentStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
-  store(input: AgentInput): Agent {
+  store(input: AgentInput, env: Env = this.env): Agent {
+    const at = env.now()
     this.db.prepare(`
       INSERT INTO agents (
         id, name, parent_id,
         domains, description, metadata, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.name,
       input.parent_id ?? null,
       input.domains ? JSON.stringify(input.domains) : null,
       input.description ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      at,
     )
     return this.get(input.id)!
   }

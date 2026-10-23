@@ -6,6 +6,7 @@ import {
 import { hydrateEngramTags } from './tags'
 import { hydrateReviewDue } from './review-due'
 import { hydrateEngramSubjects } from './subjects'
+import { type Env, DEFAULT_ENV } from './env'
 import { OPEN_TASKS_IN_SCOPE_SQL, OPEN_TASKS_COUNT_SQL, BACKLOG_COUNT_SQL } from './open-tasks'
 
 const MAX_PARENT_DEPTH = 5
@@ -13,11 +14,12 @@ const MAX_PARENT_DEPTH = 5
 export class ProjectStore {
   constructor(
     private db: Database.Database,
-    // v0.20: the read clock (ISO) — review_due is computed against it.
-    private now: () => string = () => new Date().toISOString(),
+    // v0.20: clock, ids and default actor (env.ts); reads use its clock for review_due.
+    private env: Env = DEFAULT_ENV,
   ) {}
 
-  create(input: ProjectInput): Project {
+  create(input: ProjectInput, env: Env = this.env): Project {
+    const at = env.now()
     if (input.parent_project) {
       this.assertNoCycle(input.id, input.parent_project)
     }
@@ -26,7 +28,7 @@ export class ProjectStore {
         id, name, status, goal, description, owner,
         parent_project, started_at, ended_at, metadata, status_tracks,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.name,
@@ -39,6 +41,7 @@ export class ProjectStore {
       input.ended_at ?? null,
       input.metadata ? JSON.stringify(input.metadata) : null,
       input.status_tracks ?? null,
+      at, at,
     )
     return this.get(input.id)!
   }
@@ -60,7 +63,8 @@ export class ProjectStore {
     return (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToProject(r))
   }
 
-  update(id: string, patch: ProjectUpdate): Project | null {
+  update(id: string, patch: ProjectUpdate, env: Env = this.env): Project | null {
+    const at = env.now()
     const existing = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any
     if (!existing) return null
 
@@ -84,8 +88,8 @@ export class ProjectStore {
 
     if (fields.length === 0) return this.rowToProject(existing)
 
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
+    fields.push('updated_at = ?')
+    params.push(at, id)
     this.db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...params)
     return this.get(id)
   }
@@ -118,9 +122,10 @@ export class ProjectStore {
       ORDER BY updated_at DESC LIMIT 3
     `, [scope])
 
-    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope])
-    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope) as { n: number }).n
-    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope) as { n: number }).n
+    const now = this.env.now()
+    const open_tasks = this.queryEngrams(OPEN_TASKS_IN_SCOPE_SQL, [scope, now])
+    const open_tasks_total = (this.db.prepare(OPEN_TASKS_COUNT_SQL).get(scope, now) as { n: number }).n
+    const backlog_tasks = (this.db.prepare(BACKLOG_COUNT_SQL).get(scope, now) as { n: number }).n
 
     // v0.19.1: recency, as eml_show (engrams.buildBrainState) — significance is no
     // longer written, and old high/critical decisions stayed on top.
@@ -180,7 +185,7 @@ export class ProjectStore {
     const engrams = (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToEngram(r))
     hydrateEngramTags(this.db, engrams)
     hydrateEngramSubjects(this.db, engrams)
-    hydrateReviewDue(this.db, engrams, this.now())
+    hydrateReviewDue(this.db, engrams, this.env.now())
     return engrams
   }
 

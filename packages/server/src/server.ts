@@ -81,7 +81,6 @@ import {
   createObject,
   updateObject,
   SEED_ORIGIN,
-  type WriteContext,
   type EngramType,
   type EngramStatus,
   type Significance,
@@ -429,13 +428,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // v0.19: who writes. The token gives the handle; the MCP server adds the
     // session, model and harness it runs in. Other callers write as 'direct'.
-    const writeCtx: WriteContext = {
-      caller: authCtx.caller,
-      session_id: header(req, 'x-eml-session'),
-      model: header(req, 'x-eml-model'),
-      harness: header(req, 'x-eml-harness'),
+    // v0.20: the write env — the brain's clock and ids with this actor.
+    const env = eml.env({
+      handle: authCtx.caller ?? null,
+      session_id: header(req, 'x-eml-session') ?? null,
+      model: header(req, 'x-eml-model') ?? null,
+      harness: header(req, 'x-eml-harness') ?? null,
       ingestion_method: header(req, 'x-eml-ingestion') === 'mcp' ? 'mcp' : 'direct',
-    }
+    })
 
     // v0.14: filing into a CLOSED subject is allowed (late filing) — but say so,
     // so the writer notices when it meant an active strand. Only for subjects the
@@ -464,7 +464,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = eml.engrams.store(input, writeCtx)
+      const engram = eml.engrams.store(input, env)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -472,7 +472,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = eml.engrams.trackTask(trackMatch[1], body, writeCtx)
+      const task = eml.engrams.trackTask(trackMatch[1], body, env)
       if (!task) return json(res, 404, { error: 'task not found' })
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
@@ -480,7 +480,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // POST /learning — a new learning (topic check first) or evidence for one (id).
     if (url === '/learning' && method === 'POST') {
       const body = await readBody(req)
-      const result = eml.engrams.learn(body as never, writeCtx)
+      const result = eml.engrams.learn(body as never, env)
       return json(res, result.written ? 201 : 200, result)
     }
 
@@ -559,7 +559,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = eml.engrams.update(body.id, patch as never, writeCtx)
+      const engram = eml.engrams.update(body.id, patch as never, env)
       if (!engram) return json(res, 404, { error: 'engram not found' })
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
@@ -569,7 +569,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = eml.engrams.confirmReview(id, typeof body.text === 'string' ? body.text : undefined, writeCtx)
+      const engram = eml.engrams.confirmReview(id, typeof body.text === 'string' ? body.text : undefined, env)
       if (!engram) return json(res, 404, { error: 'engram not found' })
       return json(res, 200, { engram })
     }
@@ -590,12 +590,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = createObject(eml, object, body)
+        const result = createObject(eml, object, body, env)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = updateObject(eml, object, id, body)
+        const result = updateObject(eml, object, id, body, env)
         if (!result) return json(res, 404, { error: `${object} "${id}" not found` })
         return json(res, 200, result)
       }
@@ -627,7 +627,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         strength: body.strength,
         explanation: body.explanation,
         metadata: body.metadata,
-      })
+      }, env)
       return json(res, 201, { ok: true, created })
     }
 
@@ -724,7 +724,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           email: body.email,
           description: body.description,
           metadata: body.metadata,
-        })
+        }, env)
         return json(res, 201, { user })
       } catch (err: unknown) { const e = err as Error;
         if (String(e.message).includes('UNIQUE')) {
@@ -754,7 +754,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const id = url.slice('/user/'.length).split('/')[0]
       if (!id) return json(res, 400, { error: 'user id required' })
       const body = await readBody(req)
-      const user = eml.users.update(id, body)
+      const user = eml.users.update(id, body, env)
       if (!user) return json(res, 404, { error: `user "${id}" not found` })
       return json(res, 200, { user })
     }
@@ -773,7 +773,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           domains: body.domains,
           description: body.description,
           metadata: body.metadata,
-        })
+        }, env)
         return json(res, 201, { agent })
       } catch (err: unknown) { const e = err as Error;
         if (String(e.message).includes('UNIQUE')) {

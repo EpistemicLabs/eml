@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, renderBrainStateMarkdown, type WriteContext } from '../src'
+import { EML, hygieneCheck, renderBrainStateMarkdown, type Env } from '../src'
 import { validDecision, validTask, validNote, validEvent, validLog, validProfile, validStatus, closedTask } from './fixtures'
 
 // v0.19 — fixes from the review of the write model (note v0.19-review-triage,
@@ -9,8 +9,8 @@ import { validDecision, validTask, validNote, validEvent, validLog, validProfile
 
 describe('v0.19 review fixes', () => {
   let eml: EML
-  const ctx = (session = 's1', caller = 'juno'): WriteContext =>
-    ({ caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
+  const ctx = (session = 's1', caller = 'juno'): Env =>
+    eml.env({ handle: caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })
@@ -125,9 +125,9 @@ describe('v0.19 review fixes', () => {
     })
 
     it('learning evidence without a session id does not count as a session', () => {
-      const l = eml.engrams.learn({ scope: 'user.ada', title: 't', content: 'Do X.', source: 'user', happened: 'h1', quote: 'q' }, { caller: 'juno' })
+      const l = eml.engrams.learn({ scope: 'user.ada', title: 't', content: 'Do X.', source: 'user', happened: 'h1', quote: 'q' }, eml.env({ handle: 'juno' }))
       if (!l.written) throw new Error('not written')
-      const r = eml.engrams.learn({ id: l.engram.id, source: 'user', happened: 'h2', quote: 'q2' }, { caller: 'juno' })
+      const r = eml.engrams.learn({ id: l.engram.id, source: 'user', happened: 'h2', quote: 'q2' }, eml.env({ handle: 'juno' }))
       if (!r.written) throw new Error('not written')
       expect(r.learning).toMatchObject({ state: 'collecting', supporting_sessions: 0, unsessioned_evidence: 2 })
       const s = eml.engrams.learn({ id: l.engram.id, source: 'observed', happened: 'h3' }, ctx('s1'))

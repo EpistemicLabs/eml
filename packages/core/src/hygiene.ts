@@ -300,7 +300,7 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
 
 /** Run every hygiene check against the brain. */
 export function hygieneCheck(eml: EML, opts: { now?: Date } = {}): HygieneReport {
-  const now = opts.now ?? new Date()
+  const now = opts.now ?? new Date(eml.now())
   const checks = HYGIENE_CHECKS.map(({ detect, ...meta }) => ({ ...meta, findings: detect(eml, now) }))
   return { schema: CURRENT_BRAIN_SCHEMA_VERSION, checks, total: checks.reduce((n, c) => n + c.findings.length, 0) }
 }

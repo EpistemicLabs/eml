@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { EML, UPGRADE_HINT, readObject, createObject, updateObject, type WriteContext } from '../src'
+import { EML, UPGRADE_HINT, readObject, createObject, updateObject, type Env } from '../src'
 import { seedDefaultBrain } from '../src/default-brain'
 import {
   validDecision, validTask, validNote, validEvent, validLog, validReference, validRule, validProfile, validStatus,
@@ -15,8 +15,8 @@ import {
 
 describe('v0.19 write model', () => {
   let eml: EML
-  const ctx = (session = 's1', caller = 'juno'): WriteContext =>
-    ({ caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
+  const ctx = (session = 's1', caller = 'juno'): Env =>
+    eml.env({ handle: caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })

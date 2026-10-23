@@ -229,7 +229,7 @@ export interface EngramInput {
   status?: EngramStatus
   // v0.19: the type's fields (fields.ts TYPE_FIELDS), nothing else. Provenance
   // (ingested_by, session_id, model, harness, ingestion_method) comes from the
-  // WriteContext, never from the input; significance is no longer written.
+  // env's actor, never from the input; significance is no longer written.
   properties?: Record<string, unknown>
   // v0.12: tag ids (registered slugs) this engram carries. Validated against the
   // tag registry on write — an unknown tag is rejected (create it via the tag
@@ -256,19 +256,6 @@ export interface EngramInput {
   origin?: string
   // v0.19: that software's own state (a flat text map), only with an origin.
   app?: Record<string, string>
-}
-
-/**
- * v0.19: who writes, stamped by the server on every engram and entry. The
- * caller is the token's handle; session, model and harness come from the MCP
- * server (headers), ingestion_method says which path wrote it.
- */
-export interface WriteContext {
-  caller?: string | null
-  session_id?: string | null
-  model?: string | null
-  harness?: string | null
-  ingestion_method?: IngestionMethod | null
 }
 
 // v0.9 Cluster 1: default_namespace removed (multi-caller artifact).
@@ -674,7 +661,8 @@ export interface EMLConfig {
   // identifier for logging/debugging. Fully replaced by brainId in v0.9.2+.
   namespace: string
   dbPath?: string
-  // v0.20: the read clock (ISO string) review_due is computed against; default
-  // the system clock. Lets tests fix the time.
+  // v0.20: the brain's clock (ISO-8601 UTC, ms) for writes and reads; default
+  // the system clock. And its id source; default random UUID v4. Tests fix both.
   clock?: () => string
+  newId?: () => string
 }

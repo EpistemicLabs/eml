@@ -109,7 +109,7 @@ describe('hygieneCheck()', () => {
   })
 
   describe('schema 19', () => {
-    const ctx = { caller: 'assistant' }
+    const ctx = () => eml.env({ handle: 'assistant' })
     const ids = (id: string) => check(id).findings.map(f => f.id).sort()
 
     it('all schema 19 checks are migration checks with since_schema 19, before the review check', () => {
@@ -151,9 +151,9 @@ describe('hygieneCheck()', () => {
     it('a single-incident rule is turned into a learning on the user\'s word', () => {
       const r = rule('agent.assistant', 'ask-first')
       plant(r.id, null, { applies: 'always', why: 'once' })
-      const l = eml.engrams.learn({ scope: 'agent.assistant', title: 'ask-first-learning', content: 'Ask first.', source: 'self', happened: 'once' }, ctx)
+      const l = eml.engrams.learn({ scope: 'agent.assistant', title: 'ask-first-learning', content: 'Ask first.', source: 'self', happened: 'once' }, ctx())
       if (!l.written) throw new Error('not written')
-      eml.engrams.update(l.engram.id, { supersedes: [r.id] }, ctx)
+      eml.engrams.update(l.engram.id, { supersedes: [r.id] }, ctx())
       expect(eml.engrams.get(r.id)!.status).toBe('superseded')
       expect(ids('rule-without-agreement')).toEqual([])
     })

@@ -25,7 +25,8 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  * Brain DB schema version. A fresh brain is created from
  * migrations/brain/v0.<N>.sql; existing brains migrate through the
  * v0.<N>_migrate.sql files (database.ts, forward-migrations.ts).
- * v0.13: labels + engram_labels (workflow/role facet; `review` staleness flag).
+ * v0.13: labels + engram_labels (workflow/role facet; `review` staleness flag);
+ *   unused since v0.20 (review_due is computed at read time).
  * v0.14: engrams rebuilt for the `note` type (type CHECK); Cluster B adds subjects.
  * v0.15: relations rebuilt for the `part_of` verb (relation CHECK); task_entries.
  * v0.16: epistemic mode removed — engrams rebuilt without `mode` and the five

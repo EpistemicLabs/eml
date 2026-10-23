@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { type Env, DEFAULT_ENV } from './env'
 import { User, UserInput, UserUpdate } from './types'
 
 // v0.9 Cluster 1: reserved-IDs list removed (master/global conflicts no longer
@@ -7,20 +8,22 @@ import { User, UserInput, UserUpdate } from './types'
 // v0.9_migrate.sql.
 
 export class UserStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
-  create(input: UserInput): User {
+  create(input: UserInput, env: Env = this.env): User {
+    const at = env.now()
     this.db.prepare(`
       INSERT INTO users (
         id, name, email, description, metadata,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.name,
       input.email ?? null,
       input.description ?? null,
-      input.metadata ? JSON.stringify(input.metadata) : null
+      input.metadata ? JSON.stringify(input.metadata) : null,
+      at, at,
     )
     return this.get(input.id)!
   }
@@ -36,7 +39,8 @@ export class UserStore {
       .map(r => this.rowToUser(r))
   }
 
-  update(id: string, patch: UserUpdate): User | null {
+  update(id: string, patch: UserUpdate, env: Env = this.env): User | null {
+    const at = env.now()
     const existing = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any
     if (!existing) return null
 
@@ -50,8 +54,8 @@ export class UserStore {
 
     if (fields.length === 0) return this.rowToUser(existing)
 
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
+    fields.push('updated_at = ?')
+    params.push(at, id)
     this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params)
     return this.get(id)
   }

@@ -259,7 +259,7 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
     .slice(0, 5)
   const recentLogs = eml.engrams.query({ type: 'log', limit: 3, order_by: 'created_at' })
 
-  const reviewThresholdMs = Date.now() - reviewDays * 86400 * 1000
+  const reviewThresholdMs = Date.parse(eml.now()) - reviewDays * 86400 * 1000
   const staleStatus = eml.engrams
     .query({ type: 'status', status: 'active', limit: 100 })
     .filter((s: EngramRow) => new Date(s.updated_at).getTime() < reviewThresholdMs)

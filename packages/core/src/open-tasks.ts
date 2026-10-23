@@ -18,8 +18,10 @@ const LAST_MOVEMENT = `MAX(
       COALESCE(datetime((SELECT MAX(te.at) FROM entries te WHERE te.engram_id = e.id)), datetime(e.updated_at))
     )`
 
-/** Task `e` is backlog: planned and not moved for TASK_INACTIVITY_DAYS. */
-export const BACKLOG_SQL = `(e.status = 'planned' AND ${LAST_MOVEMENT} < datetime('now', '-${TASK_INACTIVITY_DAYS} days'))`
+/** Task `e` is backlog: planned and not moved for TASK_INACTIVITY_DAYS. Binds the read's clock (ISO). */
+export const BACKLOG_SQL = `(e.status = 'planned' AND ${LAST_MOVEMENT} < datetime(?, '-${TASK_INACTIVITY_DAYS} days'))`
+
+// The three queries below bind (scope, now): the scope, then the read's clock.
 
 /** How many open tasks outside the backlog a scope has (the list below stops at 10). */
 export const OPEN_TASKS_COUNT_SQL = `

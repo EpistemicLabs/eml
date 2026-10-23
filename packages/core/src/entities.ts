@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { type Env, DEFAULT_ENV } from './env'
 import { Entity, EntityInput, EntityKind, EntityStatus, EntityUpdate } from './types'
 
 // v0.8 C6: first-class entities table for external parties (people, orgs,
@@ -6,12 +7,13 @@ import { Entity, EntityInput, EntityKind, EntityStatus, EntityUpdate } from './t
 // a typed existence check.
 
 export class EntityStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
-  create(input: EntityInput): Entity {
+  create(input: EntityInput, env: Env = this.env): Entity {
+    const at = env.now()
     this.db.prepare(`
       INSERT INTO entities (id, name, kind, status, description, metadata, status_tracks, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.name,
@@ -20,6 +22,7 @@ export class EntityStore {
       input.description ?? null,
       input.metadata ? JSON.stringify(input.metadata) : null,
       input.status_tracks ?? null,
+      at, at,
     )
     return this.get(input.id)!
   }
@@ -40,7 +43,8 @@ export class EntityStore {
     ).all(...params) as any[]).map(r => this.rowToEntity(r))
   }
 
-  update(id: string, patch: EntityUpdate): Entity | null {
+  update(id: string, patch: EntityUpdate, env: Env = this.env): Entity | null {
+    const at = env.now()
     const existing = this.db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as any
     if (!existing) return null
 
@@ -56,8 +60,8 @@ export class EntityStore {
 
     if (fields.length === 0) return this.rowToEntity(existing)
 
-    fields.push("updated_at = datetime('now')")
-    params.push(id)
+    fields.push('updated_at = ?')
+    params.push(at, id)
     this.db.prepare(`UPDATE entities SET ${fields.join(', ')} WHERE id = ?`).run(...params)
     return this.get(id)
   }

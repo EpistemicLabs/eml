@@ -19,15 +19,15 @@ export function significanceWeight(significance: string): number {
  * Recency boost: newer claims score slightly higher.
  * Returns 0.5-1.0 based on age (1.0 = today, 0.5 = 365+ days).
  */
-export function recencyBoost(createdAt: string): number {
-  const ageDays = daysSince(createdAt)
+export function recencyBoost(createdAt: string, nowMs: number = Date.now()): number {
+  const ageDays = daysSince(createdAt, nowMs)
   return Math.max(0.5, 1 - ageDays / 730) // half-value at 365 days
 }
 
 // === Helpers ===
 
-function daysSince(isoDate: string): number {
-  return Math.max(0, (Date.now() - toMs(isoDate)) / (1000 * 60 * 60 * 24))
+function daysSince(isoDate: string, nowMs: number): number {
+  return Math.max(0, (nowMs - toMs(isoDate)) / (1000 * 60 * 60 * 24))
 }
 
 function toMs(isoDate: string): number {

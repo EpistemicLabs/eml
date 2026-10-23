@@ -1,4 +1,4 @@
-import type { EngramInput, EML, StoredEngram, WriteContext } from '../src'
+import type { EngramInput, EML, StoredEngram, Env } from '../src'
 
 // Shared fixtures for engram writes in tests. v0.19: every type has required
 // fields (fields.ts) and a title (except status); tests that are not about those
@@ -67,7 +67,7 @@ export function closedTask(
   eml: EML,
   overrides: Overrides = {},
   status: 'resolved' | 'invalidated' = 'resolved',
-  ctx?: WriteContext | string | null,
+  ctx?: Env,
 ): StoredEngram {
   const task = eml.engrams.store(validTask(overrides), ctx)
   return eml.engrams.trackTask(task.id, { status, outcome: 'test outcome', text: 'closed in a test', keep: [] }, ctx)!

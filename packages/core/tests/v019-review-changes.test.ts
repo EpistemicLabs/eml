@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, readObject, createObject, type WriteContext } from '../src'
+import { EML, readObject, createObject, type Env } from '../src'
 import { renderBrainStateMarkdown } from '../src/render'
 import { validDecision, validLog, validRule } from './fixtures'
 import { hygieneCheck } from '../src/hygiene'
@@ -9,8 +9,8 @@ import { hygieneCheck } from '../src/hygiene'
 
 describe('v0.19 review changes', () => {
   let eml: EML
-  const ctx = (session = 's1', caller = 'juno'): WriteContext =>
-    ({ caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
+  const ctx = (session = 's1', caller = 'juno'): Env =>
+    eml.env({ handle: caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
   beforeEach(() => {
     eml = new EML({ dbPath: ':memory:', namespace: 'juno' })

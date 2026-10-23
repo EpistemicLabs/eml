@@ -8,6 +8,7 @@ import { UserStore } from './users'
 import { EntityStore } from './entities'
 import { TagStore } from './tags'
 import { SubjectStore } from './subjects'
+import { type Actor, type Clock, type Env, type IdSource, systemClock, randomId, NO_ACTOR } from './env'
 
 export class EML {
   public engrams!: EngramStore
@@ -19,11 +20,13 @@ export class EML {
   public subjects!: SubjectStore
   private db!: Database.Database
   private ownsConnection: boolean = true
+  private clock!: Clock
+  private newId!: IdSource
 
   constructor(config: EMLConfig) {
     this.db = initDatabase(config.dbPath ?? ':memory:')
     this.ownsConnection = true
-    this.wireStores(config.namespace, config.clock)
+    this.wireStores(config.namespace, config)
   }
 
   /**
@@ -35,24 +38,41 @@ export class EML {
    * every request boundary would close the shared DB and break all other
    * requests.
    */
-  static fromConnection(db: Database.Database, namespace: string, opts: { clock?: () => string } = {}): EML {
+  static fromConnection(db: Database.Database, namespace: string, opts: { clock?: Clock, newId?: IdSource } = {}): EML {
     const eml = Object.create(EML.prototype) as EML
     eml.db = db
     eml.ownsConnection = false
-    eml.wireStores(namespace, opts.clock)
+    eml.wireStores(namespace, opts)
     return eml
   }
 
-  private wireStores(namespace: string, clock: () => string = () => new Date().toISOString()): void {
-    this.projects = new ProjectStore(this.db, clock)
-    this.users = new UserStore(this.db)
-    this.agents = new AgentStore(this.db)
-    this.entities = new EntityStore(this.db)
-    this.tags = new TagStore(this.db)
-    this.subjects = new SubjectStore(this.db)
+  /**
+   * v0.20: the env a write runs in — this brain's clock and id source, and who
+   * writes (attribution; default: nobody). Every store write takes one; reads
+   * use the same clock (review_due, backlog).
+   */
+  env(actor: Partial<Actor> = {}): Env {
+    return { now: this.clock, newId: this.newId, actor: { ...NO_ACTOR, ...actor } }
+  }
+
+  /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
+  now(): string {
+    return this.clock()
+  }
+
+  private wireStores(namespace: string, opts: { clock?: Clock, newId?: IdSource }): void {
+    this.clock = opts.clock ?? systemClock
+    this.newId = opts.newId ?? randomId
+    const env = this.env()
+    this.projects = new ProjectStore(this.db, env)
+    this.users = new UserStore(this.db, env)
+    this.agents = new AgentStore(this.db, env)
+    this.entities = new EntityStore(this.db, env)
+    this.tags = new TagStore(this.db, env)
+    this.subjects = new SubjectStore(this.db, env)
     this.engrams = new EngramStore(
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
-      this.tags, this.subjects, clock,
+      this.tags, this.subjects, env,
     )
   }
 
@@ -124,7 +144,8 @@ export {
   TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
-export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EntryStamp, type EvidenceSource, type EvidenceStance } from './entries'
+export { appendEntry, listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
+export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, pinClock, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, createObject, updateObject, OBJECT_KINDS, type ObjectKind } from './objects'
 export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type TrackTaskInput, type LearnInput, type LearnResult } from './engrams'

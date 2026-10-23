@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { EML, significanceWeight, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown, appendEntry } from '../../core/src'
+import { EML, significanceWeight, bucketByRelevance, renderRecallMarkdown, renderBrainStateMarkdown, appendEntry, beginWrite } from '../../core/src'
 import {
   validDecision, validTask, validNote, validRule, validEvent, validLog, validReference, validProfile, validStatus, closedTask,
 } from '../../core/tests/fixtures'
@@ -90,14 +90,14 @@ describe('EML v0.2', () => {
       expect(retrieved!.content).toBe('EML uses SQLite with FTS5')
     })
 
-    // v0.19: provenance comes from the write context (never the input), free
+    // v0.19: provenance comes from the write env's actor (never the input), free
     // properties and significance are gone — the type's fields only.
-    it('stores provenance from the write context, the type\'s fields in properties', () => {
+    it('stores provenance from the write env, the type\'s fields in properties', () => {
       const engram = eml.engrams.store(validNote({
         content: 'BTC at $74,200',
         title: 'BTC',
         properties: { detail: 'value: 74200 USD' },
-      }), { caller: 'assistant', ingestion_method: 'hook', session_id: 'sess-123', model: 'm', harness: 'h' })
+      }), eml.env({ handle: 'assistant', ingestion_method: 'hook', session_id: 'sess-123', model: 'm', harness: 'h' }))
 
       expect(engram.significance).toBe('normal')
       expect(engram).toMatchObject({ ingestion_method: 'hook', session_id: 'sess-123', ingested_by: 'assistant', model: 'm', harness: 'h' })
@@ -915,12 +915,12 @@ describe('EML v0.2', () => {
       expect(engram.content).toMatch(/Session with Alice today on the v0.3 design$/)
     })
 
-    it('the session comes from the write context (not the input); old keys go to detail', () => {
+    it('the session comes from the write env (not the input); old keys go to detail', () => {
       const engram = eml.engrams.store(validLog({
         scope: 'project.eml',
         title: 'v0.3-proposal',
         properties: { detail: 'occurred_at: 2026-04-20T11:30:00Z' },
-      }), { caller: 'assistant', session_id: '2026-04-20-v03-design-a7c3b2' })
+      }), eml.env({ handle: 'assistant', session_id: '2026-04-20-v03-design-a7c3b2' }))
       expect(engram.session_id).toBe('2026-04-20-v03-design-a7c3b2')
       expect(engram.ingested_by).toBe('assistant')
       expect(() => eml.engrams.store({ ...validLog(), session_id: 'x' } as never)).toThrow(/unknown field session_id for a log/)
@@ -1186,7 +1186,7 @@ describe('EML v0.2', () => {
       task('touched in march', ago(10))
       task('touched in february', ago(20))
       // a journal entry alone (the task row untouched) counts as activity
-      appendEntry(raw, old.id, { kind: 'note', text: 'worked on it' })
+      appendEntry(raw, old.id, { kind: 'note', text: 'worked on it' }, beginWrite(eml.env()))
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
@@ -1364,7 +1364,7 @@ describe('EML v0.2', () => {
     })
 
     it('authorship comes from the caller, software from origin', () => {
-      const e = eml.engrams.store(validNote({ content: 'BTC note' }), 'scout-btc')
+      const e = eml.engrams.store(validNote({ content: 'BTC note' }), eml.env({ handle: 'scout-btc' }))
       expect(e.ingested_by).toBe('scout-btc')
       const pane = eml.engrams.store(validNote({ content: 'pane note', title: undefined, origin: 'cockpit-notes' }))
       expect(pane.origin).toBe('cockpit-notes')

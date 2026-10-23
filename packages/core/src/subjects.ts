@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { Subject, SubjectInput, SubjectUpdate, SubjectStatus, Engram } from './types'
 import { slugifyTag } from './tags'
+import { type Env, DEFAULT_ENV } from './env'
 
 /**
  * v0.14: batch-load subject ids onto a set of engrams IN PLACE. Mirror of
@@ -44,14 +45,14 @@ export function slugifySubject(name: string): string {
 }
 
 export class SubjectStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
   /**
    * Register a subject. The slug id is derived from `name`. Re-creating an
    * existing slug is a no-op that returns the existing subject (reuse, not
    * duplicate) — it neither reopens a closed subject nor overwrites its description.
    */
-  create(input: SubjectInput): Subject {
+  create(input: SubjectInput, env: Env = this.env): Subject {
     const id = slugifySubject(input.name)
     if (!id) {
       throw new Error(
@@ -60,9 +61,10 @@ export class SubjectStore {
     }
     const existing = this.get(id)
     if (existing) return existing
+    const at = env.now()
     this.db.prepare(
-      `INSERT INTO subjects (id, name, description) VALUES (?, ?, ?)`
-    ).run(id, input.name.trim(), input.description ?? null)
+      `INSERT INTO subjects (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run(id, input.name.trim(), input.description ?? null, at, at)
     return this.get(id)!
   }
 
@@ -90,7 +92,7 @@ export class SubjectStore {
    * stable — renaming changes the display name only, never the reference.
    * Throws on an unknown subject.
    */
-  update(id: string, patch: SubjectUpdate): Subject {
+  update(id: string, patch: SubjectUpdate, env: Env = this.env): Subject {
     const slug = slugifySubject(id)
     if (!this.exists(slug)) throw new Error(`subject "${id}" not found`)
     const fields: string[] = []
@@ -108,8 +110,8 @@ export class SubjectStore {
       fields.push('status = ?'); params.push(patch.status)
     }
     if (fields.length > 0) {
-      fields.push("updated_at = datetime('now')")
-      this.db.prepare(`UPDATE subjects SET ${fields.join(', ')} WHERE id = ?`).run(...params, slug)
+      fields.push('updated_at = ?')
+      this.db.prepare(`UPDATE subjects SET ${fields.join(', ')} WHERE id = ?`).run(...params, env.now(), slug)
     }
     return this.get(slug)!
   }

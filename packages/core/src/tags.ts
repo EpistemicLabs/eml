@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { Tag, TagInput, TagUpdate, Engram } from './types'
+import { type Env, DEFAULT_ENV } from './env'
 
 /**
  * v0.12: batch-load registered tag ids onto a set of engrams IN PLACE — ONE query
@@ -46,14 +47,14 @@ export function slugifyTag(name: string): string {
 }
 
 export class TagStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private env: Env = DEFAULT_ENV) {}
 
   /**
    * Register a tag. The slug id is derived from `name`. Re-creating an existing
    * slug is a no-op that returns the existing tag (reuse, not duplicate) — this
    * is what lets the write-side recall-first discipline stay cheap.
    */
-  create(input: TagInput): Tag {
+  create(input: TagInput, env: Env = this.env): Tag {
     const id = slugifyTag(input.name)
     if (!id) {
       throw new Error(
@@ -63,8 +64,8 @@ export class TagStore {
     const existing = this.get(id)
     if (existing) return existing
     this.db.prepare(
-      `INSERT INTO tags (id, name, description) VALUES (?, ?, ?)`
-    ).run(id, input.name.trim(), input.description ?? null)
+      `INSERT INTO tags (id, name, description, created_at) VALUES (?, ?, ?, ?)`
+    ).run(id, input.name.trim(), input.description ?? null, env.now())
     return this.get(id)!
   }
 

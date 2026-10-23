@@ -59,7 +59,7 @@ export function initDatabase(dbPath: string): Database.Database {
 
   // One file per schema step, each with FKs off: several steps rebuild
   // engrams/relations, and a DROP TABLE engrams with FKs on would cascade-delete
-  // the engram_tags / engram_labels / engram_subjects / entries rows.
+  // the engram_tags / engram_subjects / entries rows (engram_labels up to schema 19).
   for (let v = version + 1; v <= CURRENT_BRAIN_SCHEMA_VERSION; v++) {
     runMigrateWithFkOff(db, `v0.${v}_migrate.sql`)
   }
