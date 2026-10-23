@@ -84,12 +84,13 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
       'eml_set_status · speculation without commitment → wait.\n\n' +
       'After this call, everything about the task goes through eml_track_task: progress, stage, status, closing, ' +
       'edits.\n\n' +
-      'Larger work: make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
+      'Larger work: settle the intent with the user first (intent), then make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
       'eml_note(task_id, binding) · sub-tasks → eml_create_task(parent_id).',
     inputSchema: z.object({
       content: content('What needs doing, 1-3 sentences, action verb first, specific enough that "done" is clear.'),
       scope: scope('Narrowest true scope: project.<id> for project work, entity.<id> for person/customer follow-ups. global is rare.'),
       title: title('Kebab-case anchor, unique enough to find the task again.'),
+      intent: z.string().optional().describe('What will be different, for whom, once it\'s done, and how we\'ll notice. Settle it with the user; leave out for small tasks.'),
       context: z.string().optional().describe('Why it exists and how to pick it up cold.'),
       status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started or parked · active = started. Done things are not tasks.'),
       stage: z.enum(STAGES).optional().describe('ideation · planning · ready · implementation. Leave out for small tasks.'),

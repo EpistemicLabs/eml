@@ -37,6 +37,7 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       stage: z.enum(STAGES).nullable().optional().describe('ideation · planning · ready · implementation; frozen while the task is closed, free again after a reopen.'),
       content: z.string().optional().describe('Rewritten definition (wholesale); needs text.'),
       title: z.string().optional().describe('Set the title.'),
+      intent: z.string().nullable().optional().describe('Set the intent once the user confirmed it (what will be different, for whom, and how we\'ll notice); null clears.'),
       context: z.string().nullable().optional().describe('Set the context; null clears.'),
       priority: z.enum(PRIORITIES).nullable().optional().describe('urgent · high · normal · low; null clears.'),
       assignee_id: z.string().nullable().optional().describe('Handle of who should act; null clears.'),

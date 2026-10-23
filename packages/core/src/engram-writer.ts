@@ -570,7 +570,7 @@ export class EngramWriter extends EngramStore {
 
     // the typed fields this call sets (null clears an optional one)
     const fieldPatch: Record<string, unknown> = {}
-    for (const k of ['context', 'priority', 'assignee_id', 'due_date', 'blockers', 'stage'] as const) {
+    for (const k of ['intent', 'context', 'priority', 'assignee_id', 'due_date', 'blockers', 'stage'] as const) {
       if (input[k] !== undefined) fieldPatch[k] = input[k]
     }
     if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -668,6 +668,7 @@ export class EngramWriter extends EngramStore {
       if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
         change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
       }
+      if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
       if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
       if (contentChanged) change('content rewritten')
       if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)

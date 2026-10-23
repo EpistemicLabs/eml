@@ -76,6 +76,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     detail: text(),
   },
   task: {
+    intent: text(),
     context: text(),
     priority: oneOf(TASK_PRIORITIES),
     assignee_id: text(),

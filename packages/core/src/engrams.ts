@@ -191,6 +191,7 @@ export interface TrackTaskInput {
   stage?: string | null
   content?: string
   title?: string
+  intent?: string | null
   context?: string | null
   priority?: string | null
   assignee_id?: string | null
@@ -204,7 +205,7 @@ export interface TrackTaskInput {
   subjects?: string[]
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
-  'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'context', 'priority',
+  'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
   'assignee_id', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
 ])
 

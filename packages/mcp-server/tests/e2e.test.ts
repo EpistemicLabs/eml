@@ -296,6 +296,15 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(ghost.isError).toBe(true)
     })
 
+    it('eml_create_task + eml_track_task carry the intent (set on create, changed and cleared on track)', async () => {
+      const t = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'why-task', intent: 'users see X' })))
+      expect(t.properties.intent).toBe('users see X')
+      const changed = await call('eml_track_task', { task_id: t.id, intent: 'users see X sooner' })
+      expect(changed.isError).toBeFalsy()
+      expect(jsonOf(changed).properties.intent).toBe('users see X sooner')
+      expect(jsonOf(await call('eml_track_task', { task_id: t.id, intent: null })).properties.intent).toBeUndefined()
+    })
+
     it('eml_create_task supersedes: open sub-tasks banner points to eml_track_task parent_id', async () => {
       const old = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'old-parent' })))
       await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'old-child', parent_id: old.id }))
