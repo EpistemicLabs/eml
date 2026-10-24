@@ -27,6 +27,8 @@ export const api = {
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, jsonInit('PATCH', { title })),
   setSessionPin: (sessionId: string, isPinned: boolean) =>
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, jsonInit('PATCH', { isPinned })),
+  releaseSession: (sessionId: string, paneId: string) =>
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/release`, jsonInit('POST', { paneId })),
   deleteSession: (sessionId: string) =>
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, jsonInit('DELETE')),
 

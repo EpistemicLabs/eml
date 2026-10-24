@@ -77,6 +77,12 @@ export interface LaunchSpec {
   bin: string
   args: string[]
   env: Record<string, string>
+  /**
+   * The session is reachable outside the cockpit (Claude Code's Remote
+   * Control): it must keep running without a browser attached, and come back
+   * after a host restart, until the user closes it.
+   */
+  keepRunning: boolean
 }
 
 export interface SessionRef {

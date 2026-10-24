@@ -710,6 +710,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       json(res, 200, { success: true, session: sessionView(deps, project, { sessionId: id, ...entry }) })
       return true
     }
+    // The user closed a pane (×): a session kept running for Remote Control is
+    // no longer kept; like any detached session it ends after the timeout.
+    if (resource === 'sessions' && id && parts[3] === 'release' && method === 'POST') {
+      if (!deps.bridge.ledger.get(id)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
+      const body = await readJson(req)
+      const paneId = typeof body.paneId === 'string' && body.paneId ? body.paneId : null
+      json(res, 200, { success: true, released: deps.bridge.releasePane(id, paneId) })
+      return true
+    }
     if (resource === 'sessions' && id && method === 'DELETE') {
       const entry = deps.bridge.ledger.get(id)
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }

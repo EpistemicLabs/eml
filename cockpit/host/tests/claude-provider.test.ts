@@ -79,12 +79,18 @@ describe('Claude Code provider', () => {
       provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended }).args
     const attended = args(false)
     expect(attended).toContain('--remote-control')
+    // Driven from the Claude app too, so the session outlives the browser tab.
+    const keep = (unattended: boolean) =>
+      provider.launch({ sessionId: 'abc-7', address: 'eml-abc7', space, providerSessionId: null, resume: false, initialPrompt: null, unattended }).keepRunning
+    expect(keep(false)).toBe(true)
+    expect(keep(true)).toBe(false)
     // An option follows it, so the flag never takes the initial prompt as its name.
     expect(attended[attended.indexOf('--remote-control') + 1]).toMatch(/^--/)
     expect(attended.at(-1)).toBe('hello')
     expect(args(true)).not.toContain('--remote-control')
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
     expect(args(false)).not.toContain('--remote-control')
+    expect(keep(false)).toBe(false)
   })
 
   it('can resume only once Claude Code wrote a transcript', () => {
