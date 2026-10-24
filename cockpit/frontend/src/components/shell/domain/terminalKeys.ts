@@ -1,4 +1,4 @@
-import { ESC } from '../constants';
+import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, ESC } from '../constants';
 
 /**
  * The keys a phone keyboard lacks but an agent CLI needs: Esc to interrupt,
@@ -40,4 +40,12 @@ export function keySequence(key: TerminalKey, context: KeyContext): string {
  */
 export function submissionText(raw: string): string {
   return raw.replace(/\s+$/, '');
+}
+
+/**
+ * How an uploaded image goes into a prompt: its path on the host, pasted so
+ * the CLI takes it as an attachment, and a space that leaves room for a caption.
+ */
+export function imageReference(path: string): string {
+  return `${BRACKETED_PASTE_START}${path}${BRACKETED_PASTE_END} `;
 }

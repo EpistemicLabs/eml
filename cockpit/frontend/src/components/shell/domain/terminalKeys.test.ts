@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keySequence, submissionText } from './terminalKeys';
+import { imageReference, keySequence, submissionText } from './terminalKeys';
 
 const normal = { applicationCursor: false };
 const application = { applicationCursor: true };
@@ -34,5 +34,11 @@ describe('submissionText', () => {
 
   it('is empty for an empty message, so sending it is just Enter', () => {
     expect(submissionText('  \n')).toBe('');
+  });
+});
+
+describe('imageReference', () => {
+  it('pastes the image path and leaves room for a caption', () => {
+    expect(imageReference('/tmp/shot.png')).toBe('\x1b[200~/tmp/shot.png\x1b[201~ ');
   });
 });

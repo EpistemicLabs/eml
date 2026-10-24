@@ -25,6 +25,7 @@ import {
 import {
   decodeBinaryFrame,
   parseTextFrame,
+  uploadPastedImage,
   requestShellNonce,
   sendFrame,
   shellSocketUrl,
@@ -42,7 +43,8 @@ import {
 import { getSearchDecorations, getXtermTheme } from '../utils/terminalTheme';
 import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } from '../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../utils/terminalShortcuts';
-import { keySequence, submissionText, type TerminalKey } from '../domain/terminalKeys';
+import { imageReference, keySequence, submissionText, type TerminalKey } from '../domain/terminalKeys';
+import { prepareImageUpload } from '../utils/imageAttachment';
 
 export interface ShellRuntimeOptions {
   paneId: string | null;
@@ -52,19 +54,23 @@ export interface ShellRuntimeOptions {
   isActive: boolean;
   autoConnect: boolean;
   /**
-   * Input comes from on-screen controls (compact layout), not from typing
-   * into the terminal: tapping it then must not raise the soft keyboard.
+   * Typed on a soft keyboard (compact layout): the keyboard must not
+   * autocorrect, capitalize or suggest, which would rewrite commands.
    */
   touchInput: boolean;
 }
 
-/** Input from outside the terminal: the compact layout's key row and composer. */
+/** Input from outside the terminal: the compact layout's key row and its extras. */
 export interface ShellInput {
   sendKey: (key: TerminalKey) => void;
   /** Typed as if from the keyboard, e.g. a quick answer "1". */
   sendText: (text: string) => void;
   /** A composed message: pasted (bracketed when the CLI asks for it), then Enter. */
   submit: (message: string) => void;
+  /** An image from the device: uploaded to the host, its path put into the prompt. False if it failed. */
+  attachImage: (file: File) => Promise<boolean>;
+  /** Give the terminal the focus back, so typing goes on there. */
+  focus: () => void;
 }
 
 export type ShellOverlay =
@@ -498,13 +504,13 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     };
   }, [isActive, initialized, connected]);
 
-  // The soft keyboard belongs to the composer in touch input: xterm's helper
-  // textarea still takes focus (selection, copy), but asks for no keyboard.
+  // A soft keyboard types into xterm's helper textarea: keep it from
+  // correcting, capitalizing or suggesting, which would rewrite commands.
   useEffect(() => {
     const textarea = terminalRef.current?.textarea;
-    if (!textarea) return;
-    if (touchInput) textarea.setAttribute('inputmode', 'none');
-    else textarea.removeAttribute('inputmode');
+    if (!textarea || !touchInput) return;
+    const plain: Record<string, string> = { autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' };
+    for (const [name, value] of Object.entries(plain)) textarea.setAttribute(name, value);
   }, [touchInput, initialized]);
 
   const input = useMemo<ShellInput>(() => {
@@ -525,6 +531,14 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
         // the paste, a CLI can take it as part of the pasted text.
         window.setTimeout(() => send(keySequence('enter', { applicationCursor: false })), text ? SUBMIT_ENTER_DELAY_MS : 0);
       },
+      attachImage: async (file) => {
+        const upload = await prepareImageUpload(file);
+        const path = upload && await uploadPastedImage(upload.blob, upload.type).catch(() => null);
+        if (!path) return false;
+        send(imageReference(path));
+        return true;
+      },
+      focus: () => terminalRef.current?.focus(),
     };
   }, []);
 

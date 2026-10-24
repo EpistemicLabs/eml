@@ -15,7 +15,7 @@ interface TerminalPaneProps {
 }
 
 export default function TerminalPane({ sessionTitle, ...runtimeOptions }: TerminalPaneProps) {
-  // On a phone the input comes from the key row and composer below the terminal.
+  // On a phone the soft keyboard types into the terminal; the key row below adds what it lacks.
   const touchInput = useCompactLayout();
   const { containerRef, overlay, connect, search, input } = useShellRuntime({ ...runtimeOptions, touchInput });
 
