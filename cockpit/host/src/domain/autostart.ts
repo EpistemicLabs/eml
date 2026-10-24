@@ -23,8 +23,10 @@ export interface AutostartStatus {
   /** Running (the pid, when known), loaded but not running, or not loaded. */
   running: boolean
   pid: number | null
-  /** Where the registration lives (plist path, registry value). */
+  /** Where the registration lives (plist path, registry value, unit file). */
   where: string
+  /** Something the user should know about the registration, e.g. a Linux unit without lingering. */
+  note?: string
 }
 
 export interface Autostart {

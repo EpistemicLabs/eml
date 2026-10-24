@@ -5,7 +5,8 @@ You don't need a GitHub account, and you don't need to download this repository.
 
 **What you need**
 
-- A Mac. On Windows, see [Installing on Windows (beta)](#installing-on-windows-beta) at the end.
+- A Mac. On Windows, see [Installing on Windows (beta)](#installing-on-windows-beta), on Linux
+  [Installing on Linux](#installing-on-linux), both at the end.
 - A Claude subscription. Your agent runs on it. You sign in on the first start.
 
 ## 1. Install Node.js
@@ -135,4 +136,42 @@ out). Paste it into an issue:
 
 ```powershell
 & "$env:USERPROFILE\.eml-cockpit\node\current\node.exe" "$env:USERPROFILE\.eml-cockpit\app\current\node_modules\eml-cockpit\dist\index.js" diagnose
+```
+
+## Installing on Linux
+
+The same one-line installer works on Linux (x64 and arm64) with systemd, for example Ubuntu or Debian.
+It needs Node.js 22 or newer, from [nodejs.org](https://nodejs.org), your package manager or
+[nvm](https://github.com/nvm-sh/nvm). Run it as your own user, without `sudo`:
+
+```bash
+curl -fsSL https://github.com/EpistemicLabs/eml/releases/latest/download/install.sh | bash
+```
+
+It installs into `~/.eml-cockpit` and registers a systemd user service, `eml-cockpit-4317`, which starts
+the cockpit, starts it again after a crash or an update, and runs it while you are logged in. Check it
+with `systemctl --user status eml-cockpit-4317`.
+
+**On a server** you reach over SSH, the cockpit should run without a login and come back after a reboot.
+That needs lingering for your user, once, with root:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+The cockpit listens only on `127.0.0.1`, never on the network. To open it from your laptop, forward its
+port over SSH and keep the same port number on both ends (the cockpit accepts its own address only):
+
+```bash
+ssh -N -L 4317:127.0.0.1:4317 you@your-server
+```
+
+Then open [http://127.0.0.1:4317](http://127.0.0.1:4317) on the laptop. The service runs the Node.js the
+installer was run with: if you move or replace it, run the installer again.
+
+To uninstall or to collect diagnostics, run these as on a Mac:
+
+```bash
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js service uninstall
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js diagnose
 ```

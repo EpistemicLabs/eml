@@ -40,7 +40,7 @@ scripts/install-app.sh --from release/<v> # or local assets built with scripts/p
 ```
 
 This installs into `~/.eml-cockpit/app/versions/<v>/`, points `~/.eml-cockpit/app/current` at it and
-registers the launchd service on port 4317 (`--port`, `--home` to change). An existing
+registers the login service on port 4317 (`--port`, `--home` to change). An existing
 `~/.eml-cockpit` is kept as it is: brain, sessions, projects and the Claude login stay; the new version
 migrates the brain on start (with a backup first).
 
@@ -53,7 +53,7 @@ across a brain-schema change).
 **Start over:** stop the cockpit and delete `~/.eml-cockpit/`. That removes the brain, the
 session list and the cockpit's Claude login — back it up first (Settings › Brain › Back up).
 
-**Keep it running from source (macOS):** a source checkout can run as a login service too:
+**Keep it running from source:** a source checkout can run as a login service too:
 
 ```bash
 pnpm -F eml-cockpit build                                    # build the host once
@@ -65,13 +65,14 @@ pnpm -F eml-cockpit exec eml-cockpit service uninstall
 A source-run cockpit has no updater — update it with `git pull && pnpm install && pnpm run cockpit:build`
 and a service restart. The service is pinned to the port + home you install it with, and captures the
 absolute `node` path at install time, so re-run `service install` if you move the repo or reinstall
-node. (Linux `systemd --user` is not built yet.)
+node.
 
 **Known limits:**
 
 - Open the cockpit in **one** browser tab. A second tab takes over the running sessions, and the
   first one shows "Connect".
-- The login service runs on macOS (launchd) and Windows (the user's Run key with a small supervisor); Linux `systemd --user` is not built yet.
+- The login service runs on macOS (launchd), Windows (the user's Run key with a small supervisor) and
+  Linux (a systemd user unit; on a server without a login session it needs `loginctl enable-linger`).
 
 ## Architecture
 
