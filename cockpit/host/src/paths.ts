@@ -100,6 +100,8 @@ export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } ch
 export const CLAUDE_LOGIN_FILE = path.join(COCKPIT_HOME, 'claude-login')
 // Agent settings (sign-in mode: Claude Code login by default, or the setup-token).
 export const AGENTS_FILE = path.join(COCKPIT_HOME, 'agents.json')
+// Remote access through tailscale serve (remote-access.ts): allowed origins and users. chmod 600.
+export const REMOTE_FILE = path.join(COCKPIT_HOME, 'remote.json')
 // EML client config the session hooks read (brain URL + token of this boot).
 export const EML_HOOK_DIR = path.join(COCKPIT_HOME, 'eml')
 // Per brain space (brain-space.ts): the files a space's sessions start with —
