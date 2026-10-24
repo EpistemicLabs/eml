@@ -59,6 +59,9 @@ class ClaudeProvider implements AgentProvider {
 
   launch(req: LaunchRequest): LaunchSpec {
     const isolation = this.files()
+    // Settings › Models: reachable from the Claude app. Not for unattended
+    // sessions (workers, task runs), which nobody drives from a phone.
+    const remoteControl = readRemoteControl() && !req.unattended
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
@@ -70,11 +73,9 @@ class ClaudeProvider implements AgentProvider {
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
       '--permission-mode', req.unattended ? 'auto' : readPermissionMode(),
-      // Settings › Models: reachable from the Claude app. Not for unattended
-      // sessions (workers, task runs), which nobody drives from a phone. The
-      // flag takes an optional name, so it must not be the last argument
+      // The flag takes an optional name, so it must not be the last argument
       // before the initial prompt: the next one here is always an option.
-      ...(readRemoteControl() && !req.unattended ? ['--remote-control'] : []),
+      ...(remoteControl ? ['--remote-control'] : []),
       // The address other sessions reach this one by (ListAgents / SendMessage) — not the sidebar title.
       '--name', req.address,
       // Claude Code adopts the cockpit's id (--session-id), so both ids are the same.
@@ -88,6 +89,8 @@ class ClaudeProvider implements AgentProvider {
     return {
       bin: CLAUDE_BIN,
       args,
+      // Driven from the Claude app too: it outlives the browser tab.
+      keepRunning: remoteControl,
       env: {
         CLAUDE_CONFIG_DIR: isolation.configDir,
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own

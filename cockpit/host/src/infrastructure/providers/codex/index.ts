@@ -235,6 +235,8 @@ class CodexProvider implements AgentProvider {
       : [...options, ...(req.initialPrompt ? [req.initialPrompt] : [])]
     return {
       bin: codexRuntime.bin,
+      // Codex has no remote control: a session lives with its pane.
+      keepRunning: false,
       args,
       env: {
         CODEX_HOME: CODEX_CONFIG_DIR,

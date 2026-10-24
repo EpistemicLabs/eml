@@ -1,6 +1,7 @@
 import { ChevronDown, Plus, X } from 'lucide-react';
 
 import * as paneStore from '@/stores/usePaneStore';
+import { closePane } from '@/lib/pane-close';
 import { setTopView, useTopView } from '@/stores/useTopViewStore';
 import type { PaneState } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
@@ -98,7 +99,7 @@ export default function CompactNavBar({ projects }: { projects: Project[] }) {
             aria-label="Close pane"
             title="Close pane"
             disabled={!canClose}
-            onClick={() => shownPane && paneStore.removePane(shownPane.id)}
+            onClick={() => shownPane && closePane(shownPane.id)}
           >
             <X className="h-4 w-4" />
           </button>

@@ -9,6 +9,7 @@ import React, { useCallback, useRef } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
 import { usePaneContext } from '@/hooks/usePaneContext';
+import { closePane } from '@/lib/pane-close';
 import * as paneStore from '@/stores/usePaneStore';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
@@ -199,7 +200,7 @@ function PaneSlot({
   }, []);
 
   const onClosePane = useCallback(() => {
-    paneStore.removePane(paneId);
+    closePane(paneId);
   }, [paneId]);
 
   if (!ctx.pane) return null;

@@ -51,6 +51,12 @@ export interface LedgerEntry {
   taskId: string | null
   /** The brain space the session runs in (brain-space.ts); null = the main space (pre-spaces entries). */
   spaceId: string | null
+  /**
+   * The session is reachable outside the cockpit (Remote Control): it keeps
+   * running without a browser attached, and the host starts it again after
+   * a restart, until the user closes it (pty-bridge.ts).
+   */
+  keepRunning: boolean
 }
 
 interface LedgerFile {
@@ -85,6 +91,7 @@ function load(): LedgerFile {
           worker: entry.worker === true,
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
+          keepRunning: entry.keepRunning === true,
         }
       }
     }
@@ -143,7 +150,16 @@ export class SessionLedger {
       worker: worker || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
       spaceId: spaceId ?? prev?.spaceId ?? null,
+      keepRunning: prev?.keepRunning ?? false,
     }
+    this.persist()
+  }
+
+  /** Mark a session as kept running (or not); see LedgerEntry.keepRunning. */
+  setKeepRunning(sessionId: string, keepRunning: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.keepRunning === keepRunning) return
+    entry.keepRunning = keepRunning
     this.persist()
   }
 

@@ -22,7 +22,8 @@ import { greetingFor } from './session-greeting.js'
  *
  * Headless-xterm snapshot replay on reattach, supersede of a prior socket,
  * resize coalescing + SIGWINCH wiggle, first-chunk size resend, output
- * coalescing, WS backpressure, detached-session timeout. Sessions are spawned
+ * coalescing, WS backpressure, detached-session timeout (not for sessions kept
+ * running for Remote Control, which a host start brings back). Sessions are spawned
  * directly and isolated: the session's agent provider (domain/agent-provider.ts) supplies binary,
  * arguments and its isolated config — for Claude Code the cockpit's own `claude`
  * with the app's CLAUDE_CONFIG_DIR + --mcp-config (brain) + --settings —,
@@ -85,6 +86,8 @@ type PtySessionEntry = {
   projectPath: string
   /** The brain space the session runs in. */
   spaceId: string
+  /** Reachable outside the cockpit (LaunchSpec.keepRunning): no detached timeout. */
+  keepRunning: boolean
   // Server-side xterm that parses every PTY byte and holds the rendered
   // terminal state (grid, cursor, scrollback, alt-buffer). On reconnect we
   // serialize this and replay it as a single frame instead of dispatching
@@ -127,6 +130,15 @@ type PtySessionEntry = {
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
+// Terminal size of a kept session started without a client (host start);
+// the first pane that attaches resizes it to its own.
+const RESUME_COLS = 120
+const RESUME_ROWS = 40
+
+/** The ledger entries a host start brings back: kept running, and not a worker. */
+export function keptSessions<E extends { keepRunning: boolean; worker: boolean }>(entries: E[]): E[] {
+  return entries.filter((entry) => entry.keepRunning && !entry.worker)
+}
 // Coalesce rapid resize messages (one per ResizeObserver tick during pane
 // layout animations) into a single SIGWINCH. 120ms covers typical layout
 // animations without adding perceivable lag on intentional drag-resize.
@@ -369,7 +381,7 @@ export class PtyBridge {
     isDarkMode: boolean,
     projectId: string,
     space: BrainSpace,
-  ): IPty {
+  ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
     provider.trustProject(cwd)
     // Workers — opened by another session, nobody watching — run unattended.
@@ -386,7 +398,7 @@ export class PtyBridge {
     // The brain scope the session works in — the UserPromptSubmit hook shows
     // note edits of this scope only (decision cockpit-notes-pane).
     const brainId = brainIdFromProjectId(projectId)
-    return pty.spawn(launch.bin, launch.args, {
+    const proc = pty.spawn(launch.bin, launch.args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -405,6 +417,7 @@ export class PtyBridge {
         ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
       },
     })
+    return { pty: proc, keepRunning: launch.keepRunning }
   }
 
   // ── Per-entry plumbing ───────────────────────────────────────────────
@@ -527,7 +540,7 @@ export class PtyBridge {
         sendJson(session.ws, { type: 'output', data: '\x1bc' })
         const space = this.ctx.spaces.resolve(session.spaceId)
         const provider = this.ctx.providers.forSession(session.sessionId)
-        const fresh = this.spawnAgent(
+        const { pty: fresh } = this.spawnAgent(
           provider,
           session.sessionId, false, null, null, session.projectPath,
           session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
@@ -554,6 +567,9 @@ export class PtyBridge {
       })
       this.teardown(key, session)
       this.sessions.delete(key)
+      // The process ended on its own (/exit, a crash): nothing to bring back
+      // on the next host start. A host shutdown removes the entry first.
+      this.ledger.setKeepRunning(session.sessionId, false)
       this.forgetIfEmpty(session.sessionId)
     })
   }
@@ -568,6 +584,116 @@ export class PtyBridge {
       session.headless.dispose()
     } catch { /* already disposed */ }
     void key
+  }
+
+  /** Spawn a session's process and register its entry; `ws` null starts it without a client (host start). */
+  private startSession(opts: {
+    key: string
+    sessionId: string
+    paneId: string | null
+    projectId: string
+    projectPath: string
+    space: BrainSpace
+    provider: AgentProvider
+    resume: boolean
+    initialPrompt: string | null
+    greeting: string | null
+    cols: number
+    rows: number
+    isDarkMode: boolean
+    taskId: string | null
+  }, ws: WebSocket | null): void {
+    const { key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting, cols, rows } = opts
+    const { pty: proc, keepRunning } = this.spawnAgent(
+      provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
+    )
+
+    const headless = new HeadlessTerminal({
+      cols, rows, scrollback: HEADLESS_SCROLLBACK, allowProposedApi: true,
+    })
+    const serializeAddon = new SerializeAddon()
+    // SerializeAddon is typed against the DOM xterm, but only touches
+    // buffer state which @xterm/headless exposes identically.
+    headless.loadAddon(serializeAddon as unknown as IHeadlessAddon)
+
+    this.sessions.set(key, {
+      pty: proc,
+      ws,
+      sessionId,
+      paneId,
+      projectId,
+      projectPath,
+      spaceId: space.id,
+      keepRunning,
+      headless,
+      serializeAddon,
+      ptyPaused: false,
+      drainInterval: null,
+      timeoutId: null,
+      pendingResize: null,
+      pendingOutput: '',
+      flushTimer: null,
+      lastReportedSize: { cols, rows },
+      hasResentInitialSize: false,
+      spawnedWithResume: resume,
+      spawnedAt: Date.now(),
+      inputSeen: false,
+      earlyOutput: '',
+      replayToken: null,
+      wiggleRestore: null,
+    })
+    this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
+    this.ledger.setKeepRunning(sessionId, keepRunning)
+    this.wireProcess(key, proc)
+    this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
+  }
+
+  /**
+   * The user closed the pane (×): end its process now. The session stays in
+   * the ledger and can be resumed; it is no longer kept running.
+   */
+  stopPane(sessionId: string, paneId: string | null): number {
+    let stopped = 0
+    for (const [key, session] of [...this.sessions]) {
+      if (session.sessionId !== sessionId || (paneId && session.paneId !== paneId)) continue
+      try { session.ws?.close(1000, 'closed') } catch { /* closing */ }
+      this.teardown(key, session)
+      try { session.pty.kill() } catch { /* already gone */ }
+      this.sessions.delete(key)
+      stopped += 1
+    }
+    this.ledger.setKeepRunning(sessionId, false)
+    this.forgetIfEmpty(sessionId)
+    return stopped
+  }
+
+  /**
+   * Host start: bring back the sessions that were kept running when the host
+   * went down (an update, a reboot), so they are reachable from the Claude app
+   * again without a browser. They start resumed and without a client; a pane
+   * that opens later reattaches to them.
+   */
+  resumeKeptSessions(): number {
+    let resumed = 0
+    for (const entry of keptSessions(this.ledger.list())) {
+      const space = entry.spaceId ? this.ctx.spaces.get(entry.spaceId) : this.ctx.spaces.main
+      const project = entry.projectId ? space?.registry.get(entry.projectId) : undefined
+      const provider = this.ctx.providers.forSession(entry.sessionId)
+      if (!space || !project?.path || !entry.projectId || !this.hasTranscript(entry.sessionId) || provider.runtime.problem()) {
+        this.log(`kept session ${entry.sessionId} can't be resumed (space, folder, transcript or agent CLI missing) → no longer kept`)
+        this.ledger.setKeepRunning(entry.sessionId, false)
+        continue
+      }
+      const key = `${space.id}_${entry.projectId}_${entry.sessionId}${entry.paneId ? `_pane_${entry.paneId}` : ''}`
+      if (this.sessions.has(key)) continue
+      this.startSession({
+        key, sessionId: entry.sessionId, paneId: entry.paneId, projectId: entry.projectId, projectPath: project.path,
+        space, provider, resume: true, initialPrompt: null, greeting: null,
+        cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null,
+      }, null)
+      resumed += 1
+    }
+    return resumed
   }
 
   // ── Connection handling ──────────────────────────────────────────────
@@ -674,45 +800,10 @@ export class PtyBridge {
           const greeting = greetingFor({
             resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
           })
-          const isDarkMode = readBoolean(data.isDarkMode, true)
-          const proc = this.spawnAgent(provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, isDarkMode, projectId, space)
-
-          const headless = new HeadlessTerminal({
-            cols, rows, scrollback: HEADLESS_SCROLLBACK, allowProposedApi: true,
-          })
-          const serializeAddon = new SerializeAddon()
-          // SerializeAddon is typed against the DOM xterm, but only touches
-          // buffer state which @xterm/headless exposes identically.
-          headless.loadAddon(serializeAddon as unknown as IHeadlessAddon)
-
-          this.sessions.set(key, {
-            pty: proc,
-            ws,
-            sessionId,
-            paneId,
-            projectId,
-            projectPath,
-            spaceId: space.id,
-            headless,
-            serializeAddon,
-            ptyPaused: false,
-            drainInterval: null,
-            timeoutId: null,
-            pendingResize: null,
-            pendingOutput: '',
-            flushTimer: null,
-            lastReportedSize: { cols, rows },
-            hasResentInitialSize: false,
-            spawnedWithResume: resume,
-            spawnedAt: Date.now(),
-            inputSeen: false,
-            earlyOutput: '',
-            replayToken: null,
-            wiggleRestore: null,
-          })
-          this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, readString(data.taskId) || null, space.ledgerKey, greeting !== null)
-          this.wireProcess(key, proc)
-          this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})`)
+          this.startSession({
+            key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting,
+            cols, rows, isDarkMode: readBoolean(data.isDarkMode, true), taskId: readString(data.taskId) || null,
+          }, ws)
           return
         }
 
@@ -785,6 +876,8 @@ export class PtyBridge {
         session.flushTimer = null
       }
       session.pendingOutput = ''
+      // Reachable from the Claude app: runs on without a browser, until × or /exit.
+      if (session.keepRunning) return
       const detachedKey = key
       session.timeoutId = setTimeout(() => {
         const current = this.sessions.get(detachedKey)

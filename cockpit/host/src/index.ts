@@ -183,6 +183,10 @@ async function main() {
     host.listen(hostPort, '127.0.0.1', resolve)
   })
   log(`cockpit: ${url}`)
+  // Sessions kept running for Remote Control come back without a browser,
+  // once the host answers their hooks.
+  const kept = bridge.resumeKeptSessions()
+  if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
