@@ -61,7 +61,8 @@ export function SidebarHeader({
   viewMode: SidebarViewMode;
   onViewModeChange: (mode: SidebarViewMode) => void;
   isPinnedOpen: boolean;
-  onTogglePinned: () => void;
+  /** Absent where pinning means nothing (the compact layout's drawer). */
+  onTogglePinned?: () => void;
   onAddProject: () => void;
 }) {
   return (
@@ -94,18 +95,20 @@ export function SidebarHeader({
         >
           <Plus />
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'h-7 w-7 p-0 [&_svg]:size-3.5',
-            isPinnedOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-          )}
-          title={isPinnedOpen ? 'Unpin sidebar' : 'Pin sidebar open'}
-          onClick={onTogglePinned}
-        >
-          {isPinnedOpen ? <PinOff /> : <Pin />}
-        </Button>
+        {onTogglePinned && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              'h-7 w-7 p-0 [&_svg]:size-3.5',
+              isPinnedOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+            title={isPinnedOpen ? 'Unpin sidebar' : 'Pin sidebar open'}
+            onClick={onTogglePinned}
+          >
+            {isPinnedOpen ? <PinOff /> : <Pin />}
+          </Button>
+        )}
       </div>
     </div>
   );

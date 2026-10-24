@@ -20,6 +20,12 @@ export interface SidebarProps {
   onSetFolder: (project: Project) => void;
 }
 
+/** The compact layout's sidebar: a drawer the page opens and closes. */
+export interface SidebarDrawer {
+  open: boolean;
+  onClose: () => void;
+}
+
 export interface PendingProjectDelete {
   project: Project;
   sessionCount: number;

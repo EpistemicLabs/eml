@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon, type ISearchResultChangeEvent } from '@xterm/addon-search';
@@ -18,6 +18,7 @@ import {
   NORMAL_CLOSURE,
   RESIZE_DEBOUNCE_MS,
   SETTLE_DELAY_MS,
+  SUBMIT_ENTER_DELAY_MS,
   SUPERSEDED_REASON,
   TERMINAL_OPTIONS,
 } from '../constants';
@@ -41,6 +42,7 @@ import {
 import { getSearchDecorations, getXtermTheme } from '../utils/terminalTheme';
 import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } from '../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../utils/terminalShortcuts';
+import { keySequence, submissionText, type TerminalKey } from '../domain/terminalKeys';
 
 export interface ShellRuntimeOptions {
   paneId: string | null;
@@ -49,6 +51,20 @@ export interface ShellRuntimeOptions {
   initialCommand: string | null;
   isActive: boolean;
   autoConnect: boolean;
+  /**
+   * Input comes from on-screen controls (compact layout), not from typing
+   * into the terminal: tapping it then must not raise the soft keyboard.
+   */
+  touchInput: boolean;
+}
+
+/** Input from outside the terminal: the compact layout's key row and composer. */
+export interface ShellInput {
+  sendKey: (key: TerminalKey) => void;
+  /** Typed as if from the keyboard, e.g. a quick answer "1". */
+  sendText: (text: string) => void;
+  /** A composed message: pasted (bracketed when the CLI asks for it), then Enter. */
+  submit: (message: string) => void;
 }
 
 export type ShellOverlay =
@@ -75,7 +91,7 @@ export interface ShellSearch {
  * both directions, resize, theme and focus.
  */
 export function useShellRuntime(options: ShellRuntimeOptions) {
-  const { sessionId, isActive, autoConnect } = options;
+  const { sessionId, isActive, autoConnect, touchInput } = options;
   const { isDarkMode } = useTheme();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -482,6 +498,36 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     };
   }, [isActive, initialized, connected]);
 
+  // The soft keyboard belongs to the composer in touch input: xterm's helper
+  // textarea still takes focus (selection, copy), but asks for no keyboard.
+  useEffect(() => {
+    const textarea = terminalRef.current?.textarea;
+    if (!textarea) return;
+    if (touchInput) textarea.setAttribute('inputmode', 'none');
+    else textarea.removeAttribute('inputmode');
+  }, [touchInput, initialized]);
+
+  const input = useMemo<ShellInput>(() => {
+    const send = (data: string) => sendFrame(socketRef.current, { type: 'input', data });
+    return {
+      sendKey: (key) => {
+        const applicationCursor = terminalRef.current?.modes.applicationCursorKeysMode ?? false;
+        send(keySequence(key, { applicationCursor }));
+      },
+      sendText: send,
+      submit: (message) => {
+        const terminal = terminalRef.current;
+        const text = submissionText(message);
+        // Through xterm's paste, so the text is bracketed when the CLI has
+        // bracketed paste on and line breaks stay inside the message.
+        if (terminal && text) terminal.paste(text);
+        // Enter as its own keystroke a moment later: arriving together with
+        // the paste, a CLI can take it as part of the pasted text.
+        window.setTimeout(() => send(keySequence('enter', { applicationCursor: false })), text ? SUBMIT_ENTER_DELAY_MS : 0);
+      },
+    };
+  }, []);
+
   let overlay: ShellOverlay | null = null;
   if (!initialized) overlay = { kind: 'loading' };
   else if (failure) overlay = { kind: 'error', message: failure };
@@ -496,5 +542,5 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     close: closeSearch,
   };
 
-  return { containerRef, overlay, connect, search };
+  return { containerRef, overlay, connect, search, input };
 }

@@ -1,6 +1,8 @@
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { useShellRuntime } from '../hooks/useShellRuntime';
 import ShellOverlay from './subcomponents/ShellOverlay';
 import TerminalSearchBar from './subcomponents/TerminalSearchBar';
+import TerminalTouchInput from './subcomponents/TerminalTouchInput';
 
 interface TerminalPaneProps {
   paneId: string | null;
@@ -13,7 +15,9 @@ interface TerminalPaneProps {
 }
 
 export default function TerminalPane({ sessionTitle, ...runtimeOptions }: TerminalPaneProps) {
-  const { containerRef, overlay, connect, search } = useShellRuntime(runtimeOptions);
+  // On a phone the input comes from the key row and composer below the terminal.
+  const touchInput = useCompactLayout();
+  const { containerRef, overlay, connect, search, input } = useShellRuntime({ ...runtimeOptions, touchInput });
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
@@ -22,6 +26,7 @@ export default function TerminalPane({ sessionTitle, ...runtimeOptions }: Termin
         {search.open && !overlay && <TerminalSearchBar search={search} />}
         {overlay && <ShellOverlay state={overlay} sessionTitle={sessionTitle} onConnect={() => void connect()} />}
       </div>
+      {touchInput && <TerminalTouchInput input={input} disabled={overlay !== null} />}
     </div>
   );
 }
