@@ -45,6 +45,7 @@ import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } 
 import { matchTerminalShortcut } from '../utils/terminalShortcuts';
 import { imageReference, keySequence, submissionText, type TerminalKey } from '../domain/terminalKeys';
 import { prepareImageUpload } from '../utils/imageAttachment';
+import { installTapToType } from '../utils/terminalTapToType';
 
 export interface ShellRuntimeOptions {
   paneId: string | null;
@@ -506,11 +507,15 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
 
   // A soft keyboard types into xterm's helper textarea: keep it from
   // correcting, capitalizing or suggesting, which would rewrite commands.
+  // A tap on the terminal raises the keyboard (terminalTapToType).
   useEffect(() => {
-    const textarea = terminalRef.current?.textarea;
-    if (!textarea || !touchInput) return;
+    const terminal = terminalRef.current;
+    const textarea = terminal?.textarea;
+    const container = containerRef.current;
+    if (!terminal || !textarea || !container || !touchInput) return;
     const plain: Record<string, string> = { autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' };
     for (const [name, value] of Object.entries(plain)) textarea.setAttribute(name, value);
+    return installTapToType(terminal, container);
   }, [touchInput, initialized]);
 
   const input = useMemo<ShellInput>(() => {
