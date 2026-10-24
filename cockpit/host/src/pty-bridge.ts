@@ -140,6 +140,20 @@ const RESUME_ROWS = 40
 export function keptSessions<E extends { keepRunning: boolean; worker: boolean }>(entries: E[]): E[] {
   return entries.filter((entry) => entry.keepRunning && !entry.worker)
 }
+
+/**
+ * The live PTY of a conversation in a space, under whichever pane started it:
+ * a session closed with × keeps running until its timeout, and reopening it
+ * from the sidebar lands in a new pane. One conversation runs in one process.
+ */
+export function runningEntry<E extends { sessionId: string; spaceId: string }>(
+  sessions: Map<string, E>, spaceId: string, sessionId: string,
+): [string, E] | null {
+  for (const [key, entry] of sessions) {
+    if (entry.sessionId === sessionId && entry.spaceId === spaceId) return [key, entry]
+  }
+  return null
+}
 // Coalesce rapid resize messages (one per ResizeObserver tick during pane
 // layout animations) into a single SIGWINCH. 120ms covers typical layout
 // animations without adding perceivable lag on intentional drag-resize.
@@ -774,16 +788,23 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'This project has no folder and none could be created' })
             return
           }
-          // paneId makes the key unique per UI pane so two panes on the same
-          // project + session each own a distinct PTY instead of colliding on
-          // one and fighting over it. It's stable across reloads (persisted in
-          // the pane store), so the same pane still reattaches.
+          // The key names the pane that started the PTY. It's stable across
+          // reloads (persisted in the pane store), so the same pane reattaches.
           // The space is part of the key: two spaces may both know project
           // `bp-eml`, and a session id is minted per pane anyway.
           key = `${space.id}_${projectId}_${sessionId}${paneId ? `_pane_${paneId}` : ''}`
           const cols = readNumber(data.cols, 80)
           const rows = readNumber(data.rows, 24)
 
+          // A conversation already running under another pane (closed with ×,
+          // reopened into a new one) is taken over, not started a second time:
+          // two processes on one transcript would both write to it. The pane
+          // that had it gets `superseded` and does not reconnect.
+          const running = this.sessions.has(key) ? null : runningEntry(this.sessions, space.id, sessionId)
+          if (running) {
+            key = running[0]
+            running[1].paneId = paneId
+          }
           const existing = this.sessions.get(key)
           if (existing) {
             this.reattach(key, existing, ws, cols, rows)
