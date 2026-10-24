@@ -1,6 +1,6 @@
 {
   "name": "@engramprotocol/mcp-server",
-  "version": "0.20.3",
+  "version": "0.20.4",
   "description": "MCP wrapper for the EML HTTP API — exposes the Engram Protocol as MCP tools for Claude Code and other MCP clients, plus the Claude Code hooks (boot + reminder) as CLI commands.",
   "license": "MIT",
   "main": "dist/server.js",
