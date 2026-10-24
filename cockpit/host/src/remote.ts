@@ -158,6 +158,8 @@ function status(): void {
 /** Handle a `remote …` invocation; returns true if it consumed the args. */
 export async function runRemoteCommand(argv: string[]): Promise<boolean> {
   if (argv[0] !== 'remote') return false
+  // `remote status | head` closes stdout early; don't crash on the broken pipe.
+  process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE') process.exit(0) })
   const sub = argv[1]
   if (sub === 'enable') enable(argv.slice(2))
   else if (sub === 'disable') disable(argv.slice(2))
