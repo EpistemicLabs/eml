@@ -79,3 +79,13 @@ jobs:
       # with the autostart it registers (scripts/install-test.ps1).
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-test.ps1
         if: ${{ runner.os == 'Windows' }}
+      # Linux: install.sh from assets packed from this checkout, with the
+      # systemd user unit it registers (scripts/install-test.sh). The runner
+      # user gets lingering, so its user manager runs without a login session.
+      - name: install test (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 1 20); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          bash scripts/install-test.sh
