@@ -69,6 +69,8 @@ node.
 
 **Known limits:**
 
+- Remote access is Tailscale only (`eml-cockpit remote enable`, INSTALL.md): the host stays on
+  `127.0.0.1` and lets in requests that `tailscale serve` proxies for a listed tailnet user.
 - Open the cockpit in **one** browser tab. A second tab takes over the running sessions, and the
   first one shows "Connect".
 - The login service runs on macOS (launchd), Windows (the user's Run key with a small supervisor) and

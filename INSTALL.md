@@ -166,7 +166,22 @@ port over SSH and keep the same port number on both ends (the cockpit accepts it
 ssh -N -L 4317:127.0.0.1:4317 you@your-server
 ```
 
-Then open [http://127.0.0.1:4317](http://127.0.0.1:4317) on the laptop. The service runs the Node.js the
+Then open [http://127.0.0.1:4317](http://127.0.0.1:4317) on the laptop.
+
+**From your laptop and phone, without a tunnel:** with [Tailscale](https://tailscale.com) on the
+server and your devices, the cockpit can be reached at `https://<server>.<tailnet>.ts.net`, inside your
+tailnet only. Turn on HTTPS for the tailnet in the Tailscale admin console (leave Funnel off), then on
+the server:
+
+```bash
+sudo tailscale serve --bg --https=443 http://127.0.0.1:4317    # once, as an admin
+node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js remote enable
+```
+
+`remote enable` lets in exactly that address and your Tailscale login; anyone else on the tailnet and
+anything from the internet is refused. More people: `remote enable --user <their login>`. Check with
+`remote status`, turn it off with `remote disable`. The list lives in `~/.eml-cockpit/remote.json`
+and can only be changed there or with these commands, never from the browser. The service runs the Node.js the
 installer was run with: if you move or replace it, run the installer again.
 
 To uninstall or to collect diagnostics, run these as on a Mac:

@@ -23,6 +23,7 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
+import { runRemoteCommand } from './remote.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
 
@@ -210,6 +211,7 @@ async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
 }
 
 runServiceCommand(process.argv.slice(2))
+  .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

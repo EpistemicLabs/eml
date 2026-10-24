@@ -27,6 +27,7 @@ import { isProviderId, writeDefaultProvider } from './provider-settings.js'
 // through /api/providers.
 import { claudeVersion } from './infrastructure/providers/claude/isolation.js'
 import type { TurnEvent, TurnTracker } from './turn-state.js'
+import { requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, savePastedImage } from './paste-images.js'
@@ -815,6 +816,13 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
       json(res, 200, { status: 'ok' })
       return
     }
+    // Who may reach the cockpit at all: this machine, or a tailnet user remote
+    // access lets in (remote-access.ts) — and from which origins they may write.
+    const gate = requestGate(req, allowedOrigins)
+    if (!gate.allowed) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Not allowed from here' } })
+      return
+    }
     // CSRF guard for the whole API surface, including the brain proxy (the host
     // injects the brain token, so a cross-origin write would otherwise reach the
     // real brain): every state-changing /api/* call must carry an allowlisted
@@ -827,7 +835,7 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
       const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
-      if (write && !tokenEndpoint && !allowedOrigins.includes(req.headers.origin ?? '')) {
+      if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }
@@ -845,13 +853,14 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
 
   // Guarded WS upgrade on /ws/shell?nonce= — the session identity travels in
   // the `init` frame so a pane can reattach to its running PTY.
-  // perMessageDeflate off: loopback only, compression is pure CPU waste.
+  // perMessageDeflate off: loopback (or the tailnet), compression is pure CPU waste.
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false })
   server.on('upgrade', (req, socket, head) => {
     const { pathname, searchParams } = new URL(req.url ?? '', 'http://127.0.0.1')
     if (pathname !== '/ws/shell') { socket.destroy(); return }
+    const gate = requestGate(req, allowedOrigins)
     const origin = req.headers.origin
-    if (!origin || !allowedOrigins.includes(origin)) { socket.destroy(); return }
+    if (!gate.allowed || !origin || !gate.origins.includes(origin)) { socket.destroy(); return }
     const nonce = searchParams.get('nonce') ?? ''
     if (!deps.bridge.consumeNonce(nonce)) { socket.destroy(); return }
     wss.handleUpgrade(req, socket, head, (ws) => {

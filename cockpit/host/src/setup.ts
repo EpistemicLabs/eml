@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { CORE_INDEX } from './paths.js'
 import { provisionBrain, type BrainIdentity, type ProvisionedBrain } from './provision.js'
 import { serveStatic } from './http.js'
+import { requestGate } from './remote-access.js'
 
 /**
  * First-run setup: a home without a brain gets a minimal server on the host's
@@ -87,10 +88,13 @@ export function runFirstRunSetup(opts: SetupServerOptions): Promise<ProvisionedB
       const url = (req.url ?? '/').split('?')[0]
       const method = req.method ?? 'GET'
       if (url === '/health') { json(res, 200, { status: 'ok', setup: true }); return }
+      // Same reach as the host (remote-access.ts).
+      const gate = requestGate(req, opts.allowedOrigins)
+      if (!gate.allowed) { json(res, 403, { error: { code: 'FORBIDDEN', message: 'Not allowed from here' } }); return }
       if (url === '/api/setup' && method === 'GET') { json(res, 200, { needed: true }); return }
       if (url === '/api/setup' && method === 'POST') {
         // Same CSRF rule as the host: only the cockpit's own page may write.
-        if (!opts.allowedOrigins.includes(req.headers.origin ?? '')) {
+        if (!gate.origins.includes(req.headers.origin ?? '')) {
           json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
           return
         }
