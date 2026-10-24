@@ -19,7 +19,7 @@ import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog'
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
 import { FirstRunSignIn } from '@/components/first-run/FirstRun';
-import { findProjectOwningSession, useProjectsState } from '@/hooks/useProjectsState';
+import { findProjectOwningSession, projectsOfSpace, useProjectsState } from '@/hooks/useProjectsState';
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
@@ -60,6 +60,7 @@ function AppContentInner() {
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const {
     projects,
+    projectsBySpace,
     isLoadingProjects,
     showSettings,
     settingsInitialTab,
@@ -87,16 +88,23 @@ function AppContentInner() {
   const turnSnapshot = useTurnStore();
   const projectsRef = React.useRef(projects);
   projectsRef.current = projects;
+  const projectsBySpaceRef = React.useRef(projectsBySpace);
+  projectsBySpaceRef.current = projectsBySpace;
   const refreshProjectsRef = React.useRef(refreshProjectsSilently);
   refreshProjectsRef.current = refreshProjectsSilently;
   // One test for "empty pane" everywhere: a terminal pane whose projectId and
   // pre-minted session both resolve to no project (Choose Your Project), or a
-  // note pane with neither a note nor a project (Pick a project…).
+  // note pane with neither a note nor a project (Pick a project…). Against the
+  // projects of the pane's own space.
   paneStore.setEmptyPaneTest((pane) => {
-    const known = projectsRef.current.some((project) => project.projectId === pane.projectId);
+    const desk = paneStore.getDeskOfPane(pane.id);
+    const spaceProjects = desk
+      ? projectsOfSpace(projectsBySpaceRef.current, desk.spaceId)
+      : projectsRef.current;
+    const known = spaceProjects.some((project) => project.projectId === pane.projectId);
     if (pane.paneView === 'note') return !pane.noteId && !known;
     return pane.paneView === 'terminal' && !known &&
-      !findProjectOwningSession(projectsRef.current, pane.sessionId ?? '');
+      !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
   // The last "Session finished" notification per session, closed when the next one comes.
@@ -392,7 +400,7 @@ function AppContentInner() {
                     activePaneId={desk.activePaneId}
                     deskActive={isDeskActive}
                     compact={compact}
-                    projects={projects}
+                    projects={projectsOfSpace(projectsBySpace, desk.spaceId)}
                     onSessionStarted={refreshProjectsSilently}
                     onStartNewChat={handleNewSession}
                   />
