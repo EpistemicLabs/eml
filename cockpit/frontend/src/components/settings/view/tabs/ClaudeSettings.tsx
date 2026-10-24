@@ -26,6 +26,7 @@ type LoginStatus = {
   mode: LoginMode;
   permissionMode: PermissionMode;
   renderer: Renderer;
+  remoteControl: boolean;
   token: { set: boolean; prefix: string | null };
   account: Account | null;
 };
@@ -99,6 +100,8 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const bypass = status?.permissionMode === 'bypassPermissions';
   const setRenderer = (renderer: Renderer) => run(() => api.setRenderer(renderer));
   const pinnedInput = status?.renderer === 'fullscreen';
+  const setRemoteControl = (on: boolean) => run(() => api.setRemoteControl(on));
+  const remoteControl = status?.remoteControl === true;
 
   const tokenMode = status?.mode === 'token';
   const showTokenForm = editing || status?.token.set === false;
@@ -194,6 +197,21 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
               checked={pinnedInput}
               onChange={(checked: boolean) => void setRenderer(checked ? 'fullscreen' : 'default')}
               ariaLabel="Keep the input at the bottom"
+              disabled={busy || status === null}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label="Reachable from the Claude app"
+            description={
+              remoteControl
+                ? 'On — new sessions start with Remote Control: they show up in the Claude app and on claude.ai/code and can be driven from there, through Anthropic\'s servers. A running session joins with /remote-control.'
+                : 'Off — sessions are reachable only through this cockpit.'
+            }
+          >
+            <SettingsToggle
+              checked={remoteControl}
+              onChange={(checked: boolean) => void setRemoteControl(checked)}
+              ariaLabel="Reachable from the Claude app"
               disabled={busy || status === null}
             />
           </SettingsRow>

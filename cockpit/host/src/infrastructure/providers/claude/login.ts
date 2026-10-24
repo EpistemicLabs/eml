@@ -46,6 +46,7 @@ export interface ClaudeLoginStatus {
   mode: LoginMode
   permissionMode: PermissionMode
   renderer: Renderer
+  remoteControl: boolean
   token: { set: boolean; prefix: string | null }
   account: ClaudeAccount | null
 }
@@ -127,6 +128,16 @@ export function readRenderer(): Renderer {
   return readAgentSettings().renderer === 'default' ? 'default' : 'fullscreen'
 }
 
+/**
+ * Whether new cockpit sessions start with Claude Code's Remote Control, so
+ * they show up in the Claude app (phone, claude.ai/code) and can be driven
+ * from there. Off unless switched on in Settings › Models: the session is then
+ * reachable through Anthropic's servers, not only through the cockpit.
+ */
+export function readRemoteControl(): boolean {
+  return readAgentSettings().remoteControl === true
+}
+
 /** Returns an error message for the UI, or null on success. */
 export function writeLoginMode(raw: unknown): string | null {
   if (raw !== 'login' && raw !== 'token') return 'Unknown sign-in mode.'
@@ -149,11 +160,18 @@ export function writeRenderer(raw: unknown): string | null {
   return null
 }
 
-export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown }
+/** Returns an error message for the UI, or null on success. */
+export function writeRemoteControl(raw: unknown): string | null {
+  if (typeof raw !== 'boolean') return 'Remote Control is on or off.'
+  writeAgentSettings({ remoteControl: raw })
+  return null
+}
 
-/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer? }. */
+export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
+
+/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl? }. */
 export function writeAgentPatch(body: AgentPatch | null): string | null {
-  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined) {
+  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined) {
     return 'Nothing to change.'
   }
   if (body.mode !== undefined) {
@@ -164,7 +182,11 @@ export function writeAgentPatch(body: AgentPatch | null): string | null {
     const error = writePermissionMode(body.permissionMode)
     if (error) return error
   }
-  return body.renderer !== undefined ? writeRenderer(body.renderer) : null
+  if (body.renderer !== undefined) {
+    const error = writeRenderer(body.renderer)
+    if (error) return error
+  }
+  return body.remoteControl !== undefined ? writeRemoteControl(body.remoteControl) : null
 }
 
 /** The token a session gets injected — only in token mode. */
@@ -216,6 +238,7 @@ export async function claudeLoginStatus(): Promise<ClaudeLoginStatus> {
     mode,
     permissionMode: readPermissionMode(),
     renderer: readRenderer(),
+    remoteControl: readRemoteControl(),
     token: { set: token !== null, prefix: token ? `${token.slice(0, 16)}…` : null },
     account: await readAccount(mode),
   }
