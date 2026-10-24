@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
-import type { SidebarProps } from '../types';
+import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
 import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
@@ -11,7 +11,7 @@ import { SidebarScrollRegion } from './subcomponents/SidebarScrollRegion';
 
 const CLOSE_GRACE_MS = 200;
 
-export default function Sidebar(props: SidebarProps) {
+export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: SidebarDrawer }) {
   const controller = useSidebarController(props);
 
   const [hovered, setHovered] = useState(false);
@@ -38,6 +38,63 @@ export default function Sidebar(props: SidebarProps) {
   const isOpen =
     controller.isPinnedOpen || hovered || controller.projectRename !== null || controller.sessionRename !== null;
   const showModes = controller.projects.length > 0 && !controller.isLoading;
+
+  const panel = (
+    <>
+      <SidebarHeader
+        showModes={showModes}
+        viewMode={controller.viewMode}
+        onViewModeChange={controller.setViewMode}
+        isPinnedOpen={controller.isPinnedOpen}
+        onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
+        onAddProject={controller.openWizard}
+      />
+      <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
+      <SidebarScrollRegion
+        refreshing={controller.refreshing}
+        isRefreshInFlight={() => controller.refreshingRef.current}
+        onRefresh={() => void controller.runManualRefresh()}
+      >
+        {controller.viewMode === 'conversations' ? (
+          <SidebarConversations controller={controller} />
+        ) : (
+          <SidebarProjectTree controller={controller} />
+        )}
+      </SidebarScrollRegion>
+      <SidebarFooter onShowSettings={controller.onShowSettings} />
+    </>
+  );
+
+  // Compact layout: no rail and no hover; the panel slides in over the page
+  // and a tap beside it closes it again.
+  if (drawer) {
+    return (
+      <>
+        <SidebarModals controller={controller} />
+        <div
+          className={cn(
+            'fixed inset-0 z-50 bg-black/40 transition-opacity duration-200',
+            drawer.open ? 'opacity-100' : 'pointer-events-none opacity-0',
+          )}
+          aria-hidden
+          onClick={drawer.onClose}
+        />
+        <div
+          role="dialog"
+          aria-label="Projects and sessions"
+          aria-hidden={!drawer.open}
+          inert={!drawer.open}
+          className={cn(
+            'fixed top-0 bottom-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover shadow-2xl select-none',
+            'pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] transition-transform duration-200',
+            drawer.open ? 'translate-x-0' : '-translate-x-full',
+          )}
+        >
+          {panel}
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -67,27 +124,7 @@ export default function Sidebar(props: SidebarProps) {
               isOpen ? 'opacity-100' : 'pointer-events-none invisible opacity-0',
             )}
           >
-            <SidebarHeader
-              showModes={showModes}
-              viewMode={controller.viewMode}
-              onViewModeChange={controller.setViewMode}
-              isPinnedOpen={controller.isPinnedOpen}
-              onTogglePinned={controller.togglePinnedOpen}
-              onAddProject={controller.openWizard}
-            />
-            <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
-            <SidebarScrollRegion
-              refreshing={controller.refreshing}
-              isRefreshInFlight={() => controller.refreshingRef.current}
-              onRefresh={() => void controller.runManualRefresh()}
-            >
-              {controller.viewMode === 'conversations' ? (
-                <SidebarConversations controller={controller} />
-              ) : (
-                <SidebarProjectTree controller={controller} />
-              )}
-            </SidebarScrollRegion>
-            <SidebarFooter onShowSettings={controller.onShowSettings} />
+            {panel}
           </div>
         </div>
       </div>

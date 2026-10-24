@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon, type ISearchResultChangeEvent } from '@xterm/addon-search';
@@ -18,12 +18,14 @@ import {
   NORMAL_CLOSURE,
   RESIZE_DEBOUNCE_MS,
   SETTLE_DELAY_MS,
+  SUBMIT_ENTER_DELAY_MS,
   SUPERSEDED_REASON,
   TERMINAL_OPTIONS,
 } from '../constants';
 import {
   decodeBinaryFrame,
   parseTextFrame,
+  uploadPastedImage,
   requestShellNonce,
   sendFrame,
   shellSocketUrl,
@@ -41,6 +43,9 @@ import {
 import { getSearchDecorations, getXtermTheme } from '../utils/terminalTheme';
 import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } from '../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../utils/terminalShortcuts';
+import { imageReference, keySequence, repairMouseReports, submissionText, type TerminalKey } from '../domain/terminalKeys';
+import { prepareImageUpload } from '../utils/imageAttachment';
+import { installTapToType } from '../utils/terminalTapToType';
 
 export interface ShellRuntimeOptions {
   paneId: string | null;
@@ -49,6 +54,24 @@ export interface ShellRuntimeOptions {
   initialCommand: string | null;
   isActive: boolean;
   autoConnect: boolean;
+  /**
+   * Typed on a soft keyboard (compact layout): the keyboard must not
+   * autocorrect, capitalize or suggest, which would rewrite commands.
+   */
+  touchInput: boolean;
+}
+
+/** Input from outside the terminal: the compact layout's key row and its extras. */
+export interface ShellInput {
+  sendKey: (key: TerminalKey) => void;
+  /** Typed as if from the keyboard, e.g. a quick answer "1". */
+  sendText: (text: string) => void;
+  /** A composed message: pasted (bracketed when the CLI asks for it), then Enter. */
+  submit: (message: string) => void;
+  /** An image from the device: uploaded to the host, its path put into the prompt. False if it failed. */
+  attachImage: (file: File) => Promise<boolean>;
+  /** Give the terminal the focus back, so typing goes on there. */
+  focus: () => void;
 }
 
 export type ShellOverlay =
@@ -75,7 +98,7 @@ export interface ShellSearch {
  * both directions, resize, theme and focus.
  */
 export function useShellRuntime(options: ShellRuntimeOptions) {
-  const { sessionId, isActive, autoConnect } = options;
+  const { sessionId, isActive, autoConnect, touchInput } = options;
   const { isDarkMode } = useTheme();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -368,7 +391,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     });
 
     const dataSubscription = terminal.onData((data) => {
-      sendFrame(socketRef.current, { type: 'input', data });
+      sendFrame(socketRef.current, { type: 'input', data: repairMouseReports(data) });
     });
 
     // Pane animations fire many notifications; only the settled size is sent.
@@ -482,6 +505,48 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     };
   }, [isActive, initialized, connected]);
 
+  // A soft keyboard types into xterm's helper textarea: keep it from
+  // correcting, capitalizing or suggesting, which would rewrite commands.
+  // A tap on the terminal raises the keyboard (terminalTapToType).
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    const textarea = terminal?.textarea;
+    const container = containerRef.current;
+    if (!terminal || !textarea || !container || !touchInput) return;
+    const plain: Record<string, string> = { autocorrect: 'off', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' };
+    for (const [name, value] of Object.entries(plain)) textarea.setAttribute(name, value);
+    return installTapToType(terminal, container);
+  }, [touchInput, initialized]);
+
+  const input = useMemo<ShellInput>(() => {
+    const send = (data: string) => sendFrame(socketRef.current, { type: 'input', data });
+    return {
+      sendKey: (key) => {
+        const applicationCursor = terminalRef.current?.modes.applicationCursorKeysMode ?? false;
+        send(keySequence(key, { applicationCursor }));
+      },
+      sendText: send,
+      submit: (message) => {
+        const terminal = terminalRef.current;
+        const text = submissionText(message);
+        // Through xterm's paste, so the text is bracketed when the CLI has
+        // bracketed paste on and line breaks stay inside the message.
+        if (terminal && text) terminal.paste(text);
+        // Enter as its own keystroke a moment later: arriving together with
+        // the paste, a CLI can take it as part of the pasted text.
+        window.setTimeout(() => send(keySequence('enter', { applicationCursor: false })), text ? SUBMIT_ENTER_DELAY_MS : 0);
+      },
+      attachImage: async (file) => {
+        const upload = await prepareImageUpload(file);
+        const path = upload && await uploadPastedImage(upload.blob, upload.type).catch(() => null);
+        if (!path) return false;
+        send(imageReference(path));
+        return true;
+      },
+      focus: () => terminalRef.current?.focus(),
+    };
+  }, []);
+
   let overlay: ShellOverlay | null = null;
   if (!initialized) overlay = { kind: 'loading' };
   else if (failure) overlay = { kind: 'error', message: failure };
@@ -496,5 +561,5 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     close: closeSearch,
   };
 
-  return { containerRef, overlay, connect, search };
+  return { containerRef, overlay, connect, search, input };
 }

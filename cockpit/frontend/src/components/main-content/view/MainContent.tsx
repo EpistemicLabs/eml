@@ -6,6 +6,7 @@
 // cockpit-notes-pane). Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
 import React, { useEffect, useRef } from 'react';
 
@@ -66,6 +67,7 @@ function MainContent({
   // activate it first. The wrapper's padding reaches into the corner, so the
   // hover zone is the whole corner, not only the icons. Touch has no hover: a
   // tap there would hit an invisible control, so it stays active-only.
+  const compact = useCompactLayout();
   const toolbarReveal = !isActive &&
     'opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:hidden';
 
@@ -73,7 +75,7 @@ function MainContent({
   if (paneView === 'terminal' && !selectedProject) {
     return (
       <div className="relative flex h-full flex-col">
-        {onClosePane && (
+        {onClosePane && !compact && (
           <div className={cn('pointer-events-auto absolute top-0 right-0 z-30 pt-2 pr-2 pb-2 sm:pt-3 sm:pr-3', toolbarReveal)}>
             <MainContentTabSwitcher paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} />
           </div>
@@ -92,25 +94,31 @@ function MainContent({
             switcher. It must not be overridden by a responsive px-* (a
             former sm:px-4 reset it to 1rem, and long titles ran under the
             icons). */}
-        <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-40 pb-1 pl-3 sm:pl-4">
-          <MainContentTitle
-            paneId={paneId}
-            selectedProject={selectedProject}
-            selectedSession={selectedSession}
-            paneLabel={paneLabel}
-          />
-        </div>
+        {/* Compact layout: the header's pickers name, switch, add and close
+            panes, so the pane gives that height to its content. */}
+        {!compact && (
+          <>
+            <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-40 pb-1 pl-3 sm:pl-4">
+              <MainContentTitle
+                paneId={paneId}
+                selectedProject={selectedProject}
+                selectedSession={selectedSession}
+                paneLabel={paneLabel}
+              />
+            </div>
 
-        <div className={cn('pointer-events-auto absolute top-0 right-0 z-30 pt-2 pr-2 pb-1 sm:pr-3', toolbarReveal)}>
-          <MainContentTabSwitcher
-            paneView={paneView}
-            onSetPaneView={onSetPaneView}
-            onClosePane={onClosePane}
-            onAddPane={handleAddPane}
-          />
-        </div>
+            <div className={cn('pointer-events-auto absolute top-0 right-0 z-30 pt-2 pr-2 pb-1 sm:pr-3', toolbarReveal)}>
+              <MainContentTabSwitcher
+                paneView={paneView}
+                onSetPaneView={onSetPaneView}
+                onClosePane={onClosePane}
+                onAddPane={handleAddPane}
+              />
+            </div>
+          </>
+        )}
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-2">
+        <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? 'px-1 pb-1' : 'px-2 pb-2')}>
           <ErrorBoundary showDetails>
             {paneView === 'terminal' ? (
               <div className="flex min-h-0 flex-1 flex-col">

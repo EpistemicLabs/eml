@@ -6,8 +6,10 @@
 // pane / reuses an empty one / opens a new one, new session pre-mints a
 // Claude session id, open-in-new-pane). Trimmed: URL↔pane session sync,
 // chat WS provider + session protection, palette, service-worker
-// navigation, permission recovery, mobile drawer, todo linking.
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+// navigation, permission recovery, todo linking. Added: the compact
+// (phone) layout — sidebar as a drawer, one pane at a time, the page sized to
+// the part above the on-screen keyboard.
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
@@ -30,12 +32,15 @@ import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
 import DeskTabBar from './DeskTabBar';
+import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
-import { Brain } from 'lucide-react';
+import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
+import { Brain, Menu } from 'lucide-react';
 
 export default function AppContent() {
   return (
@@ -47,6 +52,12 @@ export default function AppContent() {
 
 function AppContentInner() {
   const { info: about } = useAboutInfo();
+  const compact = useCompactLayout();
+  useVisibleViewportHeight();
+  // The compact layout's sidebar drawer; closed again whenever the layout widens.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { if (!compact) setDrawerOpen(false); }, [compact]);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const {
     projects,
     isLoadingProjects,
@@ -262,12 +273,30 @@ function AppContentInner() {
   const activePaneCtx = usePaneContext(activePaneId, projects);
   useDocumentTitle(activePaneCtx.project?.displayName, unseenTotal);
 
+  // In the drawer a pick is the end of the errand: show what was picked.
+  const closingDrawer = <A extends unknown[]>(handler: (...args: A) => void) =>
+    (...args: A) => { handler(...args); setDrawerOpen(false); };
+
   return (
-    <div className="fixed inset-0 flex flex-col bg-background">
+    <div
+      className="fixed inset-x-0 top-0 flex flex-col bg-background"
+      style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
+    >
       {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
           The sidebar rail and the pane grid start below it, top-aligned. */}
-      <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 backdrop-blur-sm">
+      <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-sm box-content">
+        {compact && (
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Projects and sessions"
+            className="flex w-12 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        )}
         {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
+        {!compact && (
         <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[18px] font-semibold tracking-wide text-primary">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
             <Brain className="h-4 w-4 text-primary-foreground" />
@@ -292,10 +321,15 @@ function AppContentInner() {
             </span>
           )}
         </div>
+        )}
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        <div className="min-w-0 flex-1">
-          <DeskTabBar />
-        </div>
+        {compact ? (
+          <CompactNavBar projects={projects} />
+        ) : (
+          <div className="min-w-0 flex-1">
+            <DeskTabBar />
+          </div>
+        )}
       </div>
 
       {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}
@@ -307,24 +341,25 @@ function AppContentInner() {
           renders the icon rail plus a hover overlay that must extend past
           this wrapper — overflow-hidden here would clip it. z-40 lifts the
           overlay above the pane grid. */}
-      <div className="relative z-40 my-2 ml-2 h-[calc(100%-1rem)] flex-shrink-0">
+      <div className={compact ? 'contents' : 'relative z-40 my-2 ml-2 h-[calc(100%-1rem)] flex-shrink-0'}>
         <Sidebar
+          drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
           projects={projects}
           selectedProject={activePaneCtx.project}
           selectedSession={activePaneCtx.session}
-          onProjectSelect={handleProjectSelect}
-          onSessionSelect={handleSessionSelect}
-          onNewSession={handleNewSession}
+          onProjectSelect={compact ? closingDrawer(handleProjectSelect) : handleProjectSelect}
+          onSessionSelect={compact ? closingDrawer(handleSessionSelect) : handleSessionSelect}
+          onNewSession={compact ? closingDrawer(handleNewSession) : handleNewSession}
           onSessionDelete={handleSessionDelete}
           onProjectDelete={handleProjectDelete}
           isLoading={isLoadingProjects}
           onRefresh={handleSidebarRefresh}
-          onShowSettings={() => openSettings()}
+          onShowSettings={() => { setDrawerOpen(false); openSettings(); }}
           onSetFolder={(project) => setFolderTarget({ project })}
         />
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is
               active; the desks below stay mounted (hidden) so terminals
@@ -356,6 +391,7 @@ function AppContentInner() {
                     paneIds={desk.panes.map(p => p.id)}
                     activePaneId={desk.activePaneId}
                     deskActive={isDeskActive}
+                    compact={compact}
                     projects={projects}
                     onSessionStarted={refreshProjectsSilently}
                     onStartNewChat={handleNewSession}

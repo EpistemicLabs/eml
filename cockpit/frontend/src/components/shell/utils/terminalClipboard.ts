@@ -1,7 +1,8 @@
 import type { IDisposable, Terminal } from '@xterm/xterm';
 
 import { copyTextToClipboard } from '@/utils/clipboard';
-import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, KILL_LINE } from '../constants';
+import { KILL_LINE } from '../constants';
+import { imageReference } from '../domain/terminalKeys';
 import { uploadPastedImage } from './hostChannel';
 
 /**
@@ -50,8 +51,7 @@ async function pasteFromClipboard(terminal: Terminal, sendInput: (data: string) 
         const blob = await item.getType(imageType);
         const path = await uploadPastedImage(blob, imageType);
         if (path) {
-          // The trailing space leaves room for a caption.
-          sendInput(`${BRACKETED_PASTE_START}${path}${BRACKETED_PASTE_END} `);
+          sendInput(imageReference(path));
           return;
         }
         break;

@@ -30,6 +30,8 @@ export const HIDDEN_POLL_MS = 250;
 export const RESIZE_DEBOUNCE_MS = 200;
 /** How long "connecting" is held after a failed nonce request. */
 export const NONCE_FAILURE_HOLD_MS = 1500;
+/** Gap between a composer message's paste and its Enter (useShellRuntime › submit). */
+export const SUBMIT_ENTER_DELAY_MS = 60;
 /** Delay of the trailing glyph-atlas rebuild after focus/visibility/DPR events. */
 export const ATLAS_SETTLE_MS = 400;
 

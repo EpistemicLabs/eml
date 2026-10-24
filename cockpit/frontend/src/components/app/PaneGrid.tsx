@@ -3,6 +3,8 @@
 // hover-to-focus, per-pane project/session resolution via usePaneContext.
 // Inactive panes are not dimmed — every pane stays fully bright; the active one shows the view
 // toolbar, the others on hover of their top-right corner (MainContent).
+// Compact (phone) layout: the active pane fills the box (the header's pane
+// picker switches); the others stay mounted, hidden, so their terminals run on.
 import React, { useCallback, useRef } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
@@ -54,6 +56,8 @@ function focusPaneInput(paneEl: HTMLElement | null): void {
 }
 
 type SlotDeps = {
+  /** Phone layout: no hover-to-focus (a tap would raise the keyboard). */
+  compact: boolean;
   projects: Project[];
   onSessionStarted: () => void;
   onStartNewChat: (project: Project) => void;
@@ -63,6 +67,7 @@ export function PaneGridLayout({
   paneIds,
   activePaneId,
   deskActive,
+  compact,
   projects,
   onSessionStarted,
   onStartNewChat,
@@ -74,8 +79,12 @@ export function PaneGridLayout({
   // and auto-focus from running in backgrounded desks.
   deskActive: boolean;
 } & SlotDeps) {
-  const slotDeps: SlotDeps = { projects, onSessionStarted, onStartNewChat };
+  const slotDeps: SlotDeps = { compact, projects, onSessionStarted, onStartNewChat };
   if (paneIds.length === 0) return null;
+
+  if (compact && paneIds.length > 1) {
+    return <CompactPaneStack paneIds={paneIds} activePaneId={activePaneId} deskActive={deskActive} slotDeps={slotDeps} />;
+  }
 
   if (paneIds.length === 1) {
     // The last pane closes back to the empty state (removePane) — offered
@@ -127,6 +136,42 @@ export function PaneGridLayout({
   );
 }
 
+// Hidden, not display:none, as for desks: a hidden pane keeps its real size,
+// so its terminal keeps the right geometry while another pane is shown.
+function CompactPaneStack({
+  paneIds,
+  activePaneId,
+  deskActive,
+  slotDeps,
+}: {
+  paneIds: string[];
+  activePaneId: string;
+  deskActive: boolean;
+  slotDeps: SlotDeps;
+}) {
+  const shownId = paneIds.includes(activePaneId) ? activePaneId : paneIds[0];
+  return (
+    <div className="flex h-full w-full flex-col">
+      <div className="relative min-h-0 flex-1">
+        {paneIds.map((paneId) => {
+          const shown = paneId === shownId;
+          return (
+            <div
+              key={paneId}
+              aria-hidden={!shown}
+              inert={!shown}
+              className="absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden"
+              style={{ visibility: shown ? 'visible' : 'hidden' }}
+            >
+              <PaneSlot paneId={paneId} isActive={deskActive && shown} canClose slotDeps={slotDeps} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PaneSlot({
   paneId,
   isActive,
@@ -163,7 +208,7 @@ function PaneSlot({
     <div
       ref={paneRootRef}
       className="flex h-full min-h-0 w-full min-w-0 flex-col"
-      onMouseEnter={handlePaneHover}
+      onMouseEnter={slotDeps.compact ? undefined : handlePaneHover}
     >
       <MainContent
         isActive={isActive}
