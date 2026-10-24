@@ -23,7 +23,8 @@ import { greetingFor } from './session-greeting.js'
  * Headless-xterm snapshot replay on reattach, supersede of a prior socket,
  * resize coalescing + SIGWINCH wiggle, first-chunk size resend, output
  * coalescing, WS backpressure, detached-session timeout (not for sessions kept
- * running for Remote Control, which a host start brings back). Sessions are spawned
+ * running for Remote Control until their pane is closed; a host start brings
+ * those back). Sessions are spawned
  * directly and isolated: the session's agent provider (domain/agent-provider.ts) supplies binary,
  * arguments and its isolated config — for Claude Code the cockpit's own `claude`
  * with the app's CLAUDE_CONFIG_DIR + --mcp-config (brain) + --settings —,
@@ -649,22 +650,38 @@ export class PtyBridge {
   }
 
   /**
-   * The user closed the pane (×): end its process now. The session stays in
-   * the ledger and can be resumed; it is no longer kept running.
+   * A detached session ends after PTY_SESSION_TIMEOUT unless a client comes
+   * back (reattach clears the timer). It stays resumable via the ledger.
    */
-  stopPane(sessionId: string, paneId: string | null): number {
-    let stopped = 0
-    for (const [key, session] of [...this.sessions]) {
-      if (session.sessionId !== sessionId || (paneId && session.paneId !== paneId)) continue
-      try { session.ws?.close(1000, 'closed') } catch { /* closing */ }
-      this.teardown(key, session)
-      try { session.pty.kill() } catch { /* already gone */ }
+  private scheduleDetachTimeout(key: string, session: PtySessionEntry): void {
+    if (session.timeoutId) clearTimeout(session.timeoutId)
+    session.timeoutId = setTimeout(() => {
+      const current = this.sessions.get(key)
+      if (!current || current.ws) return
+      this.log(`detached session ${current.sessionId} timed out → killing pty (resumable via ledger)`)
+      this.teardown(key, current)
+      try { current.pty.kill() } catch { /* already gone */ }
       this.sessions.delete(key)
-      stopped += 1
+      this.forgetIfEmpty(current.sessionId)
+    }, PTY_SESSION_TIMEOUT)
+  }
+
+  /**
+   * The user closed the pane (×): the session is no longer kept running. Like
+   * any detached session it then ends PTY_SESSION_TIMEOUT after its last
+   * client left, and stays resumable. Whether the pane's socket closes before
+   * or after this call, the timer starts once both have happened.
+   */
+  releasePane(sessionId: string, paneId: string | null): number {
+    let released = 0
+    for (const [key, session] of this.sessions) {
+      if (session.sessionId !== sessionId || (paneId && session.paneId !== paneId)) continue
+      session.keepRunning = false
+      if (!session.ws) this.scheduleDetachTimeout(key, session)
+      released += 1
     }
     this.ledger.setKeepRunning(sessionId, false)
-    this.forgetIfEmpty(sessionId)
-    return stopped
+    return released
   }
 
   /**
@@ -878,16 +895,7 @@ export class PtyBridge {
       session.pendingOutput = ''
       // Reachable from the Claude app: runs on without a browser, until × or /exit.
       if (session.keepRunning) return
-      const detachedKey = key
-      session.timeoutId = setTimeout(() => {
-        const current = this.sessions.get(detachedKey)
-        if (!current || current.ws) return
-        this.log(`detached session ${current.sessionId} timed out → killing pty (resumable via ledger)`)
-        this.teardown(detachedKey, current)
-        try { current.pty.kill() } catch { /* already gone */ }
-        this.sessions.delete(detachedKey)
-        this.forgetIfEmpty(current.sessionId)
-      }, PTY_SESSION_TIMEOUT)
+      this.scheduleDetachTimeout(key, session)
     })
 
     ws.on('error', (error) => {

@@ -204,7 +204,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
             label="Reachable from the Claude app"
             description={
               remoteControl
-                ? 'On — new sessions start with Remote Control: they show up in the Claude app and on claude.ai/code and can be driven from there, through Anthropic\'s servers. They keep running without an open cockpit and come back after a restart, until you close their pane (×). A running session joins with /remote-control.'
+                ? 'On — new sessions start with Remote Control: they show up in the Claude app and on claude.ai/code and can be driven from there, through Anthropic\'s servers. They keep running without an open cockpit and come back after a restart; closing their pane (×) ends them after 30 minutes, like any other session. A running session joins with /remote-control.'
                 : 'Off — sessions are reachable only through this cockpit.'
             }
           >
