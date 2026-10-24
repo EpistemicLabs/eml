@@ -72,7 +72,7 @@ eml-mcp-server hook stop               [--config <path>]
 data, never evaluated). Logs, the reminder's turn counters and the save points live
 next to the config file, so one config directory is one isolated EML client.
 
-## Tools (v0.20.3)
+## Tools (v0.20.4)
 
 All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is strict: an unknown parameter is an error, not silently dropped, and the server checks the same fields again (core enforces them for MCP, REST and CLI alike). An older client that still sends removed tools or fields (`significance`, `properties`, `kind`, …) gets an error asking to upgrade `@engramprotocol/mcp-server` to ≥ 0.19.
 

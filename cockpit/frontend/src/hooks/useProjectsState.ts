@@ -31,8 +31,33 @@ function sameValue(a: unknown, b: unknown): boolean {
 
 const isDocumentVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
+const NO_PROJECTS: Project[] = [];
+const spaceKey = (spaceId: string | null): string => spaceId ?? '';
+
+/** Projects of each space seen in this tab, by space id ('' = main). */
+export type ProjectsBySpace = Readonly<Record<string, Project[]>>;
+
+/** One space's projects; a stable empty list for a space not loaded yet. */
+export function projectsOfSpace(bySpace: ProjectsBySpace, spaceId: string | null): Project[] {
+  return bySpace[spaceKey(spaceId)] ?? NO_PROJECTS;
+}
+
 export function useProjectsState() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  // Kept per space: the desks of a space left open stay mounted, and their
+  // panes resolve against their own space's projects, not the open one's — a
+  // pane that lost its project would drop its terminal and its connection.
+  const [projectsBySpace, setProjectsBySpace] = useState<ProjectsBySpace>({});
+  const activeSpaceId = paneStore.useActiveSpaceId();
+  const projects = projectsOfSpace(projectsBySpace, activeSpaceId);
+  // Changes the open space's list only.
+  const setProjects = useCallback((update: (previous: Project[]) => Project[]) => {
+    const key = spaceKey(paneStore.getActiveSpaceId());
+    setProjectsBySpace((bySpace) => {
+      const previous = bySpace[key] ?? NO_PROJECTS;
+      const next = update(previous);
+      return next === previous ? bySpace : { ...bySpace, [key]: next };
+    });
+  }, []);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('account');
@@ -46,13 +71,17 @@ export function useProjectsState() {
     const showLoadingState = options.showLoadingState ?? true;
     if (showLoadingState) setIsLoadingProjects(true);
     try {
+      // The request goes to the space open now; its answer belongs to that
+      // space even if the user switched while it was underway.
+      const key = spaceKey(paneStore.getActiveSpaceId());
       const response = await api.projects();
       if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
       const body = (await response.json()) as ProjectsResponse;
       const fetched = Array.isArray(body?.projects) ? body.projects : [];
-      setProjects((previous) => {
-        if (previous.length === 0) return fetched;
-        return sameValue(previous, fetched) ? previous : fetched;
+      setProjectsBySpace((bySpace) => {
+        const previous = bySpace[key];
+        if (previous && previous.length > 0 && sameValue(previous, fetched)) return bySpace;
+        return { ...bySpace, [key]: fetched };
       });
     } catch (error) {
       console.error('Error fetching projects:', error);
@@ -111,7 +140,7 @@ export function useProjectsState() {
         };
       }),
     );
-  }, []);
+  }, [setProjects]);
 
   const handleProjectDelete = useCallback((projectId: string) => {
     for (const pane of paneStore.getPanes()) {
@@ -120,10 +149,11 @@ export function useProjectsState() {
       }
     }
     setProjects((previous) => previous.filter((project) => project.projectId !== projectId));
-  }, []);
+  }, [setProjects]);
 
   return {
     projects,
+    projectsBySpace,
     isLoadingProjects,
     showSettings,
     settingsInitialTab,

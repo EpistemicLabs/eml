@@ -46,3 +46,16 @@ describe('kept sessions', () => {
     expect(keptSessions(entries).map((e) => e.sessionId)).toEqual(['a'])
   })
 })
+
+describe('one process per conversation', () => {
+  it('finds a conversation running under another pane of the same space only', async () => {
+    const { runningEntry } = await import('../src/pty-bridge.js')
+    const sessions = new Map([
+      ['main_bp-eml_s1_pane_old', { sessionId: 's1', spaceId: 'main' }],
+      ['other_bp-eml_s2_pane_x', { sessionId: 's2', spaceId: 'other' }],
+    ])
+    expect(runningEntry(sessions, 'main', 's1')?.[0]).toBe('main_bp-eml_s1_pane_old')
+    expect(runningEntry(sessions, 'main', 's2')).toBeNull()
+    expect(runningEntry(sessions, 'main', 's3')).toBeNull()
+  })
+})
