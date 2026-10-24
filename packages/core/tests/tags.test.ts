@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -103,12 +103,21 @@ describe('v0.12 tags', () => {
   })
 
   it('a tags-only update bumps updated_at (recency reflects the change)', () => {
-    writes(eml).tags.create({ name: 'x' })
-    const e = writes(eml).store({ type: 'note', scope: 'global', title: 'n', content: 'c' })
-    const stored = eml.engrams.get(e.id)!.updated_at
-    const upd = writes(eml).update(e.id, { tags: ['x'] })!
-    expect(upd.tags).toEqual(['x'])
-    expect(upd.updated_at).not.toEqual(stored)
+    // A fixed clock, a second apart: two writes in the same millisecond would
+    // otherwise carry the same timestamp and fail the test by chance.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      writes(eml).tags.create({ name: 'x' })
+      const e = writes(eml).store({ type: 'note', scope: 'global', title: 'n', content: 'c' })
+      const stored = eml.engrams.get(e.id)!.updated_at
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
+      const upd = writes(eml).update(e.id, { tags: ['x'] })!
+      expect(upd.tags).toEqual(['x'])
+      expect(upd.updated_at).not.toEqual(stored)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects an unslugifiable tag instead of silently dropping it', () => {
