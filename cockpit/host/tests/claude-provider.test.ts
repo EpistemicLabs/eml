@@ -73,6 +73,20 @@ describe('Claude Code provider', () => {
     expect(launch.env).not.toHaveProperty('CLAUDE_CODE_NO_FLICKER')
   })
 
+  it('starts attended sessions with Remote Control once it is switched on, never unattended ones', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ remoteControl: true }))
+    const args = (unattended: boolean) =>
+      provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended }).args
+    const attended = args(false)
+    expect(attended).toContain('--remote-control')
+    // An option follows it, so the flag never takes the initial prompt as its name.
+    expect(attended[attended.indexOf('--remote-control') + 1]).toMatch(/^--/)
+    expect(attended.at(-1)).toBe('hello')
+    expect(args(true)).not.toContain('--remote-control')
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
+    expect(args(false)).not.toContain('--remote-control')
+  })
+
   it('can resume only once Claude Code wrote a transcript', () => {
     const session = { sessionId: 'abc-4', providerSessionId: null, projectPath: null, greeted: null }
     expect(provider.canResume(session)).toBe(false)

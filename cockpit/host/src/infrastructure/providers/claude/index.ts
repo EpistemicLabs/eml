@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionRef, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRenderer, sessionToken } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -70,6 +70,11 @@ class ClaudeProvider implements AgentProvider {
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
       '--permission-mode', req.unattended ? 'auto' : readPermissionMode(),
+      // Settings › Models: reachable from the Claude app. Not for unattended
+      // sessions (workers, task runs), which nobody drives from a phone. The
+      // flag takes an optional name, so it must not be the last argument
+      // before the initial prompt: the next one here is always an option.
+      ...(readRemoteControl() && !req.unattended ? ['--remote-control'] : []),
       // The address other sessions reach this one by (ListAgents / SendMessage) — not the sidebar title.
       '--name', req.address,
       // Claude Code adopts the cockpit's id (--session-id), so both ids are the same.

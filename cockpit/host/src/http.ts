@@ -549,7 +549,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         return true
       }
       if (method === 'PUT' || method === 'PATCH') {
-        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown }
+        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
         const error = method === 'PUT' ? writeClaudeLogin(body?.token) : writeAgentPatch(body)
         if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
         invalidateAccountCache()
