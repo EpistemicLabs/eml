@@ -43,7 +43,7 @@ import {
 import { getSearchDecorations, getXtermTheme } from '../utils/terminalTheme';
 import { getTerminalFontSize, stepTerminalFontSize, subscribeTerminalFontSize } from '../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../utils/terminalShortcuts';
-import { imageReference, keySequence, submissionText, type TerminalKey } from '../domain/terminalKeys';
+import { imageReference, keySequence, repairMouseReports, submissionText, type TerminalKey } from '../domain/terminalKeys';
 import { prepareImageUpload } from '../utils/imageAttachment';
 import { installTapToType } from '../utils/terminalTapToType';
 
@@ -391,7 +391,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     });
 
     const dataSubscription = terminal.onData((data) => {
-      sendFrame(socketRef.current, { type: 'input', data });
+      sendFrame(socketRef.current, { type: 'input', data: repairMouseReports(data) });
     });
 
     // Pane animations fire many notifications; only the settled size is sent.

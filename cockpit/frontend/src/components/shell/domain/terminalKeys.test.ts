@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { imageReference, keySequence, submissionText } from './terminalKeys';
+import { imageReference, keySequence, repairMouseReports, submissionText } from './terminalKeys';
 
 const normal = { applicationCursor: false };
 const application = { applicationCursor: true };
@@ -40,5 +40,16 @@ describe('submissionText', () => {
 describe('imageReference', () => {
   it('pastes the image path and leaves room for a caption', () => {
     expect(imageReference('/tmp/shot.png')).toBe('\x1b[200~/tmp/shot.png\x1b[201~ ');
+  });
+});
+
+describe('repairMouseReports', () => {
+  it('puts a NaN mouse report on the first cell, keeping its button', () => {
+    expect(repairMouseReports('\x1b[<65;NaN;NaNM\x1b[<64;NaN;NaNM')).toBe('\x1b[<65;1;1M\x1b[<64;1;1M');
+  });
+
+  it('leaves other input alone, NaN typed as text included', () => {
+    expect(repairMouseReports('\x1b[<65;12;7M')).toBe('\x1b[<65;12;7M');
+    expect(repairMouseReports('NaN is not a number')).toBe('NaN is not a number');
   });
 });

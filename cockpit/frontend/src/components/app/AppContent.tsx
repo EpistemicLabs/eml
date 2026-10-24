@@ -32,6 +32,7 @@ import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
 import DeskTabBar from './DeskTabBar';
+import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
@@ -322,9 +323,13 @@ function AppContentInner() {
         </div>
         )}
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        <div className={compact ? 'min-w-0 flex-1 overflow-x-auto' : 'min-w-0 flex-1'}>
-          <DeskTabBar />
-        </div>
+        {compact ? (
+          <CompactNavBar projects={projects} />
+        ) : (
+          <div className="min-w-0 flex-1">
+            <DeskTabBar />
+          </div>
+        )}
       </div>
 
       {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}

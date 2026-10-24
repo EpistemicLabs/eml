@@ -3,8 +3,8 @@
 // hover-to-focus, per-pane project/session resolution via usePaneContext.
 // Inactive panes are not dimmed — every pane stays fully bright; the active one shows the view
 // toolbar, the others on hover of their top-right corner (MainContent).
-// Compact (phone) layout: the active pane fills the box and a strip above it
-// switches panes; the others stay mounted, hidden, so their terminals run on.
+// Compact (phone) layout: the active pane fills the box (the header's pane
+// picker switches); the others stay mounted, hidden, so their terminals run on.
 import React, { useCallback, useRef } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
@@ -152,17 +152,6 @@ function CompactPaneStack({
   const shownId = paneIds.includes(activePaneId) ? activePaneId : paneIds[0];
   return (
     <div className="flex h-full w-full flex-col">
-      <div role="tablist" aria-label="Panes" className="flex flex-shrink-0 gap-1 overflow-x-auto border-b border-foreground/15 px-2 py-1.5">
-        {paneIds.map((paneId, i) => (
-          <CompactPaneTab
-            key={paneId}
-            paneId={paneId}
-            index={i}
-            selected={paneId === shownId}
-            projects={slotDeps.projects}
-          />
-        ))}
-      </div>
       <div className="relative min-h-0 flex-1">
         {paneIds.map((paneId) => {
           const shown = paneId === shownId;
@@ -180,35 +169,6 @@ function CompactPaneStack({
         })}
       </div>
     </div>
-  );
-}
-
-function CompactPaneTab({
-  paneId,
-  index,
-  selected,
-  projects,
-}: {
-  paneId: string;
-  index: number;
-  selected: boolean;
-  projects: Project[];
-}) {
-  const ctx = usePaneContext(paneId, projects);
-  const label = ctx.pane?.title || ctx.pane?.label || ctx.project?.displayName || `Pane ${index + 1}`;
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={selected}
-      onClick={() => paneStore.activatePane(paneId)}
-      className={[
-        'max-w-[10rem] flex-shrink-0 truncate rounded-md px-3 py-1.5 text-[13px]',
-        selected ? 'bg-foreground/10 font-medium text-foreground' : 'text-muted-foreground',
-      ].join(' ')}
-    >
-      {label}
-    </button>
   );
 }
 

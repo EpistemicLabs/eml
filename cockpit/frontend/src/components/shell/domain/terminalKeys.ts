@@ -49,3 +49,16 @@ export function submissionText(raw: string): string {
 export function imageReference(path: string): string {
   return `${BRACKETED_PASTE_START}${path}${BRACKETED_PASTE_END} `;
 }
+
+/**
+ * Mouse reports (SGR, `ESC [ < button ; x ; y M`) whose position came out as
+ * NaN: xterm's touch scrolling produces them when a program has mouse
+ * tracking on (Claude Code's fullscreen renderer), and the program then
+ * shows the broken sequence as typed text. A wheel report only needs its
+ * button, so the position is set to the first cell and the scroll works.
+ */
+const NAN_MOUSE_REPORT = /\x1b\[<(\d+);NaN;NaN([Mm])/g;
+
+export function repairMouseReports(data: string): string {
+  return data.includes('NaN') ? data.replace(NAN_MOUSE_REPORT, '\x1b[<$1;1;1$2') : data;
+}
