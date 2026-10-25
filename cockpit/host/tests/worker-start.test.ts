@@ -52,9 +52,10 @@ describe('worker start without a tab', () => {
   it('leaves a request to an open tab during the grace time, then starts it', () => {
     const leave = spawns.watch()
     const r = request(spawns)
+    now = Date.parse(r.createdAt) + 14_999
     starter.tick()
     expect(bridge.started).toEqual([])
-    now += 15_000
+    now = Date.parse(r.createdAt) + 15_000
     starter.tick()
     expect(bridge.started.map((s) => s.id)).toEqual([r.id])
     leave()
@@ -64,7 +65,7 @@ describe('worker start without a tab', () => {
     const leave = spawns.watch()
     const r = request(spawns)
     expect(spawns.claim(r.id)).not.toBeNull()
-    now += 20_000
+    now = Date.parse(r.createdAt) + 20_000
     starter.tick()
     expect(bridge.started).toEqual([])
     leave()
