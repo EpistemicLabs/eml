@@ -10,7 +10,7 @@ import { ensurePtyHelperExecutable } from './pty-helper.js'
 import { platform } from './infrastructure/platform/index.js'
 import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
-import type { AgentProvider } from './domain/agent-provider.js'
+import type { AgentProvider, TurnState } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
@@ -137,6 +137,20 @@ type PtySessionEntry = {
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
+
+/**
+ * Which quiet worker makes room for a new one: quiet for at least `minQuietMs`,
+ * a done one before one waiting for a permission, then the one quiet the longest.
+ */
+export function pickQuietWorker(candidates: Array<{ key: string; quietMs: number; state: TurnState }>, minQuietMs: number): string | null {
+  const eligible = candidates
+    .filter((c) => c.state !== 'working' && c.quietMs >= minQuietMs)
+    .sort((a, b) => Number(a.state === 'waiting') - Number(b.state === 'waiting') || b.quietMs - a.quietMs)
+  return eligible[0]?.key ?? null
+}
+
+/** A session's turn state for the worker limits (turn-state.ts): the state and since when it holds (ms). */
+export type WorkerTurnOf = (sessionId: string) => { state: TurnState; since: number | null }
 // Terminal size of a kept session started without a client (host start);
 // the first pane that attaches resizes it to its own.
 const RESUME_COLS = 120
@@ -402,6 +416,7 @@ export class PtyBridge {
     isDarkMode: boolean,
     projectId: string,
     space: BrainSpace,
+    reachable = false,
   ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
     provider.trustProject(cwd)
@@ -413,7 +428,7 @@ export class PtyBridge {
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
+      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
       space: { id: space.id, url: space.url, token: space.token, files: space.files },
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
@@ -564,7 +579,7 @@ export class PtyBridge {
         const { pty: fresh } = this.spawnAgent(
           provider,
           session.sessionId, false, null, null, session.projectPath,
-          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
+          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space, session.hostStarted,
         )
         session.pty = fresh
         session.spawnedWithResume = false
@@ -628,6 +643,7 @@ export class PtyBridge {
     const { key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting, cols, rows } = opts
     const { pty: proc, keepRunning } = this.spawnAgent(
       provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
+      opts.hostStarted === true,
     )
 
     const headless = new HeadlessTerminal({
@@ -770,25 +786,53 @@ export class PtyBridge {
 
   /**
    * End the host-started workers that no client is attached to, that are not
-   * working, and whose last turn and last client are both more than `idleMs`
-   * ago. They stay in the sidebar, resumable. Returns how many ended.
+   * working, and that have been quiet (no turn, no client) for `idleMs`. They
+   * stay in the sidebar, resumable. Returns how many ended.
    */
-  sweepIdleWorkers(idleMs: number, turnOf: (sessionId: string) => { working: boolean; since: number | null }, now = Date.now()): number {
+  sweepIdleWorkers(idleMs: number, turnOf: WorkerTurnOf, now = Date.now()): number {
     let ended = 0
-    for (const [key, session] of [...this.sessions]) {
-      if (!session.hostStarted || session.ws) continue
-      const turn = turnOf(session.sessionId)
-      if (turn.working) continue
-      const lastActive = Math.max(session.spawnedAt, session.lastClientAt, turn.since ?? 0)
-      if (now - lastActive < idleMs) continue
-      this.log(`worker ${session.sessionId} idle without a client → ending it (resumable)`)
-      this.teardown(key, session)
-      try { session.pty.kill() } catch { /* already gone */ }
-      this.sessions.delete(key)
-      this.ledger.setKeepRunning(session.sessionId, false)
+    for (const [key, session, quietMs] of this.quietWorkers(turnOf, now)) {
+      if (quietMs < idleMs) continue
+      this.endWorker(key, session, 'idle without a client')
       ended += 1
     }
     return ended
+  }
+
+  /**
+   * Make room for a new worker: end the host-started worker without a client
+   * that has been quiet the longest, once it has been quiet for `minQuietMs`
+   * (time for a reply to reach it). One whose turn is done goes before one
+   * waiting for a permission; a working one never. False when none qualifies.
+   */
+  evictQuietWorker(minQuietMs: number, turnOf: WorkerTurnOf, now = Date.now()): boolean {
+    const quiet = this.quietWorkers(turnOf, now)
+    const pick = pickQuietWorker(quiet.map(([key, , quietMs, state]) => ({ key, quietMs, state })), minQuietMs)
+    const entry = quiet.find(([key]) => key === pick)
+    if (!entry) return false
+    this.endWorker(entry[0], entry[1], 'quiet the longest, making room for a new worker')
+    return true
+  }
+
+  /** Host-started workers without a client that are not working: key, entry, quiet time (ms), turn state. */
+  private quietWorkers(turnOf: WorkerTurnOf, now: number): Array<[string, PtySessionEntry, number, TurnState]> {
+    const quiet: Array<[string, PtySessionEntry, number, TurnState]> = []
+    for (const [key, session] of this.sessions) {
+      if (!session.hostStarted || session.ws) continue
+      const turn = turnOf(session.sessionId)
+      if (turn.state === 'working') continue
+      const lastActive = Math.max(session.spawnedAt, session.lastClientAt, turn.since ?? 0)
+      quiet.push([key, session, now - lastActive, turn.state])
+    }
+    return quiet
+  }
+
+  private endWorker(key: string, session: PtySessionEntry, why: string): void {
+    this.log(`worker ${session.sessionId} ${why} → ending it (resumable)`)
+    this.teardown(key, session)
+    try { session.pty.kill() } catch { /* already gone */ }
+    this.sessions.delete(key)
+    this.ledger.setKeepRunning(session.sessionId, false)
   }
 
   /**

@@ -70,6 +70,12 @@ export interface LaunchRequest {
   initialPrompt: string | null
   /** Nobody is watching this session (a worker): it must not stop to ask for permission. */
   unattended: boolean
+  /**
+   * An unattended worker the host started without a pane (worker-start.ts): reachable
+   * from outside the cockpit (Claude Code: Remote Control) like an attended session,
+   * since that is the only way to follow it without a cockpit tab.
+   */
+  reachable?: boolean
 }
 
 /** Binary, arguments and the provider's own environment for one session process. */

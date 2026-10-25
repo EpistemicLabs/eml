@@ -193,7 +193,7 @@ async function main() {
     spawns, bridge, log,
     turnOf: (sessionId) => {
       const turn = turns.get(sessionId)
-      return { working: turn?.state === 'working', since: turn ? Date.parse(turn.since) : null }
+      return { state: turn?.state ?? 'idle', since: turn ? Date.parse(turn.since) : null }
     },
   })
   workers.start()

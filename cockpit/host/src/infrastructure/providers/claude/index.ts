@@ -60,8 +60,9 @@ class ClaudeProvider implements AgentProvider {
   launch(req: LaunchRequest): LaunchSpec {
     const isolation = this.files()
     // Settings › Models: reachable from the Claude app. Not for unattended
-    // sessions (workers, task runs), which nobody drives from a phone.
-    const remoteControl = readRemoteControl() && !req.unattended
+    // sessions (workers, task runs), which nobody drives from a phone — except
+    // a worker the host started without a pane, which the app is the way to follow.
+    const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai

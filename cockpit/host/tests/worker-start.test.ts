@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SpawnQueue, type SpawnRequest } from '../src/spawn-queue.js'
 import { WorkerStarter } from '../src/worker-start.js'
+import { pickQuietWorker } from '../src/pty-bridge.js'
 
 // Workers a session asks for start without a cockpit tab: the host claims a
 // request no tab takes and starts it without a pane, at most three at a time.
@@ -21,6 +22,14 @@ class FakeBridge {
     this.idleSweeps.push(idleMs)
     return 0
   }
+  canEvict = false
+  evicted = 0
+  evictQuietWorker(): boolean {
+    if (!this.canEvict) return false
+    this.evicted += 1
+    this.unattended -= 1
+    return true
+  }
 }
 
 const request = (spawns: SpawnQueue, fromSessionId: string | null = 'requester') =>
@@ -37,7 +46,7 @@ describe('worker start without a tab', () => {
     bridge = new FakeBridge()
     now = Date.now()
     starter = new WorkerStarter({
-      spawns, bridge, log: () => {}, turnOf: () => ({ working: false, since: null }),
+      spawns, bridge, log: () => {}, turnOf: () => ({ state: 'done', since: null }),
       graceMs: 15_000, now: () => now,
     })
   })
@@ -78,7 +87,17 @@ describe('worker start without a tab', () => {
     expect(spawns.list()).toHaveLength(1)
   })
 
-  it('runs at most three without a client; the fourth waits until one ends', () => {
+  it('a fourth makes room by ending the quietest worker when one has been quiet long enough', () => {
+    request(spawns); request(spawns); request(spawns)
+    starter.tick()
+    bridge.canEvict = true
+    const fourth = request(spawns)
+    starter.tick()
+    expect(bridge.evicted).toBe(1)
+    expect(bridge.started.map((s) => s.id)).toContain(fourth.id)
+  })
+
+  it('runs at most three without a client; the fourth waits when none is quiet long enough', () => {
     const rs = [request(spawns), request(spawns), request(spawns), request(spawns)]
     starter.tick()
     expect(bridge.started).toHaveLength(3)
@@ -102,5 +121,30 @@ describe('worker start without a tab', () => {
     expect(spawns.watchers()).toBe(1)
     b()
     expect(spawns.watchers()).toBe(0)
+  })
+})
+
+describe('which quiet worker makes room', () => {
+  const hour = 60 * 60 * 1000
+  it('picks the one quiet the longest, once quiet for an hour', () => {
+    expect(pickQuietWorker([
+      { key: 'a', quietMs: 2 * hour, state: 'done' },
+      { key: 'b', quietMs: 5 * hour, state: 'done' },
+      { key: 'c', quietMs: 30 * 60 * 1000, state: 'done' },
+    ], hour)).toBe('b')
+  })
+
+  it('takes a done one before one waiting for a permission, and never a working one', () => {
+    expect(pickQuietWorker([
+      { key: 'waiting', quietMs: 9 * hour, state: 'waiting' },
+      { key: 'done', quietMs: 2 * hour, state: 'done' },
+      { key: 'working', quietMs: 20 * hour, state: 'working' },
+    ], hour)).toBe('done')
+    expect(pickQuietWorker([{ key: 'waiting', quietMs: 9 * hour, state: 'waiting' }], hour)).toBe('waiting')
+    expect(pickQuietWorker([{ key: 'working', quietMs: 20 * hour, state: 'working' }], hour)).toBeNull()
+  })
+
+  it('picks none when all were active within the hour (a reply may still come)', () => {
+    expect(pickQuietWorker([{ key: 'a', quietMs: 59 * 60 * 1000, state: 'done' }], hour)).toBeNull()
   })
 })
