@@ -22,6 +22,7 @@ import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
+import { WorkerStarter } from './worker-start.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
 import { scheduleUpdateChecks } from './app-update.js'
@@ -187,6 +188,15 @@ async function main() {
   // once the host answers their hooks.
   const kept = bridge.resumeKeptSessions()
   if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
+  // A worker no tab takes starts without a pane (worker-start.ts).
+  const workers = new WorkerStarter({
+    spawns, bridge, log,
+    turnOf: (sessionId) => {
+      const turn = turns.get(sessionId)
+      return { state: turn?.state ?? 'idle', since: turn ? Date.parse(turn.since) : null }
+    },
+  })
+  workers.start()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -198,6 +208,7 @@ async function main() {
   if (brain.reused) openBrowser(url)
 
   const shutdown = () => {
+    workers.stop()
     try { bridge.dispose() } catch { /* best-effort */ }
     try { server.proc.kill('SIGTERM') } catch { /* best-effort */ }
     try { host.close() } catch { /* best-effort */ }

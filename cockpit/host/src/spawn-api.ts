@@ -159,12 +159,14 @@ export async function handleSpawnApi(
 
 /** Wire spawn requests into an /api/events stream; returns the detach function. */
 export function attachSpawnEvents(spawns: SpawnQueue, send: (event: string, data: unknown) => void): () => void {
+  const leave = spawns.watch()
   send('spawns', spawns.list())
   const onSpawn = (request: SpawnRequest) => send('spawn', request)
   const onClaimed = (id: string) => send('claimed', { id })
   spawns.on('spawn', onSpawn)
   spawns.on('claimed', onClaimed)
   return () => {
+    leave()
     spawns.off('spawn', onSpawn)
     spawns.off('claimed', onClaimed)
   }

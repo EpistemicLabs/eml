@@ -10,12 +10,14 @@ import { ensurePtyHelperExecutable } from './pty-helper.js'
 import { platform } from './infrastructure/platform/index.js'
 import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
-import type { AgentProvider } from './domain/agent-provider.js'
+import type { AgentProvider, TurnState } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
 import { greetingFor } from './session-greeting.js'
+import type { ProjectEntry } from './project-registry.js'
+import type { SpawnRequest } from './spawn-queue.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
@@ -89,6 +91,10 @@ type PtySessionEntry = {
   spaceId: string
   /** Reachable outside the cockpit (LaunchSpec.keepRunning): no detached timeout. */
   keepRunning: boolean
+  /** A worker the host started without a pane (worker-start.ts): ends after a long idle time without a client. */
+  hostStarted: boolean
+  /** When a client last attached or left (ms); the idle time of a host-started worker counts from here too. */
+  lastClientAt: number
   // Server-side xterm that parses every PTY byte and holds the rendered
   // terminal state (grid, cursor, scrollback, alt-buffer). On reconnect we
   // serialize this and replay it as a single frame instead of dispatching
@@ -131,6 +137,20 @@ type PtySessionEntry = {
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
+
+/**
+ * Which quiet worker makes room for a new one: quiet for at least `minQuietMs`,
+ * a done one before one waiting for a permission, then the one quiet the longest.
+ */
+export function pickQuietWorker(candidates: Array<{ key: string; quietMs: number; state: TurnState }>, minQuietMs: number): string | null {
+  const eligible = candidates
+    .filter((c) => c.state !== 'working' && c.quietMs >= minQuietMs)
+    .sort((a, b) => Number(a.state === 'waiting') - Number(b.state === 'waiting') || b.quietMs - a.quietMs)
+  return eligible[0]?.key ?? null
+}
+
+/** A session's turn state for the worker limits (turn-state.ts): the state and since when it holds (ms). */
+export type WorkerTurnOf = (sessionId: string) => { state: TurnState; since: number | null }
 // Terminal size of a kept session started without a client (host start);
 // the first pane that attaches resizes it to its own.
 const RESUME_COLS = 120
@@ -396,6 +416,7 @@ export class PtyBridge {
     isDarkMode: boolean,
     projectId: string,
     space: BrainSpace,
+    reachable = false,
   ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
     provider.trustProject(cwd)
@@ -407,7 +428,7 @@ export class PtyBridge {
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
+      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
       space: { id: space.id, url: space.url, token: space.token, files: space.files },
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
@@ -558,7 +579,7 @@ export class PtyBridge {
         const { pty: fresh } = this.spawnAgent(
           provider,
           session.sessionId, false, null, null, session.projectPath,
-          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
+          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space, session.hostStarted,
         )
         session.pty = fresh
         session.spawnedWithResume = false
@@ -617,10 +638,12 @@ export class PtyBridge {
     rows: number
     isDarkMode: boolean
     taskId: string | null
+    hostStarted?: boolean
   }, ws: WebSocket | null): void {
     const { key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting, cols, rows } = opts
     const { pty: proc, keepRunning } = this.spawnAgent(
       provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
+      opts.hostStarted === true,
     )
 
     const headless = new HeadlessTerminal({
@@ -640,6 +663,8 @@ export class PtyBridge {
       projectPath,
       spaceId: space.id,
       keepRunning,
+      hostStarted: opts.hostStarted === true,
+      lastClientAt: Date.now(),
       headless,
       serializeAddon,
       ptyPaused: false,
@@ -727,6 +752,110 @@ export class PtyBridge {
     return resumed
   }
 
+  /**
+   * Start a worker a session asked for that no cockpit tab took (worker-start.ts):
+   * without a pane, under the request id as its session id (the address the
+   * requester already has), with the prompt as its first message. A pane opened
+   * later from the sidebar takes it over (runningEntry). Returns why it could
+   * not start, or null.
+   */
+  startWorker(request: SpawnRequest): string | null {
+    const space = this.ctx.spaces.resolve(request.spaceId ?? null)
+    const project = this.projectFor(space, request.projectId)
+    if (!project?.path) return `project ${request.projectId} has no folder`
+    const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
+    const problem = provider.runtime.problem()
+    if (problem) return problem
+    if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
+    this.startSession({
+      key: `${space.id}_${project.projectId}_${request.id}`,
+      sessionId: request.id, paneId: null, projectId: project.projectId, projectPath: project.path,
+      space, provider, resume: false, initialPrompt: request.prompt, greeting: null,
+      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null, hostStarted: true,
+    }, null)
+    if (request.title) this.ledger.setAgentTitle(request.id, request.title)
+    return null
+  }
+
+  /** Host-started workers no client is attached to — the ones the cap in worker-start.ts counts. */
+  unattendedWorkers(): number {
+    let count = 0
+    for (const session of this.sessions.values()) if (session.hostStarted && !session.ws) count += 1
+    return count
+  }
+
+  /**
+   * End the host-started workers that no client is attached to, that are not
+   * working, and that have been quiet (no turn, no client) for `idleMs`. They
+   * stay in the sidebar, resumable. Returns how many ended.
+   */
+  sweepIdleWorkers(idleMs: number, turnOf: WorkerTurnOf, now = Date.now()): number {
+    let ended = 0
+    for (const [key, session, quietMs] of this.quietWorkers(turnOf, now)) {
+      if (quietMs < idleMs) continue
+      this.endWorker(key, session, 'idle without a client')
+      ended += 1
+    }
+    return ended
+  }
+
+  /**
+   * Make room for a new worker: end the host-started worker without a client
+   * that has been quiet the longest, once it has been quiet for `minQuietMs`
+   * (time for a reply to reach it). One whose turn is done goes before one
+   * waiting for a permission; a working one never. False when none qualifies.
+   */
+  evictQuietWorker(minQuietMs: number, turnOf: WorkerTurnOf, now = Date.now()): boolean {
+    const quiet = this.quietWorkers(turnOf, now)
+    const pick = pickQuietWorker(quiet.map(([key, , quietMs, state]) => ({ key, quietMs, state })), minQuietMs)
+    const entry = quiet.find(([key]) => key === pick)
+    if (!entry) return false
+    this.endWorker(entry[0], entry[1], 'quiet the longest, making room for a new worker')
+    return true
+  }
+
+  /** Host-started workers without a client that are not working: key, entry, quiet time (ms), turn state. */
+  private quietWorkers(turnOf: WorkerTurnOf, now: number): Array<[string, PtySessionEntry, number, TurnState]> {
+    const quiet: Array<[string, PtySessionEntry, number, TurnState]> = []
+    for (const [key, session] of this.sessions) {
+      if (!session.hostStarted || session.ws) continue
+      const turn = turnOf(session.sessionId)
+      if (turn.state === 'working') continue
+      const lastActive = Math.max(session.spawnedAt, session.lastClientAt, turn.since ?? 0)
+      quiet.push([key, session, now - lastActive, turn.state])
+    }
+    return quiet
+  }
+
+  private endWorker(key: string, session: PtySessionEntry, why: string): void {
+    this.log(`worker ${session.sessionId} ${why} → ending it (resumable)`)
+    this.teardown(key, session)
+    try { session.pty.kill() } catch { /* already gone */ }
+    this.sessions.delete(key)
+    this.ledger.setKeepRunning(session.sessionId, false)
+  }
+
+  /**
+   * The registry entry of a project as a session runs in it. A brain project
+   * the registry hasn't touched yet gets its local entry here (name from the
+   * cached brain list, else the id — fixed up on the next touch). A project
+   * without a folder gets a cockpit folder, so a session starts without a dialog.
+   */
+  private projectFor(space: BrainSpace, projectId: string): ProjectEntry | null {
+    let project = space.registry.get(projectId)
+    if (!project) {
+      const brainId = brainIdFromProjectId(projectId)
+      if (brainId) {
+        const brain = space.projects.cached()?.find((p) => p.id === brainId)
+        project = space.registry.ensureBrain(brainId, brain?.name ?? brainId)
+      }
+    }
+    if (!project) return null
+    // Trusted at spawn (spawnAgent), by the session's provider.
+    if (!project.path) project = space.registry.ensureCockpitFolder(project.projectId)
+    return project
+  }
+
   // ── Connection handling ──────────────────────────────────────────────
   /** Attach a nonce-validated WS; the `init` frame binds it to a session. */
   attach(ws: WebSocket): void {
@@ -750,7 +879,6 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'This desk belongs to a brain space this cockpit no longer has' })
             return
           }
-          const registry = space.registry
           if (!SAFE_SESSION_ID.test(sessionId)) {
             sendJson(ws, { type: 'error', message: 'Invalid session ID' })
             return
@@ -763,25 +891,10 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'Invalid project ID' })
             return
           }
-          // A brain project the registry hasn't touched yet gets its local
-          // entry here (name from the cached brain list, else the id — fixed
-          // up on the next touch). A project without a folder gets a
-          // cockpit folder — a session starts without any dialog.
-          let project = registry.get(projectId)
-          if (!project) {
-            const brainId = brainIdFromProjectId(projectId)
-            if (brainId) {
-              const brain = space.projects.cached()?.find((p) => p.id === brainId)
-              project = registry.ensureBrain(brainId, brain?.name ?? brainId)
-            }
-          }
+          const project = this.projectFor(space, projectId)
           if (!project) {
             sendJson(ws, { type: 'error', message: 'Unknown project — add it in the sidebar first' })
             return
-          }
-          if (!project.path) {
-            // Trusted at spawn (spawnAgent), by the session's provider.
-            project = registry.ensureCockpitFolder(project.projectId)
           }
           const projectPath = project.path
           if (!projectPath) {
@@ -895,6 +1008,7 @@ export class PtyBridge {
       if (session.ws !== ws) return
 
       session.ws = null
+      session.lastClientAt = Date.now()
       if (session.pendingResize) {
         clearTimeout(session.pendingResize.timeoutId)
         session.pendingResize = null
@@ -940,6 +1054,7 @@ export class PtyBridge {
       try { oldWs.close(1000, 'superseded') } catch { /* already closing */ }
     }
     session.ws = ws
+    session.lastClientAt = Date.now()
 
     // Clear backpressure state left by the previous owner — the fresh ws has
     // zero bufferedAmount and the drain poll would check the wrong target.

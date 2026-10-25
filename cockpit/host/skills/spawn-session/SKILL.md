@@ -12,12 +12,21 @@ starts with your prompt as its first message. You keep working here.
 
 ## When it fits
 
+A worker is a full session: its own process and MCP servers for as long as it
+runs, and the user can talk to it. Use it for work that needs the user along
+the way (decisions, approvals, a longer back-and-forth), or when the user asks
+for a new session:
+
 - The task is self-contained: a fresh session with the prompt plus the brain
   can do it without this conversation's context.
 - It would otherwise block or bloat this session (long build, broad
-  investigation, a review with fresh eyes).
+  investigation that the user wants to follow).
 - A fresh-session handoff: consolidate first (the log is what the worker docks
   onto), then spawn the continuation.
+
+Research, audits and reviews whose result goes to the brain or back to you
+need no one along the way: run them as a subagent of this session instead
+(your agent tool). It costs no extra process and reports back to you.
 
 Not for tiny steps — doing them here is cheaper than briefing a worker.
 
@@ -68,8 +77,11 @@ say so instead of trying another way.
 ## After spawning
 
 Tell the user what the worker was asked to do and that its pane opened next to
-this one (or opens as soon as a cockpit tab is open). Then keep working; don't
-wait for it.
+this one. With no cockpit tab open, the host starts it without a pane: it shows
+in the sidebar (and in the Claude app with Remote Control), and opening it there
+attaches to the running session. At most three such workers run at a time; a
+further one takes the place of one that has been quiet for an hour, or waits.
+Then keep working; don't wait for it.
 
 With a worker address:
 

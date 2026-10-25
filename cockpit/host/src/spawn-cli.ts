@@ -9,7 +9,8 @@
  * the host puts into every session's env; without network (a sandboxed
  * session) the request goes as a file into COCKPIT_SPAWN_DIR. The worker
  * opens as a new pane next to this session and starts with the prompt as its
- * first message. A prompt file keeps
+ * first message; with no cockpit tab open the host starts it without a pane
+ * (worker-start.ts), and it shows in the sidebar. A prompt file keeps
  * multi-line prompts free of shell quoting. --provider picks the agent CLI the
  * worker runs with; without it the worker uses the cockpit's default. For a
  * worker that can message other sessions, the CLI prints its address.
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
-  process.stdout.write(`Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session (or as soon as a cockpit tab is open).\n`)
+  process.stdout.write(`Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds (in the sidebar, and in the Claude app with Remote Control), or as soon as fewer than 3 workers run without a pane.\n`)
   if (answer.body.address) process.stdout.write(`Worker address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
 }
 
