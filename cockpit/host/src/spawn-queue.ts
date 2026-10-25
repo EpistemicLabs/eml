@@ -4,12 +4,13 @@ import type { ProviderId } from './domain/agent-provider.js'
 
 /**
  * Worker-session requests from running sessions (`cockpit-spawn`, skill
- * spawn-session). The host cannot open a pane itself — a PTY belongs to a
- * browser pane — so a request waits here, goes to every open tab over
- * /api/events, and the first tab that claims it opens the pane next to the
- * requesting session with the prompt as the session's first message. With no
- * tab open it simply waits until one connects. In memory only: a host restart
- * drops unclaimed requests (the requester is gone with it anyway).
+ * spawn-session). A request waits here and goes to every open tab over
+ * /api/events; the first tab that claims it opens the pane next to the
+ * requesting session with the prompt as the session's first message. A
+ * request from a session that no tab claims in time is started by the host
+ * itself, without a pane (worker-start.ts). The host's own requests (sign-in,
+ * getting started, brain hygiene) wait for a tab. In memory only: a host
+ * restart drops unclaimed requests (the requester is gone with it anyway).
  */
 
 export interface SpawnRequest {
@@ -38,6 +39,23 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 export class SpawnQueue extends EventEmitter {
   private pending = new Map<string, SpawnRequest>()
+  private tabs = 0
+
+  /** An open tab follows the requests (/api/events); call the returned function when it leaves. */
+  watch(): () => void {
+    this.tabs += 1
+    let left = false
+    return () => {
+      if (left) return
+      left = true
+      this.tabs -= 1
+    }
+  }
+
+  /** How many tabs follow the requests right now. */
+  watchers(): number {
+    return this.tabs
+  }
 
   add(input: Omit<SpawnRequest, 'id' | 'createdAt'>): SpawnRequest {
     this.prune()
