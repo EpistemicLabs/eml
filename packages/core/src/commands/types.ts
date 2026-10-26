@@ -6,9 +6,9 @@ import type { WriteContext } from '../write/context'
 // Every brain write is one of the commands behind EML.apply(command, env)
 // (decision write-command-set; v0.21 adds the cross-brain move's). A command
 // module validates its input and applies it inside the one transaction apply()
-// opens, with the write's one Stamp. The command names are the future op types; a payload carries only
-// what the caller intends — never what the env provides (time, actor, ids the
-// brain draws).
+// opens, with the write's one Stamp. The command names are the future op
+// types; a payload carries only what the caller intends — never what the env
+// provides (time, actor, ids the brain draws).
 
 export type CommandErrorCode = 'INVALID' | 'NOT_FOUND' | 'TOPIC_EXISTS' | 'CONFLICT'
 

@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3'
 import { TASK_OPEN_STATUSES, type EngramType, type DetectionMethod, type OpenSubtask } from '../types'
 import { bumpRev } from '../entries'
 import type { WriteContext } from './context'
@@ -153,11 +154,16 @@ export function linkSupersede(ctx: WriteContext, newId: string, oldId: string, d
   dropWikilinkEcho(ctx, newId, oldId)
 }
 
+/** The scope's latest active status other than `exceptId`, if any. */
+export function activeStatusIn(db: Database.Database, scope: string, exceptId: string): { id: string, properties: string | null } | undefined {
+  return db.prepare(
+    `SELECT id, properties FROM engrams WHERE scope = ? AND type = 'status' AND status = 'active' AND id != ? ORDER BY updated_at DESC, ord DESC LIMIT 1`,
+  ).get(scope, exceptId) as { id: string, properties: string | null } | undefined
+}
+
 /** The state of the scope's active status before `exceptId` was written. */
 export function activeStatusState(ctx: WriteContext, scope: string, exceptId: string): string | null {
-  const row = ctx.db.prepare(
-    `SELECT properties FROM engrams WHERE scope = ? AND type = 'status' AND status = 'active' AND id != ? ORDER BY updated_at DESC, ord DESC LIMIT 1`,
-  ).get(scope, exceptId) as { properties: string | null } | undefined
+  const row = activeStatusIn(ctx.db, scope, exceptId)
   if (!row) return null
   const p = row.properties ? JSON.parse(row.properties) : {}
   return typeof p.state === 'string' ? p.state : null
@@ -181,8 +187,8 @@ export function autoSupersedeStatusEngrams(ctx: WriteContext, newId: string, sco
 }
 
 /** The scope's active core profile other than `exceptId`, if any. */
-export function activeCoreProfileIn(ctx: WriteContext, scope: string, exceptId: string): string | null {
-  const row = ctx.db.prepare(`
+export function activeCoreProfileIn(db: Database.Database, scope: string, exceptId: string): string | null {
+  const row = db.prepare(`
     SELECT id FROM engrams
     WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ?
       AND json_extract(properties, '$.core') = 1

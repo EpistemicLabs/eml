@@ -178,7 +178,7 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
   const coreNewlySet = newProps.core === true && oldProps.core !== true
   if (type === 'profile' && newProps.core === true && newStatus === 'active' && !coreNewlySet) {
     const arriving = existing.status !== 'active' || (patch.scope !== undefined && patch.scope !== existing.scope)
-    const other = arriving ? activeCoreProfileIn(ctx, newScope, id) : null
+    const other = arriving ? activeCoreProfileIn(ctx.db, newScope, id) : null
     if (other) {
       throw new Error(`Invalid engram: scope ${newScope} already has a core profile (${other}) — invalidate it first, or write the identity as a new profile with core=true (eml_profile), which replaces the current one.`)
     }
