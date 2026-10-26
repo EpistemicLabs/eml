@@ -21,6 +21,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const require = createRequire(join(root, 'packages', 'core', 'package.json'))
 const Database = require('better-sqlite3')
 const { EML, CURRENT_BRAIN_SCHEMA_VERSION } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
+// verify is not in core's index: rebuild needs the EML class, and an index export would be a require cycle
 const { verify } = require(join(root, 'packages', 'core', 'dist', 'log', 'rebuild.js'))
 
 const source = process.argv[2]
