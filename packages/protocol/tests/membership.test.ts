@@ -1,25 +1,19 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createHash } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  ProtocolError, applyMembership, certifyDevice, checkAuthor, clearOp, genesisMembers, memberHandles, newDeviceKeys,
-  newSigningKey, openRecord, ready, sealHandle, sealOp, signingKeyFromSeed,
-  type BrainKey, type DeviceKeys, type KeyPair, type MemberSet, type OpenedOp, type TeamOp,
+  ProtocolError, applyMembership, canonicalJson, checkAuthor, clearOp, genesisMembers, memberHandles, newDeviceKeys,
+  openRecord, ready, sealHandle, signingKeyFromSeed, type TeamOp,
 } from '../src'
 import { sealHandleWith } from '../src/membership'
+import { BRAIN, K, ZERO, addMember, cert, clear, envelope, found, keyFor, person, rotation, sha, write } from './helpers'
 
 // v0.21 (spec team-brain-protocol-package-spec §3, block 4): the membership
 // records, the reducer every reader runs over them, and a member's check of
 // an op's author — including the handle, which only members can read.
 
 const V = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'membership.json'), 'utf-8'))
-const K = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'keys.json'), 'utf-8'))
-const sha = (n: string): Buffer => createHash('sha256').update(`eml protocol test vector: ${n}`).digest()
-const BRAIN = K.device_cert.cert.brain as string
-const ZERO = '0'.repeat(64)
-const T = '2026-10-26T08:00:00.000Z'
 
 beforeAll(() => ready())
 
@@ -28,7 +22,16 @@ describe('the vector', () => {
     const at = JSON.parse(V.handle.aad)
     expect(sealHandleWith(sha('handle nonce').subarray(0, 24), V.handle.text, at, { epoch: 0, key: sha('brain key 0') })).toEqual(V.handle.box)
     const plain = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, Buffer.from(V.handle.box.ct, 'base64url'), V.handle.aad, Buffer.from(V.handle.box.nonce, 'base64url'), sha('brain key 0'))
-    expect(sodium.to_string(plain)).toBe('juno')
+    // padded to 64 bytes: the length, the UTF-8 text, zeros — the ciphertext is the same size for every handle
+    expect(plain).toHaveLength(64)
+    expect(Array.from(plain.subarray(0, 5))).toEqual([4, ...Buffer.from('juno')])
+    expect(plain.subarray(5).every(b => b === 0)).toBe(true)
+  })
+
+  it('every handle seals to the same size', () => {
+    const at = JSON.parse(V.handle.aad)
+    const key = { epoch: 0, key: sha('brain key 0') }
+    expect(sealHandle('a', at, key).ct.length).toBe(sealHandle('ä'.repeat(31), at, key).ct.length)
   })
 
   it('the genesis record founds the vector member set: the root as the one owner, epoch 0', () => {
@@ -39,58 +42,6 @@ describe('the vector', () => {
     expect(memberHandles(set, e => (e === 0 ? sha('brain key 0') : undefined))).toEqual({ [K.identity.public_key]: 'juno' })
   })
 })
-
-// --- a team brain played through ---------------------------------------------------
-
-interface Person { identity: KeyPair, device: DeviceKeys, handle: string }
-const person = (handle: string): Person => ({ identity: newSigningKey(), device: newDeviceKeys(), handle })
-const cert = (p: Person, device = p.device) => certifyDevice(p.identity, { brain: BRAIN, device_sign: device.sign.publicKey, device_enc: device.enc.publicKey, created_at: T })
-
-let seq = 0
-const envelope = (author: Person, call: string, args: unknown, device = author.device, handle: string | null = author.handle): TeamOp => ({
-  op_id: crypto.randomUUID(), schema: 21, call, args: args as never,
-  provenance: { handle, ingestion_method: 'mcp', session_id: null, model: null, harness: null },
-  team: { brain: BRAIN, device: device.sign.publicKey, base_seq: seq++, head_hash: ZERO },
-})
-const clear = (author: Person, call: string, args: unknown, device = author.device): OpenedOp => {
-  const { record } = clearOp(envelope(author, call, args, device), device.sign)
-  return openRecord(JSON.parse(JSON.stringify(record)), BRAIN, () => undefined)
-}
-
-/** A brain founded by `owner`, with its keys by epoch. */
-function found(owner: Person): { set: MemberSet, keys: BrainKey[] } {
-  const keys = [{ epoch: 0, key: sodium.randombytes_buf(32) }]
-  const op_id = crypto.randomUUID()
-  const env = {
-    ...envelope(owner, 'brain.genesis', {
-      state_hash: ZERO,
-      root: { member: owner.identity.publicKey, device_cert: cert(owner), handle: sealHandle(owner.handle, { brain: BRAIN, op_id, member: owner.identity.publicKey }, keys[0]), key_id: Buffer.from(sodium.randombytes_buf(32)).toString('base64url') },
-    }),
-    op_id,
-  }
-  const genesis = openRecord(JSON.parse(JSON.stringify(clearOp(env, owner.device.sign).record)), BRAIN, () => undefined)
-  return { set: genesisMembers(genesis), keys }
-}
-const keyFor = (keys: BrainKey[]) => (epoch: number) => keys.find(k => k.epoch === epoch)?.key
-
-/** The add_member record `owner` writes for `joiner`, sealing the joiner's handle under the current epoch. */
-function addMember(set: MemberSet, keys: BrainKey[], owner: Person, joiner: Person, role = 'member', handle = joiner.handle): OpenedOp {
-  const env = envelope(owner, 'team.add_member', {})
-  const args = { member: joiner.identity.publicKey, role, device_cert: cert(joiner), handle: sealHandle(handle, { brain: BRAIN, op_id: env.op_id, member: joiner.identity.publicKey }, keys.find(k => k.epoch === set.epoch)!) }
-  const { record } = clearOp({ ...env, args }, owner.device.sign)
-  return openRecord(JSON.parse(JSON.stringify(record)), BRAIN, () => undefined)
-}
-
-const rotation = (set: MemberSet, keys: BrainKey[], owner: Person, epoch = set.epoch + 1): OpenedOp => {
-  keys.push({ epoch, key: sodium.randombytes_buf(32) })
-  const prev = { nonce: Buffer.from(sodium.randombytes_buf(24)).toString('base64url'), ct: Buffer.from(sodium.randombytes_buf(48)).toString('base64url') }
-  return clear(owner, 'team.rotate_key', { epoch, key_id: Buffer.from(sodium.randombytes_buf(32)).toString('base64url'), prev })
-}
-const write = (author: Person, keys: BrainKey[], epoch: number, handle = author.handle): OpenedOp => {
-  const key = keys.find(k => k.epoch === epoch)!
-  const { record } = sealOp(envelope(author, 'engram.create', { type: 'note', scope: 'global', title: 't', content: 'c' }, author.device, handle), author.device.sign, key)
-  return openRecord(JSON.parse(JSON.stringify(record)), BRAIN, keyFor([key]))
-}
 
 describe('the reducer, played through a team brain', () => {
   it('founds, adds a member, and both write under their handles', () => {
@@ -217,7 +168,34 @@ describe('handles and authors', () => {
     expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBeNull()
     expect(memberHandles(two, () => undefined)).toEqual({ [ada.identity.publicKey]: null, [bo.identity.publicKey]: null })
     expect(() => sealHandle(' ada', { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(ProtocolError)
-    expect(() => sealHandle('a'.repeat(65), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–64 characters/)
+    expect(() => sealHandle('a'.repeat(64), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 bytes/)
+    expect(() => sealHandle('ä'.repeat(32), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 bytes/)
+    expect(sealHandle('a'.repeat(63), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0]).nonce).toHaveLength(32)
+  })
+})
+
+describe('handle padding', () => {
+  it('a box whose padding is not the canonical one counts as no handle', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const env = envelope(ada, 'team.add_member', {})
+    const at = canonicalJson({ brain: BRAIN, op_id: env.op_id, member: bo.identity.publicKey })
+    const sealPadded = (padded: Uint8Array) => {
+      const nonce = sodium.randombytes_buf(24)
+      return { nonce: Buffer.from(nonce).toString('base64url'), ct: Buffer.from(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, at, null, nonce, keys[0].key)).toString('base64url') }
+    }
+    const padded = new Uint8Array(64)
+    padded.set([2, ...Buffer.from('bo')])
+    const dirty = padded.slice()
+    dirty[63] = 1
+    const long = padded.slice()
+    long[0] = 64
+    for (const [plain, expected] of [[padded, 'bo'], [dirty, null], [long, null]] as const) {
+      const args = { member: bo.identity.publicKey, role: 'member', device_cert: cert(bo), handle: sealPadded(plain) }
+      const rec = openRecord(JSON.parse(JSON.stringify(clearOp({ ...env, args: args as never }, ada.device.sign).record)), BRAIN, () => undefined)
+      expect(memberHandles(applyMembership(set, rec), keyFor(keys))[bo.identity.publicKey]).toBe(expected)
+    }
   })
 })
 

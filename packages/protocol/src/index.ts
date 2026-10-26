@@ -14,5 +14,6 @@ export {
 } from './seal'
 export {
   sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor,
-  type Role, type HandleBox, type Member, type MemberSet,
+  type Role, type Box, type Member, type MemberSet,
 } from './membership'
+export { newBrainKey, keyId, rotateKey, epochKeys, wrapKey, unwrapKey, type WrappedKey } from './brainkey'

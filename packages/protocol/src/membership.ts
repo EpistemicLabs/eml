@@ -16,8 +16,8 @@ import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64ur
 
 export type Role = 'owner' | 'member'
 
-/** A handle sealed under the brain key: XChaCha20-Poly1305, AAD = canonicalJson({brain, op_id, member}). */
-export interface HandleBox {
+/** Bytes sealed with XChaCha20-Poly1305 under a brain key: a member's handle, or a rotation's previous key. */
+export interface Box {
   nonce: string
   ct: string
 }
@@ -25,7 +25,7 @@ export interface HandleBox {
 export interface Member {
   role: Role
   /** The member's handle as their joining record carried it, with the epoch and record it was sealed in. */
-  handle: { epoch: number, op_id: string, box: HandleBox }
+  handle: { epoch: number, op_id: string, box: Box }
   /** The member's devices, by device signing key. */
   devices: Record<string, DeviceCert>
 }
@@ -34,7 +34,8 @@ export interface Member {
 export interface MemberSet {
   brain: string
   epoch: number
-  key_id: string
+  /** The brain key chain, by epoch (keys.length = epoch + 1): each key's id and, from epoch 1, the previous key sealed under it. */
+  keys: Array<{ key_id: string, prev: Box | null }>
   /** Set by a removal or a revocation: until the next rotation, the brain takes no sealed op and no new member or device. */
   rotation_due: boolean
   members: Record<string, Member>
@@ -43,19 +44,24 @@ export interface MemberSet {
 const KEY_BYTES = 32
 const NONCE_BYTES = 24
 const TAG_BYTES = 16
-const HANDLE_MAX = 64
+/** A handle is sealed padded to this many bytes — a length byte, the UTF-8 text, zeros — so its ciphertext says nothing about it. */
+const HANDLE_BYTES = 64
 const ROLES: readonly string[] = ['owner', 'member']
 
 /** Seals `handle` for a membership record of `brain`: the record's op_id and the member it names are bound to it. */
-export function sealHandle(handle: string, at: { brain: string, op_id: string, member: string }, key: BrainKey): HandleBox {
+export function sealHandle(handle: string, at: { brain: string, op_id: string, member: string }, key: BrainKey): Box {
   return sealHandleWith(sodium.randombytes_buf(NONCE_BYTES), handle, at, key)
 }
 
 /** sealHandle with a given nonce — for the test vectors. */
-export function sealHandleWith(nonce: Uint8Array, handle: string, at: { brain: string, op_id: string, member: string }, key: BrainKey): HandleBox {
+export function sealHandleWith(nonce: Uint8Array, handle: string, at: { brain: string, op_id: string, member: string }, key: BrainKey): Box {
   checkHandle(handle)
   if (nonce.length !== NONCE_BYTES) throw new ProtocolError(`a nonce is ${NONCE_BYTES} bytes`)
-  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(sodium.from_string(handle), sodium.from_string(canonicalJson(at)), null, nonce, key.key)
+  const text = sodium.from_string(handle)
+  const padded = new Uint8Array(HANDLE_BYTES)
+  padded[0] = text.length
+  padded.set(text, 1)
+  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, sodium.from_string(canonicalJson(at)), null, nonce, key.key)
   return { nonce: toBase64url(nonce), ct: toBase64url(ct) }
 }
 
@@ -76,8 +82,8 @@ export function genesisMembers(genesis: OpenedOp): MemberSet {
   if (envelope.team.device !== cert.device_sign) throw new ProtocolError('the genesis is not signed by the root\'s device')
   fromBase64url(root.key_id, KEY_BYTES, 'root.key_id')
   return {
-    brain, epoch: 0, key_id: root.key_id as string, rotation_due: false,
-    members: { [cert.member]: { role: 'owner', handle: { epoch: 0, op_id: envelope.op_id, box: handleBox(root.handle) }, devices: { [cert.device_sign]: cert } } },
+    brain, epoch: 0, keys: [{ key_id: root.key_id as string, prev: null }], rotation_due: false,
+    members: { [cert.member]: { role: 'owner', handle: { epoch: 0, op_id: envelope.op_id, box: box(root.handle, 'handle', HANDLE_BYTES) }, devices: { [cert.device_sign]: cert } } },
   }
 }
 
@@ -108,7 +114,7 @@ export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
       if (typeof args.member === 'string' && Object.hasOwn(set.members, args.member)) throw new ProtocolError('the member is a member already')
       if (typeof args.role !== 'string' || !ROLES.includes(args.role)) throw new ProtocolError('role is owner or member')
       const cert = newDeviceCert(set, args.device_cert, args.member)
-      next.members[cert.member] = { role: args.role as Role, handle: { epoch: set.epoch, op_id: envelope.op_id, box: handleBox(args.handle) }, devices: { [cert.device_sign]: cert } }
+      next.members[cert.member] = { role: args.role as Role, handle: { epoch: set.epoch, op_id: envelope.op_id, box: box(args.handle, 'handle', HANDLE_BYTES) }, devices: { [cert.device_sign]: cert } }
       return next
     }
     case 'team.add_device': {
@@ -145,11 +151,8 @@ export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
       if (!isOwner) throw new ProtocolError('only an owner rotates the brain key')
       if (args.epoch !== set.epoch + 1) throw new ProtocolError(`the next epoch is ${set.epoch + 1}`)
       fromBase64url(args.key_id, KEY_BYTES, 'key_id')
-      const prev = asObject(args.prev, 'prev')
-      exactFields(prev, ['nonce', 'ct'], 'prev')
-      fromBase64url(prev.nonce, NONCE_BYTES, 'prev.nonce')
-      if (fromBase64url(prev.ct, undefined, 'prev.ct').length !== KEY_BYTES + TAG_BYTES) throw new ProtocolError('prev holds one sealed key')
-      return { ...next, epoch: set.epoch + 1, key_id: args.key_id as string, rotation_due: false }
+      const prev = box(args.prev, 'prev', KEY_BYTES)
+      return { ...next, epoch: set.epoch + 1, keys: [...set.keys, { key_id: args.key_id as string, prev }], rotation_due: false }
     }
     default:
       throw new ProtocolError(`${envelope.call} is not a membership record`)
@@ -176,8 +179,11 @@ export function memberHandles(set: MemberSet, keyFor: (epoch: number) => Uint8Ar
     let text: string | null = null
     if (key) {
       try {
-        text = sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(handle.box.ct, undefined, 'the handle'),
-          sodium.from_string(canonicalJson({ brain: set.brain, op_id: handle.op_id, member })), fromBase64url(handle.box.nonce, NONCE_BYTES, 'the handle nonce'), key))
+        const padded = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(handle.box.ct, undefined, 'the handle'),
+          sodium.from_string(canonicalJson({ brain: set.brain, op_id: handle.op_id, member })), fromBase64url(handle.box.nonce, NONCE_BYTES, 'the handle nonce'), key)
+        const length = padded[0]
+        if (padded.length !== HANDLE_BYTES || length >= HANDLE_BYTES || padded.subarray(1 + length).some(b => b !== 0)) throw new Error('not a padded handle')
+        text = new TextDecoder('utf-8', { fatal: true }).decode(padded.subarray(1, 1 + length))
         checkHandle(text)
       } catch {
         text = null
@@ -219,16 +225,18 @@ function newDeviceCert(set: MemberSet, value: unknown, member: unknown): DeviceC
   return cert
 }
 
-function handleBox(value: unknown): HandleBox {
-  const box = asObject(value, 'handle')
-  exactFields(box, ['nonce', 'ct'], 'handle')
-  fromBase64url(box.nonce, NONCE_BYTES, 'handle.nonce')
-  if (fromBase64url(box.ct, undefined, 'handle.ct').length <= TAG_BYTES) throw new ProtocolError('handle.ct holds no handle')
-  return { nonce: box.nonce as string, ct: box.ct as string }
+/** `value` as a box sealing exactly `plainBytes` bytes. */
+function box(value: unknown, what: string, plainBytes: number): Box {
+  const b = asObject(value, what)
+  exactFields(b, ['nonce', 'ct'], what)
+  fromBase64url(b.nonce, NONCE_BYTES, `${what}.nonce`)
+  fromBase64url(b.ct, plainBytes + TAG_BYTES, `${what}.ct`)
+  return { nonce: b.nonce as string, ct: b.ct as string }
 }
 
 function checkHandle(handle: string): void {
-  if (handle.length < 1 || handle.length > HANDLE_MAX || handle.trim() !== handle || /\p{C}/u.test(handle)) {
-    throw new ProtocolError(`a handle is 1–${HANDLE_MAX} characters, without surrounding space or control characters`)
+  const bytes = sodium.from_string(handle).length
+  if (bytes < 1 || bytes >= HANDLE_BYTES || handle.trim() !== handle || /\p{C}/u.test(handle)) {
+    throw new ProtocolError(`a handle is 1–${HANDLE_BYTES - 1} bytes of UTF-8, without surrounding space or control characters`)
   }
 }

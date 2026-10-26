@@ -1,11 +1,11 @@
 {
-  "description": "Membership (spec team-brain-protocol-package-spec §3): a genesis with its root and the member set it founds. The handle is sealed with XChaCha20-Poly1305 under the epoch-0 brain key of ops.json, nonce = the first 24 bytes of sha256 of \"eml protocol test vector: handle nonce\", AAD = canonicalJson({brain, op_id, member}). The device and certificate are those of keys.json.",
+  "description": "Membership (spec team-brain-protocol-package-spec §3): a genesis with its root and the member set it founds. The handle is sealed with XChaCha20-Poly1305 under the epoch-0 brain key of ops.json, nonce = the first 24 bytes of sha256 of \"eml protocol test vector: handle nonce\", AAD = canonicalJson({brain, op_id, member}), plaintext = 64 bytes: the UTF-8 length, the UTF-8 text, zeros. The device and certificate are those of keys.json; root.key_id is the id of the epoch-0 key (brainkeys.json).",
   "handle": {
     "text": "juno",
     "aad": "{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"op_id\":\"6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817\"}",
     "box": {
       "nonce": "wJuM5Sy-rSgr9betfzgISWs2bDJycPpr",
-      "ct": "MWkDUQ38d5Y_T9BunHGbnTUeVu8"
+      "ct": "X3YYUKI1gaw8sjCIUv3YPaKYg0rwrV-iEn1Du9kzZW3QJ1oA9_syJvI0q0DOVhvIxBe19ZTJ_FCaSQRLN9rO1kCBY1nhxZMgKZdjh6tZEaQ"
     }
   },
   "genesis": {
@@ -14,13 +14,18 @@
       "kind": "clear",
       "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "op_id": "6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817",
-      "payload": "{\"op_id\":\"6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817\",\"schema\":21,\"call\":\"brain.genesis\",\"args\":{\"state_hash\":\"9ac95a3b8a1caf79753545ec80ae26d3420ff83f028800f92274de0f6f09c148\",\"root\":{\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"},\"handle\":{\"nonce\":\"wJuM5Sy-rSgr9betfzgISWs2bDJycPpr\",\"ct\":\"MWkDUQ38d5Y_T9BunHGbnTUeVu8\"},\"key_id\":\"nUi3mNLoii6w_8PJuD4kBogHScd8MEQt3i8skox4fbY\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":0,\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"}}",
-      "sig": "BOotp8QYADTDm_3kg3ZvjW4A5lpBYxEUnYHTwTA8T39s_cEF_FLnDpLDZzMJbGdz3tqJmziYTzN2INPwGYRhAg"
+      "payload": "{\"op_id\":\"6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817\",\"schema\":21,\"call\":\"brain.genesis\",\"args\":{\"state_hash\":\"9ac95a3b8a1caf79753545ec80ae26d3420ff83f028800f92274de0f6f09c148\",\"root\":{\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"},\"handle\":{\"nonce\":\"wJuM5Sy-rSgr9betfzgISWs2bDJycPpr\",\"ct\":\"X3YYUKI1gaw8sjCIUv3YPaKYg0rwrV-iEn1Du9kzZW3QJ1oA9_syJvI0q0DOVhvIxBe19ZTJ_FCaSQRLN9rO1kCBY1nhxZMgKZdjh6tZEaQ\"},\"key_id\":\"_Xwt7JHIl1c7jBq67NRRbU_uf86baxDZgCoD9_FSOfA\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":0,\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"}}",
+      "sig": "oHyZBpQBmeg1qNljInEE7rBIUcT3sNTNwtOAMnGPz3XkcMHTNYFNxeYSY0vtwhctjTyKpxixTppKwAPBbDS1Dw"
     },
     "member_set": {
       "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "epoch": 0,
-      "key_id": "nUi3mNLoii6w_8PJuD4kBogHScd8MEQt3i8skox4fbY",
+      "keys": [
+        {
+          "key_id": "_Xwt7JHIl1c7jBq67NRRbU_uf86baxDZgCoD9_FSOfA",
+          "prev": null
+        }
+      ],
       "rotation_due": false,
       "members": {
         "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY": {
@@ -30,7 +35,7 @@
             "op_id": "6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817",
             "box": {
               "nonce": "wJuM5Sy-rSgr9betfzgISWs2bDJycPpr",
-              "ct": "MWkDUQ38d5Y_T9BunHGbnTUeVu8"
+              "ct": "X3YYUKI1gaw8sjCIUv3YPaKYg0rwrV-iEn1Du9kzZW3QJ1oA9_syJvI0q0DOVhvIxBe19ZTJ_FCaSQRLN9rO1kCBY1nhxZMgKZdjh6tZEaQ"
             }
           },
           "devices": {

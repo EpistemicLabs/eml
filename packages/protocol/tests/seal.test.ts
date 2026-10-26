@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createDecipheriv, createHash, verify } from 'crypto'
+import { createHash, verify } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
@@ -9,6 +9,7 @@ import {
 } from '../src'
 import { sealOpWith } from '../src/seal'
 import { signText } from '../src/keys'
+import { hchacha20, nodeOpen } from './helpers'
 
 // v0.21 (spec team-brain-protocol-package-spec §2, block 3): ops on the wire —
 // the team envelope, the op signature, sealed and clear records — against the
@@ -26,36 +27,6 @@ const keyFor = (epoch: number) => (epoch === 0 ? KEY : undefined)
 const ED25519_SPKI = hex('302a300506032b6570032100')
 const nodeVerify = (publicKey: string, text: string, sig: string): boolean =>
   verify(null, Buffer.from(text, 'utf-8'), { key: Buffer.concat([ED25519_SPKI, b64(publicKey)]), format: 'der', type: 'spki' }, b64(sig))
-
-/** HChaCha20 (draft-irtf-cfrg-xchacha §2.2): the subkey XChaCha20 derives from the key and the nonce's first 16 bytes. */
-function hchacha20(key: Buffer, nonce16: Buffer): Buffer {
-  const s = new Uint32Array(16)
-  s.set([0x61707865, 0x3320646e, 0x79622d32, 0x6b206574])
-  for (let i = 0; i < 8; i++) s[4 + i] = key.readUInt32LE(4 * i)
-  for (let i = 0; i < 4; i++) s[12 + i] = nonce16.readUInt32LE(4 * i)
-  const rotl = (v: number, n: number) => (v << n) | (v >>> (32 - n))
-  const qr = (a: number, b: number, c: number, d: number) => {
-    s[a] += s[b]; s[d] = rotl(s[d] ^ s[a], 16)
-    s[c] += s[d]; s[b] = rotl(s[b] ^ s[c], 12)
-    s[a] += s[b]; s[d] = rotl(s[d] ^ s[a], 8)
-    s[c] += s[d]; s[b] = rotl(s[b] ^ s[c], 7)
-  }
-  for (let i = 0; i < 10; i++) {
-    qr(0, 4, 8, 12); qr(1, 5, 9, 13); qr(2, 6, 10, 14); qr(3, 7, 11, 15)
-    qr(0, 5, 10, 15); qr(1, 6, 11, 12); qr(2, 7, 8, 13); qr(3, 4, 9, 14)
-  }
-  const out = Buffer.alloc(32)
-  ;[0, 1, 2, 3, 12, 13, 14, 15].forEach((w, i) => out.writeUInt32LE(s[w], 4 * i))
-  return out
-}
-
-/** XChaCha20-Poly1305 decryption through node:crypto. */
-function nodeOpen(key: Buffer, nonce: Buffer, aad: string, ct: Buffer): Buffer {
-  const d = createDecipheriv('chacha20-poly1305', hchacha20(key, nonce.subarray(0, 16)), Buffer.concat([Buffer.alloc(4), nonce.subarray(16)]), { authTagLength: 16 })
-  d.setAAD(Buffer.from(aad, 'utf-8'), { plaintextLength: ct.length - 16 })
-  d.setAuthTag(ct.subarray(-16))
-  return Buffer.concat([d.update(ct.subarray(0, -16)), d.final()])
-}
 
 /** A sealed record built by hand: any header, any plaintext — what a forger or a broken peer could send. */
 function forge(header: Record<string, unknown>, plaintext: Uint8Array, key: Uint8Array = KEY): Record<string, unknown> {
