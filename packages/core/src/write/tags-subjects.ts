@@ -100,3 +100,10 @@ export function replaceEngramTags(ctx: WriteContext, engramId: string, tags: str
   ctx.db.prepare('DELETE FROM engram_tags WHERE engram_id = ?').run(engramId)
   insertEngramTags(ctx, engramId, tags)
 }
+
+/** A tag or subject set equal to the stored one is no change (no write, no rev). */
+export function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  const sa = new Set(a)
+  const sb = new Set(b)
+  return sa.size === sb.size && [...sa].every(x => sb.has(x))
+}

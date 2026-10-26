@@ -5,7 +5,7 @@ import { appendEntry, bumpRev, type Entry } from '../entries'
 import { CLOSED_WITH_TASK, TRACK_TASK_KEYS, type TrackTaskInput } from '../engrams'
 import { validateScope } from '../write/scope'
 import { planSupersedes, applySupersedes, liveSuccessorOf, assertNoLiveSuccessor } from '../write/supersede'
-import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, replaceEngramTags, replaceEngramSubjects } from '../write/tags-subjects'
+import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects, sameSet } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import { assertPartOf, linkPartOf, parentOf, openSubtasksOf, appendTaskChange, closeBoundItems } from '../write/task-binding'
 import { CommandError, assertBaseRev, checkBaseRev, inputObject, requireText, type CommandContext, type CommandModule } from './types'
@@ -133,6 +133,11 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   if (input.parent_id !== undefined && input.parent_id !== null) assertPartOf(ctx, id, input.parent_id, { reparent: true })
   const tagSlugs = input.tags !== undefined ? normalizeAndValidateTags(ctx, input.tags, tagsOf(ctx, id)) : undefined
   const subjectSlugs = input.subjects !== undefined ? normalizeAndValidateSubjects(ctx, input.subjects) : undefined
+  // a set equal to the stored one is no change (no write, no rev, no entry)
+  const tagsChange = tagSlugs !== undefined && !sameSet(tagSlugs, tagsOf(ctx, id)) ? tagSlugs : undefined
+  const subjectsChange = subjectSlugs !== undefined && !sameSet(subjectSlugs, subjectsOf(ctx, id)) ? subjectSlugs : undefined
+  const currentParent = input.parent_id !== undefined ? parentOf(ctx, id) : undefined
+  const parentChanged = input.parent_id !== undefined && (input.parent_id ?? undefined) !== currentParent
 
   const written: Entry[] = []
   let closedWith: BoundItem[] = []
@@ -142,22 +147,29 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   const superseded: string[] = []
   let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
   const scopeChanged = input.scope !== undefined && input.scope !== existing.scope
+  const titleChanged = input.title !== undefined && input.title !== existing.title
   const props = { ...old }
   for (const [k, v] of Object.entries(fieldPatch)) {
     if (v === null) delete props[k]
     else props[k] = v
   }
   if (reopening) delete props.outcome
-  const sets: string[] = ['properties = ?']
-  const params: unknown[] = [JSON.stringify(props)]
+  const sets: string[] = []
+  const params: unknown[] = []
+  // only what differs from the stored values: a call that changes nothing and
+  // has no text writes nothing (no updated_at, no rev), like engram.update;
+  // a text-only call is progress — the note entry, updated_at and rev
+  if (JSON.stringify(props) !== JSON.stringify(old)) { sets.push('properties = ?'); params.push(JSON.stringify(props)) }
   if (statusChanged) { sets.push('status = ?'); params.push(newStatus) }
-  if (input.content !== undefined) { sets.push('content = ?'); params.push(input.content) }
-  if (input.title !== undefined) { sets.push('title = ?'); params.push(input.title) }
+  if (contentChanged) { sets.push('content = ?'); params.push(input.content) }
+  if (titleChanged) { sets.push('title = ?'); params.push(input.title) }
   if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
-  sets.push('updated_at = ?')
-  db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
-  bumpRev(db, stamp, id)
-  if (input.content !== undefined || input.title !== undefined || scopeChanged) {
+  if (sets.length > 0 || text || tagsChange !== undefined || subjectsChange !== undefined || supersedePlan.size > 0 || parentChanged) {
+    sets.push('updated_at = ?')
+    db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
+    bumpRev(db, stamp, id)
+  }
+  if (contentChanged || titleChanged || scopeChanged) {
     db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
     db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
   }
@@ -181,22 +193,19 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
   if (contentChanged) change('content rewritten')
-  if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)
+  if (titleChanged) change(`title ${existing.title ?? 'none'} → ${input.title}`)
   if (scopeChanged) change(`scope ${existing.scope} → ${input.scope}`)
   const replaced = applySupersedes(ctx, id, supersedePlan)
   superseded.push(...replaced.superseded)
   openSubtasks.push(...replaced.openSubtasks)
 
-  if (input.parent_id !== undefined) {
-    const current = parentOf(ctx, id)
-    if ((input.parent_id ?? undefined) !== current) {
-      if (current !== undefined) db.prepare(`DELETE FROM relations WHERE source_id = ? AND relation = 'part_of'`).run(id)
-      if (input.parent_id !== null) linkPartOf(ctx, id, input.parent_id)
-      change(`parent ${current ?? 'none'} → ${input.parent_id ?? 'none'}`)
-    }
+  if (parentChanged) {
+    if (currentParent !== undefined) db.prepare(`DELETE FROM relations WHERE source_id = ? AND relation = 'part_of'`).run(id)
+    if (input.parent_id !== null) linkPartOf(ctx, id, input.parent_id!)
+    change(`parent ${currentParent ?? 'none'} → ${input.parent_id ?? 'none'}`)
   }
-  if (tagSlugs !== undefined) { replaceEngramTags(ctx, id, tagSlugs); change(`tags → ${show(tagSlugs)}`) }
-  if (subjectSlugs !== undefined) { replaceEngramSubjects(ctx, id, subjectSlugs); change(`subjects → ${show(subjectSlugs)}`) }
+  if (tagsChange !== undefined) { replaceEngramTags(ctx, id, tagsChange); change(`tags → ${show(tagsChange)}`) }
+  if (subjectsChange !== undefined) { replaceEngramSubjects(ctx, id, subjectsChange); change(`subjects → ${show(subjectsChange)}`) }
 
   if (closing) {
     const r = closeBoundItems(ctx, id, newStatus as 'resolved' | 'invalidated', input.keep ?? [])

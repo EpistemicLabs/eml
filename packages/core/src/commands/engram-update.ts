@@ -8,7 +8,7 @@ import { REVIEWABLE_TYPES } from '../review-due'
 import { renderLogContent, hasStartHere, UPDATE_PATCH_KEYS, LEARNING_CONTENT_MAX_CHARS, type EngramPatch } from '../engrams'
 import { validateScope } from '../write/scope'
 import { planSupersedes, applySupersedes, successorOf, assertNoLiveSuccessor, activeCoreProfileIn, autoSupersedeCoreProfile } from '../write/supersede'
-import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects } from '../write/tags-subjects'
+import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects, sameSet } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import { boundTaskOf, assertTaskOpenForBinding } from '../write/task-binding'
 import { CommandError, assertBaseRev, checkBaseRev, inputObject, requireText, type CommandContext, type CommandModule } from './types'
@@ -277,10 +277,4 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
     ...(wikilinks.unresolved.length > 0 ? { unresolved_links: wikilinks.unresolved } : {}),
     ...(type === 'learning' ? { learning: learningState(ctx.store.entries(id)) } : {}),
   }
-}
-
-function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  const sa = new Set(a)
-  const sb = new Set(b)
-  return sa.size === sb.size && [...sa].every(x => sb.has(x))
 }
