@@ -211,7 +211,8 @@ describe('no clock or id source in core write code', () => {
     [/\buuid\w*\(|randomUUID\(/, 'uuid()'],
   ]
   const src = join(__dirname, '..', 'src')
-  for (const file of readdirSync(src).filter(f => f.endsWith('.ts') && !ALLOWED.has(f))) {
+  // recursive: the write code lives in commands/ and write/; paths are relative to src
+  for (const file of (readdirSync(src, { recursive: true }) as string[]).filter(f => f.endsWith('.ts') && !ALLOWED.has(f)).sort()) {
     it(file, () => {
       const lines = readFileSync(join(src, file), 'utf-8').split('\n')
       const hits = lines.flatMap((line, i) => FORBIDDEN.filter(([re]) => re.test(line)).map(([, what]) => `${file}:${i + 1} ${what}`))
