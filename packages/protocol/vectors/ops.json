@@ -1,0 +1,89 @@
+{
+  "description": "Ops on the wire (spec team-brain-protocol-package-spec §2). Seeds, the brain key and the nonce are sha256 of the UTF-8 text \"eml protocol test vector: <name>\" (the nonce: its first 24 bytes); the device is device_sign of keys.json. Byte strings are hex; keys, signatures, nonces and ciphertexts base64url without padding.",
+  "brain_key": {
+    "epoch": 0,
+    "key": "abdafb64ba4d51f46daf6c0fa9b9ff4935cfda461dfb861c9b3713e26a7600f8"
+  },
+  "nonce": "370cc2d1e541422803b2c75b65937f75bba2aed3fe689852",
+  "sealed": {
+    "envelope": {
+      "op_id": "3f2b8c1d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "schema": 21,
+      "call": "engram.create",
+      "args": {
+        "type": "note",
+        "scope": "global",
+        "title": "Hello team",
+        "content": "Grüße — ✓"
+      },
+      "provenance": {
+        "handle": "juno",
+        "ingestion_method": "mcp",
+        "session_id": null,
+        "model": null,
+        "harness": null
+      },
+      "team": {
+        "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "device": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+        "base_seq": 7,
+        "head_hash": "711f24063cc8f906aaf3d4a11434ab53e09e8969c8bdfb679b91d6352af5ebfc"
+      }
+    },
+    "payload": "{\"op_id\":\"3f2b8c1d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"schema\":21,\"call\":\"engram.create\",\"args\":{\"type\":\"note\",\"scope\":\"global\",\"title\":\"Hello team\",\"content\":\"Grüße — ✓\"},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"mcp\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":7,\"head_hash\":\"711f24063cc8f906aaf3d4a11434ab53e09e8969c8bdfb679b91d6352af5ebfc\"}}",
+    "payload_hash": "17a051f2b9a3e8c6b179015953c3b2365c5c4994fc67552cc1143632989d87a3",
+    "signed_text": "eml-op-v1\n17a051f2b9a3e8c6b179015953c3b2365c5c4994fc67552cc1143632989d87a3",
+    "sig": "eczm8t2xcfuC01zr1KMvOoDlzIVlnOzm3RMMhdKsdR8TCxkgeX_8b4vyNfVLo1ixmrEKUsbr5lD4L60EyXcMCQ",
+    "aad": "{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"epoch\":0,\"kind\":\"op\",\"nonce\":\"NwzC0eVBQigDssdbZZN_dbuirtP-aJhS\",\"op_id\":\"3f2b8c1d-5e6f-4a7b-8c9d-0e1f2a3b4c5d\",\"v\":1}",
+    "record": {
+      "v": 1,
+      "kind": "op",
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "op_id": "3f2b8c1d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "epoch": 0,
+      "nonce": "NwzC0eVBQigDssdbZZN_dbuirtP-aJhS",
+      "ct": "dOAsflredsH0yj2c-Z68zLLSkjbjbRNliVwoWAtbMNkOSjir9cTGB7Rlyfr8yAwRI4Sqn3uP6TKPzJQC5-oUsXW00ZiWjgEV_u9lpMjcP8HttSlBgt2gP42kkqSCa8GBLFryFg7E7GMITxofRzZxcMcFit53zwPZ91-5OR_s5lCtOpsx0nhRd38fZBMdELpaun5OZtrC4JWrzHPl2hy9yZ_jwIObNc7a5SXxybo4J2HFENsr_t1MSK5buC8S2Tbl2A33Gb2nUe0cdPifq5eX3Jw7bfXVB4NL9Nq-xQWpjiaQlml8qD5Z_-j3BlFgLv06a0EQyEYHhHc1lMWzDKqNU57hT076zMraNxne-W5N0rlKjfhsE4vKOMz8ZhgJp47K3MS7J3Yv_iEe0H5MK_TgpDgI27r-IPlNlwg5EsoR3clVHvcfxHKL79V-uDSfXCEl7wmQlWg-hEIPGux3fifNp497VsyRPYtBsJfi-KshSSVoUWqIZi4bTzsVNG0_Krjfn2PBDbXWKVXHfroMQEL_Eu-6kP4TbmUkv8lYR5rivNmyIpuOgum0g0hMdLXQYvJyT09Q4x_OofJQOb_hRbIDuBJDVPAfIB7tYUQjoci7_pX7tZvAMOwH6POdI8kX_0b3Lml1g3BEg_dio5n4AWvpFqotYj_TCyJJUtTrKTBTqScfBXrHTWfscs6mRIKXoJyuXlMTRMLS6UmrsCEytzIIawBJIwZ2NXZB9_ji87s"
+    }
+  },
+  "clear": {
+    "envelope": {
+      "op_id": "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
+      "schema": 21,
+      "call": "team.add_device",
+      "args": {
+        "device_cert": {
+          "v": 1,
+          "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+          "member": "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY",
+          "device_sign": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+          "device_enc": "jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns",
+          "created_at": "2026-10-26T08:00:00.000Z",
+          "sig": "ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ"
+        }
+      },
+      "provenance": {
+        "handle": "juno",
+        "ingestion_method": "other",
+        "session_id": null,
+        "model": null,
+        "harness": null
+      },
+      "team": {
+        "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "device": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+        "base_seq": 8,
+        "head_hash": "bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e"
+      }
+    },
+    "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
+    "signed_text": "eml-op-v1\n25b80c2ef045dda773a7c5ac46c609e8f4498fe8004fa50c50f410196fd2aae6",
+    "record": {
+      "v": 1,
+      "kind": "clear",
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "op_id": "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
+      "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
+      "sig": "t2FeyochSt-kb21sluMOIOavi3XqveE2hhHkm6Y1ES8csxRpDVMnqoGh79csgV6q0EXf3qjng1qQSwptZ1xwCg"
+    }
+  }
+}

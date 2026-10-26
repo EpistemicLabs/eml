@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { canonicalJson } from './canonical'
-import { ProtocolError, fromBase64url, sodium, toBase64url } from './sodium'
+import { ProtocolError, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
 
 // --- Keys and device certificates (v0.21) ----------------------------------------
 //
@@ -99,12 +99,7 @@ export function certifyDevice(identity: KeyPair, fields: { brain: string, device
  */
 export function verifyDeviceCert(value: unknown): DeviceCert {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ProtocolError('a device certificate is an object')
-  const fields = ['v', 'brain', 'member', 'device_sign', 'device_enc', 'created_at', 'sig']
-  const keys = Object.keys(value)
-  const extra = keys.filter(k => !fields.includes(k))
-  if (extra.length > 0) throw new ProtocolError(`a device certificate has no field ${extra.join(', ')}`)
-  const missing = fields.filter(k => !keys.includes(k))
-  if (missing.length > 0) throw new ProtocolError(`the device certificate lacks ${missing.join(', ')}`)
+  exactFields(value, ['v', 'brain', 'member', 'device_sign', 'device_enc', 'created_at', 'sig'], 'a device certificate')
   const { sig, ...body } = value as DeviceCert
   checkCertBody(body)
   if (!verifyText(body.member, DEVICE_CERT_DOMAIN, canonicalJson(body), sig)) throw new ProtocolError('the device certificate is not signed by its member')

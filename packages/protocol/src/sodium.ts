@@ -27,12 +27,12 @@ export function toBase64url(bytes: Uint8Array): string {
 }
 
 /**
- * The bytes of `text`, which must be base64url without padding and exactly
- * `length` bytes long. libsodium's decoder refuses padding, other alphabets,
- * whitespace and non-zero trailing bits, so a key or signature has one text
- * form. `what` names it in the error.
+ * The bytes of `text`, which must be base64url without padding and, when
+ * `length` is given, exactly that many bytes. libsodium's decoder refuses
+ * padding, other alphabets, whitespace and non-zero trailing bits, so a key
+ * or signature has one text form. `what` names it in the error.
  */
-export function fromBase64url(text: unknown, length: number, what: string): Uint8Array {
+export function fromBase64url(text: unknown, length: number | undefined, what: string): Uint8Array {
   let bytes: Uint8Array
   try {
     if (typeof text !== 'string') throw new Error()
@@ -40,6 +40,15 @@ export function fromBase64url(text: unknown, length: number, what: string): Uint
   } catch {
     throw new ProtocolError(`${what} is not base64url`)
   }
-  if (bytes.length !== length) throw new ProtocolError(`${what} is ${bytes.length} bytes, not ${length}`)
+  if (length !== undefined && bytes.length !== length) throw new ProtocolError(`${what} is ${bytes.length} bytes, not ${length}`)
   return bytes
+}
+
+/** Throws unless `value` has exactly `fields` — a protocol object never carries a field this version does not know. */
+export function exactFields(value: object, fields: string[], what: string): void {
+  const keys = Object.keys(value)
+  const extra = keys.filter(k => !fields.includes(k))
+  if (extra.length > 0) throw new ProtocolError(`${what} has no field ${extra.join(', ')}`)
+  const missing = fields.filter(k => !keys.includes(k))
+  if (missing.length > 0) throw new ProtocolError(`${what} lacks ${missing.join(', ')}`)
 }

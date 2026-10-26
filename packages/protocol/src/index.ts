@@ -8,3 +8,7 @@ export {
   certifyDevice, verifyDeviceCert, fingerprint,
   type KeyPair, type DeviceKeys, type DeviceCert,
 } from './keys'
+export {
+  PROTOCOL_VERSION, UnsupportedVersionError, isClearCall, sealOp, clearOp, openRecord,
+  type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
+} from './seal'
