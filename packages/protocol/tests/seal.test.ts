@@ -101,7 +101,7 @@ describe('sealed records', () => {
 
   it('opens the vector to its envelope, payload and signature', () => {
     const opened = openRecord(V.sealed.record, BRAIN, keyFor)
-    expect(opened).toEqual({ envelope: V.sealed.envelope, payload: V.sealed.payload, sig: V.sealed.sig })
+    expect(opened).toEqual({ envelope: V.sealed.envelope, payload: V.sealed.payload, sig: V.sealed.sig, epoch: 0 })
   })
 
   it('round-trips a fresh op with random keys and nonces; two seals of one op differ', () => {
@@ -111,7 +111,7 @@ describe('sealed records', () => {
     const a = sealOp(op, d, key)
     const b = sealOp(op, d, key)
     expect(a.record.nonce).not.toBe(b.record.nonce)
-    expect(openRecord(JSON.parse(JSON.stringify(a.record)), BRAIN, e => (e === 3 ? key.key : undefined))).toEqual({ envelope: op, payload: a.payload, sig: a.sig })
+    expect(openRecord(JSON.parse(JSON.stringify(a.record)), BRAIN, e => (e === 3 ? key.key : undefined))).toEqual({ envelope: op, payload: a.payload, sig: a.sig, epoch: 3 })
   })
 })
 
@@ -123,7 +123,7 @@ describe('clear records', () => {
     expect(clear.record).toEqual(V.clear.record)
     expect(Object.keys(clear.record)).toEqual(['v', 'kind', 'brain', 'op_id', 'payload', 'sig'])
     expect(nodeVerify(V.clear.envelope.team.device, V.clear.signed_text, V.clear.record.sig)).toBe(true)
-    expect(openRecord(V.clear.record, BRAIN, () => undefined)).toEqual({ envelope: V.clear.envelope, payload: V.clear.payload, sig: V.clear.record.sig })
+    expect(openRecord(V.clear.record, BRAIN, () => undefined)).toEqual({ envelope: V.clear.envelope, payload: V.clear.payload, sig: V.clear.record.sig, epoch: null })
   })
 })
 

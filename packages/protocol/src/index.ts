@@ -12,3 +12,7 @@ export {
   PROTOCOL_VERSION, UnsupportedVersionError, isClearCall, sealOp, clearOp, openRecord,
   type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
 } from './seal'
+export {
+  sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor,
+  type Role, type HandleBox, type Member, type MemberSet,
+} from './membership'

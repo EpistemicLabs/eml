@@ -1,7 +1,7 @@
 import { canonicalJson, plainJson } from './canonical'
 import { signText, verifyText, type KeyPair } from './keys'
 import { provenanceProblem, sha256Hex, type OpEnvelope, type TeamFields } from './op'
-import { ProtocolError, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
 
 // --- Ops on the wire (v0.21) -----------------------------------------------------
 //
@@ -48,11 +48,12 @@ export type LogRecord = SealedRecord | ClearRecord
 /** An op of a shared brain: the F2 envelope with its team fields. */
 export type TeamOp = OpEnvelope & { team: TeamFields }
 
-/** An opened record: the envelope, the exact payload bytes (as text) and the author's signature — what the replica logs. */
+/** An opened record: the envelope, the exact payload bytes (as text), the author's signature — what the replica logs — and the epoch it was sealed under (null in the clear). */
 export interface OpenedOp {
   envelope: TeamOp
   payload: string
   sig: string
+  epoch: number | null
 }
 
 /** A record whose protocol version this code does not know: the replica stops and asks for an update. */
@@ -95,14 +96,14 @@ export function sealOpWith(nonce: Uint8Array, envelope: TeamOp, device: KeyPair,
   const header = { v: 1 as const, kind: 'op' as const, brain: envelope.team.brain, op_id: envelope.op_id, epoch: key.epoch, nonce: toBase64url(nonce) }
   const plaintext = new Uint8Array([...fromBase64url(sig, SIG_BYTES, 'the signature'), ...sodium.from_string(payload)])
   const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, sodium.from_string(canonicalJson(header)), null, nonce, key.key)
-  return { record: { ...header, ct: toBase64url(ct) }, envelope: JSON.parse(payload) as TeamOp, payload, sig }
+  return { record: { ...header, ct: toBase64url(ct) }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: key.epoch }
 }
 
 /** Signs a membership record (a clear call) with `device`. Returns the record and what the author logs. */
 export function clearOp(envelope: TeamOp, device: KeyPair): { record: ClearRecord } & OpenedOp {
   if (!isClearCall(envelope.call)) throw new ProtocolError(`${envelope.call} is a brain write and travels sealed`)
   const { payload, sig } = signed(envelope, device)
-  return { record: { v: 1, kind: 'clear', brain: envelope.team.brain, op_id: envelope.op_id, payload, sig }, envelope: JSON.parse(payload) as TeamOp, payload, sig }
+  return { record: { v: 1, kind: 'clear', brain: envelope.team.brain, op_id: envelope.op_id, payload, sig }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: null }
 }
 
 /**
@@ -153,7 +154,7 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
     throw new ProtocolError(r.kind === 'clear' ? `${envelope.call} is a brain write and travels sealed` : `${envelope.call} travels in the clear, not sealed`)
   }
   if (!verifyText(envelope.team.device, OP_DOMAIN, sha256Hex(payload), sig)) throw new ProtocolError('the op is not signed by its device')
-  return { envelope, payload, sig }
+  return { envelope, payload, sig, epoch: r.kind === 'op' ? r.epoch as number : null }
 }
 
 /** The payload of `envelope` and the device's signature over it, after the same checks a reader makes. */
@@ -195,11 +196,6 @@ function parseEnvelope(payload: string, brain: unknown): TeamOp {
   if (!Number.isSafeInteger(team.base_seq) || (team.base_seq as number) < 0) throw new ProtocolError('team.base_seq is not a non-negative integer')
   if (typeof team.head_hash !== 'string' || !HASH.test(team.head_hash)) throw new ProtocolError('team.head_hash is not 64 lowercase hex digits')
   return op as unknown as TeamOp
-}
-
-function asObject(value: unknown, what: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ProtocolError(`${what} is an object`)
-  return value as Record<string, unknown>
 }
 
 function checkEpoch(epoch: unknown): void {

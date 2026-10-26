@@ -52,3 +52,9 @@ export function exactFields(value: object, fields: string[], what: string): void
   const missing = fields.filter(k => !keys.includes(k))
   if (missing.length > 0) throw new ProtocolError(`${what} lacks ${missing.join(', ')}`)
 }
+
+/** `value` as an object with fields, or ProtocolError naming `what`. */
+export function asObject(value: unknown, what: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ProtocolError(`${what} is an object`)
+  return value as Record<string, unknown>
+}
