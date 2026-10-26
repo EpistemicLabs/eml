@@ -1,5 +1,6 @@
 import { slugifyTag } from '../tags'
 import { slugifySubject } from '../subjects'
+import type Database from 'better-sqlite3'
 import type { WriteContext } from './context'
 
 /**
@@ -46,10 +47,12 @@ export function subjectsOf(ctx: WriteContext, id: string): string[] {
 }
 
 export function insertEngramTags(ctx: WriteContext, engramId: string, tags: string[]): void {
-  const ins = ctx.db.prepare(
-    'INSERT OR IGNORE INTO engram_tags (engram_id, tag_id, created_at) VALUES (?, ?, ?)'
-  )
-  for (const t of tags) ins.run(engramId, t, ctx.stamp.at)
+  for (const t of tags) insertEngramTagRow(ctx.db, { engram_id: engramId, tag_id: t, created_at: ctx.stamp.at })
+}
+
+/** v0.21: an engram_tags row as given, unless it exists — the one INSERT of the table. */
+export function insertEngramTagRow(db: Database.Database, row: { engram_id: string, tag_id: string, created_at: string }): void {
+  db.prepare('INSERT OR IGNORE INTO engram_tags (engram_id, tag_id, created_at) VALUES (@engram_id, @tag_id, @created_at)').run(row)
 }
 
 /**
@@ -83,10 +86,12 @@ export function normalizeAndValidateSubjects(ctx: WriteContext, subjects: string
 }
 
 export function insertEngramSubjects(ctx: WriteContext, engramId: string, subjects: string[]): void {
-  const ins = ctx.db.prepare(
-    'INSERT OR IGNORE INTO engram_subjects (engram_id, subject_id, created_at) VALUES (?, ?, ?)'
-  )
-  for (const t of subjects) ins.run(engramId, t, ctx.stamp.at)
+  for (const t of subjects) insertEngramSubjectRow(ctx.db, { engram_id: engramId, subject_id: t, created_at: ctx.stamp.at })
+}
+
+/** v0.21: an engram_subjects row as given, unless it exists — the one INSERT of the table. */
+export function insertEngramSubjectRow(db: Database.Database, row: { engram_id: string, subject_id: string, created_at: string }): void {
+  db.prepare('INSERT OR IGNORE INTO engram_subjects (engram_id, subject_id, created_at) VALUES (@engram_id, @subject_id, @created_at)').run(row)
 }
 
 /** v0.14: full-set replace of an engram's subject memberships (update semantics). */
