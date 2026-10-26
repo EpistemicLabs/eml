@@ -1,0 +1,60 @@
+{
+  "description": "Invites (spec team-brain-protocol-package-spec §5). The secret is sha256 of \"eml protocol test vector: invite secret\", the invite id the first 16 bytes of sha256 of \"…: invite id\", the join nonce the first 24 bytes of sha256 of \"…: join nonce\". mac_key / enc_key = BLAKE2b-256 keyed with the secret of \"eml-invite-mac-v1\" / \"eml-invite-enc-v1\". A MAC is crypto_auth (HMAC-SHA-512-256) under mac_key over canonicalJson of {t, …the message without mac}; the handle is padded to 64 bytes and sealed with XChaCha20-Poly1305 under enc_key, AAD = canonicalJson({brain, invite_id, member}). join_hash = sha256 of canonicalJson of the whole join. The joiner is the keys.json identity and device; the inviter has its own keys (seeds \"inviter identity\", \"inviter device sign\", \"inviter device enc\").",
+  "invite": {
+    "relay": "relay.example.org",
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
+    "secret": "5bcfdef0ad07666fcd59f7c850fe8ff35130152e10355e18d3bd2226261d2152",
+    "expires_at": "2026-11-02T08:00:00.000Z",
+    "link": "https://relay.example.org/i/1/7c9e6679-7425-40de-944b-e07fc1f90ae7/cGEWA6DfjvcDIjzOFe2nDA#W8_e8K0HZm_NWffIUP6P81EwFS4QNV4Y070iJiYdIVI"
+  },
+  "keys": {
+    "mac_key": "7e63a0e152b65370d19d2bf2e0f7e432b7beb3bb76a102220b256e722b404212",
+    "enc_key": "84c175a91c6862287e82983d728e3e138dc2ceeee06baa31559b2c646a4d1bbd"
+  },
+  "notice": {
+    "v": 1,
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
+    "expires_at": "2026-11-02T08:00:00.000Z",
+    "inviter": "DkWYyAuupxq95RN0-SnwgFUeIGQZNpTY_lP8SCvvGps",
+    "sig": "AUcflejQonreeEiScoaNwwkaY9ItKBdC_ZoXr8LzRE7vDDQxJobgVUXcort0KO557c51NicbkYjLb-f9kqlVAg"
+  },
+  "join": {
+    "v": 1,
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
+    "member": "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY",
+    "device_cert": {
+      "v": 1,
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "member": "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY",
+      "device_sign": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+      "device_enc": "jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns",
+      "created_at": "2026-10-26T08:00:00.000Z",
+      "sig": "ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ"
+    },
+    "handle": {
+      "nonce": "TPrXjKSE9G0iuqbTiae2_k8pu3S4-Hh_",
+      "ct": "HSdeO1p6GaQk230k9569nyXOCnRa0PKIAho74qt9SOrenjw6Rg4sBPorrHVx7mt1XrcmsZeYtMGA2sXmYWMpLUN5n7n_5yfxP4uc6BXhzXg"
+    },
+    "mac": "mKVbJ_ywZznXasGdoHAAupkK5bp6LbrN2qVGSHSs02g"
+  },
+  "join_hash": "13494be335a55c0dbfbeebd9ac251218f87584775b4203269cdcdaebaee50648",
+  "accept": {
+    "v": 1,
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
+    "join_hash": "13494be335a55c0dbfbeebd9ac251218f87584775b4203269cdcdaebaee50648",
+    "inviter": {
+      "v": 1,
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "member": "TQQR-lL8doKNYxTh4UZo_s6PN29xnOfShqilOJssb7I",
+      "device_sign": "DkWYyAuupxq95RN0-SnwgFUeIGQZNpTY_lP8SCvvGps",
+      "device_enc": "KlohDiK60fw3jtI5N5e9lyZl7ero9ihZ6m-aOdCeeW4",
+      "created_at": "2026-10-26T08:00:00.000Z",
+      "sig": "BF_0FONSi-pwf9quuO4xVRFsWcKW4Nz9YfUy2iDRpyJZr2KTdFtIHmhprErl0NeDmHXm1L6EQFoJ1cCKDlYBBw"
+    },
+    "mac": "k1Pu1DymSfZIWQGU0KH3Gb3YxuKloSwu3GLsz-xnfnE"
+  }
+}

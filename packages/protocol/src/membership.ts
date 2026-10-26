@@ -45,7 +45,7 @@ const KEY_BYTES = 32
 const NONCE_BYTES = 24
 const TAG_BYTES = 16
 /** A handle is sealed padded to this many bytes — a length byte, the UTF-8 text, zeros — so its ciphertext says nothing about it. */
-const HANDLE_BYTES = 64
+export const HANDLE_BYTES = 64
 const ROLES: readonly string[] = ['owner', 'member']
 
 /** Seals `handle` for a membership record of `brain`: the record's op_id and the member it names are bound to it. */
@@ -55,13 +55,8 @@ export function sealHandle(handle: string, at: { brain: string, op_id: string, m
 
 /** sealHandle with a given nonce — for the test vectors. */
 export function sealHandleWith(nonce: Uint8Array, handle: string, at: { brain: string, op_id: string, member: string }, key: BrainKey): Box {
-  checkHandle(handle)
   if (nonce.length !== NONCE_BYTES) throw new ProtocolError(`a nonce is ${NONCE_BYTES} bytes`)
-  const text = sodium.from_string(handle)
-  const padded = new Uint8Array(HANDLE_BYTES)
-  padded[0] = text.length
-  padded.set(text, 1)
-  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, sodium.from_string(canonicalJson(at)), null, nonce, key.key)
+  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padHandle(handle), sodium.from_string(canonicalJson(at)), null, nonce, key.key)
   return { nonce: toBase64url(nonce), ct: toBase64url(ct) }
 }
 
@@ -181,10 +176,7 @@ export function memberHandles(set: MemberSet, keyFor: (epoch: number) => Uint8Ar
       try {
         const padded = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(handle.box.ct, undefined, 'the handle'),
           sodium.from_string(canonicalJson({ brain: set.brain, op_id: handle.op_id, member })), fromBase64url(handle.box.nonce, NONCE_BYTES, 'the handle nonce'), key)
-        const length = padded[0]
-        if (padded.length !== HANDLE_BYTES || length >= HANDLE_BYTES || padded.subarray(1 + length).some(b => b !== 0)) throw new Error('not a padded handle')
-        text = new TextDecoder('utf-8', { fatal: true }).decode(padded.subarray(1, 1 + length))
-        checkHandle(text)
+        text = unpadHandle(padded)
       } catch {
         text = null
       }
@@ -225,8 +217,32 @@ function newDeviceCert(set: MemberSet, value: unknown, member: unknown): DeviceC
   return cert
 }
 
+/** `handle` as the 64 bytes that are sealed: its UTF-8 length, the UTF-8 text, zeros. */
+export function padHandle(handle: string): Uint8Array {
+  checkHandle(handle)
+  const text = sodium.from_string(handle)
+  const padded = new Uint8Array(HANDLE_BYTES)
+  padded[0] = text.length
+  padded.set(text, 1)
+  return padded
+}
+
+/** The handle in `padded`, which must be exactly padHandle's form; throws ProtocolError otherwise. */
+export function unpadHandle(padded: Uint8Array): string {
+  const length = padded[0]
+  if (padded.length !== HANDLE_BYTES || length >= HANDLE_BYTES || padded.subarray(1 + length).some(b => b !== 0)) throw new ProtocolError('not a padded handle')
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(padded.subarray(1, 1 + length))
+  } catch {
+    throw new ProtocolError('the handle is not UTF-8')
+  }
+  checkHandle(text)
+  return text
+}
+
 /** `value` as a box sealing exactly `plainBytes` bytes. */
-function box(value: unknown, what: string, plainBytes: number): Box {
+export function box(value: unknown, what: string, plainBytes: number): Box {
   const b = asObject(value, what)
   exactFields(b, ['nonce', 'ct'], what)
   fromBase64url(b.nonce, NONCE_BYTES, `${what}.nonce`)
