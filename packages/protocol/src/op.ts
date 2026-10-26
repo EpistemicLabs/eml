@@ -19,13 +19,45 @@ export interface Provenance {
   harness: string | null
 }
 
-/** An op as written: a call with its args, by whom, against which brain schema. */
+/**
+ * What an op in a shared brain carries besides the F2 fields: the brain it is
+ * for, the author's device signing key, and the author's last applied entry
+ * with its chain link (spec team-brain-protocol-package-spec §2a).
+ */
+export interface TeamFields {
+  brain: string
+  device: string
+  base_seq: number
+  head_hash: string
+}
+
+/** An op as written: a call with its args, by whom, against which brain schema; in a shared brain also its team fields. */
 export interface OpEnvelope {
   op_id: string
   schema: number
   call: string
   args: Json
   provenance: Provenance
+  team?: TeamFields
+}
+
+const PROVENANCE_FIELDS = ['handle', 'ingestion_method', 'session_id', 'model', 'harness']
+
+/**
+ * What is wrong with `value` as a provenance — exactly the five fields, each
+ * a string or null — or null when nothing is. Its values (which ingestion
+ * methods exist) are the brain schema's to check.
+ */
+export function provenanceProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'provenance is not an object'
+  const keys = Object.keys(value)
+  if (keys.length !== PROVENANCE_FIELDS.length || !PROVENANCE_FIELDS.every(k => keys.includes(k))) {
+    return `provenance has the fields ${keys.join(', ')}, not ${PROVENANCE_FIELDS.join(', ')}`
+  }
+  for (const [k, v] of Object.entries(value)) {
+    if (v !== null && typeof v !== 'string') return `provenance.${k} is neither a string nor null`
+  }
+  return null
 }
 
 /** prev_hash of the first entry (genesis). */

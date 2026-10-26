@@ -150,6 +150,24 @@ describe('writes through the op log', () => {
     a.eml.close(); b.eml.close()
   })
 
+  it('an op\'s provenance is checked before it runs: exactly the actor\'s fields, strings or null, a known ingestion_method', () => {
+    const a = brain()
+    a.eml.apply({ name: 'engram.create', input: validNote({ title: 'p' }) })
+    const op = payloadOf(last(a.eml))
+    const e = brain().eml
+    const stores = { eml: e, db: raw(e), store: e.engrams, projects: e.projects, users: e.users, agents: e.agents, entities: e.entities, tags: e.tags, subjects: e.subjects }
+    const run = (provenance: unknown) => () => applyOp(stores, { ...op, provenance } as OpEnvelope, START)
+    expect(run({ ...op.provenance, ingestion_method: 'relay' })).toThrow(/ingestion_method "relay" is not one of hook, direct, bulk, mcp, other/)
+    expect(run({ ...op.provenance, device: 'x' })).toThrow(/provenance has the fields/)
+    expect(run((({ harness: _h, ...rest }) => rest)(op.provenance))).toThrow(/provenance has the fields/)
+    expect(run({ ...op.provenance, model: 5 })).toThrow(/provenance\.model is neither a string nor null/)
+    expect(run(null)).toThrow(/provenance is not an object/)
+    expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(0)
+    raw(e).transaction(() => applyOp(stores, op, START))()
+    expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(1)
+    a.eml.close(); e.close()
+  })
+
   it('entries chain: each prev_hash is the previous link, every link and payload hash verifies', () => {
     const { eml } = brain()
     eml.apply({ name: 'engram.create', input: validNote({ title: 'one' }) })
