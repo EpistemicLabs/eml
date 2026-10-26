@@ -32,12 +32,17 @@ function normalize(sql: string): string {
     .trim()
 }
 
-/** Seed rows, without timestamps (the migration ledger differs by design). v0.20: the labels seed is gone with its table. */
+/**
+ * Seed rows, without timestamps (the migration ledger differs by design). v0.20: the labels seed is gone with its table.
+ * v0.21: both paths start the op log with one genesis entry (its hash covers the brain's state and time, so it differs).
+ */
 function seedOf(file: string) {
   const db = new Database(file, { readonly: true })
   try {
     return {
       version: (db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v,
+      log: db.prepare(`SELECT seq, json_extract(payload, '$.call') AS call FROM op_log ORDER BY seq`).all(),
+      snapshots: db.prepare('SELECT seq, schema FROM op_snapshots ORDER BY seq').all(),
     }
   } finally { db.close() }
 }
@@ -71,6 +76,8 @@ describe('brain schema baseline', () => {
     expect(schemaOf(migrated)).toEqual(schemaOf(fresh))
     expect(seedOf(migrated)).toEqual(seedOf(fresh))
     expect(seedOf(fresh).version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+    expect(seedOf(fresh).log).toEqual([{ seq: 1, call: 'brain.genesis' }])
+    expect(seedOf(fresh).snapshots).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION }])
   })
 
   it('refuses a brain older than the oldest migratable schema, without touching it', () => {

@@ -217,3 +217,5 @@ CREATE TABLE _eml_migrations (
   name        TEXT NOT NULL,
   applied_at  TEXT NOT NULL
 );
+
+INSERT INTO _eml_migrations (version, name, applied_at) VALUES (20, '020_v0.20', '2026-10-23T12:00:00.000Z');

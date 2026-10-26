@@ -80,7 +80,7 @@ function expectMigrated(file: string, before: { counts: Record<string, number>, 
   expect(counts(file)).toEqual(before.counts)
   const db = new Database(file, { readonly: true })
   try {
-    expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(20)
+    expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok')
     expect((db.pragma('foreign_key_check') as unknown[]).length).toBe(0)
     // the labels axis is gone, nothing else
@@ -150,8 +150,7 @@ describe('v0.20 migration — schema 20 on a seeded v0.19 brain', () => {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 19)`).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [20] })
-      expect(CURRENT_BRAIN_SCHEMA_VERSION).toBe(20)
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [20, 21] })
     } finally { control.close() }
     expectMigrated(file, before)
   })
