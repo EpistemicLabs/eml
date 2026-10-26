@@ -204,7 +204,13 @@ describe('no clock or id source in core write code', () => {
     [/new Date\(\)/, 'new Date()'],
     [/datetime\('now'/, "datetime('now')"],
     [/CURRENT_TIMESTAMP/, 'CURRENT_TIMESTAMP'],
-    [/\buuid\w*\(|randomUUID\(/, 'uuid()'],
+    // id sources, not call names: a random draw under any name (an aliased
+    // randomUUID, the uuid package, raw random bytes) fails; uuidv5 — an id
+    // derived from the op (log/op.ts) — is deterministic and passes
+    [/\brandomUUID\b/, 'randomUUID'],
+    [/\buuid(v[1-46-8])?\(/, 'uuid() / uuidv1–4, 6–8()'],
+    [/from 'uuid'|require\('uuid'\)/, "the 'uuid' package"],
+    [/\brandomBytes\b|getRandomValues|Math\.random/, 'random bytes'],
   ]
   const src = join(__dirname, '..', 'src')
   // recursive: the write code lives in commands/ and write/; paths are relative to src
