@@ -4,8 +4,8 @@ import { EML, CommandError, COMMAND_NAMES, readObject } from '../src'
 import { validDecision, validTask, validNote } from './fixtures'
 
 // v0.20 (decision write-command-set): every brain write is one of eight
-// commands behind EML.apply(command, env); the rest of EML only reads, except
-// engrams.delete and agents.delete (decision no-delete-command).
+// commands behind EML.apply(command, env); the rest of EML only reads.
+// v0.21: engrams.delete and agents.delete are gone (decision no-delete-command).
 
 describe('the command set', () => {
   let eml: EML
@@ -22,7 +22,7 @@ describe('the command set', () => {
     throw new Error('not rejected')
   }
 
-  it('is closed: eight commands, and no public write besides apply and the two deletes', () => {
+  it('is closed: eight commands, and no public write besides apply', () => {
     expect(COMMAND_NAMES).toEqual([
       'engram.create', 'engram.update', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
@@ -39,7 +39,7 @@ describe('the command set', () => {
     for (const store of ['engrams', 'projects', 'entities', 'users', 'agents', 'tags', 'subjects'] as const) {
       for (const m of methods((eml as any)[store])) if (WRITE.test(m)) writes.push(`${store}.${m}`)
     }
-    expect(writes.sort()).toEqual(['agents.delete', 'engrams.delete'])
+    expect(writes.sort()).toEqual([])
     expect(methods(eml).filter(m => !m.startsWith('wire')).sort()).toEqual(['apply', 'close', 'env', 'now'])
     // the writers and the old write functions are not exported
     for (const name of ['EngramWriter', 'ObjectWriter', 'appendEntry', 'createObject', 'updateObject']) expect(name in core).toBe(false)

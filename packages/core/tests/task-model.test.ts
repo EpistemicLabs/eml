@@ -260,7 +260,7 @@ describe('task model', () => {
       const t = task('gone')
       expect(() => writes(eml).update(t.id, { content: 'x' })).toThrow(/is a task — everything about a task goes through eml_track_task/)
       writes(eml).trackTask(t.id, { text: 'x' })
-      eml.engrams.delete(t.id)
+      rawDb().prepare('DELETE FROM engrams WHERE id = ?').run(t.id)  // no delete method since v0.21 (decision no-delete-command)
       expect((rawDb().prepare(`SELECT COUNT(*) AS n FROM entries`).get() as { n: number }).n).toBe(0)
     })
   })

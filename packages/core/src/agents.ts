@@ -20,10 +20,6 @@ export class AgentStore {
       .map(r => this.rowToAgent(r))
   }
 
-  delete(id: string): boolean {
-    return this.db.prepare('DELETE FROM agents WHERE id = ?').run(id).changes > 0
-  }
-
   exists(id: string): boolean {
     const row = this.db.prepare('SELECT 1 FROM agents WHERE id = ?').get(id)
     return !!row

@@ -591,19 +591,6 @@ export class EngramStore {
     return engrams
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare(
-      'DELETE FROM engrams WHERE id = ?'
-    ).run(id)
-    if (result.changes > 0) {
-      this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-      this.db.prepare(
-        'DELETE FROM relations WHERE (source_id = ? OR target_id = ?)'
-      ).run(id, id)
-    }
-    return result.changes > 0
-  }
-
   /** A learning's ripeness from its evidence (brain hygiene, lists). */
   learningStateOf(id: string): LearningState {
     return learningState(this.entries(id))

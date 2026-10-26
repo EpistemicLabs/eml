@@ -165,21 +165,6 @@ describe('EML v0.2', () => {
 
       expect(updated!.properties).toEqual({ detail: 'more' })
     })
-
-    it('deletes an engram and its relations', () => {
-      const a = writes(eml).store(validDecision({ content: 'A', scope: 'global' }))
-      const b = writes(eml).store(validDecision({ content: 'B', scope: 'global' }))
-      writes(eml).relate({
-        source_id: a.id, target_id: b.id,
-        relation: 'supports', detection_method: 'manual',
-      })
-
-      expect(eml.engrams.delete(a.id)).toBe(true)
-      expect(eml.engrams.get(a.id)).toBeNull()
-      // Relation should also be gone
-      const bCtx = eml.engrams.get(b.id)
-      expect(bCtx!.relations).toHaveLength(0)
-    })
   })
 
   // ============================================================
@@ -295,12 +280,6 @@ describe('EML v0.2', () => {
       const updated = writes(eml).agents.update('scout', { name: 'Scout-BTC', domains: ['market'] })
       expect(updated!.name).toBe('Scout-BTC')
       expect(updated!.domains).toEqual(['market'])
-    })
-
-    it('deletes an agent', () => {
-      writes(eml).agents.store({ id: 'temp', name: 'Temp' })
-      expect(eml.agents.delete('temp')).toBe(true)
-      expect(eml.agents.get('temp')).toBeNull()
     })
   })
 
