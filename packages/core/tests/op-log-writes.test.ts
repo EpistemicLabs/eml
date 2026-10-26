@@ -67,6 +67,8 @@ describe('writes through the op log', () => {
     const set = exportSet((other as any).db, ((other as any).db.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map(r => r.id))
     write('engram.import', { source: brainRef((other as any).db), set_hash: set.set_hash, rows: set.rows })
     other.close()
+    const importOp = payloadOf(last(eml)).op_id
+    write('engram.move_out', { ids: [l.id], set_hash: exportSet(raw(eml), [l.id]).set_hash, drop_relations: [], target: { brain: 'elsewhere', op_id: importOp } })
     expect([...used].sort()).toEqual([...COMMAND_NAMES].sort())
     eml.close()
   })

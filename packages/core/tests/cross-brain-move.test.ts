@@ -243,3 +243,92 @@ describe('engram.import', () => {
     })
   })
 })
+
+describe('engram.move_out', () => {
+  /** The set imported into a target; what the source's move_out names. */
+  function imported(s: ReturnType<typeof source>) {
+    const set = exportSet(raw(s.eml), s.set)
+    const target = brain('target')
+    target.apply({ name: 'engram.import', input: importOf(s.eml, set) })
+    const op_id = (raw(target).prepare('SELECT op_id FROM op_log ORDER BY seq DESC LIMIT 1').get() as { op_id: string }).op_id
+    const input = { ids: s.set, set_hash: set.set_hash, drop_relations: set.crossing.map(r => r.id), target: { brain: brainRef(raw(target)).brain, op_id } }
+    return { set, target, input }
+  }
+  const count = (eml: EML, sql: string, ...params: unknown[]) => (raw(eml).prepare(`SELECT COUNT(*) AS n FROM ${sql}`).get(...params) as { n: number }).n
+
+  it('removes the set and the crossing relations; registries, scope objects and the rest stay; the source verifies', () => {
+    const s = source()
+    const { set, target, input } = imported(s)
+    const relationsBefore = count(s.eml, 'relations')
+    const result = s.eml.apply({ name: 'engram.move_out', input })
+    expect(result).toEqual({
+      removed: { engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length + set.crossing.length },
+      dropped_relations: set.crossing.map(r => r.id).sort(),
+    })
+    const json = JSON.stringify(s.set)
+    const inSet = '(SELECT value FROM json_each(?))'
+    expect(count(s.eml, `engrams WHERE id IN ${inSet}`, json)).toBe(0)
+    expect(count(s.eml, `engrams_fts WHERE id IN ${inSet}`, json)).toBe(0)
+    expect(count(s.eml, `entries WHERE engram_id IN ${inSet}`, json)).toBe(0)
+    expect(count(s.eml, `engram_tags WHERE engram_id IN ${inSet}`, json)).toBe(0)
+    expect(count(s.eml, `engram_subjects WHERE engram_id IN ${inSet}`, json)).toBe(0)
+    expect(count(s.eml, `relations WHERE source_id IN ${inSet} OR target_id IN ${inSet}`, json, json)).toBe(0)
+    expect(count(s.eml, 'relations')).toBe(relationsBefore - set.rows.relations.length - set.crossing.length)
+    // what stays: the engrams outside the set, the registries, the scope objects
+    expect(s.eml.engrams.get(s.outside.id)).toBeTruthy()
+    expect(s.eml.engrams.get(s.rule.id)).toBeTruthy()
+    expect(s.eml.tags.get('ops')).toBeTruthy()
+    expect(s.eml.subjects.get('launch')).toBeTruthy()
+    expect(s.eml.projects.get('p')).toBeTruthy()
+    expect(s.eml.users.get('ada')).toBeTruthy()
+    // the op names the import in the target
+    const op = JSON.parse((raw(s.eml).prepare('SELECT payload FROM op_log ORDER BY seq DESC LIMIT 1').get() as { payload: string }).payload)
+    expect(op).toMatchObject({ call: 'engram.move_out', args: { target: input.target, set_hash: set.set_hash } })
+
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(target))).toMatchObject({ ok: true })
+    target.close(); s.eml.close()
+  })
+
+  describe('refuses, and removes nothing', () => {
+    const attempt = (eml: EML, input: unknown): CommandError => {
+      const before = { ops: opCount(eml), engrams: count(eml, 'engrams'), relations: count(eml, 'relations') }
+      const err = reject(() => eml.apply({ name: 'engram.move_out', input: input as never }))
+      expect({ ops: opCount(eml), engrams: count(eml, 'engrams'), relations: count(eml, 'relations') }).toEqual(before)
+      return err
+    }
+
+    it('a set that changed since the import', () => {
+      const s = source()
+      const { target, input } = imported(s)
+      writes(s.eml).trackTask(s.task.id, { text: 'written after the import' })
+      const err = attempt(s.eml, input)
+      expect(err.code).toBe('CONFLICT')
+      expect(err.message).toMatch(/the set changed since it was imported/)
+      target.close(); s.eml.close()
+    })
+
+    it('drop_relations that are not exactly the crossing relations', () => {
+      const s = source()
+      const { target, input } = imported(s)
+      expect(attempt(s.eml, { ...input, drop_relations: input.drop_relations.slice(1) }).code).toBe('CONFLICT')
+      expect(attempt(s.eml, { ...input, drop_relations: [...input.drop_relations, 'another'] }).message).toMatch(/must name exactly the relations crossing/)
+      // a new crossing relation after the import
+      const other = writes(s.eml).store(validDecision({ scope: 'project.elsewhere', title: 'later' }))
+      writes(s.eml).relate({ source_id: other.id, target_id: s.old.id, relation: 'supports', detection_method: 'manual' })
+      expect(attempt(s.eml, input).code).toBe('CONFLICT')
+      target.close(); s.eml.close()
+    })
+
+    it('an unknown id, and input of the wrong shape', () => {
+      const s = source()
+      const { target, input } = imported(s)
+      expect(attempt(s.eml, { ...input, ids: [...input.ids, 'nope'] }).code).toBe('NOT_FOUND')
+      expect(attempt(s.eml, { ...input, ids: [] }).code).toBe('INVALID')
+      expect(attempt(s.eml, { ...input, set_hash: 'x' }).code).toBe('INVALID')
+      expect(attempt(s.eml, { ...input, target: { brain: 'b' } }).code).toBe('INVALID')
+      expect(attempt(s.eml, { ...input, extra: 1 }).code).toBe('INVALID')
+      target.close(); s.eml.close()
+    })
+  })
+})
