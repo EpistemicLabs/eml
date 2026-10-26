@@ -1,6 +1,6 @@
 # @engramprotocol/mcp-server
 
-MCP wrapper around the EML HTTP API. Exposes the Engram Protocol as MCP tools for Claude Code (and other MCP clients) — stdio transport, Bearer-token auth against an EML server.
+MCP wrapper around the EML HTTP API. Exposes the Engram Protocol as MCP tools for Claude Code (and other MCP clients) — stdio transport, Bearer-token auth against an EML server. An app that serves many sessions can mount the same tools as one Streamable HTTP endpoint instead (`McpHttpEndpoint`, `createEmlMcpServer`); the EML Cockpit does that for its Claude Code sessions.
 
 ## Use
 
