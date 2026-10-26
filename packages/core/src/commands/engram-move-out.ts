@@ -17,12 +17,12 @@ export interface EngramMoveOutResult {
 const MOVE_OUT_KEYS = ['ids', 'set_hash', 'drop_relations', 'target']
 
 /**
- * engram.move_out — the set leaves this brain after engram.import wrote it into
- * another (spec cross-brain-move-spec). It removes only a set that is still
- * exactly what was imported (set_hash) and drops exactly the crossing
- * relations the caller named; its tags, subjects and scope objects stay. The
- * removal as an op (decision no-delete-command). Not reachable by agents: no
- * route calls it.
+ * engram.move_out — the set leaves this brain for another (spec
+ * cross-brain-move-spec). moveEngrams writes it only after finding the import
+ * in the target; the command itself checks that the set is unchanged
+ * (set_hash) and that drop_relations are exactly the crossing relations. Its
+ * tags, subjects and scope objects stay. The removal as an op (decision
+ * no-delete-command). Not reachable by agents: no route calls it.
  */
 export const engramMoveOut: CommandModule<EngramMoveOutInput, EngramMoveOutResult> = {
   name: 'engram.move_out',

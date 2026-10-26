@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { CommandError } from '../commands/types'
+import { scopeObject } from '../validate'
 import { canonicalJson } from './canonical'
 import { sha256Hex, type OpEnvelope } from './op'
 
@@ -13,15 +14,16 @@ import { sha256Hex, type OpEnvelope } from './op'
 // registry rows they need — scope objects (a project with its parents), tags
 // and subjects. ord is not carried; the target appends the rows in their source
 // order. What does not: relations crossing the set (dropped in the source, and
-// the caller names them) and entries naming an engram outside it (kept, the id
-// stays as text). The source keeps its registry rows; the target keeps the
-// ones it has.
+// the caller names them) and entries naming an engram on the other side of the
+// set's edge, either way (kept, the id stays as text). The source keeps its
+// registry rows; the target keeps the ones it has and creates the rest.
 //
 // Two ops, one in each brain's log, so a rebuild replays and verify checks
 // them like any write: engram.import writes the rows into the target, refused
 // whole on any collision; engram.move_out removes the set from the source,
-// only while the set is exactly what was imported (set_hash) — the removal is
-// an op, not a delete (decision no-delete-command).
+// only while the set's own rows are exactly what was imported (set_hash, which
+// leaves out the registry rows: they stay in the source) — the removal is an
+// op, not a delete (decision no-delete-command).
 //
 // moveEngrams (move-engrams.ts) runs them: the source is backed up first
 // (backupBrain, the user's way back), then locked; the import commits in the
@@ -50,54 +52,54 @@ export type MovedTable = keyof typeof MOVED_COLUMNS
 export type MovedRow = Record<string, string | number | null>
 export type MovedRows = Record<MovedTable, MovedRow[]>
 
-/** The scope kinds with an object, and their table. */
-export const SCOPE_TABLES: Record<string, 'projects' | 'entities' | 'users' | 'agents'> = {
-  project: 'projects', entity: 'entities', user: 'users', agent: 'agents',
-}
+/** The set's own tables: what moves out of the source, and what set_hash covers. */
+export const SET_TABLES = ['engrams', 'entries', 'relations', 'engram_tags', 'engram_subjects'] as const
 
 /** A relation with one end in the set and one outside: it does not move. */
 export interface CrossingRelation { id: string, source_id: string, target_id: string, relation: string }
-/** An entry of the set naming an engram outside it (a learning's rule_id): moves, and its id stays as text. */
+/** An entry naming an engram by id (a learning's rule_id) across the set's edge: it stays as it is. */
 export interface ExternalRef { entry_id: string, engram_id: string, rule_id: string }
 
 export interface ExportedSet {
   rows: MovedRows
-  /** sha256 of the rows as canonical JSON: what the import carries and the move_out checks. */
+  /** sha256 of the set's own rows as canonical JSON: what the import carries and the move_out checks. */
   set_hash: string
   crossing: CrossingRelation[]
+  /** Entries of the set naming an engram outside it: they move, the id stays as text. */
   external_refs: ExternalRef[]
+  /** Entries outside the set naming an engram in it: they stay, the id stays as text. */
+  incoming_refs: ExternalRef[]
 }
 
-/** The hash of a set's rows. */
+/** The hash of a set's own rows (SET_TABLES); the registry rows are not part of it. */
 export function setHash(rows: MovedRows): string {
-  return sha256Hex(canonicalJson(rows))
+  return sha256Hex(canonicalJson(Object.fromEntries(SET_TABLES.map(t => [t, rows[t]]))))
 }
 
-/** The scope's object as [table, id], or undefined for global. */
-export function scopeObject(scope: string): [table: 'projects' | 'entities' | 'users' | 'agents', id: string] | undefined {
-  const dot = scope.indexOf('.')
-  if (dot < 0) return undefined
-  const table = SCOPE_TABLES[scope.slice(0, dot)]
-  return table ? [table, scope.slice(dot + 1)] : undefined
+/** A move names at least one engram, each once. */
+export function checkIds(ids: readonly string[]): void {
+  if (ids.length === 0) throw new CommandError('INVALID', 'Invalid command: a move takes at least one engram id.')
+  const twice = ids.filter((id, i) => ids.indexOf(id) !== i)
+  if (twice.length > 0) throw new CommandError('INVALID', `Invalid command: a move names each engram once (${[...new Set(twice)].join(', ')} twice).`)
 }
 
 /**
  * The rows of engrams `ids` and of everything that moves with them, each table
  * in a fixed order (engrams, entries and relations by ord, projects parents
  * first, the rest by primary key), plus what does not move: the crossing
- * relations and the external references. An unknown id is NOT_FOUND.
+ * relations and the references across the set's edge. An unknown id, or a
+ * scope object missing in this brain, is NOT_FOUND.
  */
 export function exportSet(db: Database.Database, ids: readonly string[]): ExportedSet {
-  const set = [...new Set(ids)]
-  if (set.length === 0) throw new CommandError('INVALID', 'Invalid command: a move takes at least one engram id.')
-  const inSet = new Set(set)
-  const json = JSON.stringify(set)
+  checkIds(ids)
+  const inSet = new Set(ids)
+  const json = JSON.stringify(ids)
   const S = 'SELECT value FROM json_each(?)'
   const cols = (table: MovedTable) => MOVED_COLUMNS[table].map(c => `"${c}"`).join(', ')
   const all = (sql: string, ...params: unknown[]) => db.prepare(sql).all(...params) as MovedRow[]
 
   const engrams = all(`SELECT ${cols('engrams')} FROM engrams WHERE id IN (${S}) ORDER BY ord`, json)
-  const unknown = set.filter(id => !engrams.some(e => e.id === id))
+  const unknown = ids.filter(id => !engrams.some(e => e.id === id))
   if (unknown.length > 0) throw new CommandError('NOT_FOUND', `engram${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} not found`)
 
   const rows: MovedRows = {
@@ -112,10 +114,10 @@ export function exportSet(db: Database.Database, ids: readonly string[]): Export
     engram_subjects: all(`SELECT ${cols('engram_subjects')} FROM engram_subjects WHERE engram_id IN (${S}) ORDER BY engram_id, subject_id`, json),
   }
   for (const table of ['entities', 'users', 'agents'] as const) {
-    const objectIds = [...new Set(engrams.map(e => scopeObject(e.scope as string)).filter(o => o?.[0] === table).map(o => o![1]))]
+    const objectIds = scopedIds(engrams, table)
     rows[table] = all(`SELECT ${cols(table)} FROM ${table} WHERE id IN (${S}) ORDER BY id`, JSON.stringify(objectIds))
     const missing = objectIds.filter(id => !rows[table].some(r => r.id === id))
-    if (missing.length > 0) throw new Error(`${table} ${missing.join(', ')} not found in the source brain`)
+    if (missing.length > 0) throw new CommandError('NOT_FOUND', `${table} ${missing.join(', ')} not found in the source brain (the scope of an engram in the set)`)
   }
 
   const crossing = db.prepare(`SELECT id, source_id, target_id, relation FROM relations WHERE (source_id IN (${S})) <> (target_id IN (${S})) ORDER BY ord`)
@@ -123,7 +125,9 @@ export function exportSet(db: Database.Database, ids: readonly string[]): Export
   const external_refs = rows.entries
     .filter(e => e.rule_id !== null && !inSet.has(e.rule_id as string))
     .map(e => ({ entry_id: e.id as string, engram_id: e.engram_id as string, rule_id: e.rule_id as string }))
-  return { rows, set_hash: setHash(rows), crossing, external_refs }
+  const incoming_refs = db.prepare(`SELECT id AS entry_id, engram_id, rule_id FROM entries WHERE rule_id IN (${S}) AND engram_id NOT IN (${S}) ORDER BY ord`)
+    .all(json, json) as ExternalRef[]
+  return { rows, set_hash: setHash(rows), crossing, external_refs, incoming_refs }
 }
 
 /** Whether `named` are exactly the set's crossing relations: the drop_relations a move has to pass. */
@@ -133,17 +137,21 @@ export function namesCrossing(set: ExportedSet, named: readonly string[]): boole
   return crossing.length === sorted.length && crossing.every((id, i) => id === sorted[i])
 }
 
+/** The ids of `table`'s objects that the engrams' scopes name. */
+function scopedIds(engrams: MovedRow[], table: 'projects' | 'entities' | 'users' | 'agents'): string[] {
+  return [...new Set(engrams.map(e => scopeObject(e.scope as string)).filter(o => o?.[0] === table).map(o => o![1]))].sort()
+}
+
 /** The projects the set's scopes name, each after its parent_project chain (the foreign key needs the parent first). */
 function projectsWithParents(db: Database.Database, engrams: MovedRow[]): MovedRow[] {
   const get = db.prepare(`SELECT ${MOVED_COLUMNS.projects.map(c => `"${c}"`).join(', ')} FROM projects WHERE id = ?`)
-  const scoped = [...new Set(engrams.map(e => scopeObject(e.scope as string)).filter(o => o?.[0] === 'projects').map(o => o![1]))].sort()
   const out: MovedRow[] = []
   const seen = new Set<string>()
-  for (const id of scoped) {
+  for (const id of scopedIds(engrams, 'projects')) {
     const chain: MovedRow[] = []
     for (let p: string | null = id; p !== null && !seen.has(p); ) {
       const row = get.get(p) as MovedRow | undefined
-      if (!row) throw new Error(`projects ${p} not found in the source brain`)
+      if (!row) throw new CommandError('NOT_FOUND', `project ${p} not found in the source brain (${p === id ? 'the scope of an engram in the set' : 'a parent of a project the set needs'})`)
       seen.add(p)
       chain.unshift(row)
       p = row.parent_project as string | null

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { createHash } from 'crypto'
-import { mkdtempSync, rmSync, statSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
@@ -10,7 +10,7 @@ import { verify } from '../src/log/rebuild'
 import { MOVED_COLUMNS, brainRef, exportSet, setHash, type MovedRows } from '../src/log/move'
 import { moveEngrams, planMove } from '../src/log/move-engrams'
 import type { Env } from '../src/env'
-import { createObject, validDecision, validProfile, validRule, validStatus, validTask, writes } from './fixtures'
+import { createObject, updateObject, validDecision, validProfile, validRule, validStatus, validTask, writes } from './fixtures'
 
 // v0.21 (spec cross-brain-move-spec, block 2): a set of engrams is exported
 // from one brain as rows and imported into another as they are — ids,
@@ -118,10 +118,49 @@ describe('exportSet', () => {
     s.eml.close()
   })
 
-  it('refuses an unknown id and an empty set', () => {
+  it('refuses an unknown id, an empty set and an id named twice', () => {
     const s = source()
     expect(reject(() => exportSet(raw(s.eml), [s.task.id, 'nope'])).code).toBe('NOT_FOUND')
     expect(reject(() => exportSet(raw(s.eml), [])).code).toBe('INVALID')
+    const twice = reject(() => exportSet(raw(s.eml), [s.task.id, s.sub.id, s.task.id]))
+    expect(twice.code).toBe('INVALID')
+    expect(twice.message).toMatch(new RegExp(`${s.task.id} twice`))
+    s.eml.close()
+  })
+
+  it('a scope object or a parent missing in the source is NOT_FOUND', () => {
+    const s = source()
+    raw(s.eml).prepare("DELETE FROM users WHERE id = 'ada'").run()
+    const user = reject(() => exportSet(raw(s.eml), s.set))
+    expect(user.code).toBe('NOT_FOUND')
+    expect(user.message).toMatch(/users ada not found/)
+    raw(s.eml).pragma('foreign_keys = OFF')
+    raw(s.eml).prepare("DELETE FROM projects WHERE id = 'root'").run()
+    const parent = reject(() => exportSet(raw(s.eml), [s.task.id]))
+    expect(parent.code).toBe('NOT_FOUND')
+    expect(parent.message).toMatch(/project root not found .*a parent/)
+    s.eml.close()
+  })
+
+  it('lists the entries outside the set that name an engram in it', () => {
+    const s = source()
+    const set = exportSet(raw(s.eml), [s.rule.id])
+    expect(set.incoming_refs).toEqual([expect.objectContaining({ engram_id: s.learned.id, rule_id: s.rule.id })])
+    expect(set.external_refs).toEqual([])
+    expect(exportSet(raw(s.eml), s.set).incoming_refs).toEqual([])
+    s.eml.close()
+  })
+
+  it('the set hash covers the set\'s own rows, not the registry rows', () => {
+    const s = source()
+    const before = exportSet(raw(s.eml), s.set)
+    updateObject(s.eml, 'project', 'p', { description: 'changed' })
+    updateObject(s.eml, 'tag', 'ops', { description: 'changed' })
+    const after = exportSet(raw(s.eml), s.set)
+    expect(after.rows.projects).not.toEqual(before.rows.projects)
+    expect(after.set_hash).toBe(before.set_hash)
+    writes(s.eml).trackTask(s.task.id, { text: 'a new entry' })
+    expect(exportSet(raw(s.eml), s.set).set_hash).not.toBe(before.set_hash)
     s.eml.close()
   })
 })
@@ -174,6 +213,19 @@ describe('engram.import', () => {
     expect(verify(raw(target))).toMatchObject({ ok: true })
     target.close()
     s.eml.close()
+  })
+
+  it('creates a carried parent project only when a project it creates needs it', () => {
+    const s = source()
+    const set = exportSet(raw(s.eml), s.set)
+    const target = brain('target')
+    createObject(target, 'project', { id: 'p', name: 'P here' })
+    const result = target.apply({ name: 'engram.import', input: importOf(s.eml, set) })
+    expect(result.created.projects).toEqual([])
+    expect(target.projects.get('root')).toBeNull()
+    expect(target.projects.get('p')!.name).toBe('P here')
+    expect(verify(raw(target))).toMatchObject({ ok: true })
+    target.close(); s.eml.close()
   })
 
   describe('refuses, and writes nothing', () => {
@@ -244,6 +296,52 @@ describe('engram.import', () => {
       const err = attempt(target, edited(s, rows => { rows.projects = rows.projects.filter(p => p.id !== 'root') }))
       expect(err.code).toBe('CONFLICT')
       expect(err.message).toMatch(/project p needs its parent root/)
+      target.close(); s.eml.close()
+    })
+
+    it('a column the schema would not take: each INVALID, naming the row', () => {
+      const s = source()
+      const target = brain('target')
+      const refused = (f: (rows: MovedRows) => void, message: RegExp) => {
+        const err = attempt(target, edited(s, f))
+        expect(err.code).toBe('INVALID')
+        expect(err.message).toMatch(message)
+      }
+      refused(rows => { rows.engrams[0].properties = '{not json' }, /rows\.engrams\[0\] \(.+\)\.properties is JSON text/)
+      refused(rows => { rows.projects[0].metadata = 'nope' }, /rows\.projects\[0\] \(root\)\.metadata is JSON text/)
+      refused(rows => { rows.entries[0].id = 7 }, /rows\.entries\[0\]\.id is text/)
+      refused(rows => { rows.entries.push({ ...rows.entries[0] }) }, /appears twice in rows\.entries/)
+      refused(rows => { rows.engrams[1].created_at = '2026-10-20' }, /rows\.engrams\[1\] .*created_at is an ISO-8601 UTC time/)
+      refused(rows => { rows.entries[0].at = '2026-10-20T08:00:00Z' }, /\.at is an ISO-8601 UTC time/)
+      refused(rows => { rows.engrams[0].rev = 0 }, /rev is an integer ≥ 1/)
+      refused(rows => { rows.engrams[0].rev = 1.5 }, /rev is an integer ≥ 1/)
+      refused(rows => { rows.engrams[0].scope = 'project' }, /rows\.engrams\[0\] .*Invalid scope "project"/)
+      refused(rows => { rows.engrams[0].type = 'wish' }, /rows\.engrams\[0\] \(.+\): CHECK constraint failed/)
+      refused(rows => { rows.engrams[0].status = 'gone' }, /rows\.engrams\[0\] \(.+\): CHECK constraint failed/)
+      refused(rows => { rows.relations[0].relation = 'likes' }, /rows\.relations\[0\] \(.+\): CHECK constraint failed/)
+      expect(ids(target)).toEqual([])
+      target.close(); s.eml.close()
+    })
+
+    it('a registry row no engram of the set needs', () => {
+      const s = source()
+      const target = brain('target')
+      expect(attempt(target, edited(s, rows => { rows.tags.push({ ...rows.tags[0], id: 'extra' }) })).message).toMatch(/rows\.tags carries extra, which no engram of the set needs/)
+      expect(attempt(target, edited(s, rows => { rows.projects.push({ ...rows.projects[0], id: 'stray', parent_project: null }) })).message).toMatch(/rows\.projects carries stray/)
+      expect(attempt(target, edited(s, rows => { rows.entities.push({ id: 'acme', name: 'Acme', kind: 'org', status: 'active', description: null, metadata: null, status_tracks: null, created_at: '2026-10-20T08:00:00.000Z', updated_at: '2026-10-20T08:00:00.000Z' }) })).message).toMatch(/rows\.entities carries acme/)
+      target.close(); s.eml.close()
+    })
+
+    it('a relation twice, in the rows or in the target under another id', () => {
+      const s = source()
+      const target = brain('target')
+      expect(attempt(target, edited(s, rows => { rows.relations.push({ ...rows.relations[0], id: 'again' }) })).message).toMatch(/relation again repeats/)
+      const partOf = exportSet(raw(s.eml), s.set).rows.relations.find(r => r.relation === 'part_of')!
+      raw(target).prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at, ord)
+        VALUES ('dangling', ?, ?, 'part_of', 'manual', 1, '2026-10-20T08:00:00.000Z', (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))`).run(partOf.source_id, partOf.target_id)
+      const err = attempt(target, importOf(s.eml, exportSet(raw(s.eml), s.set)))
+      expect(err.code).toBe('CONFLICT')
+      expect(err.message).toMatch(new RegExp(`relation ${partOf.id} .* is already in this brain under another id`))
       target.close(); s.eml.close()
     })
   })
@@ -375,6 +473,8 @@ describe('moveEngrams', () => {
     expect(plan.moved).toEqual({ engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length })
     expect(plan.crossing.map(c => [c.relation, c.direction, c.other.title]).sort()).toEqual([['related_to', 'out', 'outside'], ['supports', 'in', 'outside']])
     expect(plan.external_refs).toEqual(set.external_refs)
+    expect(plan.incoming_refs).toEqual([])
+    expect(planMove({ source: raw(s.eml), target: raw(to), ids: [s.rule.id] }).incoming_refs).toEqual([expect.objectContaining({ engram_id: s.learned.id })])
     expect(plan.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
     expect(plan.collisions).toEqual([])
     // a collision the import would refuse is listed
@@ -449,6 +549,32 @@ describe('moveEngrams', () => {
     // no second import in the target
     expect(raw(to).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()).toEqual(imported)
     expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
+  it('an id named twice: INVALID before the backup', () => {
+    const s = source()
+    const to = target()
+    const backup = join(dir(), 'a.db')
+    const err = reject(() => moveEngrams({ ...args(s, to, backup), ids: [...s.set, s.task.id] }, s.eml.env()))
+    expect(err.code).toBe('INVALID')
+    expect(existsSync(backup)).toBe(false)
+    to.close(); s.eml.close()
+  })
+
+  it('a registry edit in the source between the commits: the resume still goes through', () => {
+    const s = source()
+    const to = target()
+    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash/)
+    updateObject(s.eml, 'project', 'p', { description: 'edited after the import' })
+    updateObject(s.eml, 'subject', 'launch', { description: 'edited too' })
+    const result = moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
+    expect(result.resumed).toBe(true)
+    expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
+    // the target keeps the registry rows it got with the import
+    expect(to.projects.get('p')!.description).not.toBe('edited after the import')
     expect(verify(raw(s.eml))).toMatchObject({ ok: true })
     expect(verify(raw(to))).toMatchObject({ ok: true })
     to.close(); s.eml.close()

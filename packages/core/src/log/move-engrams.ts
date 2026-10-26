@@ -5,7 +5,7 @@ import { CommandError } from '../commands/types'
 import type { Env } from '../env'
 import { backupBrain } from '../forward-migrations'
 import { commandStores, writeOp } from './apply-op'
-import { brainRef, exportSet, namesCrossing, type ExternalRef } from './move'
+import { brainRef, checkIds, exportSet, namesCrossing, type ExternalRef } from './move'
 
 // --- Moving engrams between two brains (v0.21) -----------------------------------
 //
@@ -48,6 +48,7 @@ export interface MoveResult {
  */
 export function moveEngrams(args: MoveArgs, env: Env): MoveResult {
   const { source, target, ids, drop_relations, backup_path } = args
+  checkIds(ids)
   const from = brainRef(source).brain
   const to = brainRef(target).brain
   if (from === to) throw new CommandError('INVALID', 'Invalid move: the source and the target are the same brain.')
@@ -108,6 +109,8 @@ export interface MovePlan {
   /** What the move drops in the source; their ids are the drop_relations to pass. */
   crossing: PlannedCrossing[]
   external_refs: ExternalRef[]
+  /** Entries outside the set naming an engram in it: the move leaves them as they are. */
+  incoming_refs: ExternalRef[]
   /** The scope objects, tags and subjects the import would create in the target. */
   created: EngramImportResult['created']
   /** Why the target would refuse the import; empty when it goes in. */
@@ -119,6 +122,7 @@ export function planMove(args: { source: Database.Database, target: Database.Dat
   const { source, target, ids } = args
   const set = exportSet(source, ids)
   const engram = source.prepare('SELECT id, type, title FROM engrams WHERE id = ?')
+  const stores = commandStores(EML.fromConnection(target, 'plan'), target)
   const inSet = new Set(ids)
   return {
     set_hash: set.set_hash,
@@ -129,7 +133,8 @@ export function planMove(args: { source: Database.Database, target: Database.Dat
       return { id: r.id, relation: r.relation, direction, other }
     }),
     external_refs: set.external_refs,
-    created: missingObjects(target, set.rows),
-    collisions: importProblems(target, set.rows),
+    incoming_refs: set.incoming_refs,
+    created: missingObjects(stores, set.rows),
+    collisions: importProblems(stores, set.rows),
   }
 }
