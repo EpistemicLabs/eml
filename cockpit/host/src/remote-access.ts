@@ -62,6 +62,18 @@ const header = (req: IncomingMessage, name: string): string => {
 }
 
 /**
+ * A request from this machine: Host is a loopback name and nothing proxied it.
+ * Endpoints that only local processes may use (the brain MCP endpoint) check
+ * this alone, whatever remote access allows.
+ */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  const host = header(req, 'host').toLowerCase()
+  const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
+  const proxied = header(req, 'tailscale-user-login') !== '' || header(req, 'x-forwarded-for') !== '' || header(req, 'tailscale-funnel-request') !== ''
+  return LOOPBACK.has(hostname) && !proxied
+}
+
+/**
  * Whether a request may reach the cockpit, and which origins its page may
  * write from. Local: Host is a loopback name and nothing proxied it — the
  * cockpit's own origins, as before. Anything else is remote and needs all of:
@@ -75,12 +87,10 @@ export function requestGate(
   localOrigins: string[],
   remote: RemoteAccess = readRemoteAccess(),
 ): { allowed: true; origins: string[] } | { allowed: false } {
-  const host = header(req, 'host').toLowerCase()
-  const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0]
-  const login = header(req, 'tailscale-user-login').toLowerCase()
-  const proxied = login !== '' || header(req, 'x-forwarded-for') !== '' || header(req, 'tailscale-funnel-request') !== ''
-  if (LOOPBACK.has(hostname) && !proxied) return { allowed: true, origins: localOrigins }
+  if (isLocalRequest(req)) return { allowed: true, origins: localOrigins }
 
+  const host = header(req, 'host').toLowerCase()
+  const login = header(req, 'tailscale-user-login').toLowerCase()
   if (!remote.origins.includes(`https://${host}`)) return { allowed: false }
   if (header(req, 'tailscale-funnel-request') !== '' || login === '') return { allowed: false }
   if (remote.users.length && !remote.users.includes(login)) return { allowed: false }

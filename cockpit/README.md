@@ -185,7 +185,10 @@ the project's `CLAUDE.md`, `.claude/settings.json` and `.claude/settings.local.j
 trust entry matches Claude's cwd). Local project state lives in
 `~/.eml-cockpit/projects.json`; the host trusts each project path in the
 app's `.claude.json` so the TUI opens straight into the session. The brain MCP is always attached
-(`--mcp-config`, rewritten on every host start). Your own MCPs load next to it as long as you set
+(`--mcp-config`, rewritten on every host start): one HTTP endpoint in the host (`/mcp`, loopback
+only) serves every Claude Code session instead of a process per session. A space's own per-boot
+token picks its brain, and the session must be one the host started in that space; the brain
+token never leaves the host. Your own MCPs load next to it as long as you set
 them up *inside* the cockpit: `claude mcp add -s user …` in a cockpit session (stored in the
 cockpit's `.claude.json`, survives restarts), claude.ai connectors via `/mcp`, plugins via
 `/plugin`, and a project's `.mcp.json` (Claude asks before loading it). MCPs from your normal

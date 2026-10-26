@@ -37,6 +37,7 @@ import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
+import { MCP_PATH, sessionModel } from './brain-mcp.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -87,6 +88,9 @@ export interface HostDeps {
   spawnToken: string
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
+  /** The brain MCP endpoint (brain-mcp.ts) and its URL, which a new space's mcp.json names. */
+  brainMcp: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
+  mcpUrl: string
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -298,6 +302,7 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
   })
   const space = openBrainSpace({
     id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
+    mcpUrl: deps.mcpUrl,
   })
   deps.spaces.add(space)
   return { space }
@@ -321,9 +326,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     const entry = deps.bridge.ledger.get(id)
     if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-    const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
-    const summary = deps.providers.forSession(id).summary(deps.bridge.ledger.ref(id, project?.path ?? null))
-    json(res, 200, { model: summary.model, provider: entry.provider })
+    const model = sessionModel({ spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, id)
+    json(res, 200, { model, provider: entry.provider })
     return true
   }
 
@@ -833,6 +837,9 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
       json(res, 403, { error: { code: 'FORBIDDEN', message: 'Not allowed from here' } })
       return
     }
+    // The brain MCP endpoint (brain-mcp.ts): local agent sessions only, no
+    // Origin; the space's MCP token and a known session are its guard.
+    if (url === MCP_PATH || url.startsWith(`${MCP_PATH}?`)) { void deps.brainMcp.handle(req, res); return }
     // CSRF guard for the whole API surface, including the brain proxy (the host
     // injects the brain token, so a cross-origin write would otherwise reach the
     // real brain): every state-changing /api/* call must carry an allowlisted

@@ -35,8 +35,9 @@ import { platform } from '../../platform/index.js'
  *     so it follows the cockpit's light/dark theme (see seededClaudeTheme).
  *
  * Per brain space, under spaces/<id>/ (writeSpaceFiles, called by brain-space.ts):
- *   - mcp.json (chmod 600): the brain MCP server (eml_brain) pointed at the
- *     space's brain with its token, both passed as env (never argv).
+ *   - mcp.json (chmod 600): the brain MCP server (eml_brain), the host's MCP
+ *     endpoint over HTTP with the space's per-boot MCP token (brain-mcp.ts);
+ *     the brain token itself stays in the host.
  *   - settings.json (passed via --settings): skips the interactive "Bypass
  *     Permissions mode" acceptance dialog that --dangerously-skip-permissions
  *     otherwise shows on every TUI start; carries the session hooks — turn
@@ -131,7 +132,7 @@ export { HOOK_TOKEN_HEADER, brainMcpServer }
 
 /** The files a brain space's sessions start with (brain-space.ts). */
 export interface SpaceFiles {
-  /** --mcp-config: the brain MCP server with this space's URL + token. */
+  /** --mcp-config: the brain MCP endpoint with this space's MCP token. */
   mcpConfig: string
   /** --settings: the session hooks, with the EML hooks reading `emlConfig`. */
   settings: string
@@ -148,6 +149,7 @@ export function writeSpaceFiles(
   loopbackUrl: string,
   brainToken: string,
   turnHookConfig: string,
+  mcp: { url: string; token: string },
 ): SpaceFiles {
   const dir = spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -159,7 +161,7 @@ export function writeSpaceFiles(
   writeEmlHookConfig(emlConfig, loopbackUrl, brainToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { eml_brain: brainMcpServer(loopbackUrl, brainToken) } }),
+    JSON.stringify({ mcpServers: { eml_brain: brainMcpServer(mcp.url, mcp.token) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)

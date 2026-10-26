@@ -81,16 +81,24 @@ export const BRAIN_MCP_COMMAND = { command: 'node', args: [MCP_CLI_JS] }
 /** The two environment variables the brain MCP server reads. */
 export const BRAIN_MCP_ENV_VARS = ['EML_API_URL', 'EML_API_TOKEN'] as const
 
+/** The header with a space's MCP token on every request to the host's brain MCP endpoint (brain-mcp.ts). */
+export const MCP_TOKEN_HEADER = 'x-cockpit-mcp-token'
+
+/** The header naming the cockpit session on the brain MCP endpoint; the agent CLI fills it from the session's env. */
+export const MCP_SESSION_HEADER = 'x-eml-session'
+
 /**
- * The brain MCP server entry for Claude Code's mcp.json (one per brain space).
- * URL and token go in through the environment (read by the mcp-server CLI),
- * not as arguments: arguments show up in every local user's ps output, a
- * process's environment does not.
+ * The brain MCP server entry for Claude Code's mcp.json (one per brain space):
+ * the host's MCP endpoint over HTTP (brain-mcp.ts), not a process per session.
+ * The space's MCP token picks the brain; Claude Code expands
+ * ${COCKPIT_SESSION_ID} from each session's environment, so one file serves
+ * every session of the space.
  */
-export function brainMcpServer(loopbackUrl: string, brainToken: string) {
+export function brainMcpServer(mcpUrl: string, mcpToken: string) {
   return {
-    ...BRAIN_MCP_COMMAND,
-    env: { EML_API_URL: loopbackUrl, EML_API_TOKEN: brainToken },
+    type: 'http',
+    url: mcpUrl,
+    headers: { [MCP_TOKEN_HEADER]: mcpToken, [MCP_SESSION_HEADER]: '${COCKPIT_SESSION_ID}' },
   }
 }
 
