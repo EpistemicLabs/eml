@@ -22,3 +22,5 @@ export {
   joinRequest, openJoin, joinAccept, openAccept,
   type Invite, type InviteNotice, type JoinRequest, type JoinAccept,
 } from './invite'
+export { LOGIN_WINDOW_MS, loginChallenge, loginResponse, verifyLogin, type LoginChallenge, type LoginResponse } from './login'
+export { DivergedError, checkpointArgs, checkCheckpoint } from './checkpoint'
