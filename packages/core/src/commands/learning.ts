@@ -79,19 +79,17 @@ export function createLearning(ctx: CommandContext, input: Omit<LearnInput, 'id'
   const id = stamp.newId()
   const now = stamp.at
   stamp.created.add(id)
-  db.transaction(() => {
-    db.prepare(`
-      INSERT INTO engrams (id, content, type, scope, title, status, significance, properties,
-        ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at, rev)
-      VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(id, input.content, input.scope, input.title, actor.handle, actor.ingestion_method,
-      actor.session_id, actor.model, actor.harness, now, now)
-    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)
-    appendEntry(db, id, evidence, stamp)
-    if (tagSlugs && tagSlugs.length > 0) insertEngramTags(ctx, id, tagSlugs)
-    if (subjectSlugs && subjectSlugs.length > 0) insertEngramSubjects(ctx, id, subjectSlugs)
-    materializeWikilinks(ctx, id, input.content!, input.scope!)
-  })()
+  db.prepare(`
+    INSERT INTO engrams (id, content, type, scope, title, status, significance, properties,
+      ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at, rev)
+    VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(id, input.content, input.scope, input.title, actor.handle, actor.ingestion_method,
+    actor.session_id, actor.model, actor.harness, now, now)
+  db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)
+  appendEntry(db, id, evidence, stamp)
+  if (tagSlugs && tagSlugs.length > 0) insertEngramTags(ctx, id, tagSlugs)
+  if (subjectSlugs && subjectSlugs.length > 0) insertEngramSubjects(ctx, id, subjectSlugs)
+  materializeWikilinks(ctx, id, input.content!, input.scope!)
   return { written: true, engram: ctx.store.getRaw(id, stamp.at)!, learning: learningState(ctx.store.entries(id)) }
 }
 

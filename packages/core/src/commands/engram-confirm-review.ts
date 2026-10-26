@@ -40,13 +40,11 @@ function confirmReview(ctx: CommandContext, id: string, text: string | undefined
   const live = existing.type === 'task' ? (TASK_OPEN_STATUSES as readonly string[]).includes(existing.status) : existing.status === 'active'
   if (!live) throw new Error(`Invalid engram: ${id} is ${existing.status} — a review confirms an active engram${existing.type === 'task' ? ' (an open task)' : ''}.`)
   if (existing.type === 'task') {
-    db.transaction(() => {
-      db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, id)
-      bumpRev(db, stamp, id)
-      if (text && text.trim() !== '') {
-        appendEntry(db, id, { kind: 'note', text, stage: propsOf(ctx, id).stage as string ?? null }, stamp)
-      }
-    })()
+    db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, id)
+    bumpRev(db, stamp, id)
+    if (text && text.trim() !== '') {
+      appendEntry(db, id, { kind: 'note', text, stage: propsOf(ctx, id).stage as string ?? null }, stamp)
+    }
     return ctx.store.getRaw(id, stamp.at)
   }
   const reviewDays = TYPE_REVIEW_DEFAULTS[existing.type as keyof typeof TYPE_REVIEW_DEFAULTS]
@@ -54,12 +52,10 @@ function confirmReview(ctx: CommandContext, id: string, text: string | undefined
     throw new Error(`Invalid engram: a review is confirmed for a decision, rule, profile or task (got ${existing.type}).`)
   }
   if (isBlank(text)) throw new Error('Invalid engram: confirming a review needs text — why it still holds.')
-  db.transaction(() => {
-    const props = existing.properties ? JSON.parse(existing.properties) : {}
-    props.review_due_at = addDays(stamp.at, reviewDays)
-    db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, id)
-    bumpRev(db, stamp, id)
-    appendEntry(db, id, { kind: 'review', text: text! }, stamp)
-  })()
+  const props = existing.properties ? JSON.parse(existing.properties) : {}
+  props.review_due_at = addDays(stamp.at, reviewDays)
+  db.prepare(`UPDATE engrams SET properties = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(props), stamp.at, id)
+  bumpRev(db, stamp, id)
+  appendEntry(db, id, { kind: 'review', text: text! }, stamp)
   return ctx.store.getRaw(id, stamp.at)
 }

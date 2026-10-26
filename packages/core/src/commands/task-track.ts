@@ -142,76 +142,74 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   const superseded: string[] = []
   let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
   const scopeChanged = input.scope !== undefined && input.scope !== existing.scope
-  db.transaction(() => {
-    const props = { ...old }
-    for (const [k, v] of Object.entries(fieldPatch)) {
-      if (v === null) delete props[k]
-      else props[k] = v
-    }
-    if (reopening) delete props.outcome
-    const sets: string[] = ['properties = ?']
-    const params: unknown[] = [JSON.stringify(props)]
-    if (statusChanged) { sets.push('status = ?'); params.push(newStatus) }
-    if (input.content !== undefined) { sets.push('content = ?'); params.push(input.content) }
-    if (input.title !== undefined) { sets.push('title = ?'); params.push(input.title) }
-    if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
-    sets.push('updated_at = ?')
-    db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
-    bumpRev(db, stamp, id)
-    if (input.content !== undefined || input.title !== undefined || scopeChanged) {
-      db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-      db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
-    }
-    if (contentChanged) wikilinks = materializeWikilinks(ctx, id, input.content!, input.scope ?? existing.scope)
+  const props = { ...old }
+  for (const [k, v] of Object.entries(fieldPatch)) {
+    if (v === null) delete props[k]
+    else props[k] = v
+  }
+  if (reopening) delete props.outcome
+  const sets: string[] = ['properties = ?']
+  const params: unknown[] = [JSON.stringify(props)]
+  if (statusChanged) { sets.push('status = ?'); params.push(newStatus) }
+  if (input.content !== undefined) { sets.push('content = ?'); params.push(input.content) }
+  if (input.title !== undefined) { sets.push('title = ?'); params.push(input.title) }
+  if (scopeChanged) { sets.push('scope = ?'); params.push(input.scope) }
+  sets.push('updated_at = ?')
+  db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
+  bumpRev(db, stamp, id)
+  if (input.content !== undefined || input.title !== undefined || scopeChanged) {
+    db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
+    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+  }
+  if (contentChanged) wikilinks = materializeWikilinks(ctx, id, input.content!, input.scope ?? existing.scope)
 
-    if (text) written.push(appendEntry(db, id, { kind: 'note', text, stage: props.stage ?? null }, stamp))
-    const change = (t: string) => written.push(appendTaskChange(ctx, id, t))
-    const show = (v: unknown) => v === undefined || v === null ? 'none' : Array.isArray(v) ? (v.length ? v.join(', ') : 'none') : String(v)
-    if (statusChanged) {
-      if (closing) change(`${newStatus}: ${input.outcome}`)
-      else if (reopening) change(`reopened (${newStatus})`)
-      else change(`status ${existing.status} → ${newStatus}`)
-    }
-    if (stageChanged) change(`stage ${show(old.stage)} → ${show(input.stage)}`)
-    for (const k of ['priority', 'assignee_id', 'due_date'] as const) {
-      if (input[k] !== undefined && (input[k] ?? undefined) !== old[k]) change(`${k} ${show(old[k])} → ${show(input[k])}`)
-    }
-    if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
-      change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
-    }
-    if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
-    if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
-    if (contentChanged) change('content rewritten')
-    if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)
-    if (scopeChanged) change(`scope ${existing.scope} → ${input.scope}`)
-    const replaced = applySupersedes(ctx, id, supersedePlan)
-    superseded.push(...replaced.superseded)
-    openSubtasks.push(...replaced.openSubtasks)
+  if (text) written.push(appendEntry(db, id, { kind: 'note', text, stage: props.stage ?? null }, stamp))
+  const change = (t: string) => written.push(appendTaskChange(ctx, id, t))
+  const show = (v: unknown) => v === undefined || v === null ? 'none' : Array.isArray(v) ? (v.length ? v.join(', ') : 'none') : String(v)
+  if (statusChanged) {
+    if (closing) change(`${newStatus}: ${input.outcome}`)
+    else if (reopening) change(`reopened (${newStatus})`)
+    else change(`status ${existing.status} → ${newStatus}`)
+  }
+  if (stageChanged) change(`stage ${show(old.stage)} → ${show(input.stage)}`)
+  for (const k of ['priority', 'assignee_id', 'due_date'] as const) {
+    if (input[k] !== undefined && (input[k] ?? undefined) !== old[k]) change(`${k} ${show(old[k])} → ${show(input[k])}`)
+  }
+  if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
+    change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
+  }
+  if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
+  if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
+  if (contentChanged) change('content rewritten')
+  if (input.title !== undefined && input.title !== existing.title) change(`title ${existing.title ?? 'none'} → ${input.title}`)
+  if (scopeChanged) change(`scope ${existing.scope} → ${input.scope}`)
+  const replaced = applySupersedes(ctx, id, supersedePlan)
+  superseded.push(...replaced.superseded)
+  openSubtasks.push(...replaced.openSubtasks)
 
-    if (input.parent_id !== undefined) {
-      const current = parentOf(ctx, id)
-      if ((input.parent_id ?? undefined) !== current) {
-        if (current !== undefined) db.prepare(`DELETE FROM relations WHERE source_id = ? AND relation = 'part_of'`).run(id)
-        if (input.parent_id !== null) linkPartOf(ctx, id, input.parent_id)
-        change(`parent ${current ?? 'none'} → ${input.parent_id ?? 'none'}`)
-      }
+  if (input.parent_id !== undefined) {
+    const current = parentOf(ctx, id)
+    if ((input.parent_id ?? undefined) !== current) {
+      if (current !== undefined) db.prepare(`DELETE FROM relations WHERE source_id = ? AND relation = 'part_of'`).run(id)
+      if (input.parent_id !== null) linkPartOf(ctx, id, input.parent_id)
+      change(`parent ${current ?? 'none'} → ${input.parent_id ?? 'none'}`)
     }
-    if (tagSlugs !== undefined) { replaceEngramTags(ctx, id, tagSlugs); change(`tags → ${show(tagSlugs)}`) }
-    if (subjectSlugs !== undefined) { replaceEngramSubjects(ctx, id, subjectSlugs); change(`subjects → ${show(subjectSlugs)}`) }
+  }
+  if (tagSlugs !== undefined) { replaceEngramTags(ctx, id, tagSlugs); change(`tags → ${show(tagSlugs)}`) }
+  if (subjectSlugs !== undefined) { replaceEngramSubjects(ctx, id, subjectSlugs); change(`subjects → ${show(subjectSlugs)}`) }
 
-    if (closing) {
-      const r = closeBoundItems(ctx, id, newStatus as 'resolved' | 'invalidated', input.keep ?? [])
-      closedWith = r.closed
-      kept = r.kept
-      written.push(...r.entries)
-    }
-    // what a reopen may bring back: the bound items that closed with it (an offer, never automatic)
-    if (reopening) {
-      // the supersede is undone: its edge goes, so the task can be replaced again
-      db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
-      reopenCandidates = closedWithTask(ctx, id)
-    }
-  })()
+  if (closing) {
+    const r = closeBoundItems(ctx, id, newStatus as 'resolved' | 'invalidated', input.keep ?? [])
+    closedWith = r.closed
+    kept = r.kept
+    written.push(...r.entries)
+  }
+  // what a reopen may bring back: the bound items that closed with it (an offer, never automatic)
+  if (reopening) {
+    // the supersede is undone: its edge goes, so the task can be replaced again
+    db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
+    reopenCandidates = closedWithTask(ctx, id)
+  }
 
   if (wikilinks.unresolved.length > 0) {
     console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)

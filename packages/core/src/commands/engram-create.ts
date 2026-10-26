@@ -179,63 +179,61 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   const superseded: string[] = []
   let previousState: string | null | undefined
 
-  // One transaction: the row, its search entry, every edge and entry it draws.
+  // apply()'s one transaction holds the row, its search entry, every edge and entry it draws.
   // ingested_by is the caller the server derived from the token — never input.
-  db.transaction(() => {
-    // One core profile per scope (unique index): the old one goes first.
-    stamp.created.add(id)
-    if (type === 'profile' && props.core === true) superseded.push(...autoSupersedeCoreProfile(ctx, id, input.scope))
+  // One core profile per scope (unique index): the old one goes first.
+  stamp.created.add(id)
+  if (type === 'profile' && props.core === true) superseded.push(...autoSupersedeCoreProfile(ctx, id, input.scope))
+  db.prepare(`
+    INSERT INTO engrams (
+      id, content, type, scope, title, status, significance, properties,
+      origin, ingested_by, ingestion_method, session_id, model, harness,
+      created_at, updated_at, rev
+    ) VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `).run(
+    id, content, type, input.scope, input.title ?? null, status,
+    JSON.stringify(input.app ? { ...props, app: input.app } : props),
+    input.origin ?? null, actor.handle, actor.ingestion_method,
+    actor.session_id, actor.model, actor.harness,
+    now, now,
+  )
+  db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
+    .run(id, content, input.scope, input.title ?? '')
+
+  if (type === 'status') {
+    previousState = activeStatusState(ctx, input.scope, id)
+    superseded.push(...autoSupersedeStatusEngrams(ctx, id, input.scope))
+  }
+  if (type === 'task') {
+    const stage = typeof props.stage === 'string' ? ` · stage ${props.stage}` : ''
+    appendEntry(db, id, { kind: 'change', text: `created (${status}${stage})`, stage: (props.stage as string) ?? null }, stamp)
+  }
+
+  const replaced = applySupersedes(ctx, id, supersedePlan)
+  superseded.push(...replaced.superseded)
+  openSubtasks.push(...replaced.openSubtasks)
+  for (const lid of fromLearning) {
+    supersede(ctx, id, lid)
+    superseded.push(lid)
+  }
+
+  if (input.parent_id !== undefined) linkPartOf(ctx, id, input.parent_id)
+
+  // A task-linked write: edge to the task + a change entry in its journal.
+  if (input.task_id !== undefined && taskLink) {
     db.prepare(`
-      INSERT INTO engrams (
-        id, content, type, scope, title, status, significance, properties,
-        origin, ingested_by, ingestion_method, session_id, model, harness,
-        created_at, updated_at, rev
-      ) VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(
-      id, content, type, input.scope, input.title ?? null, status,
-      JSON.stringify(input.app ? { ...props, app: input.app } : props),
-      input.origin ?? null, actor.handle, actor.ingestion_method,
-      actor.session_id, actor.model, actor.harness,
-      now, now,
-    )
-    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
-      .run(id, content, input.scope, input.title ?? '')
+      INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
+      VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
+      ON CONFLICT(source_id, target_id, relation) DO NOTHING
+    `).run(stamp.newId(), id, input.task_id, taskLink, stamp.at)
+    const label = input.title ?? (input.content.length > 80 ? `${input.content.slice(0, 80)}…` : input.content)
+    const verb = type === 'decision' ? 'taken' : type === 'event' ? 'recorded' : 'written'
+    appendTaskChange(ctx, input.task_id, `${type} ${verb}: ${label} (${id})`)
+  }
 
-    if (type === 'status') {
-      previousState = activeStatusState(ctx, input.scope, id)
-      superseded.push(...autoSupersedeStatusEngrams(ctx, id, input.scope))
-    }
-    if (type === 'task') {
-      const stage = typeof props.stage === 'string' ? ` · stage ${props.stage}` : ''
-      appendEntry(db, id, { kind: 'change', text: `created (${status}${stage})`, stage: (props.stage as string) ?? null }, stamp)
-    }
-
-    const replaced = applySupersedes(ctx, id, supersedePlan)
-    superseded.push(...replaced.superseded)
-    openSubtasks.push(...replaced.openSubtasks)
-    for (const lid of fromLearning) {
-      supersede(ctx, id, lid)
-      superseded.push(lid)
-    }
-
-    if (input.parent_id !== undefined) linkPartOf(ctx, id, input.parent_id)
-
-    // A task-linked write: edge to the task + a change entry in its journal.
-    if (input.task_id !== undefined && taskLink) {
-      db.prepare(`
-        INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-        VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
-        ON CONFLICT(source_id, target_id, relation) DO NOTHING
-      `).run(stamp.newId(), id, input.task_id, taskLink, stamp.at)
-      const label = input.title ?? (input.content.length > 80 ? `${input.content.slice(0, 80)}…` : input.content)
-      const verb = type === 'decision' ? 'taken' : type === 'event' ? 'recorded' : 'written'
-      appendTaskChange(ctx, input.task_id, `${type} ${verb}: ${label} (${id})`)
-    }
-
-    if (tagSlugs && tagSlugs.length > 0) insertEngramTags(ctx, id, tagSlugs)
-    if (subjectSlugs && subjectSlugs.length > 0) insertEngramSubjects(ctx, id, subjectSlugs)
-    wikilinks = materializeWikilinks(ctx, id, content, input.scope)
-  })()
+  if (tagSlugs && tagSlugs.length > 0) insertEngramTags(ctx, id, tagSlugs)
+  if (subjectSlugs && subjectSlugs.length > 0) insertEngramSubjects(ctx, id, subjectSlugs)
+  wikilinks = materializeWikilinks(ctx, id, content, input.scope)
 
   if (wikilinks.unresolved.length > 0) {
     console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)

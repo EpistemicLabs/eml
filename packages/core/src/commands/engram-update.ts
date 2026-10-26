@@ -229,43 +229,41 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
   const scopeChanged = patch.scope !== undefined && patch.scope !== existing.scope
   const superseded: string[] = []
   let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
-  db.transaction(() => {
-    if (type === 'profile' && newProps.core === true && oldProps.core !== true && newStatus === 'active') {
-      superseded.push(...autoSupersedeCoreProfile(ctx, id, newScope))
-    }
-    const sets: string[] = []
-    const params: unknown[] = []
-    // only what differs from the stored values: a patch that changes nothing writes nothing (no updated_at, no rev)
-    if (contentChanged) { sets.push('content = ?'); params.push(newContent) }
-    if (titleChanged) { sets.push('title = ?'); params.push(patch.title) }
-    if (scopeChanged) { sets.push('scope = ?'); params.push(patch.scope) }
-    if (patch.status !== undefined && patch.status !== existing.status) { sets.push('status = ?'); params.push(patch.status) }
-    if (JSON.stringify(newProps) !== JSON.stringify(oldProps)) { sets.push('properties = ?'); params.push(JSON.stringify(newProps)) }
-    if (sets.length > 0 || tagsChange !== undefined || subjectsChange !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
-      sets.push('updated_at = ?')
-      db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
-      bumpRev(db, stamp, id)
-    }
-    if (contentChanged || scopeChanged || titleChanged) {
-      db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-      db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
-    }
-    if (tagsChange !== undefined) replaceEngramTags(ctx, id, tagsChange)
-    if (subjectsChange !== undefined) replaceEngramSubjects(ctx, id, subjectsChange)
-    if (contentChanged) wikilinks = materializeWikilinks(ctx, id, newContent!, newScope)
-    superseded.push(...applySupersedes(ctx, id, supersedePlan).superseded)
-    if (patch.review_note !== undefined) appendEntry(db, id, { kind: 'review', text: patch.review_note }, stamp)
-    // a decision's or note's status change goes into its journal (a reopen of its task reads the last one)
-    if ((type === 'decision' || type === 'note') && newStatus !== existing.status) {
-      appendEntry(db, id, { kind: 'change', text: `status ${existing.status} → ${newStatus}` }, stamp)
-    }
-    // the supersede is undone: its edge goes, so the engram can be superseded again
-    if (reactivatesSuperseded) db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
-    if (logCorrection) appendEntry(db, id, { kind: 'change', text: logCorrection }, stamp)
-    if (type === 'learning' && patch.content !== undefined && patch.content !== existing.content) {
-      appendEntry(db, id, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
-    }
-  })()
+  if (type === 'profile' && newProps.core === true && oldProps.core !== true && newStatus === 'active') {
+    superseded.push(...autoSupersedeCoreProfile(ctx, id, newScope))
+  }
+  const sets: string[] = []
+  const params: unknown[] = []
+  // only what differs from the stored values: a patch that changes nothing writes nothing (no updated_at, no rev)
+  if (contentChanged) { sets.push('content = ?'); params.push(newContent) }
+  if (titleChanged) { sets.push('title = ?'); params.push(patch.title) }
+  if (scopeChanged) { sets.push('scope = ?'); params.push(patch.scope) }
+  if (patch.status !== undefined && patch.status !== existing.status) { sets.push('status = ?'); params.push(patch.status) }
+  if (JSON.stringify(newProps) !== JSON.stringify(oldProps)) { sets.push('properties = ?'); params.push(JSON.stringify(newProps)) }
+  if (sets.length > 0 || tagsChange !== undefined || subjectsChange !== undefined || supersedePlan.size > 0 || patch.review_note !== undefined) {
+    sets.push('updated_at = ?')
+    db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
+    bumpRev(db, stamp, id)
+  }
+  if (contentChanged || scopeChanged || titleChanged) {
+    db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
+    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+  }
+  if (tagsChange !== undefined) replaceEngramTags(ctx, id, tagsChange)
+  if (subjectsChange !== undefined) replaceEngramSubjects(ctx, id, subjectsChange)
+  if (contentChanged) wikilinks = materializeWikilinks(ctx, id, newContent!, newScope)
+  superseded.push(...applySupersedes(ctx, id, supersedePlan).superseded)
+  if (patch.review_note !== undefined) appendEntry(db, id, { kind: 'review', text: patch.review_note }, stamp)
+  // a decision's or note's status change goes into its journal (a reopen of its task reads the last one)
+  if ((type === 'decision' || type === 'note') && newStatus !== existing.status) {
+    appendEntry(db, id, { kind: 'change', text: `status ${existing.status} → ${newStatus}` }, stamp)
+  }
+  // the supersede is undone: its edge goes, so the engram can be superseded again
+  if (reactivatesSuperseded) db.prepare(`DELETE FROM relations WHERE target_id = ? AND relation = 'supersedes'`).run(id)
+  if (logCorrection) appendEntry(db, id, { kind: 'change', text: logCorrection }, stamp)
+  if (type === 'learning' && patch.content !== undefined && patch.content !== existing.content) {
+    appendEntry(db, id, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
+  }
 
   if (wikilinks.unresolved.length > 0) {
     console.warn(`[EML] unresolved wikilink(s) in engram ${id}: ${wikilinks.unresolved.map(t => `[[${t}]]`).join(' ')}`)
