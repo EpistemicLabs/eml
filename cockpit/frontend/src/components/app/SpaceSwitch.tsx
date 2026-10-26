@@ -3,11 +3,14 @@
 // marked, and "New space…" (a further local brain, host POST /api/spaces).
 // The header shows every space's desks as sections (DeskTabBar), so a desk of
 // another space is one click away there. Switching a space switches its desks.
+// A space whose brain failed to migrate is marked here (red dot), so the
+// failure is seen from every space; its banner says what happened.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Brain, Check, ChevronDown, Loader2, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { failedUnresolved, useUpdateStatus } from '@/stores/useUpdateStatusStore';
 import { setTopView } from '@/stores/useTopViewStore';
 import {
   createSpace,
@@ -26,6 +29,10 @@ interface SpaceSwitchProps {
 export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const spaces = useSpaces();
   const active = useActiveSpace();
+  const update = useUpdateStatus();
+  const failed = (space: SpaceInfo) => failedUnresolved(update?.brains[space.id]);
+  // Another space's brain is offline: the trigger carries the mark too.
+  const otherFailed = spaces.some((s) => s.id !== active?.id && failed(s));
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState('');
@@ -83,7 +90,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   };
 
   const label = active?.name ?? 'Main';
-  const title = `Space: ${label}`;
+  const title = otherFailed ? `Space: ${label} — the brain update failed in another space` : `Space: ${label}`;
 
   return (
     <div ref={rootRef} className="relative flex h-full items-stretch">
@@ -101,6 +108,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <Brain className="h-4 w-4" strokeWidth={1.8} />
           <span className="truncate">{label}</span>
+          {otherFailed && <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       ) : (
@@ -114,6 +122,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          {otherFailed && <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       )}
@@ -143,6 +152,12 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               >
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
                 <span className="flex-1 truncate">{space.name}</span>
+                {failed(space) && (
+                  <span className="flex items-center gap-1 text-[10px] text-destructive" title="The brain update failed — open the space for details">
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-destructive" />
+                    update failed
+                  </span>
+                )}
                 {space.main && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">main</span>}
               </button>
             );

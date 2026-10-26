@@ -427,21 +427,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Update banner (v0.14 Cluster 0): the newest brain-migration report and
-    // the in-app update this host runs. Dismissing a failure is refused until
-    // the brain has caught up.
+    // Update banner (v0.14 Cluster 0): per brain the newest migration report,
+    // and the in-app update this host runs. The page shows the active space's
+    // brain; dismissing and revealing act on the requesting space's brain.
+    // Dismissing a failure is refused until the brain has caught up.
     if (resource === 'update-status' && !id && method === 'GET') {
       json(res, 200, readUpdateStatus((brainId) => deps.spaces.get(brainId)?.name))
       return true
     }
     if (resource === 'update-status' && id === 'ack' && method === 'POST') {
-      const result = acknowledgeUpdateStatus()
+      const result = acknowledgeUpdateStatus(space.id)
       if (result.ok) json(res, 200, { success: true })
       else json(res, 409, { error: { code: 'NOT_RESOLVED', message: result.reason } })
       return true
     }
     if (resource === 'update-status' && id === 'reveal-backup' && method === 'POST') {
-      const backup = readUpdateStatus().report?.backupPath
+      const backup = readUpdateStatus().brains[space.id]?.report.backupPath
       if (!backup || !fs.existsSync(backup)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'No backup for this report' } }); return true }
       await revealBrainFile(backup)
       json(res, 200, { success: true })

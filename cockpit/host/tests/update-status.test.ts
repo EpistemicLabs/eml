@@ -9,6 +9,10 @@ process.env.EML_COCKPIT_HOME = home
 
 const reports = join(home, 'data', 'migration-reports')
 const migrated = { brainId: 'brain-1', brainName: 'motti', from: 17, to: 18, outcome: 'migrated', at: '2026-10-20T10:00:00.000Z' }
+const writeReport = (file: string, report: Record<string, unknown>) => {
+  mkdirSync(reports, { recursive: true })
+  writeFileSync(join(reports, file), JSON.stringify(report))
+}
 
 describe('update status (the update banner)', () => {
   let mods: typeof import('../src/update-status.js') & typeof import('../src/app-update.js')
@@ -26,20 +30,19 @@ describe('update status (the update banner)', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   it('shows nothing without a report or an in-app update', () => {
-    expect(mods.readUpdateStatus()).toEqual({ report: null, brain: null, acknowledged: false, resolved: false, updated: null })
+    expect(mods.readUpdateStatus()).toEqual({ brains: {}, updated: null })
   })
 
   it("names the report's brain by its space, else by the brain's own name", () => {
-    mkdirSync(reports, { recursive: true })
-    writeFileSync(join(reports, '20261020T100000Z-brain-1.json'), JSON.stringify(migrated))
-    expect(mods.readUpdateStatus((id) => (id === 'brain-1' ? 'Main' : undefined)).brain).toBe('Main')
-    expect(mods.readUpdateStatus().brain).toBe('motti')
+    writeReport('20261020T100000Z-brain-1.json', migrated)
+    expect(mods.readUpdateStatus((id) => (id === 'brain-1' ? 'Main' : undefined)).brains['brain-1'].brain).toBe('Main')
+    expect(mods.readUpdateStatus().brains['brain-1'].brain).toBe('motti')
   })
 
   it('reports an in-app update to the running version without a migration, until dismissed', () => {
     lastResult({ outcome: 'updated', from: '0.0.1', to: mods.ownVersion() })
     expect(mods.readUpdateStatus().updated).toEqual({ outcome: 'updated', from: '0.0.1', to: mods.ownVersion() })
-    expect(mods.acknowledgeUpdateStatus()).toEqual({ ok: true })
+    expect(mods.acknowledgeUpdateStatus('brain-1')).toEqual({ ok: true })
     expect(mods.readUpdateStatus().updated).toBeNull()
   })
 
@@ -48,22 +51,54 @@ describe('update status (the update banner)', () => {
     expect(mods.readUpdateStatus().updated).toBeNull()
     lastResult({ outcome: 'updated', from: '0.0.1', to: '0.0.2' })
     expect(mods.readUpdateStatus().updated).toBeNull()
-    expect(mods.acknowledgeUpdateStatus()).toEqual({ ok: false, reason: 'nothing to dismiss' })
+    expect(mods.acknowledgeUpdateStatus('brain-1')).toEqual({ ok: false, reason: 'nothing to dismiss' })
   })
 
-  it('dismisses the migration report and the update together', () => {
-    mkdirSync(reports, { recursive: true })
-    writeFileSync(join(reports, '20261020T100000Z-brain-1.json'), JSON.stringify(migrated))
+  it("dismisses the space's migration report and the update together", () => {
+    writeReport('20261020T100000Z-brain-1.json', migrated)
     lastResult({ outcome: 'updated', from: '0.0.1', to: mods.ownVersion() })
-    expect(mods.acknowledgeUpdateStatus()).toEqual({ ok: true })
-    expect(mods.readUpdateStatus()).toMatchObject({ acknowledged: true, updated: null })
+    expect(mods.acknowledgeUpdateStatus('brain-1')).toEqual({ ok: true })
+    expect(mods.readUpdateStatus()).toMatchObject({ brains: { 'brain-1': { acknowledged: true } }, updated: null })
+  })
+
+  it("keeps each brain's newest report: every space sees its own brain", () => {
+    // one start migrates both brains, the second a few ms later
+    writeReport('20261019T100000Z-brain-2.json', { ...migrated, brainId: 'brain-2', from: 16, to: 17 })
+    writeReport('20261024T013524158Z-brain-1.json', migrated)
+    writeReport('20261024T013524174Z-brain-2.json', { ...migrated, brainId: 'brain-2' })
+    const { brains } = mods.readUpdateStatus((id) => ({ 'brain-1': 'Main', 'brain-2': 'Privat' })[id])
+    expect(Object.keys(brains).sort()).toEqual(['brain-1', 'brain-2'])
+    expect(brains['brain-1']).toMatchObject({ brain: 'Main', report: { file: '20261024T013524158Z-brain-1.json' } })
+    expect(brains['brain-2']).toMatchObject({ brain: 'Privat', report: { file: '20261024T013524174Z-brain-2.json', from: 17 } })
+  })
+
+  it("a later brain's success does not hide an earlier brain's failure", () => {
+    writeReport('20261024T013524158Z-brain-1.json', { ...migrated, outcome: 'restored', error: 'boom' })
+    writeReport('20261024T013524174Z-brain-2.json', { ...migrated, brainId: 'brain-2' })
+    const { brains } = mods.readUpdateStatus()
+    expect(brains['brain-1']).toMatchObject({ resolved: false, report: { outcome: 'restored' } })
+    expect(brains['brain-2']).toMatchObject({ resolved: true, report: { outcome: 'migrated' } })
+  })
+
+  it("dismissing in one space leaves the other space's report", () => {
+    writeReport('20261024T013524158Z-brain-1.json', migrated)
+    writeReport('20261024T013524174Z-brain-2.json', { ...migrated, brainId: 'brain-2' })
+    expect(mods.acknowledgeUpdateStatus('brain-1')).toEqual({ ok: true })
+    expect(mods.readUpdateStatus().brains).toMatchObject({ 'brain-1': { acknowledged: true }, 'brain-2': { acknowledged: false } })
+    expect(mods.acknowledgeUpdateStatus('brain-2')).toEqual({ ok: true })
+    expect(mods.readUpdateStatus().brains).toMatchObject({ 'brain-1': { acknowledged: true }, 'brain-2': { acknowledged: true } })
+  })
+
+  it('reads a dismissal written by an earlier version (a single file name)', () => {
+    writeReport('20261024T013524174Z-brain-2.json', { ...migrated, brainId: 'brain-2' })
+    writeFileSync(join(home, 'update-status.json'), JSON.stringify({ acknowledged: '20261024T013524174Z-brain-2.json' }))
+    expect(mods.readUpdateStatus().brains['brain-2'].acknowledged).toBe(true)
   })
 
   it('refuses to dismiss a failed migration that is not resolved', () => {
-    mkdirSync(reports, { recursive: true })
-    writeFileSync(join(reports, '20261020T100000Z-brain-1.json'), JSON.stringify({ ...migrated, outcome: 'restored', error: 'boom' }))
+    writeReport('20261020T100000Z-brain-1.json', { ...migrated, outcome: 'restored', error: 'boom' })
     lastResult({ outcome: 'updated', from: '0.0.1', to: mods.ownVersion() })
-    expect(mods.acknowledgeUpdateStatus()).toEqual({ ok: false, reason: 'the brain update has not succeeded yet' })
+    expect(mods.acknowledgeUpdateStatus('brain-1')).toEqual({ ok: false, reason: 'the brain update has not succeeded yet' })
     expect(mods.readUpdateStatus().updated).not.toBeNull()
   })
 })
