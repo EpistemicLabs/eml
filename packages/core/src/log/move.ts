@@ -6,13 +6,30 @@ import { sha256Hex, type OpEnvelope } from './op'
 // --- Moving engrams between brains (v0.21) ---------------------------------------
 //
 // A set of engrams leaves one brain and arrives in another with its history
-// (spec cross-brain-move-spec; decision team-brain-move-project-as-import):
-// engram.import writes the rows as they are into the target, engram.move_out
-// removes them from the source. Both are ops in their brain's log. The set is
-// exported here as rows: the engrams, their entries, the relations inside the
-// set, their tag and subject links, and the registry rows they need — scope
-// objects (a project with its parents), tags and subjects. ord is not carried;
-// the target appends the rows in their source order.
+// (spec cross-brain-move-spec; decision team-brain-move-project-as-import).
+//
+// What moves: the engrams as stored (ids, authorship, times, rev), their
+// entries, the relations inside the set, their tag and subject links, and the
+// registry rows they need — scope objects (a project with its parents), tags
+// and subjects. ord is not carried; the target appends the rows in their source
+// order. What does not: relations crossing the set (dropped in the source, and
+// the caller names them) and entries naming an engram outside it (kept, the id
+// stays as text). The source keeps its registry rows; the target keeps the
+// ones it has.
+//
+// Two ops, one in each brain's log, so a rebuild replays and verify checks
+// them like any write: engram.import writes the rows into the target, refused
+// whole on any collision; engram.move_out removes the set from the source,
+// only while the set is exactly what was imported (set_hash) — the removal is
+// an op, not a delete (decision no-delete-command).
+//
+// moveEngrams (move-engrams.ts) runs them: the source is backed up first
+// (backupBrain, the user's way back), then locked; the import commits in the
+// target, then the move_out in the source. A failure between the two commits
+// leaves the set in both brains, never in neither; the same move called again
+// finds its import in the target's log and writes only the move_out.
+//
+// Not reachable by agents: no route and no MCP tool calls these.
 
 /** The columns carried per table, in insert order of the tables: every stored column but ord. */
 export const MOVED_COLUMNS = {

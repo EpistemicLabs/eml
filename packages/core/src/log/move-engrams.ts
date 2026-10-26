@@ -9,13 +9,10 @@ import { brainRef, exportSet, namesCrossing, type ExternalRef } from './move'
 
 // --- Moving engrams between two brains (v0.21) -----------------------------------
 //
-// The two ops of a move (log/move.ts), run in the order that loses nothing
-// (spec cross-brain-move-spec §3, §5): the source is backed up, then locked;
-// the import commits in the target, then the move_out in the source. Two files
-// cannot commit together: a failure between the two commits leaves the set in
-// both brains, and the same move called again finds its import in the target's
-// log and writes only the move_out. Not in core's index: it needs the EML class
-// at runtime (the same cycle as rebuild) — callers load it from dist/log.
+// The two ops of a move (overview in log/move.ts), run in the order that loses
+// nothing: two files cannot commit together, so the import commits first.
+// Not in core's index: it needs the EML class at runtime (the same cycle as
+// rebuild) — callers load it from dist/log.
 
 export interface MoveArgs {
   source: Database.Database
