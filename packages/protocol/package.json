@@ -1,7 +1,7 @@
 {
   "name": "@engramprotocol/protocol",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.20.4",
+  "private": false,
   "description": "EML team-brain protocol — the log format, keys, signatures and sealing, shared by the cockpit and the relay",
   "license": "MIT",
   "main": "dist/index.js",
@@ -23,6 +23,12 @@
       ]
     }
   },
+  "files": [
+    "dist",
+    "vectors",
+    "PROTOCOL.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests",
