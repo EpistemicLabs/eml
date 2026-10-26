@@ -512,8 +512,8 @@ describe('moveEngrams', () => {
     })
     expect(exportSet(raw(to), s.set).rows).toEqual(set.rows)
     expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
-    // the backup is the source before the move, owner-only
-    expect(statSync(backup).mode & 0o777).toBe(0o600)
+    // the backup is the source before the move, owner-only (Windows has no POSIX mode bits)
+    if (process.platform !== 'win32') expect(statSync(backup).mode & 0o777).toBe(0o600)
     const copy = new Database(backup, { readonly: true })
     expect((copy.prepare('SELECT COUNT(*) AS n FROM engrams WHERE id IN (SELECT value FROM json_each(?))').get(JSON.stringify(s.set)) as { n: number }).n).toBe(6)
     copy.close()
