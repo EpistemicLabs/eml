@@ -2,14 +2,14 @@
 // party computes the same way: the cockpit's brain server and the relay.
 
 export * from './log'
-export { ready, ProtocolError } from './sodium'
+export { ready, ProtocolError, UnsupportedVersionError, PROTOCOL_VERSION } from './wire'
 export {
   newSigningKey, signingKeyFromSeed, newEncryptionKey, encryptionKeyFromSeed, newDeviceKeys,
   certifyDevice, verifyDeviceCert, fingerprint,
   type KeyPair, type DeviceKeys, type DeviceCert,
 } from './keys'
 export {
-  PROTOCOL_VERSION, UnsupportedVersionError, isClearCall, sealOp, clearOp, openRecord,
+  isClearCall, sealOp, clearOp, openRecord,
   type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
 } from './seal'
 export {

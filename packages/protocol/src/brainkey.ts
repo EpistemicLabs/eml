@@ -1,8 +1,8 @@
 import { canonicalJson } from './canonical'
 import { signText, verifyText, type DeviceKeys, type KeyPair } from './keys'
 import { memberOfDevice, type Box, type MemberSet } from './membership'
-import { UnsupportedVersionError, type BrainKey } from './seal'
-import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import type { BrainKey } from './seal'
+import { KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url } from './wire'
 
 // --- The brain key (v0.21) -------------------------------------------------------
 //
@@ -25,8 +25,6 @@ export interface WrappedKey {
   sig: string
 }
 
-const KEY_BYTES = 32
-const NONCE_BYTES = 24
 const SEAL_BYTES = KEY_BYTES + 48  // crypto_box_seal: ephemeral public key (32) + MAC (16)
 const KEY_ID_DOMAIN = 'eml-brain-key-id-v1'
 const WRAP_DOMAIN = 'eml-wrapped-key-v1\n'
@@ -55,8 +53,7 @@ export function rotateKey(set: MemberSet, current: BrainKey): { next: BrainKey, 
 export function rotateKeyWith(key: Uint8Array, nonce: Uint8Array, set: MemberSet, current: BrainKey): { next: BrainKey, args: { epoch: number, key_id: string, prev: Box } } {
   if (current.epoch !== set.epoch || keyId(current.key) !== set.keys[set.epoch].key_id) throw new ProtocolError('the key to rotate is not the brain\'s current key')
   const next = { epoch: set.epoch + 1, key }
-  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(current.key, sodium.from_string(prevAad(set.brain, next.epoch)), null, nonce, next.key)
-  return { next, args: { epoch: next.epoch, key_id: keyId(next.key), prev: { nonce: toBase64url(nonce), ct: toBase64url(ct) } } }
+  return { next, args: { epoch: next.epoch, key_id: keyId(next.key), prev: sealBox(current.key, prevAad(set.brain, next.epoch), nonce, next.key) } }
 }
 
 /**
@@ -72,12 +69,7 @@ export function epochKeys(set: MemberSet, newest: BrainKey): BrainKey[] {
     if (keyId(key) !== set.keys[epoch].key_id) throw new ProtocolError(`the key of epoch ${epoch} is not the one the log names`)
     const prev = set.keys[epoch].prev
     if (!prev) return keys
-    let older: Uint8Array
-    try {
-      older = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(prev.ct, undefined, 'prev'), sodium.from_string(prevAad(set.brain, epoch)), fromBase64url(prev.nonce, NONCE_BYTES, 'prev.nonce'), key)
-    } catch {
-      throw new ProtocolError(`the prev of epoch ${epoch} does not open with its key`)
-    }
+    const older = openBox(prev.ct, prev.nonce, prevAad(set.brain, epoch), key, `the prev of epoch ${epoch} does not open with its key`)
     keys.unshift({ epoch: epoch - 1, key: older })
   }
 }
@@ -91,7 +83,7 @@ export function wrapKey(set: MemberSet, key: BrainKey, recipient: string, wrappe
   if (!member) throw new ProtocolError('the recipient is not a current device of a member')
   if (key.key.length !== KEY_BYTES) throw new ProtocolError(`a brain key is ${KEY_BYTES} bytes`)
   const enc = fromBase64url(set.members[member].devices[recipient].device_enc, KEY_BYTES, 'the recipient\'s encryption key')
-  const body = { v: 1 as const, brain: set.brain, epoch: key.epoch, recipient, sealed: toBase64url(sodium.crypto_box_seal(key.key, enc)), wrapper: wrapper.publicKey }
+  const body = { v: PROTOCOL_VERSION, brain: set.brain, epoch: key.epoch, recipient, sealed: toBase64url(sodium.crypto_box_seal(key.key, enc)), wrapper: wrapper.publicKey }
   return { ...body, sig: signText(wrapper, WRAP_DOMAIN, canonicalJson(body)) }
 }
 
@@ -103,7 +95,7 @@ export function wrapKey(set: MemberSet, key: BrainKey, recipient: string, wrappe
  */
 export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): BrainKey {
   const r = asObject(record, 'a wrapped key')
-  if (r.v !== 1) throw new UnsupportedVersionError(r.v)
+  checkVersion(r.v)
   exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
   if (r.brain !== set.brain) throw new ProtocolError('the wrapped key is for another brain')
   if (r.recipient !== device.sign.publicKey) throw new ProtocolError('the wrapped key is for another device')

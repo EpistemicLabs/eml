@@ -1,6 +1,6 @@
-import { createHash } from 'crypto'
 import { canonicalJson } from './canonical'
-import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import { sha256Hex } from './op'
+import { ISO_MS, KEY_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, UUID, asObject, exactFields, fromBase64url, sodium, toBase64url } from './wire'
 
 // --- Keys and device certificates (v0.21) ----------------------------------------
 //
@@ -35,11 +35,7 @@ export interface DeviceCert {
 }
 
 const DEVICE_CERT_DOMAIN = 'eml-device-cert-v1\n'
-const SEED_BYTES = 32
-const KEY_BYTES = 32
-const SIG_BYTES = 64
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const SEED_BYTES = KEY_BYTES
 
 /** A new Ed25519 key pair — a member's identity key or a device's signing key. */
 export function newSigningKey(): KeyPair {
@@ -87,7 +83,7 @@ export function verifyText(publicKey: string, domain: string, text: string, sig:
  * key. `created_at` is the caller's time (ISO-8601 UTC with milliseconds).
  */
 export function certifyDevice(identity: KeyPair, fields: { brain: string, device_sign: string, device_enc: string, created_at: string }): DeviceCert {
-  const body = { v: 1 as const, brain: fields.brain, member: identity.publicKey, device_sign: fields.device_sign, device_enc: fields.device_enc, created_at: fields.created_at }
+  const body = { v: PROTOCOL_VERSION, brain: fields.brain, member: identity.publicKey, device_sign: fields.device_sign, device_enc: fields.device_enc, created_at: fields.created_at }
   checkCertBody(body)
   return { ...body, sig: signText(identity, DEVICE_CERT_DOMAIN, canonicalJson(body)) }
 }
@@ -106,7 +102,7 @@ export function verifyDeviceCert(value: unknown): DeviceCert {
 }
 
 function checkCertBody(body: Omit<DeviceCert, 'sig'>): void {
-  if (body.v !== 1) throw new ProtocolError(`device certificate version ${String(body.v)} is not supported`)
+  if (body.v !== PROTOCOL_VERSION) throw new ProtocolError(`device certificate version ${String(body.v)} is not supported`)
   if (typeof body.brain !== 'string' || !UUID.test(body.brain)) throw new ProtocolError('the brain is not a lowercase UUID')
   fromBase64url(body.member, KEY_BYTES, 'the member key')
   fromBase64url(body.device_sign, KEY_BYTES, 'the device signing key')
@@ -119,6 +115,6 @@ function checkCertBody(body: Omit<DeviceCert, 'sig'>): void {
  * sha256 over the identity public key's bytes, as 8 groups of 5 hex digits.
  */
 export function fingerprint(publicKey: string): string {
-  const hex = createHash('sha256').update(fromBase64url(publicKey, KEY_BYTES, 'the public key')).digest('hex').slice(0, 40)
+  const hex = sha256Hex(Buffer.from(fromBase64url(publicKey, KEY_BYTES, 'the public key'))).slice(0, 40)
   return hex.match(/.{5}/g)!.join(' ')
 }

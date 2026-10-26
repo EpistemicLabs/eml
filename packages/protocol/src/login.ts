@@ -1,8 +1,7 @@
 import { canonicalJson } from './canonical'
 import { signText, verifyText, type KeyPair } from './keys'
 import { memberOfDevice, type MemberSet } from './membership'
-import { UnsupportedVersionError } from './seal'
-import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import { ISO_MS, KEY_BYTES, PROTOCOL_VERSION, ProtocolError, UUID, asObject, checkVersion, exactFields, fromBase64url, sodium, toBase64url } from './wire'
 
 // --- Relay login (v0.21) ---------------------------------------------------------
 //
@@ -36,10 +35,8 @@ export interface LoginResponse {
 /** A challenge is answered within this many milliseconds. */
 export const LOGIN_WINDOW_MS = 60_000
 
-const NONCE_BYTES = 32
-const KEY_BYTES = 32
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+/** A login nonce: 32 random bytes. */
+const LOGIN_NONCE_BYTES = 32
 const LOGIN_DOMAIN = 'eml-relay-login-v1\n'
 
 /** The relay's challenge for a device logging in to `brain` at `now`. */
@@ -47,7 +44,7 @@ export function loginChallenge(relay: string, brain: string, now: string): Login
   if (!relay) throw new ProtocolError('the relay host is empty')
   if (!UUID.test(brain)) throw new ProtocolError('the brain is not a lowercase UUID')
   if (!ISO_MS.test(now)) throw new ProtocolError('now is ISO-8601 UTC with milliseconds')
-  return { v: 1, relay, brain, nonce: toBase64url(sodium.randombytes_buf(NONCE_BYTES)), issued_at: now }
+  return { v: PROTOCOL_VERSION, relay, brain, nonce: toBase64url(sodium.randombytes_buf(LOGIN_NONCE_BYTES)), issued_at: now }
 }
 
 /**
@@ -57,13 +54,13 @@ export function loginChallenge(relay: string, brain: string, now: string): Login
  */
 export function loginResponse(value: unknown, host: string, brain: string, device: KeyPair): LoginResponse {
   const c = asObject(value, 'a login challenge')
-  if (c.v !== 1) throw new UnsupportedVersionError(c.v)
+  checkVersion(c.v)
   exactFields(c, ['v', 'relay', 'brain', 'nonce', 'issued_at'], 'a login challenge')
   if (c.relay !== host) throw new ProtocolError(`the challenge is for the relay ${String(c.relay)}, not ${host}`)
   if (c.brain !== brain) throw new ProtocolError('the challenge is for another brain')
-  fromBase64url(c.nonce, NONCE_BYTES, 'the nonce')
+  fromBase64url(c.nonce, LOGIN_NONCE_BYTES, 'the nonce')
   const body = { relay: host, brain, nonce: c.nonce as string, device: device.publicKey }
-  return { v: 1, ...body, sig: signText(device, LOGIN_DOMAIN, canonicalJson(body)) }
+  return { v: PROTOCOL_VERSION, ...body, sig: signText(device, LOGIN_DOMAIN, canonicalJson(body)) }
 }
 
 /**
@@ -79,7 +76,7 @@ export function verifyLogin(set: MemberSet, challenge: LoginChallenge & { used: 
   const age = Date.parse(now) - Date.parse(challenge.issued_at)
   if (!(age >= 0 && age < LOGIN_WINDOW_MS)) throw new ProtocolError('the challenge is older than a minute')
   const r = asObject(value, 'a login response')
-  if (r.v !== 1) throw new UnsupportedVersionError(r.v)
+  checkVersion(r.v)
   exactFields(r, ['v', 'relay', 'brain', 'nonce', 'device', 'sig'], 'a login response')
   if (r.relay !== challenge.relay || r.brain !== challenge.brain || r.nonce !== challenge.nonce) throw new ProtocolError('the response answers another challenge')
   if (set.brain !== challenge.brain) throw new ProtocolError('the member set is for another brain')

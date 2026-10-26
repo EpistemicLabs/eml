@@ -1,7 +1,10 @@
 import { canonicalJson, plainJson } from './canonical'
 import { signText, verifyText, type KeyPair } from './keys'
 import { provenanceProblem, sha256Hex, type OpEnvelope, type TeamFields } from './op'
-import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import {
+  HASH, KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, UUID,
+  asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url, utf8,
+} from './wire'
 
 // --- Ops on the wire (v0.21) -----------------------------------------------------
 //
@@ -12,9 +15,6 @@ import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64ur
 // the clear, signed, because the relay controls access from it. Every reader
 // opens a record the same way: one strict parse, the signature, the envelope
 // (spec team-brain-protocol-package-spec §2).
-
-/** The protocol version every record carries. */
-export const PROTOCOL_VERSION = 1
 
 /** A brain key and its epoch (spec §4). */
 export interface BrainKey {
@@ -56,20 +56,7 @@ export interface OpenedOp {
   epoch: number | null
 }
 
-/** A record whose protocol version this code does not know: the replica stops and asks for an update. */
-export class UnsupportedVersionError extends ProtocolError {
-  constructor(readonly v: unknown) {
-    super(`protocol version ${String(v)} is not supported by this version`)
-    this.name = 'UnsupportedVersionError'
-  }
-}
-
 const OP_DOMAIN = 'eml-op-v1\n'
-const NONCE_BYTES = 24
-const KEY_BYTES = 32
-const SIG_BYTES = 64
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const HASH = /^[0-9a-f]{64}$/
 const CALL = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/
 const ENVELOPE_FIELDS = ['op_id', 'schema', 'call', 'args', 'provenance', 'team']
 const TEAM_FIELDS = ['brain', 'device', 'base_seq', 'head_hash']
@@ -93,17 +80,17 @@ export function sealOpWith(nonce: Uint8Array, envelope: TeamOp, device: KeyPair,
   if (nonce.length !== NONCE_BYTES) throw new ProtocolError(`a nonce is ${NONCE_BYTES} bytes`)
   if (key.key.length !== KEY_BYTES) throw new ProtocolError(`a brain key is ${KEY_BYTES} bytes`)
   const { payload, sig } = signed(envelope, device)
-  const header = { v: 1 as const, kind: 'op' as const, brain: envelope.team.brain, op_id: envelope.op_id, epoch: key.epoch, nonce: toBase64url(nonce) }
+  const header = { v: PROTOCOL_VERSION, kind: 'op' as const, brain: envelope.team.brain, op_id: envelope.op_id, epoch: key.epoch, nonce: toBase64url(nonce) }
   const plaintext = new Uint8Array([...fromBase64url(sig, SIG_BYTES, 'the signature'), ...sodium.from_string(payload)])
-  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, sodium.from_string(canonicalJson(header)), null, nonce, key.key)
-  return { record: { ...header, ct: toBase64url(ct) }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: key.epoch }
+  const { ct } = sealBox(plaintext, canonicalJson(header), nonce, key.key)
+  return { record: { ...header, ct }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: key.epoch }
 }
 
 /** Signs a membership record (a clear call) with `device`. Returns the record and what the author logs. */
 export function clearOp(envelope: TeamOp, device: KeyPair): { record: ClearRecord } & OpenedOp {
   if (!isClearCall(envelope.call)) throw new ProtocolError(`${envelope.call} is a brain write and travels sealed`)
   const { payload, sig } = signed(envelope, device)
-  return { record: { v: 1, kind: 'clear', brain: envelope.team.brain, op_id: envelope.op_id, payload, sig }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: null }
+  return { record: { v: PROTOCOL_VERSION, kind: 'clear', brain: envelope.team.brain, op_id: envelope.op_id, payload, sig }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: null }
 }
 
 /**
@@ -116,9 +103,8 @@ export function clearOp(envelope: TeamOp, device: KeyPair): { record: ClearRecor
  * (UnsupportedVersionError for a newer protocol).
  */
 export function openRecord(record: unknown, brain: string, keyFor: (epoch: number) => Uint8Array | undefined): OpenedOp {
-  if (typeof record !== 'object' || record === null || Array.isArray(record)) throw new ProtocolError('a record is an object')
-  const r = record as Record<string, unknown>
-  if (r.v !== PROTOCOL_VERSION) throw new UnsupportedVersionError(r.v)
+  const r = asObject(record, 'a record')
+  checkVersion(r.v)
   if (r.kind !== 'op' && r.kind !== 'clear') throw new ProtocolError(`a record's kind is op or clear, not ${String(r.kind)}`)
   exactFields(r, r.kind === 'op' ? SEALED_FIELDS : CLEAR_FIELDS, `a ${r.kind} record`)
   if (r.brain !== brain) throw new ProtocolError('the record is for another brain')
@@ -130,17 +116,10 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
     const key = keyFor(r.epoch as number)
     if (!key) throw new ProtocolError(`no brain key for epoch ${String(r.epoch)}`)
     const { ct, ...header } = r
-    let plaintext: Uint8Array
-    try {
-      plaintext = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(ct, undefined, 'the ciphertext'),
-        sodium.from_string(canonicalJson(header)), fromBase64url(r.nonce, NONCE_BYTES, 'the nonce'), key)
-    } catch (err) {
-      if (err instanceof ProtocolError) throw err
-      throw new ProtocolError('the record does not decrypt under the key of its epoch')
-    }
+    const plaintext = openBox(ct, r.nonce, canonicalJson(header), key, 'the record does not decrypt under the key of its epoch')
     if (plaintext.length <= SIG_BYTES) throw new ProtocolError('the sealed record holds no payload')
     sig = toBase64url(plaintext.subarray(0, SIG_BYTES))
-    payload = utf8(plaintext.subarray(SIG_BYTES))
+    payload = utf8(plaintext.subarray(SIG_BYTES), 'the payload')
   } else {
     if (typeof r.payload !== 'string') throw new ProtocolError('the payload is a string')
     payload = r.payload
@@ -200,12 +179,4 @@ function parseEnvelope(payload: string, brain: unknown): TeamOp {
 
 function checkEpoch(epoch: unknown): void {
   if (!Number.isSafeInteger(epoch) || (epoch as number) < 0) throw new ProtocolError('the epoch is not a non-negative integer')
-}
-
-function utf8(bytes: Uint8Array): string {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    throw new ProtocolError('the payload is not UTF-8')
-  }
 }

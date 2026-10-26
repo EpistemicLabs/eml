@@ -63,7 +63,8 @@ export function provenanceProblem(value: unknown): string | null {
 /** prev_hash of the first entry (genesis). */
 export const GENESIS_PREV_HASH = '0'.repeat(64)
 
-const HASH = /^[0-9a-f]{64}$/
+/** A SHA-256 hash in its text form: 64 lowercase hex digits. */
+export const HASH = /^[0-9a-f]{64}$/
 
 /** sha256, hex; a string is hashed as its UTF-8 bytes (a payload's hash is sha256Hex(payload)). */
 export function sha256Hex(data: string | Buffer): string {

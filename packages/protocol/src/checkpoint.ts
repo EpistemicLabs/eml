@@ -1,4 +1,4 @@
-import { ProtocolError, asObject, exactFields } from './sodium'
+import { HASH, ProtocolError, asObject, exactFields } from './wire'
 import type { OpenedOp } from './seal'
 
 // --- Checkpoints (v0.21) ---------------------------------------------------------
@@ -18,8 +18,6 @@ export class DivergedError extends ProtocolError {
     this.name = 'DivergedError'
   }
 }
-
-const HASH = /^[0-9a-f]{64}$/
 
 /** The args of a checkpoint for the state after `seq` (the author's base_seq). */
 export function checkpointArgs(seq: number, stateHash: string): { seq: number, state_hash: string } {

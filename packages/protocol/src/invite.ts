@@ -2,8 +2,10 @@ import { canonicalJson } from './canonical'
 import { signText, verifyDeviceCert, verifyText, type DeviceCert, type KeyPair } from './keys'
 import { HANDLE_BYTES, box, memberOfDevice, padHandle, unpadHandle, type Box, type MemberSet } from './membership'
 import { sha256Hex } from './op'
-import { UnsupportedVersionError } from './seal'
-import { ProtocolError, asObject, exactFields, fromBase64url, sodium, toBase64url } from './sodium'
+import {
+  ISO_MS, KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, UUID, UnsupportedVersionError,
+  asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url,
+} from './wire'
 
 // --- Invites (v0.21) -------------------------------------------------------------
 //
@@ -62,13 +64,9 @@ export interface JoinAccept {
 /** An invite is good for this many days. */
 export const INVITE_DAYS = 7
 
-const SECRET_BYTES = 32
+const SECRET_BYTES = KEY_BYTES
 const INVITE_ID_BYTES = 16
-const NONCE_BYTES = 24
 const MAC_BYTES = 32
-const KEY_BYTES = 32
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const NOTICE_DOMAIN = 'eml-invite-notice-v1\n'
 
 /** A new invite of `brain` on the relay at `relay` (a host name, with a port if any), made at `now`. */
@@ -88,7 +86,7 @@ export function newInvite(relay: string, brain: string, now: string): Invite {
 
 /** The link the invitee pastes into their cockpit: https://<relay>/i/1/<brain>/<invite_id>#<secret>. */
 export function inviteLink(invite: Invite): string {
-  return `https://${invite.relay}/i/1/${invite.brain}/${invite.invite_id}#${toBase64url(invite.secret)}`
+  return `https://${invite.relay}/i/${PROTOCOL_VERSION}/${invite.brain}/${invite.invite_id}#${toBase64url(invite.secret)}`
 }
 
 /** The parts of an invite link, when it is exactly one; a link of a newer version is an UnsupportedVersionError. */
@@ -102,7 +100,7 @@ export function parseInviteLink(link: string): { relay: string, brain: string, i
   if (url.protocol !== 'https:' || url.username || url.password || url.search || !url.host) throw new ProtocolError('the invite link is not https://<relay>/i/…#<secret>')
   const parts = url.pathname.split('/')
   if (parts.length !== 5 || parts[0] !== '' || parts[1] !== 'i') throw new ProtocolError('the invite link\'s path is not /i/<version>/<brain>/<invite>')
-  if (parts[2] !== '1') throw new UnsupportedVersionError(parts[2])
+  if (parts[2] !== String(PROTOCOL_VERSION)) throw new UnsupportedVersionError(parts[2])
   if (!UUID.test(parts[3])) throw new ProtocolError('the invite link\'s brain is not a lowercase UUID')
   fromBase64url(parts[4], INVITE_ID_BYTES, 'the invite id')
   const secret = fromBase64url(url.hash.slice(1), SECRET_BYTES, 'the invite secret')
@@ -111,14 +109,14 @@ export function parseInviteLink(link: string): { relay: string, brain: string, i
 
 /** The notice the relay keeps: the invite without its secret, signed by `owner` (a device of an owner). */
 export function inviteNotice(invite: Invite, owner: KeyPair): InviteNotice {
-  const body = { v: 1 as const, brain: invite.brain, invite_id: invite.invite_id, expires_at: invite.expires_at, inviter: owner.publicKey }
+  const body = { v: PROTOCOL_VERSION, brain: invite.brain, invite_id: invite.invite_id, expires_at: invite.expires_at, inviter: owner.publicKey }
   return { ...body, sig: signText(owner, NOTICE_DOMAIN, canonicalJson(body)) }
 }
 
 /** The relay's check of a notice: exactly one, for this brain, signed by a current device of an owner. */
 export function verifyInviteNotice(set: MemberSet, value: unknown): InviteNotice {
   const n = asObject(value, 'an invite notice')
-  if (n.v !== 1) throw new UnsupportedVersionError(n.v)
+  checkVersion(n.v)
   exactFields(n, ['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'sig'], 'an invite notice')
   if (n.brain !== set.brain) throw new ProtocolError('the invite is for another brain')
   fromBase64url(n.invite_id, INVITE_ID_BYTES, 'the invite id')
@@ -149,9 +147,7 @@ export function joinRequest(link: string, member: KeyPair, deviceCert: DeviceCer
 export function joinRequestWith(nonce: Uint8Array, link: string, member: KeyPair, deviceCert: DeviceCert, handle: string): JoinRequest {
   const { brain, invite_id, secret } = parseInviteLink(link)
   if (deviceCert.member !== member.publicKey || deviceCert.brain !== brain) throw new ProtocolError('the device certificate is not the joiner\'s for this brain')
-  if (nonce.length !== NONCE_BYTES) throw new ProtocolError(`a nonce is ${NONCE_BYTES} bytes`)
-  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padHandle(handle), handleAad(brain, invite_id, member.publicKey), null, nonce, encKey(secret))
-  const body = { v: 1 as const, brain, invite_id, member: member.publicKey, device_cert: deviceCert, handle: { nonce: toBase64url(nonce), ct: toBase64url(ct) } }
+  const body = { v: PROTOCOL_VERSION, brain, invite_id, member: member.publicKey, device_cert: deviceCert, handle: sealBox(padHandle(handle), handleAad(brain, invite_id, member.publicKey), nonce, encKey(secret)) }
   return { ...body, mac: mac(secret, 'eml-invite-join-v1', body) }
 }
 
@@ -164,7 +160,7 @@ export function joinRequestWith(nonce: Uint8Array, link: string, member: KeyPair
 export function openJoin(invite: Invite, value: unknown, now: string): { member: string, device_cert: DeviceCert, handle: string, join_hash: string } {
   checkInviteOpen(invite, now)
   const j = asObject(value, 'a join')
-  if (j.v !== 1) throw new UnsupportedVersionError(j.v)
+  checkVersion(j.v)
   exactFields(j, ['v', 'brain', 'invite_id', 'member', 'device_cert', 'handle', 'mac'], 'a join')
   if (j.brain !== invite.brain || j.invite_id !== invite.invite_id) throw new ProtocolError('the join is for another invite')
   const { mac: given, ...body } = j
@@ -172,20 +168,14 @@ export function openJoin(invite: Invite, value: unknown, now: string): { member:
   const cert = verifyDeviceCert(j.device_cert)
   if (cert.member !== j.member || cert.brain !== invite.brain) throw new ProtocolError('the device certificate is not the joiner\'s for this brain')
   const sealed = box(j.handle, 'handle', HANDLE_BYTES)
-  let padded: Uint8Array
-  try {
-    padded = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, fromBase64url(sealed.ct, undefined, 'handle.ct'), handleAad(invite.brain, invite.invite_id, cert.member),
-      fromBase64url(sealed.nonce, NONCE_BYTES, 'handle.nonce'), encKey(invite.secret))
-  } catch {
-    throw new ProtocolError('the join\'s handle does not open under the invite secret')
-  }
+  const padded = openBox(sealed.ct, sealed.nonce, handleAad(invite.brain, invite.invite_id, cert.member), encKey(invite.secret), 'the join\'s handle does not open under the invite secret')
   return { member: cert.member, device_cert: cert, handle: unpadHandle(padded), join_hash: sha256Hex(canonicalJson(j)) }
 }
 
 /** The inviter's answer to a join it opened: its device's certificate, bound to that join by its hash and MAC'd. */
 export function joinAccept(invite: Invite, joinHash: string, inviterCert: DeviceCert): JoinAccept {
   if (inviterCert.brain !== invite.brain) throw new ProtocolError('the inviter\'s certificate is for another brain')
-  const body = { v: 1 as const, brain: invite.brain, invite_id: invite.invite_id, join_hash: joinHash, inviter: inviterCert }
+  const body = { v: PROTOCOL_VERSION, brain: invite.brain, invite_id: invite.invite_id, join_hash: joinHash, inviter: inviterCert }
   return { ...body, mac: mac(invite.secret, 'eml-invite-accept-v1', body) }
 }
 
@@ -198,7 +188,7 @@ export function joinAccept(invite: Invite, joinHash: string, inviterCert: Device
 export function openAccept(link: string, join: JoinRequest, value: unknown): DeviceCert {
   const { brain, invite_id, secret } = parseInviteLink(link)
   const a = asObject(value, 'an accept')
-  if (a.v !== 1) throw new UnsupportedVersionError(a.v)
+  checkVersion(a.v)
   exactFields(a, ['v', 'brain', 'invite_id', 'join_hash', 'inviter', 'mac'], 'an accept')
   if (a.brain !== brain || a.invite_id !== invite_id) throw new ProtocolError('the accept is for another invite')
   const { mac: given, ...body } = a
@@ -218,8 +208,8 @@ function encKey(secret: Uint8Array): Uint8Array {
   return sodium.crypto_generichash(KEY_BYTES, sodium.from_string('eml-invite-enc-v1'), secret)
 }
 
-function handleAad(brain: string, invite_id: string, member: string): Uint8Array {
-  return sodium.from_string(canonicalJson({ brain, invite_id, member }))
+function handleAad(brain: string, invite_id: string, member: string): string {
+  return canonicalJson({ brain, invite_id, member })
 }
 
 /** HMAC-SHA-512-256 (crypto_auth) under the invite's MAC key over the type tag and the canonical body. */
