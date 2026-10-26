@@ -19,9 +19,11 @@ describe('no brain write outside the op log', () => {
   const ALLOWED = new Set([
     'entries.ts',            // the journal helper the command modules call
     'database.ts', 'forward-migrations.ts',  // the migration runner (and its genesis)
-    'control.ts', 'tokens.ts', 'provisioning.ts',  // the control DB, whose users table shares a name with the brain's
   ])
-  const WRITE = new RegExp(`\\b(?:INSERT(?:\\s+OR\\s+\\w+)?\\s+INTO|REPLACE\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+"?(${BRAIN_TABLES.join('|')})\\b`, 'i')
+  // the control DB's files: their users table shares the name with the brain's — writes to it are theirs
+  const CONTROL = new Set(['control.ts', 'tokens.ts', 'provisioning.ts'])
+  // over the whole file text, so a statement split across lines is caught too
+  const WRITE = new RegExp(`\\b(?:INSERT(?:\\s+OR\\s+\\w+)?\\s+INTO|REPLACE\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+"?(${BRAIN_TABLES.join('|')})\\b`, 'gi')
 
   it('knows the brain tables', () => {
     expect(BRAIN_TABLES).toEqual(expect.arrayContaining(['engrams', 'relations', 'entries', 'agents', 'op_log', 'op_snapshots', 'engrams_fts']))
@@ -32,11 +34,10 @@ describe('no brain write outside the op log', () => {
     .sort()
   for (const file of files) {
     it(file, () => {
-      const lines = readFileSync(join(SRC, file), 'utf-8').split('\n')
-      const hits = lines.flatMap((line, i) => {
-        const m = WRITE.exec(line)
-        return m ? [`${file}:${i + 1} writes ${m[1]}`] : []
-      })
+      const text = readFileSync(join(SRC, file), 'utf-8')
+      const hits = [...text.matchAll(WRITE)]
+        .filter(m => !(CONTROL.has(file) && m[1].toLowerCase() === 'users'))
+        .map(m => `${file}:${text.slice(0, m.index).split('\n').length} writes ${m[1]}`)
       expect(hits).toEqual([])
     })
   }
