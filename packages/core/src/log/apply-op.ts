@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { Json, OpEnvelope } from '@engramprotocol/protocol'
+import type { Json, OpEnvelope } from '@engramprotocol/protocol/log'
 import type { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { runCommand, type CommandMap, type CommandName } from '../commands'

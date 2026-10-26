@@ -4,7 +4,7 @@ import type { IdSource } from '../env'
 // --- Op ids (v0.21) --------------------------------------------------------------
 //
 // The op envelope, the chain and the payload hash are protocol
-// (@engramprotocol/protocol). What stays here is how a replica runs an op: the
+// (@engramprotocol/protocol/log). What stays here is how a replica runs an op: the
 // ids it draws are derived from the op_id, so every replay draws the same.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

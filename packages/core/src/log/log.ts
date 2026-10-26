@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { GENESIS_PREV_HASH, chainHash, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol'
+import { GENESIS_PREV_HASH, chainHash, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { NO_ACTOR } from '../env'
 import { uuidv5 } from './op'
 import { encodeSnapshot, stateDump, stateHash } from './snapshot'

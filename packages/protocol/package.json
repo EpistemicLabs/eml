@@ -2,10 +2,27 @@
   "name": "@engramprotocol/protocol",
   "version": "0.0.0",
   "private": true,
-  "description": "EML team-brain protocol — the op envelope, the hash chain and canonical JSON, shared by the cockpit and the relay",
+  "description": "EML team-brain protocol — the log format, keys, signatures and sealing, shared by the cockpit and the relay",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./log": {
+      "types": "./dist/log.d.ts",
+      "default": "./dist/log.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "log": [
+        "dist/log.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests",

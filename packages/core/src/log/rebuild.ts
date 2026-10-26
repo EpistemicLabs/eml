@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { GENESIS_PREV_HASH, canonicalJson, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol'
+import { GENESIS_PREV_HASH, canonicalJson, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { currentSchemaSql } from '../database'
