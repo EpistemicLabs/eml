@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'crypto'
 import { EML, NO_ACTOR } from '../src'
-import { canonicalJson } from '../src/log/canonical'
+import { canonicalJson, plainJson } from '../src/log/canonical'
 import { GENESIS_PREV_HASH, chainHash, encodePayload, opIds, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
 import { decodeSnapshot, encodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
 import { validDecision, validNote, writes } from './fixtures'
@@ -12,7 +12,7 @@ import { validDecision, validNote, writes } from './fixtures'
 
 const raw = (eml: EML): any => (eml as any).db
 
-describe('canonical JSON', () => {
+describe('canonical and plain JSON', () => {
   it('sorts keys by UTF-16 code unit, at every level, without whitespace', () => {
     expect(canonicalJson({ b: 1, a: { d: [3, { z: true, y: null }], c: 'x' } })).toBe('{"a":{"c":"x","d":[3,{"y":null,"z":true}]},"b":1}')
   })
@@ -42,6 +42,13 @@ describe('canonical JSON', () => {
       expect(() => canonicalJson(bad), String(bad)).toThrow(/^Invalid command: the input must be plain JSON/)
     }
     expect(() => canonicalJson({ a: { b: [1, NaN] } })).toThrow('$.a.b[1] is NaN')
+  })
+
+  it('plainJson is the same walk without sorting: keys in their own order, the same refusals', () => {
+    expect(plainJson({ b: 1, a: { d: [3, { z: true, y: null }], c: 'x' }, u: undefined })).toBe('{"b":1,"a":{"d":[3,{"z":true,"y":null}],"c":"x"}}')
+    expect(plainJson({ b: 1, a: 2 })).toBe(JSON.stringify({ b: 1, a: 2 }))
+    expect(() => plainJson({ a: [1, NaN] })).toThrow('$.a[1] is NaN')
+    expect(() => plainJson({ when: new Date(0) })).toThrow(/^Invalid command: the input must be plain JSON/)
   })
 
   it('takes objects without a prototype', () => {
@@ -86,10 +93,12 @@ describe('payload and chain hashes', () => {
     provenance: { ...NO_ACTOR, handle: 'juno', ingestion_method: 'mcp' },
   }
 
-  it('the payload is the envelope as canonical JSON; its hash is sha256 of the UTF-8 bytes', () => {
+  it('the payload is the envelope as JSON in the caller\'s key order; its hash is sha256 of the UTF-8 bytes', () => {
     const payload = encodePayload(op)
-    expect(payload.startsWith('{"args":{"content":"c","scope":"global","title":"n","type":"note"},"call":"engram.create","op_id":')).toBe(true)
-    expect(encodePayload({ provenance: op.provenance, args: { content: 'c', title: 'n', scope: 'global', type: 'note' }, call: op.call, schema: 21, op_id: op.op_id })).toBe(payload)
+    expect(payload.startsWith('{"op_id":"9b2f3c1e-4d5a-4b6c-8d7e-0f1a2b3c4d5e","schema":21,"call":"engram.create","args":{"type":"note","scope":"global","title":"n","content":"c"},')).toBe(true)
+    expect(JSON.parse(payload)).toEqual(op)
+    // the stored bytes are the payload: another key order is another payload
+    expect(encodePayload({ provenance: op.provenance, args: op.args, call: op.call, schema: 21, op_id: op.op_id })).not.toBe(payload)
     expect(sha256Hex(payload)).toBe(createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex'))
     expect(sha256Hex('é')).toBe(sha256Hex(Buffer.from([0xc3, 0xa9])))
   })

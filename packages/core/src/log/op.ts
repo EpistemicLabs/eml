@@ -1,15 +1,15 @@
 import { createHash } from 'crypto'
 import type { Actor, IdSource } from '../env'
-import { canonicalJson, type Json } from './canonical'
+import { plainJson, type Json } from './canonical'
 
 // --- Ops (v0.21) -----------------------------------------------------------------
 //
 // Every brain write is an op in the brain's log (decision
 // team-brain-op-log-write-path; spec local-op-log-spec). The payload is the
-// canonical JSON of the envelope — what the writer intends, never what the
-// brain derives — and the log chains the entries: each link hashes the previous
-// link, the entry's position and time (set by the sequencer, not the author;
-// decision op-log-chain-covers-seq-and-time) and the payload's hash.
+// envelope as JSON in the caller's key order — what the writer intends, never
+// what the brain derives — and the log chains the entries: each link hashes
+// the previous link, the entry's position and time (set by the sequencer, not
+// the author; decision op-log-chain-covers-seq-and-time) and the payload's hash.
 
 /** An op as written: a call with its args, by whom, against which brain schema. */
 export interface OpEnvelope {
@@ -31,9 +31,9 @@ export function sha256Hex(data: string | Buffer): string {
   return createHash('sha256').update(data).digest('hex')
 }
 
-/** The payload an entry stores and hashes: the envelope as canonical JSON. */
+/** The payload an entry stores and hashes: the envelope as JSON, keys in the caller's order. */
 export function encodePayload(op: OpEnvelope): string {
-  return canonicalJson(op)
+  return plainJson(op)
 }
 
 /**
