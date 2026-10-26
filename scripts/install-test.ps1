@@ -9,7 +9,8 @@ $assets = Join-Path ([System.IO.Path]::GetTempPath()) ('eml-assets-' + [System.I
 $homeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('eml-home-' + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Force -Path $assets | Out-Null
 
-foreach ($pkg in 'packages\mcp-server', 'cockpit\host') {
+# every release asset, as pack-release.sh makes them: SHA256SUMS lists more than install.ps1 installs
+foreach ($pkg in 'packages\mcp-server', 'cockpit\host', 'packages\protocol') {
   Push-Location (Join-Path $root $pkg)
   try { & pnpm pack --pack-destination $assets | Out-Null; if ($LASTEXITCODE -ne 0) { throw "pnpm pack failed in $pkg" } }
   finally { Pop-Location }

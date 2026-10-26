@@ -51,9 +51,17 @@ main() {
     elif command -v ss >/dev/null 2>&1; then [[ -n "$(ss -Hltn "sport = :$port" 2>/dev/null)" ]]
     else return 1; fi
   }
+  # Checks the named files against their lines in SHA256SUMS, one by one: the
+  # file lists every asset of the release, more than the two installed here.
   sha256_check() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c --quiet SHA256SUMS >/dev/null
-    else shasum -a 256 -c SHA256SUMS >/dev/null; fi
+    local name expected actual
+    for name in "$@"; do
+      expected="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1; exit }' SHA256SUMS)"
+      [[ -n "$expected" ]] || return 1
+      if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$name")"
+      else actual="$(shasum -a 256 "$name")"; fi
+      [[ "${actual%% *}" == "$expected" ]] || return 1
+    done
   }
 
   # Installed and registered: nothing to do. Installed but not registered (an
@@ -107,7 +115,7 @@ main() {
       echo "  downloading $name"
       curl -fsSL --retry 2 -o "$staging/tarballs/$name" "$base/$name" || fail "download of $name failed. Check your internet connection and try again."
     done
-    (cd "$staging/tarballs" && sha256_check) || fail "the downloaded files do not match their checksums. Nothing was installed."
+    (cd "$staging/tarballs" && sha256_check "eml-cockpit-$v.tgz" "engramprotocol-mcp-server-$v.tgz") || fail "the downloaded files do not match their checksums. Nothing was installed."
     echo "  checksums ok"
 
     echo "  installing (this takes a minute)"

@@ -14,7 +14,8 @@ unit_name="eml-cockpit-$port.service"
 unit="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit_name"
 entry="$home_dir/app/current/node_modules/eml-cockpit/dist/index.js"
 
-for pkg in packages/mcp-server cockpit/host; do
+# every release asset, as pack-release.sh makes them: SHA256SUMS lists more than install.sh installs
+for pkg in packages/mcp-server cockpit/host packages/protocol; do
   (cd "$root/$pkg" && pnpm pack --pack-destination "$assets" >/dev/null)
 done
 (cd "$assets" && sha256sum ./*.tgz | sed 's#  \./#  #' > SHA256SUMS)
