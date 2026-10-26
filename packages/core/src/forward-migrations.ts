@@ -278,14 +278,7 @@ function migrateOne(args: RunForwardMigrationsOptions & {
 
 const DEFAULT_STEPS: MigrationSteps = {
   backup(brainPath, backupPath) {
-    const db = new Database(brainPath, { fileMustExist: true })
-    try {
-      db.prepare('VACUUM INTO ?').run(backupPath)
-    } finally {
-      db.close()
-    }
-    chmodSync(backupPath, 0o600)
-    withDb(backupPath, db => assertIntegrity(db, 'backup'))
+    withDb(brainPath, db => backupBrain(db, backupPath))
   },
 
   preflight(backupPath, scratchPath, files, at) {
@@ -311,6 +304,17 @@ const DEFAULT_STEPS: MigrationSteps = {
     rmSync(`${brainPath}-shm`, { force: true })
     withDb(brainPath, db => assertIntegrity(db, 'restore'))
   },
+}
+
+/**
+ * A copy of the open brain `db` at `backupPath`: VACUUM INTO (consistent incl.
+ * WAL; refuses an existing file), owner-only, integrity-checked. The
+ * pre-migration backup and the source backup of a cross-brain move.
+ */
+export function backupBrain(db: Database_t.Database, backupPath: string): void {
+  db.prepare('VACUUM INTO ?').run(backupPath)
+  chmodSync(backupPath, 0o600)
+  withDb(backupPath, db => assertIntegrity(db, 'backup'))
 }
 
 function applyFiles(db: Database_t.Database, files: MigrationFile[], at: string): void {

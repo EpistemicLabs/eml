@@ -5,7 +5,9 @@ import { validDecision, validTask, validNote } from './fixtures'
 
 // v0.20 (decision write-command-set): every brain write is one of eight
 // commands behind EML.apply(command, env); the rest of EML only reads.
-// v0.21: engrams.delete and agents.delete are gone (decision no-delete-command).
+// v0.21: engrams.delete and agents.delete are gone (decision no-delete-command);
+// engram.import and engram.move_out join for the cross-brain move (spec
+// cross-brain-move-spec).
 
 describe('the command set', () => {
   let eml: EML
@@ -22,10 +24,11 @@ describe('the command set', () => {
     throw new Error('not rejected')
   }
 
-  it('is closed: eight commands, and no public write besides apply', () => {
+  it('is closed: the commands, and no public write besides apply', () => {
     expect(COMMAND_NAMES).toEqual([
       'engram.create', 'engram.update', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
+      'engram.import', 'engram.move_out',
     ])
     const WRITE = /^(store|create|update|track|learn$|addEvidence|confirm|relate|insert|append|link|supersede|close|move|replace|set|delete)/i
     const methods = (o: object): string[] => {
