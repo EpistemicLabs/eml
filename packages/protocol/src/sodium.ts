@@ -1,0 +1,45 @@
+import sodium from 'libsodium-wrappers'
+
+// --- libsodium (v0.21) -----------------------------------------------------------
+//
+// Every primitive of the protocol is a standard libsodium construction
+// (libsodium-wrappers, WebAssembly), so any libsodium binding can check it.
+// The library loads asynchronously: await ready() once before the first call.
+
+/** Resolves once libsodium is loaded; every key, signature and seal needs it. */
+export function ready(): Promise<void> {
+  return sodium.ready
+}
+
+export { sodium }
+
+/** A protocol object that is malformed, forged or not allowed here. */
+export class ProtocolError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProtocolError'
+  }
+}
+
+/** Bytes as base64url without padding — the protocol's text form of keys, signatures and nonces. */
+export function toBase64url(bytes: Uint8Array): string {
+  return sodium.to_base64(bytes, sodium.base64_variants.URLSAFE_NO_PADDING)
+}
+
+/**
+ * The bytes of `text`, which must be base64url without padding and exactly
+ * `length` bytes long. libsodium's decoder refuses padding, other alphabets,
+ * whitespace and non-zero trailing bits, so a key or signature has one text
+ * form. `what` names it in the error.
+ */
+export function fromBase64url(text: unknown, length: number, what: string): Uint8Array {
+  let bytes: Uint8Array
+  try {
+    if (typeof text !== 'string') throw new Error()
+    bytes = sodium.from_base64(text, sodium.base64_variants.URLSAFE_NO_PADDING)
+  } catch {
+    throw new ProtocolError(`${what} is not base64url`)
+  }
+  if (bytes.length !== length) throw new ProtocolError(`${what} is ${bytes.length} bytes, not ${length}`)
+  return bytes
+}

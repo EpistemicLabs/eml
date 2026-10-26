@@ -10,5 +10,8 @@
     "build": "tsc -b",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "0.8.4"
   }
 }
