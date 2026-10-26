@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, sep } from 'path'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 
 // v0.21 (spec local-op-log-spec, block 5): the guards that keep the op log
@@ -30,6 +30,7 @@ describe('no brain write outside the op log', () => {
   })
 
   const files = (readdirSync(SRC, { recursive: true }) as string[])
+    .map(f => f.split(sep).join('/'))  // Windows lists commands\\x.ts; the checks and names use /
     .filter(f => f.endsWith('.ts') && !ALLOWED.has(f) && !ALLOWED_DIRS.some(d => f.startsWith(d)))
     .sort()
   for (const file of files) {

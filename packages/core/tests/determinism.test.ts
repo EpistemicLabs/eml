@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, sep } from 'path'
 import { EML, addDays, COMMAND_NAMES, type Env } from '../src'
 import { validDecision, validTask, validNote, writes, writeEverything } from './fixtures'
 import { stateDump } from '../src/log/snapshot'
@@ -150,7 +150,11 @@ describe('no clock or id source in core write code', () => {
   ]
   const src = join(__dirname, '..', 'src')
   // recursive: the write code lives in commands/ and write/; paths are relative to src
-  for (const file of (readdirSync(src, { recursive: true }) as string[]).filter(f => f.endsWith('.ts') && !ALLOWED.has(f)).sort()) {
+  const files = (readdirSync(src, { recursive: true }) as string[])
+    .map(f => f.split(sep).join('/'))  // Windows lists commands\\x.ts; the checks and names use /
+    .filter(f => f.endsWith('.ts') && !ALLOWED.has(f))
+    .sort()
+  for (const file of files) {
     it(file, () => {
       const lines = readFileSync(join(src, file), 'utf-8').split('\n')
       const hits = lines.flatMap((line, i) => FORBIDDEN.filter(([re]) => re.test(line)).map(([, what]) => `${file}:${i + 1} ${what}`))
