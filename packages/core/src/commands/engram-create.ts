@@ -16,6 +16,7 @@ import { assertTaskOpenForBinding, linkPartOf, appendTaskChange } from '../write
 import { findPotentialConflicts } from '../write/conflicts'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 import { createLearning } from './learning'
+import { insertEngram, insertRelation } from '../write/insert'
 
 /** engram.create for a learning: the lesson and its first evidence (the topic check runs first). */
 export interface LearningCreateInput {
@@ -173,7 +174,6 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   const subjectSlugs = input.subjects !== undefined ? normalizeAndValidateSubjects(ctx, input.subjects) : undefined
 
   const id = stamp.newId()
-  const now = stamp.at
   let wikilinks: { resolved: string[]; unresolved: string[] } = { resolved: [], unresolved: [] }
   const openSubtasks: OpenSubtask[] = []
   const superseded: string[] = []
@@ -184,21 +184,11 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   // One core profile per scope (unique index): the old one goes first.
   stamp.created.add(id)
   if (type === 'profile' && props.core === true) superseded.push(...autoSupersedeCoreProfile(ctx, id, input.scope))
-  db.prepare(`
-    INSERT INTO engrams (
-      id, content, type, scope, title, status, significance, properties,
-      origin, ingested_by, ingestion_method, session_id, model, harness,
-      created_at, updated_at, rev
-    ) VALUES (?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-  `).run(
-    id, content, type, input.scope, input.title ?? null, status,
-    JSON.stringify(input.app ? { ...props, app: input.app } : props),
-    input.origin ?? null, actor.handle, actor.ingestion_method,
-    actor.session_id, actor.model, actor.harness,
-    now, now,
-  )
-  db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
-    .run(id, content, input.scope, input.title ?? '')
+  insertEngram(ctx, {
+    id, type, scope: input.scope, title: input.title ?? null, content, status,
+    properties: JSON.stringify(input.app ? { ...props, app: input.app } : props),
+    origin: input.origin ?? null,
+  })
 
   if (type === 'status') {
     previousState = activeStatusState(ctx, input.scope, id)
@@ -221,11 +211,7 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
 
   // A task-linked write: edge to the task + a change entry in its journal.
   if (input.task_id !== undefined && taskLink) {
-    db.prepare(`
-      INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-      VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
-      ON CONFLICT(source_id, target_id, relation) DO NOTHING
-    `).run(stamp.newId(), id, input.task_id, taskLink, stamp.at)
+    insertRelation(ctx, { source_id: id, target_id: input.task_id, relation: taskLink, detection_method: 'agent_declared' })
     const label = input.title ?? (input.content.length > 80 ? `${input.content.slice(0, 80)}…` : input.content)
     const verb = type === 'decision' ? 'taken' : type === 'event' ? 'recorded' : 'written'
     appendTaskChange(ctx, input.task_id, `${type} ${verb}: ${label} (${id})`)

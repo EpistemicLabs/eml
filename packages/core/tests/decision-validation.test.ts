@@ -27,8 +27,8 @@ describe('decision validation', () => {
   /** A decision as written before v0.15: no alternatives, no rationale. */
   function legacyDecision(id: string, title: string): void {
     rawDb().prepare(
-      `INSERT INTO engrams (id, type, scope, title, content, properties, created_at, updated_at, rev)
-       VALUES (?, 'decision', 'project.eml', ?, 'legacy choice', '{"detail":"decision_type: architectural"}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1)`,
+      `INSERT INTO engrams (id, type, scope, title, content, properties, created_at, updated_at, rev, ord)
+       VALUES (?, 'decision', 'project.eml', ?, 'legacy choice', '{"detail":"decision_type: architectural"}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))`,
     ).run(id, title)
     rawDb().prepare(
       `INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, 'legacy choice', 'project.eml', ?)`,

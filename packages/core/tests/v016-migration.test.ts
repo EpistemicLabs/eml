@@ -97,10 +97,10 @@ function schemaFacts(file: string) {
 const EXPECTED = {
   version: CURRENT_BRAIN_SCHEMA_VERSION, integrity: 'ok', fkViolations: 0, hasMode: false,
   engramIndexes: [
-    'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_origin', 'idx_engrams_scope',
+    'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_ord', 'idx_engrams_origin', 'idx_engrams_scope',
     'idx_engrams_session', 'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
   ],
-  relationIndexes: ['idx_relations_source', 'idx_relations_target', 'idx_relations_type'],
+  relationIndexes: ['idx_relations_ord', 'idx_relations_source', 'idx_relations_target', 'idx_relations_type'],
 }
 
 /** Data after the migration, compared with the v0.15 state it came from. */
@@ -137,10 +137,10 @@ function expectMigratedData(before: ReturnType<typeof read>, after: ReturnType<t
 function expectChecks(file: string): void {
   const db = new Database(file)
   try {
-    const ins = db.prepare(`INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev) VALUES (?, ?, 'project.x', 'c', 'now', 'now', 1)`)
+    const ins = db.prepare(`INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev, ord) VALUES (?, ?, 'project.x', 'c', 'now', 'now', 1, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))`)
     expect(() => ins.run('n-new', 'note')).not.toThrow()
     for (const type of EPISTEMIC) expect(() => ins.run(`x-${type}`, type)).toThrow(/CHECK constraint failed/)
-    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 't-1', 'd-1', ?, 'manual', 'now')`)
+    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at, ord) VALUES (?, 't-1', 'd-1', ?, 'manual', 'now', (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))`)
     expect(() => rel.run('r-part', 'part_of')).not.toThrow()
     expect(() => rel.run('r-eval-new', 'evaluates')).toThrow(/CHECK constraint failed/)
   } finally { db.close() }
@@ -169,7 +169,7 @@ describe('v0.16 migration — epistemic mode removed on a seeded v0.15 brain', (
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 15)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19, 20] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19, 20, 21] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 

@@ -1,7 +1,7 @@
 -- ============================================================
--- EML brain schema v0.20 — fresh brain
+-- EML brain schema v0.21 — fresh brain
 --
--- The complete schema a new brain starts with (schema 20). Existing brains
+-- The complete schema a new brain starts with (schema 21). Existing brains
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
 --
@@ -9,6 +9,10 @@
 -- application, ISO-8601 UTC with milliseconds — no column defaults the clock
 -- would fill; the migration runner writes the ledger row. engrams.rev is the
 -- revision counter.
+--
+-- Schema 21 (local op log): op_log and op_snapshots; engrams, relations and
+-- entries carry ord, their insertion order. The runner writes the log's
+-- genesis after this file (database.ts applyMigration).
 --
 -- No BEGIN/COMMIT: the runner (database.ts) runs this file and the ledger row
 -- in one transaction.
@@ -111,7 +115,13 @@ CREATE TABLE engrams (
   -- ============ Revision (v0.20) ============
   -- 1 on create, +1 on every write that changes the row; engram.update and
   -- task.track take an optional base_rev precondition (decision engram-revision-counter)
-  rev                 INTEGER NOT NULL
+  rev                 INTEGER NOT NULL,
+
+  -- ============ Insertion order (v0.21) ============
+  -- 1, 2, … in the order rows were written: the tiebreak for every ordering by
+  -- time (a write stamps all its rows with one time), kept by a rebuild from
+  -- the log where the rowid is not
+  ord                 INTEGER NOT NULL
 );
 CREATE INDEX idx_engrams_scope            ON engrams(scope);
 CREATE INDEX idx_engrams_title            ON engrams(title);
@@ -122,6 +132,7 @@ CREATE INDEX idx_engrams_created          ON engrams(created_at);
 CREATE INDEX idx_engrams_ingested_by      ON engrams(ingested_by);
 CREATE INDEX idx_engrams_origin           ON engrams(origin);
 CREATE INDEX idx_engrams_session          ON engrams(session_id);
+CREATE UNIQUE INDEX idx_engrams_ord       ON engrams(ord);
 -- One core profile (the identity the boot loads) per scope among active engrams.
 CREATE UNIQUE INDEX idx_engrams_core_profile ON engrams(scope)
   WHERE type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1;
@@ -142,11 +153,13 @@ CREATE TABLE relations (
   explanation         TEXT,
   metadata            TEXT,
   created_at          TEXT NOT NULL,
+  ord                 INTEGER NOT NULL,           -- insertion order (v0.21), as engrams.ord
   UNIQUE(source_id, target_id, relation)
 );
 CREATE INDEX idx_relations_source         ON relations(source_id);
 CREATE INDEX idx_relations_target         ON relations(target_id);
 CREATE INDEX idx_relations_type           ON relations(relation);
+CREATE UNIQUE INDEX idx_relations_ord     ON relations(ord);
 
 CREATE VIRTUAL TABLE engrams_fts USING fts5(
   id UNINDEXED,
@@ -208,12 +221,41 @@ CREATE TABLE entries (
   source      TEXT CHECK(source IS NULL OR source IN ('user','observed','self')),        -- evidence
   stance      TEXT CHECK(stance IS NULL OR stance IN ('supports','contradicts','declined')), -- evidence
   quote       TEXT,                           -- evidence: the user's words, verbatim
-  rule_id     TEXT                            -- evidence: the rule the incident concerns
+  rule_id     TEXT,                           -- evidence: the rule the incident concerns
+  ord         INTEGER NOT NULL                -- insertion order (v0.21), as engrams.ord
 );
 CREATE INDEX idx_entries_engram ON entries(engram_id, at);
+CREATE UNIQUE INDEX idx_entries_ord ON entries(ord);
 
 CREATE TABLE _eml_migrations (
   version     INTEGER PRIMARY KEY,
   name        TEXT NOT NULL,
   applied_at  TEXT NOT NULL
+);
+
+-- The op log (v0.21): every brain write in order, hash-chained. An entry's
+-- link hashes the previous link, its seq, its time and its payload's hash
+-- (decision op-log-chain-covers-seq-and-time); payload is the op's envelope
+-- {op_id, schema, call, args, provenance} as JSON in the caller's key order (log/op.ts).
+-- seq 1 is the brain's genesis: the state the log starts from, kept in
+-- op_snapshots. Entries are never changed or removed (decision
+-- op-log-no-redaction).
+CREATE TABLE op_log (
+  seq           INTEGER PRIMARY KEY,          -- 1, 2, … without gaps; 1 = genesis
+  at            TEXT NOT NULL,                -- the op's time, ISO-8601 UTC ms; every row it writes carries it
+  op_id         TEXT NOT NULL UNIQUE,
+  prev_hash     TEXT NOT NULL,                -- hash of seq - 1; 64 zeros for seq 1
+  payload_hash  TEXT NOT NULL,                -- sha256 of payload, hex
+  hash          TEXT NOT NULL,                -- sha256 of prev_hash, seq, at, payload_hash
+  signature     BLOB,                         -- the author device's signature over payload_hash (shared brains); NULL in a private brain
+  payload       TEXT NOT NULL
+);
+
+-- The brain's state after op `seq` (log/snapshot.ts): every state table as
+-- gzipped canonical JSON, with the hash of that JSON.
+CREATE TABLE op_snapshots (
+  seq           INTEGER PRIMARY KEY REFERENCES op_log(seq),
+  schema        INTEGER NOT NULL,
+  state_hash    TEXT NOT NULL,
+  data          BLOB NOT NULL
 );

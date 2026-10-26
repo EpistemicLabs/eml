@@ -11,6 +11,7 @@ import { validateScope } from '../write/scope'
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, insertEngramTags, insertEngramSubjects } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import type { CommandContext } from './types'
+import { insertEngram } from '../write/insert'
 
 // --- Learnings (eml_learning) -------------------------------------------------------
 //
@@ -77,15 +78,8 @@ export function createLearning(ctx: CommandContext, input: Omit<LearnInput, 'id'
   const tagSlugs = input.tags !== undefined ? normalizeAndValidateTags(ctx, input.tags) : undefined
   const subjectSlugs = input.subjects !== undefined ? normalizeAndValidateSubjects(ctx, input.subjects) : undefined
   const id = stamp.newId()
-  const now = stamp.at
   stamp.created.add(id)
-  db.prepare(`
-    INSERT INTO engrams (id, content, type, scope, title, status, significance, properties,
-      ingested_by, ingestion_method, session_id, model, harness, created_at, updated_at, rev)
-    VALUES (?, ?, 'learning', ?, ?, 'active', 'normal', NULL, ?, ?, ?, ?, ?, ?, ?, 1)
-  `).run(id, input.content, input.scope, input.title, actor.handle, actor.ingestion_method,
-    actor.session_id, actor.model, actor.harness, now, now)
-  db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`).run(id, input.content, input.scope, input.title)
+  insertEngram(ctx, { id, type: 'learning', scope: input.scope!, title: input.title!, content: input.content!, status: 'active', properties: null, origin: null })
   appendEntry(db, id, evidence, stamp)
   if (tagSlugs && tagSlugs.length > 0) insertEngramTags(ctx, id, tagSlugs)
   if (subjectSlugs && subjectSlugs.length > 0) insertEngramSubjects(ctx, id, subjectSlugs)

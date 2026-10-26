@@ -95,7 +95,7 @@ function expectChecks(file: string): void {
     const entity = db.prepare(`INSERT INTO entities (id, name, kind, created_at, updated_at) VALUES (?, ?, ?, 'now', 'now')`)
     expect(() => entity.run('x-1', 'x', 'person')).not.toThrow()
     expect(() => entity.run('x-2', 'x', 'subject')).toThrow(/CHECK constraint failed/)
-    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 'd-1', 't-1', 'supports', ?, 'now')`)
+    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at, ord) VALUES (?, 'd-1', 't-1', 'supports', ?, 'now', (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))`)
     expect(() => rel.run('r-new', 'auto_subject')).toThrow(/CHECK constraint failed/)
     expect(() => db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id, created_at) VALUES ('n-1', 'missing', 'now')`).run()).toThrow(/FOREIGN KEY/)
   } finally { db.close() }
@@ -123,7 +123,7 @@ describe('v0.17 migration — subject → title, themes → subjects on a seeded
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 16)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [17, 18, 19, 20] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [17, 18, 19, 20, 21] })
     } finally { control.close() }
 
     expectMigrated(brainFile)

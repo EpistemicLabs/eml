@@ -55,6 +55,13 @@ export function isValidationMessage(msg: string): boolean {
     || msg.startsWith('subject name must')  // an empty rename
 }
 
+/** A rejection by the caller's input as CommandError INVALID; a CommandError or a fault as it is. */
+export function asCommandError(err: unknown): unknown {
+  if (err instanceof CommandError) return err
+  const msg = String((err as Error)?.message ?? '')
+  return isValidationMessage(msg) ? new CommandError('INVALID', msg) : err
+}
+
 /** The input as a plain object, or INVALID. */
 export function inputObject(command: string, input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {

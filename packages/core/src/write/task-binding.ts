@@ -4,10 +4,11 @@ import { addDays } from '../env'
 import { CLOSED_WITH_TASK } from '../engrams'
 import { propsOf, type WriteContext } from './context'
 import { dropWikilinkEcho } from './wikilinks'
+import { insertRelation } from './insert'
 
 /** The task a decision or note is tied to (task_id at creation: a refines / derived_from edge). */
 export function boundTaskOf(ctx: WriteContext, id: string): { id: string, status: string } | undefined {
-  return ctx.db.prepare(`SELECT t.id, t.status FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines') ORDER BY r.created_at ASC, r.rowid ASC LIMIT 1`).get(id) as { id: string, status: string } | undefined
+  return ctx.db.prepare(`SELECT t.id, t.status FROM relations r JOIN engrams t ON t.id = r.target_id WHERE r.source_id = ? AND t.type = 'task' AND r.relation IN ('derived_from', 'refines') ORDER BY r.created_at ASC, r.ord ASC LIMIT 1`).get(id) as { id: string, status: string } | undefined
 }
 
 /** A task-bound decision or note needs a task that is still open. */
@@ -52,13 +53,9 @@ export function assertPartOf(ctx: WriteContext, childId: string, parentId: strin
 /** Validate + draw child → parent. Returns true if the edge is new. */
 export function linkPartOf(ctx: WriteContext, childId: string, parentId: string): boolean {
   assertPartOf(ctx, childId, parentId)
-  const info = ctx.db.prepare(`
-    INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-    VALUES (?, ?, ?, 'part_of', 'agent_declared', 1.0, ?)
-    ON CONFLICT(source_id, target_id, relation) DO NOTHING
-  `).run(ctx.stamp.newId(), childId, parentId, ctx.stamp.at)
+  const created = insertRelation(ctx, { source_id: childId, target_id: parentId, relation: 'part_of', detection_method: 'agent_declared' })
   dropWikilinkEcho(ctx, childId, parentId)
-  return info.changes > 0
+  return created
 }
 
 export function parentOf(ctx: WriteContext, id: string): string | undefined {
@@ -82,7 +79,7 @@ export function openSubtasksOf(ctx: WriteContext, parentId: string): OpenSubtask
     JOIN engrams e ON e.id = r.source_id
     WHERE r.target_id = ? AND r.relation = 'part_of'
       AND e.type = 'task' AND e.status IN (${TASK_OPEN_STATUSES.map(() => '?').join(', ')})
-    ORDER BY e.created_at ASC
+    ORDER BY e.created_at ASC, e.ord ASC
   `).all(parentId, ...TASK_OPEN_STATUSES) as Array<{ id: string, title: string | null }>
   return rows.map(r => ({ parent_id: parentId, id: r.id, title: r.title }))
 }
@@ -103,11 +100,7 @@ export function moveBoundItems(ctx: WriteContext, oldTaskId: string, newTaskId: 
   for (const item of items) {
     const rel = item.type === 'decision' ? 'derived_from' : 'refines'
     ctx.db.prepare(`DELETE FROM relations WHERE source_id = ? AND target_id = ? AND relation = ?`).run(item.id, oldTaskId, rel)
-    ctx.db.prepare(`
-      INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, created_at)
-      VALUES (?, ?, ?, ?, 'agent_declared', 1.0, ?)
-      ON CONFLICT(source_id, target_id, relation) DO NOTHING
-    `).run(ctx.stamp.newId(), item.id, newTaskId, rel, ctx.stamp.at)
+    insertRelation(ctx, { source_id: item.id, target_id: newTaskId, relation: rel, detection_method: 'agent_declared' })
     appendTaskChange(ctx, newTaskId, `${item.type} moved here from ${oldTaskId}: ${item.title ?? item.id} (${item.id})`)
   }
 }

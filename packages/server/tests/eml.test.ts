@@ -165,21 +165,6 @@ describe('EML v0.2', () => {
 
       expect(updated!.properties).toEqual({ detail: 'more' })
     })
-
-    it('deletes an engram and its relations', () => {
-      const a = writes(eml).store(validDecision({ content: 'A', scope: 'global' }))
-      const b = writes(eml).store(validDecision({ content: 'B', scope: 'global' }))
-      writes(eml).relate({
-        source_id: a.id, target_id: b.id,
-        relation: 'supports', detection_method: 'manual',
-      })
-
-      expect(eml.engrams.delete(a.id)).toBe(true)
-      expect(eml.engrams.get(a.id)).toBeNull()
-      // Relation should also be gone
-      const bCtx = eml.engrams.get(b.id)
-      expect(bCtx!.relations).toHaveLength(0)
-    })
   })
 
   // ============================================================
@@ -295,12 +280,6 @@ describe('EML v0.2', () => {
       const updated = writes(eml).agents.update('scout', { name: 'Scout-BTC', domains: ['market'] })
       expect(updated!.name).toBe('Scout-BTC')
       expect(updated!.domains).toEqual(['market'])
-    })
-
-    it('deletes an agent', () => {
-      writes(eml).agents.store({ id: 'temp', name: 'Temp' })
-      expect(eml.agents.delete('temp')).toBe(true)
-      expect(eml.agents.get('temp')).toBeNull()
     })
   })
 
@@ -1187,7 +1166,7 @@ describe('EML v0.2', () => {
       task('touched in march', ago(10))
       task('touched in february', ago(20))
       // a journal entry alone (the task row untouched) counts as activity
-      raw.prepare(`INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-today', ?, 'note', ?, 'worked on it')`).run(old.id, new Date().toISOString())
+      raw.prepare(`INSERT INTO entries (id, engram_id, kind, at, text, ord) VALUES ('e-today', ?, 'note', ?, 'worked on it', (SELECT COALESCE(MAX(ord), 0) + 1 FROM entries))`).run(old.id, new Date().toISOString())
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
@@ -1422,8 +1401,8 @@ describe('EML v0.2', () => {
       // v0.9 Cluster 1: namespace column dropped.
       const raw = (eml as any).db
       const stmt = raw.prepare(`
-        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at, rev)
-        VALUES (?, ?, ?, ?, ?, ?, '2026-10-23T00:00:00.000Z', '2026-10-23T00:00:00.000Z', 1)
+        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at, rev, ord)
+        VALUES (?, ?, ?, ?, ?, ?, '2026-10-23T00:00:00.000Z', '2026-10-23T00:00:00.000Z', 1, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))
       `)
       expect(() => stmt.run(
         'ref-test-id', 'raw insert', 'reference', 'global', 'active', 'normal'

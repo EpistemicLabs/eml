@@ -16,7 +16,7 @@ export class UserStore {
   }
 
   list(): User[] {
-    return (this.db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as any[])
+    return (this.db.prepare('SELECT * FROM users ORDER BY created_at DESC, id').all() as any[])
       .map(r => this.rowToUser(r))
   }
 

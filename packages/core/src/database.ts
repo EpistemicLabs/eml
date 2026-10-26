@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
 import { type Clock, systemClock } from './env'
+import { needsGenesis, writeGenesis } from './log/log'
 
 // SQL files ship inside the package, next to src/ and dist/ — the same relative
 // location from a workspace checkout and from a bundled build (dist/server.cjs).
@@ -10,6 +11,11 @@ const SCHEMA_DIR = join(__dirname, '..', 'migrations', 'brain')
 
 function readSchema(file: string): string {
   return readFileSync(join(SCHEMA_DIR, file), 'utf-8')
+}
+
+/** The complete current schema of a fresh brain (`v0.<N>.sql`): new brains, and a rebuild from the log. */
+export function currentSchemaSql(): string {
+  return readSchema(`v0.${CURRENT_BRAIN_SCHEMA_VERSION}.sql`)
 }
 
 /**
@@ -31,12 +37,17 @@ const RUNNER_TRANSACTION_FROM = 20
  * at the old schema or the new one with its row, never in between; files up to
  * v0.19 carry their own BEGIN/COMMIT and run as they are. `at` is read inside
  * the transaction. foreign_keys is the caller's (it cannot change in a transaction).
+ *
+ * v0.21: a step that leaves the brain with an empty op log (schema 21 reached,
+ * fresh or migrated) writes the log's genesis in the same transaction.
  */
 export function applyMigration(db: Database.Database, version: number, sql: string, at: () => string): void {
   if (version >= RUNNER_TRANSACTION_FROM) {
     db.transaction(() => {
       db.exec(sql)
-      recordMigration(db, version, at())
+      const now = at()
+      recordMigration(db, version, now)
+      if (needsGenesis(db)) writeGenesis(db, version, now)
     })()
   } else {
     db.exec(sql)
@@ -84,7 +95,7 @@ function createOrMigrate(db: Database.Database, clock: Clock): Database.Database
   ).get()
 
   if (!hasEngrams) {
-    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, readSchema(`v0.${CURRENT_BRAIN_SCHEMA_VERSION}.sql`), clock)
+    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, currentSchemaSql(), clock)
     return db
   }
 

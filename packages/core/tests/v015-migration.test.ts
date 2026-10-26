@@ -75,14 +75,14 @@ function schemaFacts(file: string) {
 
 const EXPECTED = {
   version: CURRENT_BRAIN_SCHEMA_VERSION, integrity: 'ok', fkViolations: 0, taskEntries: true,
-  relationIndexes: ['idx_relations_source', 'idx_relations_target', 'idx_relations_type'],
+  relationIndexes: ['idx_relations_ord', 'idx_relations_source', 'idx_relations_target', 'idx_relations_type'],
 }
 
 /** The CHECK after the rebuild: part_of in, junk out. */
 function expectRelationCheck(file: string): void {
   const db = new Database(file)
   try {
-    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 't-child', 't-parent', ?, 'manual', 'now')`)
+    const ins = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at, ord) VALUES (?, 't-child', 't-parent', ?, 'manual', 'now', (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))`)
     expect(() => ins.run('r-part', 'part_of')).not.toThrow()
     expect(() => ins.run('r-junk', 'belongs_to')).toThrow(/CHECK constraint failed/)
   } finally { db.close() }
@@ -108,7 +108,7 @@ describe('v0.15 migration — relations rebuild + task_entries on a seeded v0.14
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 14)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18, 19, 20] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [15, 16, 17, 18, 19, 20, 21] })
       expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 

@@ -7,11 +7,16 @@
 //   node scripts/audit-brain-migration.mjs <path/to/brain.db>
 //
 // Prints rows per table, the distribution per type × status, timestamp formats
-// per column and the review_due_at formats, before and after; exits 1 when the
-// migration lost or added rows, left a non-ISO timestamp, an expired engram,
-// an expires_at or the labels tables, or fails the integrity / foreign-key check.
+// per column, the review_due_at formats, the state hash and the sizes (brain
+// file, op_log, op_snapshots), before and after; exits 1 when the migration
+// lost or added rows, left a non-ISO timestamp, an expired engram, an
+// expires_at or the labels tables, fails the integrity / foreign-key check, or
+// (schema 21) left the op log without exactly one valid genesis whose snapshot
+// holds the migrated state, or a log a rebuild from does not equal the brain,
+// left ord unfilled, repeated or out of rowid order — or changed the state
+// when it only had to add the log and ord.
 
-import { copyFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
@@ -21,6 +26,11 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const require = createRequire(join(root, 'packages', 'core', 'package.json'))
 const Database = require('better-sqlite3')
 const { EML, CURRENT_BRAIN_SCHEMA_VERSION } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
+// the op log's pieces are not in core's index (only this script and the tests
+// use them; rebuild needs the EML class, so an index export would be a require cycle)
+const { GENESIS_PREV_HASH, chainHash, sha256Hex } = require(join(root, 'packages', 'core', 'dist', 'log', 'op.js'))
+const { stateDump, stateHash, decodeSnapshot } = require(join(root, 'packages', 'core', 'dist', 'log', 'snapshot.js'))
+const { verify } = require(join(root, 'packages', 'core', 'dist', 'log', 'rebuild.js'))
 
 const source = process.argv[2]
 if (!source || !existsSync(source)) {
@@ -63,7 +73,60 @@ function stats(file) {
       formats,
       integrity: db.pragma('integrity_check', { simple: true }),
       fkViolations: db.pragma('foreign_key_check').length,
+      stateHash: stateHash(withoutOrd(stateDump(db))),
+      sizes: sizes(db, file),
     }
+  } finally { db.close() }
+}
+
+/** The state without ord (schema 21 adds it to engrams, relations and entries; every other value stays). */
+function withoutOrd(dump) {
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord, ...row }) => row)]))
+}
+
+/** Schema 21: ord is filled on engrams, relations and entries — 1…n, unique, in the rows' rowid order. */
+function ordFacts(file) {
+  const db = new Database(file, { readonly: true })
+  try {
+    return Object.fromEntries(['engrams', 'relations', 'entries'].map(t => [t, db.prepare(`
+      SELECT COUNT(*) AS rows, COUNT(DISTINCT ord) AS distinct_ord, MIN(ord) AS min_ord, MAX(ord) AS max_ord,
+        (SELECT COUNT(*) FROM (SELECT ord, ROW_NUMBER() OVER (ORDER BY rowid) AS n FROM ${t}) WHERE ord IS NOT n) AS out_of_rowid_order
+      FROM ${t}`).get()]))
+  } finally { db.close() }
+}
+
+/** Bytes on disk: the brain file (with its WAL) and the pages of the log tables. */
+function sizes(db, file) {
+  const pages = Object.fromEntries(db.prepare(`SELECT name, SUM(pgsize) AS bytes FROM dbstat WHERE name IN ('op_log', 'op_snapshots') GROUP BY name`).all().map(r => [r.name, r.bytes]))
+  const wal = existsSync(file + '-wal') ? statSync(file + '-wal').size : 0
+  return { file: statSync(file).size + wal, op_log: pages.op_log ?? 0, op_snapshots: pages.op_snapshots ?? 0 }
+}
+
+/** Schema 21: the log holds exactly the genesis, its link is valid, and it and its snapshot hold the brain's state. */
+function genesisProblems(file) {
+  const db = new Database(file, { readonly: true })
+  try {
+    const problems = []
+    const log = db.prepare('SELECT * FROM op_log ORDER BY seq').all()
+    if (log.length !== 1) return [`op_log has ${log.length} entries, expected the genesis alone`]
+    const g = log[0]
+    const state = stateHash(stateDump(db))
+    const payload = JSON.parse(g.payload)
+    if (g.seq !== 1 || g.prev_hash !== GENESIS_PREV_HASH) problems.push('genesis is not seq 1 after the zero hash')
+    if (g.payload_hash !== sha256Hex(g.payload)) problems.push('genesis payload_hash does not match its payload')
+    if (g.hash !== chainHash(g.prev_hash, g.seq, g.at, g.payload_hash)) problems.push('genesis chain link is not valid')
+    if (payload.call !== 'brain.genesis' || payload.schema !== CURRENT_BRAIN_SCHEMA_VERSION) problems.push(`genesis payload is ${payload.call} at schema ${payload.schema}`)
+    if (payload.args?.state_hash !== state) problems.push('genesis state_hash is not the hash of the migrated brain')
+    const snaps = db.prepare('SELECT seq, schema, state_hash, data FROM op_snapshots').all()
+    if (snaps.length !== 1 || snaps[0].seq !== 1 || snaps[0].schema !== CURRENT_BRAIN_SCHEMA_VERSION) problems.push(`expected one snapshot at seq 1, schema ${CURRENT_BRAIN_SCHEMA_VERSION}`)
+    else {
+      if (snaps[0].state_hash !== state) problems.push('snapshot state_hash is not the hash of the migrated brain')
+      if (stateHash(decodeSnapshot(snaps[0].data)) !== state) problems.push('snapshot data does not decode to the migrated brain')
+    }
+    // and the brain is its log: a rebuild from the genesis equals the migrated state
+    const verified = verify(db)
+    if (!verified.ok) problems.push(`the log does not verify: ${verified.problem}`)
+    return problems
   } finally { db.close() }
 }
 
@@ -103,13 +166,23 @@ try {
   }
   if (after.integrity !== 'ok') problems.push(`integrity_check: ${after.integrity}`)
   if (after.fkViolations > 0) problems.push(`${after.fkViolations} foreign-key violations`)
+  problems.push(...genesisProblems(copy))
+  const ord = ordFacts(copy)
+  for (const [t, f] of Object.entries(ord)) {
+    if (f.rows > 0 && (f.distinct_ord !== f.rows || f.min_ord !== 1 || f.max_ord !== f.rows)) problems.push(`${t}.ord is not 1…${f.rows} without gaps or repeats`)
+    if (f.out_of_rowid_order > 0) problems.push(`${t}.ord: ${f.out_of_rowid_order} rows out of rowid order`)
+  }
+  // from 20, the one step to 21 only adds the log and ord: the state without ord must be unchanged
+  if (before.schema === 20 && after.stateHash !== before.stateHash) problems.push('the state changed, but the step to 21 only adds the op log')
 
-  console.log(JSON.stringify({ source, before, after, problems }, null, 2))
+  console.log(JSON.stringify({ source, before, after, ord, problems }, null, 2))
   if (problems.length > 0) {
     console.error(`\n${problems.length} problem(s):\n- ${problems.join('\n- ')}`)
     process.exit(1)
   }
+  const kb = (n) => `${(n / 1024).toFixed(0)} KiB`
   console.error(`\nmigration audit ok: schema ${before.schema} → ${after.schema}, ${after.rows.engrams} engrams, ${before.expired} expired → invalidated, ${before.labels ? before.labels.engram_labels : 0} label rows dropped`)
+  console.error(`sizes: file ${kb(before.sizes.file)} → ${kb(after.sizes.file)}, op_log ${kb(after.sizes.op_log)}, op_snapshots ${kb(after.sizes.op_snapshots)}`)
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3'
 import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
-import { runCommand, type CommandMap, type CommandName } from './commands'
+import { type CommandMap, type CommandName } from './commands'
+import { commandStores, writeOp } from './log/apply-op'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -62,15 +63,15 @@ export class EML {
    * engram.confirm_review · relation.create · object.create · object.update —
    * in one transaction with one time from `env` (default: no actor). A
    * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS · CONFLICT) and
-   * writes nothing. Outside the set only engrams.delete writes (decision
-   * no-delete-command).
+   * writes nothing. Nothing else writes a brain; v0.21: engrams.delete and
+   * agents.delete are gone (decision no-delete-command).
+   *
+   * v0.21: the write is an op in the brain's log (log/apply-op.ts) — env's
+   * newId gives the op_id, its clock the entry's time; the ids the write
+   * draws are derived from the op_id.
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
-    return runCommand({
-      eml: this, db: this.db, store: this.engrams,
-      projects: this.projects, users: this.users, agents: this.agents, entities: this.entities,
-      tags: this.tags, subjects: this.subjects,
-    }, command, env)
+    return writeOp(commandStores(this, this.db), command, env)
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */

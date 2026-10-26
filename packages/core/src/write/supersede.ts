@@ -3,6 +3,7 @@ import { bumpRev } from '../entries'
 import type { WriteContext } from './context'
 import { dropWikilinkEcho } from './wikilinks'
 import { ancestorsOf, appendTaskChange, moveBoundItems, openSubtasksOf } from './task-binding'
+import { insertRelation } from './insert'
 
 /**
  * The supersede rules, one check for every write path (decision
@@ -78,7 +79,7 @@ function isOlderThan(ctx: WriteContext, id: string, newer: string): boolean {
 
 /** The engram that superseded this one (its supersedes edge), if any. */
 export function successorOf(ctx: WriteContext, id: string): string | undefined {
-  return (ctx.db.prepare(`SELECT source_id FROM relations WHERE target_id = ? AND relation = 'supersedes' ORDER BY created_at ASC LIMIT 1`).get(id) as { source_id: string } | undefined)?.source_id
+  return (ctx.db.prepare(`SELECT source_id FROM relations WHERE target_id = ? AND relation = 'supersedes' ORDER BY created_at ASC, ord ASC LIMIT 1`).get(id) as { source_id: string } | undefined)?.source_id
 }
 
 /** A successor of `id` that still holds (any status but invalidated). */
@@ -86,7 +87,7 @@ export function liveSuccessorOf(ctx: WriteContext, id: string): string | undefin
   return (ctx.db.prepare(`
     SELECT r.source_id FROM relations r JOIN engrams e ON e.id = r.source_id
     WHERE r.target_id = ? AND r.relation = 'supersedes' AND e.status != 'invalidated'
-    ORDER BY r.created_at ASC LIMIT 1
+    ORDER BY r.created_at ASC, r.ord ASC LIMIT 1
   `).get(id) as { source_id: string } | undefined)?.source_id
 }
 
@@ -148,19 +149,14 @@ export function linkSupersede(ctx: WriteContext, newId: string, oldId: string, d
     WHERE id = ? AND status IN ('active', 'planned')
   `).run(stamp.at, oldId)
   bumpRev(db, stamp, oldId)
-  db.prepare(`
-    INSERT INTO relations (id, source_id, target_id,
-      relation, detection_method, strength, created_at)
-    VALUES (?, ?, ?, 'supersedes', ?, 1.0, ?)
-    ON CONFLICT(source_id, target_id, relation) DO NOTHING
-  `).run(stamp.newId(), newId, oldId, detection, stamp.at)
+  insertRelation(ctx, { source_id: newId, target_id: oldId, relation: 'supersedes', detection_method: detection })
   dropWikilinkEcho(ctx, newId, oldId)
 }
 
 /** The state of the scope's active status before `exceptId` was written. */
 export function activeStatusState(ctx: WriteContext, scope: string, exceptId: string): string | null {
   const row = ctx.db.prepare(
-    `SELECT properties FROM engrams WHERE scope = ? AND type = 'status' AND status = 'active' AND id != ? ORDER BY updated_at DESC LIMIT 1`,
+    `SELECT properties FROM engrams WHERE scope = ? AND type = 'status' AND status = 'active' AND id != ? ORDER BY updated_at DESC, ord DESC LIMIT 1`,
   ).get(scope, exceptId) as { properties: string | null } | undefined
   if (!row) return null
   const p = row.properties ? JSON.parse(row.properties) : {}
@@ -177,6 +173,7 @@ export function autoSupersedeStatusEngrams(ctx: WriteContext, newId: string, sco
     WHERE scope = ?
       AND type = 'status' AND status = 'active'
       AND id != ?
+    ORDER BY ord
   `).all(scope, newId) as { id: string }[]
 
   for (const old of oldRows) linkSupersede(ctx, newId, old.id, 'manual')
@@ -199,6 +196,7 @@ export function autoSupersedeCoreProfile(ctx: WriteContext, newId: string, scope
     SELECT id FROM engrams
     WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ?
       AND json_extract(properties, '$.core') = 1
+    ORDER BY ord
   `).all(scope, newId) as { id: string }[]
   for (const r of rows) linkSupersede(ctx, newId, r.id, 'manual')
   return rows.map(r => r.id)
