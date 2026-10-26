@@ -1166,7 +1166,7 @@ describe('EML v0.2', () => {
       task('touched in march', ago(10))
       task('touched in february', ago(20))
       // a journal entry alone (the task row untouched) counts as activity
-      raw.prepare(`INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-today', ?, 'note', ?, 'worked on it')`).run(old.id, new Date().toISOString())
+      raw.prepare(`INSERT INTO entries (id, engram_id, kind, at, text, ord) VALUES ('e-today', ?, 'note', ?, 'worked on it', (SELECT COALESCE(MAX(ord), 0) + 1 FROM entries))`).run(old.id, new Date().toISOString())
       const state = eml.projects.getBrainState('eml')!
       expect(state.open_tasks.map(t => t.content)).toEqual(['old, but a journal entry today', 'touched in march', 'touched in february'])
     })
@@ -1401,8 +1401,8 @@ describe('EML v0.2', () => {
       // v0.9 Cluster 1: namespace column dropped.
       const raw = (eml as any).db
       const stmt = raw.prepare(`
-        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at, rev)
-        VALUES (?, ?, ?, ?, ?, ?, '2026-10-23T00:00:00.000Z', '2026-10-23T00:00:00.000Z', 1)
+        INSERT INTO engrams (id, content, type, scope, status, significance, created_at, updated_at, rev, ord)
+        VALUES (?, ?, ?, ?, ?, ?, '2026-10-23T00:00:00.000Z', '2026-10-23T00:00:00.000Z', 1, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))
       `)
       expect(() => stmt.run(
         'ref-test-id', 'raw insert', 'reference', 'global', 'active', 'normal'

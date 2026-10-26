@@ -289,7 +289,7 @@ export class EngramStore {
   sessionLog(sessionId: string | null): Engram | null {
     if (!sessionId) return null
     const row = this.db.prepare(
-      `SELECT * FROM engrams WHERE type = 'log' AND session_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT * FROM engrams WHERE type = 'log' AND session_id = ? AND status = 'active' ORDER BY created_at DESC, ord DESC LIMIT 1`,
     ).get(sessionId) as any
     return row ? this.rowToEngram(row) : null
   }
@@ -320,7 +320,7 @@ export class EngramStore {
         AND e.type IN ('decision', 'note')
         AND json_extract(e.properties, '$.binding') = 'task'
         AND e.status IN (${statuses.map(() => '?').join(', ')})
-      ORDER BY e.created_at ASC
+      ORDER BY e.created_at ASC, e.ord ASC
     `).all(taskId, ...statuses) as BoundItem[]
   }
 
@@ -346,6 +346,7 @@ export class EngramStore {
       LEFT JOIN engrams c1 ON r.source_id = c1.id
       LEFT JOIN engrams c2 ON r.target_id = c2.id
       WHERE (r.source_id = ? OR r.target_id = ?)
+      ORDER BY r.ord
     `).all(id, id) as any[]
 
     // v0.15: a task carries its journal, so a fresh session can take it over cold.
@@ -372,6 +373,7 @@ export class EngramStore {
       SELECT r.* FROM relations r
       WHERE r.source_id IN (SELECT id FROM engrams WHERE scope = ?)
          OR r.target_id IN (SELECT id FROM engrams WHERE scope = ?)
+      ORDER BY r.ord
     `).all(scope, scope) as any[]
     return rows.map(r => this.rowToRelation(r))
   }
@@ -556,6 +558,7 @@ export class EngramStore {
         case 'created_at':
         default:               orderClause = 'c.created_at DESC'; break
       }
+      orderClause += ', c.ord DESC'  // v0.21: one write stamps its rows alike — the newer insert first
     }
 
     const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1'
@@ -642,7 +645,7 @@ export class EngramStore {
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'status'
         AND status = 'active'
-      ORDER BY updated_at DESC LIMIT 3
+      ORDER BY updated_at DESC, ord DESC LIMIT 3
     `, [scope])
 
     const now = this.env.now()
@@ -656,14 +659,14 @@ export class EngramStore {
     const recent_decisions = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'decision'
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, ord DESC
       LIMIT 5
     `, [scope])
 
     const recent_logs = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'log'
-      ORDER BY created_at DESC LIMIT 5
+      ORDER BY created_at DESC, ord DESC LIMIT 5
     `, [scope])
 
     // v0.10.5: active rules in scope — name-only in the dashboard render. (relations
@@ -671,7 +674,7 @@ export class EngramStore {
     const rules = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'rule' AND status = 'active'
-      ORDER BY created_at DESC LIMIT 15
+      ORDER BY created_at DESC, ord DESC LIMIT 15
     `, [scope])
 
     // v0.13: engrams in scope that are review due (review-due.ts: standing
@@ -681,7 +684,7 @@ export class EngramStore {
     const pending_reviews = this.queryEngramsRaw(`
       SELECT c.* FROM engrams c
       WHERE c.scope = ? AND ${reviewDueSql('c')}
-      ORDER BY json_extract(c.properties, '$.review_due_at') ASC
+      ORDER BY json_extract(c.properties, '$.review_due_at') ASC, c.ord ASC
       LIMIT 15
     `, [scope, ...reviewDueParams(now)], now)
 

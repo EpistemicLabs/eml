@@ -10,8 +10,9 @@
 -- would fill; the migration runner writes the ledger row. engrams.rev is the
 -- revision counter.
 --
--- Schema 21 (local op log): op_log and op_snapshots. The runner writes the
--- log's genesis after this file (database.ts applyMigration).
+-- Schema 21 (local op log): op_log and op_snapshots; engrams, relations and
+-- entries carry ord, their insertion order. The runner writes the log's
+-- genesis after this file (database.ts applyMigration).
 --
 -- No BEGIN/COMMIT: the runner (database.ts) runs this file and the ledger row
 -- in one transaction.
@@ -114,7 +115,13 @@ CREATE TABLE engrams (
   -- ============ Revision (v0.20) ============
   -- 1 on create, +1 on every write that changes the row; engram.update and
   -- task.track take an optional base_rev precondition (decision engram-revision-counter)
-  rev                 INTEGER NOT NULL
+  rev                 INTEGER NOT NULL,
+
+  -- ============ Insertion order (v0.21) ============
+  -- 1, 2, … in the order rows were written: the tiebreak for every ordering by
+  -- time (a write stamps all its rows with one time), kept by a rebuild from
+  -- the log where the rowid is not
+  ord                 INTEGER NOT NULL
 );
 CREATE INDEX idx_engrams_scope            ON engrams(scope);
 CREATE INDEX idx_engrams_title            ON engrams(title);
@@ -125,6 +132,7 @@ CREATE INDEX idx_engrams_created          ON engrams(created_at);
 CREATE INDEX idx_engrams_ingested_by      ON engrams(ingested_by);
 CREATE INDEX idx_engrams_origin           ON engrams(origin);
 CREATE INDEX idx_engrams_session          ON engrams(session_id);
+CREATE UNIQUE INDEX idx_engrams_ord       ON engrams(ord);
 -- One core profile (the identity the boot loads) per scope among active engrams.
 CREATE UNIQUE INDEX idx_engrams_core_profile ON engrams(scope)
   WHERE type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1;
@@ -145,11 +153,13 @@ CREATE TABLE relations (
   explanation         TEXT,
   metadata            TEXT,
   created_at          TEXT NOT NULL,
+  ord                 INTEGER NOT NULL,           -- insertion order (v0.21), as engrams.ord
   UNIQUE(source_id, target_id, relation)
 );
 CREATE INDEX idx_relations_source         ON relations(source_id);
 CREATE INDEX idx_relations_target         ON relations(target_id);
 CREATE INDEX idx_relations_type           ON relations(relation);
+CREATE UNIQUE INDEX idx_relations_ord     ON relations(ord);
 
 CREATE VIRTUAL TABLE engrams_fts USING fts5(
   id UNINDEXED,
@@ -211,9 +221,11 @@ CREATE TABLE entries (
   source      TEXT CHECK(source IS NULL OR source IN ('user','observed','self')),        -- evidence
   stance      TEXT CHECK(stance IS NULL OR stance IN ('supports','contradicts','declined')), -- evidence
   quote       TEXT,                           -- evidence: the user's words, verbatim
-  rule_id     TEXT                            -- evidence: the rule the incident concerns
+  rule_id     TEXT,                           -- evidence: the rule the incident concerns
+  ord         INTEGER NOT NULL                -- insertion order (v0.21), as engrams.ord
 );
 CREATE INDEX idx_entries_engram ON entries(engram_id, at);
+CREATE UNIQUE INDEX idx_entries_ord ON entries(ord);
 
 CREATE TABLE _eml_migrations (
   version     INTEGER PRIMARY KEY,
@@ -224,7 +236,7 @@ CREATE TABLE _eml_migrations (
 -- The op log (v0.21): every brain write in order, hash-chained. An entry's
 -- link hashes the previous link, its seq, its time and its payload's hash
 -- (decision op-log-chain-covers-seq-and-time); payload is the op's envelope
--- {op_id, schema, call, args, provenance} as canonical JSON (log/op.ts).
+-- {op_id, schema, call, args, provenance} as JSON in the caller's key order (log/op.ts).
 -- seq 1 is the brain's genesis: the state the log starts from, kept in
 -- op_snapshots. Entries are never changed or removed (decision
 -- op-log-no-redaction).

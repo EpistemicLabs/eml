@@ -75,7 +75,7 @@ export type VerifyResult =
  * state. Returns ok with the state hash, or the first problem found.
  */
 export function verify(db: Database.Database): VerifyResult {
-  const entries = db.prepare('SELECT seq, at, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, at: string, prev_hash: string, payload_hash: string, hash: string, payload: string }>
+  const entries = db.prepare('SELECT seq, at, op_id, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, at: string, op_id: string, prev_hash: string, payload_hash: string, hash: string, payload: string }>
   if (entries.length === 0) return { ok: false, problem: 'the log is empty' }
 
   let prev = GENESIS_PREV_HASH
@@ -84,6 +84,7 @@ export function verify(db: Database.Database): VerifyResult {
     if (e.seq !== seq) return { ok: false, seq, problem: `entry ${seq} is missing (the next one is ${e.seq})` }
     if (e.prev_hash !== prev) return { ok: false, seq, problem: 'prev_hash is not the previous entry\'s link' }
     if (e.payload_hash !== sha256Hex(e.payload)) return { ok: false, seq, problem: 'the payload does not match its payload_hash' }
+    if (e.op_id !== (JSON.parse(e.payload) as OpEnvelope).op_id) return { ok: false, seq, problem: 'op_id is not the payload\'s op_id' }
     let link: string
     try { link = chainHash(e.prev_hash, e.seq, e.at, e.payload_hash) } catch (err) { return { ok: false, seq, problem: (err as Error).message } }
     if (e.hash !== link) return { ok: false, seq, problem: 'the chain link does not match its seq, at and hashes' }

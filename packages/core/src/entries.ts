@@ -72,8 +72,9 @@ export function appendEntry(db: Database.Database, engramId: string, input: Entr
     rule_id: input.rule_id ?? null,
   }
   db.prepare(`
-    INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id)
-    VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id)
+    INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id, ord)
+    VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id,
+      (SELECT COALESCE(MAX(ord), 0) + 1 FROM entries))
   `).run(entry)
   bumpRev(db, w, engramId)
   return entry
@@ -84,6 +85,6 @@ export function listEntries(db: Database.Database, engramId: string, kinds?: rea
   const filter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => '?').join(', ')})` : ''
   return db.prepare(
     `SELECT id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id
-     FROM entries WHERE engram_id = ?${filter} ORDER BY at ASC, rowid ASC`,
+     FROM entries WHERE engram_id = ?${filter} ORDER BY at ASC, ord ASC`,
   ).all(engramId, ...(kinds ?? [])) as Entry[]
 }

@@ -95,7 +95,7 @@ function expectChecks(file: string): void {
     const entity = db.prepare(`INSERT INTO entities (id, name, kind, created_at, updated_at) VALUES (?, ?, ?, 'now', 'now')`)
     expect(() => entity.run('x-1', 'x', 'person')).not.toThrow()
     expect(() => entity.run('x-2', 'x', 'subject')).toThrow(/CHECK constraint failed/)
-    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, 'd-1', 't-1', 'supports', ?, 'now')`)
+    const rel = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at, ord) VALUES (?, 'd-1', 't-1', 'supports', ?, 'now', (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))`)
     expect(() => rel.run('r-new', 'auto_subject')).toThrow(/CHECK constraint failed/)
     expect(() => db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id, created_at) VALUES ('n-1', 'missing', 'now')`).run()).toThrow(/FOREIGN KEY/)
   } finally { db.close() }

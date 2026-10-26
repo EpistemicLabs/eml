@@ -60,7 +60,7 @@ export class ProjectStore {
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'status'
         AND status = 'active'
-      ORDER BY updated_at DESC LIMIT 3
+      ORDER BY updated_at DESC, ord DESC LIMIT 3
     `, [scope])
 
     const now = this.env.now()
@@ -74,14 +74,14 @@ export class ProjectStore {
     const recent_decisions = this.queryEngrams(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'decision'
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, ord DESC
       LIMIT 5
     `, [scope])
 
     const recent_logs = this.queryEngrams(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'log'
-      ORDER BY created_at DESC LIMIT 3
+      ORDER BY created_at DESC, ord DESC LIMIT 3
     `, [scope])
 
     const relations = (this.db.prepare(`
@@ -90,7 +90,7 @@ export class ProjectStore {
         r.source_id IN (SELECT id FROM engrams WHERE scope = ?)
         OR
         r.target_id IN (SELECT id FROM engrams WHERE scope = ?)
-      ORDER BY r.created_at DESC LIMIT 20
+      ORDER BY r.created_at DESC, r.ord DESC LIMIT 20
     `).all(scope, scope) as any[]).map(r => this.rowToRelation(r))
 
     return { project, scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, relations }

@@ -7,7 +7,7 @@ import Database from 'better-sqlite3'
 import { EML } from '../src'
 import { rebuild, verify } from '../src/log/rebuild'
 import { stateDump, stateHash } from '../src/log/snapshot'
-import { createV20Brain, validDecision, validNote, writes, writeEverything } from './fixtures'
+import { createV20Brain, validDecision, validNote, validTask, writes, writeEverything } from './fixtures'
 
 // v0.21 (spec local-op-log-spec, block 4): a brain is its log. The genesis
 // snapshot and every op after it, replayed as stored, give the live state
@@ -77,6 +77,71 @@ describe('rebuild from the log equals the live brain', () => {
   })
 })
 
+describe('ties: one write stamps its rows alike, and order among equal times survives a rebuild', () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'eml-ties-')) })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('a clock that never moves: every write at the same time, the rebuild still equals the brain', () => {
+    let n = 0
+    const eml = new EML({
+      dbPath: ':memory:', namespace: 'test', clock: () => '2026-10-26T08:00:00.000Z',
+      newId: () => `00000000-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}`,
+    })
+    writeAll(eml)
+    expect(verify(raw(eml))).toMatchObject({ ok: true })
+    eml.close()
+  })
+
+  it('closing a task with two bound notes of the same created_at (the reviewer\'s probe b)', () => {
+    let n = 0
+    const fixed = new EML({ dbPath: ':memory:', namespace: 'test', clock: () => '2026-10-26T08:00:00.000Z', newId: () => `00000000-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}` })
+    writes(fixed).projects.create({ id: 'p', name: 'P' })
+    const t = writes(fixed).store(validTask({ scope: 'project.p', title: 'hub', status: 'active' }))
+    writes(fixed).store(validNote({ scope: 'project.p', title: 'zz-first', task_id: t.id, properties: { binding: 'task' } }))
+    writes(fixed).store(validNote({ scope: 'project.p', title: 'aa-second', task_id: t.id, properties: { binding: 'task' } }))
+    writes(fixed).trackTask(t.id, { status: 'resolved', outcome: 'done', text: 'closed', keep: [] })
+    writes(fixed).trackTask(t.id, { status: 'active', text: 'reopened' })
+    expect(verify(raw(fixed))).toMatchObject({ ok: true })
+    fixed.close()
+  })
+
+  it('rows from before the log with equal times, written in an order that is not their id order', () => {
+    const file = join(dir, 'v20.db')
+    createV20Brain(file)
+    // two task-bound notes and two journal entries of t-1, each pair at one time, the higher id written first
+    const db = new Database(file)
+    const at = '2026-10-24T09:00:00.000Z'
+    const note = db.prepare(`INSERT INTO engrams (id, type, scope, title, content, status, properties, created_at, updated_at, rev)
+      VALUES (?, 'note', 'project.p', ?, ?, 'active', '{"binding":"task"}', ?, ?, 1)`)
+    const fts = db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, 'project.p', ?)`)
+    const bind = db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES (?, ?, 't-1', 'refines', 'agent_declared', ?)`)
+    const entry = db.prepare(`INSERT INTO entries (id, engram_id, kind, at, text) VALUES (?, 't-1', 'note', ?, ?)`)
+    for (const [id, title] of [['n-z', 'written first'], ['n-a', 'written second']]) {
+      note.run(id, title, title, at, at); fts.run(id, title, title); bind.run(`r-${id}`, id, at)
+    }
+    entry.run('e-z', at, 'first entry'); entry.run('e-a', at, 'second entry')
+    db.close()
+
+    const eml = brain(file)
+    const journal = () => eml.engrams.entries('t-1').map(e => e.text)
+    const before = journal()
+    expect(before.slice(-2)).toEqual(['first entry', 'second entry'])
+    expect(eml.engrams.boundItems('t-1').map(b => b.id)).toEqual(['n-z', 'n-a'])
+    writes(eml).trackTask('t-1', { status: 'resolved', outcome: 'done', text: 'closed', keep: [] })
+    writes(eml).trackTask('t-1', { status: 'active', text: 'reopened' })
+    expect(verify(raw(eml))).toMatchObject({ ok: true })
+
+    // the rebuilt brain shows the same order
+    const into = new Database(':memory:')
+    rebuild(into, raw(eml))
+    const rebuilt = EML.fromConnection(into, 'rebuilt')
+    expect(rebuilt.engrams.entries('t-1').map(e => e.text)).toEqual(journal())
+    into.close()
+    eml.close()
+  })
+})
+
 describe('a log changed after the fact does not verify', () => {
   let eml: EML
   beforeEach(() => {
@@ -97,6 +162,11 @@ describe('a log changed after the fact does not verify', () => {
     const { payload } = db.prepare('SELECT payload FROM op_log WHERE seq = 3').get() as { payload: string }
     db.prepare('UPDATE op_log SET payload_hash = ? WHERE seq = 3').run(createHash('sha256').update(payload).digest('hex'))
     expect(verify(db)).toEqual({ ok: false, seq: 3, problem: 'the chain link does not match its seq, at and hashes' })
+  })
+
+  it('an op_id that is not the payload\'s', () => {
+    raw(eml).prepare(`UPDATE op_log SET op_id = '00000000-0000-4000-8000-0000000000ff' WHERE seq = 2`).run()
+    expect(verify(raw(eml))).toEqual({ ok: false, seq: 2, problem: 'op_id is not the payload\'s op_id' })
   })
 
   it('a changed time', () => {

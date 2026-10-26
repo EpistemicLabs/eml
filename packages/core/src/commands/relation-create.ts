@@ -2,6 +2,7 @@ import type { RelationInput } from '../types'
 import { dropWikilinkEcho } from '../write/wikilinks'
 import { boundTaskOf } from '../write/task-binding'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
+import { insertRelation } from '../write/insert'
 
 /** The relation verbs the DB accepts; supersedes and part_of come from writes, not from here (core says so). */
 const RELATION_VERBS: ReadonlySet<string> = new Set([
@@ -55,7 +56,7 @@ export const relationCreate: CommandModule<RelationInput, { created: boolean }> 
 
 /** Returns true if a new edge was inserted, false if it already existed (idempotent). */
 function relate(ctx: CommandContext, input: RelationInput): boolean {
-  const { db, stamp } = ctx
+  const { db } = ctx
   // v0.19: supersedes and part_of are not drawn by hand — they come from
   // supersedes on a write and from a task's parent_id.
   if (input.relation === 'supersedes' || input.relation === 'part_of') {
@@ -78,20 +79,12 @@ function relate(ctx: CommandContext, input: RelationInput): boolean {
       }
     }
   }
-  const info = db.prepare(`
-    INSERT INTO relations (id, source_id, target_id,
-      relation, detection_method, strength, explanation, metadata, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(source_id, target_id, relation) DO NOTHING
-  `).run(
-    stamp.newId(),
-    input.source_id, input.target_id,
-    input.relation, input.detection_method,
-    input.strength ?? 1.0,
-    input.explanation ?? null,
-    input.metadata ? JSON.stringify(input.metadata) : null,
-    stamp.at,
-  )
+  const created = insertRelation(ctx, {
+    source_id: input.source_id, target_id: input.target_id,
+    relation: input.relation, detection_method: input.detection_method,
+    strength: input.strength, explanation: input.explanation,
+    metadata: input.metadata ? JSON.stringify(input.metadata) : null,
+  })
   if (input.relation !== 'related_to') dropWikilinkEcho(ctx, input.source_id, input.target_id)
-  return info.changes > 0
+  return created
 }

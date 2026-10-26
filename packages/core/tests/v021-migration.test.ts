@@ -5,7 +5,7 @@ import { join } from 'path'
 import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initControlDatabase, runForwardMigrations } from '../src'
 import { GENESIS_PREV_HASH, chainHash, sha256Hex } from '../src/log/op'
-import { decodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
+import { decodeSnapshot, stateDump, stateHash, type StateDump } from '../src/log/snapshot'
 import { createV20Brain } from './fixtures'
 
 // Schema 21 (release F2): the op log. The step adds op_log and op_snapshots
@@ -13,6 +13,19 @@ import { createV20Brain } from './fixtures'
 // seq 1 with the hash of the brain's state and that state as the snapshot.
 
 const NOW = '2026-10-26T12:00:00.000Z'
+
+/** The state without ord (schema 21 adds it; every other value stays as it was). */
+function withoutOrd(dump: StateDump): StateDump {
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _, ...row }) => row)]))
+}
+
+/** ord is 1, 2, … in the rows' rowid order on engrams, relations and entries. */
+function expectOrdInRowidOrder(db: Database.Database): void {
+  for (const table of ['engrams', 'relations', 'entries']) {
+    const ords = (db.prepare(`SELECT ord FROM ${table} ORDER BY rowid`).all() as Array<{ ord: number }>).map(r => r.ord)
+    expect(ords, table).toEqual(ords.map((_, i) => i + 1))
+  }
+}
 
 function read<T>(file: string, fn: (db: Database.Database) => T): T {
   const db = new Database(file, { readonly: true })
@@ -59,7 +72,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     })
   })
 
-  it('through initDatabase: no state row changes, and the genesis holds the brain as it was', () => {
+  it('through initDatabase: no value of a state row changes (ord is added, in rowid order), and the genesis holds the brain as it was', () => {
     const file = join(dir, 'v20.db')
     createV20Brain(file)
     const before = read(file, db => stateDump(db))
@@ -67,7 +80,8 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     expectGenesis(file)
     read(file, db => {
       expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(21)
-      expect(stateDump(db)).toEqual(before)
+      expect(withoutOrd(stateDump(db))).toEqual(before)
+      expectOrdInRowidOrder(db)
       // the fixture fills every state table, so the comparison covers them all
       expect(Object.entries(before).filter(([, rows]) => rows.length === 0).map(([t]) => t)).toEqual([])
     })
@@ -87,7 +101,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21] })
     } finally { control.close() }
     expectGenesis(file)
-    read(file, db => expect(stateDump(db)).toEqual(before))
+    read(file, db => { expect(withoutOrd(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
   })
 
   it('the genesis is a function of the brain and the time: the same brain migrated twice writes the same entry', () => {
