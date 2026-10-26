@@ -1,7 +1,8 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import type { EngramInput, EML, StoredEngram, Env, LearnInput, LearnResult, RelationInput } from '../src'
+import { EML, type EngramInput, type StoredEngram, type Env, type LearnInput, type LearnResult, type RelationInput } from '../src'
+import { brainRef, exportSet } from '../src/log/move'
 
 // Shared fixtures for engram writes in tests. v0.19: every type has required
 // fields (fields.ts) and a title (except status); tests that are not about those
@@ -192,6 +193,35 @@ export function writeEverything(eml: EML): void {
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
 
   updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
+
+  // v0.21: engrams from another brain, with their history and their project
+  const other = otherBrain()
+  const set = exportSet((other as any).db, (((other as any).db.prepare('SELECT id FROM engrams').all()) as Array<{ id: string }>).map(r => r.id))
+  eml.apply({ name: 'engram.import', input: { source: brainRef((other as any).db), set_hash: set.set_hash, rows: set.rows } }, juno)
+  other.close()
+}
+
+/**
+ * A second brain, the same on every call: a project with a task, its journal
+ * and a decision bound to it, tagged with a tag of its own and one (ops) that
+ * writeEverything's brain has too.
+ */
+export function otherBrain(): EML {
+  let t = Date.parse('2026-10-20T08:00:00.000Z')
+  let n = 0
+  const other = new EML({
+    dbPath: ':memory:', namespace: 'other',
+    clock: () => new Date(t++).toISOString(),
+    newId: () => `10000000-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}`,
+  })
+  const kai = other.env({ handle: 'kai', session_id: 's9', ingestion_method: 'mcp' })
+  createObject(other, 'project', { id: 'moved', name: 'Moved' }, kai)
+  createObject(other, 'tag', { name: 'ops' }, kai)
+  createObject(other, 'tag', { name: 'carried' }, kai)
+  const task = writes(other).store(validTask({ scope: 'project.moved', title: 'moved-task', status: 'active', tags: ['carried', 'ops'] }), kai)
+  writes(other).trackTask(task.id, { text: 'progress' }, kai)
+  writes(other).store(validDecision({ scope: 'project.moved', title: 'moved-decision', task_id: task.id, properties: { binding: 'task' } }), kai)
+  return other
 }
 
 /** A brain file as v0.20 left it (tests/fixtures/brain-v20.sql), with a row in every state table. */

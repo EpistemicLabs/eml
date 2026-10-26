@@ -10,6 +10,7 @@ import { engramConfirmReview, type EngramConfirmReviewInput } from './engram-con
 import { relationCreate } from './relation-create'
 import { objectCreate, type ObjectCreateInput } from './object-create'
 import { objectUpdate, type ObjectUpdateInput } from './object-update'
+import { engramImport, type EngramImportInput, type EngramImportResult } from './engram-import'
 
 /** The closed command set: name → [input, result]. */
 export interface CommandMap {
@@ -21,6 +22,7 @@ export interface CommandMap {
   'relation.create': [RelationInput, { created: boolean }]
   'object.create': [ObjectCreateInput, { object: unknown, created: boolean }]
   'object.update': [ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }]
+  'engram.import': [EngramImportInput, EngramImportResult]
 }
 export type CommandName = keyof CommandMap
 export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] } }[CommandName]
@@ -34,6 +36,7 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
   'relation.create': relationCreate,
   'object.create': objectCreate,
   'object.update': objectUpdate,
+  'engram.import': engramImport,
 }
 
 export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
@@ -64,3 +67,4 @@ export type { LearningAddEvidenceInput } from './learning-add-evidence'
 export type { EngramConfirmReviewInput } from './engram-confirm-review'
 export type { ObjectCreateInput } from './object-create'
 export type { ObjectUpdateInput } from './object-update'
+export type { EngramImportInput, EngramImportResult } from './engram-import'

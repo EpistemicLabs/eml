@@ -11,6 +11,9 @@ import { stateDump } from '../src/log/snapshot'
 
 const START = Date.parse('2026-10-23T08:00:00.000Z')
 
+/** A row's key across brains: its id, or its link for engram_tags / engram_subjects. */
+const rowKey = (table: string, row: Record<string, unknown>) => `${table}:${row.id ?? `${row.engram_id}/${row.tag_id ?? row.subject_id}`}`
+
 /** A clock that moves 1 ms on every read, and ids from a counter. */
 function fixedEnv() {
   let t = START
@@ -55,11 +58,20 @@ describe('deterministic writes', () => {
     writeEverything(eml)
     const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
     const end = Date.parse(eml.now())
+    // v0.21: rows that came by engram.import keep the source brain's times
+    const imported = new Set<string>()
+    for (const { payload } of (eml as any).db.prepare(`SELECT payload FROM op_log WHERE json_extract(payload, '$.call') = 'engram.import'`).all() as Array<{ payload: string }>) {
+      for (const [table, rows] of Object.entries(JSON.parse(payload).args.rows as Record<string, Array<Record<string, unknown>>>)) {
+        for (const row of rows) imported.add(rowKey(table, row))
+      }
+    }
+    expect(imported.size).toBeGreaterThan(0)
     for (const [table, rows] of Object.entries(dump(eml))) {
       for (const row of rows) {
         for (const col of ['created_at', 'updated_at', 'at']) {
           if (!(col in row)) continue
           expect(row[col], `${table}.${col}`).toMatch(iso)
+          if (imported.has(rowKey(table, row))) continue
           const ms = Date.parse(row[col] as string)
           expect(ms >= START && ms <= end, `${table}.${col} ${row[col]}`).toBe(true)
         }
