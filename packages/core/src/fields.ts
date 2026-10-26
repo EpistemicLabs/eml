@@ -23,6 +23,8 @@ export interface FieldSpec {
   max?: number
   /** Required on create (further conditional requirements live in the write path). */
   required?: boolean
+  /** text: optional, but a value must not be blank — null clears it (decision task-intent-blank-rejected). */
+  notBlank?: boolean
 }
 
 export const BINDINGS = ['task', 'standing'] as const
@@ -76,7 +78,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     detail: text(),
   },
   task: {
-    intent: text(),
+    intent: text({ notBlank: true }),
     context: text(),
     priority: oneOf(TASK_PRIORITIES),
     assignee_id: text(),
@@ -216,6 +218,7 @@ export function validateFields(type: EngramType, fields: Record<string, unknown>
     const p = fieldProblem(name, spec, value)
     if (p) { problems.push(p); continue }
     if (spec.required && isBlank(value)) problems.push(`${name} must not be empty.`)
+    else if (spec.notBlank && isBlank(value)) problems.push(`${name} must not be blank — leave it out, or send null to clear it.`)
   }
   if (problems.length > 0) throw new Error(`Invalid engram: ${problems.join(' ')}`)
 }

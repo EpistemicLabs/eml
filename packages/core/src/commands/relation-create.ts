@@ -1,5 +1,7 @@
 import type { RelationInput } from '../types'
-import { CommandError, inputObject, type CommandModule } from './types'
+import { dropWikilinkEcho } from '../write/wikilinks'
+import { boundTaskOf } from '../write/task-binding'
+import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 
 /** The relation verbs the DB accepts; supersedes and part_of come from writes, not from here (core says so). */
 const RELATION_VERBS: ReadonlySet<string> = new Set([
@@ -42,11 +44,54 @@ export const relationCreate: CommandModule<RelationInput, { created: boolean }> 
       ...(o.metadata !== undefined ? { metadata: o.metadata } : {}),
     } as unknown as RelationInput
   },
-  apply(ctx, input, stamp) {
+  apply(ctx, input) {
     // both endpoints exist, so no dangling edge (relations has no FK)
     for (const id of [input.source_id, input.target_id]) {
       if (!ctx.eml.engrams.exists(id)) throw new CommandError('NOT_FOUND', `engram "${id}" not found`)
     }
-    return { created: ctx.engrams.relate(input, stamp) }
+    return { created: relate(ctx, input) }
   },
+}
+
+/** Returns true if a new edge was inserted, false if it already existed (idempotent). */
+function relate(ctx: CommandContext, input: RelationInput): boolean {
+  const { db, stamp } = ctx
+  // v0.19: supersedes and part_of are not drawn by hand — they come from
+  // supersedes on a write and from a task's parent_id.
+  if (input.relation === 'supersedes' || input.relation === 'part_of') {
+    throw new Error(
+      input.relation === 'supersedes'
+        ? 'Invalid engram: supersedes is drawn by a write — supersedes on the new engram when you create it, or after the fact eml_update(new_id, supersedes=[old_id]); a task: eml_track_task(new_id, supersedes=[old_id]); a status replaces the previous one by itself.'
+        : 'Invalid engram: part_of comes from a task\'s parent — eml_create_task(parent_id) or eml_track_task(parent_id).',
+    )
+  }
+  // A decision or note bound to a task (binding task) belongs to that one task:
+  // a second derived_from / refines edge to another task would close it with either.
+  if (input.relation === 'derived_from' || input.relation === 'refines') {
+    const src = db.prepare('SELECT type, properties FROM engrams WHERE id = ?').get(input.source_id) as { type: string, properties: string | null } | undefined
+    const tgt = db.prepare('SELECT type FROM engrams WHERE id = ?').get(input.target_id) as { type: string } | undefined
+    const binding = src?.properties ? JSON.parse(src.properties).binding : undefined
+    if (tgt?.type === 'task' && (src?.type === 'decision' || src?.type === 'note') && binding === 'task') {
+      const current = boundTaskOf(ctx, input.source_id)
+      if (current && current.id !== input.target_id) {
+        throw new Error(`Invalid engram: ${input.source_id} is bound to task ${current.id} — a ${src.type} is bound to one task. Make it standing first (eml_update binding=standing), or relate it with related_to.`)
+      }
+    }
+  }
+  const info = db.prepare(`
+    INSERT INTO relations (id, source_id, target_id,
+      relation, detection_method, strength, explanation, metadata, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_id, target_id, relation) DO NOTHING
+  `).run(
+    stamp.newId(),
+    input.source_id, input.target_id,
+    input.relation, input.detection_method,
+    input.strength ?? 1.0,
+    input.explanation ?? null,
+    input.metadata ? JSON.stringify(input.metadata) : null,
+    stamp.at,
+  )
+  if (input.relation !== 'related_to') dropWikilinkEcho(ctx, input.source_id, input.target_id)
+  return info.changes > 0
 }

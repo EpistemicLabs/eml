@@ -40,7 +40,8 @@ const fields = {
   trigger: (r: Row) => r.properties?.trigger as string | undefined,
   priority: (t: Row) => (t.properties?.priority as string | undefined) ?? 'normal',
   stage: (t: Row) => t.properties?.stage as string | undefined,
-  intent: (t: Row) => t.properties?.intent as string | undefined,
+  // a blank intent (accepted by v0.20.0–v0.20.4) reads as none
+  intent: (t: Row) => typeof t.properties?.intent === 'string' && t.properties.intent.trim() !== '' ? t.properties.intent : undefined,
   assignee: (t: Row) => t.properties?.assignee_id as string | undefined,
   state: (s: Row) => s.properties?.state as string | undefined,
   nextStep: (s: Row) => s.properties?.next_step as string | undefined,

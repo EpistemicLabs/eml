@@ -2,8 +2,6 @@ import type Database from 'better-sqlite3'
 import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
-import { EngramWriter } from './engram-writer'
-import { ObjectWriter } from './object-writer'
 import { runCommand, type CommandMap, type CommandName } from './commands'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
@@ -25,9 +23,6 @@ export class EML {
   private ownsConnection: boolean = true
   private clock!: Clock
   private newId!: IdSource
-  // v0.20: the write side, internal — reached only through apply()
-  private engramWriter!: EngramWriter
-  private objectWriter!: ObjectWriter
 
   constructor(config: EMLConfig) {
     this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock)
@@ -71,7 +66,11 @@ export class EML {
    * no-delete-command).
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
-    return runCommand(this.db, { eml: this, engrams: this.engramWriter, objects: this.objectWriter }, command, env)
+    return runCommand({
+      eml: this, db: this.db, store: this.engrams,
+      projects: this.projects, users: this.users, agents: this.agents, entities: this.entities,
+      tags: this.tags, subjects: this.subjects,
+    }, command, env)
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
@@ -93,11 +92,6 @@ export class EML {
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
       this.tags, this.subjects, env,
     )
-    this.engramWriter = new EngramWriter(
-      this.db, namespace, this.projects, this.users, this.agents, this.entities,
-      this.tags, this.subjects, env,
-    )
-    this.objectWriter = new ObjectWriter(this.db, this.projects, this.entities, this.users, this.agents, this.tags, this.subjects)
   }
 
   close(): void {

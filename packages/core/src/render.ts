@@ -68,7 +68,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     // v0.15: the task's stage, when set — [prio·status·stage]
     const stage = t.properties?.stage ? `·${t.properties.stage as string}` : ''
     // the task's intent, when set — the why next to the what
-    const intent = typeof t.properties?.intent === 'string' ? ` · intent: ${previewText(t.properties.intent, SHOW_PREVIEW_CHARS)}` : ''
+    // a blank intent (accepted by v0.20.0–v0.20.4) reads as none
+    const intent = typeof t.properties?.intent === 'string' && t.properties.intent.trim() !== '' ? ` · intent: ${previewText(t.properties.intent, SHOW_PREVIEW_CHARS)}` : ''
     lines.push(`- [${prio}·${t.status}${stage}]${asg} ${t.title ?? '(no title)'} — ${previewText(t.content, SHOW_PREVIEW_CHARS)}${intent} · ${t.id}`)
   }
   // the list stops at 10; the rest as a count with the call that lists them (as the project block does)

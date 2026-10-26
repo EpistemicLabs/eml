@@ -733,7 +733,7 @@ export class EngramStore {
   }
 
   /** `now`: the read's time — a write passes its stamp's, so the response reads no clock of its own. */
-  protected getRaw(id: string, now?: string): Engram | null {
+  getRaw(id: string, now?: string): Engram | null {
     const row = this.db.prepare(
       'SELECT * FROM engrams WHERE id = ?'
     ).get(id) as any

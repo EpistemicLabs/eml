@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3'
 import type { StoredEngram, Engram, RelationInput } from '../types'
 import type { LearningState } from '../learning'
 import { beginWrite, type Env } from '../env'
@@ -44,13 +43,13 @@ export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
  * one Stamp (one time) from `env`. A rejection is a CommandError and leaves
  * the brain as it was.
  */
-export function runCommand<N extends CommandName>(db: Database.Database, ctx: CommandContext, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
+export function runCommand<N extends CommandName>(stores: Omit<CommandContext, 'stamp'>, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
   const mod = COMMANDS[command?.name] as CommandModule<CommandMap[N][0], CommandMap[N][1]> | undefined
   if (!mod) throw new CommandError('INVALID', `Invalid command: unknown command "${String(command?.name)}". One of ${COMMAND_NAMES.join(', ')}.`)
   try {
-    return db.transaction(() => {
+    return stores.db.transaction(() => {
       const input = mod.validate(command.input)
-      return mod.apply(ctx, input, beginWrite(env))
+      return mod.apply({ ...stores, stamp: beginWrite(env) }, input)
     })()
   } catch (err) {
     if (err instanceof CommandError) throw err
