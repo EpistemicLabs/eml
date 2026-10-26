@@ -13,6 +13,11 @@ function readSchema(file: string): string {
   return readFileSync(join(SCHEMA_DIR, file), 'utf-8')
 }
 
+/** The complete current schema of a fresh brain (`v0.<N>.sql`): new brains, and a rebuild from the log. */
+export function currentSchemaSql(): string {
+  return readSchema(`v0.${CURRENT_BRAIN_SCHEMA_VERSION}.sql`)
+}
+
 /**
  * v0.20: the migration ledger row for schema `version`, with `at` as applied_at
  * (the ledger has no clock default since schema 20). Files up to v0.19 write
@@ -90,7 +95,7 @@ function createOrMigrate(db: Database.Database, clock: Clock): Database.Database
   ).get()
 
   if (!hasEngrams) {
-    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, readSchema(`v0.${CURRENT_BRAIN_SCHEMA_VERSION}.sql`), clock)
+    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, currentSchemaSql(), clock)
     return db
   }
 

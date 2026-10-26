@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3'
+import type { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { asCommandError, type CommandContext } from '../commands/types'
@@ -15,6 +17,15 @@ import { opIds, type OpEnvelope } from './op'
 // rejection rolls back the entry with everything else.
 
 type Stores = Omit<CommandContext, 'stamp'>
+
+/** What a command runs against: a brain's reads and stores over its connection — for the live write and a replay. */
+export function commandStores(eml: EML, db: Database.Database): Stores {
+  return {
+    eml, db, store: eml.engrams,
+    projects: eml.projects, users: eml.users, agents: eml.agents, entities: eml.entities,
+    tags: eml.tags, subjects: eml.subjects,
+  }
+}
 
 /**
  * One write: the command as an op from `env` (op_id, actor), sequenced under

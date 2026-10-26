@@ -3,7 +3,7 @@ import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
-import { writeOp } from './log/apply-op'
+import { commandStores, writeOp } from './log/apply-op'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -71,11 +71,7 @@ export class EML {
    * draws are derived from the op_id.
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
-    return writeOp({
-      eml: this, db: this.db, store: this.engrams,
-      projects: this.projects, users: this.users, agents: this.agents, entities: this.entities,
-      tags: this.tags, subjects: this.subjects,
-    }, command, env)
+    return writeOp(commandStores(this, this.db), command, env)
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
