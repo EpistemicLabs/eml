@@ -2,9 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { EML, addDays, COMMAND_NAMES, type Env } from '../src'
-import {
-  validDecision, validTask, validNote, validRule, validProfile, validStatus, validEvent, validLog, validReference, writes, createObject, updateObject,
-} from './fixtures'
+import { validDecision, validTask, validNote, writes, writeEverything } from './fixtures'
 import { stateDump } from '../src/log/snapshot'
 
 // v0.20 (spec sync-ready-write-path §2): a brain write is a function of
@@ -28,68 +26,6 @@ function brain(): EML {
 }
 
 const raw = (eml: EML): any => (eml as any).db
-
-/**
- * The same writes on any brain: every mutator, with the side effects that touch
- * several rows (supersede, part_of, task_id, bound items, wikilinks, tags,
- * subjects, objects).
- */
-function writeEverything(eml: EML): void {
-  const juno = eml.env({ handle: 'juno', session_id: 's1', model: 'm', harness: 'h', ingestion_method: 'mcp' })
-  const ada = eml.env({ handle: 'ada', session_id: 's2', ingestion_method: 'direct' })
-  writes(eml).agents.store({ id: 'juno', name: 'Juno' }, juno)
-  writes(eml).agents.update('juno', { description: 'the agent' })
-  writes(eml).users.create({ id: 'ada', name: 'Ada' }, juno)
-  writes(eml).users.update('ada', { email: 'ada@example.com' }, juno)
-  createObject(eml, 'project', { id: 'p', name: 'P' }, juno)
-  createObject(eml, 'entity', { id: 'acme', name: 'Acme', kind: 'org' }, juno)
-  createObject(eml, 'tag', { name: 'ops' }, juno)
-  createObject(eml, 'tag', { name: 'old', status: 'archived' }, juno)
-  createObject(eml, 'subject', { name: 'launch' }, juno)
-  createObject(eml, 'subject', { name: 'done-strand', status: 'closed' }, juno)
-  updateObject(eml, 'entity', 'acme', { description: 'a customer' }, juno)
-  updateObject(eml, 'tag', 'ops', { description: 'operations' }, juno)
-  updateObject(eml, 'subject', 'launch', { description: 'the launch' }, juno)
-
-  const scope = 'project.p'
-  const parent = writes(eml).store(validTask({ scope, title: 'parent', status: 'active' }), juno)
-  const child = writes(eml).store(validTask({ scope, title: 'child', parent_id: parent.id }), juno)
-  const bound = writes(eml).store(validDecision({ scope, title: 'bound', task_id: parent.id, properties: { binding: 'task' } }), juno)
-  const kept = writes(eml).store(validNote({ scope, title: 'kept', task_id: parent.id, properties: { binding: 'task' } }), juno)
-  const note = writes(eml).store(validNote({ scope, title: 'note', content: 'see [[bound]] and [[nowhere]]', tags: ['ops'], subjects: ['launch'] }), ada)
-  writes(eml).store(validStatus({ scope }), juno)
-  writes(eml).store(validStatus({ scope, content: 'next state', properties: { state: 'next' } }), ada)
-  writes(eml).store(validRule({ scope, title: 'rule-one' }), juno)
-  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada', properties: { core: true } }), juno)
-  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada-2', properties: { core: true } }), juno)
-  writes(eml).store(validEvent({ scope, title: 'shipped' }), juno)
-  const log = writes(eml).store(validLog({ scope, title: 'session' }), juno)
-  writes(eml).store(validReference({ scope, title: 'ref' }), juno)
-
-  writes(eml).trackTask(child.id, { text: 'started', status: 'active', stage: 'implementation', tags: ['ops'] }, juno)
-  writes(eml).trackTask(child.id, { status: 'resolved', outcome: 'done', text: 'finished' }, juno)
-  writes(eml).trackTask(parent.id, { status: 'resolved', outcome: 'done', text: 'closed', keep: [kept.id] }, ada)
-  writes(eml).trackTask(parent.id, { status: 'active', text: 'reopened' }, ada)
-  const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
-  writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
-
-  writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
-  writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)
-  const decision = writes(eml).store(validDecision({ scope, title: 'standing-one' }), juno)
-  writes(eml).update(decision.id, { review_note: 'still holds' }, juno)
-  writes(eml).confirmReview(decision.id, 'confirmed again', ada)
-  writes(eml).confirmReview(successor.id, 'still relevant', ada)
-  const replacement = writes(eml).store(validDecision({ scope, title: 'replacement' }), juno)
-  writes(eml).update(replacement.id, { supersedes: [decision.id] }, juno)
-  writes(eml).update(bound.id, { status: 'invalidated' }, juno)
-
-  const learned = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask before acting.', source: 'user', happened: 'once', quote: 'ask me' }, juno)
-  if (!learned.written) throw new Error('learning not written')
-  writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
-  writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
-
-  updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
-}
 
 /** The brain's state, as the op log compares and hashes it (log/snapshot.ts). */
 const dump = (eml: EML) => stateDump(raw(eml))

@@ -1,43 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, mkdirSync } from 'fs'
+import { mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initControlDatabase, runForwardMigrations } from '../src'
 import { GENESIS_PREV_HASH, chainHash, sha256Hex } from '../src/log/op'
 import { decodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
+import { createV20Brain } from './fixtures'
 
 // Schema 21 (release F2): the op log. The step adds op_log and op_snapshots
 // and changes no row; in the same transaction the runner writes the genesis —
 // seq 1 with the hash of the brain's state and that state as the snapshot.
 
-const V20_FIXTURE = join(__dirname, 'fixtures', 'brain-v20.sql')
 const NOW = '2026-10-26T12:00:00.000Z'
-
-/** A brain as v0.20 left it, with a row in every state table. */
-function createV20Brain(file: string): void {
-  const db = new Database(file)
-  db.exec(readFileSync(V20_FIXTURE, 'utf-8'))
-  const at = '2026-10-23T09:00:00.000Z'
-  db.prepare(`INSERT INTO agents (id, name, created_at) VALUES ('juno', 'Juno', ?)`).run(at)
-  db.prepare(`INSERT INTO users (id, name, created_at, updated_at) VALUES ('ada', 'Ada', ?, ?)`).run(at, at)
-  db.prepare(`INSERT INTO entities (id, name, kind, created_at, updated_at) VALUES ('acme', 'Acme', 'org', ?, ?)`).run(at, at)
-  db.prepare(`INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p', 'P', ?, ?)`).run(at, at)
-  db.prepare(`INSERT INTO tags (id, name, created_at) VALUES ('ops', 'ops', ?)`).run(at)
-  db.prepare(`INSERT INTO subjects (id, name, created_at, updated_at) VALUES ('launch', 'launch', ?, ?)`).run(at, at)
-  const engram = db.prepare(`INSERT INTO engrams (id, type, scope, title, content, status, properties, created_at, updated_at, rev)
-    VALUES (?, ?, 'project.p', ?, ?, 'active', ?, ?, ?, 1)`)
-  engram.run('d-1', 'decision', 'pick', 'chose the test option', JSON.stringify({ rationale: 'r', alternatives: ['a'] }), at, at)
-  engram.run('t-1', 'task', 'build', 'build it', JSON.stringify({ stage: 'planning' }), at, at)
-  for (const id of ['d-1', 't-1']) {
-    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
-  }
-  db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES ('rel-1', 'd-1', 't-1', 'supports', 'manual', ?)`).run(at)
-  db.prepare(`INSERT INTO engram_tags (engram_id, tag_id, created_at) VALUES ('d-1', 'ops', ?)`).run(at)
-  db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id, created_at) VALUES ('t-1', 'launch', ?)`).run(at)
-  db.prepare(`INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-1', 't-1', 'change', ?, 'created (planned)')`).run(at)
-  db.close()
-}
 
 function read<T>(file: string, fn: (db: Database.Database) => T): T {
   const db = new Database(file, { readonly: true })
