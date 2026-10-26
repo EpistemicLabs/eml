@@ -26,6 +26,7 @@ export const GENESIS_PREV_HASH = '0'.repeat(64)
 const HASH = /^[0-9a-f]{64}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** sha256, hex; a string is hashed as its UTF-8 bytes (a payload's hash is sha256Hex(payload)). */
 export function sha256Hex(data: string | Buffer): string {
   return createHash('sha256').update(data).digest('hex')
 }
@@ -33,11 +34,6 @@ export function sha256Hex(data: string | Buffer): string {
 /** The payload an entry stores and hashes: the envelope as canonical JSON. */
 export function encodePayload(op: OpEnvelope): string {
   return canonicalJson(op)
-}
-
-/** sha256 of the payload's UTF-8 bytes, hex. */
-export function payloadHash(payload: string): string {
-  return sha256Hex(payload)
 }
 
 /**

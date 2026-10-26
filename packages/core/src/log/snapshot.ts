@@ -17,19 +17,15 @@ const NOT_STATE = new Set(['_eml_migrations', 'op_log', 'op_snapshots'])
 export type StateRow = Record<string, unknown>
 export type StateDump = Record<string, StateRow[]>
 
-/** The tables a dump covers, by name. */
-export function stateTables(db: Database.Database): string[] {
-  return (db.prepare(
+/** Every state table (by name) with its rows, ordered by primary key (rowid where a table declares none). */
+export function stateDump(db: Database.Database): StateDump {
+  const tables = (db.prepare(
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'engrams_fts_%' ORDER BY name`,
   ).all() as Array<{ name: string }>)
     .map(r => r.name)
     .filter(n => !NOT_STATE.has(n))
-}
-
-/** Every state table's rows, ordered by primary key (rowid where a table declares none). */
-export function stateDump(db: Database.Database): StateDump {
   const dump: StateDump = {}
-  for (const table of stateTables(db)) {
+  for (const table of tables) {
     const pk = (db.prepare(`SELECT name, pk FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk`).all(table) as Array<{ name: string }>)
       .map(c => `"${c.name}"`)
     dump[table] = pk.length > 0

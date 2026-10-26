@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'crypto'
 import { EML, NO_ACTOR } from '../src'
 import { canonicalJson } from '../src/log/canonical'
-import { GENESIS_PREV_HASH, chainHash, encodePayload, opIds, payloadHash, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
-import { decodeSnapshot, encodeSnapshot, stateDump, stateHash, stateTables } from '../src/log/snapshot'
+import { GENESIS_PREV_HASH, chainHash, encodePayload, opIds, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
+import { decodeSnapshot, encodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
 import { validDecision, validNote, writes } from './fixtures'
 
 // v0.21 (spec local-op-log-spec, block 1): the pieces the op log is built from —
@@ -90,27 +90,27 @@ describe('payload and chain hashes', () => {
     const payload = encodePayload(op)
     expect(payload.startsWith('{"args":{"content":"c","scope":"global","title":"n","type":"note"},"call":"engram.create","op_id":')).toBe(true)
     expect(encodePayload({ provenance: op.provenance, args: { content: 'c', title: 'n', scope: 'global', type: 'note' }, call: op.call, schema: 21, op_id: op.op_id })).toBe(payload)
-    expect(payloadHash(payload)).toBe(createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex'))
-    expect(payloadHash('é')).toBe(sha256Hex(Buffer.from([0xc3, 0xa9])))
+    expect(sha256Hex(payload)).toBe(createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex'))
+    expect(sha256Hex('é')).toBe(sha256Hex(Buffer.from([0xc3, 0xa9])))
   })
 
   it('the chain link hashes prev_hash, seq, at and payload_hash (frozen vector)', () => {
-    const empty = payloadHash('{}')
+    const empty = sha256Hex('{}')
     expect(empty).toBe('44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')
     expect(chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', empty)).toBe('3804054c5c22b6ad9230b59b1379fe9f4d13c92d073d00a25654b2b046048d5b')
   })
 
   it('a change to any part changes the link', () => {
-    const p = payloadHash(encodePayload(op))
+    const p = sha256Hex(encodePayload(op))
     const base = chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', p)
     expect(chainHash(GENESIS_PREV_HASH, 2, '2026-10-26T08:00:00.000Z', p)).not.toBe(base)
     expect(chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.001Z', p)).not.toBe(base)
     expect(chainHash(base, 1, '2026-10-26T08:00:00.000Z', p)).not.toBe(base)
-    expect(chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', payloadHash('{}'))).not.toBe(base)
+    expect(chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', sha256Hex('{}'))).not.toBe(base)
   })
 
   it('refuses malformed parts', () => {
-    const p = payloadHash('{}')
+    const p = sha256Hex('{}')
     expect(() => chainHash('abc', 1, '2026-10-26T08:00:00.000Z', p)).toThrow(/hashes/)
     expect(() => chainHash(GENESIS_PREV_HASH.toUpperCase().replace(/0/g, 'A'), 1, '2026-10-26T08:00:00.000Z', p)).toThrow(/hashes/)
     expect(() => chainHash(GENESIS_PREV_HASH, 0, '2026-10-26T08:00:00.000Z', p)).toThrow(/seq/)
@@ -138,7 +138,7 @@ describe('state dump, state hash and snapshots', () => {
 
   it('covers every state table and leaves out the migration ledger and the FTS shadow tables', () => {
     const eml = brain()
-    const tables = stateTables(raw(eml))
+    const tables = Object.keys(stateDump(raw(eml)))
     expect(tables).toEqual(expect.arrayContaining(['agents', 'engrams', 'engrams_fts', 'entries', 'relations', 'users']))
     expect(tables).not.toContain('_eml_migrations')
     expect(tables.filter(t => t.startsWith('engrams_fts_'))).toEqual([])
