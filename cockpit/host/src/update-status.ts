@@ -6,11 +6,15 @@ import { ownVersion, readAppUpdateStatus } from './app-update.js'
 
 /**
  * The update banner's outcome state (v0.14 Cluster 0, decision app-update-flow):
- * the newest brain-migration report the brain server wrote, the in-app update
- * this host started with, whether the user has dismissed them, and whether a
+ * per brain the newest migration report the brain server wrote, the in-app
+ * update this host started with, what the user has dismissed, and whether a
  * failure has since been resolved. Read from files so it works while the server
- * refuses the brain (503 BRAIN_BEHIND_CODE). "Update available" comes from
+ * refuses a brain (503 BRAIN_BEHIND_CODE). "Update available" comes from
  * GET /api/app-update; the banner shows both.
+ *
+ * A start migrates every brain and writes one report each, so the status is per
+ * brain: each space shows its own brain's report, and one brain's success never
+ * hides another brain's failure.
  */
 
 const require = createRequire(import.meta.url)
@@ -32,36 +36,43 @@ export interface MigrationReport {
   at: string
 }
 
-export interface UpdateStatus {
-  report: (MigrationReport & { file: string; reportPath: string }) | null
+export interface BrainUpdateStatus {
+  report: MigrationReport & { file: string; reportPath: string }
   /** The report's brain as the user knows it: its space's display name, else the brain's own name. */
-  brain: string | null
+  brain: string
   /** The user dismissed this report. */
   acknowledged: boolean
   /** A failed report no longer applies: the brain is at or past the report's target now. */
   resolved: boolean
+}
+
+export interface UpdateStatus {
+  /** The newest report of each brain that has one, by brain id. */
+  brains: Record<string, BrainUpdateStatus>
   /** The in-app update or rollback this host runs from, until the user dismisses it. */
   updated: { outcome: 'updated' | 'rolled_back'; from: string; to: string } | null
 }
 
 interface Acknowledged {
-  /** The report file the user dismissed. */
-  acknowledged?: string
+  /** The report files the user dismissed (up to v0.20.5 a single file name). */
+  acknowledged?: string[] | string
   /** The `at` of the in-app update result the user dismissed. */
   result?: string
 }
 
-function newestReport(): UpdateStatus['report'] {
-  if (!fs.existsSync(MIGRATION_REPORTS_DIR)) return null
-  // Names start with a sortable UTC stamp.
-  const files = fs.readdirSync(MIGRATION_REPORTS_DIR).filter((n) => n.endsWith('.json')).sort()
-  for (const file of files.reverse()) {
+function newestReports(): Array<BrainUpdateStatus['report']> {
+  if (!fs.existsSync(MIGRATION_REPORTS_DIR)) return []
+  // Names start with a sortable UTC stamp: newest first, the first readable report of a brain wins.
+  const files = fs.readdirSync(MIGRATION_REPORTS_DIR).filter((n) => n.endsWith('.json')).sort().reverse()
+  const byBrain = new Map<string, BrainUpdateStatus['report']>()
+  for (const file of files) {
     const reportPath = path.join(MIGRATION_REPORTS_DIR, file)
     try {
-      return { ...(JSON.parse(fs.readFileSync(reportPath, 'utf-8')) as MigrationReport), file, reportPath }
-    } catch { /* unreadable report: try the next older one */ }
+      const report = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) as MigrationReport
+      if (typeof report.brainId === 'string' && !byBrain.has(report.brainId)) byBrain.set(report.brainId, { ...report, file, reportPath })
+    } catch { /* unreadable report: the brain's next older one counts */ }
   }
-  return null
+  return [...byBrain.values()]
 }
 
 function brainSchemaVersion(brainId: string): number | null {
@@ -85,6 +96,9 @@ function readAcknowledged(): Acknowledged {
   }
 }
 
+const acknowledgedFiles = (ack: Acknowledged): string[] =>
+  Array.isArray(ack.acknowledged) ? ack.acknowledged : ack.acknowledged ? [ack.acknowledged] : []
+
 /** The last in-app update result, when this host runs the version it went to. */
 function currentUpdate(): { at: string; outcome: 'updated' | 'rolled_back'; from: string; to: string } | null {
   const result = readAppUpdateStatus().lastResult
@@ -95,31 +109,37 @@ function currentUpdate(): { at: string; outcome: 'updated' | 'rolled_back'; from
 /** `spaceName` maps a brain id to its space's display name (undefined: no space holds it). */
 export function readUpdateStatus(spaceName: (brainId: string) => string | undefined = () => undefined): UpdateStatus {
   const ack = readAcknowledged()
+  const dismissed = new Set(acknowledgedFiles(ack))
   const update = currentUpdate()
   const updated = update && ack.result !== update.at ? { outcome: update.outcome, from: update.from, to: update.to } : null
-  const report = newestReport()
-  if (!report) return { report: null, brain: null, acknowledged: false, resolved: false, updated }
-  const version = report.outcome === 'migrated' ? null : brainSchemaVersion(report.brainId)
-  return {
-    report,
-    brain: spaceName(report.brainId) ?? report.brainName,
-    acknowledged: ack.acknowledged === report.file,
-    resolved: report.outcome === 'migrated' || (version !== null && version >= report.to),
-    updated,
+  const brains: UpdateStatus['brains'] = {}
+  for (const report of newestReports()) {
+    const version = report.outcome === 'migrated' ? null : brainSchemaVersion(report.brainId)
+    brains[report.brainId] = {
+      report,
+      brain: spaceName(report.brainId) ?? report.brainName,
+      acknowledged: dismissed.has(report.file),
+      resolved: report.outcome === 'migrated' || (version !== null && version >= report.to),
+    }
   }
+  return { brains, updated }
 }
 
 /**
- * Dismiss the banner for the current report and update. A failure can only be
- * dismissed once it is resolved — while the brain is behind, the banner is the
- * only place that says why the brain is offline.
+ * Dismiss the banner of one brain's space: that brain's report and the in-app
+ * update. A failure can only be dismissed once it is resolved — while the brain
+ * is behind, the banner is the only place that says why it is offline.
  */
-export function acknowledgeUpdateStatus(): { ok: true } | { ok: false; reason: string } {
-  const status = readUpdateStatus()
+export function acknowledgeUpdateStatus(brainId: string): { ok: true } | { ok: false; reason: string } {
+  const own = readUpdateStatus().brains[brainId]
   const update = currentUpdate()
-  if (!status.report && !update) return { ok: false, reason: 'nothing to dismiss' }
-  if (status.report && !status.resolved) return { ok: false, reason: 'the brain update has not succeeded yet' }
-  const ack: Acknowledged = { ...readAcknowledged(), ...(status.report && { acknowledged: status.report.file }), ...(update && { result: update.at }) }
-  fs.writeFileSync(ACK_FILE, JSON.stringify(ack) + '\n', { mode: 0o600 })
+  if (!own && !update) return { ok: false, reason: 'nothing to dismiss' }
+  if (own && !own.resolved) return { ok: false, reason: 'the brain update has not succeeded yet' }
+  const ack = readAcknowledged()
+  // Keep only what still names a brain's newest report, so the file does not grow with every update.
+  const current = new Set(newestReports().map((r) => r.file))
+  const files = [...new Set([...acknowledgedFiles(ack), ...(own ? [own.report.file] : [])])].filter((f) => current.has(f))
+  const next: Acknowledged = { ...ack, acknowledged: files, ...(update && { result: update.at }) }
+  fs.writeFileSync(ACK_FILE, JSON.stringify(next) + '\n', { mode: 0o600 })
   return { ok: true }
 }

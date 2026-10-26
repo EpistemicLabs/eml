@@ -2,38 +2,18 @@
 // update, from "available" through installing and restarting to its outcome.
 // "Available" comes from GET /api/app-update and stays until the update is
 // installed; the outcome from GET /api/update-status — the in-app update this
-// host runs and the last brain-schema migration. Success is green and can be
-// dismissed. A failed migration is red and stays until the brain has caught up:
-// it is the only place that says why the brain is offline.
-import { useCallback, useEffect, useState } from 'react';
+// host runs and, per brain, its last schema migration. A space shows its own
+// brain's migration only; a failure in another space is marked on the space
+// switch. Success is green and can be dismissed. A failed migration is red and
+// stays until the brain has caught up: it is the only place that says why the
+// brain is offline.
+import { useState } from 'react';
 import { ArrowUpCircle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FolderSearch, XCircle } from 'lucide-react';
 
 import { useAppUpdate } from '@/hooks/useAppUpdate';
+import { dismissUpdateStatus, failedUnresolved, useUpdateStatus, type MigrationReport } from '@/stores/useUpdateStatusStore';
+import { useActiveSpace } from '@/stores/useSpaceStore';
 import { Banner, BannerButton, BannerLink } from './Banner';
-
-type MigrationReport = {
-  brainId: string;
-  brainName: string;
-  from: number;
-  to: number;
-  outcome: 'migrated' | 'brain_missing' | 'backup_failed' | 'preflight_failed' | 'restored' | 'restore_failed';
-  error?: string;
-  backupPath?: string;
-  codeVersion?: string;
-  at: string;
-  reportPath: string;
-};
-
-type UpdateStatus = {
-  report: MigrationReport | null;
-  /** The report's brain by its space's name. */
-  brain: string | null;
-  acknowledged: boolean;
-  resolved: boolean;
-  updated: { outcome: 'updated' | 'rolled_back'; from: string; to: string } | null;
-};
-
-const POLL_MS = 60_000;
 
 // What the failure means for the brain, per outcome.
 const FAILURE_STATE: Record<Exclude<MigrationReport['outcome'], 'migrated'>, string> = {
@@ -44,45 +24,21 @@ const FAILURE_STATE: Record<Exclude<MigrationReport['outcome'], 'migrated'>, str
   restore_failed: 'could NOT be restored automatically — restore it from the backup',
 };
 
-function useUpdateStatus() {
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/update-status');
-      if (res.ok) setStatus((await res.json()) as UpdateStatus);
-    } catch { /* host unreachable: keep the last state */ }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), POLL_MS);
-    window.addEventListener('focus', load);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('focus', load);
-    };
-  }, [load]);
-
-  const dismiss = useCallback(async () => {
-    const res = await fetch('/api/update-status/ack', { method: 'POST' });
-    if (res.ok) setStatus((s) => s && { ...s, acknowledged: true, updated: null });
-  }, []);
-
-  return { status, dismiss };
-}
-
 const knownVersion = (v?: string) => (v && v !== '0.0.0' ? v : null);
 
 export default function UpdateBanner() {
   const app = useAppUpdate();
-  const { status, dismiss } = useUpdateStatus();
+  const status = useUpdateStatus();
+  const space = useActiveSpace();
   const [open, setOpen] = useState(false);
 
-  const report = status?.report ?? null;
-  const brain = status?.brain ?? report?.brainName;
-  const failure = report && report.outcome !== 'migrated' && !status?.resolved ? report.outcome : null;
-  const migrated = report?.outcome === 'migrated' && !status?.acknowledged ? report : null;
+  // The active space's brain only (space id = brain id).
+  const own = space ? status?.brains[space.id] : undefined;
+  const report = own?.report ?? null;
+  const brain = own?.brain ?? report?.brainName;
+  const failure = report && failedUnresolved(own) ? (report.outcome as Exclude<MigrationReport['outcome'], 'migrated'>) : null;
+  const migrated = report?.outcome === 'migrated' && !own?.acknowledged ? report : null;
+  const dismiss = () => { if (space) void dismissUpdateStatus(space.id); };
   const updated = status?.updated ?? null;
 
   const latest = app.status?.latest;
@@ -151,7 +107,7 @@ export default function UpdateBanner() {
       )}
 
       {outcome && !busy && (
-        <Banner tone="success" icon={CheckCircle2} onDismiss={() => void dismiss()}>
+        <Banner tone="success" icon={CheckCircle2} onDismiss={dismiss}>
           {outcome}
         </Banner>
       )}
