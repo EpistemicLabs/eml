@@ -12,6 +12,7 @@ const TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = 'hooktoken0123456789'
 const HOOK_URL = 'http://127.0.0.1:4318/api/hook'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
+const MCP_URL = 'http://127.0.0.1:4318/mcp'
 
 
 
@@ -89,11 +90,11 @@ describe('brain spaces', () => {
     }
   })
 
-  it('gives a space its own session files, owner-only, with the token only in env and the hook config', () => {
+  it('gives a space its own session files, owner-only, with the brain token only in the hook config', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const space = mods.openBrainSpace({
       id: SPACE_ID, name: 'Main', brainName: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL,
     })
 
     expect(space.files.mcpConfig).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'mcp.json'))
@@ -101,9 +102,15 @@ describe('brain spaces', () => {
     expect(space.files.emlConfig).toBe(join(mods.EML_HOOK_DIR, 'spaces', SPACE_ID, 'config'))
     for (const file of Object.values(space.files)) expectOwnerOnly(file)
 
-    const mcp = JSON.parse(readFileSync(space.files.mcpConfig, 'utf8'))
-    expect(mcp.mcpServers.eml_brain.env).toEqual({ EML_API_URL: 'http://127.0.0.1:60000', EML_API_TOKEN: TOKEN })
-    expect(mcp.mcpServers.eml_brain.args.join(' ')).not.toContain(TOKEN)
+    // The brain MCP: the host's endpoint with the space's MCP token; the brain token stays in the host.
+    const mcpRaw = readFileSync(space.files.mcpConfig, 'utf8')
+    expect(mcpRaw).not.toContain(TOKEN)
+    expect(JSON.parse(mcpRaw).mcpServers.eml_brain).toEqual({
+      type: 'http',
+      url: MCP_URL,
+      headers: { 'x-cockpit-mcp-token': space.mcpToken, 'x-eml-session': '${COCKPIT_SESSION_ID}' },
+    })
+    expect(space.mcpToken).toMatch(/^[0-9a-f]{64}$/)
 
     const settings = readFileSync(space.files.settings, 'utf8')
     expect(settings).not.toContain(TOKEN)
@@ -130,7 +137,7 @@ describe('brain spaces', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string) => mods.openBrainSpace({
       id, name, brainName: name, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL,
     })
     const main = open(SPACE_ID, 'Main')
     const spaces = new mods.BrainSpaces(main)

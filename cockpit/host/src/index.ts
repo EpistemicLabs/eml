@@ -21,6 +21,7 @@ import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
+import { MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
@@ -108,6 +109,8 @@ async function main() {
   // The per-boot token keeps other local processes from spoofing session state.
   const hookToken = randomBytes(16).toString('hex')
   const hookUrl = `http://127.0.0.1:${hostPort}/api/hook`
+  // The brain MCP endpoint every Claude Code session reaches its space's brain through (brain-mcp.ts).
+  const mcpUrl = `http://127.0.0.1:${hostPort}${MCP_PATH}`
 
   // Each agent CLI writes the files its sessions share across spaces (for
   // Claude Code: the turn-hook config, the skills, .claude.json; for Codex:
@@ -130,6 +133,7 @@ async function main() {
     url: server.baseUrl,
     token: brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
+    mcpUrl,
   })
   const spaces = new BrainSpaces(main)
   for (const extra of config?.spaces ?? []) {
@@ -137,7 +141,7 @@ async function main() {
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
       id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
-      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl,
     }))
   }
   log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
@@ -173,8 +177,10 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
+  const brainMcp = createBrainMcpHandler({ spaces, ledger, providers, serverVersion: ABOUT.version })
+
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
+    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene, brainMcp, mcpUrl },
     origins,
   )
 

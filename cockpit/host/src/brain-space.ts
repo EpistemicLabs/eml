@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import * as path from 'node:path'
 import { BrainProjectsClient } from './brain-projects.js'
 import { NotesWatcher } from './notes-api.js'
@@ -32,6 +33,12 @@ export interface BrainSpace {
   /** Base URL of the brain server this space's brain lives on. */
   url: string
   token: string
+  /**
+   * Per-boot secret of this space for the host's brain MCP endpoint
+   * (brain-mcp.ts): it alone picks the space, so a session can only reach its
+   * own brain. In memory and in the space's mcp.json only; new on every boot.
+   */
+  mcpToken: string
   /** mcp.json + settings.json a session of this space starts with, and its EML hook config. */
   files: SpaceFiles
   /** The brain's project list (cached). */
@@ -60,6 +67,8 @@ export interface OpenSpaceOptions {
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
   turnHookConfig: string
+  /** The host's brain MCP endpoint (brain-mcp.ts) the space's mcp.json points at. */
+  mcpUrl: string
 }
 
 /** Where a non-main space keeps its local state. */
@@ -67,7 +76,8 @@ const spaceStateDir = (spaceId: string) => path.join(COCKPIT_HOME, 'spaces', spa
 
 /** Write the space's session files and open its clients. */
 export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
-  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig)
+  const mcpToken = randomBytes(32).toString('hex')
+  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig, { url: opts.mcpUrl, token: mcpToken })
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main
@@ -81,6 +91,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
     token: opts.token,
+    mcpToken,
     files,
     projects: new BrainProjectsClient(opts.url, opts.token),
     registry,
@@ -113,6 +124,17 @@ export class BrainSpaces {
 
   get(id: string): BrainSpace | undefined {
     return this.byId.get(id)
+  }
+
+  /** The space whose MCP token this is (compared in constant time), or null. */
+  byMcpToken(token: string | undefined): BrainSpace | null {
+    if (!token) return null
+    const given = Buffer.from(token)
+    for (const space of this.byId.values()) {
+      const own = Buffer.from(space.mcpToken)
+      if (own.length === given.length && timingSafeEqual(own, given)) return space
+    }
+    return null
   }
 
   /** The space with `id`, or the main space when none (or an unknown one) is named. */
