@@ -13,25 +13,39 @@ wire, so anyone can check that claim against the code
 | The relay sees | The relay never sees |
 |---|---|
 | the brain id; each op's id, epoch, size and arrival time | what an op says (the payload), or its signature |
-| membership records: member and device public keys, roles, key ids | names or handles of members (they are sealed, padded to one size) |
+| membership records: member and device public keys, device certificates with their creation time, roles, key ids, which device signed each record | names or handles of members (they are sealed, padded to one size); a membership record's provenance is all null |
+| the genesis: the root's keys and the state hash of the brain it starts from | the state hashes of checkpoints (they are sealed) |
 | wrapped brain keys (sealed to one device each) and who wrapped them | the brain key of any epoch |
 | invite notices: an invite id and its expiry | the invite secret, or what the invitee calls themselves |
-| logins: which device logs in to which brain, and when | state hashes of checkpoints |
+| logins: which device logs in to which brain, and when | sessions, models or harnesses of the agents that wrote |
 
 What the relay can do, and what members notice:
 
 - **Drop or delay** records: it can; members see a gap or a stall, not a forgery.
 - **Reorder or fork** the log (show members different histories): every op
-  carries the hash of its author's chain at the point it was written (§4); a
-  replica whose own chain differs stops.
+  carries its author's chain link at the point it was written (§4); a replica
+  whose own link at that point differs stops. This is fork consistency, not
+  more: a relay that splits the members into groups and never lets an op of
+  one group reach the other is noticed only once an op crosses between them.
+- **Replay** an old record (an add_member of a removed member, an add_device
+  of a revoked device, any op again): refused — an op_id appears at most once
+  in a brain's log (§4).
 - **Forge or alter** a write, a membership change, a wrapped key, an invite
   answer or a login: it cannot — each is signed by a member's device or bound
   by a MAC under a secret the relay never sees.
+- **Serve a log of its own** to someone joining: refused — the inviter's
+  answer names the genesis and the head of the log it answered from (§8).
 - **Read** anything listed on the right: it cannot.
 
-Not covered: a member who already had a key keeps what they read with it (a
-removal rotates the key for everything after it). Metadata on the left is
-visible to the relay operator.
+Not covered:
+
+- A member who already had a key keeps what they read with it (a removal
+  rotates the key for everything after it).
+- Metadata on the left is visible to the relay operator.
+- Members are trusted in v1. A malicious member can disturb the brain — for
+  example, a false checkpoint (§10) makes every honest replica stop as
+  diverged. Defending the team against its own members is out of scope for
+  v1.
 
 ## 2. Encodings and primitives
 
@@ -44,7 +58,11 @@ visible to the relay operator.
 - **Ids**: brains and ops are lowercase UUIDs.
 - **Strict parsing**: every object has exactly its fields; an unknown field is
   refused, never ignored. An unknown version is refused as
-  "update your cockpit" (§11).
+  "update your cockpit" (§11), checked before anything else of an object.
+- **Size**: a payload is at most 16 MiB of UTF-8 (`MAX_PAYLOAD`). The largest
+  op, an import of many engrams, is far below it — a whole brain of about
+  1,400 engrams is 6.5 MiB of JSON — and the cap bounds what one op can make
+  every replica and the relay hold.
 - **Primitives**, all standard libsodium constructions:
   Ed25519 (`crypto_sign_detached`), X25519 sealed boxes (`crypto_box_seal`),
   XChaCha20-Poly1305 (`crypto_aead_xchacha20poly1305_ietf`, 24-byte nonces),
@@ -92,6 +110,9 @@ Every write to a brain — private or shared — is an op in the brain's log
   time going backwards stops a replica too.
 - **Op signature**: the author device's Ed25519 signature over
   `eml-op-v1\n<payload_hash>`.
+- **Once**: an op_id appears at most once in a brain's log. A replica refuses
+  a record whose op_id it has applied before — membership records in the
+  member set (§6), brain writes in its log — so a relay cannot replay one.
 
 ## 5. Records on the wire
 
@@ -104,6 +125,8 @@ Every write to a brain — private or shared — is an op in the brain's log
 - **Clear record** (genesis and membership): `{v: 1, kind: "clear", brain,
   op_id, payload, sig}`. Only `brain.genesis` and `team.*` calls travel in
   the clear, and they never travel sealed; a reader refuses either mix-up.
+  A clear record's author is its signing device alone: its provenance has
+  every field null (no handle, session, model or harness), or it is refused.
 - The relay delivers `{seq, at, record}`.
 - **Opening** a record: exactly its fields; this brain; for a sealed record the
   key of its epoch and successful decryption; a UTF-8 payload in its one form;
@@ -114,11 +137,13 @@ Every write to a brain — private or shared — is an op in the brain's log
 ## 6. Membership
 
 Membership follows from the log, and the relay and every member compute it
-the same way from the clear records.
+the same way from the clear records. Each record's op_id must be new to the
+log (§4).
 
 - **Genesis** (seq 1, clear): `brain.genesis {state_hash, root: {member,
   device_cert, handle, key_id}}`, signed by the root's device. The root is the
-  first owner; `key_id` names the epoch-0 key.
+  first owner; `key_id` names the epoch-0 key; `state_hash` (64 hex digits) is
+  the hash of the state the brain starts from.
 - **Records** — the signing device must be a current device of a member:
   - `team.add_member {member, role, device_cert, handle}` — by an owner, for
     someone not yet a member; role `owner` or `member`.
@@ -131,17 +156,24 @@ the same way from the clear records.
 - **Rotation due**: a removal or revocation makes a key rotation due; until
   it comes, the brain takes no sealed op and adds nobody. A removed member
   still holds the old key, so nothing new is written under it.
-- **Handles**: a member's handle (what their ops' `provenance.handle` says)
-  rides in their joining record, sealed: the UTF-8 length, the UTF-8 text and
-  zeros make 64 bytes (a handle is 1–63 bytes), encrypted with
+- **An owner keeps a device**: no record may leave the brain without an owner
+  who has a current device — then nobody could add, remove or rotate.
+- **Handles**: a member's handle (what their sealed ops' `provenance.handle`
+  says) rides in their joining record, sealed: in NFC, the UTF-8 length, the
+  UTF-8 text and zeros make 64 bytes (a handle is 1–63 bytes), encrypted with
   XChaCha20-Poly1305 under the brain key of the current epoch, AAD =
-  canonicalJson({brain, op_id, member}). Only members read it. A handle belongs
-  to whoever joined with it first; a later member with the same handle has
-  none.
-- **An op is accepted** when its device is a current device of a member, its
-  `provenance.handle` is that member's handle, and — for a sealed op — it is
-  sealed under the current epoch with no rotation due. Otherwise every replica
-  rejects it the same way.
+  canonicalJson({brain, op_id, member}). Only members read it. Two handles are
+  the same when their NFC forms match case-folded (upper-, then lower-cased).
+  A handle belongs to whoever first joined with it, for good: a later member
+  with the same handle has none — also after the first one was removed; a
+  member who joins again keeps theirs. Case and normalization follow the
+  runtime's Unicode tables; letters newer than an older runtime's tables may
+  compare differently there.
+- **An op is accepted** when its device is a current device of a member and —
+  for a sealed op — its `provenance.handle` is that member's handle, and it is
+  sealed under the current epoch with no rotation due. A membership record
+  names no handle; its device and the rules above decide. Otherwise every
+  replica rejects it the same way.
 
 ## 7. Brain keys
 
@@ -167,7 +199,8 @@ the same way from the clear records.
   for 7 days and is taken once.
 - **Notice** (kept by the relay): `{v: 1, brain, invite_id, expires_at,
   inviter, sig}`, signed by an owner's device under `eml-invite-notice-v1\n`.
-  No secret.
+  No secret. The relay takes it only from a current device of an owner, and
+  only with an expiry at most 7 days ahead.
 - **Keys from the secret** `s`: mac_key = BLAKE2b-256 of `eml-invite-mac-v1`
   keyed with `s`; enc_key = the same of `eml-invite-enc-v1`.
 - **Join** (invitee → relay → inviter): `{v: 1, brain, invite_id, member,
@@ -175,14 +208,20 @@ the same way from the clear records.
   AAD = canonicalJson({brain, invite_id, member}); `mac` = `crypto_auth` under
   mac_key over canonicalJson({t: "eml-invite-join-v1", …the join without mac}).
 - **Accept** (inviter → relay → invitee): `{v: 1, brain, invite_id,
-  join_hash, inviter, mac}`; `join_hash` = SHA-256 of canonicalJson of the whole
-  join, `inviter` = the inviter device's certificate, `mac` as above with
+  join_hash, inviter, anchor, mac}`; `join_hash` = SHA-256 of canonicalJson of
+  the whole join, `inviter` = the inviter device's certificate, `anchor` =
+  `{genesis, seq, head_hash}` — the genesis op_id of the inviter's log and its
+  last entry with that entry's chain link — and `mac` as above with
   `t: "eml-invite-accept-v1"`.
 - The relay cannot make either MAC, so it cannot swap the invitee's keys, the
-  inviter's keys or the handle. The owner confirms the join by name and
-  fingerprint, adds the member (`team.add_member`) and wraps the brain key for
-  the new device; the invitee accepts a wrapped key only from the device in
-  the accept.
+  inviter's keys, the handle or the anchor. The owner confirms the join by
+  name and fingerprint, adds the member (`team.add_member`) and wraps the brain
+  key for the new device.
+- The invitee replays the log the relay serves and refuses it unless its
+  genesis op_id is the anchor's and its chain link at the anchor's seq is the
+  anchor's head_hash; and it takes a wrapped brain key only from the inviter's
+  device named in the accept — not from just any owner of the log it was
+  served, which the relay could have made up.
 
 ## 9. Relay login
 
@@ -218,9 +257,13 @@ rule.
 - **The vectors** in `vectors/` are the reference: fixed keys and nonces (each
   derived from a readable text), every format above with its exact bytes.
   `keys.json`, `ops.json`, `membership.json`, `brainkeys.json`, `invite.json`,
-  `login.json`. Recompute them with any libsodium binding; the package's own
-  tests also check them with Node's built-in crypto, independently of
-  libsodium.
+  `login.json`. Recompute them with any libsodium binding. The package's own
+  tests also check, with Node's built-in crypto and independently of
+  libsodium: the Ed25519 keys and signatures, the X25519 keys, every
+  XChaCha20-Poly1305 box (through HChaCha20 and OpenSSL's ChaCha20-Poly1305),
+  the invite MACs (HMAC-SHA-512 truncated) and every SHA-256. Keyed BLAKE2b
+  (key ids, the invite keys) and sealed boxes (`crypto_box_seal`) are checked
+  by libsodium only.
 - **What leaves your machine**: every sealed record is the `ct` of §5. Take a
   record your cockpit sent, and check that without the brain key it opens to
   nothing, that its header holds only the fields of §5, and that with your
