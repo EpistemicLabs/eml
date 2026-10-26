@@ -50,7 +50,7 @@ function source() {
   const kai = eml.env({ handle: 'kai', session_id: 's1', model: 'm1', harness: 'h1', ingestion_method: 'mcp' })
   const ada = eml.env({ handle: 'ada', session_id: 's2', ingestion_method: 'direct' })
   createObject(eml, 'project', { id: 'root', name: 'Root' }, kai)
-  createObject(eml, 'project', { id: 'p', name: 'P', parent_project: 'root', metadata: { repo: 'r' } }, kai)
+  createObject(eml, 'project', { id: 'p', name: 'P', parent_project: 'root', metadata: { repo: 'r' }, status_tracks: 'the launch of P, in prose', started_at: '2026-03-15' }, kai)
   createObject(eml, 'project', { id: 'elsewhere', name: 'Elsewhere' }, kai)
   createObject(eml, 'user', { id: 'ada', name: 'Ada' }, kai)
   createObject(eml, 'tag', { name: 'ops', description: 'source ops' }, kai)
@@ -178,6 +178,8 @@ describe('engram.import', () => {
     const result = target.apply({ name: 'engram.import', input: importOf(s.eml, set) }, env)
     expect(result.moved).toEqual({ engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length })
     expect(result.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
+    // free-text status_tracks and a date-only started_at go in as they are
+    expect(target.projects.get('p')).toMatchObject({ status_tracks: 'the launch of P, in prose', started_at: '2026-03-15' })
 
     // the target's export of the set is the source's, row for row
     expect(exportSet(raw(target), s.set).rows).toEqual(set.rows)
@@ -314,11 +316,17 @@ describe('engram.import', () => {
       refused(rows => { rows.engrams[1].created_at = '2026-10-20' }, /rows\.engrams\[1\] .*created_at is an ISO-8601 UTC time/)
       refused(rows => { rows.entries[0].at = '2026-10-20T08:00:00Z' }, /\.at is an ISO-8601 UTC time/)
       refused(rows => { rows.engrams[0].rev = 0 }, /rev is an integer ≥ 1/)
-      refused(rows => { rows.engrams[0].rev = 1.5 }, /rev is an integer ≥ 1/)
+      refused(rows => { rows.engrams[0].rev = 1.5 }, /rev is an integer/)
       refused(rows => { rows.engrams[0].scope = 'project' }, /rows\.engrams\[0\] .*Invalid scope "project"/)
       refused(rows => { rows.engrams[0].type = 'wish' }, /rows\.engrams\[0\] \(.+\): CHECK constraint failed/)
       refused(rows => { rows.engrams[0].status = 'gone' }, /rows\.engrams\[0\] \(.+\): CHECK constraint failed/)
       refused(rows => { rows.relations[0].relation = 'likes' }, /rows\.relations\[0\] \(.+\): CHECK constraint failed/)
+      // each value of its column's type in the schema
+      refused(rows => { rows.engrams[0].title = 42 }, /rows\.engrams\[0\] .*\.title is text or null/)
+      refused(rows => { rows.engrams[0].content = 7 }, /\.content is text\./)
+      refused(rows => { rows.engrams[0].content = null }, /\.content is text/)
+      refused(rows => { rows.relations[0].strength = 'strong' }, /rows\.relations\[0\] .*\.strength is a number/)
+      refused(rows => { rows.projects[1].started_at = 'last spring' }, /rows\.projects\[1\] \(p\)\.started_at is an ISO-8601 date/)
       expect(ids(target)).toEqual([])
       target.close(); s.eml.close()
     })
@@ -477,6 +485,10 @@ describe('moveEngrams', () => {
     expect(planMove({ source: raw(s.eml), target: raw(to), ids: [s.rule.id] }).incoming_refs).toEqual([expect.objectContaining({ engram_id: s.learned.id })])
     expect(plan.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
     expect(plan.collisions).toEqual([])
+    // a set the import would refuse for its rows is not shown as clean
+    raw(s.eml).prepare("UPDATE projects SET metadata = 'not json' WHERE id = 'p'").run()
+    expect(planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).collisions).toEqual([expect.stringMatching(/rows\.projects\[1\] \(p\)\.metadata is JSON text/)])
+    raw(s.eml).prepare(`UPDATE projects SET metadata = '{"repo":"r"}' WHERE id = 'p'`).run()
     // a collision the import would refuse is listed
     to.apply({ name: 'engram.import', input: importOf(s.eml, set) })
     expect(planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).collisions).toEqual([expect.stringMatching(/^engrams .* already in this brain$/), expect.stringMatching(/^entries/), expect.stringMatching(/^relations/)])
@@ -496,7 +508,7 @@ describe('moveEngrams', () => {
       backup_path: backup, import: last(to), move_out: last(s.eml),
       moved: { engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length },
       created: { projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] },
-      dropped_relations: set.crossing.map(r => r.id).sort(), external_refs: set.external_refs, resumed: false,
+      dropped_relations: set.crossing.map(r => r.id).sort(), external_refs: set.external_refs, incoming_refs: [], resumed: false,
     })
     expect(exportSet(raw(to), s.set).rows).toEqual(set.rows)
     expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)

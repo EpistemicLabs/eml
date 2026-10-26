@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3'
+import { currentSchemaSql } from '../database'
 import type { Entry } from '../entries'
 import { insertEntryRow } from '../entries'
 import { scopeObject, validateScopePattern } from '../validate'
@@ -50,9 +52,8 @@ export const engramImport: CommandModule<EngramImportInput, EngramImportResult> 
     if (!source || typeof source.brain !== 'string' || !Number.isSafeInteger(source.head_seq) || (source.head_seq as number) < 1) {
       invalid('source is { brain: the source\'s genesis op_id, head_seq: its head seq }')
     }
-    const rows = checkRows(o.rows)
+    const rows = checkImportRows(o.rows)
     if (o.set_hash !== setHash(rows)) invalid('set_hash does not match the rows')
-    checkLinks(rows)
     return { source: { brain: source!.brain as string, head_seq: source!.head_seq as number }, set_hash: o.set_hash as string, rows }
   },
   apply(ctx, input) {
@@ -63,7 +64,7 @@ export const engramImport: CommandModule<EngramImportInput, EngramImportResult> 
     const created = missingObjects(ctx, rows)
     for (const table of OBJECT_TABLES) {
       rows[table].forEach((row, i) => {
-        if (created[table].includes(row.id as string)) insert(table, i, row, () => INSERT_OBJECT[table](ctx, row))
+        if (created[table].includes(row.id as string)) insert(table, i, row, () => INSERT_OBJECT[table](ctx.db, row))
       })
     }
     rows.engrams.forEach((row, i) => insert('engrams', i, row, () => insertEngramRow(ctx.db, row as unknown as EngramRow)))
@@ -79,13 +80,13 @@ export const engramImport: CommandModule<EngramImportInput, EngramImportResult> 
   },
 }
 
-const INSERT_OBJECT: Record<ObjectTable, (ctx: ImportStores, row: MovedRow) => void> = {
-  projects: (ctx, row) => insertProjectRow(ctx.db, row as unknown as ProjectRow),
-  entities: (ctx, row) => insertEntityRow(ctx.db, row as unknown as EntityRow),
-  users: (ctx, row) => insertUserRow(ctx.db, row as unknown as UserRow),
-  agents: (ctx, row) => insertAgentRow(ctx.db, row as unknown as AgentRow),
-  tags: (ctx, row) => insertTagRow(ctx.db, row as unknown as TagRow),
-  subjects: (ctx, row) => insertSubjectRow(ctx.db, row as unknown as SubjectRow),
+const INSERT_OBJECT: Record<ObjectTable, (db: Database.Database, row: MovedRow) => void> = {
+  projects: (db, row) => insertProjectRow(db, row as unknown as ProjectRow),
+  entities: (db, row) => insertEntityRow(db, row as unknown as EntityRow),
+  users: (db, row) => insertUserRow(db, row as unknown as UserRow),
+  agents: (db, row) => insertAgentRow(db, row as unknown as AgentRow),
+  tags: (db, row) => insertTagRow(db, row as unknown as TagRow),
+  subjects: (db, row) => insertSubjectRow(db, row as unknown as SubjectRow),
 }
 
 /** One row in; a value the schema refuses (a type, status or verb outside its set …) is INVALID naming the row. */
@@ -106,14 +107,52 @@ function rowName(table: MovedTable, i: number, row: MovedRow): string {
   return `rows.${table}[${i}]${typeof row.id === 'string' ? ` (${row.id})` : ''}`
 }
 
-const JSON_COLUMNS = new Set(['properties', 'metadata', 'status_tracks', 'domains'])
+/** The rows of an import as its validate checks them (shape, columns, links); planMove runs the same. */
+export function checkImportRows(value: unknown): MovedRows {
+  const rows = checkRows(value)
+  checkLinks(rows)
+  return rows
+}
+
+const JSON_COLUMNS = new Set(['properties', 'metadata', 'domains'])
 const TIME_COLUMNS = new Set(['created_at', 'updated_at', 'at'])
+const DATE_COLUMNS = new Set(['started_at', 'ended_at'])
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/
+
+/** Each carried column's declared type and NOT NULL, from the current schema (read once). */
+let schemaColumns: Map<string, { type: string, notnull: boolean }> | undefined
+function columnOf(table: MovedTable, column: string): { type: string, notnull: boolean } {
+  if (!schemaColumns) {
+    const db = new Database(':memory:')
+    try {
+      db.exec(currentSchemaSql())
+      schemaColumns = new Map()
+      for (const t of Object.keys(MOVED_COLUMNS)) {
+        for (const c of db.prepare('SELECT name, type, "notnull" AS required FROM pragma_table_info(?)').all(t) as Array<{ name: string, type: string, required: number }>) {
+          schemaColumns.set(`${t}.${c.name}`, { type: c.type, notnull: c.required === 1 })
+        }
+      }
+    } finally {
+      db.close()
+    }
+  }
+  return schemaColumns.get(`${table}.${column}`)!
+}
+
+/** Whether `v` is a value of the schema's column: its type (TEXT, INTEGER, REAL) or, where allowed, null. */
+function fitsColumn(v: unknown, column: { type: string, notnull: boolean }): boolean {
+  if (v === null) return !column.notnull
+  if (column.type === 'TEXT') return typeof v === 'string'
+  if (column.type === 'INTEGER') return Number.isSafeInteger(v)
+  return typeof v === 'number' && Number.isFinite(v)
+}
 
 /**
  * rows: every table, each an array of rows with exactly the carried columns;
- * values text, number or null; ids text and unique per table; JSON columns
- * parse; times ISO-8601 UTC ms; rev an integer ≥ 1; scopes well-formed.
+ * each value of its column's type in the schema (null only where the schema
+ * allows it); ids unique per table; JSON columns parse; times ISO-8601 UTC ms,
+ * project dates ISO-8601; rev ≥ 1; scopes well-formed.
  */
 function checkRows(value: unknown): MovedRows {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('rows is an object of tables')
@@ -134,18 +173,20 @@ function checkRows(value: unknown): MovedRows {
       if (cols.length !== columns.length || !columns.every(c => cols.includes(c))) invalid(`${name} has the columns ${columns.join(', ')}`)
       for (const c of columns) {
         const v = r[c]
-        if (v !== null && typeof v !== 'string' && typeof v !== 'number') invalid(`${name}.${c} is text, a number or null`)
-        if (JSON_COLUMNS.has(c) && v !== null && !parses(v)) invalid(`${name}.${c} is JSON text or null`)
-        if (TIME_COLUMNS.has(c) && !(typeof v === 'string' && ISO_MS.test(v))) invalid(`${name}.${c} is an ISO-8601 UTC time with milliseconds`)
+        const column = columnOf(table, c)
+        if (!fitsColumn(v, column)) invalid(`${name}.${c} is ${column.type === 'TEXT' ? 'text' : column.type === 'INTEGER' ? 'an integer' : 'a number'}${column.notnull ? '' : ' or null'}`)
+        if (JSON_COLUMNS.has(c) && v !== null && !parses(v as string)) invalid(`${name}.${c} is JSON text or null`)
+        if (TIME_COLUMNS.has(c) && !ISO_MS.test(v as string)) invalid(`${name}.${c} is an ISO-8601 UTC time with milliseconds`)
+        if (DATE_COLUMNS.has(c) && v !== null && !ISO_DATE.test(v as string)) invalid(`${name}.${c} is an ISO-8601 date or time, or null`)
       }
-      const key = table === 'engram_tags' ? `${r.engram_id} ${r.tag_id}` : table === 'engram_subjects' ? `${r.engram_id} ${r.subject_id}` : r.id
-      if (typeof key !== 'string' || key === '') invalid(`${name}.id is text`)
+      // ids are TEXT NOT NULL (checked above); a link row's key is its pair
+      const key = table === 'engram_tags' ? `${r.engram_id} ${r.tag_id}` : table === 'engram_subjects' ? `${r.engram_id} ${r.subject_id}` : r.id as string
+      if (key === '') invalid(`${name}.id is not empty`)
       if (keys.has(key)) invalid(`${name} appears twice in rows.${table}`)
       keys.add(key)
       if (table === 'engrams') {
-        if (!Number.isSafeInteger(r.rev) || (r.rev as number) < 1) invalid(`${name}.rev is an integer ≥ 1`)
-        if (typeof r.scope !== 'string') invalid(`${name}.scope is text`)
-        try { validateScopePattern(r.scope) } catch (err) { invalid(`${name}: ${(err as Error).message}`) }
+        if ((r.rev as number) < 1) invalid(`${name}.rev is an integer ≥ 1`)
+        try { validateScopePattern(r.scope as string) } catch (err) { invalid(`${name}: ${(err as Error).message}`) }
       }
     }
   }
@@ -153,8 +194,7 @@ function checkRows(value: unknown): MovedRows {
   return rows as MovedRows
 }
 
-function parses(v: string | number): boolean {
-  if (typeof v !== 'string') return false
+function parses(v: string): boolean {
   try { JSON.parse(v); return true } catch { return false }
 }
 

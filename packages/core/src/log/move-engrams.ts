@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3'
 import { EML } from '../index'
-import { importProblems, missingObjects, type EngramImportResult } from '../commands/engram-import'
+import { checkImportRows, importProblems, missingObjects, type EngramImportResult } from '../commands/engram-import'
 import { CommandError } from '../commands/types'
 import type { Env } from '../env'
 import { backupBrain } from '../forward-migrations'
 import { commandStores, writeOp } from './apply-op'
-import { brainRef, checkIds, exportSet, namesCrossing, type ExternalRef } from './move'
+import { brainRef, checkIds, exportSet, namesCrossing, type ExternalRef, type MovedRows } from './move'
 
 // --- Moving engrams between two brains (v0.21) -----------------------------------
 //
@@ -34,6 +34,8 @@ export interface MoveResult {
   created: EngramImportResult['created']
   dropped_relations: string[]
   external_refs: ExternalRef[]
+  /** Entries left outside the set that name a moved engram by id. */
+  incoming_refs: ExternalRef[]
   /** The import was in the target already: only the move_out ran. */
   resumed: boolean
 }
@@ -77,7 +79,7 @@ export function moveEngrams(args: MoveArgs, env: Env): MoveResult {
     const head = source.prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, op_id: string }
     return {
       backup_path, import: imported, move_out: head, moved: counts, created,
-      dropped_relations: out.dropped_relations, external_refs: set.external_refs, resumed,
+      dropped_relations: out.dropped_relations, external_refs: set.external_refs, incoming_refs: set.incoming_refs, resumed,
     }
   }).immediate()
 }
@@ -113,7 +115,7 @@ export interface MovePlan {
   incoming_refs: ExternalRef[]
   /** The scope objects, tags and subjects the import would create in the target. */
   created: EngramImportResult['created']
-  /** Why the target would refuse the import; empty when it goes in. */
+  /** Why the target would refuse the import (the rows' own checks first); empty when it goes in. */
   collisions: string[]
 }
 
@@ -135,6 +137,17 @@ export function planMove(args: { source: Database.Database, target: Database.Dat
     external_refs: set.external_refs,
     incoming_refs: set.incoming_refs,
     created: missingObjects(stores, set.rows),
-    collisions: importProblems(stores, set.rows),
+    collisions: rowProblems(set.rows) ?? importProblems(stores, set.rows),
+  }
+}
+
+/** The import's own refusal of the rows (its validate), as a problem list; undefined when they pass. */
+function rowProblems(rows: MovedRows): string[] | undefined {
+  try {
+    checkImportRows(rows)
+    return undefined
+  } catch (err) {
+    if (err instanceof CommandError) return [err.message]
+    throw err
   }
 }
