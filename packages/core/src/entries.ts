@@ -71,13 +71,18 @@ export function appendEntry(db: Database.Database, engramId: string, input: Entr
     quote: input.quote ?? null,
     rule_id: input.rule_id ?? null,
   }
+  insertEntryRow(db, entry)
+  bumpRev(db, w, engramId)
+  return entry
+}
+
+/** An entry row as given, with the next ord (v0.21) — the one place entries are inserted. */
+export function insertEntryRow(db: Database.Database, entry: Entry): void {
   db.prepare(`
     INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id, ord)
     VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id,
       (SELECT COALESCE(MAX(ord), 0) + 1 FROM entries))
   `).run(entry)
-  bumpRev(db, w, engramId)
-  return entry
 }
 
 /** An engram's entries, oldest first; optionally only some kinds. */
