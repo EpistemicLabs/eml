@@ -12,7 +12,8 @@
 // lost or added rows, left a non-ISO timestamp, an expired engram, an
 // expires_at or the labels tables, fails the integrity / foreign-key check, or
 // (schema 21) left the op log without exactly one valid genesis whose snapshot
-// holds the migrated state — or changed the state when it only had to add the log.
+// holds the migrated state, or a log a rebuild from does not equal the brain —
+// or changed the state when it only had to add the log.
 
 import { copyFileSync, mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,6 +25,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const require = createRequire(join(root, 'packages', 'core', 'package.json'))
 const Database = require('better-sqlite3')
 const { EML, CURRENT_BRAIN_SCHEMA_VERSION, GENESIS_PREV_HASH, chainHash, sha256Hex, stateDump, stateHash, decodeSnapshot } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
+const { verify } = require(join(root, 'packages', 'core', 'dist', 'log', 'rebuild.js'))
 
 const source = process.argv[2]
 if (!source || !existsSync(source)) {
@@ -100,6 +102,9 @@ function genesisProblems(file) {
       if (snaps[0].state_hash !== state) problems.push('snapshot state_hash is not the hash of the migrated brain')
       if (stateHash(decodeSnapshot(snaps[0].data)) !== state) problems.push('snapshot data does not decode to the migrated brain')
     }
+    // and the brain is its log: a rebuild from the genesis equals the migrated state
+    const verified = verify(db)
+    if (!verified.ok) problems.push(`the log does not verify: ${verified.problem}`)
     return problems
   } finally { db.close() }
 }
