@@ -1,6 +1,6 @@
 import { canonicalJson } from './canonical'
 import { sha256Hex } from './op'
-import { ISO_MS, KEY_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, UUID, asObject, exactFields, fromBase64url, sodium, toBase64url } from './wire'
+import { ISO_MS, KEY_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, UUID, asObject, checkVersion, exactFields, fromBase64url, sodium, toBase64url } from './wire'
 
 // --- Keys and device certificates (v0.21) ----------------------------------------
 //
@@ -94,7 +94,8 @@ export function certifyDevice(identity: KeyPair, fields: { brain: string, device
  * ProtocolError otherwise.
  */
 export function verifyDeviceCert(value: unknown): DeviceCert {
-  exactFields(asObject(value, 'a device certificate'), ['v', 'brain', 'member', 'device_sign', 'device_enc', 'created_at', 'sig'], 'a device certificate')
+  checkVersion(asObject(value, 'a device certificate').v)
+  exactFields(value as object, ['v', 'brain', 'member', 'device_sign', 'device_enc', 'created_at', 'sig'], 'a device certificate')
   const { sig, ...body } = value as DeviceCert
   checkCertBody(body)
   if (!verifyText(body.member, DEVICE_CERT_DOMAIN, canonicalJson(body), sig)) throw new ProtocolError('the device certificate is not signed by its member')

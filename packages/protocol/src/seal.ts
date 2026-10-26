@@ -2,7 +2,7 @@ import { canonicalJson, plainJson } from './canonical'
 import { signText, verifyText, type KeyPair } from './keys'
 import { provenanceProblem, sha256Hex, type OpEnvelope, type TeamFields } from './op'
 import {
-  HASH, KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, UUID,
+  HASH, KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, TAG_BYTES, UUID,
   asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url, utf8,
 } from './wire'
 
@@ -57,6 +57,14 @@ export interface OpenedOp {
 }
 
 const OP_DOMAIN = 'eml-op-v1\n'
+
+/**
+ * The largest payload, in bytes of UTF-8: 16 MiB. The largest op is an
+ * engram.import of a big set — a whole brain of ~1400 engrams with their
+ * journals and relations is ~6.5 MiB of JSON — so this leaves room, and caps
+ * what a member can make every replica (and the relay) hold for one op.
+ */
+export const MAX_PAYLOAD = 16 * 1024 * 1024
 const CALL = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/
 const ENVELOPE_FIELDS = ['op_id', 'schema', 'call', 'args', 'provenance', 'team']
 const TEAM_FIELDS = ['brain', 'device', 'base_seq', 'head_hash']
@@ -113,6 +121,7 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
   let sig: string
   if (r.kind === 'op') {
     checkEpoch(r.epoch)
+    if (typeof r.ct === 'string' && r.ct.length > Math.ceil((SIG_BYTES + MAX_PAYLOAD + TAG_BYTES) * 4 / 3)) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
     const key = keyFor(r.epoch as number)
     if (!key) throw new ProtocolError(`no brain key for epoch ${String(r.epoch)}`)
     const { ct, ...header } = r
@@ -122,6 +131,7 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
     payload = utf8(plaintext.subarray(SIG_BYTES), 'the payload')
   } else {
     if (typeof r.payload !== 'string') throw new ProtocolError('the payload is a string')
+    if (Buffer.byteLength(r.payload, 'utf-8') > MAX_PAYLOAD) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
     payload = r.payload
     sig = r.sig as string
     fromBase64url(sig, SIG_BYTES, 'the signature')
@@ -139,6 +149,7 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
 /** The payload of `envelope` and the device's signature over it, after the same checks a reader makes. */
 function signed(envelope: TeamOp, device: KeyPair): { payload: string, sig: string } {
   const payload = plainJson(envelope)
+  if (Buffer.byteLength(payload, 'utf-8') > MAX_PAYLOAD) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
   parseEnvelope(payload, envelope.team?.brain)
   if (envelope.team.device !== device.publicKey) throw new ProtocolError('team.device is not the signing device\'s key')
   return { payload, sig: signText(device, OP_DOMAIN, sha256Hex(payload)) }
@@ -167,6 +178,10 @@ function parseEnvelope(payload: string, brain: unknown): TeamOp {
   if (typeof op.call !== 'string' || !CALL.test(op.call)) throw new ProtocolError('call is not a name like engram.create')
   const problem = provenanceProblem(op.provenance)
   if (problem) throw new ProtocolError(problem)
+  // a membership record's author is its signing device alone; it names no handle, session, model or harness
+  if (isClearCall(op.call) && Object.values(op.provenance as object).some(v => v !== null)) {
+    throw new ProtocolError(`${op.call} carries a provenance with every field null`)
+  }
   const team = asObject(op.team, 'team')
   exactFields(team, TEAM_FIELDS, 'team')
   if (typeof team.brain !== 'string' || !UUID.test(team.brain)) throw new ProtocolError('team.brain is not a lowercase UUID')

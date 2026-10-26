@@ -62,8 +62,8 @@
         }
       },
       "provenance": {
-        "handle": "juno",
-        "ingestion_method": "other",
+        "handle": null,
+        "ingestion_method": null,
         "session_id": null,
         "model": null,
         "harness": null
@@ -75,15 +75,15 @@
         "head_hash": "bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e"
       }
     },
-    "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
-    "signed_text": "eml-op-v1\n25b80c2ef045dda773a7c5ac46c609e8f4498fe8004fa50c50f410196fd2aae6",
+    "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":null,\"ingestion_method\":null,\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
+    "signed_text": "eml-op-v1\n6d4e9f8a014b84b22e2465ce27cb90f272eacfa309e1a3df5e9129e64ec27226",
     "record": {
       "v": 1,
       "kind": "clear",
       "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "op_id": "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
-      "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":\"juno\",\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
-      "sig": "t2FeyochSt-kb21sluMOIOavi3XqveE2hhHkm6Y1ES8csxRpDVMnqoGh79csgV6q0EXf3qjng1qQSwptZ1xwCg"
+      "payload": "{\"op_id\":\"a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d\",\"schema\":21,\"call\":\"team.add_device\",\"args\":{\"device_cert\":{\"v\":1,\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"sig\":\"ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ\"}},\"provenance\":{\"handle\":null,\"ingestion_method\":null,\"session_id\":null,\"model\":null,\"harness\":null},\"team\":{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"base_seq\":8,\"head_hash\":\"bacaaeb37d993206178fe185cc8ee6904d8f4b4e091363dd8779e62460b5be7e\"}}",
+      "sig": "cc486APqaybGcBIN4jwTd3SgMzDRHrzs4u0vt5j0aZoAGZ6nNASAoDuqJuKKwCLfuY1V2d4C1Khr--vYKrDcBA"
     }
   }
 }

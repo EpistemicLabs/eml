@@ -3,7 +3,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  certifyDevice, clearOp, genesisMembers, keyId, newDeviceKeys, newSigningKey, openRecord, rotateKey, sealHandle, sealOp,
+  certifyDevice, clearOp, genesisMembers, isClearCall, keyId, newDeviceKeys, newSigningKey, openRecord, rotateKey, sealHandle, sealOp,
   type BrainKey, type DeviceKeys, type KeyPair, type MemberSet, type OpenedOp, type TeamOp,
 } from '../src'
 
@@ -53,18 +53,21 @@ export const person = (handle: string): Person => ({ identity: newSigningKey(), 
 export const cert = (p: Person, device = p.device) => certifyDevice(p.identity, { brain: BRAIN, device_sign: device.sign.publicKey, device_enc: device.enc.publicKey, created_at: T })
 
 let seq = 0
+/** An op by `author`: a sealed call names the author's handle, a membership record (clear call) a provenance of nulls. */
 export const envelope = (author: Person, call: string, args: unknown, device = author.device, handle: string | null = author.handle): TeamOp => ({
   op_id: crypto.randomUUID(), schema: 21, call, args: args as never,
-  provenance: { handle, ingestion_method: 'mcp', session_id: null, model: null, harness: null },
+  provenance: isClearCall(call) ? NO_PROVENANCE : { handle, ingestion_method: 'mcp', session_id: null, model: null, harness: null },
   team: { brain: BRAIN, device: device.sign.publicKey, base_seq: seq++, head_hash: ZERO },
 })
+export const NO_PROVENANCE = { handle: null, ingestion_method: null, session_id: null, model: null, harness: null }
 export const clear = (author: Person, call: string, args: unknown, device = author.device): OpenedOp => {
   const { record } = clearOp(envelope(author, call, args, device), device.sign)
   return openRecord(JSON.parse(JSON.stringify(record)), BRAIN, () => undefined)
 }
 
 /** A brain founded by `owner`, with its keys by epoch. */
-export function found(owner: Person): { set: MemberSet, keys: BrainKey[] } {
+/** A brain founded by `owner`: its member set, its keys by epoch, and its genesis record as a reader opened it. */
+export function found(owner: Person): { set: MemberSet, keys: BrainKey[], genesis: OpenedOp } {
   const keys = [{ epoch: 0, key: sodium.randombytes_buf(32) }]
   const op_id = crypto.randomUUID()
   const env = {
@@ -75,7 +78,7 @@ export function found(owner: Person): { set: MemberSet, keys: BrainKey[] } {
     op_id,
   }
   const genesis = openRecord(JSON.parse(JSON.stringify(clearOp(env, owner.device.sign).record)), BRAIN, () => undefined)
-  return { set: genesisMembers(genesis), keys }
+  return { set: genesisMembers(genesis), keys, genesis }
 }
 export const keyFor = (keys: BrainKey[]) => (epoch: number) => keys.find(k => k.epoch === epoch)?.key
 

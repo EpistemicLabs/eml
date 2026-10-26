@@ -3,11 +3,11 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  ProtocolError, applyMembership, canonicalJson, checkAuthor, clearOp, genesisMembers, memberHandles, newDeviceKeys,
-  openRecord, ready, sealHandle, signingKeyFromSeed, type TeamOp,
+  ProtocolError, applyMembership, canonicalJson, checkAuthor, clearOp, genesisMembers, handleKey, memberHandles, newDeviceKeys,
+  openRecord, ready, sealHandle, signingKeyFromSeed, type OpenedOp, type TeamOp,
 } from '../src'
 import { sealHandleWith } from '../src/membership'
-import { BRAIN, K, ZERO, addMember, cert, clear, envelope, found, keyFor, person, rotation, sha, write } from './helpers'
+import { BRAIN, K, ZERO, addMember, cert, clear, envelope, found, keyFor, nodeOpen, person, rotation, sha, write } from './helpers'
 
 // v0.21 (spec team-brain-protocol-package-spec §3, block 4): the membership
 // records, the reducer every reader runs over them, and a member's check of
@@ -21,7 +21,7 @@ describe('the vector', () => {
   it('reproduces the handle box; it opens with the epoch-0 key and the canonical {brain, op_id, member}', () => {
     const at = JSON.parse(V.handle.aad)
     expect(sealHandleWith(sha('handle nonce').subarray(0, 24), V.handle.text, at, { epoch: 0, key: sha('brain key 0') })).toEqual(V.handle.box)
-    const plain = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, Buffer.from(V.handle.box.ct, 'base64url'), V.handle.aad, Buffer.from(V.handle.box.nonce, 'base64url'), sha('brain key 0'))
+    const plain = nodeOpen(sha('brain key 0'), Buffer.from(V.handle.box.nonce, 'base64url'), V.handle.aad, Buffer.from(V.handle.box.ct, 'base64url'))
     // padded to 64 bytes: the length, the UTF-8 text, zeros — the ciphertext is the same size for every handle
     expect(plain).toHaveLength(64)
     expect(Array.from(plain.subarray(0, 5))).toEqual([4, ...Buffer.from('juno')])
@@ -163,7 +163,7 @@ describe('handles and authors', () => {
     const bo = person('bo')
     const { set, keys } = found(ada)
     const moved = addMember(set, keys, ada, bo)
-    ;(moved.envelope.args as { handle: unknown }).handle = set.members[ada.identity.publicKey].handle.box
+    ;(moved.envelope.args as { handle: unknown }).handle = set.handles[0].box
     const two = applyMembership(set, moved)
     expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBeNull()
     expect(memberHandles(two, () => undefined)).toEqual({ [ada.identity.publicKey]: null, [bo.identity.publicKey]: null })
@@ -215,3 +215,159 @@ describe('the genesis', () => {
     expect(() => genesisMembers({ ...g, envelope: { ...g.envelope, call: 'team.add_member' } })).toThrow(/not brain.genesis/)
   })
 })
+
+// --- review fixes (eml-cd030656) ---------------------------------------------------
+
+describe('a membership record\'s author is its device', () => {
+  it('checkAuthor takes a clear record by its device alone; a sealed op still names its handle', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const record = addMember(set, keys, ada, bo)
+    expect(record.envelope.provenance).toEqual({ handle: null, ingestion_method: null, session_id: null, model: null, harness: null })
+    expect(() => checkAuthor(set, record, memberHandles(set, keyFor(keys)))).not.toThrow()
+    expect(() => checkAuthor(set, record, {})).not.toThrow()  // the relay's view: no handles at all
+    expect(() => checkAuthor(set, write(ada, keys, 0), {})).toThrow(/not its member's handle/)
+  })
+})
+
+describe('an op_id appears once in a brain\'s log', () => {
+  it('the same record twice is refused', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const record = addMember(set, keys, ada, bo)
+    const two = applyMembership(set, record)
+    expect(two.op_ids).toEqual([...set.op_ids, record.envelope.op_id])
+    expect(() => applyMembership(two, record)).toThrow(/in the log already/)
+  })
+
+  it('a removed member is not added back by replaying their old add_member (PoC 1)', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const add = addMember(set, keys, ada, bo)
+    let s = applyMembership(set, add)
+    s = applyMembership(s, clear(ada, 'team.remove_member', { member: bo.identity.publicKey }))
+    s = applyMembership(s, rotation(s, keys, ada))
+    expect(() => applyMembership(s, add)).toThrow(/in the log already/)
+  })
+
+  it('a revoked device is not revived by replaying its old add_device (PoC 1b)', () => {
+    const ada = person('ada')
+    const phone = newDeviceKeys()
+    const { set, keys } = found(ada)
+    const addPhone = clear(ada, 'team.add_device', { device_cert: cert(ada, phone) })
+    let s = applyMembership(set, addPhone)
+    s = applyMembership(s, clear(ada, 'team.revoke_device', { device: phone.sign.publicKey }))
+    s = applyMembership(s, rotation(s, keys, ada))
+    expect(() => applyMembership(s, addPhone)).toThrow(/in the log already/)
+  })
+
+  it('the genesis op_id counts too', () => {
+    const ada = person('ada')
+    const { set, genesis } = found(ada)
+    expect(set.op_ids).toEqual([genesis.envelope.op_id])
+  })
+})
+
+describe('an owner always keeps a current device', () => {
+  it('the only owner cannot revoke their only device (PoC 4)', () => {
+    const ada = person('ada')
+    const { set } = found(ada)
+    expect(() => applyMembership(set, clear(ada, 'team.revoke_device', { device: ada.device.sign.publicKey }))).toThrow(/no owner would have a current device left/)
+  })
+
+  it('with a second device, or another owner with a device, it can', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const phone = newDeviceKeys()
+    const { set, keys } = found(ada)
+    const withPhone = applyMembership(set, clear(ada, 'team.add_device', { device_cert: cert(ada, phone) }))
+    expect(() => applyMembership(withPhone, clear(ada, 'team.revoke_device', { device: ada.device.sign.publicKey }))).not.toThrow()
+    const owners = applyMembership(set, addMember(set, keys, ada, bo, 'owner'))
+    const boWithout = applyMembership(owners, clear(bo, 'team.revoke_device', { device: bo.device.sign.publicKey }))
+    // now ada is the only owner with a device: she cannot revoke it, nor be removed — no owner could sign anything after
+    expect(() => applyMembership(boWithout, clear(ada, 'team.revoke_device', { device: ada.device.sign.publicKey }))).toThrow(/no owner would have a current device left/)
+  })
+
+  it('removing the last owner who has a device is refused, even when another owner remains', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    let s = applyMembership(set, addMember(set, keys, ada, bo, 'owner'))
+    s = applyMembership(s, clear(bo, 'team.revoke_device', { device: bo.device.sign.publicKey }))
+    s = applyMembership(s, rotation(s, keys, ada))
+    expect(() => applyMembership(s, clear(ada, 'team.remove_member', { member: ada.identity.publicKey }))).toThrow(/no owner would have a current device left/)
+  })
+})
+
+describe('handles: one form, case-folded, never reused', () => {
+  /** ada founds; `joiner` joins with `handle`. */
+  function join(handle: string, founder = 'ada') {
+    const ada = person(founder)
+    const other = person(handle)
+    const { set, keys } = found(ada)
+    const two = applyMembership(set, addMember(set, keys, ada, other))
+    return { ada, other, two, keys, handles: memberHandles(two, keyFor(keys)) }
+  }
+
+  it('a handle is sealed in NFC: a decomposed é reads back composed', () => {
+    const { other, handles } = join('re\u0301mi')
+    expect(handles[other.identity.publicKey]).toBe('r\u00e9mi')
+  })
+
+  it('composed and decomposed forms are the same handle: the later member has none (PoC 5)', () => {
+    const { other, handles } = join('re\u0301mi', 'r\u00e9mi')
+    expect(handles[other.identity.publicKey]).toBeNull()
+  })
+
+  it('handles differing only in case are the same handle', () => {
+    const { ada, other, handles } = join('Ada')
+    expect(handles[ada.identity.publicKey]).toBe('ada')
+    expect(handles[other.identity.publicKey]).toBeNull()
+    expect(handleKey('STRASSE')).toBe(handleKey('straße'))
+  })
+
+  it('a removed member\'s handle stays theirs: a newcomer with it has none; the member back again has it', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    let s = applyMembership(set, addMember(set, keys, ada, bo))
+    s = applyMembership(s, clear(ada, 'team.remove_member', { member: bo.identity.publicKey }))
+    s = applyMembership(s, rotation(s, keys, ada))
+    const bo2 = person('bo')
+    s = applyMembership(s, addMember(s, keys, ada, bo2))
+    expect(memberHandles(s, keyFor(keys))[bo2.identity.publicKey]).toBeNull()
+    expect(s.handles.map(h => h.member)).toEqual([ada.identity.publicKey, bo.identity.publicKey, bo2.identity.publicKey])
+    // bo himself joins again, with his own identity: his handle is still his
+    s = applyMembership(s, clear(ada, 'team.remove_member', { member: bo2.identity.publicKey }))
+    s = applyMembership(s, rotation(s, keys, ada))
+    s = applyMembership(s, addMember(s, keys, ada, { ...bo, device: newDeviceKeys() }))
+    expect(memberHandles(s, keyFor(keys))[bo.identity.publicKey]).toBe('bo')
+  })
+
+  it('a box whose handle is not in NFC counts as no handle', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const env = envelope(ada, 'team.add_member', {})
+    const text = Buffer.from('re\u0301mi', 'utf-8')
+    const padded = new Uint8Array(64)
+    padded.set([text.length, ...text])
+    const nonce = sodium.randombytes_buf(24)
+    const handle = { nonce: Buffer.from(nonce).toString('base64url'), ct: Buffer.from(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, canonicalJson({ brain: BRAIN, op_id: env.op_id, member: bo.identity.publicKey }), null, nonce, keys[0].key)).toString('base64url') }
+    const rec: OpenedOp = openRecord(JSON.parse(JSON.stringify(clearOp({ ...env, args: { member: bo.identity.publicKey, role: 'member', device_cert: cert(bo), handle } as never }, ada.device.sign).record)), BRAIN, () => undefined)
+    expect(memberHandles(applyMembership(set, rec), keyFor(keys))[bo.identity.publicKey]).toBeNull()
+  })
+})
+
+describe('the genesis state_hash', () => {
+  it('is 64 lowercase hex digits', () => {
+    const g = openRecord(V.genesis.record, BRAIN, () => undefined)
+    const args = g.envelope.args as { state_hash: string, root: never }
+    expect(() => genesisMembers({ ...g, envelope: { ...g.envelope, args: { ...args, state_hash: 'abc' } } })).toThrow(/state_hash/)
+    expect(() => genesisMembers({ ...g, envelope: { ...g.envelope, args: { ...args, state_hash: args.state_hash.toUpperCase() } } })).toThrow(/state_hash/)
+  })
+})
+

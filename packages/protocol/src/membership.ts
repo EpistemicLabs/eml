@@ -1,7 +1,7 @@
 import { canonicalJson } from './canonical'
 import { verifyDeviceCert, type DeviceCert } from './keys'
 import type { BrainKey, OpenedOp } from './seal'
-import { KEY_BYTES, NONCE_BYTES, ProtocolError, TAG_BYTES, asObject, exactFields, fromBase64url, openBox, sealBox, sodium, utf8 } from './wire'
+import { HASH, KEY_BYTES, NONCE_BYTES, ProtocolError, TAG_BYTES, asObject, exactFields, fromBase64url, openBox, sealBox, sodium, utf8 } from './wire'
 
 // --- Membership (v0.21) ----------------------------------------------------------
 //
@@ -9,10 +9,11 @@ import { KEY_BYTES, NONCE_BYTES, ProtocolError, TAG_BYTES, asObject, exactFields
 // first owner, the team.* records add and remove members and devices and
 // rotate the brain key. They travel in the clear (seal.ts), so the relay and
 // every member run this same reducer over them and arrive at the same member
-// set at every position. Names stay out of the relay's sight: a member's
-// handle — what their ops' provenance says — rides in its record encrypted
-// under the brain key of that epoch, and only members can read it
-// (spec team-brain-protocol-package-spec §3).
+// set at every position. A record's author is its signing device alone. Names
+// stay out of the relay's sight: a member's handle — what their sealed ops'
+// provenance says — rides in its joining record encrypted under the brain key
+// of that epoch, and only members can read it (spec
+// team-brain-protocol-package-spec §3).
 
 export type Role = 'owner' | 'member'
 
@@ -24,10 +25,16 @@ export interface Box {
 
 export interface Member {
   role: Role
-  /** The member's handle as their joining record carried it, with the epoch and record it was sealed in. */
-  handle: { epoch: number, op_id: string, box: Box }
   /** The member's devices, by device signing key. */
   devices: Record<string, DeviceCert>
+}
+
+/** A handle as a joining record carried it: whose, sealed under which epoch, in which record. */
+export interface HandleRecord {
+  member: string
+  epoch: number
+  op_id: string
+  box: Box
 }
 
 /** A shared brain's members at one position of its log. Members are kept in the order they joined. */
@@ -39,6 +46,10 @@ export interface MemberSet {
   /** Set by a removal or a revocation: until the next rotation, the brain takes no sealed op and no new member or device. */
   rotation_due: boolean
   members: Record<string, Member>
+  /** Every handle a joining record carried, in log order — also of members removed since: a handle once bound is never another member's. */
+  handles: HandleRecord[]
+  /** The op_ids of the records applied so far: an op_id appears at most once in a brain's log. */
+  op_ids: string[]
 }
 
 /** A handle is sealed padded to this many bytes — a length byte, the UTF-8 text, zeros — so its ciphertext says nothing about it. */
@@ -65,6 +76,7 @@ export function genesisMembers(genesis: OpenedOp): MemberSet {
   if (envelope.call !== 'brain.genesis') throw new ProtocolError(`the first record is ${envelope.call}, not brain.genesis`)
   const args = asObject(envelope.args, 'the genesis args')
   exactFields(args, ['state_hash', 'root'], 'the genesis args')
+  if (typeof args.state_hash !== 'string' || !HASH.test(args.state_hash)) throw new ProtocolError('state_hash is not 64 lowercase hex digits')
   const root = asObject(args.root, 'root')
   exactFields(root, ['member', 'device_cert', 'handle', 'key_id'], 'root')
   const brain = envelope.team.brain
@@ -73,28 +85,34 @@ export function genesisMembers(genesis: OpenedOp): MemberSet {
   fromBase64url(root.key_id, KEY_BYTES, 'root.key_id')
   return {
     brain, epoch: 0, keys: [{ key_id: root.key_id as string, prev: null }], rotation_due: false,
-    members: { [cert.member]: { role: 'owner', handle: { epoch: 0, op_id: envelope.op_id, box: box(root.handle, 'handle', HANDLE_BYTES) }, devices: { [cert.device_sign]: cert } } },
+    members: { [cert.member]: { role: 'owner', devices: { [cert.device_sign]: cert } } },
+    handles: [{ member: cert.member, epoch: 0, op_id: envelope.op_id, box: box(root.handle, 'handle', HANDLE_BYTES) }],
+    op_ids: [envelope.op_id],
   }
 }
 
 /**
  * The member set after a team.* record — or ProtocolError when the record
- * is not allowed there; every reader refuses it the same way. The signing
- * device must be a current device of some member. Rules:
+ * is not allowed there; every reader refuses it the same way. The record's
+ * op_id must be new to the log, and its signing device a current device of
+ * some member. Rules:
  * - add_member {member, role, device_cert, handle}: by an owner, for someone not yet a member.
  * - add_device {device_cert}: by a device of the same member.
  * - revoke_device {device}: by a device of that member or of an owner.
  * - remove_member {member}: by an owner; never the last owner.
  * - rotate_key {epoch, key_id, prev}: by an owner, to the next epoch.
- * A removal or revocation makes a rotation due; until it comes, nobody is added.
+ * A removal or revocation makes a rotation due; until it comes, nobody is
+ * added. No record may leave the brain without an owner who has a current
+ * device — nobody could add, remove or rotate any more.
  */
 export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
   const { envelope } = opened
+  if (set.op_ids.includes(envelope.op_id)) throw new ProtocolError('the op_id is in the log already: a record is applied once')
   const signer = memberOfDevice(set, envelope.team.device)
   if (!signer) throw new ProtocolError('the record\'s device is not a current device of a member')
   const isOwner = set.members[signer].role === 'owner'
   const args = asObject(envelope.args, `${envelope.call} args`)
-  const next: MemberSet = { ...set, members: { ...set.members } }
+  const next: MemberSet = { ...set, members: { ...set.members }, op_ids: [...set.op_ids, envelope.op_id] }
 
   switch (envelope.call) {
     case 'team.add_member': {
@@ -104,7 +122,8 @@ export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
       if (typeof args.member === 'string' && Object.hasOwn(set.members, args.member)) throw new ProtocolError('the member is a member already')
       if (typeof args.role !== 'string' || !ROLES.includes(args.role)) throw new ProtocolError('role is owner or member')
       const cert = newDeviceCert(set, args.device_cert, args.member)
-      next.members[cert.member] = { role: args.role as Role, handle: { epoch: set.epoch, op_id: envelope.op_id, box: box(args.handle, 'handle', HANDLE_BYTES) }, devices: { [cert.device_sign]: cert } }
+      next.members[cert.member] = { role: args.role as Role, devices: { [cert.device_sign]: cert } }
+      next.handles = [...set.handles, { member: cert.member, epoch: set.epoch, op_id: envelope.op_id, box: box(args.handle, 'handle', HANDLE_BYTES) }]
       return next
     }
     case 'team.add_device': {
@@ -122,7 +141,7 @@ export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
       const { [args.device as string]: _revoked, ...devices } = set.members[owner].devices
       next.members[owner] = { ...set.members[owner], devices }
       next.rotation_due = true
-      return next
+      return ownerKeepsADevice(next)
     }
     case 'team.remove_member': {
       exactFields(args, ['member'], 'team.remove_member args')
@@ -134,7 +153,7 @@ export function applyMembership(set: MemberSet, opened: OpenedOp): MemberSet {
       }
       delete next.members[args.member as string]
       next.rotation_due = true
-      return next
+      return ownerKeepsADevice(next)
     }
     case 'team.rotate_key': {
       exactFields(args, ['epoch', 'key_id', 'prev'], 'team.rotate_key args')
@@ -156,45 +175,65 @@ export function memberOfDevice(set: MemberSet, device: unknown): string | undefi
 }
 
 /**
- * Every member's handle, read with the brain keys. A handle belongs to the
- * member who joined with it first; a later member with the same handle gets
- * none, so no op of theirs passes checkAuthor. A box that does not open, or
- * a handle that is not one, counts as none as well.
+ * Every current member's handle, read with the brain keys. Handles are
+ * compared case-folded in NFC (handleKey), and a handle belongs to the member
+ * who first joined with it — for good: a later member with the same handle,
+ * even after the first one was removed, gets none, so no sealed op of theirs
+ * passes checkAuthor. A member who joins again keeps their own handle. A box
+ * that does not open, or a handle that is not one, counts as none.
  */
 export function memberHandles(set: MemberSet, keyFor: (epoch: number) => Uint8Array | undefined): Record<string, string | null> {
-  const taken = new Set<string>()
-  const handles: Record<string, string | null> = {}
-  for (const [member, { handle }] of Object.entries(set.members)) {
-    const key = keyFor(handle.epoch)
+  const boundTo = new Map<string, string>()
+  const latest = new Map<string, string | null>()
+  for (const h of set.handles) {
+    const key = keyFor(h.epoch)
     let text: string | null = null
     if (key) {
       try {
-        text = unpadHandle(openBox(handle.box.ct, handle.box.nonce, canonicalJson({ brain: set.brain, op_id: handle.op_id, member }), key, 'the handle does not open'))
+        text = unpadHandle(openBox(h.box.ct, h.box.nonce, canonicalJson({ brain: set.brain, op_id: h.op_id, member: h.member }), key, 'the handle does not open'))
       } catch {
         text = null
       }
     }
-    handles[member] = text !== null && !taken.has(text) ? text : null
-    if (text !== null) taken.add(text)
+    if (text !== null && !boundTo.has(handleKey(text))) boundTo.set(handleKey(text), h.member)
+    latest.set(h.member, text !== null && boundTo.get(handleKey(text)) === h.member ? text : null)
   }
+  const handles: Record<string, string | null> = {}
+  for (const member of Object.keys(set.members)) handles[member] = latest.get(member) ?? null
   return handles
 }
 
 /**
  * Throws ProtocolError unless `opened` may be applied at `set` (a member's
- * view; the relay sees no handles): its device is a current device, its
- * provenance names that member's handle, and a sealed op is sealed under the
- * current epoch with no rotation due. A membership record is then checked by
- * applyMembership as well.
+ * view): its device is a current device; and a sealed op names its member's
+ * handle in its provenance and is sealed under the current epoch with no
+ * rotation due. A membership record names no handle (its author is its
+ * device); applyMembership then checks it.
  */
 export function checkAuthor(set: MemberSet, opened: OpenedOp, handles: Record<string, string | null>): void {
   const member = memberOfDevice(set, opened.envelope.team.device)
   if (!member) throw new ProtocolError('the op\'s device is not a current device of a member')
+  if (opened.epoch === null) return
   if (handles[member] === null || handles[member] !== opened.envelope.provenance.handle) throw new ProtocolError('the op\'s provenance is not its member\'s handle')
-  if (opened.epoch !== null) {
-    if (opened.epoch !== set.epoch) throw new ProtocolError(`the op is sealed under epoch ${opened.epoch}, the brain is at ${set.epoch}`)
-    if (set.rotation_due) throw new ProtocolError('a key rotation is due; the brain takes no sealed op before it')
+  if (opened.epoch !== set.epoch) throw new ProtocolError(`the op is sealed under epoch ${opened.epoch}, the brain is at ${set.epoch}`)
+  if (set.rotation_due) throw new ProtocolError('a key rotation is due; the brain takes no sealed op before it')
+}
+
+/**
+ * What makes two handles the same: NFC, case-folded (upper, then lower, so
+ * ß and SS meet). Case and normalization tables follow the runtime's Unicode
+ * version; letters added in a newer version may fold differently on an older
+ * runtime.
+ */
+export function handleKey(handle: string): string {
+  return handle.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
+}
+
+function ownerKeepsADevice(set: MemberSet): MemberSet {
+  if (!Object.values(set.members).some(m => m.role === 'owner' && Object.keys(m.devices).length > 0)) {
+    throw new ProtocolError('no owner would have a current device left')
   }
+  return set
 }
 
 function memberCert(value: unknown, brain: string, member: unknown): DeviceCert {
@@ -210,21 +249,23 @@ function newDeviceCert(set: MemberSet, value: unknown, member: unknown): DeviceC
   return cert
 }
 
-/** `handle` as the 64 bytes that are sealed: its UTF-8 length, the UTF-8 text, zeros. */
+/** `handle` in NFC as the 64 bytes that are sealed: its UTF-8 length, the UTF-8 text, zeros. */
 export function padHandle(handle: string): Uint8Array {
-  checkHandle(handle)
-  const text = sodium.from_string(handle)
+  const nfc = handle.normalize('NFC')
+  checkHandle(nfc)
+  const text = sodium.from_string(nfc)
   const padded = new Uint8Array(HANDLE_BYTES)
   padded[0] = text.length
   padded.set(text, 1)
   return padded
 }
 
-/** The handle in `padded`, which must be exactly padHandle's form; throws ProtocolError otherwise. */
+/** The handle in `padded`, which must be exactly padHandle's form (NFC included); throws ProtocolError otherwise. */
 export function unpadHandle(padded: Uint8Array): string {
   const length = padded[0]
   if (padded.length !== HANDLE_BYTES || length >= HANDLE_BYTES || padded.subarray(1 + length).some(b => b !== 0)) throw new ProtocolError('not a padded handle')
   const text = utf8(padded.subarray(1, 1 + length), 'the handle')
+  if (text !== text.normalize('NFC')) throw new ProtocolError('the handle is not in NFC')
   checkHandle(text)
   return text
 }

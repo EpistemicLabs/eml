@@ -3,7 +3,7 @@ import { createHash, createPrivateKey, createPublicKey, verify } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  ProtocolError, certifyDevice, encryptionKeyFromSeed, fingerprint, newDeviceKeys, newSigningKey, ready,
+  ProtocolError, UnsupportedVersionError, certifyDevice, encryptionKeyFromSeed, fingerprint, newDeviceKeys, newSigningKey, ready,
   signingKeyFromSeed, verifyDeviceCert, type DeviceCert,
 } from '../src'
 
@@ -126,3 +126,12 @@ describe('fingerprint', () => {
     expect(() => fingerprint('abc')).toThrow(ProtocolError)
   })
 })
+
+describe('versions of a device certificate', () => {
+  it('a newer version is an UnsupportedVersionError, checked before its fields', () => {
+    const cert = V.device_cert.cert
+    expect(() => verifyDeviceCert({ ...cert, v: 2 })).toThrow(UnsupportedVersionError)
+    expect(() => verifyDeviceCert({ v: 2, fields: 'of a later format' })).toThrow(UnsupportedVersionError)
+  })
+})
+

@@ -1,5 +1,5 @@
 {
-  "description": "Invites (spec team-brain-protocol-package-spec §5). The secret is sha256 of \"eml protocol test vector: invite secret\", the invite id the first 16 bytes of sha256 of \"…: invite id\", the join nonce the first 24 bytes of sha256 of \"…: join nonce\". mac_key / enc_key = BLAKE2b-256 keyed with the secret of \"eml-invite-mac-v1\" / \"eml-invite-enc-v1\". A MAC is crypto_auth (HMAC-SHA-512-256) under mac_key over canonicalJson of {t, …the message without mac}; the handle is padded to 64 bytes and sealed with XChaCha20-Poly1305 under enc_key, AAD = canonicalJson({brain, invite_id, member}). join_hash = sha256 of canonicalJson of the whole join. The joiner is the keys.json identity and device; the inviter has its own keys (seeds \"inviter identity\", \"inviter device sign\", \"inviter device enc\").",
+  "description": "Invites (spec team-brain-protocol-package-spec §5). The secret is sha256 of \"eml protocol test vector: invite secret\", the invite id the first 16 bytes of sha256 of \"…: invite id\", the join nonce the first 24 bytes of sha256 of \"…: join nonce\". mac_key / enc_key = BLAKE2b-256 keyed with the secret of \"eml-invite-mac-v1\" / \"eml-invite-enc-v1\". A MAC is crypto_auth (HMAC-SHA-512-256) under mac_key over canonicalJson of {t, …the message without mac}; the handle is padded to 64 bytes and sealed with XChaCha20-Poly1305 under enc_key, AAD = canonicalJson({brain, invite_id, member}). join_hash = sha256 of canonicalJson of the whole join. The anchor of the accept is the membership.json genesis as seq 1 of its log, at 2026-10-26T08:00:00.000Z: its op_id and its chain link. The joiner is the keys.json identity and device; the inviter has its own keys (seeds \"inviter identity\", \"inviter device sign\", \"inviter device enc\").",
   "invite": {
     "relay": "relay.example.org",
     "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -55,6 +55,11 @@
       "created_at": "2026-10-26T08:00:00.000Z",
       "sig": "BF_0FONSi-pwf9quuO4xVRFsWcKW4Nz9YfUy2iDRpyJZr2KTdFtIHmhprErl0NeDmHXm1L6EQFoJ1cCKDlYBBw"
     },
-    "mac": "k1Pu1DymSfZIWQGU0KH3Gb3YxuKloSwu3GLsz-xnfnE"
+    "anchor": {
+      "genesis": "6a1f0e2d-3c4b-4a59-8e7d-6c5b4a392817",
+      "seq": 1,
+      "head_hash": "df53e9581adcf09550c978451ee534bef0cd1975e3b27dc13634c118510da3a4"
+    },
+    "mac": "gef0Uh51slnPwYKyGLmRo7JrMDDtRnx88Wdv7w6Oqmw"
   }
 }

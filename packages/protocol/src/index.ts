@@ -9,18 +9,18 @@ export {
   type KeyPair, type DeviceKeys, type DeviceCert,
 } from './keys'
 export {
-  isClearCall, sealOp, clearOp, openRecord,
+  MAX_PAYLOAD, isClearCall, sealOp, clearOp, openRecord,
   type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
 } from './seal'
 export {
-  sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor,
-  type Role, type Box, type Member, type MemberSet,
+  sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor, handleKey,
+  type Role, type Box, type Member, type MemberSet, type HandleRecord,
 } from './membership'
-export { newBrainKey, keyId, rotateKey, epochKeys, wrapKey, unwrapKey, type WrappedKey } from './brainkey'
+export { newBrainKey, keyId, rotateKey, epochKeys, wrapKey, unwrapKey, unwrapInviteKey, type WrappedKey } from './brainkey'
 export {
   INVITE_DAYS, newInvite, inviteLink, parseInviteLink, inviteNotice, verifyInviteNotice, checkInviteOpen,
-  joinRequest, openJoin, joinAccept, openAccept,
-  type Invite, type InviteNotice, type JoinRequest, type JoinAccept,
+  joinRequest, openJoin, joinAccept, openAccept, checkAnchor,
+  type Invite, type InviteNotice, type JoinRequest, type JoinAccept, type LogAnchor,
 } from './invite'
 export { LOGIN_WINDOW_MS, loginChallenge, loginResponse, verifyLogin, type LoginChallenge, type LoginResponse } from './login'
 export { DivergedError, checkpointArgs, checkCheckpoint } from './checkpoint'

@@ -7,9 +7,10 @@ import {
   ProtocolError, UnsupportedVersionError, canonicalJson, clearOp, newDeviceKeys, newSigningKey, openRecord, ready,
   sealOp, sha256Hex, signingKeyFromSeed, type KeyPair, type TeamOp,
 } from '../src'
-import { sealOpWith } from '../src/seal'
+import { MAX_PAYLOAD, sealOpWith } from '../src/seal'
 import { signText } from '../src/keys'
 import { hchacha20, nodeOpen } from './helpers'
+import { plainJson } from '../src/log'
 
 // v0.21 (spec team-brain-protocol-package-spec §2, block 3): ops on the wire —
 // the team envelope, the op signature, sealed and clear records — against the
@@ -193,3 +194,49 @@ describe('what a reader refuses', () => {
     refuse({ ...V.clear.record, payload, sig }, /op is for another brain/)
   })
 })
+
+// --- review fixes (eml-cd030656) ---------------------------------------------------
+
+describe('a membership record carries no provenance', () => {
+  const d = signingKeyFromSeed(createHash('sha256').update('eml protocol test vector: device sign').digest())
+  const named = { ...V.clear.envelope, provenance: { ...V.clear.envelope.provenance, handle: 'juno' } } as TeamOp
+
+  it('the vector\'s clear record has every provenance field null', () => {
+    expect(Object.values(V.clear.envelope.provenance)).toEqual([null, null, null, null, null])
+  })
+
+  it('an author refuses to sign one that names a handle, a session or a model', () => {
+    expect(() => clearOp(named, d)).toThrow(/team.add_device carries a provenance with every field null/)
+    expect(() => clearOp({ ...V.clear.envelope, provenance: { ...V.clear.envelope.provenance, model: 'm' } } as TeamOp, d)).toThrow(/every field null/)
+  })
+
+  it('a reader refuses one that does, even correctly signed', () => {
+    const payload = plainJson(named)
+    const record = { ...V.clear.record, payload, sig: signText(d, 'eml-op-v1\n', sha256Hex(payload)) }
+    expect(() => openRecord(record, BRAIN, () => undefined)).toThrow(/every field null/)
+  })
+})
+
+describe('the largest payload', () => {
+  const d = signingKeyFromSeed(createHash('sha256').update('eml protocol test vector: device sign').digest())
+  const key = { epoch: 0, key: KEY }
+  /** V.sealed's envelope with content padded so the payload is exactly `bytes` long. */
+  const sized = (bytes: number): TeamOp => {
+    const base = plainJson({ ...V.sealed.envelope, args: { ...V.sealed.envelope.args, content: '' } })
+    return { ...V.sealed.envelope, args: { ...V.sealed.envelope.args, content: 'x'.repeat(bytes - Buffer.byteLength(base)) } } as TeamOp
+  }
+
+  it('is 16 MiB: one at the limit seals and opens, one byte more is refused on both sides', () => {
+    expect(MAX_PAYLOAD).toBe(16 * 1024 * 1024)
+    const atLimit = sealOp(sized(MAX_PAYLOAD), d, key)
+    expect(Buffer.byteLength(atLimit.payload)).toBe(MAX_PAYLOAD)
+    expect(openRecord(atLimit.record, BRAIN, keyFor).payload).toBe(atLimit.payload)
+    expect(() => sealOp(sized(MAX_PAYLOAD + 1), d, key)).toThrow(/larger than 16777216 bytes/)
+    // a sealed record too long to hold a payload within the limit is refused before it is decrypted
+    const padded = { ...atLimit.record, ct: atLimit.record.ct + 'AAAA' }
+    expect(() => openRecord(padded, BRAIN, keyFor)).toThrow(/larger than/)
+    // a clear record's payload is measured as it is
+    expect(() => openRecord({ ...V.clear.record, payload: 'x'.repeat(MAX_PAYLOAD + 1) }, BRAIN, () => undefined)).toThrow(/larger than/)
+  })
+})
+

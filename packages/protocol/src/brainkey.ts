@@ -1,5 +1,5 @@
 import { canonicalJson } from './canonical'
-import { signText, verifyText, type DeviceKeys, type KeyPair } from './keys'
+import { signText, verifyText, type DeviceCert, type DeviceKeys, type KeyPair } from './keys'
 import { memberOfDevice, type Box, type MemberSet } from './membership'
 import type { BrainKey } from './seal'
 import { KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url } from './wire'
@@ -117,6 +117,16 @@ export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): 
   }
   if (keyId(key) !== set.keys[r.epoch as number].key_id) throw new ProtocolError(`the wrapped key is not the key the log names for epoch ${String(r.epoch)}`)
   return { epoch: r.epoch as number, key }
+}
+
+/**
+ * unwrapKey for a device that just joined: the key must also be wrapped by
+ * the inviter's device from the accept — not by any owner the log it was
+ * served names, since that log may be the relay's own.
+ */
+export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert): BrainKey {
+  if (asObject(record, 'a wrapped key').wrapper !== inviter.device_sign) throw new ProtocolError('the key is not wrapped by the inviter\'s device')
+  return unwrapKey(set, record, device)
 }
 
 function prevAad(brain: string, epoch: number): string {

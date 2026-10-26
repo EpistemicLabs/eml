@@ -3,7 +3,7 @@ import { createHmac, verify } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  INVITE_DAYS, ProtocolError, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
+  GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAnchor, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
   joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
   unwrapKey, verifyInviteNotice, wrapKey, type Invite,
 } from '../src'
@@ -17,11 +17,13 @@ import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, sha } from 
 // handle box node:crypto checks independently.
 
 const I = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'invite.json'), 'utf-8'))
+const M = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'membership.json'), 'utf-8'))
 const hex = (s: string): Buffer => Buffer.from(s, 'hex')
 const b64 = (s: string): Buffer => Buffer.from(s, 'base64url')
 const ED25519_SPKI = hex('302a300506032b6570032100')
 const vectorInvite = (): Invite => ({ relay: I.invite.relay, brain: BRAIN, invite_id: I.invite.invite_id, secret: hex(I.invite.secret), expires_at: I.invite.expires_at, redeemed: false })
 const DAY1 = '2026-10-27T08:00:00.000Z'
+const NOW = '2026-10-26T08:00:00.000Z'
 /** HMAC-SHA-512-256, as crypto_auth computes it: the first 32 bytes of HMAC-SHA-512. */
 const nodeMac = (key: Buffer, text: string): string => createHmac('sha512', key).update(text, 'utf-8').digest().subarray(0, 32).toString('base64url')
 
@@ -49,10 +51,12 @@ describe('the vectors', () => {
   it('the inviter opens the join; reproduces the accept, whose MAC node:crypto checks; the invitee opens it', () => {
     const opened = openJoin(vectorInvite(), I.join, DAY1)
     expect(opened).toEqual({ member: K.identity.public_key, device_cert: K.device_cert.cert, handle: 'juno', join_hash: I.join_hash })
-    expect(joinAccept(vectorInvite(), I.join_hash, I.accept.inviter)).toEqual(I.accept)
+    expect(joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, I.accept.anchor)).toEqual(I.accept)
     const { mac, ...body } = I.accept
     expect(nodeMac(hex(I.keys.mac_key), canonicalJson({ t: 'eml-invite-accept-v1', ...body }))).toBe(mac)
-    expect(openAccept(I.invite.link, I.join, I.accept)).toEqual(I.accept.inviter)
+    expect(openAccept(I.invite.link, I.join, I.accept)).toEqual({ inviter: I.accept.inviter, anchor: I.accept.anchor })
+    // the anchor is the membership.json genesis as seq 1: its op_id and its chain link at a fixed time
+    expect(I.accept.anchor).toEqual({ genesis: M.genesis.record.op_id, seq: 1, head_hash: chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', sha256Hex(M.genesis.record.payload)) })
   })
 
   it('the notice: node:crypto checks the inviter\'s signature; it carries no secret', () => {
@@ -124,13 +128,17 @@ describe('the relay\'s notice', () => {
     const two = applyMembership(set, addMember(set, keys, ada, bo))
     const invite = newInvite('relay.example.org', BRAIN, '2026-10-26T08:00:00.000Z')
     const notice = inviteNotice(invite, ada.device.sign)
-    expect(verifyInviteNotice(two, JSON.parse(JSON.stringify(notice)))).toEqual(notice)
+    expect(verifyInviteNotice(two, JSON.parse(JSON.stringify(notice)), NOW)).toEqual(notice)
     expect(JSON.stringify(notice)).not.toContain(Buffer.from(invite.secret).toString('base64url'))
-    expect(() => verifyInviteNotice(two, inviteNotice(invite, bo.device.sign))).toThrow(/not from a current device of an owner/)
-    expect(() => verifyInviteNotice(two, { ...notice, expires_at: '2027-01-01T00:00:00.000Z' })).toThrow(/not signed by its inviter/)
-    expect(() => verifyInviteNotice(two, { ...notice, brain: '00000000-0000-4000-8000-000000000000' })).toThrow(/another brain/)
-    expect(() => verifyInviteNotice(two, { ...notice, v: 2 })).toThrow(UnsupportedVersionError)
-    expect(() => verifyInviteNotice(two, { ...notice, secret: 'x' })).toThrow(/no field secret/)
+    expect(() => verifyInviteNotice(two, inviteNotice(invite, bo.device.sign), NOW)).toThrow(/not from a current device of an owner/)
+    expect(() => verifyInviteNotice(two, { ...notice, expires_at: '2026-10-30T00:00:00.000Z' }, NOW)).toThrow(/not signed by its inviter/)
+    expect(() => verifyInviteNotice(two, { ...notice, brain: '00000000-0000-4000-8000-000000000000' }, NOW)).toThrow(/another brain/)
+    expect(() => verifyInviteNotice(two, { ...notice, v: 2 }, NOW)).toThrow(UnsupportedVersionError)
+    expect(() => verifyInviteNotice(two, { ...notice, secret: 'x' }, NOW)).toThrow(/no field secret/)
+    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner
+    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.001Z' }, ada.device.sign)
+    expect(() => verifyInviteNotice(two, long, NOW)).toThrow(/at most 7 days/)
+    expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:00:00.000Z')
   })
 })
 
@@ -161,7 +169,8 @@ describe('what the relay could swap', () => {
     expect(() => openAccept(I.invite.link, I.join, { ...I.accept, inviter: mallory })).toThrow(/MAC is not the invite's/)
     const otherJoin = joinRequest(I.invite.link, signingKeyFromSeed(sha('identity')), K.device_cert.cert, 'juno')
     expect(() => openAccept(I.invite.link, otherJoin, I.accept)).toThrow(/answers another join/)
-    const forged = joinAccept({ ...invite(), secret: Buffer.alloc(32, 9) }, I.join_hash, mallory)
+    expect(() => openAccept(I.invite.link, I.join, { ...I.accept, anchor: { ...I.accept.anchor, seq: 2 } })).toThrow(/MAC is not the invite's/)
+    const forged = joinAccept({ ...invite(), secret: Buffer.alloc(32, 9) }, I.join_hash, mallory, I.accept.anchor)
     expect(() => openAccept(I.invite.link, I.join, forged)).toThrow(/MAC is not the invite's/)
   })
 })
@@ -170,9 +179,9 @@ describe('a join played through', () => {
   it('invite → notice → join → the owner adds the member with its handle → wraps the key → accept → the invitee trusts the wrapper', () => {
     const ada = person('ada')
     const bo = person('bo')
-    const { set, keys } = found(ada)
+    const { set, keys, genesis } = found(ada)
     const invite = newInvite('relay.example.org', BRAIN, '2026-10-26T08:00:00.000Z')
-    verifyInviteNotice(set, inviteNotice(invite, ada.device.sign))
+    verifyInviteNotice(set, inviteNotice(invite, ada.device.sign), NOW)
     const link = inviteLink(invite)
 
     const request = joinRequest(link, bo.identity, cert(bo), 'bo')
@@ -183,10 +192,64 @@ describe('a join played through', () => {
 
     const two = applyMembership(set, addMember(set, keys, ada, { ...bo, handle: joined.handle }))
     const wrapped = wrapKey(two, keys[0], bo.device.sign.publicKey, ada.device.sign)
-    const accept = joinAccept(invite, joined.join_hash, cert(ada))
-    const inviter = openAccept(link, request, JSON.parse(JSON.stringify(accept)))
+    const head = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(genesis.payload))
+    const accept = joinAccept(invite, joined.join_hash, cert(ada), { genesis: genesis.envelope.op_id, seq: 1, head_hash: head })
+    const { inviter, anchor } = openAccept(link, request, JSON.parse(JSON.stringify(accept)))
     expect(inviter.device_sign).toBe(wrapped.wrapper)
+    // the invitee replays the log the relay serves and checks it against the anchor
+    expect(() => checkAnchor(anchor, genesis.envelope.op_id, s => (s === 1 ? head : undefined))).not.toThrow()
+    expect(unwrapInviteKey(two, wrapped, bo.device, inviter)).toEqual(keys[0])
     expect(unwrapKey(two, wrapped, bo.device)).toEqual(keys[0])
     expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBe('bo')
   })
 })
+
+// --- review fixes (eml-cd030656) ---------------------------------------------------
+
+describe('the accept anchors the log the invitee replays', () => {
+  /** ada founds the real brain and invites bo; the accept carries the real log's anchor. */
+  function invited() {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys, genesis } = found(ada)
+    const invite = newInvite('relay.example.org', BRAIN, NOW)
+    const link = inviteLink(invite)
+    const request = joinRequest(link, bo.identity, cert(bo), 'bo')
+    const joined = openJoin(invite, request, DAY1)
+    const head = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(genesis.payload))
+    const two = applyMembership(set, addMember(set, keys, ada, bo))
+    const accept = joinAccept(invite, joined.join_hash, cert(ada), { genesis: genesis.envelope.op_id, seq: 1, head_hash: head })
+    return { ada, bo, keys, genesis, head, two, link, request, accept }
+  }
+
+  it('a log the relay made up — its own genesis, its own owner, a key wrapped for the invitee — is refused (PoC 3)', () => {
+    const { bo, link, request, accept } = invited()
+    const { inviter, anchor } = openAccept(link, request, accept)
+    // the relay founds a brain of the same id with an owner of its own, adds bo and wraps its own key for him
+    const relayOwner = person('relay')
+    const fake = found(relayOwner)
+    const fakeSet = applyMembership(fake.set, addMember(fake.set, fake.keys, relayOwner, bo))
+    const fakeHead = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(fake.genesis.payload))
+    expect(() => checkAnchor(anchor, fake.genesis.envelope.op_id, s => (s === 1 ? fakeHead : undefined))).toThrow(/another genesis/)
+    const fakeKey = wrapKey(fakeSet, fake.keys[0], bo.device.sign.publicKey, relayOwner.device.sign)
+    expect(unwrapKey(fakeSet, fakeKey, bo.device)).toEqual(fake.keys[0])  // by the fake log alone it would pass
+    expect(() => unwrapInviteKey(fakeSet, fakeKey, bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+  })
+
+  it('the real genesis with another history, or a log that stops short, is refused', () => {
+    const { link, request, accept, genesis } = invited()
+    const { anchor } = openAccept(link, request, accept)
+    expect(() => checkAnchor(anchor, genesis.envelope.op_id, s => (s === 1 ? 'f'.repeat(64) : undefined))).toThrow(/differs from the inviter's at seq 1/)
+    expect(() => checkAnchor({ ...anchor, seq: 5 }, genesis.envelope.op_id, s => (s === 1 ? anchor.head_hash : undefined))).toThrow(/does not reach seq 5/)
+  })
+
+  it('the anchor is under the MAC, and malformed anchors are refused on both sides', () => {
+    const { link, request, accept } = invited()
+    expect(() => openAccept(link, request, { ...accept, anchor: { ...accept.anchor, head_hash: 'f'.repeat(64) } })).toThrow(/MAC is not the invite's/)
+    expect(() => openAccept(link, request, { ...accept, anchor: { ...accept.anchor, extra: 1 } })).toThrow(/MAC is not the invite's|no field extra/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, seq: 0 })).toThrow(/anchor.seq/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, genesis: 'x' })).toThrow(/anchor.genesis/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, head_hash: 'x' })).toThrow(/anchor.head_hash/)
+  })
+})
+
