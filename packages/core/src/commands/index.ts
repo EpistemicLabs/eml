@@ -1,7 +1,7 @@
 import type { StoredEngram, Engram, RelationInput } from '../types'
 import type { LearningState } from '../learning'
 import { beginWrite, type Env } from '../env'
-import { CommandError, isValidationMessage, type CommandContext, type CommandModule } from './types'
+import { CommandError, asCommandError, type CommandContext, type CommandModule } from './types'
 import { engramCreate, type EngramCreateInput, type EngramCreateResult } from './engram-create'
 import { engramUpdate, type EngramUpdateInput } from './engram-update'
 import { taskTrack, type TaskTrackInput } from './task-track'
@@ -39,27 +39,24 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
 export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
 
 /**
- * Run one command: validate its input and apply it in ONE transaction, with
- * one Stamp (one time) from `env`. A rejection is a CommandError and leaves
- * the brain as it was.
+ * Run one command inside the caller's transaction: validate its input and
+ * apply it with one Stamp (one time) from `env`. A rejection is a
+ * CommandError. v0.21: the caller is the op log (log/apply-op.ts), whose
+ * write owns the one transaction — a rejection rolls it back, so the brain
+ * and its log stay as they were.
  */
 export function runCommand<N extends CommandName>(stores: Omit<CommandContext, 'stamp'>, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
   const mod = COMMANDS[command?.name] as CommandModule<CommandMap[N][0], CommandMap[N][1]> | undefined
   if (!mod) throw new CommandError('INVALID', `Invalid command: unknown command "${String(command?.name)}". One of ${COMMAND_NAMES.join(', ')}.`)
   try {
-    return stores.db.transaction(() => {
-      const input = mod.validate(command.input)
-      return mod.apply({ ...stores, stamp: beginWrite(env) }, input)
-    })()
+    const input = mod.validate(command.input)
+    return mod.apply({ ...stores, stamp: beginWrite(env) }, input)
   } catch (err) {
-    if (err instanceof CommandError) throw err
-    const msg = String((err as Error)?.message ?? '')
-    if (isValidationMessage(msg)) throw new CommandError('INVALID', msg)
-    throw err
+    throw asCommandError(err)
   }
 }
 
-export { CommandError, isValidationMessage, type CommandErrorCode, type CommandContext } from './types'
+export { CommandError, asCommandError, isValidationMessage, type CommandErrorCode, type CommandContext } from './types'
 export type { EngramCreateInput, EngramCreateResult, LearningCreateInput } from './engram-create'
 export type { EngramUpdateInput } from './engram-update'
 export type { TaskTrackInput } from './task-track'

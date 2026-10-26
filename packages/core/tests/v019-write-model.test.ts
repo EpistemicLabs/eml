@@ -18,12 +18,15 @@ describe('v0.19 write model', () => {
   const ctx = (session = 's1', caller = 'juno'): Env =>
     eml.env({ handle: caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
-  beforeEach(() => {
-    eml = new EML({ dbPath: ':memory:', namespace: 'juno' })
-    writes(eml).agents.store({ id: 'juno', name: 'Juno' })
-    writes(eml).users.create({ id: 'ada', name: 'Ada' })
-    writes(eml).projects.create({ id: 'p', name: 'P' })
-  })
+  /** A brain with the agent, user and project the tests write as and into. */
+  function openBrain(): EML {
+    const brain = new EML({ dbPath: ':memory:', namespace: 'juno' })
+    writes(brain).agents.store({ id: 'juno', name: 'Juno' })
+    writes(brain).users.create({ id: 'ada', name: 'Ada' })
+    writes(brain).projects.create({ id: 'p', name: 'P' })
+    return brain
+  }
+  beforeEach(() => { eml = openBrain() })
   afterEach(() => { vi.useRealTimers(); eml.close() })
 
   const rawDb = (): any => (eml.engrams as any).db
@@ -472,6 +475,9 @@ describe('v0.19 write model', () => {
     it('a decline pauses it until two more supporting pieces from different sessions', () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date('2026-10-01T10:00:00Z'))
+      // v0.21: a brain made inside the test's timeline — the op log's times never go back before its genesis
+      eml.close()
+      eml = openBrain()
       const a = lesson()
       if (!a.written) throw new Error('not written')
       vi.setSystemTime(new Date('2026-10-02T10:00:00Z'))

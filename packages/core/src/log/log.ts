@@ -8,16 +8,21 @@ import { encodeSnapshot, stateDump, stateHash } from './snapshot'
 // op_log and op_snapshots in the brain file (schema 21). Appending runs inside
 // the caller's transaction; an entry, once written, is never changed.
 
-/** Appends `op` at `at` as the next entry of the chain; returns its seq. */
-export function appendOp(db: Database.Database, op: OpEnvelope, at: string): number {
-  const head = db.prepare('SELECT seq, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, hash: string } | undefined
+/**
+ * Appends `op` as the next entry of the chain. Its time is `now`, or the head
+ * entry's time when the clock went back — the log's times never decrease.
+ * Returns the entry's seq, time and payload as stored.
+ */
+export function appendOp(db: Database.Database, op: OpEnvelope, now: string): { seq: number, at: string, payload: string } {
+  const head = db.prepare('SELECT seq, at, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, at: string, hash: string } | undefined
   const seq = (head?.seq ?? 0) + 1
+  const at = head && head.at > now ? head.at : now
   const prevHash = head?.hash ?? GENESIS_PREV_HASH
   const payload = encodePayload(op)
   const payloadHash = sha256Hex(payload)
   db.prepare(`INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, payload) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(seq, at, op.op_id, prevHash, payloadHash, chainHash(prevHash, seq, at, payloadHash), payload)
-  return seq
+  return { seq, at, payload }
 }
 
 /** True when the brain has an op log without entries — a brain that just reached schema 21. */
@@ -45,7 +50,7 @@ export function writeGenesis(db: Database.Database, schema: number, at: string):
     args: { state_hash },
     provenance: { ...NO_ACTOR, ingestion_method: 'other' },
   }
-  const seq = appendOp(db, op, at)
+  const { seq } = appendOp(db, op, at)
   db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (?, ?, ?, ?)')
     .run(seq, schema, state_hash, encodeSnapshot(dump))
 }
