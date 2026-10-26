@@ -1,8 +1,6 @@
 import type { EML } from './index'
 import { slugifyTag } from './tags'
-import { slugifySubject } from './subjects'
 import { fieldProblem, unknownFieldsError } from './fields'
-import type { ObjectWriter } from './object-writer'
 
 // --- Objects (v0.19): project · entity · tag · subject · user · agent -------------
 //
@@ -54,13 +52,13 @@ const FIXED_ON_UPDATE: Record<ObjectKind, readonly string[]> = {
   project: ['id'], entity: ['id'], tag: [], subject: [], user: ['id'], agent: ['id'],
 }
 
-function assertObject(object: unknown): asserts object is ObjectKind {
+export function assertObject(object: unknown): asserts object is ObjectKind {
   if (!(OBJECT_KINDS as readonly unknown[]).includes(object)) {
     throw new Error(`Invalid object: unknown object "${String(object)}". One of ${OBJECT_KINDS.join(', ')}.`)
   }
 }
 
-function checkFields(object: ObjectKind, input: Record<string, unknown>, mode: 'create' | 'update'): void {
+export function checkFields(object: ObjectKind, input: Record<string, unknown>, mode: 'create' | 'update'): void {
   const spec = OBJECT_FIELDS[object]
   const unknown = Object.keys(input).filter(k => !(k in spec) && input[k] !== undefined)
   if (unknown.length > 0) {
@@ -84,7 +82,7 @@ function checkFields(object: ObjectKind, input: Record<string, unknown>, mode: '
   if (problems.length > 0) throw new Error(`Invalid object: ${problems.join(' ')}`)
 }
 
-function diffOf(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, [unknown, unknown]> {
+export function diffOf(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, [unknown, unknown]> {
   const diff: Record<string, [unknown, unknown]> = {}
   for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (k === 'updated_at' || k === 'engram_count') continue
@@ -156,132 +154,5 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
       return eml.users.list().map(u => ({ ...u, engram_count: scopeCount(eml, `user.${u.id}`) }))
     case 'agent':
       return eml.agents.list().map(a => ({ ...a, engram_count: scopeCount(eml, `agent.${a.id}`) }))
-  }
-}
-
-/**
- * Create an object; only the kind's fields. A project's, entity's, user's or
- * agent's id defaults to the slug of its name. v0.20: the apply of the
- * object.create command, inside its transaction, with the write's timestamp.
- */
-export function createObject(eml: EML, w: ObjectWriter, object: unknown, input: Record<string, unknown>, at: string): { object: unknown, created: boolean } {
-  assertObject(object)
-  checkFields(object, input, 'create')
-  if (typeof input.name !== 'string' || input.name.trim() === '') throw new Error(`Invalid object: a ${object} needs a name.`)
-  const name = input.name.trim()
-  const idOf = (what: string) => {
-    const id = (input.id as string | undefined) ?? slugifyTag(name)
-    if (!/^[a-z0-9_-]+$/i.test(id)) throw new Error(`Invalid object: ${what} id is letters, digits, - and _ (it becomes the scope ${object}.<id>).`)
-    return id
-  }
-  switch (object) {
-    case 'project': {
-      const id = idOf('a project')
-      if (eml.projects.exists(id)) throw new Error(`Invalid object: project "${id}" already exists.`)
-      if (input.status === 'archived') throw new Error('Invalid object: a new project is active or paused.')
-      const project = w.createProject({
-        id, name, status: input.status as 'active' | undefined, goal: input.goal as string | undefined,
-        description: input.description as string | undefined, owner: input.owner as string | undefined,
-        parent_project: input.parent_project as string | undefined, started_at: input.started_at as string | undefined,
-        status_tracks: input.status_tracks as string | undefined, metadata: input.metadata as Record<string, string> | undefined,
-      }, at)
-      return { object: project, created: true }
-    }
-    case 'entity': {
-      const id = idOf('an entity')
-      if (!input.kind) throw new Error('Invalid object: an entity needs kind — person, org or asset.')
-      if (eml.entities.exists(id)) throw new Error(`Invalid object: entity "${id}" already exists.`)
-      const entity = w.createEntity({
-        id, name, kind: input.kind as 'person', status: input.status as 'active' | undefined,
-        description: input.description as string | undefined, status_tracks: input.status_tracks as string | undefined,
-        metadata: input.metadata as Record<string, string> | undefined,
-      }, at)
-      return { object: entity, created: true }
-    }
-    case 'tag': {
-      const created = !eml.tags.exists(slugifyTag(name))
-      const tag = w.createTag({ name, description: input.description as string | undefined }, at)
-      if (created && input.status === 'archived') w.updateTag(tag.id, { status: 'archived' })
-      return { object: eml.tags.get(tag.id), created }
-    }
-    case 'subject': {
-      const created = !eml.subjects.exists(slugifySubject(name))
-      const subject = w.createSubject({ name, description: input.description as string | undefined }, at)
-      if (created && input.status === 'closed') w.updateSubject(subject.id, { status: 'closed' }, at)
-      return { object: eml.subjects.get(subject.id), created }
-    }
-    case 'user': {
-      const id = idOf('a user')
-      if (eml.users.exists(id)) throw new Error(`Invalid object: user "${id}" already exists.`)
-      const user = w.createUser({
-        id, name, email: input.email as string | undefined, description: input.description as string | undefined,
-        metadata: input.metadata as Record<string, string> | undefined,
-      }, at)
-      return { object: user, created: true }
-    }
-    case 'agent': {
-      const id = idOf('an agent')
-      if (eml.agents.exists(id)) throw new Error(`Invalid object: agent "${id}" already exists.`)
-      const agent = w.createAgent({
-        id, name, parent_id: input.parent_id as string | undefined, domains: input.domains as string[] | undefined,
-        description: input.description as string | undefined, metadata: input.metadata as Record<string, string> | undefined,
-      }, at)
-      return { object: agent, created: true }
-    }
-  }
-}
-
-/**
- * Update an object; only the kind's fields; null clears an optional one.
- * Returns the object and the diff, or null for an unknown id. v0.20: the apply
- * of the object.update command, with the write's timestamp.
- */
-export function updateObject(eml: EML, w: ObjectWriter, object: unknown, id: string, patch: Record<string, unknown>, at: string): { object: unknown, diff: Record<string, [unknown, unknown]> } | null {
-  assertObject(object)
-  checkFields(object, patch, 'update')
-  switch (object) {
-    case 'project': {
-      const before = eml.projects.get(id)
-      if (!before) return null
-      // archiving sets ended_at; leaving archived clears it
-      const ended = patch.status === 'archived' && before.status !== 'archived' ? at.slice(0, 10)
-        : patch.status !== undefined && patch.status !== 'archived' && before.status === 'archived' ? null : undefined
-      const after = w.updateProject(id, {
-        ...(patch as object),
-        ...(ended !== undefined ? { ended_at: ended as string } : {}),
-      } as never, at)!
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
-    case 'entity': {
-      const before = eml.entities.get(id)
-      if (!before) return null
-      const after = w.updateEntity(id, patch as never, at)!
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
-    case 'tag': {
-      const slug = slugifyTag(id)
-      const before = eml.tags.get(slug)
-      if (!before) return null
-      const after = w.updateTag(slug, patch as never)!
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
-    case 'subject': {
-      const before = eml.subjects.get(id)
-      if (!before) return null
-      const after = w.updateSubject(id, patch as never, at)
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
-    case 'user': {
-      const before = eml.users.get(id)
-      if (!before) return null
-      const after = w.updateUser(id, patch as never, at)!
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
-    case 'agent': {
-      const before = eml.agents.get(id)
-      if (!before) return null
-      const after = w.updateAgent(id, patch as never)!
-      return { object: after, diff: diffOf(before as never, after as never) }
-    }
   }
 }

@@ -22,7 +22,7 @@ export function normalizeAndValidateTags(ctx: WriteContext, tags: string[], curr
     )
   }
   if (slugs.length === 0) return []
-  const known = ctx.tags?.existingIds(slugs) ?? new Set<string>()
+  const known = ctx.tags.existingIds(slugs)
   const unknown = [...new Set(slugs)].filter(s => !known.has(s))
   if (unknown.length > 0) {
     throw new Error(
@@ -30,7 +30,7 @@ export function normalizeAndValidateTags(ctx: WriteContext, tags: string[], curr
     )
   }
   // v0.19: an archived tag stays where it is but is not assigned anew.
-  const archived = [...(ctx.tags?.archivedIds(slugs) ?? [])].filter(t => !current.includes(t))
+  const archived = [...ctx.tags.archivedIds(slugs)].filter(t => !current.includes(t))
   if (archived.length > 0) {
     throw new Error(`Invalid engram: tag "${archived.join('", "')}" is archived — it stays on the engrams that carry it but is not assigned anew; pick an active one (eml_read_object object=tag).`)
   }
@@ -72,7 +72,7 @@ export function normalizeAndValidateSubjects(ctx: WriteContext, subjects: string
     )
   }
   if (slugs.length === 0) return []
-  const known = ctx.subjects?.statusByIds(slugs) ?? new Map()
+  const known = ctx.subjects.statusByIds(slugs)
   const unknown = [...new Set(slugs.filter(s => !known.has(s)))]
   if (unknown.length > 0) {
     throw new Error(

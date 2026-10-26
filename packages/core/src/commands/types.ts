@@ -1,7 +1,5 @@
 import type { EML } from '../index'
-import type { EngramWriter } from '../engram-writer'
-import type { ObjectWriter } from '../object-writer'
-import type { Stamp } from '../env'
+import type { WriteContext } from '../write/context'
 
 // --- Commands (v0.20) ------------------------------------------------------------
 //
@@ -22,18 +20,19 @@ export class CommandError extends Error {
   }
 }
 
-/** What a command's apply works with: the reads (EML) and the internal writers. */
-export interface CommandContext {
+/**
+ * What a command's apply works with: the reads (EML) and the write context of
+ * the helpers in write/ — the connection, the stores and the write's one Stamp.
+ */
+export interface CommandContext extends WriteContext {
   eml: EML
-  engrams: EngramWriter
-  objects: ObjectWriter
 }
 
 export interface CommandModule<I, R> {
   name: string
   /** Checks the input's shape; returns it typed. Rules that need the brain run in apply. */
   validate(input: unknown): I
-  apply(ctx: CommandContext, input: I, stamp: Stamp): R
+  apply(ctx: CommandContext, input: I): R
 }
 
 /**

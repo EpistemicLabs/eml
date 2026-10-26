@@ -4,7 +4,6 @@ import { addDays } from '../env'
 import { CLOSED_WITH_TASK } from '../engrams'
 import { propsOf, type WriteContext } from './context'
 import { dropWikilinkEcho } from './wikilinks'
-import { liveSuccessorOf } from './supersede'
 
 /** The task a decision or note is tied to (task_id at creation: a refines / derived_from edge). */
 export function boundTaskOf(ctx: WriteContext, id: string): { id: string, status: string } | undefined {
@@ -141,17 +140,4 @@ export function closeBoundItems(ctx: WriteContext, taskId: string, taskStatus: '
     }
   }
   return { closed, kept, entries }
-}
-
-/**
- * The bound items that closed with this task and stayed closed since: their
- * last change entry is that close. One closed by hand never carries it.
- */
-export function closedWithTask(ctx: WriteContext, taskId: string): BoundItem[] {
-  const marker = `${CLOSED_WITH_TASK} ${taskId}`
-  return ctx.store.boundItems(taskId, ['resolved', 'invalidated']).filter(item => {
-    if (liveSuccessorOf(ctx, item.id) !== undefined) return false  // replaced since: its successor holds
-    const changes = ctx.store.entries(item.id, ['change'])
-    return changes[changes.length - 1]?.text === marker
-  })
 }
