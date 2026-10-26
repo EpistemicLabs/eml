@@ -1,12 +1,12 @@
 import type Database from 'better-sqlite3'
+import type { Json, OpEnvelope } from '@engramprotocol/protocol'
 import type { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { asCommandError, type CommandContext } from '../commands/types'
-import type { Env } from '../env'
-import type { Json } from './canonical'
+import type { Actor, Env } from '../env'
 import { appendOp } from './log'
-import { opIds, type OpEnvelope } from './op'
+import { opIds } from './op'
 
 // --- Writes through the log (v0.21) ----------------------------------------------
 //
@@ -52,5 +52,5 @@ export function writeOp<N extends CommandName>(stores: Stores, command: { name: 
 
 /** Applies a logged op inside the caller's transaction: its args as stored, at its time, with its derived ids and its author. */
 export function applyOp(stores: Stores, op: OpEnvelope, at: string): unknown {
-  return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: op.provenance })
+  return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: op.provenance as Actor })
 }

@@ -1,10 +1,9 @@
 import Database from 'better-sqlite3'
+import { GENESIS_PREV_HASH, canonicalJson, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol'
 import { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { currentSchemaSql } from '../database'
 import { applyOp, commandStores } from './apply-op'
-import { canonicalJson } from './canonical'
-import { GENESIS_PREV_HASH, chainHash, sha256Hex, type OpEnvelope } from './op'
 import { decodeSnapshot, stateDump, stateHash, type StateDump } from './snapshot'
 
 // --- Rebuild and verify (v0.21) --------------------------------------------------

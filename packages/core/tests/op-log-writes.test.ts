@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EML, CommandError, COMMAND_NAMES, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { engramCreate } from '../src/commands/engram-create'
 import { applyOp } from '../src/log/apply-op'
-import { GENESIS_PREV_HASH, chainHash, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
+import { GENESIS_PREV_HASH, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol'
+import { uuidv5 } from '../src/log/op'
 import { validDecision, validNote, validTask } from './fixtures'
 
 // v0.21 (spec local-op-log-spec, block 3): every write is an op in the log —

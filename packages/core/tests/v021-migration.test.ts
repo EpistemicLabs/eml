@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initControlDatabase, runForwardMigrations } from '../src'
-import { GENESIS_PREV_HASH, chainHash, sha256Hex } from '../src/log/op'
+import { GENESIS_PREV_HASH, chainHash, sha256Hex } from '@engramprotocol/protocol'
 import { decodeSnapshot, stateDump, stateHash, type StateDump } from '../src/log/snapshot'
 import { createV20Brain } from './fixtures'
 

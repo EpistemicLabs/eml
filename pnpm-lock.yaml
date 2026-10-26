@@ -172,6 +172,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@engramprotocol/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -192,6 +195,8 @@ importers:
       '@engramprotocol/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/protocol: {}
 
   packages/server:
     dependencies:

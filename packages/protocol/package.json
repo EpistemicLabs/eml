@@ -1,0 +1,14 @@
+{
+  "name": "@engramprotocol/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "EML team-brain protocol — the op envelope, the hash chain and canonical JSON, shared by the cockpit and the relay",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  }
+}
