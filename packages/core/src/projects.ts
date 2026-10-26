@@ -31,7 +31,7 @@ export class ProjectStore {
       sql += ' WHERE status = ?'
       params.push(filters.status)
     }
-    sql += ' ORDER BY created_at DESC'
+    sql += ' ORDER BY created_at DESC, id'
     return (this.db.prepare(sql).all(...params) as any[]).map(r => this.rowToProject(r))
   }
 

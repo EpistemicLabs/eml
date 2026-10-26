@@ -16,7 +16,7 @@ export class AgentStore {
   }
 
   list(): Agent[] {
-    return (this.db.prepare('SELECT * FROM agents ORDER BY created_at DESC').all() as any[])
+    return (this.db.prepare('SELECT * FROM agents ORDER BY created_at DESC, id').all() as any[])
       .map(r => this.rowToAgent(r))
   }
 
