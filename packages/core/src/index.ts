@@ -165,8 +165,6 @@ export {
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
-export { GENESIS_PREV_HASH, chainHash, sha256Hex, type OpEnvelope } from './log/op'
-export { stateDump, stateHash, decodeSnapshot, type StateDump } from './log/snapshot'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'
 export {

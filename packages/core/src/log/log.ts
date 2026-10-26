@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { NO_ACTOR } from '../env'
-import { GENESIS_PREV_HASH, chainHash, encodePayload, sha256Hex, uuidv5, type OpEnvelope } from './op'
+import { plainJson } from './canonical'
+import { GENESIS_PREV_HASH, chainHash, sha256Hex, uuidv5, type OpEnvelope } from './op'
 import { encodeSnapshot, stateDump, stateHash } from './snapshot'
 
 // --- The op log (v0.21) ----------------------------------------------------------
@@ -18,7 +19,7 @@ export function appendOp(db: Database.Database, op: OpEnvelope, now: string): { 
   const seq = (head?.seq ?? 0) + 1
   const at = head && head.at > now ? head.at : now
   const prevHash = head?.hash ?? GENESIS_PREV_HASH
-  const payload = encodePayload(op)
+  const payload = plainJson(op)  // the envelope in the caller's key order: the bytes stored, hashed and run
   const payloadHash = sha256Hex(payload)
   db.prepare(`INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, payload) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(seq, at, op.op_id, prevHash, payloadHash, chainHash(prevHash, seq, at, payloadHash), payload)

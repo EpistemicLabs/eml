@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import type { Actor, IdSource } from '../env'
-import { plainJson, type Json } from './canonical'
+import type { Json } from './canonical'
 
 // --- Ops (v0.21) -----------------------------------------------------------------
 //
@@ -29,11 +29,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** sha256, hex; a string is hashed as its UTF-8 bytes (a payload's hash is sha256Hex(payload)). */
 export function sha256Hex(data: string | Buffer): string {
   return createHash('sha256').update(data).digest('hex')
-}
-
-/** The payload an entry stores and hashes: the envelope as JSON, keys in the caller's order. */
-export function encodePayload(op: OpEnvelope): string {
-  return plainJson(op)
 }
 
 /**

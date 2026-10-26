@@ -12,8 +12,9 @@
 // lost or added rows, left a non-ISO timestamp, an expired engram, an
 // expires_at or the labels tables, fails the integrity / foreign-key check, or
 // (schema 21) left the op log without exactly one valid genesis whose snapshot
-// holds the migrated state, or a log a rebuild from does not equal the brain —
-// or changed the state when it only had to add the log.
+// holds the migrated state, or a log a rebuild from does not equal the brain,
+// left ord unfilled, repeated or out of rowid order — or changed the state
+// when it only had to add the log and ord.
 
 import { copyFileSync, mkdtempSync, rmSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,8 +25,11 @@ import { fileURLToPath } from 'node:url'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const require = createRequire(join(root, 'packages', 'core', 'package.json'))
 const Database = require('better-sqlite3')
-const { EML, CURRENT_BRAIN_SCHEMA_VERSION, GENESIS_PREV_HASH, chainHash, sha256Hex, stateDump, stateHash, decodeSnapshot } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
-// verify is not in core's index: rebuild needs the EML class, and an index export would be a require cycle
+const { EML, CURRENT_BRAIN_SCHEMA_VERSION } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
+// the op log's pieces are not in core's index (only this script and the tests
+// use them; rebuild needs the EML class, so an index export would be a require cycle)
+const { GENESIS_PREV_HASH, chainHash, sha256Hex } = require(join(root, 'packages', 'core', 'dist', 'log', 'op.js'))
+const { stateDump, stateHash, decodeSnapshot } = require(join(root, 'packages', 'core', 'dist', 'log', 'snapshot.js'))
 const { verify } = require(join(root, 'packages', 'core', 'dist', 'log', 'rebuild.js'))
 
 const source = process.argv[2]
@@ -69,9 +73,25 @@ function stats(file) {
       formats,
       integrity: db.pragma('integrity_check', { simple: true }),
       fkViolations: db.pragma('foreign_key_check').length,
-      stateHash: stateHash(stateDump(db)),
+      stateHash: stateHash(withoutOrd(stateDump(db))),
       sizes: sizes(db, file),
     }
+  } finally { db.close() }
+}
+
+/** The state without ord (schema 21 adds it to engrams, relations and entries; every other value stays). */
+function withoutOrd(dump) {
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord, ...row }) => row)]))
+}
+
+/** Schema 21: ord is filled on engrams, relations and entries — 1…n, unique, in the rows' rowid order. */
+function ordFacts(file) {
+  const db = new Database(file, { readonly: true })
+  try {
+    return Object.fromEntries(['engrams', 'relations', 'entries'].map(t => [t, db.prepare(`
+      SELECT COUNT(*) AS rows, COUNT(DISTINCT ord) AS distinct_ord, MIN(ord) AS min_ord, MAX(ord) AS max_ord,
+        (SELECT COUNT(*) FROM (SELECT ord, ROW_NUMBER() OVER (ORDER BY rowid) AS n FROM ${t}) WHERE ord IS NOT n) AS out_of_rowid_order
+      FROM ${t}`).get()]))
   } finally { db.close() }
 }
 
@@ -147,10 +167,15 @@ try {
   if (after.integrity !== 'ok') problems.push(`integrity_check: ${after.integrity}`)
   if (after.fkViolations > 0) problems.push(`${after.fkViolations} foreign-key violations`)
   problems.push(...genesisProblems(copy))
-  // from 20, the one step to 21 only adds the log: the state must be unchanged
+  const ord = ordFacts(copy)
+  for (const [t, f] of Object.entries(ord)) {
+    if (f.rows > 0 && (f.distinct_ord !== f.rows || f.min_ord !== 1 || f.max_ord !== f.rows)) problems.push(`${t}.ord is not 1…${f.rows} without gaps or repeats`)
+    if (f.out_of_rowid_order > 0) problems.push(`${t}.ord: ${f.out_of_rowid_order} rows out of rowid order`)
+  }
+  // from 20, the one step to 21 only adds the log and ord: the state without ord must be unchanged
   if (before.schema === 20 && after.stateHash !== before.stateHash) problems.push('the state changed, but the step to 21 only adds the op log')
 
-  console.log(JSON.stringify({ source, before, after, problems }, null, 2))
+  console.log(JSON.stringify({ source, before, after, ord, problems }, null, 2))
   if (problems.length > 0) {
     console.error(`\n${problems.length} problem(s):\n- ${problems.join('\n- ')}`)
     process.exit(1)

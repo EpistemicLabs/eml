@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'crypto'
 import { EML, NO_ACTOR } from '../src'
 import { canonicalJson, plainJson } from '../src/log/canonical'
-import { GENESIS_PREV_HASH, chainHash, encodePayload, opIds, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
+import { GENESIS_PREV_HASH, chainHash, opIds, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
 import { decodeSnapshot, encodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
 import { validDecision, validNote, writes } from './fixtures'
 
@@ -94,11 +94,11 @@ describe('payload and chain hashes', () => {
   }
 
   it('the payload is the envelope as JSON in the caller\'s key order; its hash is sha256 of the UTF-8 bytes', () => {
-    const payload = encodePayload(op)
+    const payload = plainJson(op)
     expect(payload.startsWith('{"op_id":"9b2f3c1e-4d5a-4b6c-8d7e-0f1a2b3c4d5e","schema":21,"call":"engram.create","args":{"type":"note","scope":"global","title":"n","content":"c"},')).toBe(true)
     expect(JSON.parse(payload)).toEqual(op)
     // the stored bytes are the payload: another key order is another payload
-    expect(encodePayload({ provenance: op.provenance, args: op.args, call: op.call, schema: 21, op_id: op.op_id })).not.toBe(payload)
+    expect(plainJson({ provenance: op.provenance, args: op.args, call: op.call, schema: 21, op_id: op.op_id })).not.toBe(payload)
     expect(sha256Hex(payload)).toBe(createHash('sha256').update(Buffer.from(payload, 'utf8')).digest('hex'))
     expect(sha256Hex('é')).toBe(sha256Hex(Buffer.from([0xc3, 0xa9])))
   })
@@ -110,7 +110,7 @@ describe('payload and chain hashes', () => {
   })
 
   it('a change to any part changes the link', () => {
-    const p = sha256Hex(encodePayload(op))
+    const p = sha256Hex(plainJson(op))
     const base = chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', p)
     expect(chainHash(GENESIS_PREV_HASH, 2, '2026-10-26T08:00:00.000Z', p)).not.toBe(base)
     expect(chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.001Z', p)).not.toBe(base)
