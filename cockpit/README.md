@@ -290,6 +290,9 @@ the app's `CLAUDE_CONFIG_DIR`, pre-seeded with onboarding/theme and per-project 
 `bin/node` = a link to the host's node for the session hooks (their text names it and `app/current/…`, so it survives updates);
 `projects.json` = the project registry; `sessions.json` = the session ledger; `config` = the
 local brain token, chmod 600; `eml/config` = brain URL + token for the session hooks, rewritten each boot).
+Each brain file also holds its op log: every write since brain schema 21, in order and hash-chained, and
+a snapshot of the brain as it was when the log began (once, roughly a quarter of the brain's size). The log
+is never rewritten — a secret that lands in a brain stays in its history, so rotate the secret.
 Claude sign-in (Settings › Models): by default the regular Claude Code login (`/login` on first start), which
 Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
 runtimes without a browser: stored as `claude-login` (chmod 600, write-only from the browser) and injected via
