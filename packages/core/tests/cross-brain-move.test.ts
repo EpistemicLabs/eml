@@ -1,10 +1,15 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import { createHash } from 'crypto'
+import { mkdtempSync, rmSync, statSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import Database from 'better-sqlite3'
 import { EML, CommandError } from '../src'
 import { listEntries } from '../src/entries'
 import { verify } from '../src/log/rebuild'
 import { MOVED_COLUMNS, brainRef, exportSet, setHash, type MovedRows } from '../src/log/move'
+import { moveEngrams, planMove } from '../src/log/move-engrams'
+import type { Env } from '../src/env'
 import { createObject, validDecision, validProfile, validRule, validStatus, validTask, writes } from './fixtures'
 
 // v0.21 (spec cross-brain-move-spec, block 2): a set of engrams is exported
@@ -330,5 +335,138 @@ describe('engram.move_out', () => {
       expect(attempt(s.eml, { ...input, extra: 1 }).code).toBe('INVALID')
       target.close(); s.eml.close()
     })
+  })
+})
+
+describe('moveEngrams', () => {
+  // spec cross-brain-move-spec §3–§5: the two ops in the order that loses
+  // nothing, the source backed up and locked, a resume after a failure between
+  // the two commits.
+  const dirs: string[] = []
+  const dir = () => { const d = mkdtempSync(join(tmpdir(), 'eml-move-')); dirs.push(d); return d }
+  afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }) })
+  const count = (eml: EML, sql: string, ...params: unknown[]) => (raw(eml).prepare(`SELECT COUNT(*) AS n FROM ${sql}`).get(...params) as { n: number }).n
+  /** A target with rows of its own. */
+  function target() {
+    const eml = brain('target', '2026-10-26T08:00:00.000Z')
+    createObject(eml, 'project', { id: 'there', name: 'There' })
+    writes(eml).store(validDecision({ scope: 'project.there', title: 'already-here' }))
+    return eml
+  }
+  const args = (s: ReturnType<typeof source>, to: EML, backup_path: string) =>
+    ({ source: raw(s.eml), target: raw(to), ids: s.set, drop_relations: exportSet(raw(s.eml), s.set).crossing.map(r => r.id), backup_path })
+  /** The env of a move whose source write fails: the import commits, then the move_out cannot draw its op_id. */
+  const crashAfterImport = (env: Env): Env => {
+    let n = 0
+    return { ...env, newId: () => { if (++n === 2) throw new Error('crash between the commits'); return env.newId() } }
+  }
+  const unlocked = (eml: EML) => {
+    expect(raw(eml).inTransaction).toBe(false)
+    writes(eml).store(validDecision({ scope: 'project.elsewhere', title: `written-after-${opCount(eml)}` }))
+  }
+
+  it('planMove: what would move, what crosses, what the target would create; reads only', () => {
+    const s = source()
+    const to = target()
+    const before = [opCount(s.eml), opCount(to)]
+    const plan = planMove({ source: raw(s.eml), target: raw(to), ids: s.set })
+    const set = exportSet(raw(s.eml), s.set)
+    expect(plan.set_hash).toBe(set.set_hash)
+    expect(plan.moved).toEqual({ engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length })
+    expect(plan.crossing.map(c => [c.relation, c.direction, c.other.title]).sort()).toEqual([['related_to', 'out', 'outside'], ['supports', 'in', 'outside']])
+    expect(plan.external_refs).toEqual(set.external_refs)
+    expect(plan.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
+    expect(plan.collisions).toEqual([])
+    // a collision the import would refuse is listed
+    to.apply({ name: 'engram.import', input: importOf(s.eml, set) })
+    expect(planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).collisions).toEqual([expect.stringMatching(/^engrams .* already in this brain$/), expect.stringMatching(/^entries/), expect.stringMatching(/^relations/)])
+    expect(opCount(s.eml)).toBe(before[0])
+    to.close(); s.eml.close()
+  })
+
+  it('moves the mixed set: in the target as it was, gone from the source, the source backed up; both verify', () => {
+    const s = source()
+    const to = target()
+    const set = exportSet(raw(s.eml), s.set)
+    const backup = join(dir(), 'source.db')
+    const result = moveEngrams(args(s, to, backup), s.eml.env({ handle: 'mover', ingestion_method: 'other' }))
+
+    const last = (eml: EML) => raw(eml).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()
+    expect(result).toEqual({
+      backup_path: backup, import: last(to), move_out: last(s.eml),
+      moved: { engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length },
+      created: { projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] },
+      dropped_relations: set.crossing.map(r => r.id).sort(), external_refs: set.external_refs, resumed: false,
+    })
+    expect(exportSet(raw(to), s.set).rows).toEqual(set.rows)
+    expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
+    // the backup is the source before the move, owner-only
+    expect(statSync(backup).mode & 0o777).toBe(0o600)
+    const copy = new Database(backup, { readonly: true })
+    expect((copy.prepare('SELECT COUNT(*) AS n FROM engrams WHERE id IN (SELECT value FROM json_each(?))').get(JSON.stringify(s.set)) as { n: number }).n).toBe(6)
+    copy.close()
+
+    unlocked(s.eml)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
+  it('an import the target refuses: both brains unchanged, the source unlocked', () => {
+    const s = source()
+    const status = writes(s.eml).store(validStatus({ scope: 'project.p' }))
+    const to = target()
+    createObject(to, 'project', { id: 'p', name: 'P' })
+    writes(to).store(validStatus({ scope: 'project.p' }))
+    const before = [opCount(s.eml), opCount(to)]
+    const err = reject(() => moveEngrams({ ...args(s, to, join(dir(), 'a.db')), ids: [...s.set, status.id] }, s.eml.env()))
+    expect(err.code).toBe('CONFLICT')
+    expect(err.message).toMatch(/project\.p has an active status/)
+    // drop_relations that do not name the crossing ones: refused before the import
+    expect(reject(() => moveEngrams({ ...args(s, to, join(dir(), 'b.db')), drop_relations: [] }, s.eml.env())).message).toMatch(/nothing was moved/)
+    expect([opCount(s.eml), opCount(to)]).toEqual(before)
+    unlocked(s.eml)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
+  it('a failure between the two commits: the set is in both; the same move again resumes', () => {
+    const s = source()
+    const to = target()
+    const before = opCount(s.eml)
+    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash between the commits/)
+    expect(opCount(s.eml)).toBe(before)
+    expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(6)
+    expect(count(to, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(6)
+    unlocked(s.eml)
+    const imported = raw(to).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()
+
+    const result = moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
+    expect(result.resumed).toBe(true)
+    expect(result.import).toEqual(imported)
+    expect(result.created).toEqual({ projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] })
+    // no second import in the target
+    expect(raw(to).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()).toEqual(imported)
+    expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
+  it('a resume after the source changed is refused; both keep their rows', () => {
+    const s = source()
+    const to = target()
+    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash/)
+    writes(s.eml).trackTask(s.task.id, { text: 'written after the failed move' })
+    const before = [opCount(s.eml), opCount(to)]
+    const err = reject(() => moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env()))
+    expect(err.code).toBe('CONFLICT')
+    expect(err.message).toMatch(/already in this brain/)
+    expect([opCount(s.eml), opCount(to)]).toEqual(before)
+    unlocked(s.eml)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
   })
 })

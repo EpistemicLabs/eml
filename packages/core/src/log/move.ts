@@ -109,6 +109,13 @@ export function exportSet(db: Database.Database, ids: readonly string[]): Export
   return { rows, set_hash: setHash(rows), crossing, external_refs }
 }
 
+/** Whether `named` are exactly the set's crossing relations: the drop_relations a move has to pass. */
+export function namesCrossing(set: ExportedSet, named: readonly string[]): boolean {
+  const crossing = set.crossing.map(r => r.id).sort()
+  const sorted = [...named].sort()
+  return crossing.length === sorted.length && crossing.every((id, i) => id === sorted[i])
+}
+
 /** The projects the set's scopes name, each after its parent_project chain (the foreign key needs the parent first). */
 function projectsWithParents(db: Database.Database, engrams: MovedRow[]): MovedRow[] {
   const get = db.prepare(`SELECT ${MOVED_COLUMNS.projects.map(c => `"${c}"`).join(', ')} FROM projects WHERE id = ?`)

@@ -51,17 +51,13 @@ export const engramImport: CommandModule<EngramImportInput, EngramImportResult> 
   apply(ctx, input) {
     const { db } = ctx
     const { rows } = input
-    assertNoCollision(db, rows)
+    const problems = importProblems(db, rows)
+    if (problems.length > 0) throw new CommandError('CONFLICT', `engram.import refused: ${problems.join('; ')}.`)
 
-    const created: EngramImportResult['created'] = { projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] }
+    const created = missingObjects(db, rows)
     for (const table of OBJECT_TABLES) {
       for (const row of rows[table]) {
-        if (exists(db, table, row.id as string)) continue
-        if (table === 'projects' && row.parent_project !== null && !exists(db, 'projects', row.parent_project as string)) {
-          throw new CommandError('CONFLICT', `project ${row.id} needs its parent ${row.parent_project}, which is neither carried nor in this brain.`)
-        }
-        INSERT_OBJECT[table](db, row)
-        created[table].push(row.id as string)
+        if (created[table].includes(row.id as string)) INSERT_OBJECT[table](db, row)
       }
     }
     for (const row of rows.engrams) insertEngramRow(db, row as unknown as EngramRow)
@@ -149,12 +145,21 @@ function exists(db: Database.Database, table: MovedTable, id: string): boolean {
   return !!db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id)
 }
 
+/** The carried scope objects, tags and subjects this brain does not have yet: what an import creates. */
+export function missingObjects(db: Database.Database, rows: MovedRows): EngramImportResult['created'] {
+  const missing = (table: typeof OBJECT_TABLES[number]) => rows[table].map(r => r.id as string).filter(id => !exists(db, table, id))
+  return {
+    projects: missing('projects'), entities: missing('entities'), users: missing('users'),
+    agents: missing('agents'), tags: missing('tags'), subjects: missing('subjects'),
+  }
+}
+
 /**
- * The target has none of the set's ids, no active core profile in the scope of
- * a carried one and no active status in the scope of a carried one. Otherwise
- * CONFLICT, naming all of them; nothing is written.
+ * Why this brain refuses the rows, all of it (none: the import goes in): an id
+ * of the set it has already, an active core profile or active status in the
+ * scope of a carried one, a project whose parent is neither carried nor here.
  */
-function assertNoCollision(db: Database.Database, rows: MovedRows): void {
+export function importProblems(db: Database.Database, rows: MovedRows): string[] {
   const problems: string[] = []
   for (const table of ['engrams', 'entries', 'relations'] as const) {
     const taken = (db.prepare(`SELECT id FROM ${table} WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id`)
@@ -171,5 +176,12 @@ function assertNoCollision(db: Database.Database, rows: MovedRows): void {
         : undefined
     if (clash) problems.push(`${e.scope} has an active ${core ? 'core profile' : 'status'} (${(clash as { id: string }).id}) next to the carried ${e.id}`)
   }
-  if (problems.length > 0) throw new CommandError('CONFLICT', `engram.import refused: ${problems.join('; ')}.`)
+  const carried = new Set(rows.projects.map(p => p.id as string))
+  for (const p of rows.projects) {
+    if (p.parent_project === null || exists(db, 'projects', p.id as string)) continue
+    if (!carried.has(p.parent_project as string) && !exists(db, 'projects', p.parent_project as string)) {
+      problems.push(`project ${p.id} needs its parent ${p.parent_project}, which is neither carried nor in this brain`)
+    }
+  }
+  return problems
 }

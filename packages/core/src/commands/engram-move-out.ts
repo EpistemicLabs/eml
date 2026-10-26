@@ -1,4 +1,4 @@
-import { exportSet } from '../log/move'
+import { exportSet, namesCrossing } from '../log/move'
 import { CommandError, inputObject, type CommandModule } from './types'
 
 /** What a move_out names: the set, its hash as imported, the crossing relations it drops, and the import in the target. */
@@ -50,8 +50,7 @@ export const engramMoveOut: CommandModule<EngramMoveOutInput, EngramMoveOutResul
       throw new CommandError('CONFLICT', 'engram.move_out refused: the set changed since it was imported (set_hash differs); nothing was removed.')
     }
     const crossing = set.crossing.map(r => r.id).sort()
-    const named = [...input.drop_relations].sort()
-    if (crossing.length !== named.length || crossing.some((id, i) => id !== named[i])) {
+    if (!namesCrossing(set, input.drop_relations)) {
       throw new CommandError('CONFLICT', `engram.move_out refused: drop_relations must name exactly the relations crossing the set (${crossing.join(', ') || 'none'}); nothing was removed.`, { crossing })
     }
 
