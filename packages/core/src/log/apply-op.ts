@@ -1,12 +1,13 @@
 import type Database from 'better-sqlite3'
+import { provenanceProblem, type Json, type OpEnvelope, type Provenance } from '@engramprotocol/protocol/log'
 import type { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { asCommandError, type CommandContext } from '../commands/types'
-import type { Env } from '../env'
-import type { Json } from './canonical'
+import type { Actor, Env } from '../env'
+import { INGESTION_METHODS } from '../types'
 import { appendOp } from './log'
-import { opIds, type OpEnvelope } from './op'
+import { opIds } from './op'
 
 // --- Writes through the log (v0.21) ----------------------------------------------
 //
@@ -52,5 +53,20 @@ export function writeOp<N extends CommandName>(stores: Stores, command: { name: 
 
 /** Applies a logged op inside the caller's transaction: its args as stored, at its time, with its derived ids and its author. */
 export function applyOp(stores: Stores, op: OpEnvelope, at: string): unknown {
-  return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: op.provenance })
+  return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: actorOf(op.provenance) })
+}
+
+/**
+ * The actor an op writes as: its provenance, checked field by field — in a
+ * shared brain the payload is another member's, so its shape and values are
+ * not taken on trust.
+ */
+function actorOf(provenance: Provenance): Actor {
+  const problem = provenanceProblem(provenance)
+  if (problem) throw new Error(`Invalid command: the op's ${problem}.`)
+  const method = provenance.ingestion_method
+  if (method !== null && !(INGESTION_METHODS as readonly string[]).includes(method)) {
+    throw new Error(`Invalid command: the op's provenance.ingestion_method "${method}" is not one of ${INGESTION_METHODS.join(', ')}.`)
+  }
+  return provenance as Actor
 }

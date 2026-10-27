@@ -1,0 +1,19 @@
+{
+  "description": "Relay login (spec team-brain-protocol-package-spec §7). The nonce is sha256 of \"eml protocol test vector: login nonce\"; the device is device_sign of keys.json. sig = Ed25519 over \"eml-relay-login-v1\\n\" + canonicalJson({relay, brain, nonce, device}).",
+  "challenge": {
+    "v": 1,
+    "relay": "relay.example.org",
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "nonce": "F8456aKDXs4snZJ-f235LkEb3MwGgJO5NnwkzCN3NKo",
+    "issued_at": "2026-10-26T08:00:00.000Z"
+  },
+  "signed_text": "eml-relay-login-v1\n{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"device\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"nonce\":\"F8456aKDXs4snZJ-f235LkEb3MwGgJO5NnwkzCN3NKo\",\"relay\":\"relay.example.org\"}",
+  "response": {
+    "v": 1,
+    "relay": "relay.example.org",
+    "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "nonce": "F8456aKDXs4snZJ-f235LkEb3MwGgJO5NnwkzCN3NKo",
+    "device": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+    "sig": "bU6JtKp38iorKMT0lRvUgUc29lvEvq_-CVNAFzk6sGogYD8mUaxKkX9_44Csl18XfAaE-8180G-x3m5wvNkiAw"
+  }
+}

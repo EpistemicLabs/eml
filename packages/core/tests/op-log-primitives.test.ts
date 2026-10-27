@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'crypto'
 import { EML, NO_ACTOR } from '../src'
-import { canonicalJson, plainJson } from '../src/log/canonical'
-import { GENESIS_PREV_HASH, chainHash, opIds, sha256Hex, uuidv5, type OpEnvelope } from '../src/log/op'
+import { GENESIS_PREV_HASH, canonicalJson, chainHash, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
+import { opIds, uuidv5 } from '../src/log/op'
 import { decodeSnapshot, encodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
 import { validDecision, validNote, writes } from './fixtures'
 

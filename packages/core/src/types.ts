@@ -60,7 +60,8 @@ export type RelationType =
 //   bulk   → migration / mass import
 //   other  → catch-all
 // v0.19: mcp → written through the MCP server (stamped by the server, not the agent)
-export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'mcp' | 'other'
+export const INGESTION_METHODS = ['hook', 'direct', 'bulk', 'mcp', 'other'] as const
+export type IngestionMethod = typeof INGESTION_METHODS[number]
 
 // v0.9.1 Cluster 1: SourceType type removed (source_id/source_type dropped from the schema).
 

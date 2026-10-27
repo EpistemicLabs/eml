@@ -1,0 +1,32 @@
+{
+  "description": "Brain keys (spec team-brain-protocol-package-spec §4). Keys and nonces are sha256 of \"eml protocol test vector: <name>\" (nonces: the first 24 bytes). key_id = BLAKE2b-256 (crypto_generichash, key = the brain key) of \"eml-brain-key-id-v1\". prev = XChaCha20-Poly1305 of the old key under the new one, AAD = canonicalJson({brain, epoch}) with the new epoch. A wrapped key is crypto_box_seal (randomized: open it, it does not reproduce) signed under \"eml-wrapped-key-v1\\n\" + canonicalJson of the other fields; the wrapper and recipient are the keys.json device, in the member set of membership.json.",
+  "epoch0": {
+    "key": "abdafb64ba4d51f46daf6c0fa9b9ff4935cfda461dfb861c9b3713e26a7600f8",
+    "key_id": "_Xwt7JHIl1c7jBq67NRRbU_uf86baxDZgCoD9_FSOfA"
+  },
+  "rotation": {
+    "key": "d76ef62b30d739e6f029ff4d34123a8fc72f917c1ab7b8abf7348f2714088c1e",
+    "prev_nonce": "283b433a484e2edf22ba9c2fdb8838adb8373fdb319248d2",
+    "aad": "{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"epoch\":1}",
+    "args": {
+      "epoch": 1,
+      "key_id": "jjwicF8xOHE7FBBH0x3LbmMikIg3cxb7WXKlrUCnp3E",
+      "prev": {
+        "nonce": "KDtDOkhOLt8iupwv24g4rbg3P9sxkkjS",
+        "ct": "U8T221bFB_BOHLS17DMesrJ9vNi5n8Oks7QM8zQl5W5Q9yj3JMic4SM8Xg8qZHuE"
+      }
+    }
+  },
+  "wrapped": {
+    "signed_text": "eml-wrapped-key-v1\n{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"epoch\":0,\"recipient\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"sealed\":\"3IvO_m6fMladaiTiBQ1-uQBD4mhpahlyCPzB95JAAkL12Sfy9152yy_Qt7vSAUT0LauSLRJdkYhmcqmlEYqUEf5BHZTJoKlxoGid4bhYgm0\",\"v\":1,\"wrapper\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\"}",
+    "record": {
+      "v": 1,
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "epoch": 0,
+      "recipient": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+      "sealed": "3IvO_m6fMladaiTiBQ1-uQBD4mhpahlyCPzB95JAAkL12Sfy9152yy_Qt7vSAUT0LauSLRJdkYhmcqmlEYqUEf5BHZTJoKlxoGid4bhYgm0",
+      "wrapper": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+      "sig": "ZmxqyxZMmnnlPhvnJuo9w4AdGFfwKbq89viv5GMmX-1Ql6DABrvCEEBXS0uGSzXzgD_6z-CzV1Ctq90B0sDBDA"
+    }
+  }
+}

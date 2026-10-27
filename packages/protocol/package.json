@@ -1,0 +1,40 @@
+{
+  "name": "@engramprotocol/protocol",
+  "version": "0.20.4",
+  "private": false,
+  "description": "EML team-brain protocol — the log format, keys, signatures and sealing, shared by the cockpit and the relay",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./log": {
+      "types": "./dist/log.d.ts",
+      "default": "./dist/log.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "log": [
+        "dist/log.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "vectors",
+    "PROTOCOL.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "0.8.4"
+  }
+}

@@ -1,8 +1,7 @@
 import type Database from 'better-sqlite3'
 import { CommandError } from '../commands/types'
 import { scopeObject } from '../validate'
-import { canonicalJson } from './canonical'
-import { sha256Hex, type OpEnvelope } from './op'
+import { canonicalJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 
 // --- Moving engrams between brains (v0.21) ---------------------------------------
 //

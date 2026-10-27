@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3'
 import { gzipSync, gunzipSync } from 'zlib'
-import { canonicalJson } from './canonical'
-import { sha256Hex } from './op'
+import { canonicalJson, sha256Hex } from '@engramprotocol/protocol/log'
 
 // --- State dump and snapshots (v0.21) --------------------------------------------
 //
