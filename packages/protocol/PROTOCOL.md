@@ -308,6 +308,10 @@ check them.
   than the last one's. A record sent again with the same bytes gets its first
   seq back, so a device resends a write it has no answer for; an op_id in the
   log with other bytes is refused.
+- **A shorter log**: a device whose own head is beyond `welcome`'s head or
+  beyond `caught_up`'s seq stops — the relay lost or rolled back entries it
+  had served. The chain (§4) catches a past that was rewritten, not a log
+  that only got shorter.
 - **What the relay refuses**, and every device still checks itself — a relay
   that skipped a check gains nothing, since each replica applies the rules of
   §5–§8 to every record it is served:
