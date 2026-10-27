@@ -15,7 +15,7 @@ import type { WriteContext } from './context'
 export interface EngramRow {
   id: string, type: string, scope: string, title: string | null, content: string,
   status: string, significance: string, properties: string | null, origin: string | null,
-  ingested_by: string | null, ingestion_method: IngestionMethod | null,
+  ingested_by: string | null, agent: string | null, ingestion_method: IngestionMethod | null,
   session_id: string | null, model: string | null, harness: string | null,
   created_at: string, updated_at: string, rev: number,
 }
@@ -31,12 +31,12 @@ export function insertEngramRow(db: Database.Database, row: EngramRow): void {
   db.prepare(`
     INSERT INTO engrams (
       id, content, type, scope, title, status, significance, properties,
-      origin, ingested_by, ingestion_method, session_id, model, harness,
+      origin, ingested_by, agent, ingestion_method, session_id, model, harness,
       created_at, updated_at, rev, ord
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(ord), 0) + 1 FROM engrams))
   `).run(
     row.id, row.content, row.type, row.scope, row.title, row.status, row.significance, row.properties,
-    row.origin, row.ingested_by, row.ingestion_method, row.session_id, row.model, row.harness,
+    row.origin, row.ingested_by, row.agent, row.ingestion_method, row.session_id, row.model, row.harness,
     row.created_at, row.updated_at, row.rev,
   )
   db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) VALUES (?, ?, ?, ?)`)
@@ -51,7 +51,7 @@ export function insertEngram(ctx: WriteContext, row: {
   const { actor, at } = ctx.stamp
   insertEngramRow(ctx.db, {
     ...row, significance: 'normal',
-    ingested_by: actor.handle, ingestion_method: actor.ingestion_method,
+    ingested_by: actor.handle, agent: actor.agent, ingestion_method: actor.ingestion_method,
     session_id: actor.session_id, model: actor.model, harness: actor.harness,
     created_at: at, updated_at: at, rev: 1,
   })

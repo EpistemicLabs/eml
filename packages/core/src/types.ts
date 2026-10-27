@@ -304,6 +304,8 @@ export interface Engram {
   // stamps it from the authenticated token (tokens.name = caller) on write. null on
   // legacy/in-process writes; pre-v0.11 rows carry NULL or old legacy brain audit values.
   ingested_by: string | null
+  // v0.21: the agent that wrote for ingested_by; null for the human's own write (decision provenance-agent-field).
+  agent: string | null
   ingestion_method: IngestionMethod | null
   session_id: string | null
   // v0.19: the software that wrote it, and the model and harness of the session.

@@ -68,5 +68,11 @@ function actorOf(provenance: Provenance): Actor {
   if (method !== null && !(INGESTION_METHODS as readonly string[]).includes(method)) {
     throw new Error(`Invalid command: the op's provenance.ingestion_method "${method}" is not one of ${INGESTION_METHODS.join(', ')}.`)
   }
+  if (provenance.agent !== null && !AGENT.test(provenance.agent)) {
+    throw new Error('Invalid command: the op\'s provenance.agent is 1–63 characters of a-z, 0-9, _ and -.')
+  }
   return provenance as Actor
 }
+
+/** An agent as provenance names it: the charset of a member handle and of agent.<id> (decision provenance-agent-field). */
+const AGENT = /^[a-z0-9_-]{1,63}$/
