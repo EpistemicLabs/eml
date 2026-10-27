@@ -153,7 +153,7 @@ describe('writes through the op log', () => {
     const entry = last(a.eml)
     const e = b.eml
     const stores = { eml: e, db: raw(e), store: e.engrams, projects: e.projects, users: e.users, agents: e.agents, entities: e.entities, tags: e.tags, subjects: e.subjects }
-    raw(e).transaction(() => applyOp(stores, payloadOf(entry), entry.at))()
+    raw(e).transaction(() => applyOp(stores, payloadOf(entry), entry.at, null))()
     expect(row(b.eml)).toEqual(row(a.eml))
     a.eml.close(); b.eml.close()
   })
@@ -164,7 +164,7 @@ describe('writes through the op log', () => {
     const op = payloadOf(last(a.eml))
     const e = brain().eml
     const stores = { eml: e, db: raw(e), store: e.engrams, projects: e.projects, users: e.users, agents: e.agents, entities: e.entities, tags: e.tags, subjects: e.subjects }
-    const run = (provenance: unknown) => () => applyOp(stores, { ...op, provenance } as OpEnvelope, START)
+    const run = (provenance: unknown) => () => applyOp(stores, { ...op, provenance } as OpEnvelope, START, null)
     expect(run({ ...op.provenance, ingestion_method: 'relay' })).toThrow(/ingestion_method "relay" is not one of hook, direct, bulk, mcp, other/)
     expect(run({ ...op.provenance, device: 'x' })).toThrow(/provenance has the fields/)
     expect(run((({ harness: _h, ...rest }) => rest)(op.provenance))).toThrow(/provenance has the fields/)
@@ -172,7 +172,7 @@ describe('writes through the op log', () => {
     for (const agent of ['Pilot', 'pi lot', '', 'p'.repeat(64), 'pilöt']) expect(run({ ...op.provenance, agent }), agent).toThrow(/provenance\.agent is 1–63 characters/)
     expect(run(null)).toThrow(/provenance is not an object/)
     expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(0)
-    raw(e).transaction(() => applyOp(stores, op, START))()
+    raw(e).transaction(() => applyOp(stores, op, START, null))()
     expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(1)
     a.eml.close(); e.close()
   })

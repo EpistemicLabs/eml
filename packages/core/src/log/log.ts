@@ -7,7 +7,9 @@ import { encodeSnapshot, stateDump, stateHash } from './snapshot'
 // --- The op log (v0.21) ----------------------------------------------------------
 //
 // op_log and op_snapshots in the brain file (schema 21). Appending runs inside
-// the caller's transaction; an entry, once written, is never changed.
+// the caller's transaction; an entry, once written, is never changed. A private
+// brain sequences its own writes (appendOp); a shared brain takes every entry
+// in the order and at the time its relay gave it (appendRelayed).
 
 /**
  * Appends `op` as the next entry of the chain. Its time is `now`, or the head
@@ -15,15 +17,67 @@ import { encodeSnapshot, stateDump, stateHash } from './snapshot'
  * Returns the entry's seq, time and payload as stored.
  */
 export function appendOp(db: Database.Database, op: OpEnvelope, now: string): { seq: number, at: string, payload: string } {
-  const head = db.prepare('SELECT seq, at, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, at: string, hash: string } | undefined
+  const head = headOf(db)
   const seq = (head?.seq ?? 0) + 1
   const at = head && head.at > now ? head.at : now
-  const prevHash = head?.hash ?? GENESIS_PREV_HASH
   const payload = plainJson(op)  // the envelope in the caller's key order: the bytes stored, hashed and run
-  const payloadHash = sha256Hex(payload)
-  db.prepare(`INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, payload) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(seq, at, op.op_id, prevHash, payloadHash, chainHash(prevHash, seq, at, payloadHash), payload)
+  insertEntry(db, head, { seq, at, op_id: op.op_id, payload, signature: null, rejected: null })
   return { seq, at, payload }
+}
+
+/** An entry as a shared brain's relay delivered it, with what this replica found. */
+export interface RelayedEntry {
+  seq: number
+  at: string
+  /** null only for a rejected record that names no valid op_id */
+  op_id: string | null
+  /** the op's payload as signed; for a record that did not open, canonicalJson of the record */
+  payload: string
+  signature: Buffer | null
+  /** null when applied; else why this replica refused it (decision shared-log-rejected-entries) */
+  rejected: string | null
+}
+
+/** A relayed entry out of order: not the next seq, or earlier than the head — the replica stops. */
+export class RelayOrderError extends Error {
+  constructor(readonly seq: number, message: string) {
+    super(`relayed entry ${seq}: ${message}`)
+    this.name = 'RelayOrderError'
+  }
+}
+
+/**
+ * Appends an entry of a shared brain at the seq and time its relay gave it:
+ * the next seq, and no earlier than the head (the relay keeps its time
+ * monotone; a replica that sees it go back stops). Runs inside the caller's
+ * transaction, together with applying the entry.
+ */
+export function appendRelayed(db: Database.Database, entry: RelayedEntry): void {
+  const head = headOf(db)
+  const next = (head?.seq ?? 0) + 1
+  if (entry.seq !== next) throw new RelayOrderError(entry.seq, `the log expects seq ${next}`)
+  if (head && entry.at < head.at) throw new RelayOrderError(entry.seq, `its time ${entry.at} is before the head's ${head.at}`)
+  insertEntry(db, head, entry)
+}
+
+type Head = { seq: number, at: string, hash: string } | undefined
+
+function headOf(db: Database.Database): Head {
+  return db.prepare('SELECT seq, at, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as Head
+}
+
+/** Writes `entry` after `head`: its payload hash and its chain link. */
+function insertEntry(db: Database.Database, head: Head, entry: RelayedEntry): void {
+  const prevHash = head?.hash ?? GENESIS_PREV_HASH
+  const payloadHash = sha256Hex(entry.payload)
+  db.prepare(`INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, signature, rejected, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(entry.seq, entry.at, entry.op_id, prevHash, payloadHash, chainHash(prevHash, entry.seq, entry.at, payloadHash), entry.signature, entry.rejected, entry.payload)
+}
+
+/** The team brain a log belongs to — its genesis's team.brain — or null for a private brain. */
+export function teamBrainOf(db: Database.Database): string | null {
+  const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined
+  return genesis ? ((JSON.parse(genesis.payload) as OpEnvelope).team?.brain ?? null) : null
 }
 
 /** True when the brain has an op log without entries — a brain that just reached schema 21. */

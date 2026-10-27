@@ -6,7 +6,7 @@ import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { asCommandError, type CommandContext } from '../commands/types'
 import type { Actor, Env } from '../env'
 import { INGESTION_METHODS } from '../types'
-import { appendOp } from './log'
+import { appendOp, teamBrainOf } from './log'
 import { opIds } from './op'
 
 // --- Writes through the log (v0.21) ----------------------------------------------
@@ -14,8 +14,9 @@ import { opIds } from './op'
 // Every brain write is an op: appended to the log, then applied, in one
 // transaction. The command runs on the args as the log stores them, at the
 // entry's time, with ids derived from the op_id — so a replay of the entry
-// does exactly what the write did. Only applied writes stay in the log: a
-// rejection rolls back the entry with everything else.
+// does exactly what the write did. A private brain logs only applied writes:
+// a rejection rolls back the entry with everything else. A shared brain is
+// written through its relay and keeps every relayed entry, rejected ones too.
 
 type Stores = Omit<CommandContext, 'stamp'>
 
@@ -29,9 +30,10 @@ export function commandStores(eml: EML, db: Database.Database): Stores {
 }
 
 /**
- * One write: the command as an op from `env` (op_id, actor), sequenced under
- * the write lock (IMMEDIATE, also against another process on the file), then
- * applied. Throws what the command throws; nothing is written then.
+ * One write to a private brain: the command as an op from `env` (op_id,
+ * actor), sequenced under the write lock (IMMEDIATE, also against another
+ * process on the file), then applied. Throws what the command throws; nothing
+ * is written then. A shared brain refuses it: its writes go through the relay.
  */
 export function writeOp<N extends CommandName>(stores: Stores, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
   try {
@@ -43,16 +45,32 @@ export function writeOp<N extends CommandName>(stores: Stores, command: { name: 
       provenance: env.actor,
     }
     return stores.db.transaction(() => {
+      if (teamBrainOf(stores.db) !== null) throw new Error('Invalid command: a shared brain is written through its relay, not locally.')
       const entry = appendOp(stores.db, op, env.now())
-      return applyOp(stores, JSON.parse(entry.payload) as OpEnvelope, entry.at) as CommandMap[N][1]
+      return applyOp(stores, JSON.parse(entry.payload) as OpEnvelope, entry.at, null) as CommandMap[N][1]
     }).immediate()
   } catch (err) {
     throw asCommandError(err)
   }
 }
 
-/** Applies a logged op inside the caller's transaction: its args as stored, at its time, with its derived ids and its author. */
-export function applyOp(stores: Stores, op: OpEnvelope, at: string): unknown {
+/**
+ * Applies a logged op inside the caller's transaction: its args as stored, at
+ * its time, with its derived ids and its author. `teamBrain` is the team brain
+ * the log belongs to (teamBrainOf), null for a private brain: an op carries
+ * team fields exactly in a shared brain, for that brain. Membership records
+ * and checkpoints change no brain table and run nothing; a genesis only starts
+ * a log.
+ */
+export function applyOp(stores: Stores, op: OpEnvelope, at: string, teamBrain: string | null): unknown {
+  if (op.call === 'brain.genesis') throw new Error('Invalid command: brain.genesis only starts a log.')
+  const opBrain = op.team?.brain ?? null
+  if (opBrain !== teamBrain) {
+    throw new Error(teamBrain === null ? 'Invalid command: a private brain takes no op with team fields.'
+      : opBrain === null ? 'Invalid command: a shared brain takes only ops with team fields.'
+      : `Invalid command: the op is for team brain ${opBrain}, not ${teamBrain}.`)
+  }
+  if (op.call.startsWith('team.') || op.call === 'brain.checkpoint') return undefined
   return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: actorOf(op.provenance) })
 }
 
