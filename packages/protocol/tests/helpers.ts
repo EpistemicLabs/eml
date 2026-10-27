@@ -56,10 +56,10 @@ let seq = 0
 /** An op by `author`: a sealed call names the author's handle, a membership record (clear call) a provenance of nulls. */
 export const envelope = (author: Person, call: string, args: unknown, device = author.device, handle: string | null = author.handle): TeamOp => ({
   op_id: crypto.randomUUID(), schema: 21, call, args: args as never,
-  provenance: isClearCall(call) ? NO_PROVENANCE : { handle, ingestion_method: 'mcp', session_id: null, model: null, harness: null },
+  provenance: isClearCall(call) ? NO_PROVENANCE : { handle, agent: null, ingestion_method: 'mcp', session_id: null, model: null, harness: null },
   team: { brain: BRAIN, device: device.sign.publicKey, base_seq: seq++, head_hash: ZERO },
 })
-export const NO_PROVENANCE = { handle: null, ingestion_method: null, session_id: null, model: null, harness: null }
+export const NO_PROVENANCE = { handle: null, agent: null, ingestion_method: null, session_id: null, model: null, harness: null }
 export const clear = (author: Person, call: string, args: unknown, device = author.device): OpenedOp => {
   const { record } = clearOp(envelope(author, call, args, device), device.sign)
   return openRecord(JSON.parse(JSON.stringify(record)), BRAIN, () => undefined)

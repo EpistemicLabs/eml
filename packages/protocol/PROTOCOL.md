@@ -17,7 +17,7 @@ wire, so anyone can check that claim against the code
 | the genesis: the root's keys and the state hash of the brain it starts from | the state hashes of checkpoints (they are sealed) |
 | wrapped brain keys (sealed to one device each) and who wrapped them | the brain key of any epoch |
 | invite notices: an invite id and its expiry | the invite secret, or what the invitee calls themselves |
-| logins: which device logs in to which brain, and when | sessions, models or harnesses of the agents that wrote |
+| logins: which device logs in to which brain, and when | the agents that wrote for a member, or their sessions, models or harnesses |
 
 What the relay can do, and what members notice:
 
@@ -93,8 +93,10 @@ Every write to a brain — private or shared — is an op in the brain's log
 (`@engramprotocol/protocol/log`).
 
 - **Envelope**: `{op_id, schema, call, args, provenance, team}`;
-  `provenance = {handle, ingestion_method, session_id, model, harness}`, each
-  a string or null; in a shared brain
+  `provenance = {handle, agent, ingestion_method, session_id, model, harness}`,
+  each a string or null: `handle` is who is accountable for the write (in a
+  shared brain the member, §6), `agent` the agent that wrote for them (null
+  when they wrote themself); the brain schema checks the values. In a shared brain
   `team = {brain, device, base_seq, head_hash}`: the brain, the author's
   device signing key, and the author's last applied entry with its chain link.
 - **Payload**: the envelope as JSON in the author's key order, no whitespace.
@@ -111,8 +113,20 @@ Every write to a brain — private or shared — is an op in the brain's log
 - **Op signature**: the author device's Ed25519 signature over
   `eml-op-v1\n<payload_hash>`.
 - **Once**: an op_id appears at most once in a brain's log. A replica refuses
-  a record whose op_id it has applied before — membership records in the
-  member set (§6), brain writes in its log — so a relay cannot replay one.
+  a record whose op_id is in its log already — applied or rejected — so a
+  relay can neither replay a write nor hold back a refused one and slip it in
+  later, when it would pass. A rejected op_id is used up; an author who wants
+  the write again sends it with a new op_id.
+- **Rejected entries**: a record the relay delivered is part of the log at
+  its seq, whatever a replica finds in it. When it cannot be opened (§5), its
+  author or kind is not allowed (§6), or the brain refuses the call (a guard,
+  a stale revision), every replica keeps it as a rejected entry: it is in the
+  chain and changes nothing. Every replica opens every record it receives,
+  its own too, so all decide alike. For a record that does not open, the
+  payload in the chain is canonicalJson of the record as delivered, and its
+  op_id, if it is a lowercase UUID, counts as used. A record sealed under an
+  epoch the log has reached but whose key the device does not hold yet is no
+  rejection: the replica waits for its wrapped key (§7).
 
 ## 5. Records on the wire
 
@@ -126,7 +140,7 @@ Every write to a brain — private or shared — is an op in the brain's log
   op_id, payload, sig}`. Only `brain.genesis` and `team.*` calls travel in
   the clear, and they never travel sealed; a reader refuses either mix-up.
   A clear record's author is its signing device alone: its provenance has
-  every field null (no handle, session, model or harness), or it is refused.
+  every field null (no handle, agent, session, model or harness), or it is refused.
 - The relay delivers `{seq, at, record}`.
 - **Opening** a record: exactly its fields; this brain; for a sealed record the
   key of its epoch and successful decryption; a UTF-8 payload in its one form;
@@ -175,7 +189,7 @@ log (§4).
   for a sealed op — its `provenance.handle` is that member's handle, and it is
   sealed under the current epoch with no rotation due. A membership record
   names no handle; its device and the rules above decide. Otherwise every
-  replica rejects it the same way.
+  replica rejects it the same way and keeps it as a rejected entry (§4).
 
 ## 7. Brain keys
 

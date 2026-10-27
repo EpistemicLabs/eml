@@ -224,7 +224,7 @@ describe('a membership record\'s author is its device', () => {
     const bo = person('bo')
     const { set, keys } = found(ada)
     const record = addMember(set, keys, ada, bo)
-    expect(record.envelope.provenance).toEqual({ handle: null, ingestion_method: null, session_id: null, model: null, harness: null })
+    expect(record.envelope.provenance).toEqual({ handle: null, agent: null, ingestion_method: null, session_id: null, model: null, harness: null })
     expect(() => checkAuthor(set, record, memberHandles(set, keyFor(keys)))).not.toThrow()
     expect(() => checkAuthor(set, record, {})).not.toThrow()  // the relay's view: no handles at all
     expect(() => checkAuthor(set, write(ada, keys, 0), {})).toThrow(/not its member's handle/)

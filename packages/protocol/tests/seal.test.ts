@@ -107,6 +107,7 @@ describe('what an author refuses to send', () => {
     ['an op without team fields', (({ team: _t, ...rest }) => rest)(op), /lacks team/],
     ['an extra envelope field', { ...op, author: 'x' }, /no field author/],
     ['an extra provenance field', { ...op, provenance: { ...op.provenance, device: 'x' } }, /provenance has the fields/],
+    ['a provenance without agent', { ...op, provenance: (({ agent: _a, ...rest }) => rest)(op.provenance) }, /provenance has the fields/],
     ['a provenance value that is not a string', { ...op, provenance: { ...op.provenance, model: 1 } }, /provenance.model/],
     ['an uppercase op_id', { ...op, op_id: op.op_id.toUpperCase() }, /op_id/],
     ['a schema of 0', { ...op, schema: 0 }, /schema/],
@@ -202,7 +203,7 @@ describe('a membership record carries no provenance', () => {
   const named = { ...V.clear.envelope, provenance: { ...V.clear.envelope.provenance, handle: 'juno' } } as TeamOp
 
   it('the vector\'s clear record has every provenance field null', () => {
-    expect(Object.values(V.clear.envelope.provenance)).toEqual([null, null, null, null, null])
+    expect(Object.values(V.clear.envelope.provenance)).toEqual([null, null, null, null, null, null])
   })
 
   it('an author refuses to sign one that names a handle, a session or a model', () => {
