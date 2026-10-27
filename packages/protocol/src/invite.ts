@@ -77,7 +77,7 @@ export interface JoinAccept {
 export const INVITE_DAYS = 7
 
 const SECRET_BYTES = KEY_BYTES
-const INVITE_ID_BYTES = 16
+export const INVITE_ID_BYTES = 16
 const MAC_BYTES = 32
 const NOTICE_DOMAIN = 'eml-invite-notice-v1\n'
 

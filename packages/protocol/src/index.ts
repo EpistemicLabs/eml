@@ -24,3 +24,7 @@ export {
 } from './invite'
 export { LOGIN_WINDOW_MS, loginChallenge, loginResponse, verifyLogin, type LoginChallenge, type LoginResponse } from './login'
 export { DivergedError, checkpointArgs, checkCheckpoint } from './checkpoint'
+export {
+  MAX_FRAME, PRE_LOGIN_MAX, ERROR_CODES, CLOSE, INVITE_CLOSED_REASONS, frameLimit, parseClientFrame, parseRelayFrame, encodeFrame,
+  syncPath, parseSyncPath, type ClientFrame, type RelayFrame, type ErrorCode, type InviteClosedReason,
+} from './transport'
