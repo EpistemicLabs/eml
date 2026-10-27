@@ -178,7 +178,7 @@ function parseEnvelope(payload: string, brain: unknown): TeamOp {
   if (typeof op.call !== 'string' || !CALL.test(op.call)) throw new ProtocolError('call is not a name like engram.create')
   const problem = provenanceProblem(op.provenance)
   if (problem) throw new ProtocolError(problem)
-  // a membership record's author is its signing device alone; it names no handle, session, model or harness
+  // a membership record's author is its signing device alone; it names no handle, agent, session, model or harness
   if (isClearCall(op.call) && Object.values(op.provenance as object).some(v => v !== null)) {
     throw new ProtocolError(`${op.call} carries a provenance with every field null`)
   }

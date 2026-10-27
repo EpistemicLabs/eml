@@ -11,6 +11,7 @@ import type { IngestionMethod } from './types'
 /** Who writes: stamped on every engram and entry (attribution only). */
 export interface Actor {
   handle: string | null            // the token's handle → ingested_by, entry author
+  agent: string | null             // v0.21: the agent that wrote for the handle; null for the human's own writes
   ingestion_method: IngestionMethod | null
   session_id: string | null
   model: string | null
@@ -33,7 +34,7 @@ export const systemClock: Clock = () => new Date().toISOString()
 /** Random UUID v4 — the default of EMLConfig.newId. */
 export const randomId: IdSource = () => randomUUID()
 
-export const NO_ACTOR: Actor = { handle: null, ingestion_method: null, session_id: null, model: null, harness: null }
+export const NO_ACTOR: Actor = { handle: null, agent: null, ingestion_method: null, session_id: null, model: null, harness: null }
 
 /**
  * One write's stamp: the time, taken once at the start of the write and used

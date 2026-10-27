@@ -46,7 +46,7 @@ function expectGenesis(file: string): void {
     const state = stateHash(stateDump(db))
     const payload = JSON.parse(g.payload)
     expect(payload).toMatchObject({ schema: CURRENT_BRAIN_SCHEMA_VERSION, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
-    expect(payload.provenance).toEqual({ handle: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
+    expect(payload.provenance).toEqual({ handle: null, agent: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
 
     const snaps = db.prepare('SELECT * FROM op_snapshots').all() as Array<Record<string, any>>
     expect(snaps).toHaveLength(1)

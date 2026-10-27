@@ -10,9 +10,15 @@ import type { Json } from './canonical'
 // the previous link, the entry's position and time (set by the sequencer, not
 // the author; decision op-log-chain-covers-seq-and-time) and the payload's hash.
 
-/** Who wrote an op: stamped on every engram and entry it writes (attribution only). */
+/**
+ * Who wrote an op: stamped on every engram and entry it writes (attribution
+ * only). handle is who is accountable (in a shared brain the member); agent is
+ * the agent that wrote for them, null when they wrote themself (decision
+ * provenance-agent-field).
+ */
 export interface Provenance {
   handle: string | null
+  agent: string | null
   ingestion_method: string | null
   session_id: string | null
   model: string | null
@@ -41,10 +47,10 @@ export interface OpEnvelope {
   team?: TeamFields
 }
 
-const PROVENANCE_FIELDS = ['handle', 'ingestion_method', 'session_id', 'model', 'harness']
+const PROVENANCE_FIELDS = ['handle', 'agent', 'ingestion_method', 'session_id', 'model', 'harness']
 
 /**
- * What is wrong with `value` as a provenance — exactly the five fields, each
+ * What is wrong with `value` as a provenance — exactly the six fields, each
  * a string or null — or null when nothing is. Its values (which ingestion
  * methods exist) are the brain schema's to check.
  */
