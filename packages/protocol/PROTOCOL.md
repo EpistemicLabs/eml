@@ -14,7 +14,7 @@ wire, so anyone can check that claim against the code
 |---|---|
 | the brain id; each op's id, epoch, size and arrival time | what an op says (the payload), or its signature |
 | membership records: member and device public keys, device certificates with their creation time, roles, key ids, which device signed each record | names or handles of members (they are sealed, padded to one size); a membership record's provenance is all null |
-| the genesis: the root's keys and the state hash of the brain it starts from; the account that created the brain (§13) | the state hashes of checkpoints (they are sealed) |
+| the genesis: the root's keys and the state hash of the brain it starts from | the state hashes of checkpoints (they are sealed) |
 | wrapped brain keys (sealed to one device each) and who wrapped them | the brain key of any epoch |
 | invite notices: an invite id and its expiry | the invite secret, or what the invitee calls themselves |
 | logins: which device logs in to which brain, and when | sessions, models or harnesses of the agents that wrote |
@@ -292,8 +292,8 @@ check them.
   at `MAX_PAYLOAD` with its header fits — and before the login at most 64 KiB
   (`PRE_LOGIN_MAX`). Both sides check the byte length before parsing.
 - **Device → relay**: before the login `login {response}`, `create {genesis,
-  grant}` (a new brain; the grant comes from the brain owner's account and is
-  opaque here), `join {join}` (an invitee, who is no member yet); after it
+  grant}` (a new brain; the grant is the relay's own permission to create it,
+  opaque to this protocol), `join {join}` (an invitee, who is no member yet); after it
   `subscribe {from}`, `append {req, record}`, `key_put {req, wrapped}`,
   `keys {req}`, `invite_put {req, notice}`, `invite_cancel {req, invite_id}`,
   `invite_accept {req, accept}`.
