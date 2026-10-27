@@ -14,7 +14,7 @@ wire, so anyone can check that claim against the code
 |---|---|
 | the brain id; each op's id, epoch, size and arrival time | what an op says (the payload), or its signature |
 | membership records: member and device public keys, device certificates with their creation time, roles, key ids, which device signed each record | names or handles of members (they are sealed, padded to one size); a membership record's provenance is all null |
-| the genesis: the root's keys and the state hash of the brain it starts from | the state hashes of checkpoints (they are sealed) |
+| the genesis: the root's keys and the state hash of the brain it starts from; the account that created the brain (§13) | the state hashes of checkpoints (they are sealed) |
 | wrapped brain keys (sealed to one device each) and who wrapped them | the brain key of any epoch |
 | invite notices: an invite id and its expiry | the invite secret, or what the invitee calls themselves |
 | logins: which device logs in to which brain, and when | sessions, models or harnesses of the agents that wrote |
@@ -274,3 +274,54 @@ rule.
   brain key it opens to your signature and your payload.
 - **The code**: this package is the whole protocol; the cockpit's sync client
   and the relay both call it, and the relay holds no key that opens a record.
+
+## 13. Relay transport
+
+How a device and the relay talk (`transport.ts`). Records, wrapped keys,
+notices, joins and accepts ride inside a frame unchanged; their readers above
+check them.
+
+- **Connection**: one WebSocket over TLS per device per brain, at
+  `wss://<relay>/sync/1/<brain>` (`1` is the protocol version; another one is
+  "update your cockpit"). The relay sends a challenge (§9) right after the
+  upgrade.
+- **Frames**: text, one JSON object each, `{t, …}` with exactly the fields of
+  its `t`. A request carries `req`, a positive integer the device chooses; the
+  answer echoes it. Pushes carry none.
+- **Size**: a frame is at most 24 MiB of UTF-8 (`MAX_FRAME`) — a sealed record
+  at `MAX_PAYLOAD` with its header fits — and before the login at most 64 KiB
+  (`PRE_LOGIN_MAX`). Both sides check the byte length before parsing.
+- **Device → relay**: before the login `login {response}`, `create {genesis,
+  grant}` (a new brain; the grant comes from the brain owner's account and is
+  opaque here), `join {join}` (an invitee, who is no member yet); after it
+  `subscribe {from}`, `append {req, record}`, `key_put {req, wrapped}`,
+  `keys {req}`, `invite_put {req, notice}`, `invite_cancel {req, invite_id}`,
+  `invite_accept {req, accept}`.
+- **Relay → device**: `challenge {challenge}`, `welcome {member, device,
+  head}`, `created {seq, at}`, `op {seq, at, record}` (§5: the log from
+  `from` in order, then `caught_up {seq}`, then every new entry, the device's
+  own included), `appended {req, seq, at}`, `ok {req}`, `keys {req,
+  wrapped}`, `key {wrapped}`, `join {join}` (to the inviter's device),
+  `join_waiting {invite_id}`, `accept {accept}`, `invite_closed {invite_id,
+  reason}`, `error {req, code, message}`.
+- **Appending**: the relay gives the record the next seq and a time no earlier
+  than the last one's. A record sent again with the same bytes gets its first
+  seq back, so a device resends a write it has no answer for; an op_id in the
+  log with other bytes is refused.
+- **What the relay refuses**, and every device still checks itself — a relay
+  that skipped a check gains nothing, since each replica applies the rules of
+  §5–§8 to every record it is served:
+  - a sealed record whose header is not exactly §5's or not this brain's, of
+    an epoch other than the current one, or while a rotation is due;
+  - a clear record that does not open (§5) or that the member set refuses (§6);
+  - an op_id already in the log with other bytes;
+  - a wrapped key, notice or accept not from the device that is logged in, or
+    not one that may write it (§7, §8);
+  - a frame over its size, and writes over the brain's rate or storage quota.
+  A refused write is not in the log; the device may send it again as a new op
+  with a new op_id. An op_id that is in the log is used for good, whether
+  members applied the op or rejected it.
+- **Closing**: the relay closes a connection on a malformed frame (4000), an
+  unknown version (4001), a failed login (4003), when the device or its member
+  leaves the brain (4004), over the rate (4008), or when the device reads too
+  slowly (4009; it reconnects and subscribes from its last seq + 1).
