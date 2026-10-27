@@ -160,14 +160,22 @@ export interface ScopeStores {
   entities?: { exists(id: string): boolean }
 }
 
+/** The scope kinds with an object: the prefix, the object's table (and store) and its label. */
+const SCOPE_OBJECTS: ReadonlyArray<[prefix: string, table: keyof ScopeStores, label: string]> = [
+  ['project.',  'projects', 'project'],
+  ['user.',     'users',    'user'],
+  ['agent.',    'agents',   'agent'],
+  ['entity.',   'entities', 'entity'],
+]
+
+/** The scope's object as [table, id]; undefined for global. */
+export function scopeObject(scope: string): [table: keyof ScopeStores, id: string] | undefined {
+  const kind = SCOPE_OBJECTS.find(([prefix]) => scope.startsWith(prefix))
+  return kind ? [kind[1], scope.slice(kind[0].length)] : undefined
+}
+
 export function validateScopeExists(scope: string, stores: ScopeStores): void {
-  const checks: Array<[string, keyof ScopeStores, string]> = [
-    ['project.',  'projects', 'project'],
-    ['user.',     'users',    'user'],
-    ['agent.',    'agents',   'agent'],
-    ['entity.',   'entities', 'entity'],
-  ]
-  for (const [prefix, storeKey, label] of checks) {
+  for (const [prefix, storeKey, label] of SCOPE_OBJECTS) {
     if (!scope.startsWith(prefix)) continue
     const store = stores[storeKey]
     if (!store) return  // Store not wired → no check (test DI gap)

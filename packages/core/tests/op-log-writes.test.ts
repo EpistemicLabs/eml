@@ -4,7 +4,8 @@ import { engramCreate } from '../src/commands/engram-create'
 import { applyOp } from '../src/log/apply-op'
 import { GENESIS_PREV_HASH, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { uuidv5 } from '../src/log/op'
-import { validDecision, validNote, validTask } from './fixtures'
+import { brainRef, exportSet } from '../src/log/move'
+import { otherBrain, validDecision, validNote, validTask } from './fixtures'
 
 // v0.21 (spec local-op-log-spec, block 3): every write is an op in the log —
 // appended, then applied on the args as stored, at the entry's time, with ids
@@ -63,6 +64,12 @@ describe('writes through the op log', () => {
     write('relation.create', { source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
     const l = write<{ id: string }>('engram.create', { type: 'learning', scope: 'global', title: 'ask-first', content: 'Ask before acting.', evidence: { source: 'self', happened: 'once' } })
     write('learning.add_evidence', { id: l.id, source: 'observed', happened: 'again' })
+    const other = otherBrain()
+    const set = exportSet((other as any).db, ((other as any).db.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map(r => r.id))
+    write('engram.import', { source: brainRef((other as any).db), set_hash: set.set_hash, rows: set.rows })
+    other.close()
+    const importOp = payloadOf(last(eml)).op_id
+    write('engram.move_out', { ids: [l.id], set_hash: exportSet(raw(eml), [l.id]).set_hash, drop_relations: [], target: { brain: 'elsewhere', op_id: importOp } })
     expect([...used].sort()).toEqual([...COMMAND_NAMES].sort())
     eml.close()
   })

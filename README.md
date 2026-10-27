@@ -35,7 +35,7 @@ installer from [INSTALL.md](INSTALL.md) instead. Details, updates and the develo
 |---|---|
 | `cockpit/host` | The `eml-cockpit` package: the local host. It runs Claude Code sessions in PTYs, launches the brain server and serves the UI. |
 | `cockpit/frontend` | The cockpit UI (Vite + React): desks with terminal and brain panes, sidebar, brain dashboard, graph and search. |
-| `packages/core` | The engram store: SQLite schema and migrations, the op log (every write, hash-chained, rebuildable), typed validation, the graph, recall, boot. |
+| `packages/core` | The engram store: SQLite schema and migrations, the op log (every write, hash-chained, rebuildable), moving engrams between brains with their history (an import in one log, a move-out in the other), typed validation, the graph, recall, boot. |
 | `packages/protocol` | The team-brain protocol, shared by the cockpit and the relay: the op log format, device keys, sealed ops, membership, brain keys, invites, relay login. Described in [`PROTOCOL.md`](packages/protocol/PROTOCOL.md), with test vectors. |
 | `packages/server` | The HTTP API over core, one SQLite file per brain, with token routing. |
 | `packages/mcp-server` | `@engramprotocol/mcp-server`: the brain as MCP tools for Claude Code, plus the session hooks and skills. |

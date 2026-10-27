@@ -1,7 +1,8 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import type { EngramInput, EML, StoredEngram, Env, LearnInput, LearnResult, RelationInput } from '../src'
+import { EML, type EngramInput, type StoredEngram, type Env, type LearnInput, type LearnResult, type RelationInput } from '../src'
+import { brainRef, exportSet } from '../src/log/move'
 
 // Shared fixtures for engram writes in tests. v0.19: every type has required
 // fields (fields.ts) and a title (except status); tests that are not about those
@@ -191,7 +192,61 @@ export function writeEverything(eml: EML): void {
   writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
 
+  // v0.21: a task with its journal leaves for another brain; its part_of edge crosses the set and is dropped
+  const leaving = writes(eml).store(validTask({ scope, title: 'leaving', parent_id: successor.id }), juno)
+  writes(eml).trackTask(leaving.id, { text: 'handed over' }, ada)
+  moveOut(eml, [leaving.id], juno)
+
   updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
+
+  // v0.21: engrams from another brain, with their history and their project
+  const other = otherBrain()
+  const set = exportSet((other as any).db, (((other as any).db.prepare('SELECT id FROM engrams').all()) as Array<{ id: string }>).map(r => r.id))
+  eml.apply({ name: 'engram.import', input: { source: brainRef((other as any).db), set_hash: set.set_hash, rows: set.rows } }, juno)
+  other.close()
+}
+
+/** A brain with a clock that moves 1 ms per read from `start` and ids from a counter: the same on every call. */
+export function fixedBrain(namespace: string, start: string, idPrefix: string): EML {
+  let t = Date.parse(start)
+  let n = 0
+  return new EML({
+    dbPath: ':memory:', namespace,
+    clock: () => new Date(t++).toISOString(),
+    newId: () => `${idPrefix}-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}`,
+  })
+}
+
+/**
+ * The two ops of a cross-brain move by hand: engrams `ids` imported into a
+ * fresh brain, then engram.move_out in `eml` naming that import and dropping
+ * the relations that cross the set.
+ */
+export function moveOut(eml: EML, ids: string[], env?: Env): unknown {
+  const db = (eml as any).db
+  const set = exportSet(db, ids)
+  const there = fixedBrain('there', '2026-10-21T08:00:00.000Z', '20000000')
+  there.apply({ name: 'engram.import', input: { source: brainRef(db), set_hash: set.set_hash, rows: set.rows } })
+  const target = { brain: brainRef((there as any).db).brain, op_id: (there as any).db.prepare('SELECT op_id FROM op_log ORDER BY seq DESC LIMIT 1').get().op_id as string }
+  there.close()
+  return eml.apply({ name: 'engram.move_out', input: { ids, set_hash: set.set_hash, drop_relations: set.crossing.map(r => r.id), target } }, env)
+}
+
+/**
+ * A second brain, the same on every call: a project with a task, its journal
+ * and a decision bound to it, tagged with a tag of its own and one (ops) that
+ * writeEverything's brain has too.
+ */
+export function otherBrain(): EML {
+  const other = fixedBrain('other', '2026-10-20T08:00:00.000Z', '10000000')
+  const kai = other.env({ handle: 'kai', session_id: 's9', ingestion_method: 'mcp' })
+  createObject(other, 'project', { id: 'moved', name: 'Moved' }, kai)
+  createObject(other, 'tag', { name: 'ops' }, kai)
+  createObject(other, 'tag', { name: 'carried' }, kai)
+  const task = writes(other).store(validTask({ scope: 'project.moved', title: 'moved-task', status: 'active', tags: ['carried', 'ops'] }), kai)
+  writes(other).trackTask(task.id, { text: 'progress' }, kai)
+  writes(other).store(validDecision({ scope: 'project.moved', title: 'moved-decision', task_id: task.id, properties: { binding: 'task' } }), kai)
+  return other
 }
 
 /** A brain file as v0.20 left it (tests/fixtures/brain-v20.sql), with a row in every state table. */
