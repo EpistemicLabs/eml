@@ -54,6 +54,7 @@ export interface MemberSet {
 
 /** A handle is sealed padded to this many bytes — a length byte, the UTF-8 text, zeros — so its ciphertext says nothing about it. */
 export const HANDLE_BYTES = 64
+const HANDLE = new RegExp(`^[a-z0-9_-]{1,${HANDLE_BYTES - 1}}$`)
 const ROLES: readonly string[] = ['owner', 'member']
 
 /** Seals `handle` for a membership record of `brain`: the record's op_id and the member it names are bound to it. */
@@ -175,12 +176,12 @@ export function memberOfDevice(set: MemberSet, device: unknown): string | undefi
 }
 
 /**
- * Every current member's handle, read with the brain keys. Handles are
- * compared case-folded in NFC (handleKey), and a handle belongs to the member
- * who first joined with it — for good: a later member with the same handle,
- * even after the first one was removed, gets none, so no sealed op of theirs
- * passes checkAuthor. A member who joins again keeps their own handle. A box
- * that does not open, or a handle that is not one, counts as none.
+ * Every current member's handle, read with the brain keys. A handle belongs
+ * to the member who first joined with it — for good: a later member with the
+ * same handle, even after the first one was removed, gets none, so no sealed
+ * op of theirs passes checkAuthor. A member who joins again keeps their own
+ * handle. A box that does not open, or a handle that is not one, counts as
+ * none.
  */
 export function memberHandles(set: MemberSet, keyFor: (epoch: number) => Uint8Array | undefined): Record<string, string | null> {
   const boundTo = new Map<string, string>()
@@ -195,8 +196,8 @@ export function memberHandles(set: MemberSet, keyFor: (epoch: number) => Uint8Ar
         text = null
       }
     }
-    if (text !== null && !boundTo.has(handleKey(text))) boundTo.set(handleKey(text), h.member)
-    latest.set(h.member, text !== null && boundTo.get(handleKey(text)) === h.member ? text : null)
+    if (text !== null && !boundTo.has(text)) boundTo.set(text, h.member)
+    latest.set(h.member, text !== null && boundTo.get(text) === h.member ? text : null)
   }
   const handles: Record<string, string | null> = {}
   for (const member of Object.keys(set.members)) handles[member] = latest.get(member) ?? null
@@ -219,16 +220,6 @@ export function checkAuthor(set: MemberSet, opened: OpenedOp, handles: Record<st
   if (set.rotation_due) throw new ProtocolError('a key rotation is due; the brain takes no sealed op before it')
 }
 
-/**
- * What makes two handles the same: NFC, case-folded (upper, then lower, so
- * ß and SS meet). Case and normalization tables follow the runtime's Unicode
- * version; letters added in a newer version may fold differently on an older
- * runtime.
- */
-export function handleKey(handle: string): string {
-  return handle.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
-}
-
 function ownerKeepsADevice(set: MemberSet): MemberSet {
   if (!Object.values(set.members).some(m => m.role === 'owner' && Object.keys(m.devices).length > 0)) {
     throw new ProtocolError('no owner would have a current device left')
@@ -249,23 +240,21 @@ function newDeviceCert(set: MemberSet, value: unknown, member: unknown): DeviceC
   return cert
 }
 
-/** `handle` in NFC as the 64 bytes that are sealed: its UTF-8 length, the UTF-8 text, zeros. */
+/** `handle` as the 64 bytes that are sealed: its length, the text, zeros. */
 export function padHandle(handle: string): Uint8Array {
-  const nfc = handle.normalize('NFC')
-  checkHandle(nfc)
-  const text = sodium.from_string(nfc)
+  checkHandle(handle)
+  const text = sodium.from_string(handle)
   const padded = new Uint8Array(HANDLE_BYTES)
   padded[0] = text.length
   padded.set(text, 1)
   return padded
 }
 
-/** The handle in `padded`, which must be exactly padHandle's form (NFC included); throws ProtocolError otherwise. */
+/** The handle in `padded`, which must be exactly padHandle's form; throws ProtocolError otherwise. */
 export function unpadHandle(padded: Uint8Array): string {
   const length = padded[0]
   if (padded.length !== HANDLE_BYTES || length >= HANDLE_BYTES || padded.subarray(1 + length).some(b => b !== 0)) throw new ProtocolError('not a padded handle')
   const text = utf8(padded.subarray(1, 1 + length), 'the handle')
-  if (text !== text.normalize('NFC')) throw new ProtocolError('the handle is not in NFC')
   checkHandle(text)
   return text
 }
@@ -279,9 +268,12 @@ export function box(value: unknown, what: string, plainBytes: number): Box {
   return { nonce: b.nonce as string, ct: b.ct as string }
 }
 
+/**
+ * A handle is 1–63 characters of a-z, 0-9, _ and - — the charset of core's
+ * user.<id> and agent.<id>. Equal handles are equal strings: no Unicode
+ * normalization or case folding, whose tables differ between runtimes and
+ * would let two replicas disagree on whether a handle is taken.
+ */
 function checkHandle(handle: string): void {
-  const bytes = sodium.from_string(handle).length
-  if (bytes < 1 || bytes >= HANDLE_BYTES || handle.trim() !== handle || /\p{C}/u.test(handle)) {
-    throw new ProtocolError(`a handle is 1–${HANDLE_BYTES - 1} bytes of UTF-8, without surrounding space or control characters`)
-  }
+  if (!HANDLE.test(handle)) throw new ProtocolError(`a handle is 1–${HANDLE_BYTES - 1} characters of a-z, 0-9, _ and -`)
 }

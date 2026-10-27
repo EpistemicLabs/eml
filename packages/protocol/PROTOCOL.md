@@ -159,16 +159,18 @@ log (§4).
 - **An owner keeps a device**: no record may leave the brain without an owner
   who has a current device — then nobody could add, remove or rotate.
 - **Handles**: a member's handle (what their sealed ops' `provenance.handle`
-  says) rides in their joining record, sealed: in NFC, the UTF-8 length, the
-  UTF-8 text and zeros make 64 bytes (a handle is 1–63 bytes), encrypted with
-  XChaCha20-Poly1305 under the brain key of the current epoch, AAD =
+  says) is 1–63 characters of `a-z`, `0-9`, `_` and `-` — the charset of
+  EML's user and agent ids. It rides in their joining record, sealed: its
+  length, the text and zeros make 64 bytes, encrypted with XChaCha20-Poly1305
+  under the brain key of the current epoch, AAD =
   canonicalJson({brain, op_id, member}). Only members read it. Two handles are
-  the same when their NFC forms match case-folded (upper-, then lower-cased).
-  A handle belongs to whoever first joined with it, for good: a later member
-  with the same handle has none — also after the first one was removed; a
-  member who joins again keeps theirs. Case and normalization follow the
-  runtime's Unicode tables; letters newer than an older runtime's tables may
-  compare differently there.
+  the same when they are the same string: no Unicode normalization or case
+  folding, whose tables differ between runtimes and could let two replicas
+  disagree on whether a handle is taken — and none of the invisible marks,
+  look-alike letters or other spaces they would have to catch. A handle
+  belongs to whoever first joined with it, for good: a later member with the
+  same handle has none — also after the first one was removed; a member who
+  joins again keeps theirs.
 - **An op is accepted** when its device is a current device of a member and —
   for a sealed op — its `provenance.handle` is that member's handle, and it is
   sealed under the current epoch with no rotation due. A membership record
@@ -221,7 +223,9 @@ log (§4).
   genesis op_id is the anchor's and its chain link at the anchor's seq is the
   anchor's head_hash; and it takes a wrapped brain key only from the inviter's
   device named in the accept — not from just any owner of the log it was
-  served, which the relay could have made up.
+  served, which the relay could have made up. It unwraps the key first — the
+  chain links need the payload hashes inside the sealed records — but writes
+  nothing and treats the served log as genuine only once the anchor holds.
 
 ## 9. Relay login
 

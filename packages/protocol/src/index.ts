@@ -13,7 +13,7 @@ export {
   type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
 } from './seal'
 export {
-  sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor, handleKey,
+  sealHandle, genesisMembers, applyMembership, memberOfDevice, memberHandles, checkAuthor,
   type Role, type Box, type Member, type MemberSet, type HandleRecord,
 } from './membership'
 export { newBrainKey, keyId, rotateKey, epochKeys, wrapKey, unwrapKey, unwrapInviteKey, type WrappedKey } from './brainkey'

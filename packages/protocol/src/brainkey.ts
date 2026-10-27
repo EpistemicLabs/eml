@@ -122,7 +122,10 @@ export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): 
 /**
  * unwrapKey for a device that just joined: the key must also be wrapped by
  * the inviter's device from the accept — not by any owner the log it was
- * served names, since that log may be the relay's own.
+ * served names, since that log may be the relay's own. The device unwraps
+ * first (the chain links need the payload hashes inside the sealed records),
+ * but writes nothing and treats the served log as genuine only once
+ * checkAnchor has passed.
  */
 export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert): BrainKey {
   if (asObject(record, 'a wrapped key').wrapper !== inviter.device_sign) throw new ProtocolError('the key is not wrapped by the inviter\'s device')

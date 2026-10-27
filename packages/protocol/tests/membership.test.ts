@@ -3,7 +3,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  ProtocolError, applyMembership, canonicalJson, checkAuthor, clearOp, genesisMembers, handleKey, memberHandles, newDeviceKeys,
+  ProtocolError, applyMembership, canonicalJson, checkAuthor, clearOp, genesisMembers, memberHandles, newDeviceKeys,
   openRecord, ready, sealHandle, signingKeyFromSeed, type OpenedOp, type TeamOp,
 } from '../src'
 import { sealHandleWith } from '../src/membership'
@@ -31,7 +31,7 @@ describe('the vector', () => {
   it('every handle seals to the same size', () => {
     const at = JSON.parse(V.handle.aad)
     const key = { epoch: 0, key: sha('brain key 0') }
-    expect(sealHandle('a', at, key).ct.length).toBe(sealHandle('ä'.repeat(31), at, key).ct.length)
+    expect(sealHandle('a', at, key).ct.length).toBe(sealHandle('z'.repeat(63), at, key).ct.length)
   })
 
   it('the genesis record founds the vector member set: the root as the one owner, epoch 0', () => {
@@ -168,8 +168,8 @@ describe('handles and authors', () => {
     expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBeNull()
     expect(memberHandles(two, () => undefined)).toEqual({ [ada.identity.publicKey]: null, [bo.identity.publicKey]: null })
     expect(() => sealHandle(' ada', { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(ProtocolError)
-    expect(() => sealHandle('a'.repeat(64), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 bytes/)
-    expect(() => sealHandle('ä'.repeat(32), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 bytes/)
+    expect(() => sealHandle('a'.repeat(64), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 characters of a-z, 0-9, _ and -/)
+    expect(() => sealHandle('', { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0])).toThrow(/1–63 characters/)
     expect(sealHandle('a'.repeat(63), { brain: BRAIN, op_id: 'x', member: 'y' }, keys[0]).nonce).toHaveLength(32)
   })
 })
@@ -302,31 +302,35 @@ describe('an owner always keeps a current device', () => {
   })
 })
 
-describe('handles: one form, case-folded, never reused', () => {
-  /** ada founds; `joiner` joins with `handle`. */
-  function join(handle: string, founder = 'ada') {
-    const ada = person(founder)
-    const other = person(handle)
+describe('handles: lowercase ASCII, compared as strings, never reused', () => {
+  const at = { brain: BRAIN, op_id: 'x', member: 'y' }
+  const key = { epoch: 0, key: sha('brain key 0') }
+
+  it('a handle is 1–63 characters of a-z, 0-9, _ and -', () => {
+    for (const ok of ['ada', 'bo_2', 'mo-ti', '0', 'z'.repeat(63)]) expect(() => sealHandle(ok, at, key), ok).not.toThrow()
+  })
+
+  it('everything else is refused: upper case, accents in either form, look-alikes, invisible marks, other spaces (PoC 5)', () => {
+    const refused = [
+      'Ada',             // upper case
+      'r\u00e9mi',       // é composed
+      're\u0301mi',      // e + combining acute
+      '\u0430da',        // Cyrillic а
+      '\uff41da',        // fullwidth a
+      'ada\ufe0f',       // variation selector
+      'a\u034fda',       // combining grapheme joiner
+      'a\u00a0da',       // no-break space
+      'a da', ' ada', 'ada.', 'stra\u00dfe',
+    ]
+    for (const bad of refused) expect(() => sealHandle(bad, at, key), JSON.stringify(bad)).toThrow(/1–63 characters of a-z, 0-9, _ and -/)
+  })
+
+  it('the same handle twice: the later member has none', () => {
+    const ada = person('ada')
+    const twin = person('ada')
     const { set, keys } = found(ada)
-    const two = applyMembership(set, addMember(set, keys, ada, other))
-    return { ada, other, two, keys, handles: memberHandles(two, keyFor(keys)) }
-  }
-
-  it('a handle is sealed in NFC: a decomposed é reads back composed', () => {
-    const { other, handles } = join('re\u0301mi')
-    expect(handles[other.identity.publicKey]).toBe('r\u00e9mi')
-  })
-
-  it('composed and decomposed forms are the same handle: the later member has none (PoC 5)', () => {
-    const { other, handles } = join('re\u0301mi', 'r\u00e9mi')
-    expect(handles[other.identity.publicKey]).toBeNull()
-  })
-
-  it('handles differing only in case are the same handle', () => {
-    const { ada, other, handles } = join('Ada')
-    expect(handles[ada.identity.publicKey]).toBe('ada')
-    expect(handles[other.identity.publicKey]).toBeNull()
-    expect(handleKey('STRASSE')).toBe(handleKey('straße'))
+    const two = applyMembership(set, addMember(set, keys, ada, twin))
+    expect(memberHandles(two, keyFor(keys))).toEqual({ [ada.identity.publicKey]: 'ada', [twin.identity.publicKey]: null })
   })
 
   it('a removed member\'s handle stays theirs: a newcomer with it has none; the member back again has it', () => {
@@ -347,18 +351,19 @@ describe('handles: one form, case-folded, never reused', () => {
     expect(memberHandles(s, keyFor(keys))[bo.identity.publicKey]).toBe('bo')
   })
 
-  it('a box whose handle is not in NFC counts as no handle', () => {
+  it('a box whose handle is outside the charset counts as no handle', () => {
     const ada = person('ada')
     const bo = person('bo')
     const { set, keys } = found(ada)
-    const env = envelope(ada, 'team.add_member', {})
-    const text = Buffer.from('re\u0301mi', 'utf-8')
-    const padded = new Uint8Array(64)
-    padded.set([text.length, ...text])
-    const nonce = sodium.randombytes_buf(24)
-    const handle = { nonce: Buffer.from(nonce).toString('base64url'), ct: Buffer.from(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, canonicalJson({ brain: BRAIN, op_id: env.op_id, member: bo.identity.publicKey }), null, nonce, keys[0].key)).toString('base64url') }
-    const rec: OpenedOp = openRecord(JSON.parse(JSON.stringify(clearOp({ ...env, args: { member: bo.identity.publicKey, role: 'member', device_cert: cert(bo), handle } as never }, ada.device.sign).record)), BRAIN, () => undefined)
-    expect(memberHandles(applyMembership(set, rec), keyFor(keys))[bo.identity.publicKey]).toBeNull()
+    for (const text of [Buffer.from('re\u0301mi', 'utf-8'), Buffer.from('Bo', 'utf-8')]) {
+      const env = envelope(ada, 'team.add_member', {})
+      const padded = new Uint8Array(64)
+      padded.set([text.length, ...text])
+      const nonce = sodium.randombytes_buf(24)
+      const handle = { nonce: Buffer.from(nonce).toString('base64url'), ct: Buffer.from(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(padded, canonicalJson({ brain: BRAIN, op_id: env.op_id, member: bo.identity.publicKey }), null, nonce, keys[0].key)).toString('base64url') }
+      const rec: OpenedOp = openRecord(JSON.parse(JSON.stringify(clearOp({ ...env, args: { member: bo.identity.publicKey, role: 'member', device_cert: cert(bo), handle } as never }, ada.device.sign).record)), BRAIN, () => undefined)
+      expect(memberHandles(applyMembership(set, rec), keyFor(keys))[bo.identity.publicKey]).toBeNull()
+    }
   })
 })
 
