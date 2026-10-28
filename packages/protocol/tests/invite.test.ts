@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { createHmac, verify } from 'crypto'
+import { createHmac, createPrivateKey, createPublicKey, verify } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import {
-  GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAnchor, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
+  GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAccept, checkAnchor, checkJoin, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
   joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
   unwrapKey, verifyInviteNotice, wrapKey, type Invite,
 } from '../src'
@@ -13,8 +13,9 @@ import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, sha } from 
 // v0.21 (spec team-brain-protocol-package-spec §5, block 6): the invite — the
 // link with its secret in the fragment, the notice the relay keeps, the join
 // with the invitee's handle sealed under the secret, the accept bound to the
-// join — against the frozen vectors in vectors/invite.json, whose MACs and
-// handle box node:crypto checks independently.
+// join signed with the key derived from the secret, the accept bound to the
+// join — against the frozen vectors in vectors/invite.json, whose join key and
+// signatures, MAC and handle box node:crypto checks independently.
 
 const I = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'invite.json'), 'utf-8'))
 const M = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'membership.json'), 'utf-8'))
@@ -26,6 +27,12 @@ const DAY1 = '2026-10-27T08:00:00.000Z'
 const NOW = '2026-10-26T08:00:00.000Z'
 /** HMAC-SHA-512-256, as crypto_auth computes it: the first 32 bytes of HMAC-SHA-512. */
 const nodeMac = (key: Buffer, text: string): string => createHmac('sha512', key).update(text, 'utf-8').digest().subarray(0, 32).toString('base64url')
+const nodeVerify = (publicKey: string, text: string, sig: string): boolean =>
+  verify(null, Buffer.from(text, 'utf-8'), { key: Buffer.concat([ED25519_SPKI, b64(publicKey)]), format: 'der', type: 'spki' }, b64(sig))
+/** The Ed25519 public key of a 32-byte seed, through node:crypto (PKCS#8 wraps the seed). */
+const nodePublicKey = (seed: Buffer): string =>
+  createPublicKey(createPrivateKey({ key: Buffer.concat([hex('302e020100300506032b657004220420'), seed]), format: 'der', type: 'pkcs8' }))
+    .export({ format: 'der', type: 'spki' }).subarray(12).toString('base64url')
 
 beforeAll(() => ready())
 
@@ -37,11 +44,13 @@ describe('the vectors', () => {
     expect(new URL(I.invite.link).hash).toBe(`#${hex(I.invite.secret).toString('base64url')}`)
   })
 
-  it('reproduces the join, and node:crypto checks its MAC and opens its handle', () => {
+  it('reproduces the join, and node:crypto derives its key, checks its signature and opens its handle', () => {
     const joiner = signingKeyFromSeed(sha('identity'))
     expect(joinRequestWith(sha('join nonce').subarray(0, 24), I.invite.link, joiner, K.device_cert.cert, 'juno')).toEqual(I.join)
-    const { mac, ...body } = I.join
-    expect(nodeMac(hex(I.keys.mac_key), canonicalJson({ t: 'eml-invite-join-v1', ...body }))).toBe(mac)
+    expect(nodePublicKey(hex(I.keys.join_seed))).toBe(I.keys.join_key)
+    expect(I.notice.join_key).toBe(I.keys.join_key)
+    const { sig, ...body } = I.join
+    expect(nodeVerify(I.keys.join_key, `eml-invite-join-v1\n${canonicalJson(body)}`, sig)).toBe(true)
     const padded = nodeOpen(hex(I.keys.enc_key), b64(I.join.handle.nonce), canonicalJson({ brain: BRAIN, invite_id: I.invite.invite_id, member: I.join.member }), b64(I.join.handle.ct))
     expect(padded[0]).toBe(4)
     expect(padded.subarray(1, 5).toString('utf-8')).toBe('juno')
@@ -59,15 +68,15 @@ describe('the vectors', () => {
     expect(I.accept.anchor).toEqual({ genesis: M.genesis.record.op_id, seq: 1, head_hash: chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', sha256Hex(M.genesis.record.payload)) })
   })
 
-  it('the notice: node:crypto checks the inviter\'s signature; it carries no secret', () => {
+  it('the notice: node:crypto checks the inviter\'s signature; it carries the join key and no secret', () => {
     const { sig, ...body } = I.notice
-    expect(verify(null, Buffer.from(`eml-invite-notice-v1\n${canonicalJson(body)}`, 'utf-8'), { key: Buffer.concat([ED25519_SPKI, b64(I.notice.inviter)]), format: 'der', type: 'spki' }, b64(sig))).toBe(true)
-    expect(Object.keys(I.notice)).toEqual(['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'sig'])
+    expect(nodeVerify(I.notice.inviter, `eml-invite-notice-v1\n${canonicalJson(body)}`, sig)).toBe(true)
+    expect(Object.keys(I.notice)).toEqual(['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'join_key', 'sig'])
   })
 
   it('nothing the relay carries holds the secret, its keys or the handle', () => {
     const relaySees = JSON.stringify([I.notice, I.join, I.accept])
-    for (const secret of [hex(I.invite.secret), hex(I.keys.mac_key), hex(I.keys.enc_key)]) {
+    for (const secret of [hex(I.invite.secret), hex(I.keys.mac_key), hex(I.keys.enc_key), hex(I.keys.join_seed)]) {
       expect(relaySees).not.toContain(secret.toString('base64url'))
       expect(relaySees).not.toContain(secret.toString('hex'))
     }
@@ -146,15 +155,16 @@ describe('what the relay could swap', () => {
   const invite = vectorInvite
   const other = person('mallory')
 
-  it('the join: another member, another device, another handle, a MAC under another secret', () => {
-    expect(() => openJoin(invite(), { ...I.join, member: other.identity.publicKey }, DAY1)).toThrow(/MAC is not the invite's/)
-    expect(() => openJoin(invite(), { ...I.join, device_cert: cert(other) }, DAY1)).toThrow(/MAC is not the invite's/)
+  it('the join: another member, another device, another handle, a join key from another secret', () => {
+    const unsigned = /not signed with the invite's join key/
+    expect(() => openJoin(invite(), { ...I.join, member: other.identity.publicKey }, DAY1)).toThrow(unsigned)
+    expect(() => openJoin(invite(), { ...I.join, device_cert: cert(other) }, DAY1)).toThrow(unsigned)
     const flipped = b64(I.join.handle.ct)
     flipped[3] ^= 1
-    expect(() => openJoin(invite(), { ...I.join, handle: { ...I.join.handle, ct: flipped.toString('base64url') } }, DAY1)).toThrow(/MAC is not the invite's/)
+    expect(() => openJoin(invite(), { ...I.join, handle: { ...I.join.handle, ct: flipped.toString('base64url') } }, DAY1)).toThrow(unsigned)
     // a join made with a guessed secret: well-formed, but not this invite's
     const guessed = I.invite.link.replace(/#.*/, `#${Buffer.alloc(32, 7).toString('base64url')}`)
-    expect(() => openJoin(invite(), joinRequest(guessed, other.identity, cert(other), 'mallory'), DAY1)).toThrow(/MAC is not the invite's/)
+    expect(() => openJoin(invite(), joinRequest(guessed, other.identity, cert(other), 'mallory'), DAY1)).toThrow(unsigned)
     expect(() => openJoin(invite(), { ...I.join, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, DAY1)).toThrow(/another invite/)
     expect(() => openJoin(invite(), { ...I.join, v: 2 }, DAY1)).toThrow(UnsupportedVersionError)
     expect(() => openJoin(invite(), { ...I.join, note: 'x' }, DAY1)).toThrow(/no field note/)
@@ -172,6 +182,52 @@ describe('what the relay could swap', () => {
     expect(() => openAccept(I.invite.link, I.join, { ...I.accept, anchor: { ...I.accept.anchor, seq: 2 } })).toThrow(/MAC is not the invite's/)
     const forged = joinAccept({ ...invite(), secret: Buffer.alloc(32, 9) }, I.join_hash, mallory, I.accept.anchor)
     expect(() => openAccept(I.invite.link, I.join, forged)).toThrow(/MAC is not the invite's/)
+  })
+})
+
+describe('what the relay checks without the secret', () => {
+  const other = person('mallory')
+  const guessed = I.invite.link.replace(/#.*/, `#${Buffer.alloc(32, 7).toString('base64url')}`)
+
+  it('a join: signed with the notice\'s join key, for its invite, with the joiner\'s certificate', () => {
+    expect(checkJoin(JSON.parse(JSON.stringify(I.join)), I.notice)).toEqual(I.join)
+    // whoever lacks the secret cannot take the invite: a join under a guessed secret is refused
+    expect(() => checkJoin(joinRequest(guessed, other.identity, cert(other), 'mallory'), I.notice)).toThrow(/not signed with the invite's join key/)
+    expect(() => checkJoin(I.join, { ...I.notice, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' })).toThrow(/another invite/)
+    expect(() => checkJoin({ ...I.join, sig: I.notice.sig }, I.notice)).toThrow(/not signed/)
+    expect(() => checkJoin({ ...I.join, v: 2 }, I.notice)).toThrow(UnsupportedVersionError)
+    expect(() => checkJoin({ ...I.join, mac: 'x' }, I.notice)).toThrow(/no field mac/)
+  })
+
+  it('a join signed with the right key but with another member\'s certificate, or a handle box of the wrong size', () => {
+    const invite = { ...vectorInvite(), secret: Buffer.alloc(32, 7) }
+    const link = inviteLink(invite)
+    const notice = inviteNotice(invite, signingKeyFromSeed(sha('inviter device sign')))
+    expect(() => joinRequest(link, other.identity, K.device_cert.cert, 'mallory')).toThrow(/not the joiner's/)
+    const good = joinRequest(link, other.identity, cert(other), 'mallory')
+    expect(checkJoin(good, notice)).toEqual(good)
+  })
+
+  it('an accept: of the join\'s invite, answering exactly that join, with a certificate and an anchor', () => {
+    expect(checkAccept(JSON.parse(JSON.stringify(I.accept)), I.join)).toEqual(I.accept)
+    const otherJoin = joinRequest(I.invite.link, signingKeyFromSeed(sha('identity')), K.device_cert.cert, 'juno')
+    expect(() => checkAccept(I.accept, otherJoin)).toThrow(/answers another join/)
+    expect(() => checkAccept({ ...I.accept, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, I.join)).toThrow(/another invite/)
+    expect(() => checkAccept({ ...I.accept, anchor: { ...I.accept.anchor, seq: 0 } }, I.join)).toThrow(/anchor.seq/)
+    expect(() => checkAccept({ ...I.accept, inviter: { ...I.accept.inviter, sig: I.notice.sig } }, I.join)).toThrow(ProtocolError)
+    // the relay cannot check the MAC: an accept under another secret passes here and fails at the invitee
+    const forged = joinAccept({ ...vectorInvite(), secret: Buffer.alloc(32, 9) }, I.join_hash, cert(other), I.accept.anchor)
+    expect(checkAccept(forged, I.join)).toEqual(forged)
+    expect(() => openAccept(I.invite.link, I.join, forged)).toThrow(/MAC is not the invite's/)
+  })
+
+  it('a notice without a join key, or with one that is no key', () => {
+    const ada = person('ada')
+    const { set } = found(ada)
+    const notice = inviteNotice(newInvite('relay.example.org', BRAIN, NOW), ada.device.sign)
+    const { join_key: _k, ...without } = notice
+    expect(() => verifyInviteNotice(set, without, NOW)).toThrow(/lacks join_key/)
+    expect(() => verifyInviteNotice(set, { ...notice, join_key: 'short' }, NOW)).toThrow(/join key/)
   })
 })
 

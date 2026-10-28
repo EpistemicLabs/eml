@@ -30,9 +30,12 @@ What the relay can do, and what members notice:
 - **Replay** an old record (an add_member of a removed member, an add_device
   of a revoked device, any op again): refused — an op_id appears at most once
   in a brain's log (§4).
-- **Forge or alter** a write, a membership change, a wrapped key, an invite
-  answer or a login: it cannot — each is signed by a member's device or bound
-  by a MAC under a secret the relay never sees.
+- **Forge or alter** a write, a membership change, a wrapped key, a join, an
+  invite answer or a login: it cannot — each is signed by a member's device,
+  or signed or MAC'd with a key from an invite secret the relay never sees.
+- **Take an invite** it was not given: it cannot — a join is signed with a
+  key only the invite secret yields, and the relay checks that signature
+  against the notice before the join takes the invite (§8).
 - **Serve a log of its own** to someone joining: refused — the inviter's
   answer names the genesis and the head of the log it answered from (§8).
 - **Read** anything listed on the right: it cannot.
@@ -203,7 +206,8 @@ log (§4).
   the new epoch. With the newest key a member opens every older key, each
   checked against the key id the log names for its epoch; a new member reads
   the whole history.
-- **Wrapped key** (kept by the relay, outside the log):
+- **Wrapped key** (kept by the relay, outside the log; it checks everything
+  but the opening, `checkWrappedKey`, and keeps one for the next epoch too):
   `{v: 1, brain, epoch, recipient, sealed, wrapper, sig}`; `sealed` =
   `crypto_box_seal(key, the recipient device's encryption key)`; `sig` = the
   wrapper device's signature over `eml-wrapped-key-v1\n` + canonicalJson of the
@@ -218,24 +222,30 @@ log (§4).
   invite id and a 32-byte secret; `1` is the protocol version. The secret is
   in the fragment, which a browser never sends to a server. An invite is open
   for 7 days and is taken once.
-- **Notice** (kept by the relay): `{v: 1, brain, invite_id, expires_at,
-  inviter, sig}`, signed by an owner's device under `eml-invite-notice-v1\n`.
-  No secret. The relay takes it only from a current device of an owner, and
-  only with an expiry at most 7 days ahead.
 - **Keys from the secret** `s`: mac_key = BLAKE2b-256 of `eml-invite-mac-v1`
-  keyed with `s`; enc_key = the same of `eml-invite-enc-v1`.
+  keyed with `s`; enc_key = the same of `eml-invite-enc-v1`; the join key =
+  the Ed25519 key pair whose seed is the same of `eml-invite-join-key-v1`.
+- **Notice** (kept by the relay): `{v: 1, brain, invite_id, expires_at,
+  inviter, join_key, sig}` — `join_key` the join key's public half — signed by
+  an owner's device under `eml-invite-notice-v1\n`. No secret: the public key
+  says nothing about `s`. The relay takes it only from a current device of an
+  owner, and only with an expiry at most 7 days ahead.
 - **Join** (invitee → relay → inviter): `{v: 1, brain, invite_id, member,
-  device_cert, handle, mac}`; `handle` = the padded handle sealed under enc_key,
-  AAD = canonicalJson({brain, invite_id, member}); `mac` = `crypto_auth` under
-  mac_key over canonicalJson({t: "eml-invite-join-v1", …the join without mac}).
+  device_cert, handle, sig}`; `handle` = the padded handle sealed under enc_key,
+  AAD = canonicalJson({brain, invite_id, member}); `sig` = the join key's
+  signature over `eml-invite-join-v1\n` + canonicalJson of the join without
+  `sig`. The relay checks it against the notice's `join_key` (`checkJoin`)
+  before the join takes the invite, so only the secret's holder can take it.
 - **Accept** (inviter → relay → invitee): `{v: 1, brain, invite_id,
   join_hash, inviter, anchor, mac}`; `join_hash` = SHA-256 of canonicalJson of
   the whole join, `inviter` = the inviter device's certificate, `anchor` =
   `{genesis, seq, head_hash}` — the genesis op_id of the inviter's log and its
   last entry with that entry's chain link — and `mac` as above with
   `t: "eml-invite-accept-v1"`.
-- The relay cannot make either MAC, so it cannot swap the invitee's keys, the
-  inviter's keys, the handle or the anchor. The owner confirms the join by
+- The relay can make neither the join's signature nor the accept's MAC, so it
+  cannot swap the invitee's keys, the inviter's keys, the handle or the
+  anchor. What it can check of an accept without the secret (`checkAccept`):
+  its fields, its invite, the hash of exactly the join it answers. The owner confirms the join by
   name and fingerprint, adds the member (`team.add_member`) and wraps the brain
   key for the new device.
 - The invitee replays the log the relay serves and refuses it unless its
@@ -284,9 +294,9 @@ rule.
   tests also check, with Node's built-in crypto and independently of
   libsodium: the Ed25519 keys and signatures, the X25519 keys, every
   XChaCha20-Poly1305 box (through HChaCha20 and OpenSSL's ChaCha20-Poly1305),
-  the invite MACs (HMAC-SHA-512 truncated) and every SHA-256. Keyed BLAKE2b
-  (key ids, the invite keys) and sealed boxes (`crypto_box_seal`) are checked
-  by libsodium only.
+  the invite join key from its seed, the accept's MAC (HMAC-SHA-512 truncated)
+  and every SHA-256. Keyed BLAKE2b (key ids, the invite keys) and sealed boxes
+  (`crypto_box_seal`) are checked by libsodium only.
 - **What leaves your machine**: every sealed record is the `ct` of §5. Take a
   record your cockpit sent, and check that without the brain key it opens to
   nothing, that its header holds only the fields of §5, and that with your
@@ -340,6 +350,8 @@ check them.
   - an op_id already in the log with other bytes;
   - a wrapped key, notice or accept not from the device that is logged in, or
     not one that may write it (§7, §8);
+  - a join not signed with its notice's join key, and a join or accept that
+    is not exactly one (§8);
   - a frame over its size, and writes over the brain's rate or storage quota.
   A refused write is not in the log; the device may send it again as a new op
   with a new op_id. An op_id that is in the log is used for good, whether

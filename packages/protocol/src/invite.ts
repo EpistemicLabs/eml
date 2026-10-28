@@ -1,5 +1,5 @@
 import { canonicalJson } from './canonical'
-import { signText, verifyDeviceCert, verifyText, type DeviceCert, type KeyPair } from './keys'
+import { signText, signingKeyFromSeed, verifyDeviceCert, verifyText, type DeviceCert, type KeyPair } from './keys'
 import { HANDLE_BYTES, box, memberOfDevice, padHandle, unpadHandle, type Box, type MemberSet } from './membership'
 import { sha256Hex } from './op'
 import {
@@ -14,11 +14,13 @@ import {
 // fragment, so it never reaches a server. Everything the two cockpits then
 // exchange through the relay is bound to that secret: the join (the invitee's
 // identity, device certificate and handle — the handle sealed, so the relay
-// never sees it) and the accept (the inviter's device certificate) each carry
-// a MAC the relay cannot make, so it cannot swap a key in either direction.
-// The relay holds the invite as a notice signed by the owner, and it and the
-// inviter's cockpit each take a join only once and only before it expires
-// (decision team-brain-device-keys-invite-link; spec §5).
+// never sees it) is signed with a key derived from the secret, whose public
+// half the owner put into the notice, so the relay and the inviter both check
+// that only the secret's holder sent it; the accept (the inviter's device
+// certificate) carries a MAC under the secret. The relay cannot swap a key in
+// either direction. It holds the invite as a notice signed by the owner, and
+// it and the inviter's cockpit each take a join only once and only before it
+// expires (decision team-brain-device-keys-invite-link; spec §5).
 
 /** An invite as the inviter's cockpit keeps it. `redeemed` is set once a join was taken. */
 export interface Invite {
@@ -30,17 +32,18 @@ export interface Invite {
   redeemed: boolean
 }
 
-/** What the relay keeps of an invite: no secret, signed by the owner device that made it. */
+/** What the relay keeps of an invite: no secret — the public key a join is checked against — signed by the owner device that made it. */
 export interface InviteNotice {
   v: 1
   brain: string
   invite_id: string
   expires_at: string
   inviter: string
+  join_key: string
   sig: string
 }
 
-/** The invitee's join: who they are, their device, their handle (sealed under the invite secret), and the MAC. */
+/** The invitee's join: who they are, their device, their handle (sealed under the invite secret), signed with the invite's join key. */
 export interface JoinRequest {
   v: 1
   brain: string
@@ -48,7 +51,7 @@ export interface JoinRequest {
   member: string
   device_cert: DeviceCert
   handle: Box
-  mac: string
+  sig: string
 }
 
 /**
@@ -80,6 +83,9 @@ const SECRET_BYTES = KEY_BYTES
 export const INVITE_ID_BYTES = 16
 const MAC_BYTES = 32
 const NOTICE_DOMAIN = 'eml-invite-notice-v1\n'
+const JOIN_DOMAIN = 'eml-invite-join-v1\n'
+const JOIN_FIELDS = ['v', 'brain', 'invite_id', 'member', 'device_cert', 'handle', 'sig']
+const ACCEPT_FIELDS = ['v', 'brain', 'invite_id', 'join_hash', 'inviter', 'anchor', 'mac']
 
 /** A new invite of `brain` on the relay at `relay` (a host name, with a port if any), made at `now`. */
 export function newInvite(relay: string, brain: string, now: string): Invite {
@@ -121,18 +127,19 @@ export function parseInviteLink(link: string): { relay: string, brain: string, i
 
 /** The notice the relay keeps: the invite without its secret, signed by `owner` (a device of an owner). */
 export function inviteNotice(invite: Invite, owner: KeyPair): InviteNotice {
-  const body = { v: PROTOCOL_VERSION, brain: invite.brain, invite_id: invite.invite_id, expires_at: invite.expires_at, inviter: owner.publicKey }
+  const body = { v: PROTOCOL_VERSION, brain: invite.brain, invite_id: invite.invite_id, expires_at: invite.expires_at, inviter: owner.publicKey, join_key: joinKey(invite.secret).publicKey }
   return { ...body, sig: signText(owner, NOTICE_DOMAIN, canonicalJson(body)) }
 }
 
-/** The relay's check of a notice at `now`: exactly one, for this brain, expiring within INVITE_DAYS, signed by a current device of an owner. */
+/** The relay's check of a notice at `now`: exactly one, for this brain, expiring within INVITE_DAYS, with a join key, signed by a current device of an owner. */
 export function verifyInviteNotice(set: MemberSet, value: unknown, now: string): InviteNotice {
   if (!ISO_MS.test(now)) throw new ProtocolError('now is ISO-8601 UTC with milliseconds')
   const n = asObject(value, 'an invite notice')
   checkVersion(n.v)
-  exactFields(n, ['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'sig'], 'an invite notice')
+  exactFields(n, ['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'join_key', 'sig'], 'an invite notice')
   if (n.brain !== set.brain) throw new ProtocolError('the invite is for another brain')
   fromBase64url(n.invite_id, INVITE_ID_BYTES, 'the invite id')
+  fromBase64url(n.join_key, KEY_BYTES, 'the join key')
   if (typeof n.expires_at !== 'string' || !ISO_MS.test(n.expires_at)) throw new ProtocolError('expires_at is not ISO-8601 UTC with milliseconds')
   if (Date.parse(n.expires_at) > Date.parse(now) + INVITE_DAYS * 86400_000) throw new ProtocolError(`an invite is open for at most ${INVITE_DAYS} days`)
   const member = memberOfDevice(set, n.inviter)
@@ -151,7 +158,8 @@ export function checkInviteOpen(invite: { expires_at: string, redeemed: boolean 
 
 /**
  * The invitee's join for the invite in `link`: their identity, their device's
- * certificate and their handle, sealed and MAC'd under the invite secret.
+ * certificate and their handle sealed under the invite secret, signed with
+ * the invite's join key.
  */
 export function joinRequest(link: string, member: KeyPair, deviceCert: DeviceCert, handle: string): JoinRequest {
   return joinRequestWith(sodium.randombytes_buf(NONCE_BYTES), link, member, deviceCert, handle)
@@ -162,28 +170,39 @@ export function joinRequestWith(nonce: Uint8Array, link: string, member: KeyPair
   const { brain, invite_id, secret } = parseInviteLink(link)
   if (deviceCert.member !== member.publicKey || deviceCert.brain !== brain) throw new ProtocolError('the device certificate is not the joiner\'s for this brain')
   const body = { v: PROTOCOL_VERSION, brain, invite_id, member: member.publicKey, device_cert: deviceCert, handle: sealBox(padHandle(handle), handleAad(brain, invite_id, member.publicKey), nonce, encKey(secret)) }
-  return { ...body, mac: mac(secret, 'eml-invite-join-v1', body) }
+  return { ...body, sig: signText(joinKey(secret), JOIN_DOMAIN, canonicalJson(body)) }
 }
 
 /**
- * The inviter's reading of a join at `now`: exactly a join of this invite,
- * the invite still open, the MAC under its secret, the certificate the
- * joiner's for this brain, and the handle opened. The caller marks the
- * invite redeemed once the owner confirmed the join.
+ * A join of the invite in `notice` as far as it can be checked without the
+ * secret — what the relay checks before it takes one: exactly a join of this
+ * invite, signed with the notice's join key, so only someone holding the
+ * secret sent it; the certificate the joiner's for this brain; a handle box
+ * of the right size. The handle opens only with the secret (openJoin).
+ */
+export function checkJoin(value: unknown, notice: { brain: string, invite_id: string, join_key: string }): JoinRequest {
+  const j = asObject(value, 'a join')
+  checkVersion(j.v)
+  exactFields(j, JOIN_FIELDS, 'a join')
+  if (j.brain !== notice.brain || j.invite_id !== notice.invite_id) throw new ProtocolError('the join is for another invite')
+  const { sig, ...body } = j
+  if (!verifyText(notice.join_key, JOIN_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the join is not signed with the invite\'s join key')
+  const cert = verifyDeviceCert(j.device_cert)
+  if (cert.member !== j.member || cert.brain !== notice.brain) throw new ProtocolError('the device certificate is not the joiner\'s for this brain')
+  box(j.handle, 'handle', HANDLE_BYTES)
+  return j as unknown as JoinRequest
+}
+
+/**
+ * The inviter's reading of a join at `now`: the invite still open, checkJoin
+ * against the invite's own join key, and the handle opened. The caller marks
+ * the invite redeemed once the owner confirmed the join.
  */
 export function openJoin(invite: Invite, value: unknown, now: string): { member: string, device_cert: DeviceCert, handle: string, join_hash: string } {
   checkInviteOpen(invite, now)
-  const j = asObject(value, 'a join')
-  checkVersion(j.v)
-  exactFields(j, ['v', 'brain', 'invite_id', 'member', 'device_cert', 'handle', 'mac'], 'a join')
-  if (j.brain !== invite.brain || j.invite_id !== invite.invite_id) throw new ProtocolError('the join is for another invite')
-  const { mac: given, ...body } = j
-  checkMac(invite.secret, 'eml-invite-join-v1', body, given)
-  const cert = verifyDeviceCert(j.device_cert)
-  if (cert.member !== j.member || cert.brain !== invite.brain) throw new ProtocolError('the device certificate is not the joiner\'s for this brain')
-  const sealed = box(j.handle, 'handle', HANDLE_BYTES)
-  const padded = openBox(sealed.ct, sealed.nonce, handleAad(invite.brain, invite.invite_id, cert.member), encKey(invite.secret), 'the join\'s handle does not open under the invite secret')
-  return { member: cert.member, device_cert: cert, handle: unpadHandle(padded), join_hash: sha256Hex(canonicalJson(j)) }
+  const j = checkJoin(value, { brain: invite.brain, invite_id: invite.invite_id, join_key: joinKey(invite.secret).publicKey })
+  const padded = openBox(j.handle.ct, j.handle.nonce, handleAad(invite.brain, invite.invite_id, j.member), encKey(invite.secret), 'the join\'s handle does not open under the invite secret')
+  return { member: j.member, device_cert: j.device_cert, handle: unpadHandle(padded), join_hash: sha256Hex(canonicalJson(j)) }
 }
 
 /**
@@ -199,27 +218,39 @@ export function joinAccept(invite: Invite, joinHash: string, inviterCert: Device
 }
 
 /**
- * The invitee's reading of the answer to its `join`: exactly an accept of
- * this invite, for this join, with the MAC under the secret of `link`.
- * Returns the inviter's certificate — the invitee takes a wrapped brain key
- * only from that device (unwrapInviteKey) — and the log anchor, which the
- * log the relay serves must meet (checkAnchor).
+ * An accept of `join` as far as it can be checked without the secret — what
+ * the relay checks before it passes one on: exactly an accept of the join's
+ * invite, answering exactly that join, with an inviter certificate for this
+ * brain and a well-formed anchor. Its MAC needs the secret (openAccept).
  */
-export function openAccept(link: string, join: JoinRequest, value: unknown): { inviter: DeviceCert, anchor: LogAnchor } {
-  const { brain, invite_id, secret } = parseInviteLink(link)
+export function checkAccept(value: unknown, join: JoinRequest): JoinAccept {
   const a = asObject(value, 'an accept')
   checkVersion(a.v)
-  exactFields(a, ['v', 'brain', 'invite_id', 'join_hash', 'inviter', 'anchor', 'mac'], 'an accept')
-  if (a.brain !== brain || a.invite_id !== invite_id) throw new ProtocolError('the accept is for another invite')
-  const { mac: given, ...body } = a
-  checkMac(secret, 'eml-invite-accept-v1', body, given)
+  exactFields(a, ACCEPT_FIELDS, 'an accept')
+  if (a.brain !== join.brain || a.invite_id !== join.invite_id) throw new ProtocolError('the accept is for another invite')
   if (a.join_hash !== sha256Hex(canonicalJson(join))) throw new ProtocolError('the accept answers another join')
   const cert = verifyDeviceCert(a.inviter)
-  if (cert.brain !== brain) throw new ProtocolError('the inviter\'s certificate is for another brain')
+  if (cert.brain !== join.brain) throw new ProtocolError('the inviter\'s certificate is for another brain')
   const anchor = asObject(a.anchor, 'the anchor')
   exactFields(anchor, ['genesis', 'seq', 'head_hash'], 'the anchor')
   checkAnchorFields(anchor)
-  return { inviter: cert, anchor: anchor as unknown as LogAnchor }
+  return a as unknown as JoinAccept
+}
+
+/**
+ * The invitee's reading of the answer to its `join`: checkAccept, for the
+ * invite of `link`, with the MAC under its secret. Returns the inviter's
+ * certificate — the invitee takes a wrapped brain key only from that device
+ * (unwrapInviteKey) — and the log anchor, which the log the relay serves must
+ * meet (checkAnchor).
+ */
+export function openAccept(link: string, join: JoinRequest, value: unknown): { inviter: DeviceCert, anchor: LogAnchor } {
+  const { brain, invite_id, secret } = parseInviteLink(link)
+  if (join.brain !== brain || join.invite_id !== invite_id) throw new ProtocolError('the join is for another invite')
+  const a = checkAccept(value, join)
+  const { mac: given, ...body } = a
+  checkMac(secret, 'eml-invite-accept-v1', body, given)
+  return { inviter: a.inviter, anchor: a.anchor }
 }
 
 /**
@@ -241,13 +272,18 @@ function checkAnchorFields(anchor: Record<string, unknown> | LogAnchor): void {
   if (typeof anchor.head_hash !== 'string' || !HASH.test(anchor.head_hash)) throw new ProtocolError('anchor.head_hash is not 64 lowercase hex digits')
 }
 
-// The secret keys two things, so it is split into two keys (BLAKE2b keyed with the secret, one label each).
+// The secret keys three things, so it is split into three keys (BLAKE2b keyed with the secret, one label each).
 function macKey(secret: Uint8Array): Uint8Array {
   return sodium.crypto_generichash(KEY_BYTES, sodium.from_string('eml-invite-mac-v1'), secret)
 }
 
 function encKey(secret: Uint8Array): Uint8Array {
   return sodium.crypto_generichash(KEY_BYTES, sodium.from_string('eml-invite-enc-v1'), secret)
+}
+
+/** The Ed25519 key a join is signed with: its seed derived from the secret, its public half in the notice. */
+function joinKey(secret: Uint8Array): KeyPair {
+  return signingKeyFromSeed(sodium.crypto_generichash(KEY_BYTES, sodium.from_string('eml-invite-join-key-v1'), secret))
 }
 
 function handleAad(brain: string, invite_id: string, member: string): string {

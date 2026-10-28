@@ -1,5 +1,5 @@
 {
-  "description": "Invites (spec team-brain-protocol-package-spec §5). The secret is sha256 of \"eml protocol test vector: invite secret\", the invite id the first 16 bytes of sha256 of \"…: invite id\", the join nonce the first 24 bytes of sha256 of \"…: join nonce\". mac_key / enc_key = BLAKE2b-256 keyed with the secret of \"eml-invite-mac-v1\" / \"eml-invite-enc-v1\". A MAC is crypto_auth (HMAC-SHA-512-256) under mac_key over canonicalJson of {t, …the message without mac}; the handle is padded to 64 bytes and sealed with XChaCha20-Poly1305 under enc_key, AAD = canonicalJson({brain, invite_id, member}). join_hash = sha256 of canonicalJson of the whole join. The anchor of the accept is the membership.json genesis as seq 1 of its log, at 2026-10-26T08:00:00.000Z: its op_id and its chain link. The joiner is the keys.json identity and device; the inviter has its own keys (seeds \"inviter identity\", \"inviter device sign\", \"inviter device enc\").",
+  "description": "Invites (spec team-brain-protocol-package-spec §5). The secret is sha256 of \"eml protocol test vector: invite secret\", the invite id the first 16 bytes of sha256 of \"…: invite id\", the join nonce the first 24 bytes of sha256 of \"…: join nonce\". mac_key / enc_key / join_seed = BLAKE2b-256 keyed with the secret of \"eml-invite-mac-v1\" / \"eml-invite-enc-v1\" / \"eml-invite-join-key-v1\"; join_key is the Ed25519 public key of join_seed, and the notice carries it. The join is signed (Ed25519) with join_seed over \"eml-invite-join-v1\\n\" + canonicalJson of the join without sig; the accept's MAC is crypto_auth (HMAC-SHA-512-256) under mac_key over canonicalJson of {t: \"eml-invite-accept-v1\", …the accept without mac}; the handle is padded to 64 bytes and sealed with XChaCha20-Poly1305 under enc_key, AAD = canonicalJson({brain, invite_id, member}). join_hash = sha256 of canonicalJson of the whole join. The anchor of the accept is the membership.json genesis as seq 1 of its log, at 2026-10-26T08:00:00.000Z: its op_id and its chain link. The joiner is the keys.json identity and device; the inviter has its own keys (seeds \"inviter identity\", \"inviter device sign\", \"inviter device enc\").",
   "invite": {
     "relay": "relay.example.org",
     "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -10,7 +10,9 @@
   },
   "keys": {
     "mac_key": "7e63a0e152b65370d19d2bf2e0f7e432b7beb3bb76a102220b256e722b404212",
-    "enc_key": "84c175a91c6862287e82983d728e3e138dc2ceeee06baa31559b2c646a4d1bbd"
+    "enc_key": "84c175a91c6862287e82983d728e3e138dc2ceeee06baa31559b2c646a4d1bbd",
+    "join_seed": "0d1af76722e73d32e11a910d5054d96c31d30ecbd13a6af67bdc930fb3b071a9",
+    "join_key": "UsLYzeDZMXP2TnNzxxmdVqVlGA2EokgVQ8rFUrP11Xo"
   },
   "notice": {
     "v": 1,
@@ -18,7 +20,8 @@
     "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
     "expires_at": "2026-11-02T08:00:00.000Z",
     "inviter": "DkWYyAuupxq95RN0-SnwgFUeIGQZNpTY_lP8SCvvGps",
-    "sig": "AUcflejQonreeEiScoaNwwkaY9ItKBdC_ZoXr8LzRE7vDDQxJobgVUXcort0KO557c51NicbkYjLb-f9kqlVAg"
+    "join_key": "UsLYzeDZMXP2TnNzxxmdVqVlGA2EokgVQ8rFUrP11Xo",
+    "sig": "_xGLRTAKdQxMiIurvUJ5wvBEI8xKEn9eFaL809x-i7EMljS3dxmEZYwgmbqhf0vZYwP1cTA3kgG4yBE_HonSAw"
   },
   "join": {
     "v": 1,
@@ -38,14 +41,14 @@
       "nonce": "TPrXjKSE9G0iuqbTiae2_k8pu3S4-Hh_",
       "ct": "HSdeO1p6GaQk230k9569nyXOCnRa0PKIAho74qt9SOrenjw6Rg4sBPorrHVx7mt1XrcmsZeYtMGA2sXmYWMpLUN5n7n_5yfxP4uc6BXhzXg"
     },
-    "mac": "mKVbJ_ywZznXasGdoHAAupkK5bp6LbrN2qVGSHSs02g"
+    "sig": "FeMcdebyGJi3XkDjd0Rw7r2GbPANh2-bKygHgPSMVxnPtRjKsxmRucSEiCU4muNNzGkmBPoUqJhOq3ZWHYtLDQ"
   },
-  "join_hash": "13494be335a55c0dbfbeebd9ac251218f87584775b4203269cdcdaebaee50648",
+  "join_hash": "cd132bf3bf3ca581eb80c1c0c639672032ec2c35e4ed53032b42fa03c6c7fcbe",
   "accept": {
     "v": 1,
     "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
     "invite_id": "cGEWA6DfjvcDIjzOFe2nDA",
-    "join_hash": "13494be335a55c0dbfbeebd9ac251218f87584775b4203269cdcdaebaee50648",
+    "join_hash": "cd132bf3bf3ca581eb80c1c0c639672032ec2c35e4ed53032b42fa03c6c7fcbe",
     "inviter": {
       "v": 1,
       "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -60,6 +63,6 @@
       "seq": 1,
       "head_hash": "339125b112ef6e6ab7904d7276716f2348041bc99176491e1e72fbe76c179036"
     },
-    "mac": "OuyGJLZGmue4-gE1AI-y2ULxzIXEtRjNKW49VX74DLc"
+    "mac": "unve1Pkxa5SxT-P1J-aU7QLwYDDI9Uy2X9yMzPxAjuM"
   }
 }
