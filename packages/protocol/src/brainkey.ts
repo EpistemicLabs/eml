@@ -88,25 +88,41 @@ export function wrapKey(set: MemberSet, key: BrainKey, recipient: string, wrappe
 }
 
 /**
- * The brain key in `record`, wrapped for `device`: exactly a wrapped-key
- * record of this brain, signed by a current device of an owner or of the
- * recipient's own member, for an epoch the log has reached, and the key the
- * log names for that epoch. Throws ProtocolError otherwise.
+ * A wrapped key of `set`'s brain as far as it can be checked without the
+ * recipient's key — what the relay checks before it keeps one: exactly a
+ * wrapped-key record of this brain, for a current device, with an epoch,
+ * signed by a current device of an owner or of the recipient's own member.
+ * Which epochs to take is the caller's: a device unwraps only those the log
+ * has reached, the relay also keeps the next one for a rotation.
  */
-export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): BrainKey {
+export function checkWrappedKey(set: MemberSet, record: unknown): WrappedKey {
   const r = asObject(record, 'a wrapped key')
   checkVersion(r.v)
   exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
   if (r.brain !== set.brain) throw new ProtocolError('the wrapped key is for another brain')
-  if (r.recipient !== device.sign.publicKey) throw new ProtocolError('the wrapped key is for another device')
-  if (!Number.isSafeInteger(r.epoch) || (r.epoch as number) < 0 || (r.epoch as number) > set.epoch) throw new ProtocolError(`the brain has no epoch ${String(r.epoch)}`)
+  if (!Number.isSafeInteger(r.epoch) || (r.epoch as number) < 0) throw new ProtocolError('the epoch is not a non-negative integer')
+  const recipientMember = memberOfDevice(set, r.recipient)
+  if (!recipientMember) throw new ProtocolError('the recipient is not a current device of a member')
   const wrapperMember = memberOfDevice(set, r.wrapper)
   if (!wrapperMember) throw new ProtocolError('the wrapper is not a current device of a member')
-  if (set.members[wrapperMember].role !== 'owner' && wrapperMember !== memberOfDevice(set, r.recipient)) {
+  if (set.members[wrapperMember].role !== 'owner' && wrapperMember !== recipientMember) {
     throw new ProtocolError('a key is wrapped by an owner or by the recipient\'s own member')
   }
+  fromBase64url(r.sealed, SEAL_BYTES, 'sealed')
   const { sig, ...body } = r
   if (!verifyText(r.wrapper as string, WRAP_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the wrapped key is not signed by its wrapper')
+  return r as unknown as WrappedKey
+}
+
+/**
+ * The brain key in `record`, wrapped for `device`: checkWrappedKey, for this
+ * device, for an epoch the log has reached, and the key the log names for
+ * that epoch. Throws ProtocolError otherwise.
+ */
+export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): BrainKey {
+  const r = checkWrappedKey(set, record)
+  if (r.recipient !== device.sign.publicKey) throw new ProtocolError('the wrapped key is for another device')
+  if (r.epoch > set.epoch) throw new ProtocolError(`the brain has no epoch ${r.epoch}`)
   const own = sodium.crypto_box_seed_keypair(device.enc.seed)
   let key: Uint8Array
   try {
@@ -115,8 +131,8 @@ export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): 
     if (err instanceof ProtocolError) throw err
     throw new ProtocolError('the wrapped key does not open with this device\'s key')
   }
-  if (keyId(key) !== set.keys[r.epoch as number].key_id) throw new ProtocolError(`the wrapped key is not the key the log names for epoch ${String(r.epoch)}`)
-  return { epoch: r.epoch as number, key }
+  if (keyId(key) !== set.keys[r.epoch].key_id) throw new ProtocolError(`the wrapped key is not the key the log names for epoch ${r.epoch}`)
+  return { epoch: r.epoch, key }
 }
 
 /**

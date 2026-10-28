@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  ProtocolError, UnsupportedVersionError, applyMembership, canonicalJson, encryptionKeyFromSeed, epochKeys, genesisMembers, keyId,
+  ProtocolError, UnsupportedVersionError, applyMembership, canonicalJson, checkWrappedKey, encryptionKeyFromSeed, epochKeys, genesisMembers, keyId,
   newBrainKey, newDeviceKeys, openRecord, ready, rotateKey, signingKeyFromSeed, unwrapKey, wrapKey,
   type MemberSet,
 } from '../src'
@@ -142,5 +142,27 @@ describe('wrapped keys', () => {
     const forged = { ...resigned, sig: signText(ada.device.sign, 'eml-wrapped-key-v1\n', canonicalJson(resigned)) }
     expect(() => unwrapKey(set, forged, bo.device)).toThrow(/does not open with this device's key/)
     expect(() => wrapKey(set, keys[0], 'toString', ada.device.sign)).toThrow(/recipient is not a current device/)
+  })
+
+  it('what the relay checks without the recipient\'s key: everything but opening it, any epoch', () => {
+    const { ada, bo, phone, set, keys } = team()
+    const record = rotation(set, keys, ada)
+    // the next epoch's key, put before the rotation is in the log: the relay keeps it, the device waits for the rotation
+    const next = wrapKey(set, keys[1], bo.device.sign.publicKey, ada.device.sign)
+    expect(checkWrappedKey(set, JSON.parse(JSON.stringify(next)))).toEqual(next)
+    expect(() => unwrapKey(set, next, bo.device)).toThrow(/no epoch 1/)
+    expect(unwrapKey(applyMembership(set, record), next, bo.device)).toEqual(keys[1])
+    // the relay cannot tell a key the log does not name; the device can
+    const foreign = wrapKey(set, newBrainKey(0), bo.device.sign.publicKey, ada.device.sign)
+    expect(checkWrappedKey(set, foreign)).toEqual(foreign)
+    expect(() => checkWrappedKey(set, wrapKey(set, keys[0], ada.device.sign.publicKey, bo.device.sign))).toThrow(/by an owner or by the recipient's own member/)
+    const flipped = b64(next.sig)
+    flipped[5] ^= 1
+    expect(() => checkWrappedKey(set, { ...next, sig: flipped.toString('base64url') })).toThrow(/not signed by its wrapper/)
+    expect(() => checkWrappedKey(set, { ...next, epoch: -1 })).toThrow(/epoch/)
+    expect(() => checkWrappedKey(set, { ...next, sealed: 'short' })).toThrow(/sealed/)
+    // a device that is no longer one: revoked, its keys are refused
+    const revoked = applyMembership(set, clear(bo, 'team.revoke_device', { device: phone.sign.publicKey }))
+    expect(() => checkWrappedKey(revoked, wrapKey(set, keys[0], phone.sign.publicKey, ada.device.sign))).toThrow(/recipient is not a current device/)
   })
 })
