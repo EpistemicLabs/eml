@@ -165,10 +165,12 @@ Membership follows from the log, and the relay and every member compute it
 the same way from the clear records. Each record's op_id must be new to the
 log (§4).
 
-- **Genesis** (seq 1, clear): `brain.genesis {state_hash, root: {member,
-  device_cert, handle, key_id}}`, signed by the root's device. The root is the
-  first owner; `key_id` names the epoch-0 key; `state_hash` (64 hex digits) is
-  the hash of the state the brain starts from.
+- **Genesis** (seq 1, clear): `brain.genesis {brain, state_hash, root:
+  {member, device_cert, handle, key_id}}`, signed by the root's device.
+  `brain` is the brain's id, the same as `team.brain`: every brain, a private
+  one too, carries its id in its genesis. The root is the first owner;
+  `key_id` names the epoch-0 key; `state_hash` (64 hex digits) is the hash of
+  the state the brain starts from.
 - **Records** — the signing device must be a current device of a member:
   - `team.add_member {member, role, device_cert, handle}` — by an owner, for
     someone not yet a member; role `owner` or `member`.

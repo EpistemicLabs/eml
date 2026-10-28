@@ -74,6 +74,12 @@ function insertEntry(db: Database.Database, head: Head, entry: RelayedEntry): vo
     .run(entry.seq, entry.at, entry.op_id, prevHash, payloadHash, chainHash(prevHash, entry.seq, entry.at, payloadHash), entry.signature, entry.rejected, entry.payload)
 }
 
+/** The brain's own id, as its genesis carries it (args.brain), or null before a genesis. */
+export function brainIdOf(db: Database.Database): string | null {
+  const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined
+  return genesis ? ((JSON.parse(genesis.payload) as OpEnvelope).args as { brain?: string }).brain ?? null : null
+}
+
 /** The team brain a log belongs to — its genesis's team.brain — or null for a private brain. */
 export function teamBrainOf(db: Database.Database): string | null {
   const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined
@@ -88,21 +94,24 @@ export function needsGenesis(db: Database.Database): boolean {
 
 /** Namespace of the genesis op_id (uuidv5): a genesis draws no random id. */
 const GENESIS_NAMESPACE = '5d3c8e2a-7f41-4b9e-a6d0-2c1f9b8e4a70'
+const BRAIN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
- * Writes seq 1: `brain.genesis` with the hash of the brain's state as it is
- * now, and that state as the snapshot at seq 1 — what a rebuild starts from.
- * Its op_id is derived from the time and the state, so the migration
- * preflight and the live run write the same genesis.
+ * Writes seq 1: `brain.genesis` with the brain's id and the hash of its state
+ * as it is now, and that state as the snapshot at seq 1 — what a rebuild
+ * starts from. Its op_id is derived from the id, the time and the state, so
+ * the migration preflight and the live run write the same genesis, and two
+ * brains never share one.
  */
-export function writeGenesis(db: Database.Database, schema: number, at: string): void {
+export function writeGenesis(db: Database.Database, schema: number, at: string, brain: string): void {
+  if (!BRAIN_ID.test(brain)) throw new Error(`a brain id is a lowercase UUID, not "${brain}"`)
   const dump = stateDump(db)
   const state_hash = stateHash(dump)
   const op: OpEnvelope = {
-    op_id: uuidv5(GENESIS_NAMESPACE, `${at}\n${state_hash}`),
+    op_id: uuidv5(GENESIS_NAMESPACE, `${brain}\n${at}\n${state_hash}`),
     schema,
     call: 'brain.genesis',
-    args: { state_hash },
+    args: { brain, state_hash },
     provenance: { ...NO_ACTOR, ingestion_method: 'other' },
   }
   const { seq } = appendOp(db, op, at)

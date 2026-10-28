@@ -128,9 +128,10 @@ export function seedDefaultBrain(
   agentId: string = DEFAULT_BRAIN_AGENT_ID,
   userId: string = DEFAULT_BRAIN_USER_ID,
   names: DefaultBrainNames = {},
+  brainId?: string,
 ): void {
   const resolved = { agentName: names.agentName?.trim() || agentId, userName: names.userName?.trim() || userId }
-  const eml = new EML({ dbPath: brainPath, namespace: agentId })
+  const eml = new EML({ dbPath: brainPath, namespace: agentId, brainId })
   try {
     const env = eml.env({ ingestion_method: 'direct' })
     if (!eml.agents.exists(agentId)) {

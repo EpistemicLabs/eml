@@ -68,7 +68,8 @@ export function sealHandleWith(nonce: Uint8Array, handle: string, at: { brain: s
 }
 
 /**
- * The member set the genesis founds: `brain.genesis {state_hash, root}` with
+ * The member set the genesis founds: `brain.genesis {brain, state_hash, root}`
+ * with brain = team.brain (every brain carries its id in its genesis) and
  * root = {member, device_cert, handle, key_id}, signed by the root's device.
  * The first owner, epoch 0.
  */
@@ -76,11 +77,12 @@ export function genesisMembers(genesis: OpenedOp): MemberSet {
   const { envelope } = genesis
   if (envelope.call !== 'brain.genesis') throw new ProtocolError(`the first record is ${envelope.call}, not brain.genesis`)
   const args = asObject(envelope.args, 'the genesis args')
-  exactFields(args, ['state_hash', 'root'], 'the genesis args')
+  exactFields(args, ['brain', 'state_hash', 'root'], 'the genesis args')
+  const brain = envelope.team.brain
+  if (args.brain !== brain) throw new ProtocolError('the genesis names another brain than its team fields')
   if (typeof args.state_hash !== 'string' || !HASH.test(args.state_hash)) throw new ProtocolError('state_hash is not 64 lowercase hex digits')
   const root = asObject(args.root, 'root')
   exactFields(root, ['member', 'device_cert', 'handle', 'key_id'], 'root')
-  const brain = envelope.team.brain
   const cert = memberCert(root.device_cert, brain, root.member)
   if (envelope.team.device !== cert.device_sign) throw new ProtocolError('the genesis is not signed by the root\'s device')
   fromBase64url(root.key_id, KEY_BYTES, 'root.key_id')

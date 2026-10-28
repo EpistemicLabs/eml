@@ -5,6 +5,7 @@ import type Database_t from 'better-sqlite3'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
 import { applyMigration } from './database'
 import { type Clock, systemClock } from './env'
+import { brainIdOf } from './log/log'
 
 /**
  * Forward migration runner (v0.9-PROPOSAL §5.8), made safe in v0.14 Cluster 0
@@ -87,9 +88,9 @@ export interface MigrationReport {
 /** The four pipeline steps — injectable so tests can fail one on purpose. */
 export interface MigrationSteps {
   backup(brainPath: string, backupPath: string): void
-  /** `at`: applied_at of the ledger rows the files get. */
-  preflight(backupPath: string, scratchPath: string, files: MigrationFile[], at: string): void
-  applyLive(brainPath: string, files: MigrationFile[], at: string): void
+  /** `at`: applied_at of the ledger rows the files get; `brain`: the id a genesis written on the way names (control.db's). */
+  preflight(backupPath: string, scratchPath: string, files: MigrationFile[], at: string, brain: string): void
+  applyLive(brainPath: string, files: MigrationFile[], at: string, brain: string): void
   restore(backupPath: string, brainPath: string): void
 }
 
@@ -230,7 +231,7 @@ function migrateOne(args: RunForwardMigrationsOptions & {
   const at = (args.clock ?? systemClock)()
   const scratchPath = `${backupPath}.preflight`
   try {
-    steps.preflight(backupPath, scratchPath, files, at)
+    steps.preflight(backupPath, scratchPath, files, at, brain.id)
   } catch (err) {
     return fail('preflight_failed', err, backupPath)
   } finally {
@@ -238,7 +239,7 @@ function migrateOne(args: RunForwardMigrationsOptions & {
   }
 
   try {
-    steps.applyLive(brainPath, files, at)
+    steps.applyLive(brainPath, files, at, brain.id)
   } catch (liveErr) {
     try {
       steps.restore(backupPath, brainPath)
@@ -281,11 +282,11 @@ const DEFAULT_STEPS: MigrationSteps = {
     withDb(brainPath, db => backupBrain(db, backupPath))
   },
 
-  preflight(backupPath, scratchPath, files, at) {
+  preflight(backupPath, scratchPath, files, at, brain) {
     copyFileSync(backupPath, scratchPath)
     withDb(scratchPath, db => {
       const fkBefore = foreignKeyViolations(db)
-      applyFiles(db, files, at)
+      applyFiles(db, files, at, brain)
       assertIntegrity(db, 'preflight')
       const fkAfter = foreignKeyViolations(db)
       if (fkAfter > fkBefore) {
@@ -294,8 +295,8 @@ const DEFAULT_STEPS: MigrationSteps = {
     })
   },
 
-  applyLive(brainPath, files, at) {
-    withDb(brainPath, db => applyFiles(db, files, at))
+  applyLive(brainPath, files, at, brain) {
+    withDb(brainPath, db => applyFiles(db, files, at, brain))
   },
 
   restore(backupPath, brainPath) {
@@ -304,6 +305,42 @@ const DEFAULT_STEPS: MigrationSteps = {
     rmSync(`${brainPath}-shm`, { force: true })
     withDb(brainPath, db => assertIntegrity(db, 'restore'))
   },
+}
+
+/** A registered brain whose genesis names another id than its control row. */
+export interface BrainIdMismatch {
+  brainId: string
+  brainName: string
+  genesisId: string | null
+}
+
+/**
+ * v0.21: a brain carries its id in its genesis; control.db's brains.id is a
+ * cache of it. Checks every brain with status ok that has a genesis and sets
+ * a mismatch to needs_intervention — routing then refuses it, as it does a
+ * failed migration. A brain without a log yet (an older schema) or without
+ * its file is left to the migration and routing checks.
+ */
+export function checkBrainIds(opts: { control: Database_t.Database, dataDir: string }): BrainIdMismatch[] {
+  const brains = opts.control.prepare(`SELECT id, name, brain_file FROM brains WHERE status = 'ok' ORDER BY created_at ASC`)
+    .all() as Array<{ id: string, name: string, brain_file: string }>
+  const mismatches: BrainIdMismatch[] = []
+  for (const brain of brains) {
+    const file = path.isAbsolute(brain.brain_file) ? brain.brain_file : path.join(opts.dataDir, brain.brain_file)
+    if (!existsSync(file)) continue
+    const db = new Database(file, { readonly: true, fileMustExist: true })
+    let genesisId: string | null | undefined
+    try {
+      const hasLog = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'op_log'`).get()
+      genesisId = hasLog && db.prepare('SELECT 1 FROM op_log WHERE seq = 1').get() ? brainIdOf(db) : undefined
+    } finally {
+      db.close()
+    }
+    if (genesisId === undefined || genesisId === brain.id) continue
+    opts.control.prepare(`UPDATE brains SET status = 'needs_intervention', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(brain.id)
+    mismatches.push({ brainId: brain.id, brainName: brain.name, genesisId })
+  }
+  return mismatches
 }
 
 /**
@@ -317,12 +354,12 @@ export function backupBrain(db: Database_t.Database, backupPath: string): void {
   withDb(backupPath, db => assertIntegrity(db, 'backup'))
 }
 
-function applyFiles(db: Database_t.Database, files: MigrationFile[], at: string): void {
+function applyFiles(db: Database_t.Database, files: MigrationFile[], at: string, brain: string): void {
   db.pragma('foreign_keys = OFF')
   try {
     for (const f of files) {
       try {
-        applyMigration(db, f.version, f.sql, () => at)
+        applyMigration(db, f.version, f.sql, () => at, brain)
       } catch (err) {
         throw new Error(`v0.${f.version}_migrate.sql: ${errorText(err)}`)
       }
