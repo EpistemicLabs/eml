@@ -47,7 +47,8 @@
  *
  * v0.20: every write route decodes its request into one command and runs it
  * with eml.apply(command, env) (core commands/); core validates, the routes
- * keep only their query-string whitelists.
+ * keep only their query-string whitelists. v0.21: through applyWrite
+ * (write.ts), which refuses a write to a shared brain while it is read-only.
  *
  * Provenance (v0.19): the MCP server sends X-EML-Session, X-EML-Model,
  * X-EML-Harness and X-EML-Ingestion; the server stamps them on every write
@@ -94,6 +95,7 @@ import {
 import { ConnectionPool } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
+import { applyWrite, SharedBrainReadOnly } from './write'
 
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
@@ -472,7 +474,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = eml.apply({ name: 'engram.create', input }, env)
+      const engram = applyWrite(eml, { name: 'engram.create', input }, env)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -480,7 +482,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = eml.apply({ name: 'task.track', input: { ...body, id: trackMatch[1] } }, env)
+      const task = applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
@@ -489,13 +491,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       // id → learning.add_evidence; without → engram.create of a learning with its first evidence
       if (body.id !== undefined) {
-        const r = eml.apply({ name: 'learning.add_evidence', input: body as never }, env)
+        const r = applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env)
         return json(res, 201, { written: true, ...r })
       }
       const { source, happened, quote, stance, rule_id, ...lesson } = body
       const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
       try {
-        const { learning, ...engram } = eml.apply({ name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env)
+        const { learning, ...engram } = applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env)
         return json(res, 201, { written: true, engram, learning })
       } catch (err) {
         // the topic check found a match: nothing written, the matches named (as since v0.19)
@@ -579,7 +581,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = eml.apply({ name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env)
+      const engram = applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -588,7 +590,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = eml.apply({ name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env)
+      const engram = applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env)
       return json(res, 200, { engram })
     }
 
@@ -608,12 +610,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = eml.apply({ name: 'object.create', input: { object, fields: body } }, env)
+        const result = applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = eml.apply({ name: 'object.update', input: { object, id, patch: body } }, env)
+        const result = applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env)
         return json(res, 200, result)
       }
     }
@@ -622,7 +624,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      const { created } = eml.apply({ name: 'relation.create', input: body as never }, env)
+      const { created } = applyWrite(eml, { name: 'relation.create', input: body as never }, env)
       return json(res, 201, { ok: true, created })
     }
 
@@ -822,6 +824,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     json(res, 404, { error: 'Not found' })
 
   } catch (err: unknown) { const e = err as Error;
+    // v0.21: a write to a shared brain that is read-only right now
+    if (err instanceof SharedBrainReadOnly) return json(res, 503, { error: err.message, code: err.code })
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
       // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev

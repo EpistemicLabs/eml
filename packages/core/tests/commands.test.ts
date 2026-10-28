@@ -43,7 +43,7 @@ describe('the command set', () => {
       for (const m of methods((eml as any)[store])) if (WRITE.test(m)) writes.push(`${store}.${m}`)
     }
     expect(writes.sort()).toEqual([])
-    expect(methods(eml).filter(m => !m.startsWith('wire')).sort()).toEqual(['apply', 'close', 'env', 'now'])
+    expect(methods(eml).filter(m => !m.startsWith('wire')).sort()).toEqual(['apply', 'close', 'env', 'now', 'teamBrain'])
     // the writers and the old write functions are not exported
     for (const name of ['EngramWriter', 'ObjectWriter', 'appendEntry', 'createObject', 'updateObject']) expect(name in core).toBe(false)
   })
