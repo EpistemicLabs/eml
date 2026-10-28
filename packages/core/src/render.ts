@@ -17,6 +17,12 @@ export function previewText(content: string | null | undefined, maxChars: number
  * full id for eml_get. No full body, no properties dump — the full engram is one
  * eml_get away.
  */
+/** " · by <handle>", with the agent that wrote for them: " · by dominik (via motti)" (v0.21); empty without a handle. */
+function byline(e: { ingested_by: string | null, agent: string | null }): string {
+  if (!e.ingested_by) return ''
+  return e.agent ? ` · by ${e.ingested_by} (via ${e.agent})` : ` · by ${e.ingested_by}`
+}
+
 export function renderRecallMarkdown(query: string, results: Engram[]): string {
   const lines = [`# EML Recall — "${query}"`, '', `_${results.length} engram(s)_`, '']
   for (const c of results) {
@@ -27,8 +33,7 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
     lines.push(`- **[${meta.join(' | ')}]**`)
     lines.push(`  ${previewText(c.content, RECALL_PREVIEW_CHARS)}`)
     // v0.11 team-brains: surface authorship when present (shared-brain "who wrote this").
-    const by = c.ingested_by ? ` · by ${c.ingested_by}` : ''
-    lines.push(`  id: ${c.id}${by} · eml_get for full content`)
+    lines.push(`  id: ${c.id}${byline(c)} · eml_get for full content`)
     lines.push('')
   }
   return lines.join('\n')
@@ -53,8 +58,7 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   for (const s of state.current_status) {
     const st = s.properties?.state ? `[${s.properties.state}] ` : ''
     const next = s.properties?.next_step ? ` · next: ${s.properties.next_step}` : ''
-    const by = s.ingested_by ? ` · by ${s.ingested_by}` : ''
-    lines.push(`- ${st}${previewText(s.content, SHOW_PREVIEW_CHARS)}${next}${by} · ${s.id}`)
+    lines.push(`- ${st}${previewText(s.content, SHOW_PREVIEW_CHARS)}${next}${byline(s)} · ${s.id}`)
   }
   lines.push('')
 

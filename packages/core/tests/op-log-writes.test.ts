@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { EML, CommandError, COMMAND_NAMES, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
+import { EML, CommandError, COMMAND_NAMES, CURRENT_BRAIN_SCHEMA_VERSION, renderRecallMarkdown } from '../src'
 import { engramCreate } from '../src/commands/engram-create'
 import { applyOp } from '../src/log/apply-op'
 import { GENESIS_PREV_HASH, chainHash, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { uuidv5 } from '../src/log/op'
 import { brainRef, exportSet } from '../src/log/move'
+import { verify } from '../src/log/rebuild'
 import { otherBrain, validDecision, validNote, validTask } from './fixtures'
 
 // v0.21 (spec local-op-log-spec, block 3): every write is an op in the log —
@@ -152,25 +153,26 @@ describe('writes through the op log', () => {
     const entry = last(a.eml)
     const e = b.eml
     const stores = { eml: e, db: raw(e), store: e.engrams, projects: e.projects, users: e.users, agents: e.agents, entities: e.entities, tags: e.tags, subjects: e.subjects }
-    raw(e).transaction(() => applyOp(stores, payloadOf(entry), entry.at))()
+    raw(e).transaction(() => applyOp(stores, payloadOf(entry), entry.at, null))()
     expect(row(b.eml)).toEqual(row(a.eml))
     a.eml.close(); b.eml.close()
   })
 
-  it('an op\'s provenance is checked before it runs: exactly the actor\'s fields, strings or null, a known ingestion_method', () => {
+  it('an op\'s provenance is checked before it runs: exactly the actor\'s fields, strings or null, a known ingestion_method, an agent in the handle charset', () => {
     const a = brain()
     a.eml.apply({ name: 'engram.create', input: validNote({ title: 'p' }) })
     const op = payloadOf(last(a.eml))
     const e = brain().eml
     const stores = { eml: e, db: raw(e), store: e.engrams, projects: e.projects, users: e.users, agents: e.agents, entities: e.entities, tags: e.tags, subjects: e.subjects }
-    const run = (provenance: unknown) => () => applyOp(stores, { ...op, provenance } as OpEnvelope, START)
+    const run = (provenance: unknown) => () => applyOp(stores, { ...op, provenance } as OpEnvelope, START, null)
     expect(run({ ...op.provenance, ingestion_method: 'relay' })).toThrow(/ingestion_method "relay" is not one of hook, direct, bulk, mcp, other/)
     expect(run({ ...op.provenance, device: 'x' })).toThrow(/provenance has the fields/)
     expect(run((({ harness: _h, ...rest }) => rest)(op.provenance))).toThrow(/provenance has the fields/)
     expect(run({ ...op.provenance, model: 5 })).toThrow(/provenance\.model is neither a string nor null/)
+    for (const agent of ['Pilot', 'pi lot', '', 'p'.repeat(64), 'pilöt']) expect(run({ ...op.provenance, agent }), agent).toThrow(/provenance\.agent is 1–63 characters/)
     expect(run(null)).toThrow(/provenance is not an object/)
     expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(0)
-    raw(e).transaction(() => applyOp(stores, op, START))()
+    raw(e).transaction(() => applyOp(stores, op, START, null))()
     expect(raw(e).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get('p').n).toBe(1)
     a.eml.close(); e.close()
   })
@@ -188,6 +190,39 @@ describe('writes through the op log', () => {
       expect(e.hash).toBe(chainHash(e.prev_hash, e.seq, e.at, e.payload_hash))
       expect(e.signature).toBeNull()
     })
+    eml.close()
+  })
+})
+
+describe('the agent that wrote (v0.21, decision provenance-agent-field)', () => {
+  it('is stamped on the engram and its entries next to the handle, and a rebuild keeps it', () => {
+    const { eml } = brain()
+    const env = eml.env({ handle: 'juno', agent: 'pilot', ingestion_method: 'mcp' })
+    const t = eml.apply({ name: 'engram.create', input: validTask({ title: 'hub' }) }, env)
+    eml.apply({ name: 'task.track', input: { id: t.id, text: 'progress' } }, env)
+    expect(eml.engrams.get(t.id)).toMatchObject({ ingested_by: 'juno', agent: 'pilot' })
+    const entries = eml.engrams.entries(t.id)
+    expect(entries.length).toBeGreaterThan(0)
+    for (const e of entries) expect([e.author, e.agent]).toEqual(['juno', 'pilot'])
+    expect(payloadOf(last(eml)).provenance).toMatchObject({ handle: 'juno', agent: 'pilot' })
+    expect(verify(raw(eml))).toMatchObject({ ok: true })
+    eml.close()
+  })
+
+  it('is null for a human\'s own write', () => {
+    const { eml } = brain()
+    const n = eml.apply({ name: 'engram.create', input: validNote() }, eml.env({ handle: 'juno', ingestion_method: 'direct' }))
+    expect(eml.engrams.get(n.id)).toMatchObject({ ingested_by: 'juno', agent: null })
+    eml.close()
+  })
+
+  it('recall shows it after the handle: "by juno (via pilot)"; without an agent "by juno"', () => {
+    const { eml } = brain()
+    const a = eml.apply({ name: 'engram.create', input: validNote({ title: 'via' }) }, eml.env({ handle: 'juno', agent: 'pilot' }))
+    const b = eml.apply({ name: 'engram.create', input: validNote({ title: 'own' }) }, eml.env({ handle: 'juno' }))
+    const md = renderRecallMarkdown('q', [eml.engrams.get(a.id)!, eml.engrams.get(b.id)!])
+    expect(md).toContain(`id: ${a.id} · by juno (via pilot) · eml_get`)
+    expect(md).toContain(`id: ${b.id} · by juno · eml_get`)
     eml.close()
   })
 })

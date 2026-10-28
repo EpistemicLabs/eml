@@ -24,6 +24,7 @@ export interface Entry {
   kind: EntryKind
   at: string
   author: string | null
+  agent: string | null
   session_id: string | null
   model: string | null
   stage: string | null
@@ -62,6 +63,7 @@ export function appendEntry(db: Database.Database, engramId: string, input: Entr
     kind: input.kind,
     at: w.at,
     author: w.actor.handle,
+    agent: w.actor.agent,
     session_id: w.actor.session_id,
     model: w.actor.model,
     stage: input.stage ?? null,
@@ -79,8 +81,8 @@ export function appendEntry(db: Database.Database, engramId: string, input: Entr
 /** An entry row as given, with the next ord (v0.21) — the one place entries are inserted. */
 export function insertEntryRow(db: Database.Database, entry: Entry): void {
   db.prepare(`
-    INSERT INTO entries (id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id, ord)
-    VALUES (@id, @engram_id, @kind, @at, @author, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id,
+    INSERT INTO entries (id, engram_id, kind, at, author, agent, session_id, model, stage, text, source, stance, quote, rule_id, ord)
+    VALUES (@id, @engram_id, @kind, @at, @author, @agent, @session_id, @model, @stage, @text, @source, @stance, @quote, @rule_id,
       (SELECT COALESCE(MAX(ord), 0) + 1 FROM entries))
   `).run(entry)
 }
@@ -89,7 +91,7 @@ export function insertEntryRow(db: Database.Database, entry: Entry): void {
 export function listEntries(db: Database.Database, engramId: string, kinds?: readonly EntryKind[]): Entry[] {
   const filter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => '?').join(', ')})` : ''
   return db.prepare(
-    `SELECT id, engram_id, kind, at, author, session_id, model, stage, text, source, stance, quote, rule_id
+    `SELECT id, engram_id, kind, at, author, agent, session_id, model, stage, text, source, stance, quote, rule_id
      FROM entries WHERE engram_id = ?${filter} ORDER BY at ASC, ord ASC`,
   ).all(engramId, ...(kinds ?? [])) as Entry[]
 }

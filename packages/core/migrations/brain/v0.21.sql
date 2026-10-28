@@ -102,6 +102,7 @@ CREATE TABLE engrams (
   -- ============ Provenance ============
   origin              TEXT,                   -- the software that wrote it (cockpit-notes, …); NULL for agent writes
   ingested_by         TEXT,
+  agent               TEXT,                   -- the agent that wrote for ingested_by (v0.21); NULL for a human's own write
   ingestion_method    TEXT
                       CHECK(ingestion_method IS NULL OR ingestion_method IN ('hook','direct','bulk','mcp','other')),
   session_id          TEXT,                   -- stamped by the server on every write (v0.19)
@@ -214,6 +215,7 @@ CREATE TABLE entries (
   kind        TEXT NOT NULL CHECK(kind IN ('note','change','evidence','review')),
   at          TEXT NOT NULL,                  -- ISO-8601, set by the server
   author      TEXT,                           -- ingested-by handle of the caller (NULL in-process)
+  agent       TEXT,                           -- as engrams.agent (v0.21)
   session_id  TEXT,
   model       TEXT,
   stage       TEXT,                           -- task: stage at the time of the entry (or the new stage)
@@ -236,20 +238,30 @@ CREATE TABLE _eml_migrations (
 -- The op log (v0.21): every brain write in order, hash-chained. An entry's
 -- link hashes the previous link, its seq, its time and its payload's hash
 -- (decision op-log-chain-covers-seq-and-time); payload is the op's envelope
--- {op_id, schema, call, args, provenance} as JSON in the caller's key order (log/op.ts).
+-- {op_id, schema, call, args, provenance[, team]} as JSON in the caller's key order
+-- (protocol op.ts). A shared brain keeps every relayed record at its seq: one
+-- it refused stays in the chain as rejected, and one that did not open has
+-- canonicalJson of the record as its payload (PROTOCOL.md §4).
 -- seq 1 is the brain's genesis: the state the log starts from, kept in
 -- op_snapshots. Entries are never changed or removed (decision
 -- op-log-no-redaction).
 CREATE TABLE op_log (
   seq           INTEGER PRIMARY KEY,          -- 1, 2, … without gaps; 1 = genesis
   at            TEXT NOT NULL,                -- the op's time, ISO-8601 UTC ms; every row it writes carries it
-  op_id         TEXT NOT NULL UNIQUE,
+  op_id         TEXT,                         -- NULL only for a rejected record that names no valid op_id
   prev_hash     TEXT NOT NULL,                -- hash of seq - 1; 64 zeros for seq 1
   payload_hash  TEXT NOT NULL,                -- sha256 of payload, hex
   hash          TEXT NOT NULL,                -- sha256 of prev_hash, seq, at, payload_hash
   signature     BLOB,                         -- the author device's signature over payload_hash (shared brains); NULL in a private brain
-  payload       TEXT NOT NULL
+  rejected      TEXT,                         -- NULL = applied; else why the replica refused it (shared brains): outside the hash and the state
+  payload       TEXT NOT NULL,
+  CHECK (op_id IS NOT NULL OR rejected IS NOT NULL)
 );
+-- An op_id occurs once in a log (decision shared-log-rejected-entries): the
+-- index holds it for applied entries; a replica refuses a record whose op_id
+-- is in the log at all, applied or rejected, and keeps it as rejected.
+CREATE UNIQUE INDEX idx_op_log_op_id ON op_log(op_id) WHERE rejected IS NULL;
+CREATE INDEX idx_op_log_op_id_any ON op_log(op_id);
 
 -- The brain's state after op `seq` (log/snapshot.ts): every state table as
 -- gzipped canonical JSON, with the hash of that JSON.

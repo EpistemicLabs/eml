@@ -4,6 +4,7 @@ import { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { currentSchemaSql } from '../database'
 import { applyOp, commandStores } from './apply-op'
+import { teamBrainOf } from './log'
 import { decodeSnapshot, stateDump, stateHash, type StateDump } from './snapshot'
 
 // --- Rebuild and verify (v0.21) --------------------------------------------------
@@ -23,8 +24,9 @@ export class ReplayError extends Error {
 
 /**
  * Rebuilds the state of `source` into `into` (an empty database): the current
- * schema, the genesis snapshot, then every later op through applyOp with its
- * stored payload and time. `into` gets the state, not the log.
+ * schema, the genesis snapshot, then every later applied op through applyOp
+ * with its stored payload and time (a rejected entry changed nothing). `into`
+ * gets the state, not the log.
  */
 export function rebuild(into: Database.Database, source: Database.Database): void {
   const genesis = source.prepare('SELECT schema, data FROM op_snapshots WHERE seq = 1').get() as { schema: number, data: Buffer } | undefined
@@ -39,13 +41,14 @@ export function rebuild(into: Database.Database, source: Database.Database): voi
   into.pragma('foreign_keys = ON')
 
   const stores = commandStores(EML.fromConnection(into, 'rebuild'), into)
-  const entries = source.prepare('SELECT seq, at, payload FROM op_log WHERE seq > 1 ORDER BY seq').iterate() as IterableIterator<{ seq: number, at: string, payload: string }>
+  const teamBrain = teamBrainOf(source)
+  const entries = source.prepare('SELECT seq, at, payload FROM op_log WHERE seq > 1 AND rejected IS NULL ORDER BY seq').iterate() as IterableIterator<{ seq: number, at: string, payload: string }>
   into.transaction(() => {
     for (const entry of entries) {
       const op = JSON.parse(entry.payload) as OpEnvelope
       if (op.schema !== CURRENT_BRAIN_SCHEMA_VERSION) throw new ReplayError(entry.seq, `the op is schema ${op.schema}; this code replays schema ${CURRENT_BRAIN_SCHEMA_VERSION}`)
       try {
-        applyOp(stores, op, entry.at)
+        applyOp(stores, op, entry.at, teamBrain)
       } catch (err) {
         throw new ReplayError(entry.seq, `${op.call} failed on replay: ${(err as Error).message}`)
       }
@@ -69,12 +72,13 @@ export type VerifyResult =
 
 /**
  * Checks a brain against its log: every entry in order without gaps, each
- * payload against its hash and each chain link; the genesis against its
+ * payload against its hash and each chain link (rejected entries included —
+ * they are in the chain); the genesis against its
  * snapshot; then a rebuild into memory, compared table by table with the live
  * state. Returns ok with the state hash, or the first problem found.
  */
 export function verify(db: Database.Database): VerifyResult {
-  const entries = db.prepare('SELECT seq, at, op_id, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, at: string, op_id: string, prev_hash: string, payload_hash: string, hash: string, payload: string }>
+  const entries = db.prepare('SELECT seq, at, op_id, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, at: string, op_id: string | null, prev_hash: string, payload_hash: string, hash: string, payload: string }>
   if (entries.length === 0) return { ok: false, problem: 'the log is empty' }
 
   let prev = GENESIS_PREV_HASH
@@ -83,7 +87,8 @@ export function verify(db: Database.Database): VerifyResult {
     if (e.seq !== seq) return { ok: false, seq, problem: `entry ${seq} is missing (the next one is ${e.seq})` }
     if (e.prev_hash !== prev) return { ok: false, seq, problem: 'prev_hash is not the previous entry\'s link' }
     if (e.payload_hash !== sha256Hex(e.payload)) return { ok: false, seq, problem: 'the payload does not match its payload_hash' }
-    if (e.op_id !== (JSON.parse(e.payload) as OpEnvelope).op_id) return { ok: false, seq, problem: 'op_id is not the payload\'s op_id' }
+    // a rejected record that names no valid op_id is logged without one (the schema allows it only there)
+    if (e.op_id !== null && e.op_id !== (JSON.parse(e.payload) as OpEnvelope).op_id) return { ok: false, seq, problem: 'op_id is not the payload\'s op_id' }
     let link: string
     try { link = chainHash(e.prev_hash, e.seq, e.at, e.payload_hash) } catch (err) { return { ok: false, seq, problem: (err as Error).message } }
     if (e.hash !== link) return { ok: false, seq, problem: 'the chain link does not match its seq, at and hashes' }

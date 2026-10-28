@@ -11,8 +11,8 @@ export function registerRecallTool(server: McpServer, http: HttpClient): void {
       description:
         'Keyword/relevance search across active + planned engrams (FTS5 full-text, not ' +
         'embeddings) — "what do I know about X?". Ranked by text relevance (bm25); ' +
-        'recency breaks near-ties. Returns compact previews (with `by <handle>` ' +
-        'authorship in a shared brain) — drill into a hit via eml_get <id> for the full body.\n\n' +
+        'recency breaks near-ties. Returns compact previews (with authorship: `by <handle>`, ' +
+        'or `by <handle> (via <agent>)` when an agent wrote it for them) — drill into a hit via eml_get <id> for the full body.\n\n' +
         'For filtered enumeration by type/scope/status (incl. superseded/historical) use ' +
         'eml_list; for a whole-scope dashboard use eml_show; for a known ID use eml_get.',
       inputSchema: z.object({

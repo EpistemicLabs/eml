@@ -14,9 +14,9 @@ import { createV20Brain } from './fixtures'
 
 const NOW = '2026-10-26T12:00:00.000Z'
 
-/** The state without ord (schema 21 adds it; every other value stays as it was). */
-function withoutOrd(dump: StateDump): StateDump {
-  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _, ...row }) => row)]))
+/** The state without ord and agent (schema 21 adds them; every other value stays as it was). */
+function withoutNew(dump: StateDump): StateDump {
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _o, agent: _a, ...row }) => row)]))
 }
 
 /** ord is 1, 2, … in the rows' rowid order on engrams, relations and entries. */
@@ -72,7 +72,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     })
   })
 
-  it('through initDatabase: no value of a state row changes (ord is added, in rowid order), and the genesis holds the brain as it was', () => {
+  it('through initDatabase: no value of a state row changes (ord is added, in rowid order; agent is added, NULL), and the genesis holds the brain as it was', () => {
     const file = join(dir, 'v20.db')
     createV20Brain(file)
     const before = read(file, db => stateDump(db))
@@ -80,8 +80,9 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     expectGenesis(file)
     read(file, db => {
       expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(21)
-      expect(withoutOrd(stateDump(db))).toEqual(before)
+      expect(withoutNew(stateDump(db))).toEqual(before)
       expectOrdInRowidOrder(db)
+      for (const table of ['engrams', 'entries']) expect((db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE agent IS NOT NULL`).get() as { n: number }).n, table).toBe(0)
       // the fixture fills every state table, so the comparison covers them all
       expect(Object.entries(before).filter(([, rows]) => rows.length === 0).map(([t]) => t)).toEqual([])
     })
@@ -101,7 +102,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21] })
     } finally { control.close() }
     expectGenesis(file)
-    read(file, db => { expect(withoutOrd(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
+    read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
   })
 
   it('the genesis is a function of the brain and the time: the same brain migrated twice writes the same entry', () => {
