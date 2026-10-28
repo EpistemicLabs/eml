@@ -156,7 +156,9 @@ describe('wrapped keys', () => {
     const foreign = wrapKey(set, newBrainKey(0), bo.device.sign.publicKey, ada.device.sign)
     expect(checkWrappedKey(set, foreign)).toEqual(foreign)
     expect(() => checkWrappedKey(set, wrapKey(set, keys[0], ada.device.sign.publicKey, bo.device.sign))).toThrow(/by an owner or by the recipient's own member/)
-    expect(() => checkWrappedKey(set, { ...next, sig: next.sig.slice(0, -2) + 'AA' })).toThrow(/not signed by its wrapper/)
+    const flipped = b64(next.sig)
+    flipped[5] ^= 1
+    expect(() => checkWrappedKey(set, { ...next, sig: flipped.toString('base64url') })).toThrow(/not signed by its wrapper/)
     expect(() => checkWrappedKey(set, { ...next, epoch: -1 })).toThrow(/epoch/)
     expect(() => checkWrappedKey(set, { ...next, sealed: 'short' })).toThrow(/sealed/)
     // a device that is no longer one: revoked, its keys are refused
