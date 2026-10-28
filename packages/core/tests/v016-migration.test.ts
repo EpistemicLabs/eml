@@ -166,11 +166,11 @@ describe('v0.16 migration — epistemic mode removed on a seeded v0.15 brain', (
     try {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(
-        `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 15)`,
+        `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('3b241101-e2bb-4255-8caf-4136c566a962', 'test', 'u1', 'brains/b1.db', 15)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [16, 17, 18, 19, 20, 21] })
-      expect((control.prepare(`SELECT schema_version FROM brains WHERE id = 'b1'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+      expect((control.prepare(`SELECT schema_version FROM brains WHERE id = '3b241101-e2bb-4255-8caf-4136c566a962'`).get() as { schema_version: number }).schema_version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     } finally { control.close() }
 
     expectMigratedData(before, read(brainFile))

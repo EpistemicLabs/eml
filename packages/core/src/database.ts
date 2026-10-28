@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
-import { type Clock, systemClock } from './env'
+import { type Clock, systemClock, randomId } from './env'
 import { needsGenesis, writeGenesis } from './log/log'
 
 // SQL files ship inside the package, next to src/ and dist/ — the same relative
@@ -39,15 +39,16 @@ const RUNNER_TRANSACTION_FROM = 20
  * the transaction. foreign_keys is the caller's (it cannot change in a transaction).
  *
  * v0.21: a step that leaves the brain with an empty op log (schema 21 reached,
- * fresh or migrated) writes the log's genesis in the same transaction.
+ * fresh or migrated) writes the log's genesis in the same transaction, with
+ * the brain's id `brain`.
  */
-export function applyMigration(db: Database.Database, version: number, sql: string, at: () => string): void {
+export function applyMigration(db: Database.Database, version: number, sql: string, at: () => string, brain: string): void {
   if (version >= RUNNER_TRANSACTION_FROM) {
     db.transaction(() => {
       db.exec(sql)
       const now = at()
       recordMigration(db, version, now)
-      if (needsGenesis(db)) writeGenesis(db, version, now)
+      if (needsGenesis(db)) writeGenesis(db, version, now, brain)
     })()
   } else {
     db.exec(sql)
@@ -65,19 +66,20 @@ export function applyMigration(db: Database.Database, version: number, sql: stri
  * - Older brain → error; it has to be migrated with an earlier EML release.
  *
  * Each step's ledger row is written here with `clock` as applied_at, in the
- * step's transaction (applyMigration).
+ * step's transaction (applyMigration). `brain` is the id a genesis written on
+ * the way names (v0.21); a caller without one gets a fresh random id.
  *
  * The server migrates registered brains eagerly through runForwardMigrations()
  * (backup, preflight, restore on failure); this in-process path keeps the
  * factory (index.ts, provisioning, tests) consistent with it.
  */
-export function initDatabase(dbPath: string, clock: Clock = systemClock): Database.Database {
+export function initDatabase(dbPath: string, clock: Clock = systemClock, brain: string = randomId()): Database.Database {
   // This is the CREATE path (fresh provisioning runs the schema below), so it
   // intentionally opens WITHOUT { fileMustExist: true } — unlike the
   // must-exist read/migrate paths (pool.ts, forward-migrations.ts).
   const db = new Database(dbPath)
   try {
-    return createOrMigrate(db, clock)
+    return createOrMigrate(db, clock, brain)
   } catch (err) {
     // a failed create or migration must not keep the file open (on Windows the
     // open handle locks it until the process exits)
@@ -86,7 +88,7 @@ export function initDatabase(dbPath: string, clock: Clock = systemClock): Databa
   }
 }
 
-function createOrMigrate(db: Database.Database, clock: Clock): Database.Database {
+function createOrMigrate(db: Database.Database, clock: Clock, brain: string): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
@@ -95,7 +97,7 @@ function createOrMigrate(db: Database.Database, clock: Clock): Database.Database
   ).get()
 
   if (!hasEngrams) {
-    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, currentSchemaSql(), clock)
+    applyMigration(db, CURRENT_BRAIN_SCHEMA_VERSION, currentSchemaSql(), clock, brain)
     return db
   }
 
@@ -116,7 +118,7 @@ function createOrMigrate(db: Database.Database, clock: Clock): Database.Database
   // engrams/relations, and a DROP TABLE engrams with FKs on would cascade-delete
   // the engram_tags / engram_subjects / entries rows (engram_labels up to schema 19).
   for (let v = version + 1; v <= CURRENT_BRAIN_SCHEMA_VERSION; v++) {
-    runMigrateWithFkOff(db, v, clock)
+    runMigrateWithFkOff(db, v, clock, brain)
   }
   return db
 }
@@ -125,10 +127,10 @@ function createOrMigrate(db: Database.Database, clock: Clock): Database.Database
  * Runs migration step `version` with foreign_keys OFF (SQLite cannot toggle it
  * inside a transaction), then turns it back ON.
  */
-function runMigrateWithFkOff(db: Database.Database, version: number, clock: Clock): void {
+function runMigrateWithFkOff(db: Database.Database, version: number, clock: Clock, brain: string): void {
   db.pragma('foreign_keys = OFF')
   try {
-    applyMigration(db, version, readSchema(`v0.${version}_migrate.sql`), clock)
+    applyMigration(db, version, readSchema(`v0.${version}_migrate.sql`), clock, brain)
   } finally {
     db.pragma('foreign_keys = ON')
   }

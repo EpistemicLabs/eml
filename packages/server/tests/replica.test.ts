@@ -57,6 +57,7 @@ class Team {
     const op_id = crypto.randomUUID()
     const member = this.owner.identity.publicKey
     const record = json(clearOp(this.envelope(this.owner, 'brain.genesis', {
+      brain: BRAIN,
       state_hash: EML.fromConnection(this.db, 'test').stateHash(),
       root: { member, device_cert: cert(this.owner), handle: sealHandle(this.owner.handle, { brain: BRAIN, op_id, member }, this.keys[0]), key_id: keyId(this.keys[0].key) },
     }, op_id), this.owner.device.sign).record)
@@ -145,6 +146,7 @@ describe('the replica', () => {
     expect(byAva.ingested_by).toBe('ava')
     expect(entries(team.db).every(e => e.rejected === null)).toBe(true)
     expect(verify(team.db)).toMatchObject({ ok: true, entries: 6 })
+    expect(EML.fromConnection(team.db, 'test').brainId()).toBe(BRAIN)
     expect(team.replica.state).toEqual({ kind: 'live' })
   })
 

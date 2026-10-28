@@ -120,7 +120,7 @@ describe('v0.17 migration — subject → title, themes → subjects on a seeded
     try {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(
-        `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 16)`,
+        `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('3b241101-e2bb-4255-8caf-4136c566a962', 'test', 'u1', 'brains/b1.db', 16)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [17, 18, 19, 20, 21] })

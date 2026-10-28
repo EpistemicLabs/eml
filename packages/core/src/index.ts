@@ -4,7 +4,7 @@ import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
 import { commandStores, takeRelayed, writeOp } from './log/apply-op'
-import { teamBrainOf, type RelayedEntry } from './log/log'
+import { brainIdOf, teamBrainOf, type RelayedEntry } from './log/log'
 import { stateDump, stateHash } from './log/snapshot'
 import type { OpEnvelope } from '@engramprotocol/protocol/log'
 import { AgentStore } from './agents'
@@ -29,7 +29,7 @@ export class EML {
   private newId!: IdSource
 
   constructor(config: EMLConfig) {
-    this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock)
+    this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock, config.brainId)
     this.ownsConnection = true
     this.wireStores(config.namespace, config)
   }
@@ -75,6 +75,11 @@ export class EML {
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
     return writeOp(commandStores(this, this.db), command, env)
+  }
+
+  /** v0.21: this brain's id, as its genesis carries it; control.db's brains.id is a cache of it. */
+  brainId(): string | null {
+    return brainIdOf(this.db)
   }
 
   /** v0.21: the team brain this brain's log belongs to (its genesis names it), null for a private brain. */
@@ -174,6 +179,8 @@ export {
 } from './provisioning'
 export {
   runForwardMigrations,
+  checkBrainIds,
+  type BrainIdMismatch,
   type ForwardMigrationsReport,
   type BrainMigrationOutcome,
   type RunForwardMigrationsOptions,

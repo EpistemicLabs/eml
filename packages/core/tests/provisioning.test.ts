@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3'
 import { initControlDatabase, CURRENT_BRAIN_SCHEMA_VERSION } from '../src/control'
 import { verifyToken } from '../src/tokens'
 import { provisionUser } from '../src/provisioning'
-import { EML } from '../src'
+import { EML, checkBrainIds } from '../src'
 
 describe('provisionUser', () => {
   let control: Database.Database
@@ -124,6 +124,32 @@ describe('provisionUser', () => {
       } finally {
         eml.close()
       }
+    })
+  })
+
+  describe('brain id (v0.21)', () => {
+    it('the genesis carries the control row\'s brain id', () => {
+      const result = provisionUser({ email: 'a@b.de', agentId: 'assistant', userId: 'alice', control, dataDir })
+      const eml = new EML({ dbPath: join(dataDir, result.brainFile), namespace: 'assistant' })
+      try {
+        expect(eml.brainId()).toBe(result.brainId)
+      } finally {
+        eml.close()
+      }
+    })
+
+    it('a control row naming another id than the genesis is set to needs_intervention at start', () => {
+      const ok = provisionUser({ email: 'a@b.de', agentId: 'assistant', userId: 'alice', control, dataDir })
+      const off = provisionUser({ email: 'b@b.de', agentId: 'assistant', userId: 'bob', control, dataDir })
+      const other = '0f8fad5b-d9cb-469f-a165-70867728950e'
+      control.pragma('foreign_keys = OFF')
+      control.prepare('UPDATE brains SET id = ? WHERE id = ?').run(other, off.brainId)
+      control.pragma('foreign_keys = ON')
+      expect(checkBrainIds({ control, dataDir })).toEqual([{ brainId: other, brainName: 'assistant', genesisId: off.brainId }])
+      const status = (id: string) => (control.prepare('SELECT status FROM brains WHERE id = ?').get(id) as { status: string }).status
+      expect(status(other)).toBe('needs_intervention')
+      expect(status(ok.brainId)).toBe('ok')
+      expect(checkBrainIds({ control, dataDir })).toEqual([])
     })
   })
 

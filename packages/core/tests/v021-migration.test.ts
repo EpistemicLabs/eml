@@ -13,6 +13,7 @@ import { createV20Brain } from './fixtures'
 // seq 1 with the hash of the brain's state and that state as the snapshot.
 
 const NOW = '2026-10-26T12:00:00.000Z'
+const ID = '3b241101-e2bb-4255-8caf-4136c566a962'
 
 /** The state without ord and agent (schema 21 adds them; every other value stays as it was). */
 function withoutNew(dump: StateDump): StateDump {
@@ -33,7 +34,7 @@ function read<T>(file: string, fn: (db: Database.Database) => T): T {
 }
 
 /** The genesis is the log's only entry, its chain link is valid, and it and its snapshot hold the brain's state. */
-function expectGenesis(file: string): void {
+function expectGenesis(file: string, brain?: string): void {
   read(file, db => {
     const log = db.prepare('SELECT * FROM op_log').all() as Array<Record<string, any>>
     expect(log).toHaveLength(1)
@@ -46,6 +47,8 @@ function expectGenesis(file: string): void {
     const state = stateHash(stateDump(db))
     const payload = JSON.parse(g.payload)
     expect(payload).toMatchObject({ schema: CURRENT_BRAIN_SCHEMA_VERSION, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
+    expect(payload.args.brain).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    if (brain !== undefined) expect(payload.args.brain).toBe(brain)
     expect(payload.provenance).toEqual({ handle: null, agent: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
 
     const snaps = db.prepare('SELECT * FROM op_snapshots').all() as Array<Record<string, any>>
@@ -97,21 +100,32 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     const control = initControlDatabase(':memory:')
     try {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
-      control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 20)`).run()
+      control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('${ID}', 'test', 'u1', 'brains/b1.db', 20)`).run()
       const report = runForwardMigrations({ control, dataDir, clock: () => NOW })
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21] })
     } finally { control.close() }
-    expectGenesis(file)
+    expectGenesis(file, ID)
     read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
   })
 
-  it('the genesis is a function of the brain and the time: the same brain migrated twice writes the same entry', () => {
-    const a = join(dir, 'a.db'); const b = join(dir, 'b.db')
-    createV20Brain(a); createV20Brain(b)
-    new EML({ namespace: 'test', dbPath: a, clock: () => NOW }).close()
-    new EML({ namespace: 'test', dbPath: b, clock: () => NOW }).close()
-    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log').get())
+  it('the genesis is a function of the brain\'s id, the time and the state: the preflight and the live run write the same entry', () => {
+    const a = join(dir, 'a.db'); const b = join(dir, 'b.db'); const c = join(dir, 'c.db')
+    createV20Brain(a); createV20Brain(b); createV20Brain(c)
+    new EML({ namespace: 'test', dbPath: a, clock: () => NOW, brainId: ID }).close()
+    new EML({ namespace: 'test', dbPath: b, clock: () => NOW, brainId: ID }).close()
+    new EML({ namespace: 'test', dbPath: c, clock: () => NOW }).close()
+    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log').get() as { op_id: string })
     expect(entry(b)).toEqual(entry(a))
+    expect(entry(c).op_id).not.toBe(entry(a).op_id)
+  })
+
+  it('two new brains in the same millisecond get their own ids and genesis op_ids', () => {
+    const a = new EML({ namespace: 'test', dbPath: ':memory:', clock: () => NOW })
+    const b = new EML({ namespace: 'test', dbPath: ':memory:', clock: () => NOW })
+    const genesis = (eml: EML) => ((eml as any).db.prepare('SELECT op_id FROM op_log WHERE seq = 1').get() as { op_id: string }).op_id
+    expect(a.brainId()).not.toBe(b.brainId())
+    expect(genesis(a)).not.toBe(genesis(b))
+    a.close(); b.close()
   })
 
   it('a brain already at 21 keeps its one genesis on the next open', () => {

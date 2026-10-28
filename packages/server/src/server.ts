@@ -69,6 +69,7 @@ import {
   EML,
   initControlDatabase,
   runForwardMigrations,
+  checkBrainIds,
   boot,
   projectBlock,
   inheritedRules,
@@ -190,6 +191,10 @@ if (migrationReport.failedCount > 0) {
 }
 if (migrationReport.migratedCount > 0) {
   console.log(`[migrations] migrated ${migrationReport.migratedCount} brain(s)`)
+}
+// v0.21: a brain's id is in its genesis; a control row naming another is refused until fixed.
+for (const m of checkBrainIds({ control: controlDb, dataDir: DATA_DIR })) {
+  console.error(`[brains] ${m.brainId} (${m.brainName}): its genesis names brain ${m.genesisId ?? 'none'} — set to needs_intervention`)
 }
 
 // --- Helpers ---

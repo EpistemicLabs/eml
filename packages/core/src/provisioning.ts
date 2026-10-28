@@ -57,7 +57,7 @@ export function provisionUser(opts: ProvisionOptions): ProvisionResult {
   // Step 1 — brain file + default brain seed.
   // If this fails there is no control-plane state yet → just rm the file.
   try {
-    seedDefaultBrain(brainPath, opts.agentId, opts.userId, { agentName: opts.agentName, userName: opts.userName })
+    seedDefaultBrain(brainPath, opts.agentId, opts.userId, { agentName: opts.agentName, userName: opts.userName }, brainId)
   } catch (err) {
     rmSync(brainPath, { force: true })
     throw err

@@ -671,4 +671,7 @@ export interface EMLConfig {
   // the system clock. And its id source; default random UUID v4. Tests fix both.
   clock?: () => string
   newId?: () => string
+  // v0.21: the brain's id, written into the genesis when this opens a new
+  // brain or migrates one to schema 21; default a random UUID.
+  brainId?: string
 }

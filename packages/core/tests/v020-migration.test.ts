@@ -148,7 +148,7 @@ describe('v0.20 migration — schema 20 on a seeded v0.19 brain', () => {
     const control = initControlDatabase(':memory:')
     try {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
-      control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('b1', 'test', 'u1', 'brains/b1.db', 19)`).run()
+      control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('3b241101-e2bb-4255-8caf-4136c566a962', 'test', 'u1', 'brains/b1.db', 19)`).run()
       const report = runForwardMigrations({ control, dataDir })
       expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [20, 21] })
     } finally { control.close() }
