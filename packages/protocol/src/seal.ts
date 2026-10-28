@@ -102,39 +102,57 @@ export function clearOp(envelope: TeamOp, device: KeyPair): { record: ClearRecor
 }
 
 /**
- * Opens a record of `brain` as the relay delivered it: exactly the fields of
- * its kind, the brain's own, decrypted with the key of its epoch (a sealed
- * record), the payload in its one byte form and a well-formed envelope, the
- * call in the right kind, and the signature of the device the envelope names.
- * Whether that device may write at this position and whether the epoch is
- * the current one is the member set's to say (block 4). Throws ProtocolError
- * (UnsupportedVersionError for a newer protocol).
+ * A record of `brain` as far as it can be checked without a key — what the
+ * relay checks of every record it takes: exactly the fields of its kind, the
+ * brain's own, an op_id that is a lowercase UUID; a sealed record's epoch, its
+ * nonce and a ciphertext no longer than the largest payload needs; a clear
+ * record's payload within the limit and a signature of the right length.
+ * Throws ProtocolError (UnsupportedVersionError for a newer protocol).
  */
-export function openRecord(record: unknown, brain: string, keyFor: (epoch: number) => Uint8Array | undefined): OpenedOp {
+export function checkRecord(record: unknown, brain: string): LogRecord {
   const r = asObject(record, 'a record')
   checkVersion(r.v)
   if (r.kind !== 'op' && r.kind !== 'clear') throw new ProtocolError(`a record's kind is op or clear, not ${String(r.kind)}`)
   exactFields(r, r.kind === 'op' ? SEALED_FIELDS : CLEAR_FIELDS, `a ${r.kind} record`)
   if (r.brain !== brain) throw new ProtocolError('the record is for another brain')
+  if (typeof r.op_id !== 'string' || !UUID.test(r.op_id)) throw new ProtocolError('the record\'s op_id is not a lowercase UUID')
+  if (r.kind === 'op') {
+    checkEpoch(r.epoch)
+    fromBase64url(r.nonce, NONCE_BYTES, 'the nonce')
+    if (typeof r.ct !== 'string') throw new ProtocolError('the ciphertext is a string')
+    if (r.ct.length > Math.ceil((SIG_BYTES + MAX_PAYLOAD + TAG_BYTES) * 4 / 3)) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
+  } else {
+    if (typeof r.payload !== 'string') throw new ProtocolError('the payload is a string')
+    if (Buffer.byteLength(r.payload, 'utf-8') > MAX_PAYLOAD) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
+    fromBase64url(r.sig, SIG_BYTES, 'the signature')
+  }
+  return r as unknown as LogRecord
+}
 
+/**
+ * Opens a record of `brain` as the relay delivered it: checkRecord, then for
+ * a sealed record decryption with the key of its epoch, the payload in its one
+ * byte form and a well-formed envelope, the call in the right kind, and the
+ * signature of the device the envelope names. Whether that device may write
+ * at this position and whether the epoch is the current one is the member
+ * set's to say. Throws ProtocolError (UnsupportedVersionError for a newer
+ * protocol).
+ */
+export function openRecord(record: unknown, brain: string, keyFor: (epoch: number) => Uint8Array | undefined): OpenedOp {
+  const r = checkRecord(record, brain)
   let payload: string
   let sig: string
   if (r.kind === 'op') {
-    checkEpoch(r.epoch)
-    if (typeof r.ct === 'string' && r.ct.length > Math.ceil((SIG_BYTES + MAX_PAYLOAD + TAG_BYTES) * 4 / 3)) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
-    const key = keyFor(r.epoch as number)
-    if (!key) throw new ProtocolError(`no brain key for epoch ${String(r.epoch)}`)
+    const key = keyFor(r.epoch)
+    if (!key) throw new ProtocolError(`no brain key for epoch ${r.epoch}`)
     const { ct, ...header } = r
     const plaintext = openBox(ct, r.nonce, canonicalJson(header), key, 'the record does not decrypt under the key of its epoch')
     if (plaintext.length <= SIG_BYTES) throw new ProtocolError('the sealed record holds no payload')
     sig = toBase64url(plaintext.subarray(0, SIG_BYTES))
     payload = utf8(plaintext.subarray(SIG_BYTES), 'the payload')
   } else {
-    if (typeof r.payload !== 'string') throw new ProtocolError('the payload is a string')
-    if (Buffer.byteLength(r.payload, 'utf-8') > MAX_PAYLOAD) throw new ProtocolError(`the payload is larger than ${MAX_PAYLOAD} bytes`)
     payload = r.payload
-    sig = r.sig as string
-    fromBase64url(sig, SIG_BYTES, 'the signature')
+    sig = r.sig
   }
 
   const envelope = parseEnvelope(payload, brain)
@@ -143,7 +161,7 @@ export function openRecord(record: unknown, brain: string, keyFor: (epoch: numbe
     throw new ProtocolError(r.kind === 'clear' ? `${envelope.call} is a brain write and travels sealed` : `${envelope.call} travels in the clear, not sealed`)
   }
   if (!verifyText(envelope.team.device, OP_DOMAIN, sha256Hex(payload), sig)) throw new ProtocolError('the op is not signed by its device')
-  return { envelope, payload, sig, epoch: r.kind === 'op' ? r.epoch as number : null }
+  return { envelope, payload, sig, epoch: r.kind === 'op' ? r.epoch : null }
 }
 
 /** The payload of `envelope` and the device's signature over it, after the same checks a reader makes. */

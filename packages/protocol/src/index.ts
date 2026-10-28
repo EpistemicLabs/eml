@@ -9,7 +9,7 @@ export {
   type KeyPair, type DeviceKeys, type DeviceCert,
 } from './keys'
 export {
-  MAX_PAYLOAD, isClearCall, sealOp, clearOp, openRecord,
+  MAX_PAYLOAD, isClearCall, sealOp, clearOp, checkRecord, openRecord,
   type BrainKey, type SealedRecord, type ClearRecord, type LogRecord, type TeamOp, type OpenedOp,
 } from './seal'
 export {

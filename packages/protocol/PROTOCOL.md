@@ -142,7 +142,12 @@ Every write to a brain — private or shared — is an op in the brain's log
   A clear record's author is its signing device alone: its provenance has
   every field null (no handle, agent, session, model or harness), or it is refused.
 - The relay delivers `{seq, at, record}`.
-- **Opening** a record: exactly its fields; this brain; for a sealed record the
+- **Checking** a record without a key (`checkRecord`, what the relay checks
+  of every record): exactly its fields; this brain; an `op_id` that is a
+  lowercase UUID; for a sealed record an epoch, a 24-byte nonce and a
+  ciphertext no longer than the largest payload needs; for a clear record a
+  payload within the limit and a 64-byte signature.
+- **Opening** a record: the check above; for a sealed record the
   key of its epoch and successful decryption; a UTF-8 payload in its one form;
   exactly the envelope's fields; the record's `op_id` is the payload's; the
   call travels in the right kind; the signature is `team.device`'s. Then the

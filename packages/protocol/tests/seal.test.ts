@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import sodium from 'libsodium-wrappers'
 import {
-  ProtocolError, UnsupportedVersionError, canonicalJson, clearOp, newDeviceKeys, newSigningKey, openRecord, ready,
+  ProtocolError, UnsupportedVersionError, canonicalJson, checkRecord, clearOp, newDeviceKeys, newSigningKey, openRecord, ready,
   sealOp, sha256Hex, signingKeyFromSeed, type KeyPair, type TeamOp,
 } from '../src'
 import { MAX_PAYLOAD, sealOpWith } from '../src/seal'
@@ -241,3 +241,33 @@ describe('the largest payload', () => {
   })
 })
 
+
+describe('what anyone checks without a key', () => {
+  const rec = V.sealed.record
+  const refuse = (record: unknown, error: RegExp) => expect(() => checkRecord(record, BRAIN)).toThrow(error)
+
+  it('passes both kinds of record through unchanged', () => {
+    expect(checkRecord(rec, BRAIN)).toEqual(rec)
+    expect(checkRecord(V.clear.record, BRAIN)).toEqual(V.clear.record)
+  })
+  it('refuses a newer version, another kind or brain, an extra field', () => {
+    expect(() => checkRecord({ ...rec, v: 2 }, BRAIN)).toThrow(UnsupportedVersionError)
+    refuse({ ...rec, kind: 'snapshot' }, /kind/)
+    expect(() => checkRecord(rec, '00000000-0000-4000-8000-000000000000')).toThrow(/another brain/)
+    refuse({ ...V.clear.record, epoch: 0 }, /no field epoch/)
+  })
+  it('refuses an op_id that is not a lowercase UUID', () => {
+    refuse({ ...rec, op_id: rec.op_id.toUpperCase() }, /op_id/)
+    refuse({ ...V.clear.record, op_id: 7 }, /op_id/)
+  })
+  it('refuses a sealed record\'s bad epoch, nonce or ciphertext', () => {
+    refuse({ ...rec, epoch: -1 }, /epoch/)
+    refuse({ ...rec, nonce: rec.nonce.slice(4) }, /nonce/)
+    refuse({ ...rec, ct: 7 }, /ciphertext/)
+    refuse({ ...rec, ct: 'A'.repeat(Math.ceil((64 + MAX_PAYLOAD + 16) * 4 / 3) + 1) }, /larger than/)
+  })
+  it('refuses a clear record\'s oversized payload or short signature', () => {
+    refuse({ ...V.clear.record, payload: 'x'.repeat(MAX_PAYLOAD + 1) }, /larger than/)
+    refuse({ ...V.clear.record, sig: V.clear.record.sig.slice(4) }, /signature/)
+  })
+})
