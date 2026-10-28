@@ -6,7 +6,8 @@ import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { asCommandError, type CommandContext } from '../commands/types'
 import type { Actor, Env } from '../env'
 import { INGESTION_METHODS } from '../types'
-import { appendOp, teamBrainOf } from './log'
+import { RelayOrderError, appendOp, appendRelayed, teamBrainOf, type RelayedEntry } from './log'
+import { stateDump, stateHash, encodeSnapshot } from './snapshot'
 import { opIds } from './op'
 
 // --- Writes through the log (v0.21) ----------------------------------------------
@@ -72,6 +73,44 @@ export function applyOp(stores: Stores, op: OpEnvelope, at: string, teamBrain: s
   }
   if (op.call.startsWith('team.') || op.call === 'brain.checkpoint') return undefined
   return runCommand(stores, { name: op.call as CommandName, input: op.args as never }, { now: () => at, newId: opIds(op.op_id), actor: actorOf(op.provenance) })
+}
+
+/**
+ * Takes one relayed entry of a shared brain (spec team-brain-sync-client-spec
+ * §4): appended at its seq and time and, unless the replica already refused
+ * it (entry.rejected), `op` applied — in one transaction. An op the brain
+ * refuses is kept as rejected ("INVALID: …"); returns why the entry was
+ * rejected, or null when it was applied. The genesis at seq 1 founds the log: the brain must be
+ * in the state it names, which becomes the snapshot at seq 1. Throws
+ * RelayOrderError for an entry out of order and Error for a genesis whose
+ * state is not this brain's: the replica stops.
+ */
+export function takeRelayed(stores: Stores, entry: RelayedEntry, op: OpEnvelope | null): string | null {
+  const { db } = stores
+  if (entry.rejected !== null) {
+    db.transaction(() => appendRelayed(db, entry))()
+    return entry.rejected
+  }
+  if (op === null) throw new Error('a relayed entry is applied with its op or kept as rejected')
+  if (entry.seq === 1 && op.call === 'brain.genesis') {
+    db.transaction(() => {
+      appendRelayed(db, entry)
+      const dump = stateDump(db)
+      const hash = stateHash(dump)
+      if (hash !== (op.args as { state_hash?: unknown }).state_hash) throw new Error('the genesis names another state than this brain\'s')
+      db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (1, ?, ?, ?)').run(op.schema, hash, encodeSnapshot(dump))
+    })()
+    return null
+  }
+  try {
+    db.transaction(() => { appendRelayed(db, entry); applyOp(stores, op, entry.at, teamBrainOf(db)) })()
+    return null
+  } catch (err) {
+    if (err instanceof RelayOrderError) throw err
+    const why = `INVALID: ${(err as Error).message}`
+    db.transaction(() => appendRelayed(db, { ...entry, rejected: why }))()
+    return why
+  }
 }
 
 /**

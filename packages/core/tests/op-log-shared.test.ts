@@ -3,10 +3,10 @@ import Database from 'better-sqlite3'
 import { canonicalJson, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { applyOp, commandStores } from '../src/log/apply-op'
-import { RelayOrderError, appendRelayed, teamBrainOf, type RelayedEntry } from '../src/log/log'
+import { RelayOrderError, appendRelayed, teamBrainOf } from '../src/log/log'
 import { uuidv5 } from '../src/log/op'
 import { rebuild, verify } from '../src/log/rebuild'
-import { encodeSnapshot, stateDump, stateHash } from '../src/log/snapshot'
+import { stateDump, stateHash } from '../src/log/snapshot'
 import { validNote } from './fixtures'
 
 // v0.21 (spec team-brain-sync-client-spec §2–§3): a shared brain's log as core
@@ -33,40 +33,40 @@ function envelope(n: number, call: string, args: unknown, team: string | null = 
   }
 }
 
-/** A shared brain: an empty brain whose log starts with a relayed genesis for BRAIN and its snapshot. */
-function sharedBrain(): EML {
+/** An empty brain file as a replica starts it: the schema, no rows, no log (a new brain file writes a private genesis). */
+function emptyBrain(): EML {
   const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-  const db = raw(eml)
-  db.exec('DELETE FROM op_snapshots; DELETE FROM op_log')  // the private genesis a new brain file writes
-  const dump = stateDump(db)
-  const genesis = envelope(1, 'brain.genesis', { state_hash: stateHash(dump) })
-  db.transaction(() => {
-    appendRelayed(db, { seq: 1, at: T0, op_id: genesis.op_id, payload: plainJson(genesis), signature: null, rejected: null })
-    db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (1, ?, ?, ?)').run(CURRENT_BRAIN_SCHEMA_VERSION, stateHash(dump), encodeSnapshot(dump))
-  })()
+  raw(eml).exec('DELETE FROM op_snapshots; DELETE FROM op_log')
   return eml
 }
 
-/** How a replica takes a relayed op: append it at its seq and apply it, or keep it as rejected — in one transaction. */
+/** A shared brain: an empty brain whose log starts with a relayed genesis for BRAIN. */
+function sharedBrain(): EML {
+  const eml = emptyBrain()
+  expect(take(eml, 1, envelope(1, 'brain.genesis', { state_hash: eml.stateHash() }), T0)).toBeNull()
+  return eml
+}
+
+/** How a replica takes a relayed op (EML.takeRelayed): applied, or kept as rejected. */
 function take(eml: EML, seq: number, op: OpEnvelope, at = time(seq)): string | null {
-  const db = raw(eml)
-  const stores = commandStores(eml, db)
-  const entry: RelayedEntry = { seq, at, op_id: op.op_id, payload: plainJson(op), signature: null, rejected: null }
-  try {
-    db.transaction(() => { appendRelayed(db, entry); applyOp(stores, op, at, BRAIN) })()
-    return null
-  } catch (err) {
-    if (err instanceof RelayOrderError) throw err
-    const rejected = `INVALID: ${(err as Error).message}`
-    db.transaction(() => appendRelayed(db, { ...entry, rejected }))()
-    return rejected
-  }
+  return eml.takeRelayed({ seq, at, op_id: op.op_id, payload: plainJson(op), signature: null, rejected: null }, op)
 }
 
 const count = (eml: EML, title: string): number =>
   (raw(eml).prepare('SELECT COUNT(*) AS n FROM engrams WHERE title = ?').get(title) as { n: number }).n
 
 describe('a shared brain\'s log', () => {
+  it('starts with a genesis naming the empty state, which becomes the snapshot at seq 1', () => {
+    const eml = sharedBrain()
+    const snapshot = raw(eml).prepare('SELECT seq, state_hash FROM op_snapshots').all()
+    expect(snapshot).toEqual([{ seq: 1, state_hash: eml.stateHash() }])
+    const other = emptyBrain()
+    const wrong = envelope(1, 'brain.genesis', { state_hash: '0'.repeat(64) })
+    expect(() => take(other, 1, wrong, T0)).toThrow(/another state/)
+    expect((raw(other).prepare('SELECT COUNT(*) AS n FROM op_log').get() as { n: number }).n).toBe(0)
+    eml.close(); other.close()
+  })
+
   it('belongs to the team brain its genesis names; a private brain\'s to none', () => {
     const shared = sharedBrain()
     const own = new EML({ dbPath: ':memory:', namespace: 'test' })
@@ -109,10 +109,8 @@ describe('a shared brain\'s log', () => {
     const db = raw(eml)
     const record = { v: 1, kind: 'op', brain: BRAIN, op_id: opId(2), epoch: 0, nonce: 'AAAA', ct: 'garbage' }
     const nameless = { ...record, op_id: 'not-a-uuid' }
-    db.transaction(() => {
-      appendRelayed(db, { seq: 2, at: time(2), op_id: record.op_id, payload: canonicalJson(record), signature: null, rejected: 'UNOPENABLE: the box does not open' })
-      appendRelayed(db, { seq: 3, at: time(3), op_id: null, payload: canonicalJson(nameless), signature: null, rejected: 'UNOPENABLE: the box does not open' })
-    })()
+    eml.takeRelayed({ seq: 2, at: time(2), op_id: record.op_id, payload: canonicalJson(record), signature: null, rejected: 'UNOPENABLE: the box does not open' }, null)
+    eml.takeRelayed({ seq: 3, at: time(3), op_id: null, payload: canonicalJson(nameless), signature: null, rejected: 'UNOPENABLE: the box does not open' }, null)
     const e = db.prepare('SELECT payload_hash FROM op_log WHERE seq = 2').get() as { payload_hash: string }
     expect(e.payload_hash).toBe(sha256Hex(canonicalJson(record)))
     expect(verify(db)).toMatchObject({ ok: true, entries: 3 })

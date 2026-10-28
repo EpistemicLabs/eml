@@ -6,6 +6,6 @@
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"],
-  "references": [{ "path": "../core" }]
+  "references": [{ "path": "../core" }, { "path": "../protocol" }]
 }
 
