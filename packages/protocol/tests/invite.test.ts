@@ -195,6 +195,7 @@ describe('what the relay checks without the secret', () => {
     expect(() => checkJoin(joinRequest(guessed, other.identity, cert(other), 'mallory'), I.notice)).toThrow(/not signed with the invite's join key/)
     expect(() => checkJoin(I.join, { ...I.notice, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' })).toThrow(/another invite/)
     expect(() => checkJoin({ ...I.join, sig: I.notice.sig }, I.notice)).toThrow(/not signed/)
+    for (const sig of [7, null, { x: 1 }, '']) expect(() => checkJoin({ ...I.join, sig }, I.notice)).toThrow(ProtocolError)
     expect(() => checkJoin({ ...I.join, v: 2 }, I.notice)).toThrow(UnsupportedVersionError)
     expect(() => checkJoin({ ...I.join, mac: 'x' }, I.notice)).toThrow(/no field mac/)
   })
