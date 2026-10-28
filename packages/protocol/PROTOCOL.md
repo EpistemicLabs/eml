@@ -127,9 +127,12 @@ Every write to a brain — private or shared — is an op in the brain's log
   chain and changes nothing. Every replica opens every record it receives,
   its own too, so all decide alike. For a record that does not open, the
   payload in the chain is canonicalJson of the record as delivered, and its
-  op_id, if it is a lowercase UUID, counts as used. A record sealed under an
-  epoch the log has reached but whose key the device does not hold yet is no
-  rejection: the replica waits for its wrapped key (§7).
+  op_id, if it is a lowercase UUID, counts as used. A sealed record whose
+  epoch is not the brain's current one at its position is rejected unopened
+  by every replica, its author's too, with the payload of a record that does
+  not open: whether a device still holds an older key must not change what
+  it logs. A record sealed under the current epoch whose key the device does
+  not hold yet is no rejection: the replica waits for its wrapped key (§7).
 
 ## 5. Records on the wire
 

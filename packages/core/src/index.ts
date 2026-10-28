@@ -3,8 +3,10 @@ import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
-import { commandStores, writeOp } from './log/apply-op'
-import { teamBrainOf } from './log/log'
+import { commandStores, takeRelayed, writeOp } from './log/apply-op'
+import { teamBrainOf, type RelayedEntry } from './log/log'
+import { stateDump, stateHash } from './log/snapshot'
+import type { OpEnvelope } from '@engramprotocol/protocol/log'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -78,6 +80,20 @@ export class EML {
   /** v0.21: the team brain this brain's log belongs to (its genesis names it), null for a private brain. */
   teamBrain(): string | null {
     return teamBrainOf(this.db)
+  }
+
+  /**
+   * v0.21: takes one entry its relay delivered into this shared brain — the
+   * replica's write path (log/apply-op.ts takeRelayed): `op` applied, or the
+   * entry kept as rejected. Returns why it was rejected, or null when applied.
+   */
+  takeRelayed(entry: RelayedEntry, op: OpEnvelope | null): string | null {
+    return takeRelayed(commandStores(this, this.db), entry, op)
+  }
+
+  /** v0.21: the hash of this brain's state (log/snapshot.ts) — what a checkpoint states. */
+  stateHash(): string {
+    return stateHash(stateDump(this.db))
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
@@ -170,6 +186,7 @@ export {
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
+export { RelayOrderError, type RelayedEntry } from './log/log'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'

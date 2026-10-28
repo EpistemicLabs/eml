@@ -13,7 +13,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@engramprotocol/core": "workspace:*"
+    "@engramprotocol/core": "workspace:*",
+    "@engramprotocol/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

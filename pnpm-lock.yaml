@@ -207,6 +207,9 @@ importers:
       '@engramprotocol/core':
         specifier: workspace:*
         version: link:../core
+      '@engramprotocol/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
