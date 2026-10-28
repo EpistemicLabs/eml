@@ -4,6 +4,7 @@ import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
 import { commandStores, writeOp } from './log/apply-op'
+import { teamBrainOf } from './log/log'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -72,6 +73,11 @@ export class EML {
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
     return writeOp(commandStores(this, this.db), command, env)
+  }
+
+  /** v0.21: the team brain this brain's log belongs to (its genesis names it), null for a private brain. */
+  teamBrain(): string | null {
+    return teamBrainOf(this.db)
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
