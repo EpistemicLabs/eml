@@ -72,6 +72,7 @@ export function found(owner: Person): { set: MemberSet, keys: BrainKey[], genesi
   const op_id = crypto.randomUUID()
   const env = {
     ...envelope(owner, 'brain.genesis', {
+      brain: BRAIN,
       state_hash: ZERO,
       root: { member: owner.identity.publicKey, device_cert: cert(owner), handle: sealHandle(owner.handle, { brain: BRAIN, op_id, member: owner.identity.publicKey }, keys[0]), key_id: keyId(keys[0].key) },
     }),
