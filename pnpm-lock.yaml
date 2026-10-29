@@ -45,8 +45,8 @@ importers:
         specifier: 0.12.0-beta.301
         version: 0.12.0-beta.301(@xterm/xterm@6.1.0-beta.304)
       '@xterm/addon-search':
-        specifier: 0.17.0-beta.301
-        version: 0.17.0-beta.301(@xterm/xterm@6.1.0-beta.304)
+        specifier: 0.17.0-beta.310
+        version: 0.17.0-beta.310(@xterm/xterm@6.1.0-beta.304)
       '@xterm/addon-web-links':
         specifier: 0.13.0-beta.301
         version: 0.13.0-beta.301(@xterm/xterm@6.1.0-beta.304)
@@ -1174,10 +1174,10 @@ packages:
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.304
 
-  '@xterm/addon-search@0.17.0-beta.301':
-    resolution: {integrity: sha512-Dj8q+p2/5c4fcS4hag6QaXngxstnc4DdzREN/IhpGxz5a1JpW/3FnF9/JE1P1wvNLp9fApgGmZqBMW4xCF6HKg==}
+  '@xterm/addon-search@0.17.0-beta.310':
+    resolution: {integrity: sha512-HUrAJuoe4LQMfWnx9Xse/xkpTG4CLqor7jirGK5hzTFcPS4xN7WVUp7q3JyfH/SCPc3o081ZDScy9ZN3o09PuQ==}
     peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.304
+      '@xterm/xterm': ^6.1.0-beta.315
 
   '@xterm/addon-serialize@0.14.0':
     resolution: {integrity: sha512-uteyTU1EkrQa2Ux6P/uFl2fzmXI46jy5uoQMKEOM0fKTyiW7cSn0WrFenHm5vO5uEXX/GpwW/FgILvv3r0WbkA==}
@@ -3079,7 +3079,7 @@ snapshots:
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304
 
-  '@xterm/addon-search@0.17.0-beta.301(@xterm/xterm@6.1.0-beta.304)':
+  '@xterm/addon-search@0.17.0-beta.310(@xterm/xterm@6.1.0-beta.304)':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.304
 
