@@ -37,14 +37,14 @@
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@engramprotocol/cockpit-frontend": "workspace:*",
     "@engramprotocol/core": "workspace:*",
     "@engramprotocol/server": "workspace:*",
     "@types/node": "^22.10.0",
-    "@types/ws": "^8.5.13",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.9.0"
