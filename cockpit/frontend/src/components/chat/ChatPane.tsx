@@ -13,7 +13,7 @@ import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 
 import { AgentCard } from './AgentCard';
-import { groupItems, keysToReveal, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
@@ -52,10 +52,37 @@ function ToolStatusMark({ tool }: { tool: ToolItem }) {
   return null;
 }
 
+function DiffBlock({ lines }: { lines: DiffLine[] }) {
+  return (
+    <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 pr-8 whitespace-pre-wrap break-words text-foreground">
+      {lines.map((line, index) => (
+        // A diff doesn't reorder, and its lines may repeat.
+        <div key={index} className={line.sign === '+' ? 'text-success' : line.sign === '-' ? 'text-destructive' : undefined}>{line.sign} {line.text}</div>
+      ))}
+    </pre>
+  );
+}
+
+/** A few lines of a command's output, in place; the row or the count opens all of it. */
+function OutputPreview({ output, onOpen }: { output: string; onOpen: () => void }) {
+  const { head, hidden, tail } = outputPreview(output);
+  const block = 'whitespace-pre-wrap break-words';
+  return (
+    <div className="mt-0.5 ml-[11px] border-l border-border pl-3 font-mono text-muted-foreground">
+      <div className={block}>{head.join('\n')}</div>
+      {hidden > 0 && <button type="button" onClick={onOpen} className={cn('hover:text-foreground', TARGET)}>… +{hidden} lines</button>}
+      {tail.length > 0 && <div className={block}>{tail.join('\n')}</div>}
+    </div>
+  );
+}
+
 /** Open rows stay open across new events: `opened` lives in the pane. */
 function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; onToggle: (id: string) => void }) {
   const Icon = TOOL_ICONS[tool.toolKind];
   const open = opened;
+  const failed = tool.status === 'failed';
+  const diff = tool.toolKind === 'edit' && !failed ? editDiff(tool.input) : null;
+  const preview = !open && !!tool.output.trim() && (failed || tool.toolKind === 'execute');
   return (
     <div data-chat-item={tool.id} className="chat-work">
       <button
@@ -65,16 +92,24 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
         className={cn('flex w-full items-center gap-2 rounded px-1 text-left font-mono text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <Icon className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
-        <span className="min-w-0 flex-1 truncate font-mono">{tool.title}</span>
+        <span className={cn('min-w-0 flex-1 truncate font-mono', failed && 'text-destructive')}>{tool.title}</span>
+        {diff && (
+          <span className="flex-shrink-0">
+            <span className="text-success">+{diff.added}</span> <span className="text-destructive">−{diff.removed}</span>
+          </span>
+        )}
         <ToolStatusMark tool={tool} />
       </button>
+      {preview && <OutputPreview output={tool.output} onOpen={() => onToggle(tool.id)} />}
       {open && (
         <>
           {tool.approval && <div className="px-1 pt-0.5 text-muted-foreground">{OUTCOME_LABEL[tool.approval]}</div>}
           <div className="relative">
-            <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 pr-8 whitespace-pre-wrap break-words text-foreground">
-              {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
-            </pre>
+            {diff ? <DiffBlock lines={diff.lines} /> : (
+              <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 pr-8 whitespace-pre-wrap break-words text-foreground">
+                {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
+              </pre>
+            )}
             <button
               type="button"
               aria-label="Copy the call and its output"
@@ -114,20 +149,11 @@ function FoldedRow({ item, opened, onToggle }: { item: FoldedItem; opened: Set<s
     : <ToolRow tool={item} opened={opened.has(item.id)} onToggle={onToggle} />;
 }
 
-/** One line for a run: what is in it, and whether something runs or failed. */
-function foldLabel(items: FoldedItem[]): string {
-  const calls = items.filter((item) => item.type === 'tool').length;
-  const thinking = calls < items.length ? 'Thinking' : '';
-  const toolCalls = calls === 0 ? '' : `${calls} tool ${calls === 1 ? 'call' : 'calls'}`;
-  return [thinking, toolCalls].filter(Boolean).join(', ');
-}
-
 function ToolGroup({ tools, id, opened, onToggle }: { tools: FoldedItem[]; id: string; opened: Set<string>; onToggle: (id: string) => void }) {
   if (tools.length === 1) return <FoldedRow item={tools[0]} opened={opened} onToggle={onToggle} />;
   const groupKey = `group:${id}`;
   const open = opened.has(groupKey);
   const running = tools.some((item) => (item.type === 'tool' ? item.status === 'running' : item.streaming));
-  const failed = tools.some((item) => item.type === 'tool' && item.status === 'failed');
   return (
     <div className="chat-work">
       <button
@@ -137,8 +163,7 @@ function ToolGroup({ tools, id, opened, onToggle }: { tools: FoldedItem[]; id: s
         className={cn('flex w-full items-center gap-2 rounded px-1 text-left font-mono text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={1.8} />
-        <span className="min-w-0 flex-1 truncate">{foldLabel(tools)}</span>
-        {failed && <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-destructive" aria-label="A call failed" />}
+        <span className="min-w-0 flex-1 truncate">{foldSummary(tools)}</span>
         {running && <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" aria-label="Running" />}
       </button>
       {open && (
@@ -337,7 +362,7 @@ const Messages = memo(function Messages({
             return (
               <div key={item.id} data-chat-item={item.id} className="flex flex-col items-end gap-1 pt-2">
                 {item.images.length > 0 && (
-                  <div className="flex max-w-[min(85%,528px)] flex-wrap justify-end gap-1">
+                  <div className="flex max-w-[min(85%,720px)] flex-wrap justify-end gap-1">
                     {item.images.map((image, index) => (image.url ? (
                       <a key={image.url} href={image.url} target="_blank" rel="noreferrer">
                         <img src={image.url} alt="Pasted" className="max-h-40 rounded-md border border-border" />
@@ -350,7 +375,7 @@ const Messages = memo(function Messages({
                     )))}
                   </div>
                 )}
-                {item.text && <div className="max-w-[min(85%,528px)] rounded-md bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>}
+                {item.text && <div className="max-w-[min(85%,720px)] rounded-md bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>}
                 {item.queued && <span className="text-muted-foreground">queued</span>}
               </div>
             );

@@ -1,11 +1,57 @@
 import { describe, expect, it } from 'vitest';
 
-import { EMPTY_CHAT, currentModelOption, groupItems, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
+import { EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
 
-const tool = (toolId: string): ChatEvent => ({ kind: 'tool_call', toolId, name: 'Bash', toolKind: 'execute', title: `Run ${toolId}`, input: {} });
+const tool = (toolId: string): ChatEvent => ({ kind: 'tool_call', toolId, name: 'Read', toolKind: 'read', title: `Run ${toolId}`, input: {} });
+const named = (toolId: string, name: string, toolKind: 'read' | 'edit' | 'execute' | 'search' | 'other', input: Record<string, unknown>): ChatEvent => ({ kind: 'tool_call', toolId, name, toolKind, title: name, input });
+
+describe('what a row says', () => {
+  const summary = (events: ChatEvent[]) => {
+    const [group] = groupItems(fold(events).items);
+    return group.kind === 'tools' ? foldSummary(group.tools) : '';
+  };
+
+  it('names what was looked at, merging neighbours of one kind', () => {
+    expect(summary([
+      named('a', 'Read', 'read', { file_path: '/x/auth.ts' }),
+      named('b', 'Read', 'read', { file_path: '/x/session.ts' }),
+      named('c', 'Grep', 'search', { pattern: 'token' }),
+    ])).toBe('Read auth.ts, session.ts · Searched "token"');
+  });
+
+  it('says how many more there are, and counts a file read twice once', () => {
+    const read = (id: string, file: string) => named(id, 'Read', 'read', { file_path: file });
+    expect(summary([read('a', 'a.ts'), read('b', 'a.ts'), read('c', 'b.ts'), read('d', 'c.ts'), read('e', 'd.ts')])).toBe('Read a.ts, b.ts, c.ts +1 more');
+  });
+
+  it('commands, edits and failures stay rows of their own', () => {
+    const items = fold([
+      tool('a'), tool('b'),
+      named('c', 'Bash', 'execute', { command: 'ls' }),
+      tool('d'),
+      named('e', 'Edit', 'edit', { file_path: 'x' }),
+      tool('f'), { kind: 'tool_result', toolId: 'f', status: 'failed', output: 'no' },
+    ]).items;
+    expect(groupItems(items).map((group) => (group.kind === 'tools' ? group.tools.map((t) => t.id).join('') : ''))).toEqual(['ab', 'c', 'd', 'e', 'f']);
+  });
+
+  it('counts an edit by its changed lines, not the lines around them', () => {
+    const diff = editDiff({ old_string: 'keep\nold\nend', new_string: 'keep\nnew\nnewer\nend' });
+    expect(diff).toMatchObject({ added: 2, removed: 1 });
+    expect(diff?.lines.map((line) => line.sign).join('')).toBe(' -++ ');
+    expect(editDiff({ content: 'a\nb' })).toMatchObject({ added: 2, removed: 0 });
+    expect(editDiff({ edits: [{ old_string: 'a', new_string: 'b' }, { old_string: '', new_string: 'c' }] })).toMatchObject({ added: 2, removed: 1 });
+    expect(editDiff({ file_path: 'x' })).toBeNull();
+  });
+
+  it('previews short output whole, long output by its start and end', () => {
+    expect(outputPreview('a\nb\n')).toEqual({ head: ['a', 'b'], hidden: 0, tail: [] });
+    expect(outputPreview('1\n2\n3\n4\n5\n6\n7\n8')).toEqual({ head: ['1'], hidden: 5, tail: ['7', '8'] });
+  });
+});
 
 describe('background shells', () => {
   const started: ChatEvent = { kind: 'shell_task', taskId: 's', toolId: 't', description: 'npm run dev', status: 'running' };
@@ -199,11 +245,8 @@ describe('reduceChat', () => {
 describe('groupItems', () => {
   const card = (requestId: string): ChatEvent => ({ kind: 'permission_request', requestId, toolId: null, toolName: 'Bash', title: 'Run', input: {}, reason: null, alwaysScope: null });
 
-  it('folds calls, failed ones and thinking into one group', () => {
-    const state = fold([
-      tool('a'), { kind: 'thinking', blockId: 'x', text: 'hm' }, tool('b'),
-      { kind: 'tool_result', toolId: 'b', status: 'failed', output: 'no' },
-    ]);
+  it('folds calls and thinking into one group', () => {
+    const state = fold([tool('a'), { kind: 'thinking', blockId: 'x', text: 'hm' }, tool('b')]);
     const groups = groupItems(state.items);
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ kind: 'tools', tools: [{ id: 'a' }, { id: 'x' }, { id: 'b' }] });

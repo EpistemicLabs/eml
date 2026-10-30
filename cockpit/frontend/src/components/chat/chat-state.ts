@@ -332,9 +332,10 @@ export type RenderGroup =
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> };
 
 /**
- * Everything but the conversation folds: adjacent tool calls and thinking sit in
- * one group, and a settled card goes (its tool row keeps the decision). What stays
- * open: messages, answers, cards still waiting for the user, errors, subagents.
+ * Looking around folds: adjacent reads, searches and thinking sit in one group, named
+ * by foldSummary, and a settled card goes (its tool row keeps the decision). What
+ * changes or can fail stays a row of its own: edits, commands, whatever failed. What
+ * stays open: messages, answers, cards still waiting for the user, errors, subagents.
  */
 export function groupItems(items: ChatItem[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
@@ -350,6 +351,9 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });
+      } else if (item.status === 'failed' || item.toolKind === 'edit' || item.toolKind === 'execute') {
+        flush();
+        groups.push({ kind: 'tools', id: item.id, tools: [item] });
       } else {
         run.push(item);
       }
@@ -362,6 +366,82 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
   }
   flush();
   return groups;
+}
+
+const SUMMARY_VERBS: Partial<Record<ToolKind, string>> = { read: 'Read', search: 'Searched', fetch: 'Fetched' };
+// Per verb; the row cuts off what still doesn't fit.
+const SUMMARY_TARGETS = 3;
+
+function summaryTarget(tool: Extract<ChatItem, { type: 'tool' }>): string {
+  const field = (...keys: string[]) => keys.map((key) => tool.input[key]).find((value): value is string => typeof value === 'string' && !!value);
+  const path = field('file_path', 'notebook_path');
+  if (path) return path.split(/[\\/]/).pop() ?? path;
+  const query = field('pattern', 'query');
+  if (query) return `"${query}"`;
+  return field('url', 'path', 'description') ?? '';
+}
+
+/** One line for a folded run that says what was looked at, so a wrong turn shows without opening it. */
+export function foldSummary(items: FoldedItem[]): string {
+  const parts: Array<{ verb: string; targets: string[] }> = [];
+  for (const item of items) {
+    if (item.type !== 'tool') continue;
+    const verb = SUMMARY_VERBS[item.toolKind] ?? item.name;
+    const last = parts[parts.length - 1];
+    const target = summaryTarget(item);
+    if (last?.verb === verb) { if (target && !last.targets.includes(target)) last.targets.push(target); } else parts.push({ verb, targets: target ? [target] : [] });
+  }
+  if (parts.length === 0) return 'Thinking';
+  return parts.map(({ verb, targets }) => {
+    const shown = targets.slice(0, SUMMARY_TARGETS).join(', ');
+    const more = targets.length > SUMMARY_TARGETS ? ` +${targets.length - SUMMARY_TARGETS} more` : '';
+    return [verb, shown].filter(Boolean).join(' ') + more;
+  }).join(' · ');
+}
+
+export interface DiffLine {
+  sign: ' ' | '+' | '-';
+  text: string;
+}
+
+function diffOf(before: string, after: string): DiffLine[] {
+  const old = before ? before.split('\n') : [];
+  const next = after ? after.split('\n') : [];
+  let start = 0;
+  while (start < old.length && start < next.length && old[start] === next[start]) start += 1;
+  let end = 0;
+  while (end < old.length - start && end < next.length - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end += 1;
+  const same = (line: string): DiffLine => ({ sign: ' ', text: line });
+  return [
+    ...old.slice(0, start).map(same),
+    ...old.slice(start, old.length - end).map((text): DiffLine => ({ sign: '-', text })),
+    ...next.slice(start, next.length - end).map((text): DiffLine => ({ sign: '+', text })),
+    ...old.slice(old.length - end).map(same),
+  ];
+}
+
+/** An edit call's change, from its input; null when the input doesn't say. */
+export function editDiff(input: Record<string, unknown>): { lines: DiffLine[]; added: number; removed: number } | null {
+  const text = (value: unknown) => (typeof value === 'string' ? value : '');
+  let lines: DiffLine[] | null = null;
+  if (Array.isArray(input.edits)) lines = (input.edits as Array<Record<string, unknown>>).flatMap((edit) => diffOf(text(edit.old_string), text(edit.new_string)));
+  else if (typeof input.old_string === 'string' || typeof input.new_string === 'string') lines = diffOf(text(input.old_string), text(input.new_string));
+  else if (typeof input.content === 'string') lines = diffOf('', input.content);
+  if (!lines) return null;
+  return {
+    lines,
+    added: lines.filter((line) => line.sign === '+').length,
+    removed: lines.filter((line) => line.sign === '-').length,
+  };
+}
+
+const PREVIEW_LINES = 3;
+
+/** A command's output in a few lines: its start and, where a failure usually says why, its end. */
+export function outputPreview(output: string): { head: string[]; hidden: number; tail: string[] } {
+  const lines = output.replace(/\n+$/, '').split('\n');
+  if (lines.length <= PREVIEW_LINES) return { head: lines, hidden: 0, tail: [] };
+  return { head: lines.slice(0, 1), hidden: lines.length - PREVIEW_LINES, tail: lines.slice(-2) };
 }
 
 /** What has to be open to see an item: its row, and the group it is folded into. */

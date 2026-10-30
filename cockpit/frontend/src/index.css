@@ -150,9 +150,9 @@ body {
 .chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: 12px; margin-bottom: 12px; }
 .chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: 4px; margin-bottom: 4px; }
 .chat-pane p { margin-top: 12px; margin-bottom: 12px; }
-/* Prose stays at about 75 characters a line; code, tables and tools take the pane. */
+/* Prose stays at about 100 characters a line; code, tables and tools take the pane. */
 .chat-pane p, .chat-pane [data-streamdown^="heading-"], .chat-pane [data-streamdown="ordered-list"],
-.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 528px; }
+.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 720px; }
 .chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
 .chat-pane p:last-child { margin-bottom: 0; }
 /* What the agent did reads as one stream; the wider gaps stay around the conversation. */
