@@ -56,24 +56,19 @@ export function AgentCard({
     agent?.durationMs != null ? formatDuration(agent.durationMs) : null,
   ].filter(Boolean).join(' · ');
   return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="flex items-start gap-1 p-1">
+    <div className="chat-work font-mono">
+      <div className="flex items-start gap-1">
         <button
           type="button"
           aria-expanded={open}
           onClick={() => onToggle(tool.id)}
-          className={cn('flex min-w-0 flex-1 items-start gap-2 rounded px-1.5 py-1 text-left hover:bg-foreground/5', TARGET)}
+          className={cn('flex min-w-0 flex-1 items-start gap-2 rounded px-1 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
         >
-          <ChevronRight className={cn('mt-1 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} strokeWidth={1.8} />
-          <Users className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} />
+          <ChevronRight className={cn('mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} strokeWidth={1.8} />
+          <Users className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate">{agent?.description ?? tool.title}</span>
             {/* Plain text: agent names come from configuration. */}
-            {(agent?.agentType || facts) && (
-              <span className="block truncate text-muted-foreground">
-                {[agent?.agentType, facts].filter(Boolean).join(' · ')}
-              </span>
-            )}
+            <span className="block truncate">{[agent?.description ?? tool.title, agent?.agentType, facts].filter(Boolean).join(' · ')}</span>
             {live && agent?.activity && <span className="block truncate text-muted-foreground">{agent.activity}</span>}
           </span>
           <StatusMark status={status} />
@@ -82,14 +77,14 @@ export function AgentCard({
           <button
             type="button"
             onClick={() => onStop(agent.taskId)}
-            className={cn('flex-shrink-0 rounded px-2 py-1 text-muted-foreground hover:bg-foreground/5', TARGET)}
+            className={cn('flex-shrink-0 rounded px-2 text-muted-foreground hover:bg-foreground/5', TARGET)}
           >
             Stop
           </button>
         )}
       </div>
       {open && (
-        <div className="space-y-1.5 border-t border-border p-2">
+        <div className="mt-1 ml-[11px] space-y-1 border-l border-border pl-3">
           {tools.map((inner) => {
             const Icon = TOOL_ICONS[inner.toolKind];
             return (

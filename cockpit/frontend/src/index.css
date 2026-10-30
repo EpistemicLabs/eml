@@ -155,6 +155,8 @@ body {
 .chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 528px; }
 .chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
 .chat-pane p:last-child { margin-bottom: 0; }
+/* What the agent did reads as one stream; the wider gaps stay around the conversation. */
+.chat-pane .chat-work + .chat-work { margin-top: 4px; }
 /* Below 16px, iOS zooms the page when a field takes the focus. */
 @media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
 

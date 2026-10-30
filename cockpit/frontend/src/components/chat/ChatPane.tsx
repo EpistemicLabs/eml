@@ -55,12 +55,12 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
   const Icon = TOOL_ICONS[tool.toolKind];
   const open = opened;
   return (
-    <div>
+    <div className="chat-work">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => onToggle(tool.id)}
-        className={cn('flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
+        className={cn('flex w-full items-center gap-2 rounded px-1 text-left font-mono text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <Icon className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
         <span className="min-w-0 flex-1 truncate font-mono">{tool.title}</span>
@@ -80,12 +80,12 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
 
 function ThinkingRow({ item, opened, onToggle }: { item: Extract<FoldedItem, { type: 'thinking' }>; opened: boolean; onToggle: (id: string) => void }) {
   return (
-    <div>
+    <div className="chat-work">
       <button
         type="button"
         aria-expanded={opened}
         onClick={() => onToggle(item.id)}
-        className={cn('flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
+        className={cn('flex w-full items-center gap-2 rounded px-1 text-left font-mono text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
         <span className="min-w-0 flex-1 truncate">{item.streaming ? 'Thinking…' : 'Thinking'}</span>
@@ -116,12 +116,12 @@ function ToolGroup({ tools, id, opened, onToggle }: { tools: FoldedItem[]; id: s
   const running = tools.some((item) => (item.type === 'tool' ? item.status === 'running' : item.streaming));
   const failed = tools.some((item) => item.type === 'tool' && item.status === 'failed');
   return (
-    <div>
+    <div className="chat-work">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => onToggle(groupKey)}
-        className={cn('flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
+        className={cn('flex w-full items-center gap-2 rounded px-1 text-left font-mono text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={1.8} />
         <span className="min-w-0 flex-1 truncate">{foldLabel(tools)}</span>
@@ -175,7 +175,7 @@ function PermissionCard({ item, onAnswer }: { item: PermissionItem; onAnswer: (i
   return (
     <div className="space-y-2 rounded-md border border-warning/50 bg-card p-3">
       {/* Plain text: tool and server names come from configuration. */}
-      <div className="font-medium break-words">{item.title}</div>
+      <div className="font-mono font-medium break-words">{item.title}</div>
       {item.reason && <div className="text-muted-foreground">{item.reason}</div>}
       <PermissionPreview item={item} />
       <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">
