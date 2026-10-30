@@ -151,13 +151,38 @@ describe('reduceChat', () => {
 });
 
 describe('groupItems', () => {
-  it('folds adjacent calls into one group and lets a failed one break out', () => {
+  const card = (requestId: string): ChatEvent => ({ kind: 'permission_request', requestId, toolId: null, toolName: 'Bash', title: 'Run', input: {}, reason: null, alwaysScope: null });
+
+  it('folds calls, failed ones and thinking into one group', () => {
     const state = fold([
-      tool('a'), tool('b'), tool('c'), tool('d'),
-      { kind: 'tool_result', toolId: 'c', status: 'failed', output: 'no' },
+      tool('a'), { kind: 'thinking', blockId: 'x', text: 'hm' }, tool('b'),
+      { kind: 'tool_result', toolId: 'b', status: 'failed', output: 'no' },
     ]);
     const groups = groupItems(state.items);
-    expect(groups.map((g) => (g.kind === 'tools' ? g.tools.map((t) => t.id) : []))).toEqual([['a', 'b'], ['c'], ['d']]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ kind: 'tools', tools: [{ id: 'a' }, { id: 'x' }, { id: 'b' }] });
+  });
+
+  it('a settled card folds away whatever its outcome, a waiting one stays', () => {
+    for (const outcome of ['allowed', 'always', 'denied', 'cancelled'] as const) {
+      const state = fold([tool('a'), card('r'), { kind: 'request_settled', requestId: 'r', outcome }, tool('b')]);
+      expect(groupItems(state.items)).toHaveLength(1);
+    }
+    expect(groupItems(fold([tool('a'), card('r'), tool('b')]).items)).toHaveLength(3);
+  });
+
+  it('answers, errors and notices stay open and split a run', () => {
+    const state = fold([tool('a'), { kind: 'text', blockId: 't', text: 'answer' }, tool('b'), { kind: 'error', message: 'boom' }, tool('c')]);
+    expect(groupItems(state.items).map((g) => g.kind)).toEqual(['tools', 'item', 'tools', 'item', 'tools']);
+  });
+
+  it('the tool row keeps the approval', () => {
+    const state = fold([
+      tool('a'),
+      { kind: 'permission_request', requestId: 'r', toolId: 'a', toolName: 'Bash', title: 'Run', input: {}, reason: null, alwaysScope: null },
+      { kind: 'request_settled', requestId: 'r', outcome: 'always' },
+    ]);
+    expect(state.items[0]).toMatchObject({ type: 'tool', approval: 'always' });
   });
 
   it('an empty thinking block does not split a run', () => {

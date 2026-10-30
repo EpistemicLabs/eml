@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 
 import { AgentCard } from './AgentCard';
-import { groupItems, statusLine, type AgentTask, type AgentTool, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { groupItems, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
@@ -52,7 +52,7 @@ function ToolStatusMark({ tool }: { tool: ToolItem }) {
 /** Open rows stay open across new events: `opened` lives in the pane. */
 function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; onToggle: (id: string) => void }) {
   const Icon = TOOL_ICONS[tool.toolKind];
-  const open = opened || tool.status === 'failed';
+  const open = opened;
   return (
     <div>
       <button
@@ -66,19 +66,54 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
         <ToolStatusMark tool={tool} />
       </button>
       {open && (
-        <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 whitespace-pre-wrap break-words text-foreground">
-          {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
-        </pre>
+        <>
+          {tool.approval && <div className="px-1 pt-0.5 text-muted-foreground">{OUTCOME_LABEL[tool.approval]}</div>}
+          <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 whitespace-pre-wrap break-words text-foreground">
+            {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
+          </pre>
+        </>
       )}
     </div>
   );
 }
 
-function ToolGroup({ tools, id, opened, onToggle }: { tools: ToolItem[]; id: string; opened: Set<string>; onToggle: (id: string) => void }) {
-  if (tools.length === 1) return <ToolRow tool={tools[0]} opened={opened.has(tools[0].id)} onToggle={onToggle} />;
+function ThinkingRow({ item, opened, onToggle }: { item: Extract<FoldedItem, { type: 'thinking' }>; opened: boolean; onToggle: (id: string) => void }) {
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={opened}
+        onClick={() => onToggle(item.id)}
+        className={cn('flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
+      >
+        <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
+        <span className="min-w-0 flex-1 truncate">{item.streaming ? 'Thinking…' : 'Thinking'}</span>
+      </button>
+      {opened && <div className="px-1 pt-0.5 pb-1 whitespace-pre-wrap break-words text-muted-foreground">{item.text}</div>}
+    </div>
+  );
+}
+
+function FoldedRow({ item, opened, onToggle }: { item: FoldedItem; opened: Set<string>; onToggle: (id: string) => void }) {
+  return item.type === 'thinking'
+    ? <ThinkingRow item={item} opened={opened.has(item.id)} onToggle={onToggle} />
+    : <ToolRow tool={item} opened={opened.has(item.id)} onToggle={onToggle} />;
+}
+
+/** One line for a run: what is in it, and whether something runs or failed. */
+function foldLabel(items: FoldedItem[]): string {
+  const calls = items.filter((item) => item.type === 'tool').length;
+  const thinking = calls < items.length ? 'Thinking' : '';
+  const toolCalls = calls === 0 ? '' : `${calls} tool ${calls === 1 ? 'call' : 'calls'}`;
+  return [thinking, toolCalls].filter(Boolean).join(', ');
+}
+
+function ToolGroup({ tools, id, opened, onToggle }: { tools: FoldedItem[]; id: string; opened: Set<string>; onToggle: (id: string) => void }) {
+  if (tools.length === 1) return <FoldedRow item={tools[0]} opened={opened} onToggle={onToggle} />;
   const groupKey = `group:${id}`;
   const open = opened.has(groupKey);
-  const running = tools.some((tool) => tool.status === 'running');
+  const running = tools.some((item) => (item.type === 'tool' ? item.status === 'running' : item.streaming));
+  const failed = tools.some((item) => item.type === 'tool' && item.status === 'failed');
   return (
     <div>
       <button
@@ -88,12 +123,13 @@ function ToolGroup({ tools, id, opened, onToggle }: { tools: ToolItem[]; id: str
         className={cn('flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-foreground/5', TARGET)}
       >
         <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={1.8} />
-        <span className="min-w-0 flex-1 truncate">{tools.length} tool calls</span>
+        <span className="min-w-0 flex-1 truncate">{foldLabel(tools)}</span>
+        {failed && <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-destructive" aria-label="A call failed" />}
         {running && <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" aria-label="Running" />}
       </button>
       {open && (
         <div className="ml-3 border-l border-border pl-2">
-          {tools.map((tool) => <ToolRow key={tool.id} tool={tool} opened={opened.has(tool.id)} onToggle={onToggle} />)}
+          {tools.map((item) => <FoldedRow key={item.id} item={item} opened={opened} onToggle={onToggle} />)}
         </div>
       )}
     </div>
@@ -297,13 +333,6 @@ const Messages = memo(function Messages({
             );
           case 'assistant':
             return <Assistant key={item.id} text={item.text} streaming={item.streaming} />;
-          case 'thinking':
-            return (
-              <div key={item.id} className="flex items-start gap-2 text-muted-foreground">
-                <Brain className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} />
-                <span className="line-clamp-3 min-w-0 whitespace-pre-wrap break-words">{item.text}</span>
-              </div>
-            );
           case 'permission':
             return <PermissionCard key={item.id} item={item} onAnswer={onAnswer} />;
           case 'question':

@@ -104,8 +104,8 @@ export type ChatItem =
   | { type: 'user'; id: string; text: string; queued: boolean }
   | { type: 'assistant'; id: string; text: string; streaming: boolean }
   | { type: 'thinking'; id: string; text: string; streaming: boolean }
-  | { type: 'tool'; id: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown>; status: ToolStatus; output: string }
-  | { type: 'permission'; id: string; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null; outcome: RequestOutcome | null }
+  | { type: 'tool'; id: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown>; status: ToolStatus; output: string; approval?: RequestOutcome }
+  | { type: 'permission'; id: string; toolId?: string | null; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null; outcome: RequestOutcome | null }
   | { type: 'question'; id: string; questions: Question[]; outcome: RequestOutcome | null }
   | { type: 'notice'; id: string; text: string }
   | { type: 'error'; id: string; text: string }
@@ -276,7 +276,7 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return {
         ...state,
         items: [...items, {
-          type: 'permission', id: event.requestId, toolName: event.toolName, title: event.title,
+          type: 'permission', id: event.requestId, toolId: event.toolId, toolName: event.toolName, title: event.title,
           input: event.input, reason: event.reason, alwaysScope: event.alwaysScope, outcome: null,
         }],
       };
@@ -287,7 +287,11 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       if (index < 0) index = indexOfItem(items, 'question', event.requestId);
       if (index < 0) return state;
       const item = items[index] as Extract<ChatItem, { type: 'permission' | 'question' }>;
-      return { ...state, items: replaceAt(items, index, { ...item, outcome: event.outcome }) };
+      const settled = replaceAt(items, index, { ...item, outcome: event.outcome });
+      // The tool row keeps the decision, for when it is opened.
+      const toolIndex = item.type === 'permission' && item.toolId ? indexOfItem(settled, 'tool', item.toolId) : -1;
+      if (toolIndex >= 0) settled[toolIndex] = { ...(settled[toolIndex] as Extract<ChatItem, { type: 'tool' }>), approval: event.outcome };
+      return { ...state, items: settled };
     }
     case 'activity':
       return { ...state, activity: event.state };
@@ -319,33 +323,41 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
   }
 }
 
+/** What folds into one line and opens on demand: the work behind an answer. */
+export type FoldedItem = Extract<ChatItem, { type: 'tool' | 'thinking' }>;
+
 export type RenderGroup =
-  | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' }> }
-  | { kind: 'tools'; id: string; tools: Array<Extract<ChatItem, { type: 'tool' }>> }
+  | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' | 'thinking' }> }
+  | { kind: 'tools'; id: string; tools: FoldedItem[] }
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> };
 
-/** Adjacent tool calls sit in one group; a failed one or a subagent breaks out, so it is never hidden in a summary. */
+/**
+ * Everything but the conversation folds: adjacent tool calls and thinking sit in
+ * one group, and a settled card goes (its tool row keeps the decision). What stays
+ * open: messages, answers, cards still waiting for the user, errors, subagents.
+ */
 export function groupItems(items: ChatItem[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
-  let run: Array<Extract<ChatItem, { type: 'tool' }>> = [];
+  let run: FoldedItem[] = [];
   const flush = () => {
     if (run.length > 0) groups.push({ kind: 'tools', id: run[0].id, tools: run });
     run = [];
   };
   for (const item of items) {
-    if (item.type !== 'tool') {
-      // A thinking block with nothing to show does not split a run of tools.
-      if (item.type === 'thinking' && !item.text) continue;
+    if (item.type === 'thinking') {
+      if (item.text) run.push(item);
+    } else if (item.type === 'tool') {
+      if (item.toolKind === 'agent') {
+        flush();
+        groups.push({ kind: 'agent', tool: item });
+      } else {
+        run.push(item);
+      }
+    } else if ((item.type === 'permission' || item.type === 'question') && item.outcome) {
+      continue;
+    } else {
       flush();
       groups.push({ kind: 'item', item });
-    } else if (item.toolKind === 'agent') {
-      flush();
-      groups.push({ kind: 'agent', tool: item });
-    } else if (item.status === 'failed') {
-      flush();
-      groups.push({ kind: 'tools', id: item.id, tools: [item] });
-    } else {
-      run.push(item);
     }
   }
   flush();
