@@ -156,6 +156,8 @@ body {
 .chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
 .chat-pane p:last-child { margin-bottom: 0; }
 /* What the agent did reads as one stream; the wider gaps stay around the conversation. */
+/* A quote in a reply is text to read, however the markdown renderer mutes it. */
+.chat-pane [data-streamdown="blockquote"] { font-size: 14px; line-height: 22px; font-style: normal; color: var(--color-foreground); }
 .chat-pane .chat-work + .chat-work { margin-top: 4px; }
 .chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
 ::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
