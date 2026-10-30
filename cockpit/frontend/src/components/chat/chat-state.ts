@@ -36,6 +36,13 @@ export interface ModeOption {
   description: string;
 }
 
+export interface ShellTask {
+  taskId: string;
+  toolId: string | null;
+  description: string;
+  status: AgentTaskStatus;
+}
+
 export interface AgentTask {
   taskId: string;
   toolId: string | null;
@@ -71,6 +78,7 @@ export type ChatEvent =
   | { kind: 'commands'; commands: CommandInfo[] }
   | { kind: 'context'; usedTokens: number; maxTokens: number }
   | { kind: 'agent_task'; taskId: string; toolId?: string | null; description?: string; agentType?: string | null; status?: AgentTaskStatus; background?: boolean; activity?: string; tokens?: number; toolUses?: number; durationMs?: number }
+  | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
   | { kind: 'conversation_reset'; conversationId: string }
   | { kind: 'user_message'; id: string; text: string; queued: boolean }
@@ -113,6 +121,8 @@ export interface ChatState {
   commands: CommandInfo[];
   context: { usedTokens: number; maxTokens: number } | null;
   agents: AgentTask[];
+  /** Shells running in the background. */
+  shells: ShellTask[];
   /** Tool calls inside subagents, by the call that started the subagent. */
   agentTools: Record<string, AgentTool[]>;
   /** The last turn ended in a failure; cleared by the next one. */
@@ -120,7 +130,7 @@ export interface ChatState {
 }
 
 export const EMPTY_CHAT: ChatState = {
-  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], agentTools: {}, failed: false,
+  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], agentTools: {}, failed: false,
 };
 
 function indexOfItem(items: ChatItem[], type: ChatItem['type'], id: string): number {
@@ -171,6 +181,17 @@ function reduceAgentTask(agents: AgentTask[], event: Extract<ChatEvent, { kind: 
   }];
 }
 
+function reduceShellTask(shells: ShellTask[], event: Extract<ChatEvent, { kind: 'shell_task' }>): ShellTask[] {
+  const { kind: _kind, ...patch } = event;
+  const index = shells.findIndex((shell) => shell.taskId === event.taskId);
+  if (index >= 0) {
+    const next = shells.slice();
+    next[index] = { ...shells[index], ...patch };
+    return next;
+  }
+  return [...shells, { toolId: null, description: 'Shell', status: 'running', ...patch }];
+}
+
 function reduceAgentTool(tools: Record<string, AgentTool[]>, event: Extract<ChatEvent, { kind: 'agent_tool' }>): Record<string, AgentTool[]> {
   const list = tools[event.parentToolId] ?? [];
   const index = list.findIndex((tool) => tool.id === event.toolId);
@@ -207,11 +228,13 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return { ...state, context: { usedTokens: event.usedTokens, maxTokens: event.maxTokens } };
     case 'agent_task':
       return { ...state, agents: reduceAgentTask(state.agents, event) };
+    case 'shell_task':
+      return { ...state, shells: reduceShellTask(state.shells, event) };
     case 'agent_tool':
       return { ...state, agentTools: reduceAgentTool(state.agentTools, event) };
     case 'conversation_reset':
       return {
-        ...state, agents: [], agentTools: {}, context: null, failed: false,
+        ...state, agents: [], shells: [], agentTools: {}, context: null, failed: false,
         items: [{ type: 'notice', id: `s${seq}`, text: 'Started a new conversation.' }],
       };
     case 'user_message':
@@ -287,7 +310,10 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return { ...state, items: [...items, { type: 'error', id: `s${seq}`, text: event.message }] };
     case 'runtime_exit':
       // Whatever was running or asking went with the process; the status line must not stay stuck.
-      return { ...state, activity: 'idle', items: settleTools(items), agents: stopAgents(state.agents, false) };
+      return { ...state, activity: 'idle', items: settleTools(items),
+        agents: stopAgents(state.agents, false),
+        shells: state.shells.map((shell) => (shell.status === 'running' ? { ...shell, status: 'stopped' } : shell)),
+      };
     case 'usage':
       return state;
   }

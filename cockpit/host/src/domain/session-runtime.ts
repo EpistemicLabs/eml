@@ -87,6 +87,8 @@ export type RuntimeEvent =
     toolUses?: number
     durationMs?: number
   }
+  /** A shell running in the background, started or changed: a field left out did not change. */
+  | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
   /** A tool call inside a subagent; `title` and `toolKind` come with the call, a later `status` updates it. */
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
   /** The agent dropped the conversation and goes on in a new one under this id (`/clear`). */

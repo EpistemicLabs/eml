@@ -7,6 +7,20 @@ const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
 
 const tool = (toolId: string): ChatEvent => ({ kind: 'tool_call', toolId, name: 'Bash', toolKind: 'execute', title: `Run ${toolId}`, input: {} });
 
+describe('background shells', () => {
+  const started: ChatEvent = { kind: 'shell_task', taskId: 's', toolId: 't', description: 'npm run dev', status: 'running' };
+
+  it('a shell outlives its turn and ends when it says so', () => {
+    const state = fold([started, { kind: 'turn_end', reason: 'success' }]);
+    expect(state.shells[0]).toMatchObject({ description: 'npm run dev', status: 'running' });
+    expect(fold([{ kind: 'shell_task', taskId: 's', status: 'stopped' }], state).shells[0]).toMatchObject({ description: 'npm run dev', status: 'stopped' });
+  });
+
+  it('goes with the process', () => {
+    expect(fold([started, { kind: 'runtime_exit', expected: true }]).shells[0].status).toBe('stopped');
+  });
+});
+
 describe('subagents', () => {
   const started: ChatEvent = { kind: 'agent_task', taskId: 'a', toolId: 't', description: 'Look', status: 'running', background: false };
 

@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import {
-  AlertCircle, ArrowDown, Brain, ChevronRight, Loader2, Plug,
+  AlertCircle, ArrowDown, Brain, ChevronRight, Loader2,
 } from 'lucide-react';
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
@@ -366,17 +366,7 @@ export function ChatPane({
             onClose={() => setServersOpen(false)}
           />
         )}
-        <div className="flex items-center gap-2">
-          <div role="status" className="min-h-4 min-w-0 flex-1 text-muted-foreground">{status}</div>
-          <button
-            type="button"
-            aria-expanded={serversOpen}
-            onClick={() => setServersOpen((open) => !open)}
-            className={cn('flex items-center gap-1 rounded px-1 text-xs text-muted-foreground hover:text-foreground', TARGET)}
-          >
-            <Plug className="h-3 w-3" strokeWidth={1.8} /> MCP
-          </button>
-        </div>
+        <div role="status" className="min-h-4 text-muted-foreground">{status}</div>
         <Composer
           sessionId={sessionId}
           running={running}

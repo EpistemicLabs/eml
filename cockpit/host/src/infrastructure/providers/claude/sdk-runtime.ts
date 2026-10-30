@@ -143,6 +143,8 @@ export class ClaudeEventMapper {
   private sawSessionState = false
   private interrupted = false
   private agentTasks = new Set<string>()
+  // Every shell task; only one running in the background is shown (`shown`).
+  private shellTasks = new Map<string, { toolId: string | null; description: string; shown: boolean }>()
   private conversationId: string | null = null
 
   noteInterrupt(): void {
@@ -172,6 +174,22 @@ export class ClaudeEventMapper {
       ]
     }
     if (message.subtype === 'status' && message.permissionMode) return [{ kind: 'settings', mode: message.permissionMode }]
+    if (message.subtype === 'task_started' && message.task_type === 'local_bash') {
+      const shell = { toolId: message.tool_use_id ?? null, description: message.description, shown: message.is_backgrounded === true }
+      this.shellTasks.set(message.task_id, shell)
+      return shell.shown ? [{ kind: 'shell_task', taskId: message.task_id, toolId: shell.toolId, description: shell.description, status: 'running' }] : []
+    }
+    const shell = 'task_id' in message ? this.shellTasks.get(message.task_id as string) : undefined
+    if (shell && (message.subtype === 'task_updated' || message.subtype === 'task_notification')) {
+      const status = message.subtype === 'task_notification' ? message.status : message.patch.status
+      const ended = status === 'completed' || status === 'failed' ? status : status === 'killed' || status === 'stopped' ? 'stopped' : undefined
+      const start = !shell.shown && message.subtype === 'task_updated' && message.patch.is_backgrounded === true
+      if (start) shell.shown = true
+      if (ended) this.shellTasks.delete(message.task_id)
+      if (!shell.shown) return []
+      if (start) return [{ kind: 'shell_task', taskId: message.task_id, toolId: shell.toolId, description: shell.description, status: ended ?? 'running' }]
+      return ended ? [{ kind: 'shell_task', taskId: message.task_id, status: ended }] : []
+    }
     if (message.subtype === 'task_started') {
       if (message.task_type !== 'local_agent' || message.skip_transcript || message.ambient) return []
       this.agentTasks.add(message.task_id)

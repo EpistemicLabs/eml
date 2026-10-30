@@ -121,6 +121,34 @@ describe('ClaudeEventMapper', () => {
   })
 })
 
+describe('ClaudeEventMapper, shells', () => {
+  const system = (mapper: ClaudeEventMapper, subtype: string, extra: object) => mapper.map(sdk({ type: 'system', subtype, task_id: 's1', ...extra }))
+  const started = { task_type: 'local_bash', tool_use_id: 't1', description: 'npm run dev' }
+
+  it('shows a background shell until it ends', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(system(mapper, 'task_started', { ...started, is_backgrounded: true })).toEqual([
+      { kind: 'shell_task', taskId: 's1', toolId: 't1', description: 'npm run dev', status: 'running' },
+    ])
+    expect(system(mapper, 'task_updated', { patch: { status: 'killed' } })).toEqual([{ kind: 'shell_task', taskId: 's1', status: 'stopped' }])
+    expect(system(mapper, 'task_notification', { status: 'stopped' })).toEqual([])
+  })
+
+  it('leaves a foreground shell out, and shows it once it moves to the background', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(system(mapper, 'task_started', { ...started, is_backgrounded: false })).toEqual([])
+    expect(system(mapper, 'task_updated', { patch: { is_backgrounded: true } })).toEqual([
+      { kind: 'shell_task', taskId: 's1', toolId: 't1', description: 'npm run dev', status: 'running' },
+    ])
+  })
+
+  it('a foreground shell that ends stays out', () => {
+    const mapper = new ClaudeEventMapper()
+    system(mapper, 'task_started', { ...started, is_backgrounded: false })
+    expect(system(mapper, 'task_notification', { status: 'completed' })).toEqual([])
+  })
+})
+
 describe('historyEvents', () => {
   it('turns a transcript into events and leaves out what the CLI wrote as the user', () => {
     const events = historyEvents([

@@ -1,7 +1,7 @@
 // The input: text, the `/` command menu, the mode switch and what runs in the
 // background, one container. The model picker sits in the status bar below it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, Cpu, Loader2, Shield, Square, Users } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Cpu, Loader2, Shield, Square, Terminal, Users } from 'lucide-react';
 
 import { modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
@@ -113,27 +113,36 @@ export function ModelPicker({ chat, onSetModel }: { chat: ChatState; onSetModel:
   );
 }
 
-function AgentsChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: string) => void }) {
-  const running = chat.agents.filter((agent) => agent.status === 'running');
-  if (running.length === 0) return null;
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/** What runs beside the conversation: subagents and background shells. */
+function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: string) => void }) {
+  const agents = chat.agents.filter((agent) => agent.status === 'running');
+  const shells = chat.shells.filter((shell) => shell.status === 'running');
+  if (agents.length + shells.length === 0) return null;
+  const row = (taskId: string, icon: ReactNode, title: string, detail: string | null) => (
+    <div key={taskId} className="flex items-center gap-2 px-2 py-1.5">
+      {icon}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-foreground" title={title}>{title}</span>
+        {detail && <span className="block truncate text-muted-foreground">{detail}</span>}
+      </span>
+      <button type="button" aria-label={`Stop ${title}`} onClick={() => onStop(taskId)} className={cn('flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground', TARGET)}>
+        <Square className="h-3.5 w-3.5" strokeWidth={1.8} />
+      </button>
+    </div>
+  );
+  const iconClass = 'h-3.5 w-3.5 flex-shrink-0 text-muted-foreground';
   return (
     <ChipMenu
-      label={`${running.length} ${running.length === 1 ? 'agent' : 'agents'}`}
-      title="Running subagents"
+      label={[agents.length ? count(agents.length, 'agent') : '', shells.length ? count(shells.length, 'shell') : ''].filter(Boolean).join(' · ')}
+      title="Running in the background"
       icon={<Loader2 className="h-3 w-3 flex-shrink-0 animate-spin" strokeWidth={1.8} />}
     >
-      {() => running.map((agent) => (
-        <div key={agent.taskId} className="flex items-center gap-2 px-2 py-1.5">
-          <Users className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-foreground">{agent.description}</span>
-            {agent.activity && <span className="block truncate text-muted-foreground">{agent.activity}</span>}
-          </span>
-          <button type="button" onClick={() => onStop(agent.taskId)} className={cn('flex-shrink-0 rounded px-2 py-1 text-muted-foreground hover:bg-foreground/5', TARGET)}>
-            Stop
-          </button>
-        </div>
-      ))}
+      {() => [
+        ...agents.map((agent) => row(agent.taskId, <Users className={iconClass} strokeWidth={1.8} />, agent.description, agent.activity)),
+        ...shells.map((shell) => row(shell.taskId, <Terminal className={iconClass} strokeWidth={1.8} />, shell.description, null)),
+      ]}
     </ChipMenu>
   );
 }
@@ -271,7 +280,7 @@ export function Composer({
               />
             ))}
           </ChipMenu>
-          <AgentsChip chat={chat} onStop={onStopAgent} />
+          <BackgroundChip chat={chat} onStop={onStopAgent} />
           <div className="flex-1" />
           {running && (
             <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-foreground/5')}>
