@@ -16,6 +16,10 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
+import { ChatBridge } from './chat-bridge.js'
+import { InMemoryEventStore } from './application/session-events.js'
+import { SessionHandoff } from './application/session-handoff.js'
+import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
 import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
@@ -164,10 +168,19 @@ async function main() {
   }
   fs.mkdirSync(TASKS_DIR, { recursive: true })
   watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers })
-  const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv })
+  // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
+  const handoff = (): SessionHandoff => sessionHandoff
+  const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId) })
   const swept = bridge.sweepEmptySessions()
   if (swept > 0) process.stderr.write(`[pty] forgot ${swept} session(s) that never ran a turn\n`)
   const turns = new TurnTracker()
+  const chat = new ChatBridge({
+    ledger, providers, spaces, sessionEnv,
+    runtimes: createClaudeSdkRuntimes(),
+    events: new InMemoryEventStore(),
+    onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+  }, handoff)
+  const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -175,7 +188,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
+    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
     origins,
   )
 
@@ -210,6 +223,7 @@ async function main() {
   const shutdown = () => {
     workers.stop()
     try { bridge.dispose() } catch { /* best-effort */ }
+    void chat.dispose()
     try { server.proc.kill('SIGTERM') } catch { /* best-effort */ }
     try { host.close() } catch { /* best-effort */ }
     process.exit(0)

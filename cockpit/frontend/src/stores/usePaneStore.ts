@@ -36,9 +36,9 @@ import { setTopView } from './useTopViewStore';
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
  */
-export type PaneView = 'terminal' | 'brain' | 'note';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'brain', 'note'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -195,7 +195,7 @@ const normalizeTerminalLabels = (panes: PaneState[]): PaneState[] => {
 const createPane = (paneView: PaneView = 'terminal', projectId: string | null = null): PaneState => ({
   id: generateId(),
   projectId,
-  sessionId: paneView === 'terminal' ? newCliSessionId() : null,
+  sessionId: paneView === 'terminal' || paneView === 'chat' ? newCliSessionId() : null,
   paneView,
 });
 
@@ -811,9 +811,10 @@ export function setPaneView(paneId: string, view: PaneView): void {
   if (loc.pane.sessionId && view !== 'note') {
     sessionViews = { ...sessionViews, [loc.pane.sessionId]: view };
   }
-  // A pane opened as a note or brain view has no session yet; the terminal
-  // only starts with one, so switching to it mints the id a new pane would get.
-  const sessionId = view === 'terminal' && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
+  // A pane opened as a note or brain view has no session yet; the terminal and
+  // the chat only start with one, so switching to them mints the id a new pane would get.
+  const needsSession = view === 'terminal' || view === 'chat';
+  const sessionId = needsSession && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
   const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, paneView: view, sessionId }));
   setSnapshot({ ...snapshot, desks, sessionViews });
 }
@@ -827,7 +828,7 @@ export function setPaneView(paneId: string, view: PaneView): void {
 
 export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
-  | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider }
+  | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
   | { surface: 'brain'; projectId: string | null };
 
@@ -871,10 +872,14 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
 export function openInPane(target: OpenTarget): string {
   setTopView('desks');
   const existing = findPaneHolding(target);
+  // A session the user moved to the chat view opens there; a new one is a terminal.
+  const shownView: PaneView = target.surface === 'terminal' && target.sessionId && (target.chat || snapshot.sessionViews[target.sessionId] === 'chat')
+    ? 'chat'
+    : target.surface;
   if (existing) {
     activatePane(existing.id);
-    if (existing.paneView !== target.surface) {
-      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: target.surface }));
+    if (existing.paneView !== shownView) {
+      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: shownView }));
       setSnapshot({ ...snapshot, desks });
     }
     return existing.id;
@@ -886,7 +891,7 @@ export function openInPane(target: OpenTarget): string {
       : target.surface === 'note'
         ? { noteId: target.noteId }
         : {};
-  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: target.surface, ...items };
+  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: shownView, ...items };
 
   const active = getActivePane();
   if (active && isEmptyPane(active)) {

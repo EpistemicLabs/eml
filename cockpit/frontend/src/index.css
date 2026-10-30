@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../node_modules/streamdown/dist/*.js";
 
 /* Two palettes (herdr-style: monospace, coral/purple accents): light in @theme,
    dark under html.dark. ThemeContext sets the class from the user's choice

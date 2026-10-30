@@ -13,6 +13,8 @@ import React, { useEffect, useRef } from 'react';
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
+import { ChatPane } from '../../chat/ChatPane';
+import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { cn } from '@/lib/utils';
@@ -48,6 +50,7 @@ function MainContent({
     if (initialShellCommand !== null) consumePendingShellCommand(paneId);
   }, [paneId, initialShellCommand]);
   const noteId = usePane(paneId)?.noteId;
+  const switchBlocked = useSwitchBlocked(sessionId);
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what
   // this pane resolves to (a pane opened from a sidebar session may carry no
@@ -71,8 +74,8 @@ function MainContent({
   const toolbarReveal = !isActive &&
     'opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:hidden';
 
-  // Brain and note panes don't need a project here; terminal panes do.
-  if (paneView === 'terminal' && !selectedProject) {
+  // Brain and note panes don't need a project here; terminal and chat panes do.
+  if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {
     return (
       <div className="relative flex h-full flex-col">
         {onClosePane && !compact && (
@@ -113,6 +116,7 @@ function MainContent({
                 onSetPaneView={onSetPaneView}
                 onClosePane={onClosePane}
                 onAddPane={handleAddPane}
+                switchBlocked={switchBlocked}
               />
             </div>
           </>
@@ -134,6 +138,8 @@ function MainContent({
                 </div>
                 <TerminalStatusBar session={selectedSession} />
               </div>
+            ) : paneView === 'chat' && selectedProject && sessionId ? (
+              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : (

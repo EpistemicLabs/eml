@@ -6,6 +6,7 @@ import { attachSpawnEvents, handleSpawnApi } from './spawn-api.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
+import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces } from './brain-space.js'
 import { provisionSpace } from './provision.js'
 import {
@@ -87,6 +88,8 @@ export interface HostDeps {
   spawnToken: string
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
+  /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
+  chat: ChatBridge
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -167,7 +170,8 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     isPinned: entry.pinned,
     paneId: entry.paneId,
     taskId: entry.taskId,
-    state: deps.bridge.sessionState(entry.sessionId),
+    state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
+    runtime: entry.runtime,
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
     __provider: deps.providers.forSession(entry.sessionId).id,
@@ -681,6 +685,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       if (!project) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Project not found' } }); return true }
       const deleteData = url.searchParams.get('deleteData') === '1'
       deps.bridge.killProjectSessions(id, space.ledgerKey)
+      deps.chat.killProjectSessions(id, space.ledgerKey)
       for (const entry of deps.bridge.ledger.list(id, space.ledgerKey)) {
         if (deleteData) deps.providers.forSession(entry.sessionId).deleteTranscript(deps.bridge.ledger.ref(entry.sessionId, project.path))
         deps.bridge.ledger.remove(entry.sessionId)
@@ -723,6 +728,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const entry = deps.bridge.ledger.get(id)
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
       deps.bridge.killSession(id)
+      await deps.chat.kill(id)
       deps.turns.forget(id)
       const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
       deps.providers.forSession(id).deleteTranscript(deps.bridge.ledger.ref(id, project?.path ?? null))
@@ -746,6 +752,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     // PTY attach handshake
     if (resource === 'pty' && method === 'POST') {
       json(res, 200, deps.bridge.mintNonce())
+      return true
+    }
+
+    // Chat view attach handshake
+    if (resource === 'chat' && method === 'POST') {
+      json(res, 200, deps.chat.mintNonce())
       return true
     }
   } catch (err) {
@@ -866,17 +878,18 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false })
   server.on('upgrade', (req, socket, head) => {
     const { pathname, searchParams } = new URL(req.url ?? '', 'http://127.0.0.1')
-    if (pathname !== '/ws/shell') { socket.destroy(); return }
+    if (pathname !== '/ws/shell' && pathname !== '/ws/chat') { socket.destroy(); return }
     const gate = requestGate(req, allowedOrigins)
     const origin = req.headers.origin
     if (!gate.allowed || !origin || !gate.origins.includes(origin)) { socket.destroy(); return }
     const nonce = searchParams.get('nonce') ?? ''
-    if (!deps.bridge.consumeNonce(nonce)) { socket.destroy(); return }
+    const side = pathname === '/ws/chat' ? deps.chat : deps.bridge
+    if (!side.consumeNonce(nonce)) { socket.destroy(); return }
     wss.handleUpgrade(req, socket, head, (ws) => {
       // Disable Nagle on loopback — it only delays small frames.
       const tcp = (ws as unknown as { _socket?: { setNoDelay?: (f: boolean) => void } })._socket
       tcp?.setNoDelay?.(true)
-      deps.bridge.attach(ws)
+      side.attach(ws)
     })
   })
 

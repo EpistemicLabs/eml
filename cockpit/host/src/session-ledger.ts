@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
 import { PROVIDER_IDS, type ProviderId, type SessionRef } from './domain/agent-provider.js'
+import type { SessionRuntimeKind } from './domain/session-runtime.js'
 
 /**
  * Host-owned session ledger (decision cockpit-session-resume-strategy).
@@ -57,6 +58,8 @@ export interface LedgerEntry {
    * a restart, until the user closes it (pty-bridge.ts).
    */
   keepRunning: boolean
+  /** How the session last ran: in a terminal, or through the chat view. The conversation is the same either way. */
+  runtime: SessionRuntimeKind
 }
 
 interface LedgerFile {
@@ -92,6 +95,7 @@ function load(): LedgerFile {
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
+          runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
         }
       }
     }
@@ -151,6 +155,7 @@ export class SessionLedger {
       taskId: taskId ?? prev?.taskId ?? null,
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
+      runtime: prev?.runtime ?? 'terminal',
     }
     this.persist()
   }
@@ -160,6 +165,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.keepRunning === keepRunning) return
     entry.keepRunning = keepRunning
+    this.persist()
+  }
+
+  /** Record how the session runs now (chat-bridge.ts, pty-bridge.ts). */
+  setRuntime(sessionId: string, runtime: SessionRuntimeKind): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.runtime === runtime) return
+    entry.runtime = runtime
     this.persist()
   }
 
