@@ -157,6 +157,8 @@ body {
 .chat-pane p:last-child { margin-bottom: 0; }
 /* What the agent did reads as one stream; the wider gaps stay around the conversation. */
 .chat-pane .chat-work + .chat-work { margin-top: 4px; }
+.chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
 /* Below 16px, iOS zooms the page when a field takes the focus. */
 @media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
 

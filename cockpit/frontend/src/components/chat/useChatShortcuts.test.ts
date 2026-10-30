@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { escapeStops, selectedText } from './useChatShortcuts';
+import { escapeStops, paneShortcut, selectedText } from './useChatShortcuts';
+
+describe('paneShortcut', () => {
+  const press = (key: string, patch: object = {}) => paneShortcut({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...patch });
+
+  it('takes Ctrl or Cmd with O and F', () => {
+    expect(press('o', { ctrlKey: true })).toBe('expand');
+    expect(press('F', { metaKey: true })).toBe('search');
+  });
+
+  it('leaves everything else alone', () => {
+    expect(press('o')).toBeNull();
+    expect(press('f', { ctrlKey: true, shiftKey: true })).toBeNull();
+    expect(press('k', { ctrlKey: true })).toBeNull();
+  });
+});
 
 describe('escapeStops', () => {
   const base = { running: true, activePane: true, handled: false, dialogOpen: false, inPane: true };

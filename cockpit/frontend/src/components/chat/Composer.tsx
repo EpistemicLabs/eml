@@ -7,7 +7,7 @@ import { modelLabel } from '@/components/main-content/view/subcomponents/Termina
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 
-import { currentModelOption, matchCommands, type ChatState, type CommandInfo } from './chat-state';
+import { currentModelOption, matchCommands, sentMessages, stepHistory, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
 import { TARGET } from './tool-icons';
 
@@ -191,6 +191,9 @@ export function Composer({
   const [draft, setDraft] = useState(() => readDraft(sessionId));
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  // Going through sent messages with the arrow keys; typing ends it.
+  const [recalled, setRecalled] = useState<number | null>(null);
+  const draftBeforeRecall = useRef('');
   const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { setDraft(readDraft(sessionId)); }, [sessionId]);
@@ -210,6 +213,14 @@ export function Composer({
     writeDraft(sessionId, text);
     setActive(0);
     setDismissed(false);
+    setRecalled(null);
+  };
+  const recall = (step: -1 | 1) => {
+    const sent = sentMessages(chat.items);
+    const next = stepHistory(sent.length, recalled, step);
+    if (recalled === null) draftBeforeRecall.current = draft;
+    setRecalled(next);
+    setDraft(next === null ? draftBeforeRecall.current : sent[next]);
   };
   const sendText = (text: string) => {
     if (!text.trim() || !onSend(text)) return;
@@ -244,6 +255,9 @@ export function Composer({
       }
     }
     if (compact) return;
+    // As in a terminal, but never at the cost of moving around in a text being written.
+    if (event.key === 'ArrowUp' && (recalled !== null || !draft)) { event.preventDefault(); recall(-1); return; }
+    if (event.key === 'ArrowDown' && recalled !== null) { event.preventDefault(); recall(1); return; }
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendText(draft); }
     else if (event.key === 'Escape' && running) { event.preventDefault(); onStop(); }
   };

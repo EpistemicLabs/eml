@@ -364,6 +364,54 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
   return groups;
 }
 
+/** What has to be open to see an item: its row, and the group it is folded into. */
+export function keysToReveal(items: ChatItem[], id: string): string[] {
+  for (const group of groupItems(items)) {
+    if (group.kind === 'agent' && group.tool.id === id) return [id];
+    if (group.kind === 'tools' && group.tools.some((item) => item.id === id)) {
+      return group.tools.length > 1 ? [`group:${group.id}`, id] : [id];
+    }
+  }
+  return [];
+}
+
+/** The tool call Ctrl+O acts on: the newest one that has a row. */
+export function latestToolId(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (items[i].type === 'tool') return items[i].id;
+  }
+  return null;
+}
+
+/** The items whose text holds the query, oldest first. Folded rows count, whether open or not. */
+export function searchItems(items: ChatItem[], query: string): string[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return items.filter((item) => {
+    const text = item.type === 'tool' ? `${item.title}\n${item.output}`
+      : item.type === 'user' || item.type === 'assistant' || item.type === 'thinking' ? item.text
+        : '';
+    return text.toLowerCase().includes(needle);
+  }).map((item) => item.id);
+}
+
+/** The user's messages, oldest first, for going back through them with the arrow keys. */
+export function sentMessages(items: ChatItem[]): string[] {
+  return items.flatMap((item) => (item.type === 'user' ? [item.text] : []));
+}
+
+/**
+ * One step through the sent messages. `index` null: not browsing them. Back from there
+ * starts at the newest; forward past the newest leaves the list, which gives null.
+ */
+export function stepHistory(count: number, index: number | null, step: -1 | 1): number | null {
+  if (count === 0) return null;
+  if (index === null) return step === -1 ? count - 1 : null;
+  const next = index + step;
+  if (next < 0) return 0;
+  return next >= count ? null : next;
+}
+
 /** The commands a draft is asking for: only while it is a bare `/word`. Name matches first, in the list's order. */
 export function matchCommands(commands: CommandInfo[], draft: string): CommandInfo[] {
   const typed = /^\/(\S*)$/.exec(draft)?.[1];

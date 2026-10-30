@@ -4,19 +4,21 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import {
-  AlertCircle, ArrowDown, Brain, ChevronRight, Loader2,
+  AlertCircle, ArrowDown, Brain, ChevronRight, Copy, Loader2,
 } from 'lucide-react';
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
+import { copyTextToClipboard } from '@/utils/clipboard';
 
 import { AgentCard } from './AgentCard';
-import { groupItems, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { groupItems, keysToReveal, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
+import { ChatSearch } from './ChatSearch';
 import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
@@ -55,7 +57,7 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
   const Icon = TOOL_ICONS[tool.toolKind];
   const open = opened;
   return (
-    <div className="chat-work">
+    <div data-chat-item={tool.id} className="chat-work">
       <button
         type="button"
         aria-expanded={open}
@@ -69,9 +71,20 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
       {open && (
         <>
           {tool.approval && <div className="px-1 pt-0.5 text-muted-foreground">{OUTCOME_LABEL[tool.approval]}</div>}
-          <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 whitespace-pre-wrap break-words text-foreground">
-            {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
-          </pre>
+          <div className="relative">
+            <pre className="mt-1 mb-1 max-h-72 overflow-auto rounded bg-muted p-2 pr-8 whitespace-pre-wrap break-words text-foreground">
+              {tool.output || (tool.status === 'running' ? 'Running…' : 'No output')}
+            </pre>
+            <button
+              type="button"
+              aria-label="Copy the call and its output"
+              title="Copy the call and its output"
+              onClick={() => { void copyTextToClipboard(tool.output ? `${tool.title}\n\n${tool.output}` : tool.title); }}
+              className="absolute top-1 right-1 rounded p-1 text-muted-foreground hover:bg-foreground/5"
+            >
+              <Copy className="h-3.5 w-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -80,7 +93,7 @@ function ToolRow({ tool, opened, onToggle }: { tool: ToolItem; opened: boolean; 
 
 function ThinkingRow({ item, opened, onToggle }: { item: Extract<FoldedItem, { type: 'thinking' }>; opened: boolean; onToggle: (id: string) => void }) {
   return (
-    <div className="chat-work">
+    <div data-chat-item={item.id} className="chat-work">
       <button
         type="button"
         aria-expanded={opened}
@@ -278,32 +291,27 @@ function JumpToLatest() {
 }
 
 /** Lets the input re-pin the scroll when a message goes out. */
-function PinOnSend({ pinRef }: { pinRef: React.MutableRefObject<(() => void) | null> }) {
-  const { scrollToBottom } = useStickToBottomContext();
+function PinOnSend({ pinRef, unpinRef }: { pinRef: React.MutableRefObject<(() => void) | null>; unpinRef: React.MutableRefObject<(() => void) | null> }) {
+  const { scrollToBottom, stopScroll } = useStickToBottomContext();
   useEffect(() => {
     pinRef.current = () => { void scrollToBottom(); };
-    return () => { pinRef.current = null; };
-  }, [pinRef, scrollToBottom]);
+    unpinRef.current = stopScroll;
+    return () => { pinRef.current = null; unpinRef.current = null; };
+  }, [pinRef, unpinRef, scrollToBottom, stopScroll]);
   return null;
 }
 
 const Messages = memo(function Messages({
-  items, agents, agentTools, onAnswer, onStopAgent,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
   agentTools: Record<string, AgentTool[]>;
+  opened: Set<string>;
+  onToggle: (id: string) => void;
   onAnswer: (id: string, reply: PermissionReply) => void;
   onStopAgent: (taskId: string) => void;
 }) {
-  const [opened, setOpened] = useState<Set<string>>(() => new Set());
-  const toggle = useCallback((id: string) => {
-    setOpened((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
   const groups = useMemo(() => groupItems(items), [items]);
   return (
     <div role="log" aria-live="off" className={cn(COLUMN, 'space-y-4 py-4')}>
@@ -327,13 +335,13 @@ const Messages = memo(function Messages({
         switch (item.type) {
           case 'user':
             return (
-              <div key={item.id} className="flex flex-col items-end gap-1 pt-2">
+              <div key={item.id} data-chat-item={item.id} className="flex flex-col items-end gap-1 pt-2">
                 <div className="max-w-[min(85%,528px)] rounded-md bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>
                 {item.queued && <span className="text-muted-foreground">queued</span>}
               </div>
             );
           case 'assistant':
-            return <Assistant key={item.id} text={item.text} streaming={item.streaming} />;
+            return <div key={item.id} data-chat-item={item.id}><Assistant text={item.text} streaming={item.streaming} /></div>;
           case 'permission':
             return <PermissionCard key={item.id} item={item} onAnswer={onAnswer} />;
           case 'question':
@@ -361,7 +369,35 @@ export function ChatPane({
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
   const running = chat.activity !== 'idle';
-  useChatShortcuts(rootRef, running, isActive, interrupt);
+  const unpinRef = useRef<(() => void) | null>(null);
+  const [opened, setOpened] = useState<Set<string>>(() => new Set());
+  const [searching, setSearching] = useState(false);
+  const toggle = useCallback((id: string) => {
+    setOpened((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const reveal = useCallback((keys: string[]) => {
+    setOpened((prev) => (keys.every((key) => prev.has(key)) ? prev : new Set([...prev, ...keys])));
+  }, []);
+  const itemsRef = useRef(chat.items);
+  itemsRef.current = chat.items;
+  const expandLatest = useCallback(() => {
+    const id = latestToolId(itemsRef.current);
+    if (!id) return;
+    const keys = keysToReveal(itemsRef.current, id);
+    setOpened((prev) => {
+      const next = new Set(prev);
+      // Closing leaves the group open: it may hold other rows being read.
+      if (prev.has(id)) next.delete(id); else keys.forEach((key) => next.add(key));
+      return next;
+    });
+  }, []);
+  const openSearch = useCallback(() => setSearching(true), []);
+  const closeSearch = useCallback(() => setSearching(false), []);
+  useChatShortcuts(rootRef, running, isActive, interrupt, expandLatest, openSearch);
   const status = switching
     ?? (connection === 'closed' ? 'Connection lost, reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
@@ -376,10 +412,10 @@ export function ChatPane({
     <div ref={rootRef} className="chat-pane flex h-full min-h-0 flex-col">
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} onAnswer={answer} onStopAgent={stopAgent} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
         </StickToBottom.Content>
         <JumpToLatest />
-        <PinOnSend pinRef={pinRef} />
+        <PinOnSend pinRef={pinRef} unpinRef={unpinRef} />
       </StickToBottom>
       <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pb-2')}>
         {problem && <div role="alert" className="text-destructive break-words">{problem}</div>}
@@ -388,6 +424,16 @@ export function ChatPane({
             This session moved to another view.
             <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
           </div>
+        )}
+        {searching && (
+          <ChatSearch
+            items={chat.items}
+            opened={opened}
+            root={rootRef}
+            onReveal={reveal}
+            onUnpin={() => unpinRef.current?.()}
+            onClose={closeSearch}
+          />
         )}
         {serversOpen && (
           <ToolServersPanel

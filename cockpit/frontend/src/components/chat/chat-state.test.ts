@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { EMPTY_CHAT, currentModelOption, groupItems, matchCommands, reduceChat, statusLine, type ChatEvent, type ChatState } from './chat-state';
+import { EMPTY_CHAT, currentModelOption, groupItems, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
@@ -66,6 +66,40 @@ describe('session settings', () => {
     const models = [{ id: 'default', label: 'Default', description: '', resolved: 'claude-x' }, { id: 'x', label: 'X', description: '', resolved: 'claude-x' }];
     expect(currentModelOption({ model: 'claude-x', models })?.id).toBe('default');
     expect(currentModelOption({ model: 'other', models })).toBeNull();
+  });
+});
+
+describe('keyboard helpers', () => {
+  const user: ChatEvent = { kind: 'user_message', id: 'u', text: 'Find the Bug', queued: false };
+  const result: ChatEvent = { kind: 'tool_result', toolId: '2', status: 'completed', output: 'a bug here' };
+  const { items } = fold([user, tool('1'), tool('2'), result, { kind: 'text', blockId: 'a', text: 'done' }, tool('3')]);
+
+  it('reveals a row with the group it is folded into', () => {
+    expect(keysToReveal(items, '2')).toEqual(['group:1', '2']);
+    expect(keysToReveal(items, '3')).toEqual(['3']);
+    expect(keysToReveal(items, 'a')).toEqual([]);
+  });
+
+  it('finds the newest tool call', () => {
+    expect(latestToolId(items)).toBe('3');
+    expect(latestToolId([])).toBeNull();
+  });
+
+  it('searches titles, output and messages, also in folded rows, ignoring case', () => {
+    expect(searchItems(items, 'BUG')).toEqual(['u', '2']);
+    expect(searchItems(items, 'Run 3')).toEqual(['3']);
+    expect(searchItems(items, '  ')).toEqual([]);
+  });
+
+  it('goes back through sent messages and out again', () => {
+    expect(sentMessages(items)).toEqual(['Find the Bug']);
+    expect(stepHistory(2, null, -1)).toBe(1);
+    expect(stepHistory(2, 1, -1)).toBe(0);
+    expect(stepHistory(2, 0, -1)).toBe(0);
+    expect(stepHistory(2, 0, 1)).toBe(1);
+    expect(stepHistory(2, 1, 1)).toBeNull();
+    expect(stepHistory(2, null, 1)).toBeNull();
+    expect(stepHistory(0, null, -1)).toBeNull();
   });
 });
 

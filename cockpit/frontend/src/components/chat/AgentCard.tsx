@@ -56,7 +56,7 @@ export function AgentCard({
     agent?.durationMs != null ? formatDuration(agent.durationMs) : null,
   ].filter(Boolean).join(' · ');
   return (
-    <div className="chat-work font-mono">
+    <div data-chat-item={tool.id} className="chat-work font-mono">
       <div className="flex items-start gap-1">
         <button
           type="button"
