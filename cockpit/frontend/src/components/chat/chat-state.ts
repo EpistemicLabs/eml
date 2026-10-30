@@ -14,8 +14,65 @@ export interface Question {
   options: Array<{ label: string; description: string }>;
 }
 
+export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  argumentHint: string;
+  aliases: string[];
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  description: string;
+  resolved: string | null;
+}
+
+export interface ModeOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface AgentTask {
+  taskId: string;
+  toolId: string | null;
+  description: string;
+  agentType: string | null;
+  status: AgentTaskStatus;
+  background: boolean;
+  activity: string | null;
+  tokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
+}
+
+export interface AgentTool {
+  id: string;
+  toolKind: ToolKind;
+  title: string;
+  status: ToolStatus;
+}
+
+export interface ToolServer {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
+  error: string | null;
+  scope: string | null;
+  transport: 'web' | 'process' | null;
+  toolCount: number;
+}
+
 export type ChatEvent =
-  | { kind: 'ready'; model: string | null }
+  | { kind: 'settings'; model?: string | null; mode?: string }
+  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[] }
+  | { kind: 'commands'; commands: CommandInfo[] }
+  | { kind: 'context'; usedTokens: number; maxTokens: number }
+  | { kind: 'agent_task'; taskId: string; toolId?: string | null; description?: string; agentType?: string | null; status?: AgentTaskStatus; background?: boolean; activity?: string; tokens?: number; toolUses?: number; durationMs?: number }
+  | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
+  | { kind: 'conversation_reset'; conversationId: string }
   | { kind: 'user_message'; id: string; text: string; queued: boolean }
   | { kind: 'text_delta'; blockId: string; delta: string }
   | { kind: 'text'; blockId: string; text: string }
@@ -50,11 +107,21 @@ export interface ChatState {
   items: ChatItem[];
   activity: Activity;
   model: string | null;
+  mode: string | null;
+  models: ModelOption[];
+  modes: ModeOption[];
+  commands: CommandInfo[];
+  context: { usedTokens: number; maxTokens: number } | null;
+  agents: AgentTask[];
+  /** Tool calls inside subagents, by the call that started the subagent. */
+  agentTools: Record<string, AgentTool[]>;
   /** The last turn ended in a failure; cleared by the next one. */
   failed: boolean;
 }
 
-export const EMPTY_CHAT: ChatState = { items: [], activity: 'idle', model: null, failed: false };
+export const EMPTY_CHAT: ChatState = {
+  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], agentTools: {}, failed: false,
+};
 
 function indexOfItem(items: ChatItem[], type: ChatItem['type'], id: string): number {
   for (let i = items.length - 1; i >= 0; i -= 1) {
@@ -84,6 +151,39 @@ function settleTools(items: ChatItem[]): ChatItem[] {
   return next;
 }
 
+/** Running subagents are over. `foregroundOnly`: a background one outlives the turn. */
+function stopAgents(agents: AgentTask[], foregroundOnly: boolean): AgentTask[] {
+  if (!agents.some((agent) => agent.status === 'running' && !(foregroundOnly && agent.background))) return agents;
+  return agents.map((agent) => (agent.status === 'running' && !(foregroundOnly && agent.background) ? { ...agent, status: 'stopped' } : agent));
+}
+
+function reduceAgentTask(agents: AgentTask[], event: Extract<ChatEvent, { kind: 'agent_task' }>): AgentTask[] {
+  const { kind: _kind, ...patch } = event;
+  const index = agents.findIndex((agent) => agent.taskId === event.taskId);
+  if (index >= 0) {
+    const next = agents.slice();
+    next[index] = { ...agents[index], ...patch };
+    return next;
+  }
+  return [...agents, {
+    toolId: null, description: 'Subagent', agentType: null, status: 'running', background: false,
+    activity: null, tokens: null, toolUses: null, durationMs: null, ...patch,
+  }];
+}
+
+function reduceAgentTool(tools: Record<string, AgentTool[]>, event: Extract<ChatEvent, { kind: 'agent_tool' }>): Record<string, AgentTool[]> {
+  const list = tools[event.parentToolId] ?? [];
+  const index = list.findIndex((tool) => tool.id === event.toolId);
+  if (index >= 0) {
+    const next = list.slice();
+    next[index] = { ...list[index], status: event.status };
+    return { ...tools, [event.parentToolId]: next };
+  }
+  // A result without its call (the call was before this process): nothing to show it on.
+  if (!event.title) return tools;
+  return { ...tools, [event.parentToolId]: [...list, { id: event.toolId, toolKind: event.toolKind ?? 'other', title: event.title, status: event.status }] };
+}
+
 function unqueueFirst(items: ChatItem[]): ChatItem[] {
   const index = items.findIndex((item) => item.type === 'user' && item.queued);
   if (index < 0) return items;
@@ -93,8 +193,27 @@ function unqueueFirst(items: ChatItem[]): ChatItem[] {
 export function reduceChat(state: ChatState, event: ChatEvent, seq: number): ChatState {
   const { items } = state;
   switch (event.kind) {
-    case 'ready':
-      return { ...state, model: event.model };
+    case 'settings':
+      return {
+        ...state,
+        ...(event.model !== undefined ? { model: event.model } : {}),
+        ...(event.mode !== undefined ? { mode: event.mode } : {}),
+      };
+    case 'capabilities':
+      return { ...state, models: event.models, modes: event.modes };
+    case 'commands':
+      return { ...state, commands: event.commands };
+    case 'context':
+      return { ...state, context: { usedTokens: event.usedTokens, maxTokens: event.maxTokens } };
+    case 'agent_task':
+      return { ...state, agents: reduceAgentTask(state.agents, event) };
+    case 'agent_tool':
+      return { ...state, agentTools: reduceAgentTool(state.agentTools, event) };
+    case 'conversation_reset':
+      return {
+        ...state, agents: [], agentTools: {}, context: null, failed: false,
+        items: [{ type: 'notice', id: `s${seq}`, text: 'Started a new conversation.' }],
+      };
     case 'user_message':
       return {
         ...state,
@@ -154,6 +273,7 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return {
         ...state,
         failed: event.reason === 'error',
+        agents: event.reason === 'interrupted' ? stopAgents(state.agents, true) : state.agents,
         items: event.reason === 'interrupted' ? [...settled, { type: 'interrupted', id: `s${seq}` }] : settled,
       };
     }
@@ -167,7 +287,7 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return { ...state, items: [...items, { type: 'error', id: `s${seq}`, text: event.message }] };
     case 'runtime_exit':
       // Whatever was running or asking went with the process; the status line must not stay stuck.
-      return { ...state, activity: 'idle', items: settleTools(items) };
+      return { ...state, activity: 'idle', items: settleTools(items), agents: stopAgents(state.agents, false) };
     case 'usage':
       return state;
   }
@@ -175,9 +295,10 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
 
 export type RenderGroup =
   | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' }> }
-  | { kind: 'tools'; id: string; tools: Array<Extract<ChatItem, { type: 'tool' }>> };
+  | { kind: 'tools'; id: string; tools: Array<Extract<ChatItem, { type: 'tool' }>> }
+  | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> };
 
-/** Adjacent tool calls sit in one group; a failed one breaks out, so it is never hidden in a summary. */
+/** Adjacent tool calls sit in one group; a failed one or a subagent breaks out, so it is never hidden in a summary. */
 export function groupItems(items: ChatItem[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
   let run: Array<Extract<ChatItem, { type: 'tool' }>> = [];
@@ -191,6 +312,9 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       if (item.type === 'thinking' && !item.text) continue;
       flush();
       groups.push({ kind: 'item', item });
+    } else if (item.toolKind === 'agent') {
+      flush();
+      groups.push({ kind: 'agent', tool: item });
     } else if (item.status === 'failed') {
       flush();
       groups.push({ kind: 'tools', id: item.id, tools: [item] });
@@ -200,6 +324,29 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
   }
   flush();
   return groups;
+}
+
+/** The commands a draft is asking for: only while it is a bare `/word`. Name matches first, in the list's order. */
+export function matchCommands(commands: CommandInfo[], draft: string): CommandInfo[] {
+  const typed = /^\/(\S*)$/.exec(draft)?.[1];
+  if (typed === undefined) return [];
+  const query = typed.toLowerCase();
+  const rank = (command: CommandInfo): number => {
+    const name = command.name.toLowerCase();
+    if (name.startsWith(query)) return 0;
+    if (command.aliases.some((alias) => alias.toLowerCase().startsWith(query))) return 1;
+    return name.includes(query) ? 2 : 3;
+  };
+  return commands
+    .map((command) => ({ command, rank: rank(command) }))
+    .filter(({ rank: r }) => r < 3)
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ command }) => command);
+}
+
+/** The option a session's model shows as: several can stand for one model, the first one speaks. */
+export function currentModelOption(state: Pick<ChatState, 'model' | 'models'>): ModelOption | null {
+  return state.models.find((option) => option.id === state.model || option.resolved === state.model) ?? null;
 }
 
 /** The status line above the input; null when there is nothing to say. */

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching } from './chat-store';
-import type { ChatEvent } from './chat-state';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setToolServers } from './chat-store';
+import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
 // reconnecting would take it back.
@@ -15,6 +15,8 @@ export type PermissionReply =
   | { decision: 'always' }
   | { decision: 'deny' }
   | { decision: 'answer'; answers: Record<string, string> };
+
+export type ToolServerAction = 'enable' | 'disable' | 'reconnect';
 
 async function mintNonce(): Promise<string | null> {
   try {
@@ -59,12 +61,13 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string };
+        const frame = JSON.parse(message.data) as { type: string; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
         } else if (frame.type === 'reset' && typeof frame.epoch === 'number') resetChat(sessionId, frame.epoch);
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
+        else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
       socket.onclose = (event) => {
@@ -104,6 +107,11 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     send: useCallback((text: string) => sendFrame({ type: 'send', text }), [sendFrame]),
     interrupt: useCallback(() => sendFrame({ type: 'interrupt' }), [sendFrame]),
     answer: useCallback((requestId: string, answer: PermissionReply) => sendFrame({ type: 'answer', requestId, answer }), [sendFrame]),
+    setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
+    setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
+    stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
+    askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
+    changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
     reconnect: useCallback(() => setAttempt((n) => n + 1), []),
   };
 }

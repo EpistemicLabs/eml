@@ -38,6 +38,64 @@ describe('ClaudeEventMapper', () => {
     expect(mapper.map(assistant('m', [{ type: 'text', text: 'inner' }], { parent_tool_use_id: 't' }))).toEqual([])
   })
 
+  it('shows a local command\'s answer but not the CLI\'s placeholder', () => {
+    const mapper = new ClaudeEventMapper()
+    const synthetic = (text: string) => assistant('m', [{ type: 'text', text }], { message: { id: 'm', model: '<synthetic>', content: [{ type: 'text', text }] } })
+    expect(mapper.map(synthetic('## Context Usage'))).toContainEqual(expect.objectContaining({ kind: 'text', text: '## Context Usage' }))
+    expect(mapper.map(synthetic('No response requested.'))).toEqual([])
+  })
+
+  it('reports the mode and model from init and from a status change', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(mapper.map(sdk({ type: 'system', subtype: 'init', model: 'm1', permissionMode: 'auto' }))).toEqual([{ kind: 'settings', model: 'm1', mode: 'auto' }])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'status', status: null, permissionMode: 'plan' }))).toEqual([{ kind: 'settings', mode: 'plan' }])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'status', status: 'compacting' }))).toEqual([])
+  })
+
+  it('follows a subagent from start to end, with its tool calls under the call that started it', () => {
+    const mapper = new ClaudeEventMapper()
+    const system = (subtype: string, extra: object) => mapper.map(sdk({ type: 'system', subtype, task_id: 'a1', ...extra }))
+    const usage = { total_tokens: 100, tool_uses: 2, duration_ms: 3000 }
+    expect(system('task_started', { tool_use_id: 't1', description: 'Look', subagent_type: 'Explore', task_type: 'local_agent', is_backgrounded: false })).toEqual([
+      { kind: 'agent_task', taskId: 'a1', toolId: 't1', description: 'Look', agentType: 'Explore', status: 'running', background: false },
+    ])
+    expect(system('task_progress', { description: 'Reading', usage })).toEqual([
+      { kind: 'agent_task', taskId: 'a1', activity: 'Reading', tokens: 100, toolUses: 2, durationMs: 3000 },
+    ])
+    expect(mapper.map(assistant('m', [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/x' } },
+      { type: 'tool_use', id: 'h1', name: 'SubagentHandback', input: {} },
+    ], { parent_tool_use_id: 't1' }))).toEqual([
+      { kind: 'agent_tool', parentToolId: 't1', toolId: 'r1', toolKind: 'read', title: 'Read /x', status: 'running' },
+    ])
+    expect(mapper.map(sdk({ type: 'user', parent_tool_use_id: 't1', message: { content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'x' }] } }))).toEqual([
+      { kind: 'agent_tool', parentToolId: 't1', toolId: 'r1', status: 'completed' },
+    ])
+    expect(system('task_updated', { patch: { status: 'killed' } })).toEqual([{ kind: 'agent_task', taskId: 'a1', status: 'stopped' }])
+    expect(system('task_notification', { status: 'completed', usage })).toEqual([
+      { kind: 'agent_task', taskId: 'a1', status: 'completed', tokens: 100, toolUses: 2, durationMs: 3000 },
+    ])
+  })
+
+  it('leaves other tasks out, and takes a subagent\'s report as its result', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(mapper.map(sdk({ type: 'system', subtype: 'task_started', task_id: 'b', task_type: 'local_bash', description: 'x' }))).toEqual([])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'task_updated', task_id: 'b', patch: { status: 'completed' } }))).toEqual([])
+    expect(mapper.map(sdk({
+      type: 'user', parent_tool_use_id: null, tool_use_result: { handbackReport: { text: 'the report' } },
+      message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'delivered' }] },
+    }))).toEqual([{ kind: 'tool_result', toolId: 't', status: 'completed', output: 'the report' }])
+  })
+
+  it('reports a cleared conversation', () => {
+    const mapper = new ClaudeEventMapper()
+    const init = (session_id: string) => mapper.map(sdk({ type: 'system', subtype: 'init', session_id, model: 'm', permissionMode: 'default' })).map((e) => e.kind)
+    expect(init('c1')).toEqual(['settings'])
+    expect(init('c1')).toEqual(['settings'])
+    expect(mapper.map(sdk({ type: 'conversation_reset', new_conversation_id: 'not-the-transcript' }))).toEqual([])
+    expect(init('c2')).toEqual(['conversation_reset', 'settings'])
+  })
+
   it('ends an interrupted turn as interrupted, whatever the result says', () => {
     const mapper = new ClaudeEventMapper()
     mapper.noteInterrupt()

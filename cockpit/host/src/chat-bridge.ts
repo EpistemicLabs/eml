@@ -23,9 +23,15 @@ import { sessionAddress } from './session-address.js'
  *   client → { type:'send', text }
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
+ *   client → { type:'tool_servers' }
+ *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
+ *   client → { type:'set_mode', mode }
+ *   client → { type:'set_model', model }
+ *   client → { type:'stop_agent', taskId }
  *   host   → { type:'switching', reason }           (the handoff is under way)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
+ *   host   → { type:'tool_servers', servers, error }  (a snapshot, not part of the event log)
  *   host   → { type:'error', message }
  *
  * Attach handshake as for the terminal: POST /api/chat mints a one-time nonce, the
@@ -42,6 +48,8 @@ const INTERRUPT_WAIT_MS = 3_000
 const WS_MAX_BUFFERED = 16 * 1024 * 1024
 
 const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
+// A model id may carry a variant: `opus[1m]`.
+const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
@@ -80,6 +88,11 @@ type ClientMessage = {
   text?: unknown
   requestId?: unknown
   answer?: unknown
+  mode?: unknown
+  model?: unknown
+  taskId?: unknown
+  name?: unknown
+  action?: unknown
 }
 
 function send(ws: WebSocket | null, message: Record<string, unknown>): void {
@@ -207,7 +220,18 @@ export class ChatBridge {
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)
           if (answer) entry.runtime?.answerPermission(text(data.requestId), answer)
-        }
+        } else if (data.type === 'set_mode' && SAFE_ID.test(text(data.mode))) {
+          this.control(entry, (runtime) => runtime.setMode(text(data.mode)))
+        } else if (data.type === 'set_model' && SAFE_MODEL.test(text(data.model))) {
+          const model = text(data.model)
+          this.control(entry, async (runtime) => {
+            await runtime.setModel(model)
+            this.ctx.ledger.setChatSettings(entry.sessionId, { model })
+          })
+        } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
+          this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
+        } else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
+        else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.log(`error: ${message}`)
@@ -231,6 +255,12 @@ export class ChatBridge {
     })
 
     ws.on('error', (error) => this.log(`ws error: ${error.message}`))
+  }
+
+  /** A change to the running session; what goes wrong shows in the conversation. */
+  private control(entry: ChatEntry, action: (runtime: SessionRuntime) => Promise<void>): void {
+    if (!entry.runtime) throw new Error('This session is not running. Send a message to resume it first.')
+    void action(entry.runtime).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
   }
 
   /** Validates the frame and starts the session's way in; returns its id, or null when refused. */
@@ -299,7 +329,8 @@ export class ChatBridge {
     // The view is rebuilt from the transcript, which holds what the terminal added
     // and was never streamed; from here on it renders from this one log.
     if (resume) {
-      for (const event of await this.ctx.runtimes.history(sessionId, projectPath)) this.emit(entry, event)
+      const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
+      for (const event of await this.ctx.runtimes.history(conversationId, projectPath)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
     provider.trustProject(projectPath)
@@ -330,8 +361,10 @@ export class ChatBridge {
       COCKPIT_SESSION_ID: sessionId,
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
+    const stored = this.ctx.ledger.get(sessionId)
     entry.runtime = this.ctx.runtimes.start({
-      sessionId, resume, cwd: projectPath, env, address,
+      sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
+      cwd: projectPath, env, address,
       files: { mcpConfig: space.files.mcpConfig, settings: space.files.settings },
       onEvent: (event) => this.onRuntimeEvent(entry, event),
     })
@@ -339,6 +372,12 @@ export class ChatBridge {
 
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
     switch (event.kind) {
+      case 'settings':
+        if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
+        break
+      case 'conversation_reset':
+        this.ctx.ledger.bindProviderSession(entry.sessionId, event.conversationId)
+        break
       case 'activity':
         entry.active = event.state !== 'idle'
         break
@@ -392,6 +431,33 @@ export class ChatBridge {
       this.emit(entry, { kind: 'activity', state: 'working' })
     }
     entry.runtime?.send(id, message)
+  }
+
+  private async sendToolServers(entry: ChatEntry, ws: WebSocket, failure: string | null = null): Promise<void> {
+    if (!entry.runtime) {
+      send(ws, { type: 'tool_servers', servers: [], error: failure ?? 'The session is not running right now. It starts with the next message.' })
+      return
+    }
+    try {
+      send(ws, { type: 'tool_servers', servers: await entry.runtime.toolServers(), error: failure })
+    } catch (error) {
+      send(ws, { type: 'tool_servers', servers: [], error: failure ?? (error instanceof Error ? error.message : String(error)) })
+    }
+  }
+
+  /** Whatever comes of it, the client gets the servers as they are now. */
+  private async changeToolServer(entry: ChatEntry, ws: WebSocket, name: string, action: string): Promise<void> {
+    let failure: string | null = null
+    try {
+      if (action === 'enable' || action === 'disable') await entry.runtime?.setToolServerEnabled(name, action === 'enable')
+      else if (action === 'reconnect') await entry.runtime?.reconnectToolServer(name)
+    } catch (error) {
+      // A server that wants a sign-in throws here though it did what was asked; the
+      // list says so and the panel says where to sign in. Anything else is a failure.
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/needs-auth/.test(message)) failure = `${name}: ${message}`
+    }
+    await this.sendToolServers(entry, ws, failure)
   }
 
   /** A client on a running session: it takes the session over and gets what it does not have. */

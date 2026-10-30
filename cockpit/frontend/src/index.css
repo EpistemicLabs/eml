@@ -133,6 +133,31 @@ body {
   font-size: 13px;
 }
 
+/* The chat view's type: 14px text, 16px headings, 12px for everything secondary,
+   which is what is muted, plus preformatted output. Gaps sit on a 4px grid. Not in
+   a layer, so it wins over the utilities the markdown renderer brings. */
+.chat-pane {
+  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-pane * { font-size: inherit; line-height: inherit; }
+.chat-pane .text-muted-foreground, .chat-pane pre { font-size: 12px; line-height: 18px; }
+.chat-pane [class*="font-mono"], .chat-pane code, .chat-pane pre { font-family: var(--font-mono); font-variant-ligatures: none; }
+.chat-pane [data-streamdown^="heading-"] { margin-top: 20px; margin-bottom: 8px; font-size: 16px; line-height: 24px; font-weight: 600; }
+.chat-pane [data-streamdown="ordered-list"], .chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="code-block"],
+.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: 12px; margin-bottom: 12px; }
+.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: 4px; margin-bottom: 4px; }
+.chat-pane p { margin-top: 12px; margin-bottom: 12px; }
+/* Prose stays at about 75 characters a line; code, tables and tools take the pane. */
+.chat-pane p, .chat-pane [data-streamdown^="heading-"], .chat-pane [data-streamdown="ordered-list"],
+.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 528px; }
+.chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
+.chat-pane p:last-child { margin-bottom: 0; }
+/* Below 16px, iOS zooms the page when a field takes the focus. */
+@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
+
 /* Structural utilities the sidebar uses; they resolve against the current
    palette. */
 @utility frosted {

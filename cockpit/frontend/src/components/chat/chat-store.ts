@@ -2,7 +2,7 @@
 // the connection, and the events waiting for the next animation frame.
 import { useSyncExternalStore } from 'react';
 
-import { EMPTY_CHAT, reduceChat, type ChatEvent, type ChatState } from './chat-state';
+import { EMPTY_CHAT, reduceChat, type ChatEvent, type ChatState, type ToolServer } from './chat-state';
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'superseded';
 
@@ -13,6 +13,9 @@ export interface ChatSnapshot {
   switching: string | null;
   /** The host refused or failed something outside the conversation. */
   problem: string | null;
+  /** The session's tool servers as last asked for; null until then. */
+  toolServers: ToolServer[] | null;
+  toolServersError: string | null;
 }
 
 interface SessionStore {
@@ -25,7 +28,7 @@ interface SessionStore {
   listeners: Set<() => void>;
 }
 
-const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null };
+const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, toolServers: null, toolServersError: null };
 // requestAnimationFrame stops in a hidden tab; the events must still arrive.
 const HIDDEN_FLUSH_MS = 250;
 
@@ -85,6 +88,10 @@ export function setConnection(sessionId: string, connection: Connection): void {
 
 export function setSwitching(sessionId: string, switching: string | null): void {
   publish(storeOf(sessionId), { switching });
+}
+
+export function setToolServers(sessionId: string, toolServers: ToolServer[], toolServersError: string | null): void {
+  publish(storeOf(sessionId), { toolServers, toolServersError });
 }
 
 export function setProblem(sessionId: string, problem: string | null): void {

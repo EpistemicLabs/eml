@@ -1,30 +1,41 @@
 // Cockpit addition: a status bar under every terminal
-// pane — when the last message was, which model answered, how much context
+// and chat pane — when the last message was, which model answered, how much context
 // the last turn carried. All three come from the session transcript the
 // host reads (session-summary.ts); the list refreshes with the projects poll.
-import { useEffect, useState } from 'react';
+// A chat pane knows model and context live and passes them in.
+import { useEffect, useState, type ReactNode } from 'react';
 import { Clock, Cpu, Gauge } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 
 type TerminalStatusBarProps = {
   session: ProjectSession | null;
+  /** Fresher than the transcript; a field that is null falls back to it. */
+  live?: { model: string | null; contextTokens: number | null; contextWindow: number | null };
+  /** Takes the model's place: a picker instead of a label. */
+  modelSlot?: ReactNode;
+  className?: string;
 };
 
 const MODEL_LABELS: Array<[RegExp, string]> = [
+  [/fable-5-5/, 'Fable 5.5'],
   [/fable-5-1/, 'Fable 5.1'],
   [/fable-5/, 'Fable 5'],
   [/mythos-5-1/, 'Mythos 5.1'],
+  [/opus-5-5/, 'Opus 5.5'],
   [/opus-5/, 'Opus 5'],
   [/opus-4-8/, 'Opus 4.8'],
   [/opus-4-7/, 'Opus 4.7'],
   [/opus-4-6/, 'Opus 4.6'],
+  [/sonnet-5-5/, 'Sonnet 5.5'],
   [/sonnet-5/, 'Sonnet 5'],
   [/sonnet-4-6/, 'Sonnet 4.6'],
+  [/haiku-5-5/, 'Haiku 5.5'],
   [/haiku-4-5/, 'Haiku 4.5'],
 ];
 
-function modelLabel(model: string): string {
+export function modelLabel(model: string): string {
   for (const [pattern, label] of MODEL_LABELS) {
     if (pattern.test(model)) return model.includes('[1m]') ? `${label} (1M)` : label;
   }
@@ -41,7 +52,7 @@ function contextWindow(model: string | null | undefined): number {
   return 1_000_000;
 }
 
-function formatTokens(n: number): string {
+export function formatTokens(n: number): string {
   if (n >= 1_000_000) return n % 1_000_000 === 0 ? `${n / 1_000_000}M` : `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k`;
   return String(n);
@@ -68,7 +79,7 @@ function formatAge(iso: string, now: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function TerminalStatusBar({ session }: TerminalStatusBarProps) {
+export default function TerminalStatusBar({ session, live, modelSlot, className }: TerminalStatusBarProps) {
   // Minute clock so the relative age stays honest without re-fetching.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -77,9 +88,9 @@ export default function TerminalStatusBar({ session }: TerminalStatusBarProps) {
   }, []);
 
   const lastMessageAt = session?.lastMessageAt ?? null;
-  const model = session?.model ?? null;
-  const contextTokens = session?.contextTokens ?? null;
-  const window_ = contextWindow(model);
+  const model = live?.model ?? session?.model ?? null;
+  const contextTokens = live?.contextTokens ?? session?.contextTokens ?? null;
+  const window_ = live?.contextWindow ?? contextWindow(model);
   const contextPct = contextTokens !== null ? Math.min(100, Math.round((contextTokens / window_) * 100)) : null;
 
   // One line, always: nothing wraps, the content stays
@@ -90,7 +101,7 @@ export default function TerminalStatusBar({ session }: TerminalStatusBarProps) {
   // Column model: the left column is the only one allowed to shrink (and
   // clips); the right column keeps at least its content width.
   return (
-    <div className="@container flex-shrink-0 border-t border-foreground/15 px-2 pt-1.5 text-caption text-foreground">
+    <div className={cn('@container flex-shrink-0 border-t border-foreground/15 px-2 pt-1.5 text-caption text-foreground', className)}>
       <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-2 whitespace-nowrap">
         {/* left: when · middle: model · right: context */}
         <span className="flex min-w-0 items-center gap-1.5 justify-self-start" title="Last message">
@@ -105,10 +116,12 @@ export default function TerminalStatusBar({ session }: TerminalStatusBarProps) {
           )}
         </span>
 
-        <span className="flex items-center gap-1.5 justify-self-center" title={model ?? 'Model unknown until the first turn'}>
-          <Cpu className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
-          <span>{model ? modelLabel(model) : '—'}</span>
-        </span>
+        {modelSlot ?? (
+          <span className="flex items-center gap-1.5 justify-self-center" title={model ?? 'Model unknown until the first turn'}>
+            <Cpu className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
+            <span>{model ? modelLabel(model) : '—'}</span>
+          </span>
+        )}
 
         <span className="flex items-center gap-1.5 justify-self-end" title="Context at the last turn (input + cache tokens) / window">
           <Gauge className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />

@@ -29,8 +29,68 @@ export interface Question {
   options: QuestionOption[]
 }
 
+/** A command the agent takes as a message, written `/name`. */
+export interface CommandInfo {
+  name: string
+  description: string
+  argumentHint: string
+  aliases: string[]
+}
+
+export interface ModelOption {
+  id: string
+  label: string
+  description: string
+  /** The model id this option stands for now (an alias resolves to one). */
+  resolved: string | null
+}
+
+export interface ModeOption {
+  id: string
+  label: string
+  description: string
+}
+
+export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
+
+/** A tool server the session has, as the user manages it. Holds no address or credentials. */
+export interface ToolServer {
+  name: string
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+  error: string | null
+  scope: string | null
+  /** How the server is reached: over the web, or as a process on this machine. */
+  transport: 'web' | 'process' | null
+  toolCount: number
+}
+
 export type RuntimeEvent =
-  | { kind: 'ready'; model: string | null }
+  /** What the session runs with now; a field left out did not change. */
+  | { kind: 'settings'; model?: string | null; mode?: string }
+  /** What can be chosen in this session. */
+  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[] }
+  /** Replaces the command list. */
+  | { kind: 'commands'; commands: CommandInfo[] }
+  | { kind: 'context'; usedTokens: number; maxTokens: number }
+  /** A subagent, started or changed: a field left out did not change. `toolId` is the call that started it. */
+  | {
+    kind: 'agent_task'
+    taskId: string
+    toolId?: string | null
+    description?: string
+    agentType?: string | null
+    status?: AgentTaskStatus
+    background?: boolean
+    /** One line on what it is doing now. */
+    activity?: string
+    tokens?: number
+    toolUses?: number
+    durationMs?: number
+  }
+  /** A tool call inside a subagent; `title` and `toolKind` come with the call, a later `status` updates it. */
+  | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
+  /** The agent dropped the conversation and goes on in a new one under this id (`/clear`). */
+  | { kind: 'conversation_reset'; conversationId: string }
   | { kind: 'user_message'; id: string; text: string; queued: boolean }
   /** Streamed text of a block; a later `text` with the same blockId replaces it. */
   | { kind: 'text_delta'; blockId: string; delta: string }
@@ -79,6 +139,13 @@ export interface SessionRuntime {
   interrupt(): Promise<void>
   /** Idempotent per request: an answer to a settled or unknown request does nothing. */
   answerPermission(requestId: string, answer: PermissionAnswer): void
+  /** Rejects when the agent refuses it; a change shows up as a `settings` event. */
+  setMode(mode: string): Promise<void>
+  setModel(model: string): Promise<void>
+  stopAgent(taskId: string): Promise<void>
+  toolServers(): Promise<ToolServer[]>
+  setToolServerEnabled(name: string, enabled: boolean): Promise<void>
+  reconnectToolServer(name: string): Promise<void>
   /** Ends the run; resolves once its process has exited. Open requests settle as cancelled. */
   close(): Promise<void>
 }
@@ -87,6 +154,11 @@ export interface SessionRuntimeStart {
   sessionId: string
   /** Continue the stored conversation instead of starting one under `sessionId`. */
   resume: boolean
+  /** The stored conversation's own id, when it is not `sessionId` any more. */
+  conversationId: string | null
+  /** The mode and model the session last ran with; null: the agent's default. */
+  mode: string | null
+  model: string | null
   cwd: string
   /** The session's complete environment; a runtime inherits nothing else. */
   env: Record<string, string>
@@ -100,7 +172,7 @@ export interface SessionRuntimeStart {
 export interface SessionRuntimeFactory {
   start(request: SessionRuntimeStart): SessionRuntime
   /** The stored conversation as events, oldest first. */
-  history(sessionId: string, cwd: string): Promise<RuntimeEvent[]>
+  history(conversationId: string, cwd: string): Promise<RuntimeEvent[]>
 }
 
 export interface StoredEvent {
