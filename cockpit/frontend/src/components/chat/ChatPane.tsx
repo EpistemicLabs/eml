@@ -26,7 +26,8 @@ type ToolItem = Extract<ChatItem, { type: 'tool' }>;
 type PermissionItem = Extract<ChatItem, { type: 'permission' }>;
 type QuestionItem = Extract<ChatItem, { type: 'question' }>;
 
-const COLUMN = 'w-full px-3 md:px-4';
+// Centered, as wide as one of two panes side by side on a large screen.
+const COLUMN = 'mx-auto w-full max-w-[980px] px-3 md:px-4';
 
 const OUTCOME_LABEL: Record<RequestOutcome, string> = {
   allowed: 'Allowed once',
