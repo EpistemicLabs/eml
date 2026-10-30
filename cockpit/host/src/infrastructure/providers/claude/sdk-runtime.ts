@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { query, getSessionMessages, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
-  CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
+  ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
 } from '../../../domain/session-runtime.js'
 import { CLAUDE_BIN } from './runtime.js'
 
@@ -331,7 +331,10 @@ export function historyEvents(messages: Array<Pick<SessionMessage, 'type' | 'uui
     const content = (stored.message as { content?: unknown } | null)?.content
     if (stored.type === 'user') {
       const words = userWords(content)
-      if (words !== null) events.push({ kind: 'user_message', id: stored.uuid, text: words, queued: false })
+      const images = Array.isArray(content) ? (content as ContentBlock[]).filter((block) => block.type === 'image').map(() => ({ url: null })) : []
+      if (words !== null || images.length > 0) {
+        events.push({ kind: 'user_message', id: stored.uuid, text: words ?? '', queued: false, ...(images.length > 0 ? { images } : {}) })
+      }
       if (Array.isArray(content)) {
         for (const block of content as ContentBlock[]) {
           if (block.type === 'tool_result') events.push(toolResultEvent(block, null))
@@ -554,11 +557,15 @@ class ClaudeSdkRuntime implements SessionRuntime {
     })
   })
 
-  send(id: string, text: string): void {
+  send(id: string, text: string, images: ImageInput[] = []): void {
+    const content = images.length === 0 ? text : [
+      ...images.map(({ mediaType, data }) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } })),
+      ...(text.trim() ? [{ type: 'text', text }] : []),
+    ]
     this.input.push({
       type: 'user',
       uuid: id as SDKUserMessage['uuid'],
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: content as SDKUserMessage['message']['content'] },
       parent_tool_use_id: null,
       session_id: this.request.sessionId,
     })

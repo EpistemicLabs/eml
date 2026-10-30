@@ -51,6 +51,12 @@ export interface ModeOption {
   description: string
 }
 
+/** An image going into a message: base64. */
+export interface ImageInput {
+  mediaType: string
+  data: string
+}
+
 export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
 
 /** A tool server the session has, as the user manages it. Holds no address or credentials. */
@@ -93,7 +99,8 @@ export type RuntimeEvent =
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
   /** The agent dropped the conversation and goes on in a new one under this id (`/clear`). */
   | { kind: 'conversation_reset'; conversationId: string }
-  | { kind: 'user_message'; id: string; text: string; queued: boolean }
+  /** `images`: what came with it; `url` null for one that can only be counted (a stored conversation). */
+  | { kind: 'user_message'; id: string; text: string; queued: boolean; images?: Array<{ url: string | null }> }
   /** Streamed text of a block; a later `text` with the same blockId replaces it. */
   | { kind: 'text_delta'; blockId: string; delta: string }
   | { kind: 'text'; blockId: string; text: string }
@@ -136,7 +143,7 @@ export type PermissionAnswer =
 
 /** One live run of a session. Its events arrive through the `onEvent` it was started with. */
 export interface SessionRuntime {
-  send(id: string, text: string): void
+  send(id: string, text: string, images?: ImageInput[]): void
   /** Stop the running turn. Messages already queued still run, so they must not be sent again. */
   interrupt(): Promise<void>
   /** Idempotent per request: an answer to a settled or unknown request does nothing. */

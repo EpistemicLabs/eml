@@ -164,6 +164,20 @@ describe('historyEvents', () => {
   })
 })
 
+describe('historyEvents with images', () => {
+  it('counts a stored message\'s images, and keeps one that has no words', () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'x' } }
+    const events = historyEvents([
+      { type: 'user', uuid: 'u1', parent_tool_use_id: null, message: { content: [image, { type: 'text', text: 'see' }] } },
+      { type: 'user', uuid: 'u2', parent_tool_use_id: null, message: { content: [image] } },
+    ])
+    expect(events.slice(0, 2)).toEqual([
+      { kind: 'user_message', id: 'u1', text: 'see', queued: false, images: [{ url: null }] },
+      { kind: 'user_message', id: 'u2', text: '', queued: false, images: [{ url: null }] },
+    ])
+  })
+})
+
 describe('toolTitle', () => {
   it('is one line of verb and target', () => {
     expect(toolTitle('Read', { file_path: '/a/b' })).toBe('Read /a/b')

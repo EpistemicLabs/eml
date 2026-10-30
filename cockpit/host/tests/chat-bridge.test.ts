@@ -1,11 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
 import { ChatBridge, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
-import type { PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
+import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
+import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -14,6 +17,7 @@ import type { PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFact
  */
 class FakeRuntime implements SessionRuntime {
   sent: string[] = []
+  images: ImageInput[][] = []
   answers: Array<[string, PermissionAnswer]> = []
   interrupts = 0
   closed = false
@@ -21,7 +25,7 @@ class FakeRuntime implements SessionRuntime {
   serverCalls: string[] = []
   constructor(readonly start: SessionRuntimeStart) {}
   emit(event: RuntimeEvent): void { this.start.onEvent(event) }
-  send(_id: string, text: string): void { this.sent.push(text) }
+  send(_id: string, text: string, images: ImageInput[] = []): void { this.sent.push(text); this.images.push(images) }
   async interrupt(): Promise<void> { this.interrupts += 1; this.emit({ kind: 'turn_end', reason: 'interrupted' }) }
   answerPermission(requestId: string, answer: PermissionAnswer): void { this.answers.push([requestId, answer]) }
   modes: string[] = []
@@ -355,6 +359,27 @@ describe('ChatBridge', () => {
     await flush()
     expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', servers: [] })
     expect((ws.frames.at(-1) as { error: string }).error).toContain('not running')
+  })
+
+  it('puts pasted images into the message and shows them by url', async () => {
+    const name = '11111111-1111-1111-1111-111111111111.png'
+    mkdirSync(PASTE_IMAGES_DIR, { recursive: true })
+    writeFileSync(join(PASTE_IMAGES_DIR, name), 'pixels')
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: '', images: [name] })
+    expect(runtimes[0].images[0]).toEqual([{ mediaType: 'image/png', data: Buffer.from('pixels').toString('base64') }])
+    expect(ws.events()).toContainEqual(expect.objectContaining({ kind: 'user_message', images: [{ url: `/api/paste-image/${name}` }] }))
+  })
+
+  it('refuses an image name that is not one of ours, and sends nothing', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: 'look', images: ['../../secret.png'] })
+    expect(runtimes[0].sent).toEqual([])
+    expect(ws.frames).toContainEqual(expect.objectContaining({ type: 'error' }))
   })
 
   it('refuses another agent\'s session', async () => {

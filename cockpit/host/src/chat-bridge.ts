@@ -12,6 +12,7 @@ import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
+import { readPastedImage } from './paste-images.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -47,6 +48,7 @@ const INTERRUPT_WAIT_MS = 3_000
 // reconnects and asks for what it missed.
 const WS_MAX_BUFFERED = 16 * 1024 * 1024
 
+const MAX_IMAGES = 10
 const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
 // A model id may carry a variant: `opus[1m]`.
 const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
@@ -78,6 +80,7 @@ export interface ChatContext {
 }
 
 type ClientMessage = {
+  images?: unknown
   type?: string
   paneId?: unknown
   projectId?: unknown
@@ -111,6 +114,11 @@ function parseMessage(raw: RawData, isBinary: boolean): ClientMessage | null {
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+function parseImageNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((name): name is string => typeof name === 'string').slice(0, MAX_IMAGES)
+}
 
 export function parseAnswer(value: unknown): PermissionAnswer | null {
   if (!value || typeof value !== 'object') return null
@@ -215,7 +223,7 @@ export class ChatBridge {
         if (!sessionId) return
         const entry = this.entries.get(sessionId)
         if (!entry || entry.ws !== ws) return
-        if (data.type === 'send') this.sendMessage(entry, text(data.text))
+        if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)
@@ -415,8 +423,10 @@ export class ChatBridge {
     send(ws, { type: 'event', seq: stored.seq, event: stored.event })
   }
 
-  private sendMessage(entry: ChatEntry, message: string): void {
-    if (!message.trim()) return
+  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = []): void {
+    if (!message.trim() && imageNames.length === 0) return
+    // First: an image that can't be read must not leave half a message behind.
+    const images = imageNames.map(readPastedImage)
     // A crash leaves the entry without a runtime; the conversation goes on.
     if (!entry.runtime) {
       const space = this.ctx.spaces.get(entry.spaceId)
@@ -425,12 +435,15 @@ export class ChatBridge {
       this.startRuntime(entry, provider, space, provider.canResume(this.ctx.ledger.ref(entry.sessionId, null)))
     }
     const id = randomUUID()
-    this.emit(entry, { kind: 'user_message', id, text: message, queued: entry.active })
+    this.emit(entry, {
+      kind: 'user_message', id, text: message, queued: entry.active,
+      ...(images.length > 0 ? { images: images.map(({ url }) => ({ url })) } : {}),
+    })
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })
     }
-    entry.runtime?.send(id, message)
+    entry.runtime?.send(id, message, images.map(({ mediaType, data }) => ({ mediaType, data })))
   }
 
   private async sendToolServers(entry: ChatEntry, ws: WebSocket, failure: string | null = null): Promise<void> {

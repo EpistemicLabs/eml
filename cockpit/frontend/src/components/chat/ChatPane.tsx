@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import {
-  AlertCircle, ArrowDown, Brain, ChevronRight, Copy, Loader2,
+  AlertCircle, ArrowDown, Brain, ChevronRight, Copy, Image as ImageIcon, Loader2,
 } from 'lucide-react';
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
@@ -336,7 +336,21 @@ const Messages = memo(function Messages({
           case 'user':
             return (
               <div key={item.id} data-chat-item={item.id} className="flex flex-col items-end gap-1 pt-2">
-                <div className="max-w-[min(85%,528px)] rounded-md bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>
+                {item.images.length > 0 && (
+                  <div className="flex max-w-[min(85%,528px)] flex-wrap justify-end gap-1">
+                    {item.images.map((image, index) => (image.url ? (
+                      <a key={image.url} href={image.url} target="_blank" rel="noreferrer">
+                        <img src={image.url} alt="Pasted" className="max-h-40 rounded-md border border-border" />
+                      </a>
+                    ) : (
+                      // A stored image has nothing else to tell it apart.
+                      <span key={index} className="flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-muted-foreground">
+                        <ImageIcon className="h-3.5 w-3.5" strokeWidth={1.8} /> Image
+                      </span>
+                    )))}
+                  </div>
+                )}
+                {item.text && <div className="max-w-[min(85%,528px)] rounded-md bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>}
                 {item.queued && <span className="text-muted-foreground">queued</span>}
               </div>
             );
@@ -401,9 +415,9 @@ export function ChatPane({
   const status = switching
     ?? (connection === 'closed' ? 'Connection lost, reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
-  const onSend = useCallback((text: string) => {
-    if (text.trim() === '/mcp') { setServersOpen(true); return true; }
-    const sent = send(text);
+  const onSend = useCallback((text: string, images: string[]) => {
+    if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
+    const sent = send(text, images);
     if (sent) pinRef.current?.();
     return sent;
   }, [send]);

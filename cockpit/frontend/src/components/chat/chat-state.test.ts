@@ -103,6 +103,18 @@ describe('keyboard helpers', () => {
   });
 });
 
+describe('images in messages', () => {
+  it('keeps what came with a message, and leaves a message without words out of the recall list', () => {
+    const { items } = fold([
+      { kind: 'user_message', id: 'a', text: '', queued: false, images: [{ url: '/x.png' }] },
+      { kind: 'user_message', id: 'b', text: 'hi', queued: false },
+    ]);
+    expect(items[0]).toMatchObject({ images: [{ url: '/x.png' }] });
+    expect(items[1]).toMatchObject({ images: [] });
+    expect(sentMessages(items)).toEqual(['hi']);
+  });
+});
+
 describe('matchCommands', () => {
   const command = (name: string, aliases: string[] = []) => ({ name, description: '', argumentHint: '', aliases });
   const list = [command('review'), command('compact'), command('usage', ['cost']), command('recap')];

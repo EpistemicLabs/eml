@@ -1,9 +1,10 @@
 // The input: text, the `/` command menu, the mode switch and what runs in the
 // background, one container. The model picker sits in the status bar below it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, Cpu, Loader2, Shield, Square, Terminal, Users } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Cpu, Loader2, Paperclip, Shield, Square, Terminal, Users, X } from 'lucide-react';
 
 import { modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 
@@ -176,13 +177,24 @@ function CommandMenu({
   );
 }
 
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+// What the model takes per image; the host refuses more as well.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+interface Attachment {
+  id: number;
+  preview: string;
+  /** The stored file's name; null while it uploads. */
+  name: string | null;
+}
+
 export function Composer({
   sessionId, running, chat, onSend, onStop, onSetMode, onStopAgent,
 }: {
   sessionId: string;
   running: boolean;
   chat: ChatState;
-  onSend: (text: string) => boolean;
+  onSend: (text: string, images: string[]) => boolean;
   onStop: () => void;
   onSetMode: (mode: string) => boolean;
   onStopAgent: (taskId: string) => void;
@@ -194,9 +206,18 @@ export function Composer({
   // Going through sent messages with the arrow keys; typing ends it.
   const [recalled, setRecalled] = useState<number | null>(null);
   const draftBeforeRecall = useRef('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachProblem, setAttachProblem] = useState<string | null>(null);
+  const nextAttachment = useRef(0);
+  const filePicker = useRef<HTMLInputElement>(null);
+  const previews = useRef(new Set<string>());
   const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { setDraft(readDraft(sessionId)); }, [sessionId]);
+  useEffect(() => {
+    const open = previews.current;
+    return () => { open.forEach((preview) => URL.revokeObjectURL(preview)); open.clear(); };
+  }, []);
   // The field grows with its text; the stylesheet's max-height bounds it.
   useLayoutEffect(() => {
     const element = input.current;
@@ -222,9 +243,42 @@ export function Composer({
     setRecalled(next);
     setDraft(next === null ? draftBeforeRecall.current : sent[next]);
   };
+  const removeAttachment = (id: number) => {
+    setAttachments((current) => current.filter((attachment) => {
+      if (attachment.id !== id) return true;
+      URL.revokeObjectURL(attachment.preview);
+      previews.current.delete(attachment.preview);
+      return false;
+    }));
+  };
+  const addFiles = (files: File[]) => {
+    setAttachProblem(null);
+    for (const file of files) {
+      if (!IMAGE_TYPES.includes(file.type)) { setAttachProblem('Only PNG, JPEG, GIF and WebP images can be attached.'); continue; }
+      if (file.size > MAX_IMAGE_BYTES) { setAttachProblem('An image can be at most 5 MB.'); continue; }
+      const id = nextAttachment.current;
+      nextAttachment.current += 1;
+      const preview = URL.createObjectURL(file);
+      previews.current.add(preview);
+      setAttachments((current) => [...current, { id, preview, name: null }]);
+      void uploadPastedImage(file, file.type).catch(() => null).then((path) => {
+        const name = path?.split(/[\\/]/).pop() ?? null;
+        if (!name) {
+          setAttachProblem('The image could not be uploaded.');
+          removeAttachment(id);
+          return;
+        }
+        setAttachments((current) => current.map((attachment) => (attachment.id === id ? { ...attachment, name } : attachment)));
+      });
+    }
+  };
+  const uploading = attachments.some((attachment) => attachment.name === null);
+  const canSend = (text: string) => !uploading && (!!text.trim() || attachments.length > 0);
   const sendText = (text: string) => {
-    if (!text.trim() || !onSend(text)) return;
+    if (!canSend(text) || !onSend(text, attachments.flatMap((attachment) => (attachment.name ? [attachment.name] : [])))) return;
     change('');
+    attachments.forEach((attachment) => removeAttachment(attachment.id));
+    setAttachProblem(null);
   };
   const insert = (command: CommandInfo) => {
     change(`/${command.name} `);
@@ -266,7 +320,34 @@ export function Composer({
   return (
     <div className="relative">
       {matches.length > 0 && <CommandMenu commands={matches} active={selected} onHover={setActive} onPick={insert} />}
-      <div className="rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-foreground/30 focus-within:shadow-md">
+      <div
+        className="rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-foreground/30 focus-within:shadow-md"
+        onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
+        onDrop={(event) => {
+          const files = Array.from(event.dataTransfer.files);
+          if (files.length === 0) return;
+          event.preventDefault();
+          addFiles(files);
+        }}
+      >
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3 pt-2.5">
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className="relative">
+                <img src={attachment.preview} alt="To send" className={cn('h-16 rounded-md border border-border', attachment.name === null && 'opacity-50')} />
+                <button
+                  type="button"
+                  aria-label="Remove image"
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="absolute -top-1.5 -right-1.5 rounded-full border border-border bg-card p-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {attachProblem && <div role="alert" className="px-3 pt-2 text-destructive">{attachProblem}</div>}
         <textarea
           ref={input}
           aria-label="Message"
@@ -275,9 +356,35 @@ export function Composer({
           placeholder={running ? 'Queue a message…' : 'Message, or / for commands'}
           onChange={(event) => change(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+            if (files.length === 0) return;
+            event.preventDefault();
+            addFiles(files);
+          }}
           className="block max-h-48 min-h-0 w-full resize-none overflow-y-auto bg-transparent px-3 pt-2.5 pb-1 outline-none"
         />
         <div className="flex items-center gap-1 px-1.5 pb-1.5">
+          <input
+            ref={filePicker}
+            type="file"
+            accept={IMAGE_TYPES.join(',')}
+            multiple
+            hidden
+            onChange={(event) => {
+              addFiles(Array.from(event.target.files ?? []));
+              event.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Attach an image"
+            title="Attach an image (or paste or drop one)"
+            onClick={() => filePicker.current?.click()}
+            className={cn('flex items-center rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/5', TARGET)}
+          >
+            <Paperclip className="h-3.5 w-3.5" strokeWidth={1.8} />
+          </button>
           <ChipMenu
             label={mode?.label ?? 'Mode'}
             title="Permission mode (Shift+Tab)"
@@ -301,11 +408,11 @@ export function Composer({
               <Square className="h-4 w-4" />
             </button>
           )}
-          {(!running || draft.trim()) && (
+          {(!running || draft.trim() || attachments.length > 0) && (
             <button
               type="button"
               aria-label="Send"
-              disabled={!draft.trim()}
+              disabled={!canSend(draft)}
               onClick={() => sendText(draft)}
               className={cn(iconButton, 'bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30')}
             >

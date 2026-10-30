@@ -81,7 +81,7 @@ export type ChatEvent =
   | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
   | { kind: 'conversation_reset'; conversationId: string }
-  | { kind: 'user_message'; id: string; text: string; queued: boolean }
+  | { kind: 'user_message'; id: string; text: string; queued: boolean; images?: Array<{ url: string | null }> }
   | { kind: 'text_delta'; blockId: string; delta: string }
   | { kind: 'text'; blockId: string; text: string }
   | { kind: 'thinking_delta'; blockId: string; delta: string }
@@ -101,7 +101,7 @@ export type ChatEvent =
   | { kind: 'runtime_exit'; expected: boolean };
 
 export type ChatItem =
-  | { type: 'user'; id: string; text: string; queued: boolean }
+  | { type: 'user'; id: string; text: string; queued: boolean; images: Array<{ url: string | null }> }
   | { type: 'assistant'; id: string; text: string; streaming: boolean }
   | { type: 'thinking'; id: string; text: string; streaming: boolean }
   | { type: 'tool'; id: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown>; status: ToolStatus; output: string; approval?: RequestOutcome }
@@ -241,7 +241,7 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return {
         ...state,
         failed: false,
-        items: [...items, { type: 'user', id: event.id, text: event.text, queued: event.queued }],
+        items: [...items, { type: 'user', id: event.id, text: event.text, queued: event.queued, images: event.images ?? [] }],
       };
     case 'text_delta':
     case 'thinking_delta': {
@@ -397,7 +397,7 @@ export function searchItems(items: ChatItem[], query: string): string[] {
 
 /** The user's messages, oldest first, for going back through them with the arrow keys. */
 export function sentMessages(items: ChatItem[]): string[] {
-  return items.flatMap((item) => (item.type === 'user' ? [item.text] : []));
+  return items.flatMap((item) => (item.type === 'user' && item.text ? [item.text] : []));
 }
 
 /**

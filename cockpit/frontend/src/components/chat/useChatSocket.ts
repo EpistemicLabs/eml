@@ -104,7 +104,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
   }, []);
 
   return {
-    send: useCallback((text: string) => sendFrame({ type: 'send', text }), [sendFrame]),
+    send: useCallback((text: string, images: string[] = []) => sendFrame({ type: 'send', text, ...(images.length > 0 ? { images } : {}) }), [sendFrame]),
     interrupt: useCallback(() => sendFrame({ type: 'interrupt' }), [sendFrame]),
     answer: useCallback((requestId: string, answer: PermissionReply) => sendFrame({ type: 'answer', requestId, answer }), [sendFrame]),
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
