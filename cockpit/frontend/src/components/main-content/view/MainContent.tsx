@@ -139,7 +139,7 @@ function MainContent({
                 <TerminalStatusBar session={selectedSession} />
               </div>
             ) : paneView === 'chat' && selectedProject && sessionId ? (
-              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} />
+              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} isActive={isActive} />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : (

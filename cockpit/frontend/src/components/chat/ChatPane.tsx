@@ -17,6 +17,7 @@ import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
+import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
 type ToolItem = Extract<ChatItem, { type: 'tool' }>;
@@ -352,13 +353,15 @@ const Messages = memo(function Messages({
 });
 
 export function ChatPane({
-  paneId, projectId, sessionId, session,
-}: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null }) {
+  paneId, projectId, sessionId, session, isActive,
+}: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean }) {
   const { chat, connection, switching, problem, toolServers, toolServersError } = useChatSession(sessionId);
   const { send, interrupt, answer, setMode, setModel, stopAgent, reconnect, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId);
   const pinRef = useRef<(() => void) | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
   const running = chat.activity !== 'idle';
+  useChatShortcuts(rootRef, running, isActive, interrupt);
   const status = switching
     ?? (connection === 'closed' ? 'Connection lost, reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
@@ -370,7 +373,7 @@ export function ChatPane({
   }, [send]);
 
   return (
-    <div className="chat-pane flex h-full min-h-0 flex-col">
+    <div ref={rootRef} className="chat-pane flex h-full min-h-0 flex-col">
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} onAnswer={answer} onStopAgent={stopAgent} />

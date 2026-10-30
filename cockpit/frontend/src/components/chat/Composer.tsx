@@ -29,7 +29,7 @@ function ChipMenu({
     const outside = (event: MouseEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpen(false); } };
     document.addEventListener('mousedown', outside);
     document.addEventListener('keydown', escape);
     return () => {
