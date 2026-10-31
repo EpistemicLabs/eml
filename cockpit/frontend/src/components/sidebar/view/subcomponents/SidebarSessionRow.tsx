@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
+import { allSessionState } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
 
 const CHIP =
@@ -25,11 +26,15 @@ export interface SessionRowProps {
   onRequestDelete: (projectId: string, session: ProjectSession) => void;
   /** Given only where the row offers the pin chip (the conversations view). */
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
+  /** Given in the All view: the agent the session belongs to, marked with its letter. */
+  agent?: { letter: string; name: string };
 }
 
-function StatusDot({ session }: { session: ProjectSession }) {
+function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView: boolean }) {
   const turns = useTurnStore();
-  const state = turns.turns[session.id]?.state ?? session.turnState ?? 'idle';
+  const state = inAllView
+    ? allSessionState(session, turns.turns[session.id])
+    : turns.turns[session.id]?.state ?? session.turnState ?? 'idle';
   const unseenDone = isUnseenDone(turns, session.id);
   if (state !== 'working' && state !== 'waiting' && !unseenDone) return null;
   const title =
@@ -56,6 +61,7 @@ export function SidebarSessionRow({
   onSelect,
   onRequestDelete,
   pin,
+  agent,
 }: SessionRowProps) {
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
@@ -64,7 +70,7 @@ export function SidebarSessionRow({
 
   return (
     <div className="group relative">
-      <StatusDot session={session} />
+      <StatusDot session={session} inAllView={Boolean(agent)} />
       <Button
         variant="ghost"
         className={cn(
@@ -75,6 +81,14 @@ export function SidebarSessionRow({
         onClick={() => onSelect(session, projectId)}
       >
         <div className="flex w-full min-w-0 items-center gap-2">
+          {agent && (
+            <span
+              title={agent.name}
+              className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border text-[9px] font-semibold text-muted-foreground"
+            >
+              {agent.letter}
+            </span>
+          )}
           <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />
           <div className="min-w-0 flex-1">
             <div

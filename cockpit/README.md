@@ -168,6 +168,11 @@ Brain tab. Host side: `brain-space.ts` (one `BrainSpace` per brain: token, sessi
 space in the `x-cockpit-space` header of every host request (missing = main). Shared team brains join the
 same registry later (task `cockpit-brain-spaces`).
 
+With more than one space, the sidebar's switch also offers **All spaces** (the default): one list of every
+space's sessions with the sections Waiting, Pinned, Working and Recent, each row marked with its agent's
+letter. It is a view of the sidebar only: the cockpit stays in one space, and a click switches to the
+session's space and opens it there. The list comes from `GET /api/sessions/all` (ids and metadata, no tokens).
+
 ### A space's own agent
 
 A further space can have its own agent: its own agent id, Claude config folder, login, MCP allowlist and

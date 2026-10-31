@@ -31,6 +31,8 @@ export interface ProjectSession {
   __provider?: LLMProvider;
   /** The owning project's id. */
   __projectId?: string;
+  /** Set by the All view: the pane store's key of the session's space (null = main); the click opens it there. */
+  __spaceKey?: string | null;
   [key: string]: unknown;
 }
 

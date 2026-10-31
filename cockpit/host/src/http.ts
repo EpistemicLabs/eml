@@ -368,6 +368,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     return true
   }
 
+  // The sessions of every space (the sidebar's All view), each resolved in its own space.
+  if (resource === 'sessions' && id === 'all' && method === 'GET') {
+    const sessions = deps.bridge.ledger.list()
+      .map((entry) => {
+        const owner = deps.spaces.resolve(entry.spaceId)
+        return { ...sessionView(deps, entry.projectId ? owner.registry.get(entry.projectId) : undefined, entry), spaceId: owner.id }
+      })
+      .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
+    json(res, 200, { sessions })
+    return true
+  }
+
   // Every other route works in one space.
   const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
   if (!space) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
@@ -725,7 +737,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         pinned: typeof body.isPinned === 'boolean' ? body.isPinned : undefined,
       })
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-      const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
+      // The session's own space, not the shown one: the All view acts on any space's sessions.
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       json(res, 200, { success: true, session: sessionView(deps, project, { sessionId: id, ...entry }) })
       return true
     }
@@ -744,7 +757,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       deps.bridge.killSession(id)
       await deps.chat.kill(id)
       deps.turns.forget(id)
-      const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       deps.providers.forSession(id).deleteTranscript(deps.bridge.sessionRef(id, project?.path ?? null))
       deps.bridge.ledger.remove(id)
       json(res, 200, { success: true })

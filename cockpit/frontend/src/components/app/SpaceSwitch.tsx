@@ -1,19 +1,22 @@
 // The brain space menu (decision cockpit-naming-desks-spaces): the sidebar's
 // group header over the projects opens it — the spaces, the active one
-// marked, and "New space…" (a further local brain, host POST /api/spaces).
+// marked, and "New space…" (a further local brain, host POST /api/spaces). In
+// the sidebar it also offers All spaces, a view of the sidebar only.
 // The header shows every space's desks as sections (DeskTabBar), so a desk of
 // another space is one click away there. Switching a space switches its desks.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Check, ChevronDown, Loader2, Plus } from 'lucide-react';
+import { Brain, Check, ChevronDown, Layers, Loader2, Plus } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { setTopView } from '@/stores/useTopViewStore';
 import {
   createSpace,
   loadSpaces,
+  setAllView,
   switchSpace,
   useActiveSpace,
+  useAllView,
   useSpaces,
   type SpaceInfo,
 } from '@/stores/useSpaceStore';
@@ -26,6 +29,8 @@ interface SpaceSwitchProps {
 export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const spaces = useSpaces();
   const active = useActiveSpace();
+  const allView = useAllView();
+  const showingAll = variant === 'sidebar' && allView;
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState('');
@@ -66,6 +71,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const close = () => { setOpen(false); setCreating(false); setDraft(''); setError(null); };
 
   const select = (space: SpaceInfo) => {
+    setAllView(false);
     switchSpace(space);
     setTopView('desks');
     close();
@@ -82,8 +88,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     select(result.space);
   };
 
-  const label = active?.name ?? 'Main';
-  const title = `Space: ${label}`;
+  const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
+  const title = showingAll ? 'All spaces' : `Space: ${label}`;
 
   return (
     <div ref={rootRef} className="relative flex h-full items-stretch">
@@ -127,8 +133,24 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           onMouseDown={(e) => e.stopPropagation()}
           className="fixed z-[1000] min-w-[12rem] rounded-lg border border-border bg-popover p-1 text-body shadow-lg"
         >
+          {variant === 'sidebar' && spaces.length > 1 && (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={showingAll}
+              onClick={() => { setAllView(true); close(); }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal',
+                showingAll ? 'text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <Check className={cn('h-3.5 w-3.5', showingAll ? 'opacity-100' : 'opacity-0')} />
+              <span className="flex-1 truncate">All spaces</span>
+              <Layers className="h-3.5 w-3.5 opacity-60" />
+            </button>
+          )}
           {spaces.map((space) => {
-            const isActive = space.id === active?.id;
+            const isActive = !showingAll && space.id === active?.id;
             return (
               <button
                 key={space.id}

@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useDesks } from '@/stores/usePaneStore';
 import { api } from '@/utils/api';
+import { useAllView } from '@/stores/useSpaceStore';
 import type { Project, ProjectSession } from '@/types/app';
+import { useAllSessions } from './useAllSessions';
 import type {
   ConversationEntry,
   PendingProjectDelete,
@@ -70,9 +72,11 @@ export function useSidebarController(props: SidebarProps) {
   useEffect(() => {
     propsRef.current = props;
   });
+  const allView = useAllView();
+  const { sessions: allSessions, refresh: refreshAllSessions } = useAllSessions(allView);
   const refreshList = useCallback(async () => {
-    await propsRef.current.onRefresh();
-  }, []);
+    await Promise.all([propsRef.current.onRefresh(), refreshAllSessions()]);
+  }, [refreshAllSessions]);
 
   // ── Errors (user actions only) ─────────────────────────────────────
   const [error, setError] = useState<SidebarError | null>(null);
@@ -237,14 +241,14 @@ export function useSidebarController(props: SidebarProps) {
     refreshingRef.current = true;
     setRefreshing(true);
     try {
-      await propsRef.current.onRefresh();
+      await refreshList();
     } catch (refreshError) {
       console.error('[Sidebar] Refresh failed:', refreshError);
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, []);
+  }, [refreshList]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -497,6 +501,8 @@ export function useSidebarController(props: SidebarProps) {
     now,
     viewMode,
     setViewMode,
+    allView,
+    allSessions,
     isPinnedOpen,
     togglePinnedOpen,
     showHidden,

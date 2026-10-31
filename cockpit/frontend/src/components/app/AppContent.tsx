@@ -19,7 +19,7 @@ import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog'
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
 import { FirstRunSignIn } from '@/components/first-run/FirstRun';
-import { findProjectOwningSession, projectsOfSpace, useProjectsState } from '@/hooks/useProjectsState';
+import { findProjectOwningSession, projectsOfSpace, spaceLoaded, useProjectsState } from '@/hooks/useProjectsState';
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
@@ -98,6 +98,10 @@ function AppContentInner() {
   // projects of the pane's own space.
   paneStore.setEmptyPaneTest((pane) => {
     const desk = paneStore.getDeskOfPane(pane.id);
+    // Projects not loaded yet (a space first opened from the All view): nothing
+    // can be told about the pane, so only one without a project counts as empty,
+    // or a click would replace a running session.
+    if (desk && !spaceLoaded(projectsBySpaceRef.current, desk.spaceId)) return !pane.projectId;
     const spaceProjects = desk
       ? projectsOfSpace(projectsBySpaceRef.current, desk.spaceId)
       : projectsRef.current;
@@ -257,7 +261,7 @@ function AppContentInner() {
   // stores projectId null for a session that plainly has a project
   // (root of the "+ → Choose Your Project" bug).
   const projectIdForSession = useCallback((session: ProjectSession): string | null => {
-    return session.__projectId ?? findProjectOwningSession(projectsRef.current, session.id)?.projectId ?? null;
+    return session.__projectId || (findProjectOwningSession(projectsRef.current, session.id)?.projectId ?? null);
   }, []);
 
   // Every open goes through paneStore.openInPane (decision
@@ -265,7 +269,9 @@ function AppContentInner() {
   // on its desk, in its view, leaving the Brain tab — never duplicated; else
   // an empty active pane takes it; else it opens next to the active pane.
   const handleSessionSelect = useCallback((session: ProjectSession) => {
-    paneStore.openInPane({ surface: 'terminal', projectId: projectIdForSession(session), sessionId: session.id, chat: session.runtime === 'sdk' });
+    const target = { surface: 'terminal' as const, projectId: projectIdForSession(session), sessionId: session.id, chat: session.runtime === 'sdk' };
+    if (session.__spaceKey !== undefined) paneStore.openSessionInSpace(session.__spaceKey, target);
+    else paneStore.openInPane(target);
   }, [projectIdForSession]);
 
   // "Set folder…" from the sidebar. (A project without a folder no longer

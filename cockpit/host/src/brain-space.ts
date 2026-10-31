@@ -57,9 +57,21 @@ export interface SpaceView {
   id: string
   name: string
   main: boolean
+  /** What the space's sessions are marked with (spaceLabel). */
+  label: string
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main })
+/**
+ * The name for a space's sessions: its agent, else for main the agent the brain
+ * was set up with. Further brains copy that name, so a further space without
+ * its own agent goes by its display name.
+ */
+export function spaceLabel(space: BrainSpace): string {
+  const agentId = space.agent?.id ?? (space.main && space.brainName !== 'main' ? space.brainName : null)
+  return agentId ? agentId.charAt(0).toUpperCase() + agentId.slice(1) : space.name
+}
+
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, label: spaceLabel(space) })
 
 export interface OpenSpaceOptions {
   id: string

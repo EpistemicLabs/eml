@@ -750,11 +750,11 @@ export function activatePane(id: string): void {
   const loc = findPaneLocation(id);
   if (!loc) return;
   const { desk, pane } = loc;
-  if (snapshot.activeDeskId === desk.id && desk.activePaneId === pane.id) return;
+  if (snapshot.activeDeskId === desk.id && desk.activePaneId === pane.id && snapshot.activeSpaceId === desk.spaceId) return;
   const desks = desk.activePaneId === pane.id
     ? snapshot.desks
     : snapshot.desks.map(s => (s.id === desk.id ? { ...s, activePaneId: pane.id } : s));
-  setSnapshot({ ...snapshot, desks, activeDeskId: desk.id });
+  setSnapshot({ ...snapshot, desks, activeDeskId: desk.id, activeSpaceId: desk.spaceId });
 }
 
 export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): void {
@@ -910,6 +910,15 @@ export function openInPane(target: OpenTarget): string {
     ...fields,
     ...(target.surface === 'terminal' ? {} : { sessionId: null }),
   });
+}
+
+/**
+ * Open a session of any space (the sidebar's All view). The space switches
+ * first: a pane's desk decides the token and the agent its session starts with.
+ */
+export function openSessionInSpace(spaceId: string | null, target: OpenTarget): string {
+  activateSpace(spaceId);
+  return openInPane(target);
 }
 
 /** Show a note (openInPane). */

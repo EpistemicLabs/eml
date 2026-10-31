@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import SpaceSwitch from '@/components/app/SpaceSwitch';
 import { cn } from '@/lib/utils';
 import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
 import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
+import { SidebarAllSessions } from './subcomponents/SidebarAllSessions';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
 import { SidebarModals } from './subcomponents/SidebarModals';
 import { SidebarProjectTree } from './subcomponents/SidebarProjectTree';
@@ -37,7 +39,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
 
   const isOpen =
     controller.isPinnedOpen || hovered || controller.projectRename !== null || controller.sessionRename !== null;
-  const showModes = controller.projects.length > 0 && !controller.isLoading;
+  const showModes = !controller.allView && controller.projects.length > 0 && !controller.isLoading;
 
   const panel = (
     <>
@@ -47,15 +49,20 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         onViewModeChange={controller.setViewMode}
         isPinnedOpen={controller.isPinnedOpen}
         onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
-        onAddProject={controller.openWizard}
+        onAddProject={controller.allView ? undefined : controller.openWizard}
       />
+      <div className="flex-shrink-0 px-1 pb-1">
+        <SpaceSwitch variant="sidebar" />
+      </div>
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <SidebarScrollRegion
         refreshing={controller.refreshing}
         isRefreshInFlight={() => controller.refreshingRef.current}
         onRefresh={() => void controller.runManualRefresh()}
       >
-        {controller.viewMode === 'conversations' ? (
+        {controller.allView ? (
+          <SidebarAllSessions controller={controller} />
+        ) : controller.viewMode === 'conversations' ? (
           <SidebarConversations controller={controller} />
         ) : (
           <SidebarProjectTree controller={controller} />

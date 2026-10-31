@@ -63,7 +63,8 @@ export function SidebarHeader({
   isPinnedOpen: boolean;
   /** Absent where pinning means nothing (the compact layout's drawer). */
   onTogglePinned?: () => void;
-  onAddProject: () => void;
+  /** Absent where a new project has no space to go to (the All view). */
+  onAddProject?: () => void;
 }) {
   return (
     <div className="flex flex-shrink-0 items-center justify-between px-3 pt-3 pb-2">
@@ -86,15 +87,17 @@ export function SidebarHeader({
         <div />
       )}
       <div className="flex items-center gap-0.5">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-          title="Add project"
-          onClick={onAddProject}
-        >
-          <Plus />
-        </Button>
+        {onAddProject && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
+            title="Add project"
+            onClick={onAddProject}
+          >
+            <Plus />
+          </Button>
+        )}
         {onTogglePinned && (
           <Button
             variant="ghost"
