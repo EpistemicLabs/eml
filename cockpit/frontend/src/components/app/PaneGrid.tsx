@@ -162,7 +162,8 @@ function CompactPaneStack({
               aria-hidden={!shown}
               inert={!shown}
               className="absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden"
-              style={{ visibility: shown ? 'visible' : 'hidden' }}
+              // Inherit, not visible: an explicit visible would show through a hidden desk.
+              style={{ visibility: shown ? 'inherit' : 'hidden' }}
             >
               <PaneSlot paneId={paneId} isActive={deskActive && shown} canClose slotDeps={slotDeps} />
             </div>
