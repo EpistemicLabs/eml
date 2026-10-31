@@ -33,7 +33,7 @@ export default function PreferencesTab({
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
-  const phoneChat = useSyncExternalStore(subscribeSettings, () => readSettings().phoneChat);
+  const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -78,13 +78,13 @@ export default function PreferencesTab({
             />
           </SettingsRow>
           <SettingsRow
-            label="Chat view on phones"
-            description="On a phone, sessions open in the chat view instead of the terminal. A turn running in the terminal is not interrupted. This browser only."
+            label="Open sessions in chat"
+            description="Claude sessions open in the chat view instead of the terminal, unless you picked the terminal for that session. A turn running in the terminal is not interrupted. This browser only."
           >
             <SettingsToggle
-              checked={phoneChat}
-              onChange={(checked) => writeSettings({ phoneChat: checked })}
-              ariaLabel="Chat view on phones"
+              checked={chatDefault}
+              onChange={(checked) => writeSettings({ chatDefault: checked })}
+              ariaLabel="Open sessions in chat"
             />
           </SettingsRow>
         </SettingsCard>

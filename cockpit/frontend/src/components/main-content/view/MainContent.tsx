@@ -8,7 +8,7 @@
 // ops, UI preferences, mobile menu, loading state.
 import { shouldOpenInChat } from '@/components/chat/chat-default';
 import { readSettings, subscribeSettings } from '@/components/settings/utils/settingsStorage';
-import { isTouchScreen, useCompactLayout } from '@/hooks/useCompactLayout';
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
 import React, { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
@@ -53,8 +53,7 @@ function MainContent({
   }, [paneId, initialShellCommand]);
   const pane = usePane(paneId);
   const noteId = pane?.noteId;
-  const phoneChat = useSyncExternalStore(subscribeSettings, () => readSettings().phoneChat);
-  const onPhone = useCompactLayout() && isTouchScreen();
+  const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
   // A session's way of running follows it (session-handoff.ts): when it appears here
   // or moves to chat elsewhere. Not on every look: a session the user just moved
   // back to the terminal still reads as chat until the host has moved it.
@@ -68,12 +67,12 @@ function MainContent({
     if (shouldOpenInChat({
       view: paneView,
       runtime: changed ? runtime : null,
-      phoneDefault: phoneChat && onPhone,
+      chatDefault,
       pickedView: getSessionView(sessionId),
       provider: selectedSession.__provider ?? pane?.provider ?? 'claude',
       queuedCommand: initialShellCommand !== null,
     })) onSetPaneView('chat');
-  }, [selectedSession, sessionId, paneView, phoneChat, onPhone, pane?.provider, initialShellCommand, onSetPaneView]);
+  }, [selectedSession, sessionId, paneView, chatDefault, pane?.provider, initialShellCommand, onSetPaneView]);
   const switchBlocked = useSwitchBlocked(sessionId);
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what
@@ -163,7 +162,7 @@ function MainContent({
                 <TerminalStatusBar session={selectedSession} />
               </div>
             ) : paneView === 'chat' && selectedProject && sessionId ? (
-              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} whenIdle={phoneChat && onPhone} isActive={isActive} />
+              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} whenIdle={chatDefault} isActive={isActive} />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : (

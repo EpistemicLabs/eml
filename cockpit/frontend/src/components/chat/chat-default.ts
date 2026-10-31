@@ -3,8 +3,8 @@ export function shouldOpenInChat(pane: {
   view: string;
   /** How the session runs, when that just became known or changed here; null otherwise. */
   runtime: string | null;
-  /** The chat view is the default here: a phone, with the setting on. */
-  phoneDefault: boolean;
+  /** The setting that opens sessions in the chat view. */
+  chatDefault: boolean;
   /** The view the user picked for this session in this browser. */
   pickedView: string | undefined;
   provider: string;
@@ -13,5 +13,5 @@ export function shouldOpenInChat(pane: {
 }): boolean {
   if (pane.view !== 'terminal' || pane.provider !== 'claude' || pane.queuedCommand) return false;
   if (pane.runtime === 'sdk') return true;
-  return pane.phoneDefault && pane.pickedView !== 'terminal';
+  return pane.chatDefault && pane.pickedView !== 'terminal';
 }
