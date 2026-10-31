@@ -13,7 +13,7 @@ import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 
 import { AgentCard } from './AgentCard';
-import { wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
@@ -338,7 +338,7 @@ function FollowOnViewResize() {
   return null;
 }
 
-/** Lets the input re-pin the scroll when a message goes out. */
+/** Lets the pane re-pin the scroll when a sent message arrives. */
 function PinOnSend({ pinRef, unpinRef }: { pinRef: React.MutableRefObject<(() => void) | null>; unpinRef: React.MutableRefObject<(() => void) | null> }) {
   const { scrollToBottom, stopScroll } = useStickToBottomContext();
   useEffect(() => {
@@ -466,9 +466,19 @@ export function ChatPane({
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
     const sent = send(text, images);
-    if (sent) pinRef.current?.();
+    if (sent) pinWhenSentArrives.current = true;
     return sent;
   }, [send]);
+
+  // Pinned on arrival, not on send: the message comes back from the host, and an input
+  // shrinking in between scrolls the view up, which the library takes for the reader's doing.
+  const pinWhenSentArrives = useRef(false);
+  const latestSentId = latestUserMessageId(chat.items);
+  useEffect(() => {
+    if (!latestSentId || !pinWhenSentArrives.current) return;
+    pinWhenSentArrives.current = false;
+    pinRef.current?.();
+  }, [latestSentId]);
 
   return (
     <div ref={rootRef} className="chat-pane flex h-full min-h-0 flex-col">

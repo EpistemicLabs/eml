@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { wasAtBottom, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
+import { latestUserMessageId, wasAtBottom, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
 
 const tool = (toolId: string): ChatEvent => ({ kind: 'tool_call', toolId, name: 'Read', toolKind: 'read', title: `Run ${toolId}`, input: {} });
 const named = (toolId: string, name: string, toolKind: 'read' | 'edit' | 'execute' | 'search' | 'other', input: Record<string, unknown>): ChatEvent => ({ kind: 'tool_call', toolId, name, toolKind, title: name, input });
+
+describe('latestUserMessageId', () => {
+  it('finds the newest message of the user, behind later items and with images only', () => {
+    const items = [
+      { type: 'user', id: 'a', text: 'first', queued: false, images: [] },
+      { type: 'user', id: 'b', text: '', queued: false, images: [{ url: null }] },
+      { type: 'notice', id: 'c', text: 'later' },
+    ] as ChatState['items'];
+    expect(latestUserMessageId(items)).toBe('b');
+    expect(latestUserMessageId([])).toBeNull();
+  });
+});
 
 describe('wasAtBottom', () => {
   it('a shorter view stays at the bottom if it was there, also a little above it', () => {

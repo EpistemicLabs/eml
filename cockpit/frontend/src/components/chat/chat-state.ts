@@ -490,6 +490,15 @@ export function sentMessages(items: ChatItem[]): string[] {
   return items.flatMap((item) => (item.type === 'user' && item.text ? [item.text] : []));
 }
 
+/** The newest message of the user, also one with images only. */
+export function latestUserMessageId(items: ChatItem[]): string | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.type === 'user') return item.id;
+  }
+  return null;
+}
+
 /**
  * One step through the sent messages. `index` null: not browsing them. Back from there
  * starts at the newest; forward past the newest leaves the list, which gives null.
