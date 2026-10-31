@@ -4,6 +4,7 @@ import { CONFIG_DIR } from '../../../paths.js'
 import type {
   ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
 } from '../../../domain/session-runtime.js'
+import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 
 /**
@@ -395,6 +396,11 @@ interface OpenRequest {
   suggestions: Parameters<CanUseTool>[2]['suggestions']
 }
 
+/** The mode a run starts in: the session's own choice, else what terminal sessions start in (Settings › Models). */
+export function startingMode(chosen: string | null, setting: string): string {
+  return chosen ?? setting
+}
+
 class ClaudeSdkRuntime implements SessionRuntime {
   private input = new InputQueue()
   private mapper = new ClaudeEventMapper()
@@ -419,8 +425,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
         cwd: request.cwd,
         env: request.env,
         pathToClaudeCodeExecutable: CLAUDE_BIN,
-        // Left out, the session can start in auto and the cards would never be asked.
-        permissionMode: (request.mode ?? 'default') as PermissionMode,
+        // Always named: left out, the CLI picks one itself.
+        permissionMode: startingMode(request.mode, readPermissionMode()) as PermissionMode,
         ...(request.model ? { model: request.model } : {}),
         agentProgressSummaries: true,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
@@ -461,7 +467,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
         })),
       })
       this.emitCommands()
-      this.emit({ kind: 'settings', mode: this.request.mode ?? 'default' })
+      this.emit({ kind: 'settings', mode: startingMode(this.request.mode, readPermissionMode()) })
       await this.refreshContext()
     } catch { /* the session works without them; a closing one has no answers */ }
   }

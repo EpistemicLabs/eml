@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import { ClaudeEventMapper, historyEvents, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { ClaudeEventMapper, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -175,6 +175,13 @@ describe('historyEvents with images', () => {
       { kind: 'user_message', id: 'u1', text: 'see', queued: false, images: [{ url: null }] },
       { kind: 'user_message', id: 'u2', text: '', queued: false, images: [{ url: null }] },
     ])
+  })
+})
+
+describe('startingMode', () => {
+  it('a new session starts as the settings say, a session with a choice keeps it', () => {
+    expect(startingMode(null, 'auto')).toBe('auto')
+    expect(startingMode('default', 'auto')).toBe('default')
   })
 })
 
