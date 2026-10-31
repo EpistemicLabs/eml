@@ -159,6 +159,9 @@ body {
 /* A quote in a reply is text to read, however the markdown renderer mutes it. */
 .chat-pane [data-streamdown="blockquote"] { font-size: 14px; line-height: 22px; font-style: normal; color: var(--color-foreground); }
 .chat-pane .chat-work + .chat-work { margin-top: 4px; }
+/* Tables keep one line per row and show all their rows: wide ones scroll sideways, none scrolls down. */
+.chat-pane [data-streamdown="table-wrapper"] > div:has(> table) { max-height: none !important; overflow-y: hidden; }
+.chat-pane [data-streamdown="table-cell"] { white-space: nowrap; }
 .chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
 ::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
 /* Below 16px, iOS zooms the page when a field takes the focus. */

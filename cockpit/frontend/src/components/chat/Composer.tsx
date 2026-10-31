@@ -189,10 +189,12 @@ interface Attachment {
 }
 
 export function Composer({
-  sessionId, running, chat, onSend, onStop, onSetMode, onStopAgent,
+  sessionId, running, status, chat, onSend, onStop, onSetMode, onStopAgent,
 }: {
   sessionId: string;
   running: boolean;
+  /** One short line on what is going on; empty when nothing is. */
+  status: string | null;
   chat: ChatState;
   onSend: (text: string, images: string[]) => boolean;
   onStop: () => void;
@@ -403,7 +405,7 @@ export function Composer({
             ))}
           </ChipMenu>
           <BackgroundChip chat={chat} onStop={onStopAgent} />
-          <div className="flex-1" />
+          <div role="status" className="min-w-0 flex-1 truncate px-1 text-right text-muted-foreground">{status}</div>
           {running && (
             <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-foreground/5')}>
               <Square className="h-3.5 w-3.5" />

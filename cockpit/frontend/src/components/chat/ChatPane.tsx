@@ -302,18 +302,39 @@ function QuestionCard({ item, onAnswer }: { item: QuestionItem; onAnswer: (id: s
   );
 }
 
-function JumpToLatest({ raised }: { raised: boolean }) {
+function JumpToLatest() {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
   if (isAtBottom) return null;
   return (
     <button
       type="button"
       onClick={() => { void scrollToBottom(); }}
-      className={cn('absolute', raised ? 'bottom-8' : 'bottom-2', ' left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
+      className={cn('absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
     >
       <ArrowDown className="h-3 w-3" /> Jump to latest
     </button>
   );
+}
+
+/**
+ * The library follows the content's size only. A phone's keyboard and a growing input
+ * shrink the view around it instead, which would leave the newest lines hidden and
+ * end the following. Whoever scrolled away on purpose stays where they are.
+ */
+function FollowOnViewResize() {
+  const { scrollRef, scrollToBottom, escapedFromLock } = useStickToBottomContext();
+  const escaped = useRef(escapedFromLock);
+  escaped.current = escapedFromLock;
+  useEffect(() => {
+    const view = scrollRef.current;
+    if (!view || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (!escaped.current) void scrollToBottom('instant');
+    });
+    observer.observe(view);
+    return () => observer.disconnect();
+  }, [scrollRef, scrollToBottom]);
+  return null;
 }
 
 /** Lets the input re-pin the scroll when a message goes out. */
@@ -439,7 +460,7 @@ export function ChatPane({
   const closeSearch = useCallback(() => setSearching(false), []);
   useChatShortcuts(rootRef, running, isActive, interrupt, expandLatest, openSearch);
   const status = switching
-    ?? (connection === 'closed' ? 'Connection lost, reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
+    ?? (connection === 'closed' ? 'Reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
@@ -453,21 +474,16 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
+          {connection === 'superseded' && (
+            <div className={cn(COLUMN, 'flex items-center gap-2 pb-1 text-muted-foreground')}>
+              This session moved to the terminal.
+              <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
+            </div>
+          )}
         </StickToBottom.Content>
-        <JumpToLatest raised={!!status || connection === 'superseded'} />
-        {/* Over the text's bottom edge, so an empty status takes no room from it. */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0">
-          <div className={cn(COLUMN, 'flex flex-col items-start gap-1 pb-1')}>
-            {connection === 'superseded' && (
-              <div className="pointer-events-auto flex items-center gap-2 rounded bg-background/95 px-1 text-muted-foreground">
-                This session moved to the terminal.
-                <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
-              </div>
-            )}
-            <div role="status" className={cn('rounded text-muted-foreground', status && 'bg-background/95 px-1')}>{status}</div>
-          </div>
-        </div>
+        <JumpToLatest />
         <PinOnSend pinRef={pinRef} unpinRef={unpinRef} />
+        <FollowOnViewResize />
       </StickToBottom>
       <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pb-[5px]')}>
         {problem && <div role="alert" className="text-destructive break-words">{problem}</div>}
@@ -503,6 +519,7 @@ export function ChatPane({
         <Composer
           sessionId={sessionId}
           running={running}
+          status={status}
           chat={chat}
           onSend={onSend}
           onStop={interrupt}
