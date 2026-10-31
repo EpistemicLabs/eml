@@ -13,7 +13,7 @@ import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 
 import { AgentCard } from './AgentCard';
-import { editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
@@ -318,22 +318,23 @@ function JumpToLatest() {
 
 /**
  * The library follows the content's size only. A phone's keyboard and a growing input
- * shrink the view around it instead, which would leave the newest lines hidden and
- * end the following. Whoever scrolled away on purpose stays where they are.
+ * shrink the view around it instead, which would leave the newest lines hidden. Whether
+ * the reader was at the bottom is measured, not taken from the library's lock: an iOS
+ * bounce at the bottom scrolls up a little and releases that lock.
  */
 function FollowOnViewResize() {
-  const { scrollRef, scrollToBottom, escapedFromLock } = useStickToBottomContext();
-  const escaped = useRef(escapedFromLock);
-  escaped.current = escapedFromLock;
+  const { scrollRef } = useStickToBottomContext();
   useEffect(() => {
     const view = scrollRef.current;
     if (!view || typeof ResizeObserver === 'undefined') return undefined;
+    let height = view.clientHeight;
     const observer = new ResizeObserver(() => {
-      if (!escaped.current) void scrollToBottom('instant');
+      if (wasAtBottom(view, height)) view.scrollTop = view.scrollHeight;
+      height = view.clientHeight;
     });
     observer.observe(view);
     return () => observer.disconnect();
-  }, [scrollRef, scrollToBottom]);
+  }, [scrollRef]);
   return null;
 }
 
@@ -485,7 +486,7 @@ export function ChatPane({
         <PinOnSend pinRef={pinRef} unpinRef={unpinRef} />
         <FollowOnViewResize />
       </StickToBottom>
-      <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pb-[5px]')}>
+      <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pt-3 pb-[5px]')}>
         {problem && <div role="alert" className="text-destructive break-words">{problem}</div>}
         {searching && (
           <ChatSearch

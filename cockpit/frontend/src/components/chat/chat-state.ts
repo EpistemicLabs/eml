@@ -444,6 +444,16 @@ export function outputPreview(output: string): { head: string[]; hidden: number;
   return { head: lines.slice(0, 1), hidden: lines.length - PREVIEW_LINES, tail: lines.slice(-2) };
 }
 
+// As near the bottom as still counts as being there.
+const AT_BOTTOM_PX = 70;
+
+/** Whether a view that just got shorter had its reader at the bottom before that. */
+export function wasAtBottom(view: { scrollHeight: number; scrollTop: number; clientHeight: number }, previousHeight: number): boolean {
+  const shrunk = previousHeight - view.clientHeight;
+  if (shrunk <= 0) return false;
+  return view.scrollHeight - view.scrollTop - previousHeight <= AT_BOTTOM_PX;
+}
+
 /** What has to be open to see an item: its row, and the group it is folded into. */
 export function keysToReveal(items: ChatItem[], id: string): string[] {
   for (const group of groupItems(items)) {

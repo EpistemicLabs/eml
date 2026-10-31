@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
+import { wasAtBottom, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
 
 const tool = (toolId: string): ChatEvent => ({ kind: 'tool_call', toolId, name: 'Read', toolKind: 'read', title: `Run ${toolId}`, input: {} });
 const named = (toolId: string, name: string, toolKind: 'read' | 'edit' | 'execute' | 'search' | 'other', input: Record<string, unknown>): ChatEvent => ({ kind: 'tool_call', toolId, name, toolKind, title: name, input });
+
+describe('wasAtBottom', () => {
+  it('a shorter view stays at the bottom if it was there, also a little above it', () => {
+    expect(wasAtBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 300 }, 600)).toBe(true);
+    expect(wasAtBottom({ scrollHeight: 1000, scrollTop: 350, clientHeight: 300 }, 600)).toBe(true);
+  });
+
+  it('leaves a reader further up where they are, and a view that grew alone', () => {
+    expect(wasAtBottom({ scrollHeight: 1000, scrollTop: 100, clientHeight: 300 }, 600)).toBe(false);
+    expect(wasAtBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 600 }, 300)).toBe(false);
+  });
+});
 
 describe('what a row says', () => {
   const summary = (events: ChatEvent[]) => {
