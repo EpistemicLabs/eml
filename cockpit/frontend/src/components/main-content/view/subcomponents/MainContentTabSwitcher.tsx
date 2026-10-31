@@ -1,7 +1,7 @@
 // Adapted: VIEW_MODES = terminal | brain (decision cockpit-pane-types).
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { useEffect, useRef, useState } from 'react';
-import { Brain, NotebookPen, Plus, Terminal, X, type LucideIcon } from 'lucide-react';
+import { Brain, MessageSquare, NotebookPen, Plus, Terminal, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import Tooltip from '@/shared/view/ui/Tooltip';
@@ -22,6 +22,8 @@ type MainContentTabSwitcherProps = {
   // With more than one agent CLI set up, the menu offers a session per CLI
   // (like the sidebar's "+"); `provider` is then the chosen one.
   onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
+  // A terminal/chat handoff is under way: why those two can't be switched now.
+  switchBlocked?: string | null;
 };
 
 type ViewModeDef = {
@@ -30,16 +32,19 @@ type ViewModeDef = {
   icon: LucideIcon;
 };
 
-// Mutually exclusive: Terminal ↔ Brain ↔ Note swap the pane's body.
+// Mutually exclusive: Terminal ↔ Chat ↔ Brain ↔ Note swap the pane's body.
 const VIEW_MODES: ViewModeDef[] = [
   { view: 'terminal', label: 'Terminal', icon: Terminal },
+  { view: 'chat', label: 'Chat', icon: MessageSquare },
   { view: 'brain', label: 'Brain', icon: Brain },
   { view: 'note', label: 'Note', icon: NotebookPen },
 ];
 
 // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
 // terminal entries come from newSessionEntries.
-const NEW_LABEL: Record<Exclude<PaneView, 'terminal'>, string> = { brain: 'New brain view', note: 'New note' };
+const NEW_LABEL: Record<Exclude<PaneView, 'terminal'>, string> = { chat: 'New chat session', brain: 'New brain view', note: 'New note' };
+
+const TO_TERMINAL_HINT = 'Terminal: stops a running turn; background tasks and session grants do not carry over';
 
 /**
  * Apple-style toolbar: a Segmented Control for the pane's view mode
@@ -52,6 +57,7 @@ export default function MainContentTabSwitcher({
   onSetPaneView,
   onClosePane,
   onAddPane,
+  switchBlocked = null,
 }: MainContentTabSwitcherProps) {
   const closeLabel = 'Close this pane';
   const addLabel = 'New pane next to this one';
@@ -89,16 +95,18 @@ export default function MainContentTabSwitcher({
       >
         {VIEW_MODES.map((mode) => {
           const isActive = paneView === mode.view;
+          const blocked = !isActive && !!switchBlocked && (mode.view === 'terminal' || mode.view === 'chat');
           return (
-            <Tooltip key={mode.view} content={mode.label} position="bottom">
+            <Tooltip key={mode.view} content={blocked ? switchBlocked : paneView === 'chat' && mode.view === 'terminal' ? TO_TERMINAL_HINT : mode.label} position="bottom">
               <button
                 type="button"
                 role="radio"
                 aria-checked={isActive}
                 aria-label={mode.label}
+                disabled={blocked}
                 onClick={() => onSetPaneView(mode.view)}
                 className={cn(
-                  'flex h-6 w-7 items-center justify-center rounded transition-colors duration-150',
+                  'flex h-6 w-7 items-center justify-center rounded transition-colors duration-150 disabled:opacity-40',
                   isActive
                     ? 'bg-foreground/20 text-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground',

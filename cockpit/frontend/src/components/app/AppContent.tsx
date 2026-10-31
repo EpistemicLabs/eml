@@ -103,7 +103,7 @@ function AppContentInner() {
       : projectsRef.current;
     const known = spaceProjects.some((project) => project.projectId === pane.projectId);
     if (pane.paneView === 'note') return !pane.noteId && !known;
-    return pane.paneView === 'terminal' && !known &&
+    return (pane.paneView === 'terminal' || pane.paneView === 'chat') && !known &&
       !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
@@ -265,7 +265,7 @@ function AppContentInner() {
   // on its desk, in its view, leaving the Brain tab — never duplicated; else
   // an empty active pane takes it; else it opens next to the active pane.
   const handleSessionSelect = useCallback((session: ProjectSession) => {
-    paneStore.openInPane({ surface: 'terminal', projectId: projectIdForSession(session), sessionId: session.id });
+    paneStore.openInPane({ surface: 'terminal', projectId: projectIdForSession(session), sessionId: session.id, chat: session.runtime === 'sdk' });
   }, [projectIdForSession]);
 
   // "Set folder…" from the sidebar. (A project without a folder no longer

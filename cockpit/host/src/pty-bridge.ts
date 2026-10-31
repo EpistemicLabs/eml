@@ -10,14 +10,15 @@ import { ensurePtyHelperExecutable } from './pty-helper.js'
 import { platform } from './infrastructure/platform/index.js'
 import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
-import type { AgentProvider, SessionRef, SessionSpace, TurnState } from './domain/agent-provider.js'
+import type { AgentProvider, SessionRef, TurnState } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
-import type { BrainSpace, BrainSpaces } from './brain-space.js'
+import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space.js'
 import { greetingFor } from './session-greeting.js'
 import type { ProjectEntry } from './project-registry.js'
 import type { SpawnRequest } from './spawn-queue.js'
+import type { SessionHandoff } from './application/session-handoff.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
@@ -137,6 +138,9 @@ type PtySessionEntry = {
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
+const CHAT_CLOSING_NOTICE = 'Closing the chat session: a running turn stops; its background tasks and "allow for this session" grants do not carry over.'
+// How long a PTY handing its session to the chat view gets to exit before SIGKILL.
+const PTY_EXIT_TIMEOUT_MS = 5_000
 
 /**
  * Which quiet worker makes room for a new one: quiet for at least `minQuietMs`,
@@ -299,6 +303,10 @@ export interface SpawnContext {
   spaces: BrainSpaces
   /** Cockpit env for every session (COCKPIT_URL, spawn token, spawn CLI) — see index.ts. */
   sessionEnv: Record<string, string>
+  /** One writer per conversation: a session enters the terminal through this, once the chat side has let go. */
+  handoff?: () => SessionHandoff
+  /** Whether the chat view runs this session right now. */
+  chatHolds?: (sessionId: string) => boolean
 }
 
 interface PendingNonce {
@@ -351,6 +359,36 @@ export class PtyBridge {
       state = 'detached'
     }
     return state
+  }
+
+  /** Whether a PTY of this session is alive, client attached or not. */
+  isRunning(sessionId: string): boolean {
+    for (const session of this.sessions.values()) if (session.sessionId === sessionId) return true
+    return false
+  }
+
+  /**
+   * End a session's PTY for the chat view, and resolve once the process has
+   * exited. Its pane gets `superseded` and does not reconnect. It stays
+   * resumable: the ledger entry is left alone.
+   */
+  async end(sessionId: string): Promise<void> {
+    const exits: Array<Promise<void>> = []
+    for (const [key, session] of [...this.sessions]) {
+      if (session.sessionId !== sessionId) continue
+      const proc = session.pty
+      exits.push(new Promise((resolve) => {
+        const hardKill = setTimeout(() => { try { proc.kill('SIGKILL') } catch { /* already gone */ } }, PTY_EXIT_TIMEOUT_MS)
+        proc.onExit(() => { clearTimeout(hardKill); resolve() })
+      }))
+      try { session.ws?.close(1000, 'superseded') } catch { /* closing */ }
+      this.teardown(key, session)
+      this.sessions.delete(key)
+      try { proc.kill() } catch { /* already gone */ }
+    }
+    await Promise.all(exits)
+    this.ledger.setKeepRunning(sessionId, false)
+    this.ctx.providers.forSession(sessionId).auth.invalidate()
   }
 
   /** Kill every PTY of a session (sidebar delete). The ledger entry is the caller's business. */
@@ -426,7 +464,7 @@ export class PtyBridge {
     reachable = false,
   ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
-    const sessionSpace: SessionSpace = { id: space.id, url: space.url, token: space.token, files: space.files, ...(space.agent ? { agent: space.agent } : {}) }
+    const sessionSpace = sessionSpaceOf(space)
     provider.trustProject(cwd, sessionSpace)
     // Workers — opened by another session, nobody watching — run unattended.
     // An externally queued command maps to the agent's initial prompt (the
@@ -692,6 +730,7 @@ export class PtyBridge {
     })
     this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
     this.ledger.setKeepRunning(sessionId, keepRunning)
+    this.ledger.setRuntime(sessionId, 'terminal')
     this.wireProcess(key, proc)
     this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
   }
@@ -915,67 +954,21 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'This project has no folder and none could be created' })
             return
           }
-          // The key names the pane that started the PTY. It's stable across
-          // reloads (persisted in the pane store), so the same pane reattaches.
-          // The space is part of the key: two spaces may both know project
-          // `bp-eml`, and a session id is minted per pane anyway.
-          key = `${space.id}_${projectId}_${sessionId}${paneId ? `_pane_${paneId}` : ''}`
-          const cols = readNumber(data.cols, 80)
-          const rows = readNumber(data.rows, 24)
-
-          // A conversation already running under another pane (closed with ×,
-          // reopened into a new one) is taken over, not started a second time:
-          // two processes on one transcript would both write to it. The pane
-          // that had it gets `superseded` and does not reconnect.
-          const running = this.sessions.has(key) ? null : runningEntry(this.sessions, space.id, sessionId)
-          if (running) {
-            key = running[0]
-            running[1].paneId = paneId
+          // A session the chat view holds comes here once its process has exited
+          // (session-handoff.ts); until then the socket has no session.
+          const open = () => {
+            if (ws.readyState !== WebSocket.OPEN) return
+            key = this.openFromInit(ws, data, space, sessionId, paneId, projectId, projectPath)
           }
-          const existing = this.sessions.get(key)
-          if (existing) {
-            this.reattach(key, existing, ws, cols, rows)
-            this.ledger.touch(sessionId, paneId)
-            return
+          if (!this.ctx.handoff) { open(); return }
+          const handoff = this.ctx.handoff()
+          if (handoff.switching(sessionId) || this.ctx.chatHolds?.(sessionId)) {
+            sendJson(ws, { type: 'output', data: `${CHAT_CLOSING_NOTICE}\r\n` })
           }
-
-          // The ledger alone isn't enough: a session that never ran a turn has
-          // no transcript, and `--resume` on it exits 1 ("No conversation found").
-          const resume = this.ledger.has(sessionId) && this.hasTranscript(sessionId)
-          // A session keeps the provider it started with; a new one takes the
-          // pane's choice, or the default.
-          const provider = this.ledger.has(sessionId)
-            ? this.ctx.providers.forSession(sessionId)
-            : this.ctx.providers.get(readString(data.provider)) ?? this.ctx.providers.default()
-          // Preflight: without a working agent CLI the spawn would exit at once
-          // with a cryptic message — say what's wrong instead.
-          const problem = provider.runtime.problem()
-          if (problem) {
-            sendJson(ws, {
-              type: 'output',
-              data: `\r\n\x1b[31m${problem}\x1b[0m\r\n${provider.runtime.problemHint}\r\n`,
-            })
-            this.log(`not starting session ${sessionId}: ${problem}`)
-            return
-          }
-          // A space with its own agent never falls back to the shared config.
-          const agentProblem = space.agent?.problem(provider.id)
-          if (agentProblem) {
-            sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${agentProblem}\x1b[0m\r\n` })
-            this.log(`not starting session ${sessionId}: ${agentProblem}`)
-            return
-          }
-          // The first message belongs to a fresh session only. The pane keeps it
-          // and resends it on every reconnect; on a resume (after a host restart)
-          // it would land as a new user message in the running conversation.
-          const initialPrompt = resume ? null : readString(data.initialCommand) || null
-          const greeting = greetingFor({
-            resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
+          handoff.enter('terminal', sessionId, open).catch((error: Error) => {
+            this.log(`error: ${error.message}`)
+            sendJson(ws, { type: 'output', data: `\r\n\x1b[31mError: ${error.message}\x1b[0m\r\n` })
           })
-          this.startSession({
-            key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting,
-            cols, rows, isDarkMode: readBoolean(data.isDarkMode, true), taskId: readString(data.taskId) || null,
-          }, ws)
           return
         }
 
@@ -1057,6 +1050,74 @@ export class PtyBridge {
     ws.on('error', (error) => {
       this.log(`ws error: ${error.message}`)
     })
+  }
+
+  /** The part of `init` that runs as the session's only writer; returns the entry's key, or null when nothing started. */
+  private openFromInit(
+    ws: WebSocket, data: ShellIncomingMessage, space: BrainSpace, sessionId: string, paneId: string | null, projectId: string, projectPath: string,
+  ): string | null {
+    // The key names the pane that started the PTY. It's stable across
+    // reloads (persisted in the pane store), so the same pane reattaches.
+    // The space is part of the key: two spaces may both know project
+    // `bp-eml`, and a session id is minted per pane anyway.
+    let key = `${space.id}_${projectId}_${sessionId}${paneId ? `_pane_${paneId}` : ''}`
+    const cols = readNumber(data.cols, 80)
+    const rows = readNumber(data.rows, 24)
+
+    // A conversation already running under another pane (closed with ×,
+    // reopened into a new one) is taken over, not started a second time:
+    // two processes on one transcript would both write to it. The pane
+    // that had it gets `superseded` and does not reconnect.
+    const running = this.sessions.has(key) ? null : runningEntry(this.sessions, space.id, sessionId)
+    if (running) {
+      key = running[0]
+      running[1].paneId = paneId
+    }
+    const existing = this.sessions.get(key)
+    if (existing) {
+      this.reattach(key, existing, ws, cols, rows)
+      this.ledger.touch(sessionId, paneId)
+      return key
+    }
+
+    // The ledger alone isn't enough: a session that never ran a turn has
+    // no transcript, and `--resume` on it exits 1 ("No conversation found").
+    const resume = this.ledger.has(sessionId) && this.hasTranscript(sessionId)
+    // A session keeps the provider it started with; a new one takes the
+    // pane's choice, or the default.
+    const provider = this.ledger.has(sessionId)
+      ? this.ctx.providers.forSession(sessionId)
+      : this.ctx.providers.get(readString(data.provider)) ?? this.ctx.providers.default()
+    // Preflight: without a working agent CLI the spawn would exit at once
+    // with a cryptic message — say what's wrong instead.
+    const problem = provider.runtime.problem()
+    if (problem) {
+      sendJson(ws, {
+        type: 'output',
+        data: `\r\n\x1b[31m${problem}\x1b[0m\r\n${provider.runtime.problemHint}\r\n`,
+      })
+      this.log(`not starting session ${sessionId}: ${problem}`)
+      return null
+    }
+    // A space with its own agent never falls back to the shared config.
+    const agentProblem = space.agent?.problem(provider.id)
+    if (agentProblem) {
+      sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${agentProblem}\x1b[0m\r\n` })
+      this.log(`not starting session ${sessionId}: ${agentProblem}`)
+      return null
+    }
+    // The first message belongs to a fresh session only. The pane keeps it
+    // and resends it on every reconnect; on a resume (after a host restart)
+    // it would land as a new user message in the running conversation.
+    const initialPrompt = resume ? null : readString(data.initialCommand) || null
+    const greeting = greetingFor({
+      resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
+    })
+    this.startSession({
+      key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting,
+      cols, rows, isDarkMode: readBoolean(data.isDarkMode, true), taskId: readString(data.taskId) || null,
+    }, ws)
+    return key
   }
 
   /** A client reconnects to a running PTY: take ownership, replay the snapshot. */

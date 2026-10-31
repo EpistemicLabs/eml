@@ -5,6 +5,7 @@ import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
 import { agentMcpConfigPath, writeAgentFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { openSpaceAgent, type SpaceAgent } from './agent-config.js'
+import type { SessionSpace } from './domain/agent-provider.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
@@ -44,6 +45,11 @@ export interface BrainSpace {
   registry: ProjectRegistry
   /** Note changes of this brain for the UI's `notes` event. */
   notes: NotesWatcher
+}
+
+/** The space as a session gets it. Both ways of running a session start from this, so an agent cannot be left behind on one. */
+export function sessionSpaceOf(space: BrainSpace): SessionSpace {
+  return { id: space.id, url: space.url, token: space.token, files: space.files, ...(space.agent ? { agent: space.agent } : {}) }
 }
 
 /** What the UI gets to see of a space (GET /api/spaces). */

@@ -197,6 +197,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
 - **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
 - **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
   setup-token mode does not apply to these sessions.
+- **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
+  folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
 - **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
   missing, or the record does not fit, the session does not start and the pane says why. It never falls back to the
   shared folder, and nothing recreates the folder.
