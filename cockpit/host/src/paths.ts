@@ -58,6 +58,8 @@ export const DATA_DIR = path.join(COCKPIT_HOME, 'data')          // control.db +
 export const BACKUPS_DIR = path.join(COCKPIT_HOME, 'backups')    // manual backups; pre-migration/ from the brain server
 export const MIGRATION_REPORTS_DIR = path.join(DATA_DIR, 'migration-reports') // one JSON per attempted brain migration
 export const CONFIG_DIR = path.join(COCKPIT_HOME, 'claude-config') // isolated CLAUDE_CONFIG_DIR
+// A space's own agent (agent-config.ts): <AGENTS_DIR>/<agent id>/agent.json and what it names.
+export const AGENTS_DIR = path.join(COCKPIT_HOME, 'agents')
 export const CODEX_CONFIG_DIR = path.join(COCKPIT_HOME, 'codex-config') // isolated CODEX_HOME
 // The cockpit's own Codex CLI + its versions (providers/codex/runtime.ts).
 export const CODEX_RUNTIME_DIR = path.join(COCKPIT_HOME, 'codex')

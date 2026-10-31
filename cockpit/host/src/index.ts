@@ -25,6 +25,7 @@ import { SpawnQueue } from './spawn-queue.js'
 import { WorkerStarter } from './worker-start.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
+import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
 
@@ -34,7 +35,8 @@ import { platform } from './infrastructure/platform/index.js'
  * start the http+ws host → open the tab.
  *
  * `eml-cockpit service …` (autostart install/uninstall/status) and
- * `eml-cockpit diagnose` (redacted diagnostics for an issue) are handled first
+ * `eml-cockpit diagnose` (redacted diagnostics for an issue) and
+ * `eml-cockpit agent …` (a space's own agent, agent-command.ts) are handled first
  * and exit; with no subcommand the host boots normally.
  */
 
@@ -138,8 +140,11 @@ async function main() {
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
       id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
-      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, agentId: extra.agent,
     }))
+    const agent = spaces.get(extraRow.id)?.agent
+    const problem = agent?.problem('claude')
+    if (agent) log(`space ${extra.name ?? extraRow.name}: agent ${agent.id}${problem ? ` — ${problem}` : ''}`)
   }
   log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
 
@@ -228,5 +233,6 @@ async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
 runServiceCommand(process.argv.slice(2))
   .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
+  .then(async (handled) => handled || runAgentCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

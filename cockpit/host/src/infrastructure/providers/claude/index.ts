@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
-  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionRef, SessionSummary, TurnSignal,
+  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgent, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
 import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, type IsolationFiles } from './isolation.js'
@@ -28,6 +28,23 @@ const WAITING_TYPES = new Set([
 /** The id Claude Code files the conversation under. */
 const transcriptId = (session: SessionRef) => session.providerSessionId ?? session.sessionId
 
+/**
+ * What a session of a space with its own agent runs with on top: connectors off,
+ * MCP servers get only the environment their definition names, no second memory
+ * beside the brain, its own temp folder. The login is the one in the agent's
+ * folder; launch() adds no token, and the session env is an allowlist (pty-bridge.ts).
+ */
+function agentEnv(agent: SessionAgent): Record<string, string> {
+  fs.mkdirSync(agent.tempDir, { recursive: true, mode: 0o700 })
+  return {
+    ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+    CLAUDE_CODE_MCP_ALLOWLIST_ENV: '1',
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+    CLAUDE_CODE_TMPDIR: agent.tempDir,
+    TMPDIR: agent.tempDir,
+  }
+}
+
 class ClaudeProvider implements AgentProvider {
   readonly id = 'claude' as const
   readonly label = 'Claude Code'
@@ -52,13 +69,26 @@ class ClaudeProvider implements AgentProvider {
     return this.isolation
   }
 
-  trustProject(projectPath: string): void {
+  /** The config folder of a session: its agent's, never the shared one for a session that has an agent. */
+  private configDirFor(agent: SessionAgent | null | undefined): string | null {
+    return agent ? agent.configDirs.claude ?? null : this.files().configDir
+  }
+
+  trustProject(projectPath: string, space?: SessionSpace): void {
+    const agent = space?.agent
+    // A missing folder is reported at launch and must not be created here.
+    if (agent?.problem('claude')) return
+    const configDir = this.configDirFor(agent)
     // The project's trust flag lives in the APP's .claude.json — never the user's.
-    ensureProjectTrusted(projectPath)
+    if (configDir) ensureProjectTrusted(projectPath, configDir)
   }
 
   launch(req: LaunchRequest): LaunchSpec {
-    const isolation = this.files()
+    const agent = req.space.agent ?? null
+    const problem = agent?.problem('claude')
+    if (problem) throw new Error(problem)
+    const configDir = this.configDirFor(agent)
+    if (!configDir) throw new Error(`Agent "${agent?.id}" has no config folder for Claude Code.`)
     // Settings › Models: reachable from the Claude app. Not for unattended
     // sessions (workers, task runs), which nobody drives from a phone — except
     // a worker the host started without a pane, which the app is the way to follow.
@@ -70,6 +100,8 @@ class ClaudeProvider implements AgentProvider {
       // ~/.claude.json never reaches a session — CLAUDE_CONFIG_DIR isolates it.
       // Both files are the session's space's: its brain, its hooks.
       '--mcp-config', req.space.files.mcpConfig,
+      // A space with its own agent: exactly its mcp.json, whatever else is configured anywhere.
+      ...(agent ? ['--strict-mcp-config'] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
@@ -86,14 +118,15 @@ class ClaudeProvider implements AgentProvider {
     // Login mode (default): no token — Claude Code uses the sign-in stored in
     // the app's config dir, or asks for one on first start. Token mode: the
     // setup-token from Settings › Models.
-    const oauthToken = sessionToken()
+    // A space with its own agent always uses the login in its folder.
+    const oauthToken = agent ? null : sessionToken()
     return {
       bin: CLAUDE_BIN,
       args,
       // Driven from the Claude app too: it outlives the browser tab.
       keepRunning: remoteControl,
       env: {
-        CLAUDE_CONFIG_DIR: isolation.configDir,
+        CLAUDE_CONFIG_DIR: configDir,
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own
         // updater would install a native copy into the user's ~/.local.
         DISABLE_AUTOUPDATER: '1',
@@ -106,6 +139,7 @@ class ClaudeProvider implements AgentProvider {
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
         // The session knows its own address — a worker it spawns is told where to answer (skill spawn-session).
         COCKPIT_SESSION_ADDRESS: req.address,
+        ...(agent ? agentEnv(agent) : {}),
       },
     }
   }
@@ -117,7 +151,9 @@ class ClaudeProvider implements AgentProvider {
    * and the slug rule (truncation + hash for long paths) is Claude Code's.
    */
   canResume(session: SessionRef): boolean {
-    const projectsDir = path.join(this.files().configDir, 'projects')
+    const configDir = this.configDirFor(session.agent)
+    if (!configDir) return false
+    const projectsDir = path.join(configDir, 'projects')
     try {
       return fs.readdirSync(projectsDir).some((dir) =>
         fs.existsSync(path.join(projectsDir, dir, `${transcriptId(session)}.jsonl`)))
@@ -154,11 +190,13 @@ class ClaudeProvider implements AgentProvider {
   }
 
   summary(session: SessionRef): SessionSummary {
-    return readSessionSummary(session.projectPath, transcriptId(session), session.greeted)
+    const configDir = this.configDirFor(session.agent)
+    return readSessionSummary(configDir ? session.projectPath : null, transcriptId(session), session.greeted, configDir ?? undefined)
   }
 
   deleteTranscript(session: SessionRef): void {
-    deleteTranscript(session.projectPath, transcriptId(session))
+    const configDir = this.configDirFor(session.agent)
+    if (configDir) deleteTranscript(session.projectPath, transcriptId(session), configDir)
   }
 }
 

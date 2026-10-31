@@ -42,6 +42,8 @@ export interface IsolationContext {
  */
 export interface SessionSpace {
   id: string
+  /** The space's own agent (agent-config.ts); absent = the provider's shared config. */
+  agent?: SessionAgent | null
   /** Base URL and token of the space's brain. */
   url: string
   token: string
@@ -53,6 +55,22 @@ export interface SessionSpace {
     /** The EML client config (URL + token) the EML hooks of this space read. */
     emlConfig: string
   }
+}
+
+/**
+ * A brain space's own agent as a session sees it: everything the session keeps
+ * goes into this agent's folders, never into the shared config.
+ */
+export interface SessionAgent {
+  id: string
+  /** The agent's config folder per agent CLI, as stored in its record. A CLI not named here cannot run this agent. */
+  configDirs: Partial<Record<ProviderId, string>>
+  /** The agent's own temp folder. */
+  tempDir: string
+  /** Why a session of this CLI must not start right now, or null. Looks at the files on every call. */
+  problem(provider: ProviderId): string | null
+  /** Record what the boot found wrong; from then on `problem` answers with it. */
+  setProblem(why: string): void
 }
 
 export interface LaunchRequest {
@@ -107,6 +125,8 @@ export interface SessionRef {
    * null when the ledger does not know (an entry from before it recorded this).
    */
   greeted: boolean | null
+  /** The agent of the session's space; absent = the provider's shared config. */
+  agent?: SessionAgent | null
 }
 
 /** Best-effort display data for the sidebar, read from the provider's transcript. */
@@ -216,7 +236,7 @@ export interface AgentProvider {
   /** Write the isolated config: brain MCP, session hooks, EML hooks, skills. Once per boot, before any launch. */
   prepare(ctx: IsolationContext): void
   /** Let sessions open this folder without the provider's trust prompt. Idempotent. */
-  trustProject(projectPath: string): void
+  trustProject(projectPath: string, space?: SessionSpace): void
   launch(req: LaunchRequest): LaunchSpec
   /** Whether the provider has a stored conversation for this session. */
   canResume(session: SessionRef): boolean

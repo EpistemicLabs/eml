@@ -122,7 +122,7 @@ export async function sessionStart(
     const res = await fetchImpl(`${cfg.EML_URL}/boot`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.EML_API_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ budget }),
+      body: JSON.stringify({ budget, ...(cfg.EML_AGENT ? { agent: cfg.EML_AGENT } : {}) }),
       signal: AbortSignal.timeout(BOOT_TIMEOUT_MS),
     })
     status = res.status

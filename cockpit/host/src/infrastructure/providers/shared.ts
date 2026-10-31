@@ -87,10 +87,10 @@ export const BRAIN_MCP_ENV_VARS = ['EML_API_URL', 'EML_API_TOKEN'] as const
  * not as arguments: arguments show up in every local user's ps output, a
  * process's environment does not.
  */
-export function brainMcpServer(loopbackUrl: string, brainToken: string) {
+export function brainMcpServer(loopbackUrl: string, brainToken: string, agentId?: string) {
   return {
     ...BRAIN_MCP_COMMAND,
-    env: { EML_API_URL: loopbackUrl, EML_API_TOKEN: brainToken },
+    env: { EML_API_URL: loopbackUrl, EML_API_TOKEN: brainToken, ...(agentId ? { EML_AGENT: agentId } : {}) },
   }
 }
 
@@ -155,13 +155,13 @@ export function ensureHookNode(): string {
 }
 
 /** The EML client config (URL + token) of one brain space, read by that space's EML hooks. */
-export function writeEmlHookConfig(file: string, loopbackUrl: string, brainToken: string): void {
+export function writeEmlHookConfig(file: string, loopbackUrl: string, brainToken: string, agentId?: string): void {
   const dir = path.dirname(file)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   fs.chmodSync(dir, 0o700)
   fs.writeFileSync(
     file,
-    `# EML client config for the cockpit's session hooks — rewritten on every boot.\nEML_URL=${loopbackUrl}\nEML_API_TOKEN=${brainToken}\n`,
+    `# EML client config for the cockpit's session hooks — rewritten on every boot.\nEML_URL=${loopbackUrl}\nEML_API_TOKEN=${brainToken}\n${agentId ? `EML_AGENT=${agentId}\n` : ''}`,
     { mode: 0o600 },
   )
   fs.chmodSync(file, 0o600)

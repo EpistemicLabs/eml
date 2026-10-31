@@ -10,7 +10,7 @@ import { ensurePtyHelperExecutable } from './pty-helper.js'
 import { platform } from './infrastructure/platform/index.js'
 import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
-import type { AgentProvider, TurnState } from './domain/agent-provider.js'
+import type { AgentProvider, SessionRef, SessionSpace, TurnState } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
@@ -378,9 +378,14 @@ export class PtyBridge {
   }
 
   // ── Spawn ────────────────────────────────────────────────────────────
+  /** What a provider needs to find this session's conversation: the ledger's ids and its space's agent. */
+  sessionRef(sessionId: string, projectPath: string | null): SessionRef {
+    return this.ledger.ref(sessionId, projectPath, this.ctx.spaces.resolve(this.ledger.get(sessionId)?.spaceId).agent)
+  }
+
   /** Whether the session's provider has a stored conversation for it — only after the first turn. */
   private hasTranscript(sessionId: string): boolean {
-    return this.ctx.providers.forSession(sessionId).canResume(this.ledger.ref(sessionId, null))
+    return this.ctx.providers.forSession(sessionId).canResume(this.sessionRef(sessionId, null))
   }
 
   /**
@@ -393,6 +398,8 @@ export class PtyBridge {
   private forgetIfEmpty(sessionId: string): boolean {
     const entry = this.ledger.get(sessionId)
     if (!entry || entry.title || entry.pinned) return false
+    // A folder that is away says nothing about the transcript in it.
+    if (this.ctx.spaces.resolve(entry.spaceId).agent?.problem(entry.provider)) return false
     if (this.sessionState(sessionId) !== 'ended' || this.hasTranscript(sessionId)) return false
     this.ledger.remove(sessionId)
     this.log(`session ${sessionId} ended without a turn → forgotten`)
@@ -419,7 +426,8 @@ export class PtyBridge {
     reachable = false,
   ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
-    provider.trustProject(cwd)
+    const sessionSpace: SessionSpace = { id: space.id, url: space.url, token: space.token, files: space.files, ...(space.agent ? { agent: space.agent } : {}) }
+    provider.trustProject(cwd, sessionSpace)
     // Workers — opened by another session, nobody watching — run unattended.
     // An externally queued command maps to the agent's initial prompt (the
     // cockpit spawns agents, not shells). The greeting is a first prompt too,
@@ -429,7 +437,7 @@ export class PtyBridge {
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
       sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
-      space: { id: space.id, url: space.url, token: space.token, files: space.files },
+      space: sessionSpace,
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
     // note edits of this scope only (decision cockpit-notes-pane).
@@ -735,6 +743,12 @@ export class PtyBridge {
       const space = entry.spaceId ? this.ctx.spaces.get(entry.spaceId) : this.ctx.spaces.main
       const project = entry.projectId ? space?.registry.get(entry.projectId) : undefined
       const provider = this.ctx.providers.forSession(entry.sessionId)
+      // Its agent's folder is away: stays kept, and comes back on a start with the folder in place.
+      const agentProblem = space?.agent?.problem(provider.id)
+      if (agentProblem) {
+        this.log(`kept session ${entry.sessionId} not resumed: ${agentProblem}`)
+        continue
+      }
       if (!space || !project?.path || !entry.projectId || !this.hasTranscript(entry.sessionId) || provider.runtime.problem()) {
         this.log(`kept session ${entry.sessionId} can't be resumed (space, folder, transcript or agent CLI missing) → no longer kept`)
         this.ledger.setKeepRunning(entry.sessionId, false)
@@ -764,7 +778,7 @@ export class PtyBridge {
     const project = this.projectFor(space, request.projectId)
     if (!project?.path) return `project ${request.projectId} has no folder`
     const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
-    const problem = provider.runtime.problem()
+    const problem = provider.runtime.problem() ?? space.agent?.problem(provider.id)
     if (problem) return problem
     if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
     this.startSession({
@@ -942,6 +956,13 @@ export class PtyBridge {
               data: `\r\n\x1b[31m${problem}\x1b[0m\r\n${provider.runtime.problemHint}\r\n`,
             })
             this.log(`not starting session ${sessionId}: ${problem}`)
+            return
+          }
+          // A space with its own agent never falls back to the shared config.
+          const agentProblem = space.agent?.problem(provider.id)
+          if (agentProblem) {
+            sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${agentProblem}\x1b[0m\r\n` })
+            this.log(`not starting session ${sessionId}: ${agentProblem}`)
             return
           }
           // The first message belongs to a fresh session only. The pane keeps it

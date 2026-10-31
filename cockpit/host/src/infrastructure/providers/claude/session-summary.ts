@@ -34,8 +34,8 @@ function encodeProjectDir(projectPath: string): string {
   return projectPath.replace(/[^a-zA-Z0-9]/g, '-')
 }
 
-export function transcriptPathFor(projectPath: string, sessionId: string): string {
-  return path.join(CONFIG_DIR, 'projects', encodeProjectDir(projectPath), `${sessionId}.jsonl`)
+export function transcriptPathFor(projectPath: string, sessionId: string, configDir: string = CONFIG_DIR): string {
+  return path.join(configDir, 'projects', encodeProjectDir(projectPath), `${sessionId}.jsonl`)
 }
 
 function extractText(content: unknown): string | null {
@@ -51,9 +51,9 @@ function extractText(content: unknown): string | null {
   return null
 }
 
-export function readSessionSummary(projectPath: string | null, sessionId: string, greeted: boolean | null): SessionSummary {
+export function readSessionSummary(projectPath: string | null, sessionId: string, greeted: boolean | null, configDir: string = CONFIG_DIR): SessionSummary {
   if (!projectPath) return EMPTY
-  const file = transcriptPathFor(projectPath, sessionId)
+  const file = transcriptPathFor(projectPath, sessionId, configDir)
   let stats: fs.Stats
   try {
     stats = fs.statSync(file)
@@ -129,7 +129,7 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
 }
 
 /** Delete the transcript (best-effort; the user's isolated config dir). */
-export function deleteTranscript(projectPath: string | null, sessionId: string): void {
+export function deleteTranscript(projectPath: string | null, sessionId: string, configDir: string = CONFIG_DIR): void {
   if (!projectPath) return
-  try { fs.unlinkSync(transcriptPathFor(projectPath, sessionId)) } catch { /* absent */ }
+  try { fs.unlinkSync(transcriptPathFor(projectPath, sessionId, configDir)) } catch { /* absent */ }
 }

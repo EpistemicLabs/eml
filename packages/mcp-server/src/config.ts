@@ -12,6 +12,8 @@ export const EML_CONFIG = path.join(EML_DIR, 'config')
 export interface EmlConfig {
   EML_URL?: string
   EML_API_TOKEN?: string
+  /** The agent this session boots as, set by the embedding app; absent = the brain's default agent. */
+  EML_AGENT?: string
 }
 
 export function readConfig(configPath: string = EML_CONFIG): EmlConfig | null {
@@ -29,7 +31,7 @@ export function parseConfig(raw: string): EmlConfig {
     if (eq < 0) continue
     const key = trimmed.slice(0, eq).trim()
     const value = trimmed.slice(eq + 1).trim()
-    if (key === 'EML_URL' || key === 'EML_API_TOKEN') {
+    if (key === 'EML_URL' || key === 'EML_API_TOKEN' || key === 'EML_AGENT') {
       out[key] = value
     }
   }

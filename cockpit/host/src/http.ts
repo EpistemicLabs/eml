@@ -140,13 +140,18 @@ async function providerViews(deps: HostDeps) {
 }
 
 /** A project folder is opened by sessions of any provider — none of them should ask about trust. */
-function trustProject(deps: HostDeps, projectPath: string): void {
-  for (const provider of deps.providers.all()) provider.trustProject(projectPath)
+function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): void {
+  const sessionSpace = { id: space.id, url: space.url, token: space.token, files: space.files, ...(space.agent ? { agent: space.agent } : {}) }
+  for (const provider of deps.providers.all()) {
+    // An agent's project stays out of the configs of the CLIs it does not run with.
+    if (space.agent && !space.agent.configDirs[provider.id]) continue
+    provider.trustProject(projectPath, sessionSpace)
+  }
 }
 
 // ── Project + session views ───────────────────────
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
-  const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.ledger.ref(entry.sessionId, project?.path ?? null))
+  const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null))
   // The last real message, not the last reattach: a reload or a click on a
   // pane bumps lastAttached and would show every open session as "<1m".
   const lastActivity = summary.lastMessageAt ?? summary.lastActivity ?? entry.createdAt
@@ -322,7 +327,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const entry = deps.bridge.ledger.get(id)
     if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
     const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
-    const summary = deps.providers.forSession(id).summary(deps.bridge.ledger.ref(id, project?.path ?? null))
+    const summary = deps.providers.forSession(id).summary(deps.bridge.sessionRef(id, project?.path ?? null))
     json(res, 200, { model: summary.model, provider: entry.provider })
     return true
   }
@@ -626,7 +631,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         typeof body.path === 'string' ? body.path : '',
         typeof body.customName === 'string' ? body.customName : null,
       )
-      if (project.path) trustProject(deps, project.path)
+      if (project.path) trustProject(deps, space, project.path)
       json(res, created ? 201 : 200, { success: true, created, project: projectView(deps, space, project) })
       return true
     }
@@ -672,7 +677,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       })
       // The registry keeps a copy of the brain name for when the brain is unreachable.
       if (brainName !== null && entry.brainProjectId) project = space.registry.ensureBrain(entry.brainProjectId, brainName)
-      if (typeof requestedPath === 'string' && project.path) trustProject(deps, project.path)
+      if (typeof requestedPath === 'string' && project.path) trustProject(deps, space, project.path)
       json(res, 200, { success: true, project: projectView(deps, space, project, renamedBrain) })
       return true
     }
@@ -682,7 +687,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const deleteData = url.searchParams.get('deleteData') === '1'
       deps.bridge.killProjectSessions(id, space.ledgerKey)
       for (const entry of deps.bridge.ledger.list(id, space.ledgerKey)) {
-        if (deleteData) deps.providers.forSession(entry.sessionId).deleteTranscript(deps.bridge.ledger.ref(entry.sessionId, project.path))
+        if (deleteData) deps.providers.forSession(entry.sessionId).deleteTranscript(deps.bridge.sessionRef(entry.sessionId, project.path))
         deps.bridge.ledger.remove(entry.sessionId)
       }
       space.registry.remove(id)
@@ -725,7 +730,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       deps.bridge.killSession(id)
       deps.turns.forget(id)
       const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
-      deps.providers.forSession(id).deleteTranscript(deps.bridge.ledger.ref(id, project?.path ?? null))
+      deps.providers.forSession(id).deleteTranscript(deps.bridge.sessionRef(id, project?.path ?? null))
       deps.bridge.ledger.remove(id)
       json(res, 200, { success: true })
       return true
