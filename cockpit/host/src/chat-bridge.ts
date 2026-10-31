@@ -16,11 +16,12 @@ import { readPastedImage } from './paste-images.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
- * runtime per session, the session's events numbered in an EventStore, and at
- * most one client on a session.
+ * runtime per session, the session's events numbered in an EventStore, and any
+ * number of clients on a session: each catches up from its own number, then gets
+ * every event. A conversation has one writer process, not one reader.
  *
  * Wire protocol:
- *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after? }
+ *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle? }
  *   client → { type:'send', text }
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
@@ -29,6 +30,7 @@ import { readPastedImage } from './paste-images.js'
  *   client → { type:'set_mode', mode }
  *   client → { type:'set_model', model }
  *   client → { type:'stop_agent', taskId }
+ *   host   → { type:'terminal_busy', state }        (init with whenIdle refused: send it again later)
  *   host   → { type:'switching', reason }           (the handoff is under way)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
@@ -61,7 +63,7 @@ interface ChatEntry {
   projectId: string
   projectPath: string
   runtime: SessionRuntime | null
-  ws: WebSocket | null
+  clients: Set<WebSocket>
   active: boolean
   openRequests: Set<string>
   timeoutId: NodeJS.Timeout | null
@@ -77,9 +79,12 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** What the session's terminal process is in the middle of, if anything: a takeover would cut it off. */
+  terminalBusy?: (sessionId: string) => 'working' | 'waiting' | null
 }
 
 type ClientMessage = {
+  whenIdle?: unknown
   images?: unknown
   type?: string
   paneId?: unknown
@@ -162,7 +167,7 @@ export class ChatBridge {
   sessionState(sessionId: string): SessionState {
     const entry = this.entries.get(sessionId)
     if (!entry?.runtime) return 'ended'
-    return entry.ws?.readyState === WebSocket.OPEN ? 'running' : 'detached'
+    return [...entry.clients].some((ws) => ws.readyState === WebSocket.OPEN) ? 'running' : 'detached'
   }
 
   /** Close the session's runtime, and resolve once its process has exited. The client is told not to reconnect. */
@@ -176,8 +181,10 @@ export class ChatBridge {
       await runtime.close()
       entry.runtime = null
     }
-    try { entry.ws?.close(1000, reason) } catch { /* closing */ }
-    entry.ws = null
+    for (const ws of entry.clients) {
+      try { ws.close(1000, reason) } catch { /* closing */ }
+    }
+    entry.clients.clear()
     this.entries.delete(sessionId)
     this.ctx.events.forget(sessionId)
     this.log(`session ${sessionId} left the chat runtime (${reason})`)
@@ -222,7 +229,7 @@ export class ChatBridge {
         }
         if (!sessionId) return
         const entry = this.entries.get(sessionId)
-        if (!entry || entry.ws !== ws) return
+        if (!entry?.clients.has(ws)) return
         if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
@@ -250,12 +257,11 @@ export class ChatBridge {
     ws.on('close', () => {
       if (!sessionId) return
       const entry = this.entries.get(sessionId)
-      if (!entry || entry.ws !== ws) return
-      entry.ws = null
+      if (!entry?.clients.delete(ws) || entry.clients.size > 0) return
       // A grace period, not an abort: a reload must not cost the running turn or an open card.
       entry.timeoutId = setTimeout(() => {
         const current = this.entries.get(entry.sessionId)
-        if (!current || current.ws) return
+        if (!current || current.clients.size > 0) return
         this.log(`detached session ${entry.sessionId} timed out → closing (resumable via ledger)`)
         void this.end(entry.sessionId, 'timed out')
       }, DETACHED_TIMEOUT_MS)
@@ -288,6 +294,13 @@ export class ChatBridge {
     const problem = provider.runtime.problem()
     if (problem) return refuse(`${problem} ${provider.runtime.problemHint}`)
 
+    // Asked to wait: no session yet, so the same socket can send its init again.
+    const busy = data.whenIdle === true ? this.ctx.terminalBusy?.(sessionId) ?? null : null
+    if (busy) {
+      send(ws, { type: 'terminal_busy', state: busy })
+      return null
+    }
+
     const after = typeof data.after === 'number' ? data.after : 0
     const epoch = typeof data.epoch === 'number' ? data.epoch : null
     const path = project.path
@@ -319,7 +332,7 @@ export class ChatBridge {
     const { sessionId, paneId, projectId, projectPath, space, provider } = opts
     const existing = this.entries.get(sessionId)
     if (existing) {
-      this.takeOver(existing, ws, opts.epoch, opts.after)
+      this.join(existing, ws, opts.epoch, opts.after)
       this.ctx.ledger.touch(sessionId, paneId)
       return
     }
@@ -328,7 +341,7 @@ export class ChatBridge {
     const fromTerminal = this.ctx.ledger.get(sessionId)?.runtime === 'terminal'
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null))
     const entry: ChatEntry = {
-      sessionId, spaceId: space.id, projectId, projectPath, runtime: null, ws, active: false,
+      sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
       openRequests: new Set(), timeoutId: null, turnEnded: null,
     }
     this.entries.set(sessionId, entry)
@@ -416,11 +429,12 @@ export class ChatBridge {
 
   private emit(entry: ChatEntry, event: RuntimeEvent): void {
     const stored = this.ctx.events.append(entry.sessionId, event)
-    const ws = entry.ws
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    // Too far behind: drop the socket, its client asks for what it missed.
-    if (ws.bufferedAmount > WS_MAX_BUFFERED) { try { ws.close(1013, 'behind') } catch { /* closing */ } return }
-    send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    for (const ws of entry.clients) {
+      if (ws.readyState !== WebSocket.OPEN) continue
+      // Too far behind: drop the socket, its client asks for what it missed.
+      if (ws.bufferedAmount > WS_MAX_BUFFERED) { try { ws.close(1013, 'behind') } catch { /* closing */ } continue }
+      send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    }
   }
 
   private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = []): void {
@@ -473,14 +487,10 @@ export class ChatBridge {
     await this.sendToolServers(entry, ws, failure)
   }
 
-  /** A client on a running session: it takes the session over and gets what it does not have. */
-  private takeOver(entry: ChatEntry, ws: WebSocket, epoch: number | null, after: number): void {
+  /** A client on a running session: it joins the others and gets what it does not have. */
+  private join(entry: ChatEntry, ws: WebSocket, epoch: number | null, after: number): void {
     if (entry.timeoutId) { clearTimeout(entry.timeoutId); entry.timeoutId = null }
-    const old = entry.ws
-    if (old && old !== ws && old.readyState === WebSocket.OPEN) {
-      try { old.close(1000, 'superseded') } catch { /* closing */ }
-    }
-    entry.ws = ws
+    entry.clients.add(ws)
     const current = this.ctx.events.epoch(entry.sessionId)
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })

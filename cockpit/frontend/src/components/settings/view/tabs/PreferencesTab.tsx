@@ -1,6 +1,9 @@
 // Settings › Preferences: the user's personal setup, one section per area
 // (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
+import { useSyncExternalStore } from 'react';
+
 import { ThemeModeSelector } from '@/shared/view/ui';
+import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
@@ -30,6 +33,7 @@ export default function PreferencesTab({
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
+  const phoneChat = useSyncExternalStore(subscribeSettings, () => readSettings().phoneChat);
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -71,6 +75,16 @@ export default function PreferencesTab({
               checked={greetOnStart}
               onChange={onGreetOnStartChange}
               ariaLabel="Greeting at session start"
+            />
+          </SettingsRow>
+          <SettingsRow
+            label="Chat view on phones"
+            description="On a phone, sessions open in the chat view instead of the terminal. A turn running in the terminal is not interrupted. This browser only."
+          >
+            <SettingsToggle
+              checked={phoneChat}
+              onChange={(checked) => writeSettings({ phoneChat: checked })}
+              ariaLabel="Chat view on phones"
             />
           </SettingsRow>
         </SettingsCard>

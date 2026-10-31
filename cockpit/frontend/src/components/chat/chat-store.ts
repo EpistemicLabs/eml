@@ -13,6 +13,8 @@ export interface ChatSnapshot {
   switching: string | null;
   /** The host refused or failed something outside the conversation. */
   problem: string | null;
+  /** The session's terminal is in the middle of this, and this view waits for it. */
+  terminalBusy: 'working' | 'waiting' | null;
   /** The session's tool servers as last asked for; null until then. */
   toolServers: ToolServer[] | null;
   toolServersError: string | null;
@@ -28,7 +30,7 @@ interface SessionStore {
   listeners: Set<() => void>;
 }
 
-const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, toolServers: null, toolServersError: null };
+const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, terminalBusy: null, toolServers: null, toolServersError: null };
 // requestAnimationFrame stops in a hidden tab; the events must still arrive.
 const HIDDEN_FLUSH_MS = 250;
 
@@ -84,6 +86,10 @@ export function setConnection(sessionId: string, connection: Connection): void {
   const store = storeOf(sessionId);
   flush(store);
   publish(store, { connection, ...(connection === 'open' ? {} : { switching: null }) });
+}
+
+export function setTerminalBusy(sessionId: string, terminalBusy: 'working' | 'waiting' | null): void {
+  publish(storeOf(sessionId), { terminalBusy });
 }
 
 export function setSwitching(sessionId: string, switching: string | null): void {

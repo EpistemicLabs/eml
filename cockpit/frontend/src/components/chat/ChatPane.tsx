@@ -302,14 +302,14 @@ function QuestionCard({ item, onAnswer }: { item: QuestionItem; onAnswer: (id: s
   );
 }
 
-function JumpToLatest() {
+function JumpToLatest({ raised }: { raised: boolean }) {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
   if (isAtBottom) return null;
   return (
     <button
       type="button"
       onClick={() => { void scrollToBottom(); }}
-      className={cn('absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
+      className={cn('absolute', raised ? 'bottom-8' : 'bottom-2', ' left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
     >
       <ArrowDown className="h-3 w-3" /> Jump to latest
     </button>
@@ -340,7 +340,7 @@ const Messages = memo(function Messages({
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
   return (
-    <div role="log" aria-live="off" className={cn(COLUMN, 'space-y-4 py-4')}>
+    <div role="log" aria-live="off" className={cn(COLUMN, 'space-y-4 pt-4 pb-1')}>
       {groups.map((group) => {
         if (group.kind === 'agent') {
           const { tool } = group;
@@ -401,10 +401,10 @@ const Messages = memo(function Messages({
 });
 
 export function ChatPane({
-  paneId, projectId, sessionId, session, isActive,
-}: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean }) {
-  const { chat, connection, switching, problem, toolServers, toolServersError } = useChatSession(sessionId);
-  const { send, interrupt, answer, setMode, setModel, stopAgent, reconnect, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId);
+  paneId, projectId, sessionId, session, isActive, whenIdle = false,
+}: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean }) {
+  const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
+  const { send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -454,17 +454,23 @@ export function ChatPane({
         <StickToBottom.Content>
           <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
         </StickToBottom.Content>
-        <JumpToLatest />
+        <JumpToLatest raised={!!status || connection === 'superseded'} />
+        {/* Over the text's bottom edge, so an empty status takes no room from it. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0">
+          <div className={cn(COLUMN, 'flex flex-col items-start gap-1 pb-1')}>
+            {connection === 'superseded' && (
+              <div className="pointer-events-auto flex items-center gap-2 rounded bg-background/95 px-1 text-muted-foreground">
+                This session moved to the terminal.
+                <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
+              </div>
+            )}
+            <div role="status" className={cn('rounded text-muted-foreground', status && 'bg-background/95 px-1')}>{status}</div>
+          </div>
+        </div>
         <PinOnSend pinRef={pinRef} unpinRef={unpinRef} />
       </StickToBottom>
-      <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pb-2')}>
+      <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pb-[5px]')}>
         {problem && <div role="alert" className="text-destructive break-words">{problem}</div>}
-        {connection === 'superseded' && (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            This session moved to another view.
-            <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
-          </div>
-        )}
         {searching && (
           <ChatSearch
             items={chat.items}
@@ -484,7 +490,16 @@ export function ChatPane({
             onClose={() => setServersOpen(false)}
           />
         )}
-        <div role="status" className="min-h-4 text-muted-foreground">{status}</div>
+        {terminalBusy ? (
+          <div role="status" className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+            <span className="min-w-0 flex-1">
+              {terminalBusy === 'waiting' ? 'The terminal is waiting for an answer.' : 'Working in the terminal. This opens here when the turn ends.'}
+            </span>
+            <button type="button" onClick={takeOver} className={cn('flex-shrink-0 rounded-md border border-border px-3 py-1 hover:bg-foreground/5', TARGET)}>
+              Take over
+            </button>
+          </div>
+        ) : (
         <Composer
           sessionId={sessionId}
           running={running}
@@ -494,11 +509,12 @@ export function ChatPane({
           onSetMode={setMode}
           onStopAgent={stopAgent}
         />
+        )}
         <TerminalStatusBar
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
-          modelSlot={<ModelPicker chat={chat} onSetModel={setModel} />}
-          className="border-t-0 px-1 pt-0.5 text-muted-foreground"
+          modelSlot={<div className="-my-3 md:my-0"><ModelPicker chat={chat} onSetModel={setModel} /></div>}
+          className="-mt-1 border-t-0 px-1 pt-0.5 text-muted-foreground md:mt-0"
         />
       </div>
     </div>

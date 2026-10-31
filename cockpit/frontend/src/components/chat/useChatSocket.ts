@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setToolServers } from './chat-store';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
@@ -29,7 +29,11 @@ async function mintNonce(): Promise<string | null> {
   }
 }
 
-export function useChatSocket(paneId: string, projectId: string, sessionId: string) {
+// How often a view waiting for the terminal asks again.
+const BUSY_RETRY_MS = 3_000;
+
+export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false) {
+  const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   // Bumped by "Reconnect": starts the effect over.
   const [attempt, setAttempt] = useState(0);
@@ -40,6 +44,12 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     let disposed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let backoff = 500;
+    let busyRetry: ReturnType<typeof setTimeout> | null = null;
+    const clearBusy = () => {
+      if (busyRetry) clearTimeout(busyRetry);
+      busyRetry = null;
+      setTerminalBusy(sessionId, null);
+    };
 
     const connect = async () => {
       setConnection(sessionId, 'connecting');
@@ -49,19 +59,30 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       const socket = nonce ? new WebSocket(`${scheme}//${window.location.host}/ws/chat?nonce=${encodeURIComponent(nonce)}`) : null;
       if (!socket) { schedule(); return; }
       socketRef.current = socket;
+      const sendInit = (wait: boolean) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        const desk = paneStore.getDeskOfPane(paneId);
+        socket.send(JSON.stringify({
+          type: 'init', paneId, projectId, sessionId, spaceId: desk?.spaceId ?? null, ...resumePoint(sessionId), ...(wait ? { whenIdle: true } : {}),
+        }));
+      };
+      sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
 
       socket.onopen = () => {
         if (disposed) { socket.close(); return; }
         backoff = 500;
         setConnection(sessionId, 'open');
-        const desk = paneStore.getDeskOfPane(paneId);
-        socket.send(JSON.stringify({
-          type: 'init', paneId, projectId, sessionId, spaceId: desk?.spaceId ?? null, ...resumePoint(sessionId),
-        }));
+        sendInit(whenIdle);
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
+        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
+        if (frame.type === 'terminal_busy') {
+          setTerminalBusy(sessionId, frame.state ?? 'working');
+          busyRetry = setTimeout(() => sendInit(true), BUSY_RETRY_MS);
+          return;
+        }
+        if (frame.type === 'event' || frame.type === 'reset' || frame.type === 'switching') clearBusy();
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
@@ -72,6 +93,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onclose = (event) => {
         if (socketRef.current === socket) socketRef.current = null;
+        clearBusy();
         if (disposed) return;
         if (NO_RECONNECT.has(event.reason)) { setConnection(sessionId, 'superseded'); return; }
         setConnection(sessionId, 'closed');
@@ -89,12 +111,14 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     return () => {
       disposed = true;
       if (retry) clearTimeout(retry);
+      if (busyRetry) clearTimeout(busyRetry);
+      sendInitRef.current = null;
       const socket = socketRef.current;
       socketRef.current = null;
       // A CONNECTING socket closes itself in onopen (closing it now only logs an error).
       if (socket && socket.readyState === WebSocket.OPEN) socket.close();
     };
-  }, [paneId, projectId, sessionId, attempt]);
+  }, [paneId, projectId, sessionId, attempt, whenIdle]);
 
   const sendFrame = useCallback((frame: Record<string, unknown>): boolean => {
     const socket = socketRef.current;
@@ -112,6 +136,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
+    takeOver: useCallback(() => sendInitRef.current?.(false), []),
     reconnect: useCallback(() => setAttempt((n) => n + 1), []),
   };
 }

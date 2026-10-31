@@ -26,5 +26,7 @@ export type CockpitSettings = {
   notifyOnDone: boolean;
   /** A plain new session opens with a greeting and the project's state (default on). */
   greetOnStart: boolean;
+  /** Sessions open in the chat view on a phone. Off by default: the chat view is opt-in. */
+  phoneChat: boolean;
   lastUpdated?: string;
 };

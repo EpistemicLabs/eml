@@ -819,6 +819,11 @@ export function setPaneView(paneId: string, view: PaneView): void {
   setSnapshot({ ...snapshot, desks, sessionViews });
 }
 
+/** The view this browser remembers for a session, if the user ever picked one. */
+export function getSessionView(sessionId: string): PaneView | undefined {
+  return snapshot.sessionViews[sessionId];
+}
+
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
 // A pane is an area for one project holding at most one item per surface
 // (terminal → session, note → note, brain → the project's brain view) and

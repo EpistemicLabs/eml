@@ -62,7 +62,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -107,6 +107,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     runtimes: factory,
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: string) => turns.push([id, state]),
+    terminalBusy: opts.busy,
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -196,14 +197,47 @@ describe('ChatBridge', () => {
     expect(stale.events()).toHaveLength(2)
   })
 
-  it('a second client takes the session over and the first is told not to come back', async () => {
+  it('a second client joins: one runtime, both get every event, and either can send', async () => {
     const { bridge, runtimes } = setup()
     const first = connect(bridge)
     await flush()
-    connect(bridge)
+    runtimes[0].emit({ kind: 'text', blockId: 'a', text: 'before' })
+    const second = connect(bridge)
     await flush()
-    expect(first.closes).toEqual(['superseded'])
+    expect(first.closes).toEqual([])
     expect(runtimes).toHaveLength(1)
+    expect(second.events()).toContainEqual({ kind: 'text', blockId: 'a', text: 'before' })
+    second.client({ type: 'send', text: 'from the phone' })
+    expect(runtimes[0].sent).toEqual(['from the phone'])
+    const user = expect.objectContaining({ kind: 'user_message', text: 'from the phone' })
+    expect(first.events()).toContainEqual(user)
+    expect(second.events()).toContainEqual(user)
+  })
+
+  it('a session is detached only when its last client has left, and ending closes them all', async () => {
+    const { bridge } = setup()
+    const first = connect(bridge)
+    await flush()
+    const second = connect(bridge)
+    await flush()
+    first.emit('close')
+    expect(bridge.sessionState('s1')).toBe('running')
+    first.readyState = WebSocket.CLOSED
+    await bridge.end('s1')
+    expect(second.closes).toEqual(['superseded'])
+  })
+
+  it('a card answered on one device settles on the other', async () => {
+    const { bridge, runtimes } = setup()
+    const first = connect(bridge)
+    await flush()
+    const second = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'question', requestId: 'q', questions: [] })
+    second.client({ type: 'answer', requestId: 'q', answer: { decision: 'allow' } })
+    expect(runtimes[0].answers).toEqual([['q', { decision: 'allow' }]])
+    runtimes[0].emit({ kind: 'request_settled', requestId: 'q', outcome: 'allowed' })
+    expect(first.events()).toContainEqual({ kind: 'request_settled', requestId: 'q', outcome: 'allowed' })
   })
 
   it('a closed socket does not stop the turn, and an open card is served again', async () => {
@@ -380,6 +414,29 @@ describe('ChatBridge', () => {
     ws.client({ type: 'send', text: 'look', images: ['../../secret.png'] })
     expect(runtimes[0].sent).toEqual([])
     expect(ws.frames).toContainEqual(expect.objectContaining({ type: 'error' }))
+  })
+
+  it('waits for a working terminal when asked to, on the same socket, and only then takes over', async () => {
+    let busy: 'working' | null = 'working'
+    const { bridge, runtimes, terminal } = setup({ terminalRunning: true, busy: () => busy })
+    const ws = connect(bridge, { whenIdle: true })
+    await flush()
+    expect(ws.frames).toEqual([{ type: 'terminal_busy', state: 'working' }])
+    expect(terminal.ended).toBe(0)
+    expect(runtimes).toHaveLength(0)
+    busy = null
+    ws.client({ type: 'init', paneId: 'pane', projectId: 'p1', sessionId: 's1', whenIdle: true })
+    await flush()
+    expect(terminal.ended).toBe(1)
+    expect(runtimes).toHaveLength(1)
+  })
+
+  it('takes over a working terminal when not asked to wait', async () => {
+    const { bridge, runtimes, terminal } = setup({ terminalRunning: true, busy: () => 'working' })
+    connect(bridge)
+    await flush()
+    expect(terminal.ended).toBe(1)
+    expect(runtimes).toHaveLength(1)
   })
 
   it('refuses another agent\'s session', async () => {
