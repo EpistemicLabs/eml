@@ -31,7 +31,7 @@ import type { TurnEvent, TurnTracker } from './turn-state.js'
 import { requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
-import { PasteImageError, savePastedImage } from './paste-images.js'
+import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
@@ -433,6 +433,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         if (!(error instanceof PasteImageError)) throw error
         json(res, error.status, { error: { code: 'BAD_IMAGE', message: error.message } })
       }
+      return true
+    }
+
+    // A pasted image as the chat view shows it.
+    if (resource === 'paste-image' && id && method === 'GET') {
+      const image = pastedImageFile(id)
+      if (!image) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Image not found' } }); return true }
+      res.writeHead(200, { 'Content-Type': image.mediaType, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=86400' })
+      fs.createReadStream(image.file).pipe(res)
       return true
     }
 

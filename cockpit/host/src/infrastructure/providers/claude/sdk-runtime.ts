@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { query, getSessionMessages, type CanUseTool, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, getSessionMessages, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
-  PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind,
+  ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
 } from '../../../domain/session-runtime.js'
+import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 
 /**
@@ -26,6 +27,19 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   WebFetch: 'fetch', WebSearch: 'fetch',
   Task: 'agent', Agent: 'agent',
 }
+
+const MODES: ModeOption[] = [
+  { id: 'default', label: 'Ask first', description: 'Asks before edits and commands' },
+  { id: 'acceptEdits', label: 'Accept edits', description: 'Edits go through, commands still ask' },
+  { id: 'plan', label: 'Plan', description: 'Reads and plans, changes nothing' },
+  { id: 'auto', label: 'Auto', description: 'A classifier approves or stops each action' },
+]
+
+// A subagent's own bookkeeping, nothing it did.
+const HIDDEN_AGENT_TOOLS = new Set(['SubagentHandback'])
+
+// The text the CLI writes as the assistant when a turn has nothing to say.
+const NO_RESPONSE = 'No response requested.'
 
 const VERBS: Record<ToolKind, string> = {
   read: 'Read', edit: 'Edit', execute: 'Run', search: 'Search', fetch: 'Fetch', agent: 'Agent', other: '',
@@ -73,9 +87,19 @@ function userWords(content: unknown): string | null {
   return text
 }
 
-/** A placeholder the CLI writes as the assistant ("No response requested."); no model said it. */
-function isSynthetic(message: unknown): boolean {
-  return (message as { model?: string } | null)?.model === '<synthetic>'
+/**
+ * What the CLI itself wrote as the assistant and nobody should read: its placeholder
+ * for an empty turn. A local command's answer (`/context`) comes the same way and stays.
+ */
+function isPlaceholder(message: unknown): boolean {
+  const { model, content } = (message ?? {}) as { model?: string; content?: unknown }
+  if (model !== '<synthetic>') return false
+  return Array.isArray(content) && content.every((block: { text?: string }) => block.text === NO_RESPONSE)
+}
+
+function transportOf(type: string | undefined): ToolServer['transport'] {
+  if (!type) return null
+  return type === 'stdio' || type === 'sdk' ? 'process' : 'web'
 }
 
 interface ContentBlock {
@@ -91,12 +115,14 @@ interface ContentBlock {
 }
 
 function toolResultEvent(block: ContentBlock, toolUseResult: unknown): RuntimeEvent {
-  const launched = (toolUseResult as { status?: string } | null | undefined)?.status === 'async_launched'
+  const result = toolUseResult as { status?: string; handbackReport?: { text?: string } } | null | undefined
+  const launched = result?.status === 'async_launched'
   return {
     kind: 'tool_result',
     toolId: block.tool_use_id ?? '',
     status: block.is_error ? 'failed' : launched ? 'launched' : 'completed',
-    output: resultText(block.content),
+    // A subagent's report: the result block only says it was delivered.
+    output: result?.handbackReport?.text ?? resultText(block.content),
   }
 }
 
@@ -109,7 +135,7 @@ function toolCallEvent(block: ContentBlock): RuntimeEvent {
 /**
  * Maps the SDK's stream onto RuntimeEvents. A message arrives once per block with
  * a shared id, after its deltas: the complete block takes over the id its deltas
- * ran under. A subagent's own stream stays out (no subagent trees in this view).
+ * ran under. Of a subagent, its task state and tool calls come through; its text does not.
  */
 export class ClaudeEventMapper {
   private messageId: string | null = null
@@ -117,6 +143,10 @@ export class ClaudeEventMapper {
   private blockCounter = 0
   private sawSessionState = false
   private interrupted = false
+  private agentTasks = new Set<string>()
+  // Every shell task; only one running in the background is shown (`shown`).
+  private shellTasks = new Map<string, { toolId: string | null; description: string; shown: boolean }>()
+  private conversationId: string | null = null
 
   noteInterrupt(): void {
     this.interrupted = true
@@ -134,7 +164,62 @@ export class ClaudeEventMapper {
   }
 
   private system(message: Extract<SDKMessage, { type: 'system' }>): RuntimeEvent[] {
-    if (message.subtype === 'init') return [{ kind: 'ready', model: message.model ?? null }]
+    if (message.subtype === 'init') {
+      // `/clear` goes on under a new session id, and only init names it: the
+      // conversation_reset message's new_conversation_id is not the transcript's.
+      const reset = this.conversationId !== null && this.conversationId !== message.session_id
+      this.conversationId = message.session_id
+      return [
+        ...(reset ? [{ kind: 'conversation_reset', conversationId: message.session_id } as const] : []),
+        { kind: 'settings', model: message.model ?? null, mode: message.permissionMode },
+      ]
+    }
+    if (message.subtype === 'status' && message.permissionMode) return [{ kind: 'settings', mode: message.permissionMode }]
+    if (message.subtype === 'task_started' && message.task_type === 'local_bash') {
+      const shell = { toolId: message.tool_use_id ?? null, description: message.description, shown: message.is_backgrounded === true }
+      this.shellTasks.set(message.task_id, shell)
+      return shell.shown ? [{ kind: 'shell_task', taskId: message.task_id, toolId: shell.toolId, description: shell.description, status: 'running' }] : []
+    }
+    const shell = 'task_id' in message ? this.shellTasks.get(message.task_id as string) : undefined
+    if (shell && (message.subtype === 'task_updated' || message.subtype === 'task_notification')) {
+      const status = message.subtype === 'task_notification' ? message.status : message.patch.status
+      const ended = status === 'completed' || status === 'failed' ? status : status === 'killed' || status === 'stopped' ? 'stopped' : undefined
+      const start = !shell.shown && message.subtype === 'task_updated' && message.patch.is_backgrounded === true
+      if (start) shell.shown = true
+      if (ended) this.shellTasks.delete(message.task_id)
+      if (!shell.shown) return []
+      if (start) return [{ kind: 'shell_task', taskId: message.task_id, toolId: shell.toolId, description: shell.description, status: ended ?? 'running' }]
+      return ended ? [{ kind: 'shell_task', taskId: message.task_id, status: ended }] : []
+    }
+    if (message.subtype === 'task_started') {
+      if (message.task_type !== 'local_agent' || message.skip_transcript || message.ambient) return []
+      this.agentTasks.add(message.task_id)
+      return [{
+        kind: 'agent_task', taskId: message.task_id, toolId: message.tool_use_id ?? null, description: message.description,
+        agentType: message.subagent_type ?? null, status: 'running', background: message.is_backgrounded === true,
+      }]
+    }
+    if (message.subtype === 'task_progress') {
+      if (!this.agentTasks.has(message.task_id)) return []
+      return [{
+        kind: 'agent_task', taskId: message.task_id, activity: message.summary ?? message.description,
+        tokens: message.usage.total_tokens, toolUses: message.usage.tool_uses, durationMs: message.usage.duration_ms,
+      }]
+    }
+    if (message.subtype === 'task_updated') {
+      if (!this.agentTasks.has(message.task_id)) return []
+      const { status, is_backgrounded: background } = message.patch
+      const ended = status === 'completed' || status === 'failed' ? status : status === 'killed' ? 'stopped' : undefined
+      if (!ended && background === undefined) return []
+      return [{ kind: 'agent_task', taskId: message.task_id, ...(ended ? { status: ended } : {}), ...(background !== undefined ? { background } : {}) }]
+    }
+    if (message.subtype === 'task_notification') {
+      if (!this.agentTasks.has(message.task_id)) return []
+      return [{
+        kind: 'agent_task', taskId: message.task_id, status: message.status,
+        ...(message.usage ? { tokens: message.usage.total_tokens, toolUses: message.usage.tool_uses, durationMs: message.usage.duration_ms } : {}),
+      }]
+    }
     if (message.subtype === 'compact_boundary') return [{ kind: 'compaction' }]
     if (message.subtype === 'session_state_changed') {
       this.sawSessionState = true
@@ -181,7 +266,8 @@ export class ClaudeEventMapper {
   }
 
   private assistant(message: Extract<SDKMessage, { type: 'assistant' }>): RuntimeEvent[] {
-    if (message.parent_tool_use_id || isSynthetic(message.message)) return []
+    if (message.parent_tool_use_id) return this.agentCalls(message.parent_tool_use_id, message.message.content as ContentBlock[])
+    if (isPlaceholder(message.message)) return []
     const events: RuntimeEvent[] = []
     const messageId = (message.message as { id?: string }).id ?? message.uuid
     for (const block of message.message.content as ContentBlock[]) {
@@ -195,10 +281,24 @@ export class ClaudeEventMapper {
     return events
   }
 
+  private agentCalls(parentToolId: string, content: ContentBlock[]): RuntimeEvent[] {
+    return content
+      .filter((block) => block.type === 'tool_use' && !HIDDEN_AGENT_TOOLS.has(block.name ?? ''))
+      .map((block) => {
+        const name = block.name ?? 'Tool'
+        return { kind: 'agent_tool', parentToolId, toolId: block.id ?? '', toolKind: toolKind(name), title: toolTitle(name, block.input ?? {}), status: 'running' }
+      })
+  }
+
   private user(message: Extract<SDKMessage, { type: 'user' }>): RuntimeEvent[] {
-    if (message.parent_tool_use_id) return []
     const content = message.message.content
     if (!Array.isArray(content)) return []
+    const parentToolId = message.parent_tool_use_id
+    if (parentToolId) {
+      return (content as ContentBlock[])
+        .filter((block) => block.type === 'tool_result')
+        .map((block) => ({ kind: 'agent_tool', parentToolId, toolId: block.tool_use_id ?? '', status: block.is_error ? 'failed' : 'completed' }))
+    }
     return (content as ContentBlock[])
       .filter((block) => block.type === 'tool_result')
       .map((block) => toolResultEvent(block, message.tool_use_result))
@@ -232,13 +332,16 @@ export function historyEvents(messages: Array<Pick<SessionMessage, 'type' | 'uui
     const content = (stored.message as { content?: unknown } | null)?.content
     if (stored.type === 'user') {
       const words = userWords(content)
-      if (words !== null) events.push({ kind: 'user_message', id: stored.uuid, text: words, queued: false })
+      const images = Array.isArray(content) ? (content as ContentBlock[]).filter((block) => block.type === 'image').map(() => ({ url: null })) : []
+      if (words !== null || images.length > 0) {
+        events.push({ kind: 'user_message', id: stored.uuid, text: words ?? '', queued: false, ...(images.length > 0 ? { images } : {}) })
+      }
       if (Array.isArray(content)) {
         for (const block of content as ContentBlock[]) {
           if (block.type === 'tool_result') events.push(toolResultEvent(block, null))
         }
       }
-    } else if (stored.type === 'assistant' && Array.isArray(content) && !isSynthetic(stored.message)) {
+    } else if (stored.type === 'assistant' && Array.isArray(content) && !isPlaceholder(stored.message)) {
       for (const block of content as ContentBlock[]) {
         if (block.type === 'text' && block.text) events.push({ kind: 'text', blockId: `${stored.uuid}:${counter++}`, text: block.text })
         else if (block.type === 'tool_use') events.push(toolCallEvent(block))
@@ -293,6 +396,11 @@ interface OpenRequest {
   suggestions: Parameters<CanUseTool>[2]['suggestions']
 }
 
+/** The mode a run starts in: the session's own choice, else what terminal sessions start in (Settings › Models). */
+export function startingMode(chosen: string | null, setting: string): string {
+  return chosen ?? setting
+}
+
 class ClaudeSdkRuntime implements SessionRuntime {
   private input = new InputQueue()
   private mapper = new ClaudeEventMapper()
@@ -305,6 +413,9 @@ class ClaudeSdkRuntime implements SessionRuntime {
   private exitReported = false
   private requestCounter = 0
   private stderrTail = ''
+  private commands: SlashCommand[] = []
+  private terminalCommands = new Set<string>()
+  private models: Array<{ value: string; resolvedModel?: string }> = []
 
   constructor(private request: SessionRuntimeStart) {
     this.exited = new Promise((resolve) => { this.markExited = resolve })
@@ -314,8 +425,10 @@ class ClaudeSdkRuntime implements SessionRuntime {
         cwd: request.cwd,
         env: request.env,
         pathToClaudeCodeExecutable: CLAUDE_BIN,
-        // Left out, the session can start in auto and the cards would never be asked.
-        permissionMode: 'default',
+        // Always named: left out, the CLI picks one itself.
+        permissionMode: startingMode(request.mode, readPermissionMode()) as PermissionMode,
+        ...(request.model ? { model: request.model } : {}),
+        agentProgressSummaries: true,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         includePartialMessages: true,
         settings: request.files.settings,
@@ -326,7 +439,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
           ...(request.strictMcp ? { 'strict-mcp-config': null } : {}),
           name: request.address,
         },
-        ...(request.resume ? { resume: request.sessionId } : { sessionId: request.sessionId }),
+        ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {
@@ -342,6 +455,58 @@ class ClaudeSdkRuntime implements SessionRuntime {
       },
     })
     void this.pump()
+    void this.announce()
+  }
+
+  /** What the session offers, without waiting for a first message. */
+  private async announce(): Promise<void> {
+    try {
+      const init = await this.query.initializationResult()
+      this.models = init.models
+      this.commands = init.commands
+      this.emit({
+        kind: 'capabilities',
+        modes: MODES,
+        models: init.models.map((model) => ({
+          id: model.value, label: model.displayName, description: model.description, resolved: model.resolvedModel ?? null,
+        })),
+      })
+      this.emitCommands()
+      this.emit({ kind: 'settings', mode: startingMode(this.request.mode, readPermissionMode()) })
+      await this.refreshContext()
+    } catch { /* the session works without them; a closing one has no answers */ }
+  }
+
+  /** The list without what only a terminal can do, or the CLI keeps to itself. */
+  private emitCommands(): void {
+    const commands: CommandInfo[] = this.commands
+      .filter((command) => !this.terminalCommands.has(command.name) && !command.name.startsWith('__'))
+      .map((command) => ({
+        name: command.name, description: command.description, argumentHint: command.argumentHint, aliases: command.aliases ?? [],
+      }))
+    this.emit({ kind: 'commands', commands })
+  }
+
+  private async refreshContext(): Promise<void> {
+    if (this.closing) return
+    try {
+      const usage = await this.query.getContextUsage({ detail: 'summary' })
+      this.emit({ kind: 'context', usedTokens: usage.totalTokens, maxTokens: usage.maxTokens })
+    } catch { /* the status bar keeps its last number */ }
+  }
+
+  /** What the view needs from a message beyond its mapping. */
+  private observe(message: SDKMessage): void {
+    if (message.type === 'result') void this.refreshContext()
+    if (message.type !== 'system') return
+    if (message.subtype === 'compact_boundary') void this.refreshContext()
+    else if (message.subtype === 'init') {
+      this.terminalCommands = new Set(message.terminal_slash_commands ?? [])
+      if (this.commands.length > 0) this.emitCommands()
+    } else if (message.subtype === 'commands_changed') {
+      this.commands = message.commands
+      this.emitCommands()
+    }
   }
 
   private emit(event: RuntimeEvent): void {
@@ -351,6 +516,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
   private async pump(): Promise<void> {
     try {
       for await (const message of this.query) {
+        this.observe(message)
         for (const event of this.mapper.map(message)) this.emit(event)
       }
     } catch (error) {
@@ -402,11 +568,15 @@ class ClaudeSdkRuntime implements SessionRuntime {
     })
   })
 
-  send(id: string, text: string): void {
+  send(id: string, text: string, images: ImageInput[] = []): void {
+    const content = images.length === 0 ? text : [
+      ...images.map(({ mediaType, data }) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } })),
+      ...(text.trim() ? [{ type: 'text', text }] : []),
+    ]
     this.input.push({
       type: 'user',
       uuid: id as SDKUserMessage['uuid'],
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: content as SDKUserMessage['message']['content'] },
       parent_tool_use_id: null,
       session_id: this.request.sessionId,
     })
@@ -415,6 +585,21 @@ class ClaudeSdkRuntime implements SessionRuntime {
   async interrupt(): Promise<void> {
     this.mapper.noteInterrupt()
     await this.query.interrupt()
+  }
+
+  async setMode(mode: string): Promise<void> {
+    await this.query.setPermissionMode(mode as PermissionMode)
+    this.emit({ kind: 'settings', mode })
+  }
+
+  async setModel(model: string): Promise<void> {
+    await this.query.setModel(model)
+    this.emit({ kind: 'settings', model: this.models.find((known) => known.value === model)?.resolvedModel ?? model })
+    await this.refreshContext()
+  }
+
+  async stopAgent(taskId: string): Promise<void> {
+    await this.query.stopTask(taskId)
   }
 
   answerPermission(requestId: string, answer: PermissionAnswer): void {
@@ -436,6 +621,26 @@ class ClaudeSdkRuntime implements SessionRuntime {
     }
   }
 
+  async toolServers(): Promise<ToolServer[]> {
+    // Not the server's config: it can carry URLs and headers, and the view needs neither.
+    return (await this.query.mcpServerStatus()).map((server) => ({
+      name: server.name,
+      status: server.status,
+      error: server.error ?? null,
+      scope: server.scope ?? null,
+      transport: transportOf(server.config?.type),
+      toolCount: server.tools?.length ?? 0,
+    }))
+  }
+
+  setToolServerEnabled(name: string, enabled: boolean): Promise<void> {
+    return this.query.toggleMcpServer(name, enabled)
+  }
+
+  reconnectToolServer(name: string): Promise<void> {
+    return this.query.reconnectMcpServer(name)
+  }
+
   async close(): Promise<void> {
     this.closing = true
     this.input.end()
@@ -455,12 +660,12 @@ export function createClaudeSdkRuntimes(): SessionRuntimeFactory {
   let reads: Promise<unknown> = Promise.resolve()
   return {
     start: (request) => new ClaudeSdkRuntime(request),
-    history(sessionId, cwd, agent) {
+    history(conversationId, cwd, agent) {
       const configDir = agent ? agent.configDirs.claude : CONFIG_DIR
       if (!configDir) return Promise.reject(new Error(`Agent "${agent?.id}" has no config folder for Claude Code.`))
       const read = reads.then(async () => {
         process.env.CLAUDE_CONFIG_DIR = configDir
-        return historyEvents(await getSessionMessages(sessionId, { dir: cwd }))
+        return historyEvents(await getSessionMessages(conversationId, { dir: cwd }))
       })
       reads = read.catch(() => { /* the caller gets it */ })
       return read

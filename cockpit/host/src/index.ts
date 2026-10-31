@@ -184,6 +184,11 @@ async function main() {
     runtimes: createClaudeSdkRuntimes(),
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+    terminalBusy: (sessionId): 'working' | 'waiting' | null => {
+      if (!bridge.isRunning(sessionId)) return null
+      const state = turns.get(sessionId)?.state
+      return state === 'working' || state === 'waiting' ? state : null
+    },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.

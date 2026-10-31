@@ -1,11 +1,14 @@
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
 import { ChatBridge, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
-import type { PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart } from '../src/domain/session-runtime.js'
+import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
+import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -14,14 +17,34 @@ import type { PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFact
  */
 class FakeRuntime implements SessionRuntime {
   sent: string[] = []
+  images: ImageInput[][] = []
   answers: Array<[string, PermissionAnswer]> = []
   interrupts = 0
   closed = false
+  servers: ToolServer[] = [{ name: 'tools', status: 'connected', error: null, scope: 'user', transport: 'web', toolCount: 2 }]
+  serverCalls: string[] = []
   constructor(readonly start: SessionRuntimeStart) {}
   emit(event: RuntimeEvent): void { this.start.onEvent(event) }
-  send(_id: string, text: string): void { this.sent.push(text) }
+  send(_id: string, text: string, images: ImageInput[] = []): void { this.sent.push(text); this.images.push(images) }
   async interrupt(): Promise<void> { this.interrupts += 1; this.emit({ kind: 'turn_end', reason: 'interrupted' }) }
   answerPermission(requestId: string, answer: PermissionAnswer): void { this.answers.push([requestId, answer]) }
+  modes: string[] = []
+  models: string[] = []
+  stopped: string[] = []
+  async setMode(mode: string): Promise<void> {
+    if (mode === 'refused') throw new Error('not allowed')
+    this.modes.push(mode)
+    this.emit({ kind: 'settings', mode })
+  }
+  async setModel(model: string): Promise<void> { this.models.push(model) }
+  async stopAgent(taskId: string): Promise<void> { this.stopped.push(taskId) }
+  async toolServers(): Promise<ToolServer[]> { return this.servers }
+  async setToolServerEnabled(name: string, enabled: boolean): Promise<void> { this.serverCalls.push(`${name}:${enabled}`) }
+  async reconnectToolServer(name: string): Promise<void> {
+    this.serverCalls.push(`${name}:reconnect`)
+    if (name === 'broken') throw new Error('no route')
+    if (name === 'locked') throw new Error('Server status: needs-auth')
+  }
   async close(): Promise<void> { this.closed = true; this.emit({ kind: 'runtime_exit', expected: true }) }
 }
 
@@ -39,13 +62,13 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
-  const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean }>()
+  const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; conversation?: string }>()
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
     id: 'claude',
@@ -65,7 +88,14 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     ledger: {
       has: (id: string) => ledgerEntries.has(id),
       get: (id: string) => ledgerEntries.get(id),
-      ref: () => ({ sessionId: 's1', providerSessionId: null, projectPath: null, greeted: null }),
+      ref: (id: string) => ({ sessionId: 's1', providerSessionId: ledgerEntries.get(id)?.conversation ?? null, projectPath: null, greeted: null }),
+      setChatSettings: (id: string, patch: { mode?: string; model?: string }) => {
+        const entry = ledgerEntries.get(id)
+        if (!entry) return
+        if (patch.mode) entry.chatMode = patch.mode
+        if (patch.model) entry.chatModel = patch.model
+      },
+      bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
       recordSpawn: (id: string) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false }) },
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
       setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
@@ -77,6 +107,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     runtimes: factory,
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: string) => turns.push([id, state]),
+    terminalBusy: opts.busy,
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -166,14 +197,47 @@ describe('ChatBridge', () => {
     expect(stale.events()).toHaveLength(2)
   })
 
-  it('a second client takes the session over and the first is told not to come back', async () => {
+  it('a second client joins: one runtime, both get every event, and either can send', async () => {
     const { bridge, runtimes } = setup()
     const first = connect(bridge)
     await flush()
-    connect(bridge)
+    runtimes[0].emit({ kind: 'text', blockId: 'a', text: 'before' })
+    const second = connect(bridge)
     await flush()
-    expect(first.closes).toEqual(['superseded'])
+    expect(first.closes).toEqual([])
     expect(runtimes).toHaveLength(1)
+    expect(second.events()).toContainEqual({ kind: 'text', blockId: 'a', text: 'before' })
+    second.client({ type: 'send', text: 'from the phone' })
+    expect(runtimes[0].sent).toEqual(['from the phone'])
+    const user = expect.objectContaining({ kind: 'user_message', text: 'from the phone' })
+    expect(first.events()).toContainEqual(user)
+    expect(second.events()).toContainEqual(user)
+  })
+
+  it('a session is detached only when its last client has left, and ending closes them all', async () => {
+    const { bridge } = setup()
+    const first = connect(bridge)
+    await flush()
+    const second = connect(bridge)
+    await flush()
+    first.emit('close')
+    expect(bridge.sessionState('s1')).toBe('running')
+    first.readyState = WebSocket.CLOSED
+    await bridge.end('s1')
+    expect(second.closes).toEqual(['superseded'])
+  })
+
+  it('a card answered on one device settles on the other', async () => {
+    const { bridge, runtimes } = setup()
+    const first = connect(bridge)
+    await flush()
+    const second = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'question', requestId: 'q', questions: [] })
+    second.client({ type: 'answer', requestId: 'q', answer: { decision: 'allow' } })
+    expect(runtimes[0].answers).toEqual([['q', { decision: 'allow' }]])
+    runtimes[0].emit({ kind: 'request_settled', requestId: 'q', outcome: 'allowed' })
+    expect(first.events()).toContainEqual({ kind: 'request_settled', requestId: 'q', outcome: 'allowed' })
   })
 
   it('a closed socket does not stop the turn, and an open card is served again', async () => {
@@ -233,6 +297,146 @@ describe('ChatBridge', () => {
     expect(runtimes).toHaveLength(2)
     expect(runtimes[1].start.resume).toBe(true)
     expect(runtimes[1].sent).toEqual(['still there?'])
+  })
+
+  it('a chosen mode and model are remembered and start the next run', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true })
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'set_mode', mode: 'auto' })
+    ws.client({ type: 'set_model', model: 'opus[1m]' })
+    await flush()
+    expect(runtimes[0].modes).toEqual(['auto'])
+    expect(ledgerEntries.get('s1')).toMatchObject({ chatMode: 'auto', chatModel: 'opus[1m]' })
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'send', text: 'go on' })
+    expect(runtimes[1].start).toMatchObject({ mode: 'auto', model: 'opus[1m]' })
+  })
+
+  it('a refused mode is not remembered and shows in the conversation', async () => {
+    const { bridge, ledgerEntries } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'set_mode', mode: 'refused' })
+    await flush()
+    expect(ledgerEntries.get('s1')?.chatMode).toBeUndefined()
+    expect(ws.events()).toContainEqual({ kind: 'error', message: 'not allowed' })
+  })
+
+  it('stops a subagent, and ignores a malformed id', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'stop_agent', taskId: 'a1' })
+    ws.client({ type: 'stop_agent', taskId: 'bad id!' })
+    expect(runtimes[0].stopped).toEqual(['a1'])
+  })
+
+  it('follows a cleared conversation: the next run resumes the new one', async () => {
+    const { bridge, runtimes } = setup({ transcript: true })
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'conversation_reset', conversationId: 'new-conversation' })
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'send', text: 'go on' })
+    expect(runtimes[1].start.conversationId).toBe('new-conversation')
+  })
+
+  it('serves the tool servers on request, outside the event log', async () => {
+    const { bridge } = setup()
+    const ws = connect(bridge)
+    await flush()
+    const events = ws.events().length
+    ws.client({ type: 'tool_servers' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: null, servers: [{ name: 'tools', toolCount: 2 }] })
+    expect(ws.events()).toHaveLength(events)
+  })
+
+  it('changes a tool server and answers with the servers as they are now', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'tool_server', name: 'tools', action: 'disable' })
+    ws.client({ type: 'tool_server', name: 'tools', action: 'enable' })
+    ws.client({ type: 'tool_server', name: 'tools', action: 'reconnect' })
+    ws.client({ type: 'tool_server', name: 'tools', action: 'delete' })
+    await flush()
+    expect(runtimes[0].serverCalls).toEqual(['tools:false', 'tools:true', 'tools:reconnect'])
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers' })
+  })
+
+  it('reports a failed change next to the current servers', async () => {
+    const { bridge } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'tool_server', name: 'broken', action: 'reconnect' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: 'broken: no route', servers: [{ name: 'tools' }] })
+  })
+
+  it('a server that wants a sign-in is no failure', async () => {
+    const { bridge } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'tool_server', name: 'locked', action: 'reconnect' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: null })
+  })
+
+  it('says so when no runtime is there to ask', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'tool_servers' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', servers: [] })
+    expect((ws.frames.at(-1) as { error: string }).error).toContain('not running')
+  })
+
+  it('puts pasted images into the message and shows them by url', async () => {
+    const name = '11111111-1111-1111-1111-111111111111.png'
+    mkdirSync(PASTE_IMAGES_DIR, { recursive: true })
+    writeFileSync(join(PASTE_IMAGES_DIR, name), 'pixels')
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: '', images: [name] })
+    expect(runtimes[0].images[0]).toEqual([{ mediaType: 'image/png', data: Buffer.from('pixels').toString('base64') }])
+    expect(ws.events()).toContainEqual(expect.objectContaining({ kind: 'user_message', images: [{ url: `/api/paste-image/${name}` }] }))
+  })
+
+  it('refuses an image name that is not one of ours, and sends nothing', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: 'look', images: ['../../secret.png'] })
+    expect(runtimes[0].sent).toEqual([])
+    expect(ws.frames).toContainEqual(expect.objectContaining({ type: 'error' }))
+  })
+
+  it('waits for a working terminal when asked to, on the same socket, and only then takes over', async () => {
+    let busy: 'working' | null = 'working'
+    const { bridge, runtimes, terminal } = setup({ terminalRunning: true, busy: () => busy })
+    const ws = connect(bridge, { whenIdle: true })
+    await flush()
+    expect(ws.frames).toEqual([{ type: 'terminal_busy', state: 'working' }])
+    expect(terminal.ended).toBe(0)
+    expect(runtimes).toHaveLength(0)
+    busy = null
+    ws.client({ type: 'init', paneId: 'pane', projectId: 'p1', sessionId: 's1', whenIdle: true })
+    await flush()
+    expect(terminal.ended).toBe(1)
+    expect(runtimes).toHaveLength(1)
+  })
+
+  it('takes over a working terminal when not asked to wait', async () => {
+    const { bridge, runtimes, terminal } = setup({ terminalRunning: true, busy: () => 'working' })
+    connect(bridge)
+    await flush()
+    expect(terminal.ended).toBe(1)
+    expect(runtimes).toHaveLength(1)
   })
 
   it('refuses another agent\'s session', async () => {

@@ -60,6 +60,9 @@ export interface LedgerEntry {
   keepRunning: boolean
   /** How the session last ran: in a terminal, or through the chat view. The conversation is the same either way. */
   runtime: SessionRuntimeKind
+  /** The permission mode and model chosen in the chat view; a resume starts with them. */
+  chatMode: string | null
+  chatModel: string | null
 }
 
 interface LedgerFile {
@@ -96,6 +99,8 @@ function load(): LedgerFile {
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
+          chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
+          chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
         }
       }
     }
@@ -156,6 +161,8 @@ export class SessionLedger {
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
+      chatMode: prev?.chatMode ?? null,
+      chatModel: prev?.chatModel ?? null,
     }
     this.persist()
   }
@@ -173,6 +180,18 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.runtime === runtime) return
     entry.runtime = runtime
+    this.persist()
+  }
+
+  /** Remember what the chat view runs with. */
+  setChatSettings(sessionId: string, patch: { mode?: string; model?: string }): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    const chatMode = patch.mode ?? entry.chatMode
+    const chatModel = patch.model ?? entry.chatModel
+    if (entry.chatMode === chatMode && entry.chatModel === chatModel) return
+    entry.chatMode = chatMode
+    entry.chatModel = chatModel
     this.persist()
   }
 

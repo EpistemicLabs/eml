@@ -6,9 +6,11 @@
 // cockpit-notes-pane). Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
+import { shouldOpenInChat } from '@/components/chat/chat-default';
+import { readSettings, subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
@@ -16,7 +18,7 @@ import { NotePane } from '../../notes/NotePane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
-import { addPaneNextTo, consumePendingShellCommand, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { addPaneNextTo, consumePendingShellCommand, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { cn } from '@/lib/utils';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
@@ -49,7 +51,28 @@ function MainContent({
   useEffect(() => {
     if (initialShellCommand !== null) consumePendingShellCommand(paneId);
   }, [paneId, initialShellCommand]);
-  const noteId = usePane(paneId)?.noteId;
+  const pane = usePane(paneId);
+  const noteId = pane?.noteId;
+  const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
+  // A session's way of running follows it (session-handoff.ts): when it appears here
+  // or moves to chat elsewhere. Not on every look: a session the user just moved
+  // back to the terminal still reads as chat until the host has moved it.
+  const knownRuntime = useRef<{ sessionId: string; runtime: string | null } | null>(null);
+  useLayoutEffect(() => {
+    if (!selectedSession || !sessionId) return;
+    const runtime = (selectedSession.runtime as string | undefined) ?? null;
+    const known = knownRuntime.current;
+    const changed = known?.sessionId !== sessionId || known.runtime !== runtime;
+    knownRuntime.current = { sessionId, runtime };
+    if (shouldOpenInChat({
+      view: paneView,
+      runtime: changed ? runtime : null,
+      chatDefault,
+      pickedView: getSessionView(sessionId),
+      provider: selectedSession.__provider ?? pane?.provider ?? 'claude',
+      queuedCommand: initialShellCommand !== null,
+    })) onSetPaneView('chat');
+  }, [selectedSession, sessionId, paneView, chatDefault, pane?.provider, initialShellCommand, onSetPaneView]);
   const switchBlocked = useSwitchBlocked(sessionId);
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what
@@ -122,7 +145,7 @@ function MainContent({
           </>
         )}
 
-        <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? 'px-1 pb-1' : 'px-2 pb-2')}>
+        <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? 'px-1' : 'px-2', paneView === 'chat' ? 'pb-0' : compact ? 'pb-1' : 'pb-2')}>
           <ErrorBoundary showDetails>
             {paneView === 'terminal' ? (
               <div className="flex min-h-0 flex-1 flex-col">
@@ -139,7 +162,7 @@ function MainContent({
                 <TerminalStatusBar session={selectedSession} />
               </div>
             ) : paneView === 'chat' && selectedProject && sessionId ? (
-              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} />
+              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} whenIdle={chatDefault} isActive={isActive} />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : (

@@ -12,20 +12,29 @@ import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
+import { readPastedImage } from './paste-images.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
- * runtime per session, the session's events numbered in an EventStore, and at
- * most one client on a session.
+ * runtime per session, the session's events numbered in an EventStore, and any
+ * number of clients on a session: each catches up from its own number, then gets
+ * every event. A conversation has one writer process, not one reader.
  *
  * Wire protocol:
- *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after? }
+ *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle? }
  *   client → { type:'send', text }
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
+ *   client → { type:'tool_servers' }
+ *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
+ *   client → { type:'set_mode', mode }
+ *   client → { type:'set_model', model }
+ *   client → { type:'stop_agent', taskId }
+ *   host   → { type:'terminal_busy', state }        (init with whenIdle refused: send it again later)
  *   host   → { type:'switching', reason }           (the handoff is under way)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
+ *   host   → { type:'tool_servers', servers, error }  (a snapshot, not part of the event log)
  *   host   → { type:'error', message }
  *
  * Attach handshake as for the terminal: POST /api/chat mints a one-time nonce, the
@@ -41,7 +50,10 @@ const INTERRUPT_WAIT_MS = 3_000
 // reconnects and asks for what it missed.
 const WS_MAX_BUFFERED = 16 * 1024 * 1024
 
+const MAX_IMAGES = 10
 const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
+// A model id may carry a variant: `opus[1m]`.
+const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
@@ -51,7 +63,7 @@ interface ChatEntry {
   projectId: string
   projectPath: string
   runtime: SessionRuntime | null
-  ws: WebSocket | null
+  clients: Set<WebSocket>
   active: boolean
   openRequests: Set<string>
   timeoutId: NodeJS.Timeout | null
@@ -67,9 +79,13 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** What the session's terminal process is in the middle of, if anything: a takeover would cut it off. */
+  terminalBusy?: (sessionId: string) => 'working' | 'waiting' | null
 }
 
 type ClientMessage = {
+  whenIdle?: unknown
+  images?: unknown
   type?: string
   paneId?: unknown
   projectId?: unknown
@@ -80,6 +96,11 @@ type ClientMessage = {
   text?: unknown
   requestId?: unknown
   answer?: unknown
+  mode?: unknown
+  model?: unknown
+  taskId?: unknown
+  name?: unknown
+  action?: unknown
 }
 
 function send(ws: WebSocket | null, message: Record<string, unknown>): void {
@@ -98,6 +119,11 @@ function parseMessage(raw: RawData, isBinary: boolean): ClientMessage | null {
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+
+function parseImageNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((name): name is string => typeof name === 'string').slice(0, MAX_IMAGES)
+}
 
 export function parseAnswer(value: unknown): PermissionAnswer | null {
   if (!value || typeof value !== 'object') return null
@@ -141,7 +167,7 @@ export class ChatBridge {
   sessionState(sessionId: string): SessionState {
     const entry = this.entries.get(sessionId)
     if (!entry?.runtime) return 'ended'
-    return entry.ws?.readyState === WebSocket.OPEN ? 'running' : 'detached'
+    return [...entry.clients].some((ws) => ws.readyState === WebSocket.OPEN) ? 'running' : 'detached'
   }
 
   /** Close the session's runtime, and resolve once its process has exited. The client is told not to reconnect. */
@@ -155,8 +181,10 @@ export class ChatBridge {
       await runtime.close()
       entry.runtime = null
     }
-    try { entry.ws?.close(1000, reason) } catch { /* closing */ }
-    entry.ws = null
+    for (const ws of entry.clients) {
+      try { ws.close(1000, reason) } catch { /* closing */ }
+    }
+    entry.clients.clear()
     this.entries.delete(sessionId)
     this.ctx.events.forget(sessionId)
     this.log(`session ${sessionId} left the chat runtime (${reason})`)
@@ -201,13 +229,24 @@ export class ChatBridge {
         }
         if (!sessionId) return
         const entry = this.entries.get(sessionId)
-        if (!entry || entry.ws !== ws) return
-        if (data.type === 'send') this.sendMessage(entry, text(data.text))
+        if (!entry?.clients.has(ws)) return
+        if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)
           if (answer) entry.runtime?.answerPermission(text(data.requestId), answer)
-        }
+        } else if (data.type === 'set_mode' && SAFE_ID.test(text(data.mode))) {
+          this.control(entry, (runtime) => runtime.setMode(text(data.mode)))
+        } else if (data.type === 'set_model' && SAFE_MODEL.test(text(data.model))) {
+          const model = text(data.model)
+          this.control(entry, async (runtime) => {
+            await runtime.setModel(model)
+            this.ctx.ledger.setChatSettings(entry.sessionId, { model })
+          })
+        } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
+          this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
+        } else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
+        else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.log(`error: ${message}`)
@@ -218,12 +257,11 @@ export class ChatBridge {
     ws.on('close', () => {
       if (!sessionId) return
       const entry = this.entries.get(sessionId)
-      if (!entry || entry.ws !== ws) return
-      entry.ws = null
+      if (!entry?.clients.delete(ws) || entry.clients.size > 0) return
       // A grace period, not an abort: a reload must not cost the running turn or an open card.
       entry.timeoutId = setTimeout(() => {
         const current = this.entries.get(entry.sessionId)
-        if (!current || current.ws) return
+        if (!current || current.clients.size > 0) return
         this.log(`detached session ${entry.sessionId} timed out → closing (resumable via ledger)`)
         void this.end(entry.sessionId, 'timed out')
       }, DETACHED_TIMEOUT_MS)
@@ -231,6 +269,12 @@ export class ChatBridge {
     })
 
     ws.on('error', (error) => this.log(`ws error: ${error.message}`))
+  }
+
+  /** A change to the running session; what goes wrong shows in the conversation. */
+  private control(entry: ChatEntry, action: (runtime: SessionRuntime) => Promise<void>): void {
+    if (!entry.runtime) throw new Error('This session is not running. Send a message to resume it first.')
+    void action(entry.runtime).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
   }
 
   /** Validates the frame and starts the session's way in; returns its id, or null when refused. */
@@ -252,6 +296,13 @@ export class ChatBridge {
     // A space with its own agent never falls back to the shared config.
     const agentProblem = space.agent?.problem(provider.id)
     if (agentProblem) return refuse(agentProblem)
+
+    // Asked to wait: no session yet, so the same socket can send its init again.
+    const busy = data.whenIdle === true ? this.ctx.terminalBusy?.(sessionId) ?? null : null
+    if (busy) {
+      send(ws, { type: 'terminal_busy', state: busy })
+      return null
+    }
 
     const after = typeof data.after === 'number' ? data.after : 0
     const epoch = typeof data.epoch === 'number' ? data.epoch : null
@@ -284,7 +335,7 @@ export class ChatBridge {
     const { sessionId, paneId, projectId, projectPath, space, provider } = opts
     const existing = this.entries.get(sessionId)
     if (existing) {
-      this.takeOver(existing, ws, opts.epoch, opts.after)
+      this.join(existing, ws, opts.epoch, opts.after)
       this.ctx.ledger.touch(sessionId, paneId)
       return
     }
@@ -293,7 +344,7 @@ export class ChatBridge {
     const fromTerminal = this.ctx.ledger.get(sessionId)?.runtime === 'terminal'
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
-      sessionId, spaceId: space.id, projectId, projectPath, runtime: null, ws, active: false,
+      sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
       openRequests: new Set(), timeoutId: null, turnEnded: null,
     }
     this.entries.set(sessionId, entry)
@@ -302,7 +353,8 @@ export class ChatBridge {
     // The view is rebuilt from the transcript, which holds what the terminal added
     // and was never streamed; from here on it renders from this one log.
     if (resume) {
-      for (const event of await this.ctx.runtimes.history(sessionId, projectPath, space.agent)) this.emit(entry, event)
+      const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
+      for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.agent)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
     provider.trustProject(projectPath, sessionSpaceOf(space))
@@ -333,8 +385,10 @@ export class ChatBridge {
       COCKPIT_SESSION_ID: sessionId,
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
+    const stored = this.ctx.ledger.get(sessionId)
     entry.runtime = this.ctx.runtimes.start({
-      sessionId, resume, cwd: projectPath, env, address,
+      sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
+      cwd: projectPath, env, address,
       files: { mcpConfig: space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.agent,
       onEvent: (event) => this.onRuntimeEvent(entry, event),
@@ -343,6 +397,12 @@ export class ChatBridge {
 
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
     switch (event.kind) {
+      case 'settings':
+        if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
+        break
+      case 'conversation_reset':
+        this.ctx.ledger.bindProviderSession(entry.sessionId, event.conversationId)
+        break
       case 'activity':
         entry.active = event.state !== 'idle'
         break
@@ -373,15 +433,18 @@ export class ChatBridge {
 
   private emit(entry: ChatEntry, event: RuntimeEvent): void {
     const stored = this.ctx.events.append(entry.sessionId, event)
-    const ws = entry.ws
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    // Too far behind: drop the socket, its client asks for what it missed.
-    if (ws.bufferedAmount > WS_MAX_BUFFERED) { try { ws.close(1013, 'behind') } catch { /* closing */ } return }
-    send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    for (const ws of entry.clients) {
+      if (ws.readyState !== WebSocket.OPEN) continue
+      // Too far behind: drop the socket, its client asks for what it missed.
+      if (ws.bufferedAmount > WS_MAX_BUFFERED) { try { ws.close(1013, 'behind') } catch { /* closing */ } continue }
+      send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    }
   }
 
-  private sendMessage(entry: ChatEntry, message: string): void {
-    if (!message.trim()) return
+  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = []): void {
+    if (!message.trim() && imageNames.length === 0) return
+    // First: an image that can't be read must not leave half a message behind.
+    const images = imageNames.map(readPastedImage)
     // A crash leaves the entry without a runtime; the conversation goes on.
     if (!entry.runtime) {
       const space = this.ctx.spaces.get(entry.spaceId)
@@ -390,22 +453,48 @@ export class ChatBridge {
       this.startRuntime(entry, provider, space, provider.canResume(this.ctx.ledger.ref(entry.sessionId, null, space.agent)))
     }
     const id = randomUUID()
-    this.emit(entry, { kind: 'user_message', id, text: message, queued: entry.active })
+    this.emit(entry, {
+      kind: 'user_message', id, text: message, queued: entry.active,
+      ...(images.length > 0 ? { images: images.map(({ url }) => ({ url })) } : {}),
+    })
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })
     }
-    entry.runtime?.send(id, message)
+    entry.runtime?.send(id, message, images.map(({ mediaType, data }) => ({ mediaType, data })))
   }
 
-  /** A client on a running session: it takes the session over and gets what it does not have. */
-  private takeOver(entry: ChatEntry, ws: WebSocket, epoch: number | null, after: number): void {
-    if (entry.timeoutId) { clearTimeout(entry.timeoutId); entry.timeoutId = null }
-    const old = entry.ws
-    if (old && old !== ws && old.readyState === WebSocket.OPEN) {
-      try { old.close(1000, 'superseded') } catch { /* closing */ }
+  private async sendToolServers(entry: ChatEntry, ws: WebSocket, failure: string | null = null): Promise<void> {
+    if (!entry.runtime) {
+      send(ws, { type: 'tool_servers', servers: [], error: failure ?? 'The session is not running right now. It starts with the next message.' })
+      return
     }
-    entry.ws = ws
+    try {
+      send(ws, { type: 'tool_servers', servers: await entry.runtime.toolServers(), error: failure })
+    } catch (error) {
+      send(ws, { type: 'tool_servers', servers: [], error: failure ?? (error instanceof Error ? error.message : String(error)) })
+    }
+  }
+
+  /** Whatever comes of it, the client gets the servers as they are now. */
+  private async changeToolServer(entry: ChatEntry, ws: WebSocket, name: string, action: string): Promise<void> {
+    let failure: string | null = null
+    try {
+      if (action === 'enable' || action === 'disable') await entry.runtime?.setToolServerEnabled(name, action === 'enable')
+      else if (action === 'reconnect') await entry.runtime?.reconnectToolServer(name)
+    } catch (error) {
+      // A server that wants a sign-in throws here though it did what was asked; the
+      // list says so and the panel says where to sign in. Anything else is a failure.
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/needs-auth/.test(message)) failure = `${name}: ${message}`
+    }
+    await this.sendToolServers(entry, ws, failure)
+  }
+
+  /** A client on a running session: it joins the others and gets what it does not have. */
+  private join(entry: ChatEntry, ws: WebSocket, epoch: number | null, after: number): void {
+    if (entry.timeoutId) { clearTimeout(entry.timeoutId); entry.timeoutId = null }
+    entry.clients.add(ws)
     const current = this.ctx.events.epoch(entry.sessionId)
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })
