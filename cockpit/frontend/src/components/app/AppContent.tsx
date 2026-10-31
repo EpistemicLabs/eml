@@ -39,6 +39,9 @@ import UpdateBanner from './UpdateBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { cn } from '@/lib/utils';
+import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
+import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
 import { Brain, Menu } from 'lucide-react';
 
@@ -58,6 +61,9 @@ function AppContentInner() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => { if (!compact) setDrawerOpen(false); }, [compact]);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  useDrawerSwipe(compact, drawerOpen, openDrawer, closeDrawer);
+  const keyboardOpen = useSoftKeyboardOpen();
   const {
     projects,
     projectsBySpace,
@@ -293,6 +299,7 @@ function AppContentInner() {
 
   return (
     <div
+      data-app-root
       className="fixed inset-x-0 top-0 flex flex-col bg-background"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
     >
@@ -373,7 +380,9 @@ function AppContentInner() {
         />
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
+      {/* The home indicator's inset is only needed at the screen's bottom edge. With the keyboard
+          up the app already ends above it, but iOS keeps reporting the inset. */}
+      <div className={cn('relative flex min-w-0 flex-1 flex-col', !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}>
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is
               active; the desks below stay mounted (hidden) so terminals

@@ -1,20 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import SpaceSwitch from '@/components/app/SpaceSwitch';
+import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
+import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { cn } from '@/lib/utils';
 import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
+import { RowSheetContext, type RowSheetApi, type RowSheetTarget } from './rowSheetContext';
 import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
 import { SidebarAllSessions } from './subcomponents/SidebarAllSessions';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
 import { SidebarModals } from './subcomponents/SidebarModals';
 import { SidebarProjectTree } from './subcomponents/SidebarProjectTree';
+import { SidebarRowSheet } from './subcomponents/SidebarRowSheet';
 import { SidebarScrollRegion } from './subcomponents/SidebarScrollRegion';
 
 const CLOSE_GRACE_MS = 200;
 
 export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: SidebarDrawer }) {
   const controller = useSidebarController(props);
+  const keyboardOpen = useSoftKeyboardOpen();
+  const [sheetTarget, setSheetTarget] = useState<RowSheetTarget | null>(null);
+  const { isSessionPinned } = controller;
+  const rowSheet = useMemo<RowSheetApi>(() => ({ open: setSheetTarget, isSessionPinned }), [isSessionPinned]);
 
   const [hovered, setHovered] = useState(false);
   const closeTimer = useRef<number | null>(null);
@@ -78,7 +86,9 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
     return (
       <>
         <SidebarModals controller={controller} />
+        {sheetTarget && <SidebarRowSheet target={sheetTarget} controller={controller} onClose={() => setSheetTarget(null)} />}
         <div
+          data-sidebar-drawer
           className={cn(
             'fixed inset-0 z-50 bg-black/40 transition-opacity duration-200',
             drawer.open ? 'opacity-100' : 'pointer-events-none opacity-0',
@@ -91,13 +101,17 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
           aria-label="Projects and sessions"
           aria-hidden={!drawer.open}
           inert={!drawer.open}
+          data-sidebar-drawer
+          // Sized to the visible viewport like the app: searching raises the keyboard, which would cover its lower part.
+          style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
           className={cn(
-            'fixed top-0 bottom-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover shadow-2xl select-none',
-            'pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] transition-transform duration-200',
+            'fixed top-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover shadow-2xl select-none',
+            'pt-[env(safe-area-inset-top)] transition-transform duration-200 [-webkit-touch-callout:none]',
+            !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]',
             drawer.open ? 'translate-x-0' : '-translate-x-full',
           )}
         >
-          {panel}
+          <RowSheetContext.Provider value={rowSheet}>{panel}</RowSheetContext.Provider>
         </div>
       </>
     );

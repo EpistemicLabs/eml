@@ -1,12 +1,14 @@
-import { Check, Edit2, Pin, Trash2, X } from 'lucide-react';
+import { Check, Edit2, MoreHorizontal, Pin, Trash2, X } from 'lucide-react';
 
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
+import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
 import { allSessionState } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
+import { useRowSheet } from '../rowSheetContext';
 
 const CHIP =
   'flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground';
@@ -66,15 +68,20 @@ export function SidebarSessionRow({
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
   const age = compactAge(sessionTimeString(session), now);
-  const isRenaming = renameDraft !== null;
+  const sheet = useRowSheet();
+  // In the compact layout the sheet does the renaming.
+  const isRenaming = !sheet && renameDraft !== null;
+  const openSheet = () => sheet?.open({ kind: 'session', session, projectId });
+  const longPress = useLongPress(openSheet);
 
   return (
-    <div className="group relative">
+    <div className="group relative" {...(sheet ? longPress : {})}>
       <StatusDot session={session} inAllView={Boolean(agent)} />
       <Button
         variant="ghost"
         className={cn(
-          'h-7.5 w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
+          'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
+          sheet ? 'h-10 pr-10' : 'h-7.5',
           isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}
@@ -94,7 +101,7 @@ export function SidebarSessionRow({
             <div
               className={cn(
                 'flex min-w-0 items-center gap-1.5',
-                isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15',
+                !sheet && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
               )}
             >
               <span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
@@ -106,10 +113,14 @@ export function SidebarSessionRow({
                   task
                 </span>
               )}
+              {sheet?.isSessionPinned(session) && (
+                <Pin aria-label="Pinned" className="flex-shrink-0 fill-current text-muted-foreground" />
+              )}
               {age && (
                 <span
                   className={cn(
-                    'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground group-hover:hidden',
+                    'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground',
+                    !sheet && 'group-hover:hidden',
                     isRenaming && 'hidden',
                   )}
                 >
@@ -121,6 +132,16 @@ export function SidebarSessionRow({
         </div>
       </Button>
 
+      {sheet ? (
+        <button
+          type="button"
+          aria-label={`Actions for ${name}`}
+          className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
+          onClick={openSheet}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      ) : (
       <div
         className={cn(
           'absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 transition-opacity duration-200',
@@ -206,6 +227,7 @@ export function SidebarSessionRow({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

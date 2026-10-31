@@ -104,7 +104,7 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search sessions"
               aria-label="Search recent sessions"
-              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-primary"
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
             />
           </div>
           {recent.map((group) => {

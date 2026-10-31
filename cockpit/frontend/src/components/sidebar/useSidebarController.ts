@@ -420,10 +420,7 @@ export function useSidebarController(props: SidebarProps) {
     [],
   );
   const cancelSessionDelete = useCallback(() => setPendingSessionDelete(null), []);
-  const confirmSessionDelete = useCallback(async () => {
-    if (!pendingSessionDelete) return;
-    const { sessionId } = pendingSessionDelete;
-    setPendingSessionDelete(null);
+  const deleteSession = useCallback(async (sessionId: string) => {
     try {
       const response = await api.deleteSession(sessionId);
       if (!response.ok) {
@@ -440,7 +437,13 @@ export function useSidebarController(props: SidebarProps) {
       console.error('[Sidebar] Error deleting session:', deleteError);
       reportError(FALLBACK_ERROR_MESSAGE);
     }
-  }, [pendingSessionDelete, reportError, actionSucceeded, refreshList]);
+  }, [reportError, actionSucceeded, refreshList]);
+  const confirmSessionDelete = useCallback(async () => {
+    if (!pendingSessionDelete) return;
+    const { sessionId } = pendingSessionDelete;
+    setPendingSessionDelete(null);
+    await deleteSession(sessionId);
+  }, [pendingSessionDelete, deleteSession]);
 
   // ── Remove a folder project ────────────────────────────────────────
   const [pendingProjectDelete, setPendingProjectDelete] = useState<PendingProjectDelete | null>(null);
@@ -550,6 +553,7 @@ export function useSidebarController(props: SidebarProps) {
     pendingSessionDelete,
     requestSessionDelete,
     confirmSessionDelete,
+    deleteSession,
     cancelSessionDelete,
     // wizard
     wizardOpen,
