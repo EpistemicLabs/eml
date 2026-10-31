@@ -316,7 +316,8 @@ export function Composer({
     else if (event.key === 'Escape' && running) { event.preventDefault(); onStop(); }
   };
 
-  const iconButton = cn('flex h-8 min-w-11 items-center justify-center rounded-full md:w-8 md:min-w-0', TARGET);
+  // 28 px to see; on a phone the ::after keeps the tap area at 44 px.
+  const iconButton = "relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full after:absolute after:-inset-2 after:content-[''] md:after:hidden";
   return (
     <div className="relative">
       {matches.length > 0 && <CommandMenu commands={matches} active={selected} onHover={setActive} onPick={insert} />}
@@ -364,7 +365,7 @@ export function Composer({
           }}
           className="block max-h-48 min-h-0 w-full resize-none overflow-y-auto bg-transparent px-3 pt-2.5 pb-1 outline-none"
         />
-        <div className="flex items-center gap-1 px-1.5 pb-1.5">
+        <div className="flex items-center gap-1 px-1.5 pb-1 max-md:[&>*]:-my-2">
           <input
             ref={filePicker}
             type="file"
@@ -405,7 +406,7 @@ export function Composer({
           <div className="flex-1" />
           {running && (
             <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-foreground/5')}>
-              <Square className="h-4 w-4" />
+              <Square className="h-3.5 w-3.5" />
             </button>
           )}
           {(!running || draft.trim() || attachments.length > 0) && (
@@ -416,7 +417,7 @@ export function Composer({
               onClick={() => sendText(draft)}
               className={cn(iconButton, 'bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30')}
             >
-              <ArrowUp className="h-4 w-4" strokeWidth={2.2} />
+              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.2} />
             </button>
           )}
         </div>
