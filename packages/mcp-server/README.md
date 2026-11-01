@@ -61,6 +61,8 @@ eml-mcp-server hook stop               [--config <path>]
   in the same turn — before the session goes idle, where it can be compacted with nobody there to
   give the agent a turn. A turn continued this way (`stop_hook_active`) is let through. With an
   unreadable transcript the hook stays silent.
+- **After a resume** `session-start` (`source: "resume"`) prints one line instead of the boot, which is
+  already in the session's history.
 - **After a compaction** `session-start` (`source: "compact"`) puts a hint with the transcript's
   path before the boot and takes its length off the boot's budget.
 - **`--json`** prints the context in the hook JSON envelope
