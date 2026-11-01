@@ -882,13 +882,14 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // real brain): every state-changing /api/* call must carry an allowlisted
     // Origin — the cockpit's own page. The token-authenticated machine endpoints
     // carry no Origin and are exempt: /api/hook (session hooks, per-boot token in
-    // the x-cockpit-hook header), /api/spawn (worker spawn) and
-    // /api/session-title/<id> (a session naming itself), both X-Cockpit-Token. Reads
+    // the x-cockpit-hook header), /api/spawn (worker spawn),
+    // /api/session-title/<id> (a session naming itself) and
+    // /api/sessions/<target>/message, all X-Cockpit-Token. Reads
     // (GET/HEAD) are open; a cross-origin page still can't read the response.
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
+      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
       if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
