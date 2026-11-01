@@ -337,6 +337,8 @@ export class ChatBridge {
       return null
     }
 
+    // Decided here: by the time the session enters this side, the terminal has let go.
+    const readOnly = data.readOnly === true && !this.ctx.terminalRuns?.(sessionId)
     const after = typeof data.after === 'number' ? data.after : 0
     const epoch = typeof data.epoch === 'number' ? data.epoch : null
     const path = project.path
@@ -344,7 +346,7 @@ export class ChatBridge {
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
-      readOnly: data.readOnly === true && !this.ctx.terminalRuns?.(sessionId),
+      readOnly,
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -590,6 +592,8 @@ export class ChatBridge {
       case 'turn_end': {
         entry.active = false
         entry.turnEnded?.()
+        // A host going down interrupts the turn on its way out: that one was cut off, not over.
+        if (!entry.closing) this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
         const attention = attentionAfterTurn({
           worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,
         })
@@ -641,6 +645,7 @@ export class ChatBridge {
     entry.declared = false
     entry.askedStatus = false
     this.ctx.ledger.setAttention(entry.sessionId, null)
+    this.ctx.ledger.setTurnInFlight(entry.sessionId, true)
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })

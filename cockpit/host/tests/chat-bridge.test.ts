@@ -101,6 +101,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
       touch: () => {},
       setAgentTitle: () => {},
+      setTurnInFlight: (id: string, inFlight: boolean) => { const entry = ledgerEntries.get(id) as unknown as { inFlight?: boolean } | undefined; if (entry) entry.inFlight = inFlight },
       setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
@@ -296,6 +297,20 @@ describe('ChatBridge', () => {
     await flush()
     expect(terminal.ended).toBe(1)
     expect(runtimes).toHaveLength(1)
+  })
+
+  it('a worker\'s turn counts as cut off only if the host goes down during it', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const inFlight = () => (ledgerEntries.get('s1') as unknown as { inFlight?: boolean }).inFlight
+    expect(inFlight()).toBe(true)
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(inFlight()).toBe(false)
+    void bridge.deliver('s1', 'more')
+    expect(inFlight()).toBe(true)
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    await bridge.dispose()
+    expect(inFlight()).toBe(true)
   })
 
   it('a worker that cannot start says why and leaves nothing behind', () => {

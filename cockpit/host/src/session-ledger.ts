@@ -71,6 +71,8 @@ export interface LedgerEntry {
   attention: { kind: Attention; reason: string | null } | null
   /** What the session may use, for its whole life; null: no limits. */
   toolProfile: ToolProfile | null
+  /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
+  turnInFlight: { retried: boolean } | null
 }
 
 interface LedgerFile {
@@ -114,6 +116,7 @@ function load(): LedgerFile {
             ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null }
             : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
+          turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
         }
       }
     }
@@ -179,6 +182,7 @@ export class SessionLedger {
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
       toolProfile: prev?.toolProfile ?? null,
+      turnInFlight: prev?.turnInFlight ?? null,
     }
     this.persist()
   }
@@ -212,6 +216,21 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     entry.toolProfile = toolProfile
+    this.persist()
+  }
+
+  /** A worker's turn started (keeps a retry already used) or ended. */
+  setTurnInFlight(sessionId: string, inFlight: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.worker || (!!entry.turnInFlight === inFlight)) return
+    entry.turnInFlight = inFlight ? { retried: false } : null
+    this.persist()
+  }
+
+  markTurnRetried(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.turnInFlight) return
+    entry.turnInFlight.retried = true
     this.persist()
   }
 

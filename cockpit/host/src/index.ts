@@ -20,6 +20,7 @@ import { ChatBridge } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
+import { recoverWorkers } from './application/recover-workers.js'
 import { loadMessageToken } from './message-token.js'
 import { sessionAddress } from './session-address.js'
 import { InMemoryEventStore } from './application/session-events.js'
@@ -203,7 +204,7 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     onExit: (sessionId) => turns.forget(sessionId),
-    terminalRuns: (sessionId) => bridge.isRunning(sessionId),
+    terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
       return terminalBusyState({
@@ -242,6 +243,18 @@ async function main() {
   // once the host answers their hooks.
   const kept = bridge.resumeKeptSessions()
   if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
+  // Workers a restart cut off mid-turn carry on, once the host answers their hooks.
+  void recoverWorkers({
+    interrupted: () => ledger.list().flatMap(({ sessionId, turnInFlight }) => (turnInFlight ? [{ sessionId, retried: turnInFlight.retried }] : [])),
+    markRetried: (sessionId) => ledger.markTurnRetried(sessionId),
+    giveUp: (sessionId, kind, reason) => {
+      ledger.setTurnInFlight(sessionId, false)
+      ledger.setAttention(sessionId, { kind, reason })
+      turns.apply({ sessionId, state: 'waiting' })
+    },
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    log,
+  }).then((recovered) => { if (recovered > 0) log(`[worker] ${recovered} worker(s) continue after the restart`) })
   // A worker no tab takes starts without a pane (worker-start.ts).
   const workers = new WorkerStarter({
     spawns, log,

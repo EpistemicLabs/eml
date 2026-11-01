@@ -37,6 +37,8 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   const known = deps.ledger.get(sessionId)?.providerSessionId ?? (provider.adoptsSessionId ? sessionId : null)
   if (known && known !== signal.providerSessionId) return
   deps.ledger.bindProviderSession(sessionId, signal.providerSessionId)
+  // A terminal process dies with the host without a word, so its hooks are all there is to go by.
+  if (signal.state === 'working' || signal.state === 'done') deps.ledger.setTurnInFlight(sessionId, signal.state === 'working')
   // A session that said it needs someone still does once its turn is over.
   const state = signal.state === 'done' && deps.ledger.get(sessionId)?.attention ? 'waiting' : signal.state
   deps.turns.apply({ sessionId, state, settleMs: signal.settleMs })
