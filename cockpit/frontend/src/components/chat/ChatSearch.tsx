@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
 import { keysToReveal, searchItems, type ChatItem } from './chat-state';
+import { pasteTextDirectly } from './pasteText';
 
 const HIGHLIGHT = 'chat-search';
 
@@ -98,6 +99,7 @@ export function ChatSearch({
         placeholder="Search the conversation"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
+        onPaste={pasteTextDirectly}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
           if (event.key === 'Enter') { event.preventDefault(); step(event.shiftKey ? -1 : 1); }

@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 
 import { currentModelOption, matchCommands, sentMessages, stepHistory, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
+import { pasteTextDirectly } from './pasteText';
 import { TARGET } from './tool-icons';
 
 /** A small button opening a list above it. */
@@ -361,7 +362,7 @@ export function Composer({
           onKeyDown={onKeyDown}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
-            if (files.length === 0) return;
+            if (files.length === 0) { pasteTextDirectly(event); return; }
             event.preventDefault();
             addFiles(files);
           }}
