@@ -426,7 +426,7 @@ export function ChatPane({
   paneId, projectId, sessionId, session, isActive, whenIdle = false,
 }: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean }) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
-  const { send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle);
+  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -532,6 +532,7 @@ export function ChatPane({
           running={running}
           status={status}
           chat={chat}
+          onUse={start}
           onSend={onSend}
           onStop={interrupt}
           onSetMode={setMode}

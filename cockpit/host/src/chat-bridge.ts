@@ -25,7 +25,8 @@ import { attentionAfterTurn, shouldAskForStatus } from './domain/session-attenti
  * every event. A conversation has one writer process, not one reader.
  *
  * Wire protocol:
- *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle? }
+ *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle?, readOnly? }
+ *   client → { type:'start' }                        (a read-only view is about to be used)
  *   client → { type:'send', text }
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
@@ -94,11 +95,14 @@ export interface ChatContext {
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
   /** The session's process died on its own: whatever its turn state said no longer holds. */
   onExit?: (sessionId: string) => void
+  /** Whether a terminal process holds this session: a read-only view can't take it from there. */
+  terminalRuns?: (sessionId: string) => boolean
   /** What the session's terminal process is in the middle of, if anything: a takeover would cut it off. */
   terminalBusy?: (sessionId: string) => 'working' | 'waiting' | null
 }
 
 type ClientMessage = {
+  readOnly?: unknown
   whenIdle?: unknown
   images?: unknown
   type?: string
@@ -265,7 +269,8 @@ export class ChatBridge {
         if (!sessionId) return
         const entry = this.entries.get(sessionId)
         if (!entry?.clients.has(ws)) return
-        if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
+        if (data.type === 'start') this.ensureStarted(entry)
+        else if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)
@@ -339,6 +344,7 @@ export class ChatBridge {
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
+      readOnly: data.readOnly === true && !this.ctx.terminalRuns?.(sessionId),
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -357,6 +363,8 @@ export class ChatBridge {
     provider: AgentProvider
     epoch: number | null
     after: number
+    /** Show the conversation and start no process until it is used. */
+    readOnly: boolean
     onSwitch: () => void
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
@@ -385,6 +393,13 @@ export class ChatBridge {
       for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.agent)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
+    if (opts.readOnly) return
+    this.startEntry(entry, provider, space, paneId, resume)
+  }
+
+  /** The session gets its process here, once someone uses it. */
+  private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean): void {
+    const { sessionId, projectId, projectPath } = entry
     provider.trustProject(projectPath, sessionSpaceOf(space))
     this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey)
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
@@ -395,6 +410,19 @@ export class ChatBridge {
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
+  }
+
+  /** A read-only view is being used, or a crash left the entry without a process: the conversation goes on. */
+  private ensureStarted(entry: ChatEntry): void {
+    if (entry.runtime || entry.closing) return
+    const { sessionId } = entry
+    if (this.ctx.terminalRuns?.(sessionId)) throw new Error('This session runs in the terminal now. Reopen it here to move it over.')
+    const space = this.ctx.spaces.get(entry.spaceId)
+    if (!space) throw new Error('This session\'s brain space is gone')
+    const known = this.ctx.ledger.has(sessionId)
+    const provider = known ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
+    if (!provider) throw new Error('This session\'s agent is gone')
+    this.startEntry(entry, provider, space, this.ctx.ledger.get(sessionId)?.paneId ?? null, known && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent)))
   }
 
   /**
@@ -602,13 +630,7 @@ export class ChatBridge {
     if (!message.trim() && imageNames.length === 0) return
     // First: an image that can't be read must not leave half a message behind.
     const images = imageNames.map(readPastedImage)
-    // A crash leaves the entry without a runtime; the conversation goes on.
-    if (!entry.runtime) {
-      const space = this.ctx.spaces.get(entry.spaceId)
-      const provider = this.ctx.providers.forSession(entry.sessionId)
-      if (!space) throw new Error('This session\'s brain space is gone')
-      this.startRuntime(entry, provider, space, provider.canResume(this.ctx.ledger.ref(entry.sessionId, null, space.agent)))
-    }
+    this.ensureStarted(entry)
     const id = randomUUID()
     this.emit(entry, {
       kind: 'user_message', id, text: message, queued: entry.active,

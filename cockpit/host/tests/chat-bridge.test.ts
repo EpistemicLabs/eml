@@ -257,6 +257,47 @@ describe('ChatBridge', () => {
     expect(runtimes[0].start.deniedTools).toEqual(['Bash'])
   })
 
+  it('a read-only view shows the conversation and starts nothing until it is used', async () => {
+    const { bridge, runtimes } = setup({ transcript: true, runtimeOf: 'terminal', history: [{ kind: 'text', blockId: 'b', text: 'earlier' }, { kind: 'history_end' }] })
+    const ws = connect(bridge, { readOnly: true })
+    await flush()
+    expect(runtimes).toHaveLength(0)
+    expect(ws.events().some((event) => event.kind === 'text')).toBe(true)
+    expect(bridge.isRunning('s1')).toBe(false)
+    ws.client({ type: 'start' })
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].start.resume).toBe(true)
+    ws.client({ type: 'start' })
+    expect(runtimes).toHaveLength(1)
+  })
+
+  it('a message in a read-only view starts it too', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge, { readOnly: true })
+    await flush()
+    ws.client({ type: 'send', text: 'hi' })
+    expect(runtimes[0].sent).toEqual(['hi'])
+  })
+
+  it('a read-only view joins a running session as it is', async () => {
+    const { bridge, runtimes } = setup()
+    connect(bridge)
+    await flush()
+    connect(bridge, { readOnly: true })
+    await flush()
+    expect(runtimes).toHaveLength(1)
+    expect(bridge.isRunning('s1')).toBe(true)
+  })
+
+  it('a view of a session a terminal holds does not stay read-only', async () => {
+    const { bridge, runtimes, terminal } = setup({ transcript: true, runtimeOf: 'terminal', terminalRunning: true })
+    ;(bridge as unknown as { ctx: { terminalRuns: () => boolean } }).ctx.terminalRuns = () => terminal.running
+    connect(bridge, { readOnly: true })
+    await flush()
+    expect(terminal.ended).toBe(1)
+    expect(runtimes).toHaveLength(1)
+  })
+
   it('a worker that cannot start says why and leaves nothing behind', () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })

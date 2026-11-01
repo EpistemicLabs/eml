@@ -203,6 +203,7 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     onExit: (sessionId) => turns.forget(sessionId),
+    terminalRuns: (sessionId) => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
       return terminalBusyState({

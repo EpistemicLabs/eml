@@ -63,7 +63,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         if (socket.readyState !== WebSocket.OPEN) return;
         const desk = paneStore.getDeskOfPane(paneId);
         socket.send(JSON.stringify({
-          type: 'init', paneId, projectId, sessionId, spaceId: desk?.spaceId ?? null, ...resumePoint(sessionId), ...(wait ? { whenIdle: true } : {}),
+          type: 'init', paneId, projectId, sessionId, spaceId: desk?.spaceId ?? null, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
         }));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
@@ -129,6 +129,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
 
   return {
     send: useCallback((text: string, images: string[] = []) => sendFrame({ type: 'send', text, ...(images.length > 0 ? { images } : {}) }), [sendFrame]),
+    start: useCallback(() => sendFrame({ type: 'start' }), [sendFrame]),
     interrupt: useCallback(() => sendFrame({ type: 'interrupt' }), [sendFrame]),
     answer: useCallback((requestId: string, answer: PermissionReply) => sendFrame({ type: 'answer', requestId, answer }), [sendFrame]),
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),

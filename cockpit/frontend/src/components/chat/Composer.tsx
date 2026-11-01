@@ -190,13 +190,15 @@ interface Attachment {
 }
 
 export function Composer({
-  sessionId, running, status, chat, onSend, onStop, onSetMode, onStopAgent,
+  sessionId, running, status, chat, onUse, onSend, onStop, onSetMode, onStopAgent,
 }: {
   sessionId: string;
   running: boolean;
   /** One short line on what is going on; empty when nothing is. */
   status: string | null;
   chat: ChatState;
+  /** The user reaches for the input: a read-only session gets its process now. An input focused on its own says nothing. */
+  onUse: () => void;
   onSend: (text: string, images: string[]) => boolean;
   onStop: () => void;
   onSetMode: (mode: string) => boolean;
@@ -358,7 +360,11 @@ export function Composer({
           rows={1}
           value={draft}
           placeholder={running ? 'Queue a message…' : 'Message, or / for commands'}
-          onChange={(event) => change(event.target.value)}
+          onPointerDown={onUse}
+          onChange={(event) => {
+            if (!draft) onUse();
+            change(event.target.value);
+          }}
           onKeyDown={onKeyDown}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
