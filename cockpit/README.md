@@ -202,6 +202,18 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
 - **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
 - **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
   setup-token mode does not apply to these sessions.
+- **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A chat session with a window keeps running;
+  with none it stops 30 minutes after its last activity, a worker or an open card after 24 hours, never mid-turn or
+  with background work. Opening a chat only shows it: the process starts when the input is used or a message arrives.
+- **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
+  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models off stay in
+  the terminal. There is no worker cap; new workers wait while free memory is low. In chat a worker reports
+  `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
+  `review`. After a host restart a worker cut off mid-turn gets one message to continue, then is marked `failed`.
+- **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
+  (`application/deliver-message.ts`); a session in a terminal answers busy. Sessions use `$COCKPIT_MESSAGE_JS`. An outside
+  service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
+- **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
 - **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
