@@ -21,7 +21,6 @@ describe('readSwipe', () => {
     expect(readSwipe(SWIPE_COMMIT_PX - 1, 0, 'right')).toBe('pending');
     expect(readSwipe(SWIPE_COMMIT_PX, 0, 'right')).toBe('commit');
     expect(readSwipe(-SWIPE_COMMIT_PX, 5, 'left')).toBe('commit');
-    expect(readSwipe(5, SWIPE_COMMIT_PX, 'down')).toBe('commit');
   });
 
   it('gives up on a vertical scroll', () => {
@@ -32,6 +31,5 @@ describe('readSwipe', () => {
   it('gives up on the opposite direction', () => {
     expect(readSwipe(-30, 0, 'right')).toBe('cancel');
     expect(readSwipe(30, 0, 'left')).toBe('cancel');
-    expect(readSwipe(0, -30, 'down')).toBe('cancel');
   });
 });

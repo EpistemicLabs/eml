@@ -6,13 +6,13 @@ import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { cn } from '@/lib/utils';
 import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
-import { RowSheetContext, type RowSheetApi, type RowSheetTarget } from './rowSheetContext';
+import { RowMenuContext, type RowMenuApi, type RowMenuTarget } from './rowMenuContext';
 import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
 import { SidebarAllSessions } from './subcomponents/SidebarAllSessions';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
 import { SidebarModals } from './subcomponents/SidebarModals';
 import { SidebarProjectTree } from './subcomponents/SidebarProjectTree';
-import { SidebarRowSheet } from './subcomponents/SidebarRowSheet';
+import { SidebarRowMenu } from './subcomponents/SidebarRowMenu';
 import { SidebarScrollRegion } from './subcomponents/SidebarScrollRegion';
 
 const CLOSE_GRACE_MS = 200;
@@ -20,9 +20,12 @@ const CLOSE_GRACE_MS = 200;
 export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: SidebarDrawer }) {
   const controller = useSidebarController(props);
   const keyboardOpen = useSoftKeyboardOpen();
-  const [sheetTarget, setSheetTarget] = useState<RowSheetTarget | null>(null);
+  const [menuTarget, setMenuTarget] = useState<{ target: RowMenuTarget; row: DOMRect | null } | null>(null);
   const { isSessionPinned } = controller;
-  const rowSheet = useMemo<RowSheetApi>(() => ({ open: setSheetTarget, isSessionPinned }), [isSessionPinned]);
+  const rowMenu = useMemo<RowMenuApi>(() => ({
+    open: (target, row) => setMenuTarget({ target, row: row?.getBoundingClientRect() ?? null }),
+    isSessionPinned,
+  }), [isSessionPinned]);
 
   const [hovered, setHovered] = useState(false);
   const closeTimer = useRef<number | null>(null);
@@ -86,7 +89,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
     return (
       <>
         <SidebarModals controller={controller} />
-        {sheetTarget && <SidebarRowSheet target={sheetTarget} controller={controller} onClose={() => setSheetTarget(null)} />}
+        {menuTarget && <SidebarRowMenu target={menuTarget.target} row={menuTarget.row} controller={controller} onClose={() => setMenuTarget(null)} />}
         <div
           data-sidebar-drawer
           className={cn(
@@ -111,7 +114,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
             drawer.open ? 'translate-x-0' : '-translate-x-full',
           )}
         >
-          <RowSheetContext.Provider value={rowSheet}>{panel}</RowSheetContext.Provider>
+          <RowMenuContext.Provider value={rowMenu}>{panel}</RowMenuContext.Provider>
         </div>
       </>
     );

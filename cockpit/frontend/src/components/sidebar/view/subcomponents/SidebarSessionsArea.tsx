@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { useNotes, useUnseenNotes } from '@/lib/notes';
 import type { Project } from '@/types/app';
 import type { SidebarController } from '../../useSidebarController';
-import { useRowSheet } from '../rowSheetContext';
+import { useRowMenu } from '../rowMenuContext';
 import { isSessionRecent, readShowOlderIds, storeShowOlder } from '../../utils';
 import { SidebarProjectActions } from './SidebarProjectActions';
 import { NewPaneButton, SidebarGroupLabel, SidebarProjectNotes, isRecentNote } from './SidebarProjectNotes';
@@ -32,7 +32,7 @@ function SessionsSkeleton() {
 }
 
 export function SidebarSessionsArea({ project, controller }: { project: Project; controller: SidebarController }) {
-  const sheet = useRowSheet();
+  const menu = useRowMenu();
   const {
     now,
     selectedSessionId,
@@ -128,7 +128,7 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
               <span className="text-[10px] tabular-nums">{olderCount}</span>
             </button>
           )}
-          {!sheet && (
+          {!menu && (
             <SidebarProjectActions
               project={project}
               onToggleStar={(target) => void controller.toggleProjectStar(target)}

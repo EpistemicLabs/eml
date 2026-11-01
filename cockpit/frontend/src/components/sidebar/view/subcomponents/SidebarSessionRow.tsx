@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Check, Edit2, MoreHorizontal, Pin, Trash2, X } from 'lucide-react';
 
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
@@ -8,7 +9,7 @@ import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
 import { allSessionState } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
-import { useRowSheet } from '../rowSheetContext';
+import { useRowMenu } from '../rowMenuContext';
 
 const CHIP =
   'flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground';
@@ -68,20 +69,21 @@ export function SidebarSessionRow({
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
   const age = compactAge(sessionTimeString(session), now);
-  const sheet = useRowSheet();
-  // In the compact layout the sheet does the renaming.
-  const isRenaming = !sheet && renameDraft !== null;
-  const openSheet = () => sheet?.open({ kind: 'session', session, projectId });
-  const longPress = useLongPress(openSheet);
+  const menu = useRowMenu();
+  // In the compact layout the menu does the renaming.
+  const isRenaming = !menu && renameDraft !== null;
+  const rowRef = useRef<HTMLDivElement>(null);
+  const openMenu = () => menu?.open({ kind: 'session', session, projectId }, rowRef.current);
+  const longPress = useLongPress(openMenu);
 
   return (
-    <div className="group relative" {...(sheet ? longPress : {})}>
+    <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
       <StatusDot session={session} inAllView={Boolean(agent)} />
       <Button
         variant="ghost"
         className={cn(
           'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
-          sheet ? 'h-10 pr-10' : 'h-7.5',
+          menu ? 'h-10 pr-10' : 'h-7.5',
           isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}
@@ -101,7 +103,7 @@ export function SidebarSessionRow({
             <div
               className={cn(
                 'flex min-w-0 items-center gap-1.5',
-                !sheet && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
+                !menu && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
               )}
             >
               <span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
@@ -113,14 +115,14 @@ export function SidebarSessionRow({
                   task
                 </span>
               )}
-              {sheet?.isSessionPinned(session) && (
+              {menu?.isSessionPinned(session) && (
                 <Pin aria-label="Pinned" className="flex-shrink-0 fill-current text-muted-foreground" />
               )}
               {age && (
                 <span
                   className={cn(
                     'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground',
-                    !sheet && 'group-hover:hidden',
+                    !menu && 'group-hover:hidden',
                     isRenaming && 'hidden',
                   )}
                 >
@@ -132,12 +134,12 @@ export function SidebarSessionRow({
         </div>
       </Button>
 
-      {sheet ? (
+      {menu ? (
         <button
           type="button"
           aria-label={`Actions for ${name}`}
           className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
-          onClick={openSheet}
+          onClick={openMenu}
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>

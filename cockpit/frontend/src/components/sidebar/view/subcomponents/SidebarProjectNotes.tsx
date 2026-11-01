@@ -13,7 +13,7 @@ import { noteAge, parseBrainDate, useArchiveNote, useCreateNote, useRenameNote, 
 import { Button } from '@/shared/view/ui';
 import { forgetNoteInPanes, openInPane, openNote, useActivePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
-import { useRowSheet } from '../rowSheetContext';
+import { useRowMenu } from '../rowMenuContext';
 
 // The project's one "+" (0.15.1): a small menu — new session / note / brain —
 // like the pane toolbar's "+", because a terminal pane starts an agent
@@ -174,9 +174,10 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const isSelected = activePane?.paneView === 'note' && activePane.noteId === note.id;
-  const sheet = useRowSheet();
-  const openSheet = () => sheet?.open({ kind: 'note', note, project });
-  const longPress = useLongPress(openSheet);
+  const menu = useRowMenu();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const openMenu = () => menu?.open({ kind: 'note', note, project }, rowRef.current);
+  const longPress = useLongPress(openMenu);
 
   const save = () => {
     const title = draft.trim();
@@ -185,35 +186,35 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
   };
 
   return (
-    <div className={cn('group relative', archive.isPending && 'pointer-events-none opacity-50')} {...(sheet ? longPress : {})}>
+    <div ref={rowRef} className={cn('group relative', archive.isPending && 'pointer-events-none opacity-50')} {...(menu ? longPress : {})}>
       <Button
         variant="ghost"
         className={cn(
           'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50',
-          sheet ? 'h-10 pr-10' : 'h-7.5',
+          menu ? 'h-10 pr-10' : 'h-7.5',
           isSelected && 'bg-accent text-accent-foreground',
         )}
         onClick={() => openNote(note.id, project.projectId)}
         title={note.title}
       >
-        <div className={cn('flex w-full min-w-0 items-center gap-2', !sheet && 'group-hover:pr-[56px]')}>
+        <div className={cn('flex w-full min-w-0 items-center gap-2', !menu && 'group-hover:pr-[56px]')}>
           <NotebookPen className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{note.title}</span>
           {unseen.has(note.id) && (
             <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" title="Changed by the agent" />
           )}
-          <span className={cn('flex-shrink-0 text-[11px] text-muted-foreground', !sheet && 'group-hover:hidden')}>
+          <span className={cn('flex-shrink-0 text-[11px] text-muted-foreground', !menu && 'group-hover:hidden')}>
             {noteAge(note.updatedAt, currentTime)}
           </span>
         </div>
       </Button>
 
-      {sheet ? (
+      {menu ? (
         <button
           type="button"
           aria-label={`Actions for ${note.title}`}
           className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
-          onClick={openSheet}
+          onClick={openMenu}
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>
