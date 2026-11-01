@@ -1,5 +1,6 @@
-import { useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { useRef, useState, type TouchEvent } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { Edit2, Eye, EyeOff, FolderPlus, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
 
 import { readSwipe } from '@/hooks/swipeGesture';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
@@ -13,6 +14,7 @@ import type { RowSheetTarget } from '../rowSheetContext';
 
 const ACTION = 'flex min-h-12 w-full items-center justify-center rounded-xl bg-foreground/[0.06] px-4 text-base text-foreground active:bg-foreground/15 disabled:opacity-40';
 const DESTRUCTIVE = 'text-destructive';
+const TILE = 'flex min-h-[72px] min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-foreground/[0.06] px-1 text-[13px] text-foreground active:bg-foreground/15';
 
 function targetName(target: RowSheetTarget): string {
   if (target.kind === 'session') return sessionDisplayName(target.session);
@@ -112,26 +114,32 @@ export function SidebarRowSheet({
     if (reading !== 'pending') swipeStart.current = null;
   };
 
-  const rows: ReactNode[] = [];
-  const action = (label: string, onClick: () => void, className?: string) => {
-    rows.push(<button key={label} type="button" className={cn(ACTION, className)} onClick={onClick}>{label}</button>);
-  };
+  const tiles: Array<{ label: string; Icon: LucideIcon; onClick: () => void; destructive?: boolean }> = [];
   if (target.kind === 'session') {
-    action(controller.isSessionPinned(target.session) ? 'Unpin' : 'Pin', run(() => void controller.toggleSessionPin(target.session)));
-    action('Rename', startRename);
-    action('Delete', () => setStep('confirm'), DESTRUCTIVE);
+    const pinned = controller.isSessionPinned(target.session);
+    tiles.push(
+      { label: pinned ? 'Unpin' : 'Pin', Icon: pinned ? PinOff : Pin, onClick: run(() => void controller.toggleSessionPin(target.session)) },
+      { label: 'Rename', Icon: Edit2, onClick: startRename },
+      { label: 'Delete', Icon: Trash2, onClick: () => setStep('confirm'), destructive: true },
+    );
   } else if (target.kind === 'note') {
-    action('Rename', startRename);
-    action('Delete', () => setStep('confirm'), DESTRUCTIVE);
+    tiles.push(
+      { label: 'Rename', Icon: Edit2, onClick: startRename },
+      { label: 'Delete', Icon: Trash2, onClick: () => setStep('confirm'), destructive: true },
+    );
   } else {
     const { project } = target;
-    action(project.isStarred ? 'Unpin' : 'Pin', run(() => void controller.toggleProjectStar(project)));
-    action('Rename', startRename);
+    tiles.push(
+      { label: project.isStarred ? 'Unpin' : 'Pin', Icon: project.isStarred ? PinOff : Pin, onClick: run(() => void controller.toggleProjectStar(project)) },
+      { label: 'Rename', Icon: Edit2, onClick: startRename },
+    );
     if (project.kind === 'brain') {
-      action(project.fullPath ? 'Change folder' : 'Link a folder', run(() => controller.onSetFolder(project)));
-      action(project.hidden ? 'Show' : 'Hide', run(() => void controller.toggleProjectHidden(project.projectId)));
+      tiles.push(
+        { label: 'Folder', Icon: FolderPlus, onClick: run(() => controller.onSetFolder(project)) },
+        { label: project.hidden ? 'Show' : 'Hide', Icon: project.hidden ? Eye : EyeOff, onClick: run(() => void controller.toggleProjectHidden(project.projectId)) },
+      );
     } else {
-      action('Remove from cockpit', run(() => controller.requestProjectDelete(project)), DESTRUCTIVE);
+      tiles.push({ label: 'Remove', Icon: Trash2, onClick: run(() => controller.requestProjectDelete(project)), destructive: true });
     }
   }
 
@@ -157,7 +165,16 @@ export function SidebarRowSheet({
         <div className="truncate px-1 py-1 text-center text-sm font-medium text-muted-foreground">
           {step === 'confirm' ? `Delete “${targetName(target)}”?` : targetName(target)}
         </div>
-        {step === 'actions' && rows}
+        {step === 'actions' && (
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${tiles.length}, minmax(0, 1fr))` }}>
+            {tiles.map(({ label, Icon, onClick, destructive }) => (
+              <button key={label} type="button" className={cn(TILE, destructive && DESTRUCTIVE)} onClick={onClick}>
+                <Icon className="h-5 w-5" strokeWidth={1.8} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {step === 'rename' && (
           <>
             <input
