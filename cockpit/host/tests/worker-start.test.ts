@@ -1,22 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SpawnQueue, type SpawnRequest } from '../src/spawn-queue.js'
 import { WorkerStarter } from '../src/worker-start.js'
-import { pickQuietWorker } from '../src/pty-bridge.js'
 
 // Workers a session asks for start without a cockpit tab: the host claims a
-// request no tab takes and starts it without a pane, at most three at a time.
+// request no tab takes and starts it without a pane, while the machine has room.
 
 class FakeBridge {
   started: SpawnRequest[] = []
-  unattended = 0
   idleSweeps: number[] = []
   startWorker(request: SpawnRequest): string | null {
     this.started.push(request)
-    this.unattended += 1
     return null
-  }
-  unattendedWorkers(): number {
-    return this.unattended
   }
   sweepIdleWorkers(idleMs: number): number {
     this.idleSweeps.push(idleMs)
@@ -25,14 +19,6 @@ class FakeBridge {
   room = true
   hasRoom(): boolean {
     return this.room
-  }
-  canEvict = false
-  evicted = 0
-  evictQuietWorker(): boolean {
-    if (!this.canEvict) return false
-    this.evicted += 1
-    this.unattended -= 1
-    return true
   }
 }
 
@@ -91,24 +77,22 @@ describe('worker start without a tab', () => {
     expect(spawns.list()).toHaveLength(1)
   })
 
-  it('a fourth makes room by ending the quietest worker when one has been quiet long enough', () => {
-    request(spawns); request(spawns); request(spawns)
-    starter.tick()
-    bridge.canEvict = true
-    const fourth = request(spawns)
-    starter.tick()
-    expect(bridge.evicted).toBe(1)
-    expect(bridge.started.map((s) => s.id)).toContain(fourth.id)
+  it('has no cap: every due request starts while there is room', () => {
+    for (let i = 0; i < 5; i += 1) request(spawns)
+    new WorkerStarter({ spawns, bridge, turnOf: () => ({ state: 'idle', since: null }), log: () => {} }).tick()
+    expect(bridge.started).toHaveLength(5)
   })
 
-  it('runs at most three without a client; the fourth waits when none is quiet long enough', () => {
-    const rs = [request(spawns), request(spawns), request(spawns), request(spawns)]
+  it('a request waits while the machine has little free memory', () => {
+    request(spawns)
+    bridge.room = false
+    const starter = new WorkerStarter({ spawns, bridge, turnOf: () => ({ state: 'idle', since: null }), log: () => {} })
     starter.tick()
-    expect(bridge.started).toHaveLength(3)
-    expect(spawns.list().map((s) => s.id)).toEqual([rs[3].id])
-    bridge.unattended = 2
+    expect(bridge.started).toHaveLength(0)
+    expect(spawns.list()).toHaveLength(1)
+    bridge.room = true
     starter.tick()
-    expect(bridge.started.map((s) => s.id)).toContain(rs[3].id)
+    expect(bridge.started).toHaveLength(1)
   })
 
   it('sweeps idle workers with the 24-hour limit on every check', () => {
@@ -125,30 +109,5 @@ describe('worker start without a tab', () => {
     expect(spawns.watchers()).toBe(1)
     b()
     expect(spawns.watchers()).toBe(0)
-  })
-})
-
-describe('which quiet worker makes room', () => {
-  const hour = 60 * 60 * 1000
-  it('picks the one quiet the longest, once quiet for an hour', () => {
-    expect(pickQuietWorker([
-      { key: 'a', quietMs: 2 * hour, state: 'done' },
-      { key: 'b', quietMs: 5 * hour, state: 'done' },
-      { key: 'c', quietMs: 30 * 60 * 1000, state: 'done' },
-    ], hour)).toBe('b')
-  })
-
-  it('takes a done one before one waiting for a permission, and never a working one', () => {
-    expect(pickQuietWorker([
-      { key: 'waiting', quietMs: 9 * hour, state: 'waiting' },
-      { key: 'done', quietMs: 2 * hour, state: 'done' },
-      { key: 'working', quietMs: 20 * hour, state: 'working' },
-    ], hour)).toBe('done')
-    expect(pickQuietWorker([{ key: 'waiting', quietMs: 9 * hour, state: 'waiting' }], hour)).toBe('waiting')
-    expect(pickQuietWorker([{ key: 'working', quietMs: 20 * hour, state: 'working' }], hour)).toBeNull()
-  })
-
-  it('picks none when all were active within the hour (a reply may still come)', () => {
-    expect(pickQuietWorker([{ key: 'a', quietMs: 59 * 60 * 1000, state: 'done' }], hour)).toBeNull()
   })
 })

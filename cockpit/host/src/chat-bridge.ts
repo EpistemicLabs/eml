@@ -14,6 +14,7 @@ import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
+import { chatSessionShouldStop } from './domain/session-lifecycle.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -42,9 +43,6 @@ import type { SpawnRequest } from './domain/spawn-request.js'
  * WS upgrade presents it (+ same-origin); the session identity travels in `init`.
  */
 
-// As for a terminal: the session outlives its client for this long, so a reload or
-// a lost connection never costs a running turn.
-const DETACHED_TIMEOUT_MS = 30 * 60 * 1000
 // How long a switch lets an interrupted turn finish on its own before closing it.
 const INTERRUPT_WAIT_MS = 3_000
 // Socket buffer above which a client is too far behind to keep streaming to; it
@@ -70,8 +68,10 @@ interface ChatEntry {
   clients: Set<WebSocket>
   active: boolean
   openRequests: Set<string>
-  timeoutId: NodeJS.Timeout | null
   turnEnded: (() => void) | null
+  /** Background shells and subagents still running: they end with the process. */
+  backgroundTasks: Set<string>
+  lastActivity: number
 }
 
 export interface ChatContext {
@@ -83,6 +83,8 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** The session's process died on its own: whatever its turn state said no longer holds. */
+  onExit?: (sessionId: string) => void
   /** What the session's terminal process is in the middle of, if anything: a takeover would cut it off. */
   terminalBusy?: (sessionId: string) => 'working' | 'waiting' | null
 }
@@ -178,7 +180,6 @@ export class ChatBridge {
   async end(sessionId: string, reason = 'superseded'): Promise<void> {
     const entry = this.entries.get(sessionId)
     if (!entry) return
-    if (entry.timeoutId) { clearTimeout(entry.timeoutId); entry.timeoutId = null }
     const runtime = entry.runtime
     if (runtime) {
       if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
@@ -205,6 +206,26 @@ export class ChatBridge {
   /** Host shutdown. Sessions resume from the ledger when a client comes back. */
   async dispose(): Promise<void> {
     await Promise.all([...this.entries.keys()].map((id) => this.end(id, 'host shutdown').catch(() => { /* best-effort */ })))
+  }
+
+  /** End the sessions the lifecycle rule says should stop. They stay resumable; returns how many ended. */
+  sweepIdle(now = Date.now()): number {
+    let ended = 0
+    for (const entry of [...this.entries.values()]) {
+      const stop = chatSessionShouldStop({
+        clients: entry.clients.size,
+        running: entry.runtime !== null,
+        turnActive: entry.active,
+        backgroundTasks: entry.backgroundTasks.size,
+        openRequests: entry.openRequests.size,
+        worker: this.ctx.ledger.get(entry.sessionId)?.worker === true,
+        quietMs: now - entry.lastActivity,
+      })
+      if (!stop) continue
+      void this.end(entry.sessionId, 'timed out')
+      ended += 1
+    }
+    return ended
   }
 
   /** The session is being deleted. */
@@ -261,15 +282,8 @@ export class ChatBridge {
     ws.on('close', () => {
       if (!sessionId) return
       const entry = this.entries.get(sessionId)
-      if (!entry?.clients.delete(ws) || entry.clients.size > 0) return
-      // A grace period, not an abort: a reload must not cost the running turn or an open card.
-      entry.timeoutId = setTimeout(() => {
-        const current = this.entries.get(entry.sessionId)
-        if (!current || current.clients.size > 0) return
-        this.log(`detached session ${entry.sessionId} timed out → closing (resumable via ledger)`)
-        void this.end(entry.sessionId, 'timed out')
-      }, DETACHED_TIMEOUT_MS)
-      entry.timeoutId.unref?.()
+      // No abort: a reload must not cost the running turn or an open card (sweepIdle).
+      if (entry?.clients.delete(ws)) entry.lastActivity = Date.now()
     })
 
     ws.on('error', (error) => this.log(`ws error: ${error.message}`))
@@ -349,7 +363,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), timeoutId: null, turnEnded: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(),
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -393,7 +407,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), timeoutId: null, turnEnded: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(),
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -447,6 +461,7 @@ export class ChatBridge {
   }
 
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
+    entry.lastActivity = Date.now()
     switch (event.kind) {
       case 'settings':
         if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
@@ -466,6 +481,11 @@ export class ChatBridge {
         entry.openRequests.delete(event.requestId)
         if (event.outcome !== 'cancelled' && entry.openRequests.size === 0) this.ctx.onTurn(entry.sessionId, 'working')
         break
+      case 'shell_task':
+      case 'agent_task':
+        if (event.status === 'running') entry.backgroundTasks.add(event.taskId)
+        else if (event.status) entry.backgroundTasks.delete(event.taskId)
+        break
       case 'turn_end':
         entry.active = false
         entry.turnEnded?.()
@@ -474,8 +494,13 @@ export class ChatBridge {
         entry.runtime = null
         entry.active = false
         entry.openRequests.clear()
+        entry.backgroundTasks.clear()
         entry.turnEnded?.()
-        if (!event.expected) this.log(`runtime of ${entry.sessionId} ended unexpectedly; the next message resumes it`)
+        // No Stop hook comes after a crash, so nothing else would end its turn state.
+        if (!event.expected) {
+          this.ctx.onExit?.(entry.sessionId)
+          this.log(`runtime of ${entry.sessionId} ended unexpectedly; the next message resumes it`)
+        }
         break
       default:
     }
@@ -508,6 +533,7 @@ export class ChatBridge {
       kind: 'user_message', id, text: message, queued: entry.active,
       ...(images.length > 0 ? { images: images.map(({ url }) => ({ url })) } : {}),
     })
+    entry.lastActivity = Date.now()
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })
@@ -544,8 +570,8 @@ export class ChatBridge {
 
   /** A client on a running session: it joins the others and gets what it does not have. */
   private join(entry: ChatEntry, ws: WebSocket, epoch: number | null, after: number): void {
-    if (entry.timeoutId) { clearTimeout(entry.timeoutId); entry.timeoutId = null }
     entry.clients.add(ws)
+    entry.lastActivity = Date.now()
     const current = this.ctx.events.epoch(entry.sessionId)
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })

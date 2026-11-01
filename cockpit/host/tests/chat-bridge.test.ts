@@ -155,6 +155,30 @@ describe('ChatBridge', () => {
     expect(bridge.sessionState('s1')).toBe('running')
   })
 
+  it('a session whose window closed stops once its time is up, and never mid-turn', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    ws.emit('close')
+    expect(bridge.sweepIdle(Date.now() + 3 * 24 * 60 * 60 * 1000)).toBe(0)
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(bridge.sweepIdle(Date.now() + 60_000)).toBe(0)
+    expect(bridge.sweepIdle(Date.now() + 31 * 60 * 1000)).toBe(1)
+    await flush()
+    expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('a crashed session frees its entry and reports it', async () => {
+    const exits: string[] = []
+    const { bridge, runtimes } = setup()
+    ;(bridge as unknown as { ctx: { onExit: (id: string) => void } }).ctx.onExit = (id) => exits.push(id)
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    expect(exits).toEqual(['s1'])
+    expect(bridge.sweepIdle()).toBe(1)
+  })
+
   it('a worker that cannot start says why and leaves nothing behind', () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })

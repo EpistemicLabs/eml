@@ -79,8 +79,8 @@ say so instead of trying another way.
 Tell the user what the worker was asked to do and that its pane opened next to
 this one. With no cockpit tab open, the host starts it without a pane: it shows
 in the sidebar (and in the Claude app with Remote Control), and opening it there
-attaches to the running session. At most three such workers run at a time; a
-further one takes the place of one that has been quiet for an hour, or waits.
+attaches to the running session. It keeps running while it works and stops after
+24 hours idle; a new worker waits while the machine has little free memory.
 Then keep working; don't wait for it.
 
 With a worker address:

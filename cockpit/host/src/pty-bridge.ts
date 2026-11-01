@@ -144,17 +144,6 @@ const CHAT_CLOSING_NOTICE = 'Closing the chat session: a running turn stops; its
 // How long a PTY handing its session to the chat view gets to exit before SIGKILL.
 const PTY_EXIT_TIMEOUT_MS = 5_000
 
-/**
- * Which quiet worker makes room for a new one: quiet for at least `minQuietMs`,
- * a done one before one waiting for a permission, then the one quiet the longest.
- */
-export function pickQuietWorker(candidates: Array<{ key: string; quietMs: number; state: TurnState }>, minQuietMs: number): string | null {
-  const eligible = candidates
-    .filter((c) => c.state !== 'working' && c.quietMs >= minQuietMs)
-    .sort((a, b) => Number(a.state === 'waiting') - Number(b.state === 'waiting') || b.quietMs - a.quietMs)
-  return eligible[0]?.key ?? null
-}
-
 /** A session's turn state for the worker limits (turn-state.ts): the state and since when it holds (ms). */
 export type WorkerTurnOf = (sessionId: string) => { state: TurnState; since: number | null }
 // Terminal size of a kept session started without a client (host start);
@@ -750,6 +739,8 @@ export class PtyBridge {
    */
   private scheduleDetachTimeout(key: string, session: PtySessionEntry): void {
     if (session.timeoutId) clearTimeout(session.timeoutId)
+    // A worker follows the worker rules (sweepIdleWorkers): never cut off mid-turn.
+    if (this.isWorker(session)) return
     session.timeoutId = setTimeout(() => {
       const current = this.sessions.get(key)
       if (!current || current.ws) return
@@ -839,15 +830,8 @@ export class PtyBridge {
     return null
   }
 
-  /** Host-started workers no client is attached to — the ones the cap in worker-start.ts counts. */
-  unattendedWorkers(): number {
-    let count = 0
-    for (const session of this.sessions.values()) if (session.hostStarted && !session.ws) count += 1
-    return count
-  }
-
   /**
-   * End the host-started workers that no client is attached to, that are not
+   * End the workers that no client is attached to, that are not
    * working, and that have been quiet (no turn, no client) for `idleMs`. They
    * stay in the sidebar, resumable. Returns how many ended.
    */
@@ -861,26 +845,15 @@ export class PtyBridge {
     return ended
   }
 
-  /**
-   * Make room for a new worker: end the host-started worker without a client
-   * that has been quiet the longest, once it has been quiet for `minQuietMs`
-   * (time for a reply to reach it). One whose turn is done goes before one
-   * waiting for a permission; a working one never. False when none qualifies.
-   */
-  evictQuietWorker(minQuietMs: number, turnOf: WorkerTurnOf, now = Date.now()): boolean {
-    const quiet = this.quietWorkers(turnOf, now)
-    const pick = pickQuietWorker(quiet.map(([key, , quietMs, state]) => ({ key, quietMs, state })), minQuietMs)
-    const entry = quiet.find(([key]) => key === pick)
-    if (!entry) return false
-    this.endWorker(entry[0], entry[1], 'quiet the longest, making room for a new worker')
-    return true
+  private isWorker(session: PtySessionEntry): boolean {
+    return session.hostStarted || this.ledger.get(session.sessionId)?.worker === true
   }
 
-  /** Host-started workers without a client that are not working: key, entry, quiet time (ms), turn state. */
+  /** Workers without a client that are not working: key, entry, quiet time (ms), turn state. */
   private quietWorkers(turnOf: WorkerTurnOf, now: number): Array<[string, PtySessionEntry, number, TurnState]> {
     const quiet: Array<[string, PtySessionEntry, number, TurnState]> = []
     for (const [key, session] of this.sessions) {
-      if (!session.hostStarted || session.ws) continue
+      if (!this.isWorker(session) || session.ws) continue
       const turn = turnOf(session.sessionId)
       if (turn.state === 'working') continue
       const lastActive = Math.max(session.spawnedAt, session.lastClientAt, turn.since ?? 0)

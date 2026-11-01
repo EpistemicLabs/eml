@@ -186,6 +186,7 @@ async function main() {
     runtimes: createClaudeSdkRuntimes(),
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+    onExit: (sessionId) => turns.forget(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
       return terminalBusyState({
@@ -228,9 +229,7 @@ async function main() {
     bridge: {
       startWorker: (request) => startWorker.withoutPane(request),
       hasRoom: () => startWorker.hasRoom(),
-      unattendedWorkers: () => bridge.unattendedWorkers(),
-      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf),
-      evictQuietWorker: (minQuietMs, turnOf) => bridge.evictQuietWorker(minQuietMs, turnOf),
+      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf) + chat.sweepIdle(),
     },
     turnOf: (sessionId) => {
       const turn = turns.get(sessionId)
