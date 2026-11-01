@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { createSdkMcpServer, query, getSessionMessages, tool, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
@@ -36,6 +38,21 @@ const MODES: ModeOption[] = [
   { id: 'plan', label: 'Plan', description: 'Reads and plans, changes nothing' },
   { id: 'auto', label: 'Auto', description: 'A classifier approves or stops each action' },
 ]
+
+/**
+ * The terminal follows Chrome's "Enabled by default" setting; an SDK session ignores
+ * it and needs the flag. An agent keeps to its MCP allowlist, so it gets no browser.
+ */
+function chromeForChat(request: SessionRuntimeStart): boolean {
+  if (request.strictMcp) return false
+  try {
+    const configDir = request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
+    const config = JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8')) as { claudeInChromeDefaultEnabled?: unknown }
+    return config.claudeInChromeDefaultEnabled === true
+  } catch {
+    return false
+  }
+}
 
 // A subagent's own bookkeeping, nothing it did.
 const HIDDEN_AGENT_TOOLS = new Set(['SubagentHandback'])
@@ -455,7 +472,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
       prompt: this.input,
       options: {
         cwd: request.cwd,
-        env: request.env,
+        // Artifact is off by default in the SDK. A value already set wins, so 0 turns it off.
+        env: { CLAUDE_CODE_ARTIFACT: '1', ...request.env },
         pathToClaudeCodeExecutable: CLAUDE_BIN,
         // Always named: left out, the CLI picks one itself.
         permissionMode: startingMode(request.mode, readPermissionMode()) as PermissionMode,
@@ -469,6 +487,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
           'mcp-config': request.files.mcpConfig,
           // A flag without a value.
           ...(request.strictMcp ? { 'strict-mcp-config': null } : {}),
+          ...(chromeForChat(request) ? { chrome: null } : {}),
           name: request.address,
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
