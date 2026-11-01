@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldOpenInChat } from './chat-default';
+import { heldCommandAfter, shouldOpenInChat } from './chat-default';
 
 describe('shouldOpenInChat', () => {
   const base = { view: 'terminal', runtime: null, chatDefault: true, pickedView: undefined, provider: 'claude', queuedCommand: false };
@@ -22,5 +22,19 @@ describe('shouldOpenInChat', () => {
     ['the pane shows something else', { view: 'brain' }],
   ])('leaves it alone when %s', (_why, patch) => {
     expect(shouldOpenInChat({ ...base, ...patch })).toBe(false);
+  });
+});
+
+describe('heldCommandAfter', () => {
+  it('drops the command once the first turn is done', () => {
+    expect(heldCommandAfter('prompt', 'done')).toBeNull();
+  });
+
+  it.each([undefined, 'idle', 'working', 'waiting'])('keeps it while the turn is %s', (state) => {
+    expect(heldCommandAfter('prompt', state)).toBe('prompt');
+  });
+
+  it('leaves a command not read yet alone until it is done', () => {
+    expect(heldCommandAfter(undefined, 'working')).toBeUndefined();
   });
 });

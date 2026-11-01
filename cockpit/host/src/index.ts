@@ -17,6 +17,7 @@ import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
 import { ChatBridge } from './chat-bridge.js'
+import { terminalBusyState } from './domain/session-lifecycle.js'
 import { InMemoryEventStore } from './application/session-events.js'
 import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
@@ -185,9 +186,12 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
-      if (!bridge.isRunning(sessionId)) return null
-      const state = turns.get(sessionId)?.state
-      return state === 'working' || state === 'waiting' ? state : null
+      const turn = turns.get(sessionId)
+      return terminalBusyState({
+        running: bridge.isRunning(sessionId),
+        turn: turn ? { state: turn.state, since: Date.parse(turn.since) } : null,
+        promptAt: bridge.promptAt(sessionId),
+      })
     },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })

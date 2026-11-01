@@ -94,6 +94,8 @@ type PtySessionEntry = {
   keepRunning: boolean
   /** A worker the host started without a pane (worker-start.ts): ends after a long idle time without a client. */
   hostStarted: boolean
+  /** When the process was started with a prompt (ms); null without one. */
+  promptAt: number | null
   /** When a client last attached or left (ms); the idle time of a host-started worker counts from here too. */
   lastClientAt: number
   // Server-side xterm that parses every PTY byte and holds the rendered
@@ -365,6 +367,12 @@ export class PtyBridge {
   isRunning(sessionId: string): boolean {
     for (const session of this.sessions.values()) if (session.sessionId === sessionId) return true
     return false
+  }
+
+  /** When the session's process was started with a prompt (ms); null when it wasn't, or none runs. */
+  promptAt(sessionId: string): number | null {
+    for (const session of this.sessions.values()) if (session.sessionId === sessionId) return session.promptAt
+    return null
   }
 
   /**
@@ -710,6 +718,7 @@ export class PtyBridge {
       spaceId: space.id,
       keepRunning,
       hostStarted: opts.hostStarted === true,
+      promptAt: initialPrompt !== null ? Date.now() : null,
       lastClientAt: Date.now(),
       headless,
       serializeAddon,

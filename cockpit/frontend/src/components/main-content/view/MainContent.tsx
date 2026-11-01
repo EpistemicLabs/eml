@@ -6,7 +6,7 @@
 // cockpit-notes-pane). Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
-import { shouldOpenInChat } from '@/components/chat/chat-default';
+import { heldCommandAfter, shouldOpenInChat } from '@/components/chat/chat-default';
 import { readSettings, subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
@@ -19,6 +19,7 @@ import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
@@ -42,11 +43,13 @@ function MainContent({
   // terminal can start — a worker of a space that isn't open has no project
   // here yet. Read during render, removed from the (persisted) queue only
   // after mount, so a reload before the space is opened keeps it. Held in a
-  // ref: later re-renders (e.g. paneView toggles) reuse it.
+  // ref until the first turn is done: re-renders and reconnects until then reuse it.
   const heldShellCommand = useRef<string | null | undefined>(undefined);
   if (heldShellCommand.current === undefined && (paneView !== 'terminal' || selectedProject)) {
     heldShellCommand.current = peekPendingShellCommand(paneId);
   }
+  const turnState = useTurnStore().turns[sessionId ?? '']?.state;
+  heldShellCommand.current = heldCommandAfter(heldShellCommand.current, turnState);
   const initialShellCommand = heldShellCommand.current ?? null;
   useEffect(() => {
     if (initialShellCommand !== null) consumePendingShellCommand(paneId);

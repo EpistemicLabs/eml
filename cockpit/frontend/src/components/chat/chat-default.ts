@@ -15,3 +15,9 @@ export function shouldOpenInChat(pane: {
   if (pane.runtime === 'sdk') return true;
   return pane.chatDefault && pane.pickedView !== 'terminal';
 }
+
+// A worker's start command is needed until its first turn has run; after that the
+// pane has no more use for it, and holding it would keep the pane in the terminal.
+export function heldCommandAfter(command: string | null | undefined, turnState: string | undefined): string | null | undefined {
+  return turnState === 'done' ? null : command;
+}
