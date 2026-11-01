@@ -473,6 +473,7 @@ export class PtyBridge {
     const launch = provider.launch({
       sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
       space: sessionSpace,
+      toolProfile: this.ledger.get(sessionId)?.toolProfile ?? null,
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
     // note edits of this scope only (decision cockpit-notes-pane).

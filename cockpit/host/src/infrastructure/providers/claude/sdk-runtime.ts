@@ -473,6 +473,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
         ...(request.worker ? workerOptions(request.worker) : {}),
+        ...(request.deniedTools?.length ? { disallowedTools: request.deniedTools } : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {
           const child = spawn(options.command, options.args, {

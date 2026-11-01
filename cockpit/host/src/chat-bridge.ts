@@ -428,6 +428,7 @@ export class ChatBridge {
         this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
+        if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted.
         this.ctx.onTurn(sessionId, 'working')
@@ -491,6 +492,7 @@ export class ChatBridge {
     const launch = provider.launch({
       sessionId, address, providerSessionId, resume, initialPrompt: null, unattended: false,
       space: sessionSpaceOf(space),
+      toolProfile: this.ctx.ledger.get(sessionId)?.toolProfile ?? null,
     })
     const brainId = brainIdFromProjectId(projectId)
     // The same environment a terminal session gets. The SDK replaces the
@@ -507,8 +509,9 @@ export class ChatBridge {
     entry.runtime = this.ctx.runtimes.start({
       sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
       cwd: projectPath, env, address,
-      files: { mcpConfig: space.files.mcpConfig, settings: space.files.settings },
-      strictMcp: !!space.agent,
+      files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
+      strictMcp: !!space.agent || !!launch.limits?.mcpConfig,
+      ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       ...(stored?.worker ? { worker: this.workerReporting(entry) } : {}),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
     })

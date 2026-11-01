@@ -1,4 +1,5 @@
 import type { ProviderId } from './agent-provider.js'
+import type { ToolProfile } from './tool-profile.js'
 
 /** A request for a worker session (spawn-queue.ts holds them until someone takes one). */
 export interface SpawnRequest {
@@ -22,5 +23,7 @@ export interface SpawnRequest {
   placement?: 'append' | 'replace-empty-desk'
   /** An outside service may send the worker messages. */
   wakeable?: boolean
+  /** What the worker may use; its limits hold only in the chat runtime or a host-started process. */
+  toolProfile?: ToolProfile
   createdAt: string
 }

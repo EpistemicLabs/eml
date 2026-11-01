@@ -241,6 +241,22 @@ describe('ChatBridge', () => {
     expect(own.runtimes[0].start.worker).toBeUndefined()
   })
 
+  it('a worker keeps its tool profile on the runtime', () => {
+    const { bridge, runtimes } = setup()
+    let stored: unknown
+    const ctx = (bridge as unknown as { ctx: { ledger: { setToolProfile?: (id: string, profile: unknown) => void }; providers: { get: () => { launch: () => object } } } }).ctx
+    ctx.ledger.setToolProfile = (_id, profile) => { stored = profile }
+    const provider = ctx.providers.get()
+    const launch = provider.launch
+    provider.launch = () => ({ ...launch(), limits: { mcpConfig: '/limited.json', deniedTools: ['Bash'] } })
+    const toolProfile = { deniedTools: ['Bash'], mcpServers: ['messages'] }
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '', toolProfile })
+    expect(stored).toEqual(toolProfile)
+    expect(runtimes[0].start.files.mcpConfig).toBe('/limited.json')
+    expect(runtimes[0].start.strictMcp).toBe(true)
+    expect(runtimes[0].start.deniedTools).toEqual(['Bash'])
+  })
+
   it('a worker that cannot start says why and leaves nothing behind', () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })

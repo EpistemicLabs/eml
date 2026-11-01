@@ -4,7 +4,7 @@ import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgent, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
 import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, readWorkersInChat, sessionToken } from './login.js'
-import { ensureProjectTrusted, writeIsolationFiles, type IsolationFiles } from './isolation.js'
+import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
@@ -98,15 +98,18 @@ class ClaudeProvider implements AgentProvider {
     // sessions (workers, task runs), which nobody drives from a phone — except
     // a worker the host started without a pane, which the app is the way to follow.
     const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
+    const profile = req.toolProfile ?? null
+    const limitedMcp = profile?.mcpServers ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile.mcpServers) : null
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
       // connectors, plugins, the project's .mcp.json) load too. The user's own
       // ~/.claude.json never reaches a session — CLAUDE_CONFIG_DIR isolates it.
       // Both files are the session's space's: its brain, its hooks.
-      '--mcp-config', req.space.files.mcpConfig,
-      // A space with its own agent: exactly its mcp.json, whatever else is configured anywhere.
-      ...(agent ? ['--strict-mcp-config'] : []),
+      '--mcp-config', limitedMcp ?? req.space.files.mcpConfig,
+      // A space with its own agent, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
+      ...(agent || limitedMcp ? ['--strict-mcp-config'] : []),
+      ...(profile?.deniedTools.length ? ['--disallowedTools', profile.deniedTools.join(',')] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
@@ -130,6 +133,7 @@ class ClaudeProvider implements AgentProvider {
       args,
       // Driven from the Claude app too: it outlives the browser tab.
       keepRunning: remoteControl,
+      ...(profile ? { limits: { mcpConfig: limitedMcp, deniedTools: profile.deniedTools } } : {}),
       env: {
         CLAUDE_CONFIG_DIR: configDir,
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own
@@ -145,6 +149,7 @@ class ClaudeProvider implements AgentProvider {
         // The session knows its own address — a worker it spawns is told where to answer (skill spawn-session).
         COCKPIT_SESSION_ADDRESS: req.address,
         ...(agent ? agentEnv(agent) : {}),
+        ...(limitedMcp ? { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } : {}),
       },
     }
   }

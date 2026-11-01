@@ -52,6 +52,18 @@ describe('StartWorker', () => {
     expect(failed.started).toEqual(['chat', 'terminal'])
   })
 
+  it('a worker with a tool profile never falls back to the terminal', () => {
+    const limited = { ...request, toolProfile: { deniedTools: ['Bash'], mcpServers: null } }
+    const noChat = setup({ inChat: false })
+    expect(noChat.worker.forPane(limited)).toBeNull()
+    expect(noChat.worker.withoutPane(limited)).toBe('a tool profile needs the chat runtime')
+    expect(noChat.started).toEqual([])
+    const failed = setup({ chatProblem: 'no' })
+    expect(failed.worker.forPane(limited)).toBeNull()
+    expect(failed.worker.withoutPane(limited)).toBe('no')
+    expect(failed.started).toEqual(['chat', 'chat'])
+  })
+
   it('has room above the memory floor, and where memory cannot be told', () => {
     expect(setup({ free: MIN_FREE_MEMORY }).worker.hasRoom()).toBe(true)
     expect(setup({ free: MIN_FREE_MEMORY - 1 }).worker.hasRoom()).toBe(false)

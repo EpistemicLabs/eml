@@ -38,20 +38,28 @@ export class StartWorker {
     return free === null || free >= MIN_FREE_MEMORY
   }
 
-  /** A tab took the request. `terminal`: the pane starts the worker itself, with the prompt. */
-  forPane(request: SpawnRequest): SessionRuntimeKind {
-    if (!this.inChat(request)) return 'terminal'
+  /**
+   * A tab took the request. `terminal`: the pane starts the worker itself, with the
+   * prompt. Null: it could not start. A worker with a tool profile has no fallback:
+   * a pane's start would lose its limits.
+   */
+  forPane(request: SpawnRequest): SessionRuntimeKind | null {
+    if (!this.inChat(request)) return request.toolProfile ? null : 'terminal'
     const problem = this.deps.chat.startWorker(request)
     if (!problem) return 'sdk'
+    if (request.toolProfile) {
+      this.deps.log(`[worker] ${request.id} could not start: ${problem}`)
+      return null
+    }
     this.deps.log(`[worker] ${request.id} stays in the terminal: ${problem}`)
     return 'terminal'
   }
 
   /** No tab took it: the host runs it without a pane. Returns why it could not start, or null. */
   withoutPane(request: SpawnRequest): string | null {
-    if (!this.inChat(request)) return this.deps.terminal.startWorker(request)
+    if (!this.inChat(request)) return request.toolProfile ? 'a tool profile needs the chat runtime' : this.deps.terminal.startWorker(request)
     const problem = this.deps.chat.startWorker(request)
-    if (!problem) return null
+    if (!problem || request.toolProfile) return problem
     this.deps.log(`[worker] ${request.id} goes to the terminal: ${problem}`)
     return this.deps.terminal.startWorker(request)
   }

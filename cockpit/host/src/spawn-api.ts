@@ -6,7 +6,8 @@ import type { MessageRequest } from './application/deliver-message.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { projectIdForBrain } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
-import type { BrainSpace, BrainSpaces } from './brain-space.js'
+import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space.js'
+import { parseToolProfile } from './domain/tool-profile.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 
@@ -91,6 +92,12 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   if (typeof body.provider === 'string' && body.provider && !provider) {
     return fail(400, 'UNKNOWN_PROVIDER', `Unknown provider "${body.provider}". Known: ${deps.providers.all().map((p) => p.id).join(', ')}`)
   }
+  const toolProfile = parseToolProfile(body)
+  if (toolProfile === 'invalid') return fail(400, 'INVALID_TOOLS', 'deniedTools and mcpServers are lists of names')
+  const chosen = provider ?? deps.providers.default()
+  if (toolProfile && !chosen.workerRunsInChat(sessionSpaceOf(space))) {
+    return fail(400, 'TOOLS_NEED_CHAT', 'Tool limits need the chat runtime, which this provider or sign-in does not use')
+  }
   const request = deps.spawns.add({
     projectId,
     prompt,
@@ -98,6 +105,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     title: typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 60) : null,
     fromSessionId,
     ...(body.wakeable === true ? { wakeable: true } : {}),
+    ...(toolProfile ? { toolProfile } : {}),
     // Named for a further space only; main is the default on both sides.
     ...(space.main ? {} : { spaceId: space.id }),
   })
@@ -195,8 +203,13 @@ export async function handleSpawnApi(
       return true
     }
     const request = deps.spawns.claim(claim[1])
-    if (!request) json(res, 409, { error: { code: 'ALREADY_CLAIMED', message: 'Taken by another tab or expired' } })
-    else json(res, 200, { ...request, runtime: deps.workers.forPane(request) })
+    if (!request) {
+      json(res, 409, { error: { code: 'ALREADY_CLAIMED', message: 'Taken by another tab or expired' } })
+      return true
+    }
+    const runtime = deps.workers.forPane(request)
+    if (runtime) json(res, 200, { ...request, runtime })
+    else json(res, 500, { error: { code: 'NOT_STARTED', message: 'The worker could not start; the host log says why' } })
     return true
   }
   return false

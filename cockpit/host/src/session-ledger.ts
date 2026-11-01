@@ -4,6 +4,7 @@ import { COCKPIT_HOME } from './paths.js'
 import { PROVIDER_IDS, type ProviderId, type SessionAgent, type SessionRef } from './domain/agent-provider.js'
 import type { SessionRuntimeKind } from './domain/session-runtime.js'
 import type { Attention } from './domain/session-attention.js'
+import type { ToolProfile } from './domain/tool-profile.js'
 
 /**
  * Host-owned session ledger (decision cockpit-session-resume-strategy).
@@ -68,6 +69,8 @@ export interface LedgerEntry {
   wakeable: boolean
   /** It waits for someone, and why; null when not. */
   attention: { kind: Attention; reason: string | null } | null
+  /** What the session may use, for its whole life; null: no limits. */
+  toolProfile: ToolProfile | null
 }
 
 interface LedgerFile {
@@ -110,6 +113,7 @@ function load(): LedgerFile {
           attention: entry.attention && typeof entry.attention.kind === 'string'
             ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null }
             : null,
+          toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
         }
       }
     }
@@ -174,6 +178,7 @@ export class SessionLedger {
       chatModel: prev?.chatModel ?? null,
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
+      toolProfile: prev?.toolProfile ?? null,
     }
     this.persist()
   }
@@ -199,6 +204,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || (entry.attention === null && attention === null)) return
     entry.attention = attention
+    this.persist()
+  }
+
+  /** Set when the session starts; it holds on every resume, in either view. */
+  setToolProfile(sessionId: string, toolProfile: ToolProfile): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.toolProfile = toolProfile
     this.persist()
   }
 

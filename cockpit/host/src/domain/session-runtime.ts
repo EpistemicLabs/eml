@@ -179,6 +179,8 @@ export interface SessionRuntimeStart {
   files: { mcpConfig: string; settings: string }
   /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with its own agent. */
   strictMcp: boolean
+  /** Built-in tools this session may not use (its tool profile). */
+  deniedTools?: string[]
   onEvent: (event: RuntimeEvent) => void
   /** A worker reports how it stands; absent for other sessions. */
   worker?: {

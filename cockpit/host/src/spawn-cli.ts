@@ -3,7 +3,8 @@
  *
  *   node "$COCKPIT_SPAWN_JS" --project <brain project id | name | folder path>
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
- *        [--provider <claude | codex>]
+ *        [--provider <claude | codex>] [--wakeable]
+ *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which
  * the host puts into every session's env; without network (a sandboxed
@@ -13,7 +14,9 @@
  * (worker-start.ts), and it shows in the sidebar. A prompt file keeps
  * multi-line prompts free of shell quoting. --provider picks the agent CLI the
  * worker runs with; without it the worker uses the cockpit's default. For a
- * worker that can message other sessions, the CLI prints its address.
+ * worker that can message other sessions, the CLI prints its address. --wakeable
+ * lets an outside service message it; --deny-tools and --mcp-servers limit what it
+ * may use, for its whole life.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -24,6 +27,8 @@ function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
   return i >= 0 ? process.argv[i + 1] : undefined
 }
+
+const list = (name: string): string[] | undefined => arg(name)?.split(',').map((item) => item.trim()).filter(Boolean)
 
 async function main(): Promise<void> {
   const project = arg('project')
@@ -41,6 +46,9 @@ async function main(): Promise<void> {
     title: arg('title'),
     provider: arg('provider'),
     fromSession: process.env.COCKPIT_SESSION_ID,
+    ...(process.argv.includes('--wakeable') ? { wakeable: true } : {}),
+    ...(list('deny-tools') ? { deniedTools: list('deny-tools') } : {}),
+    ...(list('mcp-servers') ? { mcpServers: list('mcp-servers') } : {}),
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)

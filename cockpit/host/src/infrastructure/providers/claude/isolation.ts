@@ -193,6 +193,21 @@ export function writeSpaceFiles(
   return { mcpConfig, settings, emlConfig }
 }
 
+/** A session's servers under a tool profile: the listed ones and always the brain. */
+export function limitMcpServers(config: { mcpServers: Record<string, unknown> }, allowed: string[]): { mcpServers: Record<string, unknown> } {
+  const mcpServers = Object.fromEntries(Object.entries(config.mcpServers).filter(([name]) => name === 'eml_brain' || allowed.includes(name)))
+  return { mcpServers }
+}
+
+/** The mcp.json of a session limited to `allowed`, beside its space's. Owner-only: it holds the same secrets. */
+export function writeLimitedMcpConfig(spaceMcpConfig: string, sessionId: string, allowed: string[]): string {
+  const config = JSON.parse(fs.readFileSync(spaceMcpConfig, 'utf8')) as { mcpServers: Record<string, unknown> }
+  const file = path.join(path.dirname(spaceMcpConfig), `mcp-${sessionId}.json`)
+  fs.writeFileSync(file, JSON.stringify(limitMcpServers(config, allowed), null, 2), { mode: 0o600 })
+  fs.chmodSync(file, 0o600)
+  return file
+}
+
 /** Where a space with an agent keeps its session files: in the agent's own folder. */
 const agentSpaceDir = (configDir: string, spaceId: string) => path.join(configDir, 'spaces', spaceId)
 

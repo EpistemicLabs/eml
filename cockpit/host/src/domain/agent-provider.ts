@@ -1,3 +1,5 @@
+import type { ToolProfile } from './tool-profile.js'
+
 /**
  * The agent CLI a cockpit session runs, as the host sees it (ARCHITECTURE.md,
  * "First step: agent providers"). The host owns panes, the ledger, turn state
@@ -94,6 +96,8 @@ export interface LaunchRequest {
    * since that is the only way to follow it without a cockpit tab.
    */
   reachable?: boolean
+  /** What the session may use. */
+  toolProfile?: ToolProfile | null
 }
 
 /** Binary, arguments and the provider's own environment for one session process. */
@@ -107,6 +111,8 @@ export interface LaunchSpec {
    * after a host restart, until the user closes it.
    */
   keepRunning: boolean
+  /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */
+  limits?: { mcpConfig: string | null; deniedTools: string[] }
 }
 
 export interface SessionRef {
