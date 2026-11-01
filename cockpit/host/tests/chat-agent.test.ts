@@ -166,6 +166,38 @@ describe('the chat view in a space with its own agent', () => {
     expect(args[1]).not.toHaveProperty('strict-mcp-config')
   })
 
+  it('the SDK runtime turns Artifact on unless the session already set it', () => {
+    const factory = createClaudeSdkRuntimes()
+    const start = { sessionId: 's', resume: false, cwd: '/work', address: 'a', files: { mcpConfig: '/m', settings: '/s' }, onEvent: () => {} }
+    factory.start({ ...start, env: { KEEP: 'x' } })
+    factory.start({ ...start, env: { CLAUDE_CODE_ARTIFACT: '0' } })
+    const envs = sdk.options.slice(-2).map((o) => o.env as Record<string, string>)
+    expect(envs[0]).toMatchObject({ CLAUDE_CODE_ARTIFACT: '1', KEEP: 'x' })
+    expect(envs[1].CLAUDE_CODE_ARTIFACT).toBe('0')
+  })
+
+  it('the SDK runtime passes the Chrome flag only when the setting is on and no agent is strict', () => {
+    const factory = createClaudeSdkRuntimes()
+    const dir = mkdtempSync(join(home, 'chrome-'))
+    const env = { CLAUDE_CONFIG_DIR: dir }
+    const start = { sessionId: 's', resume: false, cwd: '/work', env, address: 'a', files: { mcpConfig: '/m', settings: '/s' }, onEvent: () => {} }
+    const chromeArg = () => (sdk.options.at(-1)?.extraArgs as Record<string, unknown>)
+
+    factory.start(start)
+    expect(chromeArg()).not.toHaveProperty('chrome')
+
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ claudeInChromeDefaultEnabled: false }))
+    factory.start(start)
+    expect(chromeArg()).not.toHaveProperty('chrome')
+
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ claudeInChromeDefaultEnabled: true }))
+    factory.start(start)
+    expect(chromeArg()).toHaveProperty('chrome', null)
+
+    factory.start({ ...start, strictMcp: true })
+    expect(chromeArg()).not.toHaveProperty('chrome')
+  })
+
   it('reads history from each session\'s own folder, one read at a time', async () => {
     const factory = createClaudeSdkRuntimes()
     const agent = spaces.get(SPACE)?.agent
