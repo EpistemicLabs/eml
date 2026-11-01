@@ -75,6 +75,14 @@ describe('sessions across spaces', () => {
     rmSync(home, { recursive: true, force: true })
   })
 
+  it('the message endpoint takes tokens without an Origin; other session writes do not', async () => {
+    const post = (path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-cockpit-token': 'wrong' }, body: '{}' })
+    const message = await (await post('/api/sessions/in-main/message')).json() as { error: { message: string } }
+    expect(message.error.message).not.toContain('Cross-origin')
+    const other = await (await post('/api/sessions/in-main/release')).json() as { error: { message: string } }
+    expect(other.error.message).toContain('Cross-origin')
+  })
+
   const write = (method: string, path: string, body?: unknown, space?: string) => fetch(`${base}${path}`, {
     method,
     headers: { origin: 'http://cockpit.test', 'content-type': 'application/json', ...(space ? { 'x-cockpit-space': space } : {}) },

@@ -415,7 +415,8 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
     tools: [tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
       worker.report(status, reason ?? null)
       return { content: [{ type: 'text', text: `Recorded: ${status}.` }] }
-    })],
+      // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
+    }, { alwaysLoad: true })],
   })
   return {
     mcpServers: { cockpit: server },
