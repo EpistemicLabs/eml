@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -19,6 +19,9 @@ import { PtyBridge } from './pty-bridge.js'
 import { ChatBridge } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
+import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
+import { loadMessageToken } from './message-token.js'
+import { sessionAddress } from './session-address.js'
 import { InMemoryEventStore } from './application/session-events.js'
 import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
@@ -164,6 +167,8 @@ async function main() {
     COCKPIT_SPAWN_JS: SPAWN_CLI_JS,
     // A greeted session names itself once it knows what it is about (session-greeting.ts).
     COCKPIT_TITLE_JS: SESSION_TITLE_CLI_JS,
+    // A message that also reaches a stopped session (session-message-cli.ts).
+    COCKPIT_MESSAGE_JS: SESSION_MESSAGE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,
@@ -174,7 +179,18 @@ async function main() {
     COCKPIT_TASKS_DIR: TASKS_DIR,
   }
   fs.mkdirSync(TASKS_DIR, { recursive: true })
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers })
+  const deliver = (request: MessageRequest) => deliverMessage({
+    find: (target) => {
+      const found = ledger.list().find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)
+      return found ? { sessionId: found.sessionId, wakeable: found.wakeable } : null
+    },
+    terminalRuns: (sessionId) => bridge.isRunning(sessionId),
+    runsInChat: (sessionId) => providers.forSession(sessionId)
+      .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
+    chatRuns: (sessionId) => chat.isRunning(sessionId),
+    deliver: (sessionId, text) => chat.deliver(sessionId, text),
+  }, request)
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId) })
@@ -210,7 +226,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, hygiene },
+    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
     origins,
   )
 

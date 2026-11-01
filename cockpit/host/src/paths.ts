@@ -27,6 +27,8 @@ export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js
 export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
 // CLI a greeted session runs to name itself (session-title-cli.ts, session-greeting.ts).
 export const SESSION_TITLE_CLI_JS = path.join(HOST_ROOT, 'dist', 'session-title-cli.js')
+// CLI a session runs to message another one (session-message-cli.ts).
+export const SESSION_MESSAGE_CLI_JS = path.join(HOST_ROOT, 'dist', 'session-message-cli.js')
 // CLI a session runs for the cockpit's redacted diagnostics (diagnose-cli.ts, skill report-issue).
 export const DIAGNOSE_CLI_JS = path.join(HOST_ROOT, 'dist', 'diagnose-cli.js')
 // Skills that only make sense inside the cockpit (spawn-session).
@@ -118,6 +120,8 @@ export const LEGACY_EML_HOOK_CONFIG = path.join(EML_HOOK_DIR, 'config')
 export const CLAUDE_TURN_HOOK_CONFIG = path.join(CONFIG_DIR, 'turn-hook.json')
 // Worker requests as files, for sessions whose sandbox has no network (spawn-inbox.ts).
 export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
+// What an outside service presents to send a session a message (message-token.ts).
+export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.
 export const TASKS_DIR = path.join(COCKPIT_HOME, 'tasks')
 // Cockpit folders: made for brain projects that have no folder of their own

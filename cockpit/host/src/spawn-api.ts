@@ -2,6 +2,8 @@ import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
 import type { StartWorker } from './application/start-worker.js'
+import type { MessageRequest } from './application/deliver-message.js'
+import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { projectIdForBrain } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
@@ -21,6 +23,8 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *                                A chat worker starts here; the answer's `runtime` says so
  * plus the `spawns` / `spawn` / `claimed` events on /api/events.
  *
+ *   POST /api/sessions/<target>/message  a message for a session, by id or address; with the
+ *                                spawn token, or from outside with the message token (message-token.ts)
  * The same token and inbox carry a session naming itself (session-title-cli.ts):
  *   PUT /api/session-title/<id> body: title — or the inbox request with kind 'session-title'.
  */
@@ -33,6 +37,8 @@ export interface SpawnDeps {
   /** The worker runs in the requesting session's space (ledger), else main. */
   spaces: BrainSpaces
   ledger: SessionLedger
+  /** The message endpoint's use case (application/deliver-message.ts). */
+  deliver: (request: MessageRequest) => Promise<DeliveryOutcome>
 }
 
 const MAX_PROMPT = 50_000
@@ -91,6 +97,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     ...(provider ? { provider: provider.id } : {}),
     title: typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 60) : null,
     fromSessionId,
+    ...(body.wakeable === true ? { wakeable: true } : {}),
     // Named for a further space only; main is the default on both sides.
     ...(space.main ? {} : { spaceId: space.id }),
   })
@@ -119,10 +126,27 @@ export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, b
   return { status: 200, payload: { title } }
 }
 
+const DELIVERY_STATUS: Record<DeliveryOutcome, number> = { delivered: 200, resumed: 200, busy: 409, unknown: 404, refused: 403 }
+
+/**
+ * A message for a session — the one rule for all ways it arrives (POST
+ * /api/sessions/<target>/message, the spawn inbox). The caller has checked the token.
+ */
+export async function requestMessage(
+  deps: Pick<SpawnDeps, 'deliver'>, caller: MessageRequest['caller'], target: unknown, body: Record<string, unknown>,
+): Promise<{ status: number; payload: { outcome: DeliveryOutcome } | { error: { code: string; message: string } } }> {
+  const text = typeof body.text === 'string' ? body.text.trim() : ''
+  if (!text || text.length > MAX_PROMPT) return { status: 400, payload: { error: { code: 'INVALID_TEXT', message: `text is required (max ${MAX_PROMPT} chars)` } } }
+  if (typeof target !== 'string' || !target) return { status: 400, payload: { error: { code: 'INVALID_TARGET', message: 'target is required' } } }
+  const from = typeof body.from === 'string' ? body.from.replace(INVISIBLE, '').trim().slice(0, MAX_TITLE) : ''
+  const outcome = await deps.deliver({ target, text, from: from || null, caller })
+  return { status: DELIVERY_STATUS[outcome], payload: { outcome } }
+}
+
 export async function handleSpawnApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  deps: SpawnDeps & { workers: StartWorker },
+  deps: SpawnDeps & { workers: StartWorker; outsideToken: string },
   pathname: string,
   method: string,
   json: Json,
@@ -134,6 +158,19 @@ export async function handleSpawnApi(
       return true
     }
     const result = await requestSpawn(deps, await readJson(req))
+    json(res, result.status, result.payload)
+    return true
+  }
+
+  const message = pathname.match(/^\/api\/sessions\/([a-zA-Z0-9_.:-]+)\/message$/)
+  if (message && method === 'POST') {
+    const token = req.headers['x-cockpit-token']
+    const caller = token === deps.spawnToken ? 'session' : token === deps.outsideToken ? 'outside' : null
+    if (!caller) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session or a service holding the message token can send this' } })
+      return true
+    }
+    const result = await requestMessage(deps, caller, message[1], await readJson(req))
     json(res, result.status, result.payload)
     return true
   }

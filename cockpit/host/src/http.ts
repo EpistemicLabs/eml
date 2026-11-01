@@ -2,7 +2,7 @@ import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WebSocketServer } from 'ws'
-import { attachSpawnEvents, handleSpawnApi } from './spawn-api.js'
+import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
@@ -88,6 +88,9 @@ export interface HostDeps {
   workers: StartWorker
   /** Per-boot secret sessions send with POST /api/spawn. */
   spawnToken: string
+  /** What an outside service sends with a message for a session (message-token.ts). */
+  outsideToken: string
+  deliver: SpawnDeps['deliver']
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
@@ -320,7 +323,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).

@@ -63,6 +63,8 @@ export interface LedgerEntry {
   /** The permission mode and model chosen in the chat view; a resume starts with them. */
   chatMode: string | null
   chatModel: string | null
+  /** An outside service may send it messages (cockpit message endpoint). */
+  wakeable: boolean
 }
 
 interface LedgerFile {
@@ -101,6 +103,7 @@ function load(): LedgerFile {
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
           chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
           chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
+          wakeable: entry.wakeable === true,
         }
       }
     }
@@ -163,6 +166,7 @@ export class SessionLedger {
       runtime: prev?.runtime ?? 'terminal',
       chatMode: prev?.chatMode ?? null,
       chatModel: prev?.chatModel ?? null,
+      wakeable: prev?.wakeable ?? false,
     }
     this.persist()
   }
@@ -180,6 +184,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.runtime === runtime) return
     entry.runtime = runtime
+    this.persist()
+  }
+
+  /** Let an outside service send this session messages. */
+  setWakeable(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.wakeable) return
+    entry.wakeable = true
     this.persist()
   }
 

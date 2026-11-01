@@ -15,6 +15,7 @@ import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop } from './domain/session-lifecycle.js'
+import type { DeliveryOutcome } from './domain/session-delivery.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -72,6 +73,8 @@ interface ChatEntry {
   /** Background shells and subagents still running: they end with the process. */
   backgroundTasks: Set<string>
   lastActivity: number
+  /** Being closed: a message now would go down with the process. */
+  closing: boolean
 }
 
 export interface ChatContext {
@@ -180,6 +183,7 @@ export class ChatBridge {
   async end(sessionId: string, reason = 'superseded'): Promise<void> {
     const entry = this.entries.get(sessionId)
     if (!entry) return
+    entry.closing = true
     const runtime = entry.runtime
     if (runtime) {
       if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
@@ -363,7 +367,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(),
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -407,7 +411,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(),
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -417,6 +421,7 @@ export class ChatBridge {
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
         this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
+        if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted.
         this.ctx.onTurn(sessionId, 'working')
@@ -429,6 +434,48 @@ export class ChatBridge {
       }
     })
     return failure
+  }
+
+  /**
+   * A message from outside any client: to the running session, or to a stopped one,
+   * which resumes first. Only reports success once the session has it.
+   */
+  async deliver(sessionId: string, text: string): Promise<DeliveryOutcome> {
+    if (this.handoff().switching(sessionId)) return 'busy'
+    const running = this.entries.get(sessionId)
+    if (running) {
+      if (running.closing) return 'busy'
+      this.sendMessage(running, text)
+      return 'delivered'
+    }
+    const stored = this.ctx.ledger.get(sessionId)
+    if (!stored?.projectId) return 'unknown'
+    const projectId = stored.projectId
+    const space = this.ctx.spaces.resolve(stored.spaceId)
+    const path = this.projectFor(space, projectId)?.path
+    const provider = this.ctx.providers.forSession(sessionId)
+    if (!path || provider.runtime.problem() || space.agent?.problem(provider.id)) return 'refused'
+    await this.handoff().enter('sdk', sessionId, async () => {
+      const entry: ChatEntry = {
+        sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
+      }
+      this.entries.set(sessionId, entry)
+      this.ctx.events.reset(sessionId)
+      const resume = provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
+      if (resume) {
+        const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
+        for (const event of await this.ctx.runtimes.history(conversationId, path, space.agent)) this.emit(entry, event)
+      }
+      provider.trustProject(path, sessionSpaceOf(space))
+      this.ctx.ledger.recordSpawn(sessionId, stored.paneId, projectId, provider.id, false, null, space.ledgerKey)
+      this.ctx.ledger.setRuntime(sessionId, 'sdk')
+      if (stored.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+      this.startRuntime(entry, provider, space, resume)
+      this.sendMessage(entry, text)
+      this.log(`resumed ${sessionId} for a message`)
+    })
+    return 'resumed'
   }
 
   private startRuntime(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, resume: boolean): void {

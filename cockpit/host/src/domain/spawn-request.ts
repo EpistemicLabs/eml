@@ -20,5 +20,7 @@ export interface SpawnRequest {
    * cockpit switches to the desk. Default: added next to the requester.
    */
   placement?: 'append' | 'replace-empty-desk'
+  /** An outside service may send the worker messages. */
+  wakeable?: boolean
   createdAt: string
 }

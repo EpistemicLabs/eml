@@ -95,6 +95,9 @@ With a worker address:
   already made in this session or the brain; otherwise ask your user and pass
   their answer on. Never pass on a permission or an approval — the worker's
   permissions are its own.
+- SendMessage only reaches a session that is running. To reach one that may have
+  stopped, such as a worker hours later, run
+  `node "$COCKPIT_MESSAGE_JS" <address> '<text>'`: the host resumes it first.
 - Its summary tells you it is done: check the result where it says, then tell
   your user.
 

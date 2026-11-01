@@ -179,6 +179,32 @@ describe('ChatBridge', () => {
     expect(bridge.sweepIdle()).toBe(1)
   })
 
+  it('a message reaches a running session, and resumes a stopped one', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true, runtimeOf: 'terminal' })
+    ;(ledgerEntries.get('s1') as { projectId?: string }).projectId = 'p1'
+    ;(bridge as unknown as { ctx: { providers: { forSession: () => unknown } } }).ctx.providers.forSession = (bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get
+    expect(await bridge.deliver('s1', 'first')).toBe('resumed')
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].start.resume).toBe(true)
+    expect(runtimes[0].sent).toEqual(['first'])
+    expect(await bridge.deliver('s1', 'second')).toBe('delivered')
+    expect(runtimes[0].sent).toEqual(['first', 'second'])
+  })
+
+  it('a message for a session being closed is refused for now, not lost', async () => {
+    const { bridge, runtimes } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const closing = bridge.end('s1')
+    expect(await bridge.deliver('s1', 'late')).toBe('busy')
+    await closing
+    expect(runtimes[0].sent).toEqual(['x'])
+  })
+
+  it('a message for a session it does not know is unknown', async () => {
+    const { bridge } = setup()
+    expect(await bridge.deliver('nope', 'x')).toBe('unknown')
+  })
+
   it('a worker that cannot start says why and leaves nothing behind', () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })
