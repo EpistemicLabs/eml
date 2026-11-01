@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
 import type { AgentProvider, TurnState } from './domain/agent-provider.js'
 import type {
-  EventStore, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory,
+  EventStore, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart,
 } from './domain/session-runtime.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -16,6 +16,7 @@ import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop } from './domain/session-lifecycle.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
+import { attentionAfterTurn, shouldAskForStatus } from './domain/session-attention.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -58,6 +59,8 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
 
+const STATUS_REMINDER = 'You have not said how you stand. Call session_status: done, or question, review or failed with a reason. Then end your turn.'
+
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
 interface ChatEntry {
@@ -75,6 +78,9 @@ interface ChatEntry {
   lastActivity: number
   /** Being closed: a message now would go down with the process. */
   closing: boolean
+  /** This turn the worker said how it stands, or was asked to. */
+  declared: boolean
+  askedStatus: boolean
 }
 
 export interface ChatContext {
@@ -367,7 +373,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -411,7 +417,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -458,7 +464,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -503,8 +509,25 @@ export class ChatBridge {
       cwd: projectPath, env, address,
       files: { mcpConfig: space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.agent,
+      ...(stored?.worker ? { worker: this.workerReporting(entry) } : {}),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
     })
+  }
+
+  private workerReporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
+    return {
+      report: (status, reason) => {
+        entry.declared = true
+        this.ctx.ledger.setAttention(entry.sessionId, status === 'done' ? null : { kind: status, reason })
+        if (status !== 'done') this.ctx.onTurn(entry.sessionId, 'waiting')
+      },
+      onTurnEnding: () => {
+        const ask = shouldAskForStatus({ worker: true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
+        if (!ask) return null
+        entry.askedStatus = true
+        return STATUS_REMINDER
+      },
+    }
   }
 
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
@@ -533,10 +556,18 @@ export class ChatBridge {
         if (event.status === 'running') entry.backgroundTasks.add(event.taskId)
         else if (event.status) entry.backgroundTasks.delete(event.taskId)
         break
-      case 'turn_end':
+      case 'turn_end': {
         entry.active = false
         entry.turnEnded?.()
+        const attention = attentionAfterTurn({
+          worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,
+        })
+        if (attention) {
+          this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
+          this.ctx.onTurn(entry.sessionId, 'waiting')
+        }
         break
+      }
       case 'runtime_exit':
         entry.runtime = null
         entry.active = false
@@ -581,6 +612,10 @@ export class ChatBridge {
       ...(images.length > 0 ? { images: images.map(({ url }) => ({ url })) } : {}),
     })
     entry.lastActivity = Date.now()
+    // A new turn: whoever it waited for has answered.
+    entry.declared = false
+    entry.askedStatus = false
+    this.ctx.ledger.setAttention(entry.sessionId, null)
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })

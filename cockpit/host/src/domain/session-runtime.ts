@@ -1,3 +1,4 @@
+import type { WorkerStatus } from './session-attention.js'
 /**
  * A session driven through a structured harness instead of a terminal: the port
  * the chat view runs on. It says nothing about any one agent: an adapter
@@ -179,6 +180,12 @@ export interface SessionRuntimeStart {
   /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with its own agent. */
   strictMcp: boolean
   onEvent: (event: RuntimeEvent) => void
+  /** A worker reports how it stands; absent for other sessions. */
+  worker?: {
+    report(status: WorkerStatus, reason: string | null): void
+    /** Its turn is about to end: what to tell it instead of letting it stop; null lets it stop. */
+    onTurnEnding(): string | null
+  }
 }
 
 export interface SessionRuntimeFactory {

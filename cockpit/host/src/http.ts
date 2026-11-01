@@ -182,6 +182,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     taskId: entry.taskId,
     state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
     runtime: entry.runtime,
+    attention: entry.attention,
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
     __provider: deps.providers.forSession(entry.sessionId).id,

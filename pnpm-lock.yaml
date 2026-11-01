@@ -144,6 +144,9 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.21.3
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@engramprotocol/cockpit-frontend':
         specifier: workspace:*

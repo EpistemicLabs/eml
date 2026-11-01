@@ -96,11 +96,12 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
         if (patch.model) entry.chatModel = patch.model
       },
       bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
-      recordSpawn: (id: string) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false }) },
+      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false }); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
       setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
       touch: () => {},
       setAgentTitle: () => {},
+      setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
     spaces: { get: () => space, main: space, resolve: () => space },
@@ -203,6 +204,41 @@ describe('ChatBridge', () => {
   it('a message for a session it does not know is unknown', async () => {
     const { bridge } = setup()
     expect(await bridge.deliver('nope', 'x')).toBe('unknown')
+  })
+
+  it('a worker that ends its turn without saying is asked once, then marked for review', () => {
+    const { bridge, runtimes, ledgerEntries, turns } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const worker = runtimes[0].start.worker
+    expect(worker?.onTurnEnding()).toContain('session_status')
+    expect(worker?.onTurnEnding()).toBeNull()
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect((ledgerEntries.get('s1') as unknown as { attention: unknown }).attention).toEqual({ kind: 'review', reason: null })
+    expect(turns).toContainEqual(['s1', 'waiting'])
+  })
+
+  it('a worker that says it needs someone keeps that until a new message comes', () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const attention = () => (ledgerEntries.get('s1') as unknown as { attention: unknown }).attention
+    runtimes[0].start.worker?.report('question', 'A or B?')
+    expect(runtimes[0].start.worker?.onTurnEnding()).toBeNull()
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(attention()).toEqual({ kind: 'question', reason: 'A or B?' })
+    void bridge.deliver('s1', 'A')
+    expect(attention()).toBeNull()
+  })
+
+  it('a worker that says done leaves nothing, and other sessions get no status tool', async () => {
+    const worker = setup()
+    worker.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    worker.runtimes[0].start.worker?.report('done', null)
+    worker.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect((worker.ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention ?? null).toBeNull()
+    const own = setup()
+    connect(own.bridge)
+    await flush()
+    expect(own.runtimes[0].start.worker).toBeUndefined()
   })
 
   it('a worker that cannot start says why and leaves nothing behind', () => {

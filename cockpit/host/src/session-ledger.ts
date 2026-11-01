@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
 import { PROVIDER_IDS, type ProviderId, type SessionAgent, type SessionRef } from './domain/agent-provider.js'
 import type { SessionRuntimeKind } from './domain/session-runtime.js'
+import type { Attention } from './domain/session-attention.js'
 
 /**
  * Host-owned session ledger (decision cockpit-session-resume-strategy).
@@ -65,6 +66,8 @@ export interface LedgerEntry {
   chatModel: string | null
   /** An outside service may send it messages (cockpit message endpoint). */
   wakeable: boolean
+  /** It waits for someone, and why; null when not. */
+  attention: { kind: Attention; reason: string | null } | null
 }
 
 interface LedgerFile {
@@ -104,6 +107,9 @@ function load(): LedgerFile {
           chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
           chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
           wakeable: entry.wakeable === true,
+          attention: entry.attention && typeof entry.attention.kind === 'string'
+            ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null }
+            : null,
         }
       }
     }
@@ -167,6 +173,7 @@ export class SessionLedger {
       chatMode: prev?.chatMode ?? null,
       chatModel: prev?.chatModel ?? null,
       wakeable: prev?.wakeable ?? false,
+      attention: prev?.attention ?? null,
     }
     this.persist()
   }
@@ -184,6 +191,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.runtime === runtime) return
     entry.runtime = runtime
+    this.persist()
+  }
+
+  /** Record that the session waits for someone, or no longer does. */
+  setAttention(sessionId: string, attention: LedgerEntry['attention']): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || (entry.attention === null && attention === null)) return
+    entry.attention = attention
     this.persist()
   }
 

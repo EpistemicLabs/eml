@@ -1,11 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { query, getSessionMessages, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
+import { createSdkMcpServer, query, getSessionMessages, tool, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
   ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
 } from '../../../domain/session-runtime.js'
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
+import { WORKER_STATUSES } from '../../../domain/session-attention.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -401,6 +403,35 @@ export function startingMode(chosen: string | null, setting: string): string {
   return chosen ?? setting
 }
 
+const STATUS_TOOL = 'session_status'
+const STATUS_TOOL_DESCRIPTION = 'Say how you stand when you end your turn. Nobody watches you run, so this is how people learn you need them. '
+  + 'done: finished, nobody needs to act. question: only a person can decide; ask it in your reply too. '
+  + 'review: finished, and someone should look at the result. failed: you could not do it.'
+
+/** The status tool and the check before a worker's turn ends, in this process: no extra server per worker. */
+function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
+  const server = createSdkMcpServer({
+    name: 'cockpit',
+    tools: [tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
+      worker.report(status, reason ?? null)
+      return { content: [{ type: 'text', text: `Recorded: ${status}.` }] }
+    })],
+  })
+  return {
+    mcpServers: { cockpit: server },
+    // Nobody may be there to answer a card about the tool that says so.
+    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`],
+    hooks: {
+      Stop: [{
+        hooks: [async () => {
+          const reason = worker.onTurnEnding()
+          return reason ? { decision: 'block' as const, reason } : {}
+        }],
+      }],
+    },
+  }
+}
+
 class ClaudeSdkRuntime implements SessionRuntime {
   private input = new InputQueue()
   private mapper = new ClaudeEventMapper()
@@ -441,6 +472,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
+        ...(request.worker ? workerOptions(request.worker) : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {
           const child = spawn(options.command, options.args, {

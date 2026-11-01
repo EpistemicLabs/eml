@@ -38,7 +38,8 @@
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@engramprotocol/cockpit-frontend": "workspace:*",

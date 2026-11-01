@@ -213,6 +213,8 @@ async function main() {
     },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
+  // Turn state starts empty; what a session waits for someone about is saved.
+  for (const { sessionId, attention } of ledger.list()) if (attention) turns.apply({ sessionId, state: 'waiting' })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
     runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
