@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgent, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, sessionToken } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, readWorkersInChat, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -81,6 +81,11 @@ class ClaudeProvider implements AgentProvider {
     const configDir = this.configDirFor(agent)
     // The project's trust flag lives in the APP's .claude.json — never the user's.
     if (configDir) ensureProjectTrusted(projectPath, configDir)
+  }
+
+  /** The chat runtime passes no login token: token mode stays in the terminal, except for an agent, which has its own login. */
+  workerRunsInChat(space: SessionSpace): boolean {
+    return readWorkersInChat() && (!!space.agent || !sessionToken())
   }
 
   launch(req: LaunchRequest): LaunchSpec {

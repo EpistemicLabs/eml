@@ -9,6 +9,7 @@ const output = (cmd: string, args: string[]) => new Promise<{ code: number; stde
 export const darwin: Platform = {
   ...posixBase,
   os: 'darwin',
+  freeMemory: () => null,
   runtimeKey: () => `darwin-${archKey()}`,
   // macOS pbcopy, which Claude Code copies through, reads non-UTF-8 input as Mac Roman.
   fallbackLang: 'en_US.UTF-8',

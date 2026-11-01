@@ -237,6 +237,8 @@ export interface AgentProvider {
   prepare(ctx: IsolationContext): void
   /** Let sessions open this folder without the provider's trust prompt. Idempotent. */
   trustProject(projectPath: string, space?: SessionSpace): void
+  /** Whether a worker of this space runs through the chat runtime rather than a terminal. */
+  workerRunsInChat(space: SessionSpace): boolean
   launch(req: LaunchRequest): LaunchSpec
   /** Whether the provider has a stored conversation for this session. */
   canResume(session: SessionRef): boolean

@@ -22,6 +22,10 @@ class FakeBridge {
     this.idleSweeps.push(idleMs)
     return 0
   }
+  room = true
+  hasRoom(): boolean {
+    return this.room
+  }
   canEvict = false
   evicted = 0
   evictQuietWorker(): boolean {

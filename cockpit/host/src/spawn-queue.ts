@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import type { ProviderId } from './domain/agent-provider.js'
+import type { SpawnRequest } from './domain/spawn-request.js'
+
+export type { SpawnRequest }
 
 /**
  * Worker-session requests from running sessions (`cockpit-spawn`, skill
@@ -12,28 +14,6 @@ import type { ProviderId } from './domain/agent-provider.js'
  * getting started, brain hygiene) wait for a tab. In memory only: a host
  * restart drops unclaimed requests (the requester is gone with it anyway).
  */
-
-export interface SpawnRequest {
-  /** Also the worker's session id: the page opens the pane under it (spawn-api.ts returns the worker's address from it). */
-  id: string
-  /** Registry project id the worker runs in (`bp-<brain id>` or a folder id). */
-  projectId: string
-  prompt: string
-  title: string | null
-  /** The agent CLI the worker runs with (a provider id); unset → the user's default. */
-  provider?: ProviderId
-  /** The requesting session — the worker opens on its desk, next to its pane. */
-  fromSessionId: string | null
-  /** The brain space the worker runs in (the requester's). Absent = main (the host's own spawns, onboarding.ts). */
-  spaceId?: string
-  /**
-   * 'replace-empty-desk' (first run, onboarding.ts): if the active desk holds
-   * only its untouched starting terminal, the pane takes its place and the
-   * cockpit switches to the desk. Default: added next to the requester.
-   */
-  placement?: 'append' | 'replace-empty-desk'
-  createdAt: string
-}
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
 

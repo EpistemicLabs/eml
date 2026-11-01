@@ -18,6 +18,7 @@ import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
 import { ChatBridge } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
+import { StartWorker } from './application/start-worker.js'
 import { InMemoryEventStore } from './application/session-events.js'
 import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
@@ -25,7 +26,7 @@ import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace } from './brain-space.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { WorkerStarter } from './worker-start.js'
 import { runServiceCommand } from './service.js'
@@ -195,6 +196,12 @@ async function main() {
     },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
+  const startWorker = new StartWorker({
+    chat, terminal: bridge, log,
+    runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
+      .workerRunsInChat(sessionSpaceOf(spaces.resolve(request.spaceId ?? null))),
+    freeMemory: () => platform.freeMemory(),
+  })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -202,7 +209,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
+    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, hygiene },
     origins,
   )
 
@@ -217,7 +224,14 @@ async function main() {
   if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
   // A worker no tab takes starts without a pane (worker-start.ts).
   const workers = new WorkerStarter({
-    spawns, bridge, log,
+    spawns, log,
+    bridge: {
+      startWorker: (request) => startWorker.withoutPane(request),
+      hasRoom: () => startWorker.hasRoom(),
+      unattendedWorkers: () => bridge.unattendedWorkers(),
+      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf),
+      evictQuietWorker: (minQuietMs, turnOf) => bridge.evictQuietWorker(minQuietMs, turnOf),
+    },
     turnOf: (sessionId) => {
       const turn = turns.get(sessionId)
       return { state: turn?.state ?? 'idle', since: turn ? Date.parse(turn.since) : null }

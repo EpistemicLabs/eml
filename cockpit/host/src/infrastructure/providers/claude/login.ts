@@ -47,6 +47,8 @@ export interface ClaudeLoginStatus {
   permissionMode: PermissionMode
   renderer: Renderer
   remoteControl: boolean
+  /** Workers start in the chat runtime; on unless turned off. */
+  workersInChat: boolean
   token: { set: boolean; prefix: string | null }
   account: ClaudeAccount | null
 }
@@ -134,6 +136,10 @@ export function readRenderer(): Renderer {
  * from there. Off unless switched on in Settings › Models: the session is then
  * reachable through Anthropic's servers, not only through the cockpit.
  */
+export function readWorkersInChat(): boolean {
+  return readAgentSettings().workersInChat !== false
+}
+
 export function readRemoteControl(): boolean {
   return readAgentSettings().remoteControl === true
 }
@@ -167,11 +173,18 @@ export function writeRemoteControl(raw: unknown): string | null {
   return null
 }
 
-export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
+/** Returns an error message for the UI, or null on success. */
+export function writeWorkersInChat(raw: unknown): string | null {
+  if (typeof raw !== 'boolean') return 'Workers in chat is on or off.'
+  writeAgentSettings({ workersInChat: raw })
+  return null
+}
 
-/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl? }. */
+export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown; workersInChat?: unknown }
+
+/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl?, workersInChat? }. */
 export function writeAgentPatch(body: AgentPatch | null): string | null {
-  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined) {
+  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined && body?.workersInChat === undefined) {
     return 'Nothing to change.'
   }
   if (body.mode !== undefined) {
@@ -186,7 +199,11 @@ export function writeAgentPatch(body: AgentPatch | null): string | null {
     const error = writeRenderer(body.renderer)
     if (error) return error
   }
-  return body.remoteControl !== undefined ? writeRemoteControl(body.remoteControl) : null
+  if (body.remoteControl !== undefined) {
+    const error = writeRemoteControl(body.remoteControl)
+    if (error) return error
+  }
+  return body.workersInChat !== undefined ? writeWorkersInChat(body.workersInChat) : null
 }
 
 /** The token a session gets injected — only in token mode. */
@@ -239,6 +256,7 @@ export async function claudeLoginStatus(): Promise<ClaudeLoginStatus> {
     permissionMode: readPermissionMode(),
     renderer: readRenderer(),
     remoteControl: readRemoteControl(),
+    workersInChat: readWorkersInChat(),
     token: { set: token !== null, prefix: token ? `${token.slice(0, 16)}…` : null },
     account: await readAccount(mode),
   }

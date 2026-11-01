@@ -100,8 +100,9 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
       setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
       touch: () => {},
+      setAgentTitle: () => {},
     },
-    providers: { get: () => provider, forSession: () => provider },
+    providers: { get: () => provider, forSession: () => provider, default: () => provider },
     spaces: { get: () => space, main: space, resolve: () => space },
     sessionEnv: { COCKPIT_URL: 'http://host' },
     runtimes: factory,
@@ -130,6 +131,36 @@ function connect(bridge: ChatBridge, init: object = {}): FakeSocket {
 
 describe('ChatBridge', () => {
   beforeEach(() => { vi.useRealTimers() })
+
+  it('starts a worker with no client, its prompt as the first message, in auto mode', () => {
+    const { bridge, runtimes, ledgerEntries, turns } = setup()
+    const problem = bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: 'Job', fromSessionId: 'r', createdAt: '' })
+    expect(problem).toBeNull()
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].start.resume).toBe(false)
+    expect(runtimes[0].start.mode).toBe('auto')
+    expect(runtimes[0].sent).toEqual(['do it'])
+    expect(ledgerEntries.get('s1')?.runtime).toBe('sdk')
+    expect(turns).toContainEqual(['s1', 'working'])
+    expect(bridge.sessionState('s1')).toBe('detached')
+  })
+
+  it('a pane joins a running worker and sees its first message, without a second process', async () => {
+    const { bridge, runtimes } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: 'r', createdAt: '' })
+    const ws = connect(bridge)
+    await flush()
+    expect(runtimes).toHaveLength(1)
+    expect(ws.events().some((event) => event.kind === 'user_message' && event.text === 'do it')).toBe(true)
+    expect(bridge.sessionState('s1')).toBe('running')
+  })
+
+  it('a worker that cannot start says why and leaves nothing behind', () => {
+    const failing = setup()
+    ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })
+    expect(failing.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })).toBe('no binary')
+    expect(failing.bridge.isRunning('s1')).toBe(false)
+  })
 
   it('starts a new session under its id with the session environment and no login token', async () => {
     const { bridge, runtimes, ledgerEntries } = setup()

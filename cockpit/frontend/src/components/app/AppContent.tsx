@@ -153,7 +153,7 @@ function AppContentInner() {
     // worker of another space would wait out the whole loop (minutes in a
     // background tab, where the browser throttles the timers).
     const knownProject = (projectId: string) => projectsRef.current.some((project) => project.projectId === projectId);
-    const openWorker = async (request: SpawnRequest) => {
+    const openWorker = async (request: SpawnRequest, inChat: boolean) => {
       // Decided before loading the project — that can auto-select it into the empty pane.
       const replacePaneId = request.placement === 'replace-empty-desk' ? paneStore.findEmptyDeskPane() : null;
       const inOpenSpace = (request.spaceId ?? null) === paneStore.getActiveSpaceId();
@@ -163,12 +163,14 @@ function AppContentInner() {
       }
       // The request names a further space by brain id; absent = main, which the pane store calls null.
       // Its id is the worker's session id — the requester already got the worker's address from it.
-      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId });
+      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId, inChat });
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
-        void api.claimSpawn(request.id).then((response) => {
-          if (response.ok) return openWorker(request);
+        void api.claimSpawn(request.id).then(async (response) => {
+          if (!response.ok) return;
+          const { runtime } = await response.json() as { runtime?: string };
+          return openWorker(request, runtime === 'sdk');
         }).catch(() => { /* host gone — the request is dropped with it */ });
       }
     };

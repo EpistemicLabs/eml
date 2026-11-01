@@ -30,6 +30,8 @@ export interface WorkerBridge {
   unattendedWorkers(): number
   sweepIdleWorkers(idleMs: number, turnOf: WorkerTurnOf): number
   evictQuietWorker(minQuietMs: number, turnOf: WorkerTurnOf): boolean
+  /** Whether the machine has room for another worker; a request waits while it has not. */
+  hasRoom(): boolean
 }
 
 export interface WorkerStartDeps {
@@ -88,6 +90,10 @@ export class WorkerStarter {
       .filter((request) => noTabs || this.now() - Date.parse(request.createdAt) >= this.graceMs)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     for (const request of due) {
+      if (!this.deps.bridge.hasRoom()) {
+        this.deps.log(`[worker] little free memory; ${request.id} waits`)
+        return
+      }
       if (this.deps.bridge.unattendedWorkers() >= this.maxUnattended && !this.deps.bridge.evictQuietWorker(this.minQuietMs, this.deps.turnOf)) {
         this.deps.log(`[worker] ${this.deps.bridge.unattendedWorkers()} workers run without a client, none quiet long enough; ${request.id} waits`)
         return

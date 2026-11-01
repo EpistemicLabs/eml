@@ -1053,6 +1053,8 @@ export function addWorkerPane(opts: {
   replacePaneId?: string | null;
   /** The worker's session id, when the host fixed it in advance (the spawn request id — host spawn-api.ts). */
   sessionId?: string;
+  /** The host already runs it in chat: the pane only joins, with nothing to send. */
+  inChat?: boolean;
 }): string {
   const from = opts.fromSessionId
     ? snapshot.desks
@@ -1060,7 +1062,7 @@ export function addWorkerPane(opts: {
         .find(({ pane }) => pane.sessionId === opts.fromSessionId)
     : undefined;
   const newPane: PaneState = {
-    ...createPane('terminal', opts.projectId),
+    ...createPane(opts.inChat ? 'chat' : 'terminal', opts.projectId),
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.title ? { title: opts.title } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
@@ -1089,7 +1091,7 @@ export function addWorkerPane(opts: {
   if (replaced && !hasPendingShellCommand(opts.replacePaneId!)) {
     // Queue the prompt first: the pane is on screen, so it mounts (and reads
     // its first message) as soon as the snapshot changes.
-    enqueuePendingShellCommand(newPane.id, opts.prompt);
+    if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
     setSnapshot({
       ...snapshot,
       activeDeskId: replaced.id,
@@ -1103,7 +1105,7 @@ export function addWorkerPane(opts: {
   const idx = from && from.desk.id === target.id ? target.panes.findIndex(p => p.id === from.pane.id) : target.panes.length - 1;
   const panes = [...target.panes.slice(0, idx + 1), newPane, ...target.panes.slice(idx + 1)];
   setSnapshot({ ...snapshot, desks: desks.map(s => (s.id === target.id ? { ...s, panes } : s)) });
-  enqueuePendingShellCommand(newPane.id, opts.prompt);
+  if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
   return newPane.id;
 }
 

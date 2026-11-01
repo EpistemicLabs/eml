@@ -1,6 +1,7 @@
 import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
+import type { StartWorker } from './application/start-worker.js'
 import { projectIdForBrain } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
 import type { BrainSpace, BrainSpaces } from './brain-space.js'
@@ -16,7 +17,8 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *                                sandbox has no network (spawn-inbox.ts)
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
  *                                http.ts); the first tab wins and opens the pane,
- *                                with the request id as the worker's session id
+ *                                with the request id as the worker's session id.
+ *                                A chat worker starts here; the answer's `runtime` says so
  * plus the `spawns` / `spawn` / `claimed` events on /api/events.
  *
  * The same token and inbox carry a session naming itself (session-title-cli.ts):
@@ -120,7 +122,7 @@ export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, b
 export async function handleSpawnApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  deps: SpawnDeps,
+  deps: SpawnDeps & { workers: StartWorker },
   pathname: string,
   method: string,
   json: Json,
@@ -149,9 +151,15 @@ export async function handleSpawnApi(
 
   const claim = pathname.match(/^\/api\/spawns\/([0-9a-f-]{36})\/claim$/)
   if (claim && method === 'POST') {
+    // Without room it stays queued, and the host starts it once there is (worker-start.ts).
+    const waiting = deps.spawns.list().find((candidate) => candidate.id === claim[1])
+    if (waiting?.fromSessionId && !deps.workers.hasRoom()) {
+      json(res, 409, { error: { code: 'NO_ROOM', message: 'Too little free memory for another worker right now' } })
+      return true
+    }
     const request = deps.spawns.claim(claim[1])
     if (!request) json(res, 409, { error: { code: 'ALREADY_CLAIMED', message: 'Taken by another tab or expired' } })
-    else json(res, 200, request)
+    else json(res, 200, { ...request, runtime: deps.workers.forPane(request) })
     return true
   }
   return false

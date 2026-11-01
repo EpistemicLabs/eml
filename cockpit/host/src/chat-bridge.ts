@@ -13,6 +13,7 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
+import type { SpawnRequest } from './domain/spawn-request.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -54,6 +55,9 @@ const MAX_IMAGES = 10
 const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
 // A model id may carry a variant: `opus[1m]`.
 const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
+
+// The mode a worker runs in, as in the terminal: nobody is there to answer.
+const WORKER_MODE = 'auto'
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
@@ -360,10 +364,57 @@ export class ChatBridge {
     provider.trustProject(projectPath, sessionSpaceOf(space))
     this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey)
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
+    // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
+    const stored = this.ctx.ledger.get(sessionId)
+    if (stored?.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
     // A terminal session kept for Remote Control is not one any more.
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
+  }
+
+  /**
+   * Start a worker a session asked for, with no client: under the request id (the
+   * address the requester already has), its prompt as the first message. A pane
+   * joins it like any client. Returns why it could not start, or null.
+   */
+  startWorker(request: SpawnRequest): string | null {
+    const sessionId = request.id
+    const space = this.ctx.spaces.resolve(request.spaceId ?? null)
+    const project = this.projectFor(space, request.projectId)
+    if (!project?.path) return `project ${request.projectId} has no folder`
+    const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
+    const problem = provider.runtime.problem() ?? space.agent?.problem(provider.id)
+    if (problem) return problem
+    if (this.entries.has(sessionId)) return 'already running'
+    const { projectId, path } = project
+    let failure: string | null = null
+    // A new id has no other side to wait for, so this runs right away.
+    void this.handoff().enter('sdk', sessionId, () => {
+      const entry: ChatEntry = {
+        sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
+        openRequests: new Set(), timeoutId: null, turnEnded: null,
+      }
+      this.entries.set(sessionId, entry)
+      this.ctx.events.reset(sessionId)
+      try {
+        provider.trustProject(path, sessionSpaceOf(space))
+        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, true, null, space.ledgerKey)
+        this.ctx.ledger.setRuntime(sessionId, 'sdk')
+        this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+        if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
+        this.startRuntime(entry, provider, space, false)
+        // Working from here on: its first hook comes only once the agent CLI has booted.
+        this.ctx.onTurn(sessionId, 'working')
+        this.sendMessage(entry, request.prompt)
+        this.log(`starting worker ${sessionId} in ${path}`)
+      } catch (error) {
+        this.entries.delete(sessionId)
+        this.ctx.events.forget(sessionId)
+        failure = error instanceof Error ? error.message : String(error)
+      }
+    })
+    return failure
   }
 
   private startRuntime(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, resume: boolean): void {
