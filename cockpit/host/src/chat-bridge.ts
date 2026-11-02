@@ -487,7 +487,9 @@ export class ChatBridge {
       } catch (error) {
         this.entries.delete(sessionId)
         this.ctx.events.forget(sessionId)
-        failure = error instanceof Error ? error.message : String(error)
+        // This text reaches an HTTP response: the message only, never the raw value.
+        failure = error instanceof Error ? error.message : 'the worker could not start'
+        this.log(`worker ${sessionId} did not start: ${failure}`)
       }
     })
     return failure

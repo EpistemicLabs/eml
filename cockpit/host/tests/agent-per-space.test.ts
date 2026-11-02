@@ -94,7 +94,8 @@ describe('a space with its own agent', () => {
     open(AGENT)
     const mcp = JSON.parse(readFileSync(mcpFile, 'utf8'))
     expect(Object.keys(mcp.mcpServers).sort()).toEqual(['alpha', 'eml_brain'])
-    expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
+    // Windows has no owner-only mode bits.
+    if (process.platform !== 'win32') expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
   })
 
   it('the session files name the agent: the host sets the identity, the brain keeps its name', () => {
