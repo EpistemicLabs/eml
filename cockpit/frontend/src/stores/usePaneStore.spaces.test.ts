@@ -58,4 +58,15 @@ describe('opening a session of another space', () => {
     store.activatePane(paneId);
     expect(store.getActiveSpaceId()).toBe(OTHER);
   });
+
+  it('opens a new session as the settings and provider say, an existing one as it was', () => {
+    const viewOf = (paneId: string) => store.getDesks().flatMap((desk) => desk.panes).find((pane) => pane.id === paneId)?.paneView;
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('terminal');
+    store.setDefaultProvider('claude');
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('chat');
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'codex' }))).toBe('terminal');
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', sessionId: 'kept' }))).toBe('terminal');
+    storage.set('cockpit-settings', JSON.stringify({ chatDefault: false }));
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('terminal');
+  });
 });

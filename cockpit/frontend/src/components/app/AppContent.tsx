@@ -11,6 +11,7 @@
 // the part above the on-screen keyboard.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import CommandPalette from '../command-palette/CommandPalette';
@@ -102,6 +103,8 @@ function AppContentInner() {
   projectsBySpaceRef.current = projectsBySpace;
   const refreshProjectsRef = React.useRef(refreshProjectsSilently);
   refreshProjectsRef.current = refreshProjectsSilently;
+  const { data: providers } = useProviders();
+  paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
   // One test for "empty pane" everywhere: a terminal pane whose projectId and
   // pre-minted session both resolve to no project (Choose Your Project), or a
   // note pane with neither a note nor a project (Pick a project…). Against the

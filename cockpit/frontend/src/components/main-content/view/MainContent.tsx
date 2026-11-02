@@ -18,7 +18,7 @@ import { NotePane } from '../../notes/NotePane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
-import { addPaneNextTo, consumePendingShellCommand, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
 
@@ -86,7 +86,7 @@ function MainContent({
   // store's fallbacks (this pane's id → desk default → a sibling's project).
   const handleAddPane = (view: PaneView, provider?: LLMProvider) => {
     addPaneNextTo(paneId, {
-      paneView: view,
+      paneView: view === 'terminal' ? newSessionView(provider) : view,
       ...(provider ? { provider } : {}),
       ...(selectedProject ? { projectId: selectedProject.projectId } : {}),
     });

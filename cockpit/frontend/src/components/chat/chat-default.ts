@@ -1,3 +1,8 @@
+// Whether a new session opens in chat. An unknown provider stays in the terminal: only Claude has a chat.
+export function startsInChat(session: { chatDefault: boolean; provider: string | null }): boolean {
+  return session.chatDefault && session.provider === 'claude';
+}
+
 // When a terminal pane should show its session in the chat view instead.
 export function shouldOpenInChat(pane: {
   view: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { heldCommandAfter, shouldOpenInChat } from './chat-default';
+import { heldCommandAfter, shouldOpenInChat, startsInChat } from './chat-default';
 
 describe('shouldOpenInChat', () => {
   const base = { view: 'terminal', runtime: null, chatDefault: true, pickedView: undefined, provider: 'claude', queuedCommand: false };
@@ -36,5 +36,19 @@ describe('heldCommandAfter', () => {
 
   it('leaves a command not read yet alone until it is done', () => {
     expect(heldCommandAfter(undefined, 'working')).toBeUndefined();
+  });
+});
+
+describe('startsInChat', () => {
+  it('opens a new Claude session in chat', () => {
+    expect(startsInChat({ chatDefault: true, provider: 'claude' })).toBe(true);
+  });
+
+  it.each([
+    ['the setting is off', { chatDefault: false, provider: 'claude' }],
+    ['it is a Codex session', { chatDefault: true, provider: 'codex' }],
+    ['the default provider is not known yet', { chatDefault: true, provider: null }],
+  ])('stays in the terminal when %s', (_why, session) => {
+    expect(startsInChat(session)).toBe(false);
   });
 });

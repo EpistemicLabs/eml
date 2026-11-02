@@ -26,6 +26,8 @@
  */
 import type { LLMProvider } from '@/types/app';
 import { useCallback, useSyncExternalStore } from 'react';
+import { startsInChat } from '@/components/chat/chat-default';
+import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { setTopView } from './useTopViewStore';
 
 /**
@@ -930,6 +932,18 @@ export function isEmptyPane(pane: PaneState): boolean {
   return isEmptyPaneTest(pane);
 }
 
+// The provider a session without its own runs with (host: /api/providers); null until known.
+let defaultProvider: string | null = null;
+
+export function setDefaultProvider(provider: string | null): void {
+  defaultProvider = provider;
+}
+
+/** The view a new session opens in, so it never starts a terminal just to leave it. */
+export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
+  return startsInChat({ chatDefault: readSettings().chatDefault, provider: provider ?? defaultProvider }) ? 'chat' : 'terminal';
+}
+
 /** The pane that already holds the target's item, on any desk. */
 function findPaneHolding(target: OpenTarget): PaneState | undefined {
   const panes = snapshot.desks.flatMap(s => s.panes);
@@ -960,10 +974,12 @@ export function paneHoldingSession(sessionId: string): PaneState | undefined {
 export function openInPane(target: OpenTarget): string {
   setTopView('desks');
   const existing = findPaneHolding(target);
-  // A session the user moved to the chat view opens there; a new one is a terminal.
-  const shownView: PaneView = target.surface === 'terminal' && target.sessionId && (target.chat || snapshot.sessionViews[target.sessionId] === 'chat')
-    ? 'chat'
-    : target.surface;
+  // A session the user moved to the chat view opens there; a new one as the settings say.
+  const shownView: PaneView = target.surface !== 'terminal'
+    ? target.surface
+    : !target.sessionId
+      ? newSessionView(target.provider)
+      : target.chat || snapshot.sessionViews[target.sessionId] === 'chat' ? 'chat' : 'terminal';
   if (existing) {
     activatePane(existing.id);
     if (existing.paneView !== shownView) {
