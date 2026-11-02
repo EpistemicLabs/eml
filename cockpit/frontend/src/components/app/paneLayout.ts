@@ -11,8 +11,8 @@ export const DEFAULT_MAIN_WIDTH = 1 / 3;
 /** The main column never gets narrower than its toolbar and a usable terminal. */
 export const MIN_MAIN_PX = 320;
 
-/** Below this a pane's body (MainContent's min-w-[280px]) starts to clip. */
-export const MIN_STACK_PANE_PX = 280;
+/** A pane in the stack keeps room for its toolbar and some of its title, the handle for a swap. */
+export const MIN_STACK_PANE_PX = 360;
 
 // Grid geometry for a pane at index `i` of `n` total. ≤3 panes share one row;
 // 4+ split into a top row of ceil(n/2) and a bottom row of floor(n/2).

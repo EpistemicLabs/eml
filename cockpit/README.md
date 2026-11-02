@@ -262,6 +262,12 @@ with `--session-id`; a `--resume` that finds no conversation falls back to a fre
 under the same id. Desks (the top tabs; `spaces` in the store) keep their panes mounted while hidden, so switching desks never
 touches a terminal.
 
+A desk can have one **main pane** (the toolbar's panel icon): a full-height column at the left, a third wide until its
+divider is dragged, with the other panes in the even grid beside it. The width is remembered per desk. Like a pinned pane, a
+main pane can't be closed or moved to another desk until main is turned off. Dragging a pane's title onto another pane swaps
+the two, and whichever lands in the main column is the main pane. Panes keep a fixed DOM order and only their grid placement
+changes (`components/app/paneLayout.ts`), so none of this remounts a terminal or chat or loses its scroll position.
+
 ## Brain views
 
 The header's fixed **Brain** tab is a brain *surface*: a small mini-app (dashboard → project →
