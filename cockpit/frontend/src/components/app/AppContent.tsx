@@ -411,6 +411,9 @@ function AppContentInner() {
                   <PaneGridLayout
                     paneIds={desk.panes.map(p => p.id)}
                     activePaneId={desk.activePaneId}
+                    deskId={desk.id}
+                    mainPaneId={desk.mainPaneId}
+                    mainWidth={desk.mainWidth}
                     deskActive={isDeskActive}
                     compact={compact}
                     projects={projectsOfSpace(projectsBySpace, desk.spaceId)}

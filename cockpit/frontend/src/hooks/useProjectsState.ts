@@ -129,7 +129,7 @@ export function useProjectsState() {
   const handleSessionDelete = useCallback((sessionId: string) => {
     for (const pane of paneStore.getPanes()) {
       if (pane.sessionId !== sessionId) continue;
-      if (pane.pinned) paneStore.clearPane(pane.id);
+      if (paneStore.isPaneProtected(pane.id)) paneStore.clearPane(pane.id);
       else paneStore.removePane(pane.id);
     }
     setProjects((previous) =>

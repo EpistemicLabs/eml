@@ -5,7 +5,9 @@
 // toolbar, the others on hover of their top-right corner (MainContent).
 // Compact (phone) layout: the active pane fills the box (the header's pane
 // picker switches); the others stay mounted, hidden, so their terminals run on.
-import React, { useCallback, useRef } from 'react';
+// A desk may have a main pane: a full-height column at the left, resized by its
+// divider (paneLayout.ts). Dragging a pane title onto another pane swaps the two.
+import React, { useCallback, useRef, useState } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
 import { usePaneContext } from '@/hooks/usePaneContext';
@@ -13,34 +15,8 @@ import { closePane } from '@/lib/pane-close';
 import * as paneStore from '@/stores/usePaneStore';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
-
-const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
-const lcm = (a: number, b: number): number => (a / gcd(a, b)) * b;
-
-// Grid geometry for a pane at index `i` of `n` total. ≤3 panes share one row;
-// 4+ split into a top row of ceil(n/2) and a bottom row of floor(n/2).
-// Returned as explicit grid placement so every pane stays a flat sibling of
-// ONE grid container — crossing the 3→4 boundary only moves a pane's grid
-// cell, it never reparents (and thus never unmounts/remounts) the pane, so
-// terminal state survives the reflow.
-function paneGridGeometry(i: number, n: number) {
-  const twoRows = n > 3;
-  const top = twoRows ? Math.ceil(n / 2) : n;
-  const bottom = n - top;
-  const cols = twoRows ? lcm(top, bottom) : n;
-  const inTopRow = !twoRows || i < top;
-  const rowCount = inTopRow ? top : bottom;
-  const posInRow = inTopRow ? i : i - top;
-  const span = cols / rowCount;
-  return {
-    cols,
-    twoRows,
-    gridRow: inTopRow ? 1 : 2,
-    gridColumn: `${posInRow * span + 1} / span ${span}`,
-    isLastInRow: posInRow === rowCount - 1,
-    inTopRow,
-  };
-}
+import { endPaneDrag, getDraggedPane } from './paneDrag';
+import { deskLayout, mainColumnWidth, mainWidthAtPointer } from './paneLayout';
 
 // Hover-to-focus: pull keyboard focus into a pane's primary input the
 // moment the pointer enters it, so the user can type immediately — or
@@ -67,6 +43,9 @@ type SlotDeps = {
 export function PaneGridLayout({
   paneIds,
   activePaneId,
+  deskId,
+  mainPaneId,
+  mainWidth,
   deskActive,
   compact,
   projects,
@@ -75,19 +54,25 @@ export function PaneGridLayout({
 }: {
   paneIds: string[];
   activePaneId: string;
+  deskId: string;
+  mainPaneId?: string;
+  mainWidth?: number;
   // Whether this grid's desk is the visible one. Panes in a hidden desk
   // are never "active" — that keeps the active-only chrome (view switcher)
   // and auto-focus from running in backgrounded desks.
   deskActive: boolean;
 } & SlotDeps) {
   const slotDeps: SlotDeps = { compact, projects, onSessionStarted, onStartNewChat };
+  const gridRef = useRef<HTMLDivElement>(null);
+  // The pane a dragged pane title would swap with.
+  const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
   if (paneIds.length === 0) return null;
 
   if (compact && paneIds.length > 1) {
     return <CompactPaneStack paneIds={paneIds} activePaneId={activePaneId} deskActive={deskActive} slotDeps={slotDeps} />;
   }
 
-  if (paneIds.length === 1) {
+  if (compact) {
     // The last pane closes back to the empty state (removePane) — offered
     // only when there is something to close. Keyed like the grid's panes: a
     // pane replaced in place (first run) must mount fresh and read its own
@@ -96,28 +81,32 @@ export function PaneGridLayout({
   }
 
   const n = paneIds.length;
-  const canRemove = n > 1;
-  const { cols, twoRows } = paneGridGeometry(0, n);
+  const layout = deskLayout(n, mainPaneId === paneIds[0], mainWidth);
+  // Rendered in a fixed order, placed by the grid: a swap must not move a pane
+  // in the DOM, which would reset the scroll position of what is inside it.
+  const rendered = [...paneIds].sort();
 
   return (
     <div
-      className="grid h-full w-full"
+      ref={gridRef}
+      className="relative grid h-full w-full"
       style={{
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-        gridTemplateRows: twoRows ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)',
-      }}
+        gridTemplateColumns: layout.gridTemplateColumns,
+        gridTemplateRows: layout.gridTemplateRows,
+        ...(layout.hasMain ? { '--main-width': mainColumnWidth(mainWidth, n - 1) } : {}),
+      } as React.CSSProperties}
     >
-      {paneIds.map((paneId, i) => {
+      {rendered.map((paneId) => {
         const isActive = deskActive && paneId === activePaneId;
-        const geo = paneGridGeometry(i, n);
+        const placement = layout.placements[paneIds.indexOf(paneId)];
         return (
           <div
             key={paneId}
-            style={{ gridColumn: geo.gridColumn, gridRow: String(geo.gridRow) }}
+            style={{ gridColumn: placement.gridColumn, gridRow: placement.gridRow }}
             className={[
               'group relative flex min-h-0 min-w-0 flex-col overflow-hidden',
-              !geo.isLastInRow && 'border-r border-foreground/15',
-              geo.twoRows && geo.inTopRow && 'border-b border-foreground/15',
+              placement.borderRight && 'border-r border-foreground/15',
+              placement.borderBottom && 'border-b border-foreground/15',
               !isActive && 'cursor-pointer',
             ]
               .filter(Boolean)
@@ -128,12 +117,86 @@ export function PaneGridLayout({
               if (target?.closest('[data-pane-close]')) return;
               paneStore.activatePane(paneId);
             }}
+            // In the capture phase: a pane title dropped on a terminal or an
+            // input must swap the panes, not land there as text.
+            onDragOverCapture={(event) => {
+              const dragged = getDraggedPane();
+              if (!dragged || !paneStore.canSwapPanes(dragged, paneId)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = 'move';
+              if (swapTargetId !== paneId) setSwapTargetId(paneId);
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+              if (swapTargetId === paneId) setSwapTargetId(null);
+            }}
+            onDropCapture={(event) => {
+              const dragged = getDraggedPane();
+              if (!dragged || !paneStore.canSwapPanes(dragged, paneId)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              endPaneDrag();
+              setSwapTargetId(null);
+              paneStore.swapPanes(dragged, paneId);
+            }}
           >
-            <PaneSlot paneId={paneId} isActive={isActive} canClose={canRemove} slotDeps={slotDeps} />
+            <PaneSlot
+              paneId={paneId}
+              isActive={isActive}
+              canClose={n > 1 ? true : 'unlessEmpty'}
+              isMain={paneId === mainPaneId}
+              slotDeps={slotDeps}
+            />
+            {swapTargetId === paneId && (
+              <div aria-hidden className="pointer-events-none absolute inset-0 z-40 bg-primary/15 ring-2 ring-inset ring-primary" />
+            )}
           </div>
         );
       })}
+      {layout.hasMain && <MainDivider gridRef={gridRef} deskId={deskId} stackCount={n - 1} />}
     </div>
+  );
+}
+
+// Drags the main column's edge. The width goes straight onto the grid while the
+// pointer moves, so the panes aren't rendered again for each step, and into the
+// store when it lets go. Terminals refit from their own ResizeObserver, once the
+// pointer pauses, so the session isn't sent a resize per step.
+function MainDivider({
+  gridRef,
+  deskId,
+  stackCount,
+}: {
+  gridRef: React.RefObject<HTMLDivElement | null>;
+  deskId: string;
+  stackCount: number;
+}) {
+  const shareAt = (event: React.PointerEvent) => {
+    const box = gridRef.current!.getBoundingClientRect();
+    return mainWidthAtPointer(event.clientX, box.left, box.width, stackCount);
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the main pane"
+      title="Drag to resize the main pane"
+      className="absolute inset-y-0 z-30 w-2 -translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-primary/30 active:bg-primary/40"
+      style={{ left: 'var(--main-width)' }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+        gridRef.current!.style.setProperty('--main-width', mainColumnWidth(shareAt(event), stackCount));
+      }}
+      onPointerUp={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+        paneStore.setMainWidth(deskId, shareAt(event));
+      }}
+    />
   );
 }
 
@@ -178,11 +241,13 @@ function PaneSlot({
   paneId,
   isActive,
   canClose,
+  isMain = false,
   slotDeps,
 }: {
   paneId: string;
   isActive: boolean;
   canClose: boolean | 'unlessEmpty';
+  isMain?: boolean;
   slotDeps: SlotDeps;
 }) {
   const ctx = usePaneContext(paneId, slotDeps.projects);
@@ -204,6 +269,10 @@ function PaneSlot({
     closePane(paneId);
   }, [paneId]);
 
+  const onToggleMainPane = useCallback(() => {
+    paneStore.toggleMainPane(paneId);
+  }, [paneId]);
+
   if (!ctx.pane) return null;
 
   return (
@@ -221,10 +290,12 @@ function PaneSlot({
         paneView={ctx.pane.paneView}
         onSetPaneView={onSetPaneView}
         onClosePane={
-          (canClose === 'unlessEmpty' ? ctx.project !== null : canClose) && !ctx.pane.pinned
+          (canClose === 'unlessEmpty' ? ctx.project !== null : canClose) && !ctx.pane.pinned && !isMain
             ? onClosePane
             : undefined
         }
+        isMainPane={isMain}
+        onToggleMainPane={onToggleMainPane}
         paneLabel={ctx.pane.label ?? null}
       />
     </div>
