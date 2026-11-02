@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
-import { Brain, Menu } from 'lucide-react';
+import { Brain } from 'lucide-react';
 
 export default function AppContent() {
   return (
@@ -85,6 +85,10 @@ function AppContentInner() {
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
+  // The phone has no way back from the Brain tab, so it stays on the desks.
+  useEffect(() => {
+    if (compact && topView === 'brain') setTopView('desks');
+  }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
   // Streams from the host (Claude Code hooks → /api/events). A finished
@@ -307,19 +311,9 @@ function AppContentInner() {
     >
       {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
           The sidebar rail and the pane grid start below it, top-aligned. */}
+      {!compact && (
       <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-sm box-content">
-        {compact && (
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Projects and sessions"
-            className="flex w-12 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        )}
         {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
-        {!compact && (
         <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[18px] font-semibold tracking-wide text-primary">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
             <Brain className="h-4 w-4 text-primary-foreground" />
@@ -344,20 +338,18 @@ function AppContentInner() {
             </span>
           )}
         </div>
-        )}
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        {compact ? (
-          <CompactNavBar projects={projects} />
-        ) : (
-          <div className="min-w-0 flex-1">
-            <DeskTabBar />
-          </div>
-        )}
+        <div className="min-w-0 flex-1">
+          <DeskTabBar />
+        </div>
       </div>
+      )}
 
       {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}
-      <UpdateBanner />
-      <BrainHygieneBanner />
+      <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
+        <UpdateBanner />
+        <BrainHygieneBanner />
+      </div>
 
       <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
@@ -384,7 +376,11 @@ function AppContentInner() {
 
       {/* The home indicator's inset is only needed at the screen's bottom edge. With the keyboard
           up the app already ends above it, but iOS keeps reporting the inset. */}
-      <div className={cn('relative flex min-w-0 flex-1 flex-col', !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}>
+      <div
+        className={cn('relative flex min-w-0 flex-1 flex-col', !compact && !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}
+        style={compact ? ({ '--bottom-inset': keyboardOpen ? '0px' : 'env(safe-area-inset-bottom)' } as React.CSSProperties) : undefined}
+      >
+        {compact && <CompactNavBar onOpenMenu={openDrawer} />}
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is
               active; the desks below stay mounted (hidden) so terminals

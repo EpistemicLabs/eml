@@ -119,7 +119,7 @@ function MainContent({
       {/* Body area: title (top-left), floating toolbar (top-right of THIS
           area), and the pane body. */}
       <div className="relative flex min-h-0 min-w-[280px] flex-1 flex-col overflow-hidden">
-        {/* pr-40 keeps the title clear of the absolutely positioned tab
+        {/* pr-56 keeps the title clear of the absolutely positioned tab
             switcher. It must not be overridden by a responsive px-* (a
             former sm:px-4 reset it to 1rem, and long titles ran under the
             icons). */}
@@ -127,7 +127,7 @@ function MainContent({
             panes, so the pane gives that height to its content. */}
         {!compact && (
           <>
-            <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-40 pb-1 pl-3 sm:pl-4">
+            <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-56 pb-1 pl-3 sm:pl-4">
               <MainContentTitle
                 paneId={paneId}
                 selectedProject={selectedProject}
@@ -148,7 +148,11 @@ function MainContent({
           </>
         )}
 
-        <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? 'px-1' : 'px-2', paneView === 'chat' ? 'pb-0' : compact ? 'pb-1' : 'pb-2')}>
+        <div
+          className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? (paneView === 'chat' ? 'px-0' : 'px-1') : 'px-2', paneView === 'chat' ? 'pb-0' : compact ? '' : 'pb-2')}
+          // Only a chat runs under the floating header and to the bottom edge.
+          style={compact && paneView !== 'chat' ? { paddingTop: 'calc(env(safe-area-inset-top) + 52px)', paddingBottom: 'calc(var(--bottom-inset, 0px) + 4px)' } : undefined}
+        >
           <ErrorBoundary showDetails>
             {paneView === 'terminal' ? (
               <div className="flex min-h-0 flex-1 flex-col">

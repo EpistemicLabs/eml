@@ -84,6 +84,14 @@
   --type-learning: #5f6b12;
   --subject-active: #186c53;
   --hash-lightness: 38%;
+  --glass-bar: rgba(255, 255, 255, .70);
+  --glass-field: rgba(255, 255, 255, .88);
+  --glass-solid: #fff;
+  --glass-rim: rgba(255, 255, 255, .70);
+  --glass-line-bar: rgba(0, 0, 0, .10);
+  --glass-line-field: rgba(0, 0, 0, .42);
+  --glass-shadow: 0 8px 24px rgba(16, 24, 40, .12), 0 1px 2px rgba(16, 24, 40, .08);
+  --glass-edge: 246 247 249;
 }
 
 html.dark {
@@ -99,6 +107,14 @@ html.dark {
   --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
+  --glass-bar: rgba(26, 30, 36, .62);
+  --glass-field: rgba(26, 30, 36, .86);
+  --glass-solid: #1b1f26;
+  --glass-rim: rgba(255, 255, 255, .10);
+  --glass-line-bar: rgba(255, 255, 255, .16);
+  --glass-line-field: rgba(255, 255, 255, .34);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, .45), 0 1px 2px rgba(0, 0, 0, .40);
+  --glass-edge: 11 13 16;
   --color-review: #d9a441;
   --color-background: #0b0d10;
   --color-foreground: #e6e8ec;
@@ -174,6 +190,40 @@ body {
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border: 1px solid var(--color-border);
+}
+
+/* Frosted glass on the phone. The filter values are literal: Safari is reported not
+   to resolve custom properties inside -webkit-backdrop-filter. */
+.glass-bar, .glass-field { box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
+.glass-bar { background: var(--glass-bar); border: 1px solid var(--glass-line-bar); }
+.glass-field { background: var(--glass-field); border: 1px solid var(--glass-line-field); }
+.glass-solid { background: var(--glass-solid); border: 1px solid var(--glass-line-field); box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
+.glass-bar, .glass-field {
+  -webkit-backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
+  backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
+}
+html.dark .glass-bar, html.dark .glass-field {
+  -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(.55);
+  backdrop-filter: blur(18px) saturate(170%) brightness(.55);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-bar, .glass-field { background: var(--glass-solid); border-color: var(--glass-line-field); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-bar, .glass-field, html.dark .glass-bar, html.dark .glass-field {
+    background: var(--glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-color: var(--glass-line-field);
+  }
+}
+/* Scroll edges fade without blur: a gradient costs almost nothing. */
+.glass-edge-top { background: linear-gradient(to bottom, rgb(var(--glass-edge)) 0, rgb(var(--glass-edge) / .96) env(safe-area-inset-top), rgb(var(--glass-edge) / .55) calc(env(safe-area-inset-top) + 28px), rgb(var(--glass-edge) / 0) 100%); }
+.glass-edge-bottom { background: linear-gradient(to top, rgb(var(--glass-edge) / .92) 0, rgb(var(--glass-edge) / .6) 45%, rgb(var(--glass-edge) / 0) 100%); }
+/* Readable secondary text in the chat, phone only. */
+@media (max-width: 767px) {
+  .chat-pane { --color-muted-foreground: #4a5260; }
+  html.dark .chat-pane { --color-muted-foreground: #9aa4b1; }
 }
 
 @utility nav-divider {

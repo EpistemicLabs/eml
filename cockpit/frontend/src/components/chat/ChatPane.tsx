@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
@@ -304,12 +305,14 @@ function QuestionCard({ item, onAnswer }: { item: QuestionItem; onAnswer: (id: s
 
 function JumpToLatest() {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const compact = useCompactLayout();
   if (isAtBottom) return null;
   return (
     <button
       type="button"
       onClick={() => { void scrollToBottom(); }}
-      className={cn('absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
+      className={cn('absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 shadow', TARGET)}
+      style={compact ? { bottom: 'calc(var(--composer-offset) + 8px)' } : undefined}
     >
       <ArrowDown className="h-3 w-3" /> Jump to latest
     </button>
@@ -480,10 +483,29 @@ export function ChatPane({
     pinRef.current?.();
   }, [latestSentId]);
 
+  // On a phone the input floats over the conversation, so the view keeps its height
+  // and the input's height goes into the conversation's bottom padding.
+  const compact = useCompactLayout();
+  const inputRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const input = inputRef.current;
+    const root = rootRef.current;
+    if (!compact || !input || !root || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => root.style.setProperty('--composer-height', `${input.offsetHeight}px`));
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [compact]);
+
   return (
-    <div ref={rootRef} className="chat-pane flex h-full min-h-0 flex-col">
+    <div
+      ref={rootRef}
+      className="chat-pane relative flex h-full min-h-0 flex-col"
+      // 6 px above the keyboard; with it closed, partly into the home indicator's inset.
+      style={compact ? ({ '--composer-bottom': 'max(6px, calc(var(--bottom-inset, 0px) - 14px))', '--composer-offset': 'calc(var(--composer-height, 96px) + var(--composer-bottom))' } as React.CSSProperties) : undefined}
+    >
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
+          <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + 60px)', paddingBottom: 'calc(var(--composer-offset) + 12px)' } : undefined}>
           <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
           {connection === 'superseded' && (
             <div className={cn(COLUMN, 'flex items-center gap-2 pb-1 text-muted-foreground')}>
@@ -491,13 +513,19 @@ export function ChatPane({
               <button type="button" onClick={reconnect} className={cn('underline', TARGET)}>Bring it back here</button>
             </div>
           )}
+          </div>
         </StickToBottom.Content>
         <JumpToLatest />
         <PinOnSend pinRef={pinRef} unpinRef={unpinRef} />
         <FollowOnViewResize />
       </StickToBottom>
-      <div className={cn(COLUMN, 'flex-shrink-0 space-y-2 pt-3 pb-[5px]')}>
-        {problem && <div role="alert" className="text-destructive break-words">{problem}</div>}
+      {compact && <div aria-hidden="true" className="glass-edge-bottom pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-[calc(var(--composer-offset)+16px)]" />}
+      <div
+        ref={inputRef}
+        className={compact ? 'absolute inset-x-2 z-10 space-y-2' : cn(COLUMN, 'flex-shrink-0 space-y-2 pt-3 pb-[5px]')}
+        style={compact ? { bottom: 'var(--composer-bottom)' } : undefined}
+      >
+        {problem && <div role="alert" className={cn('text-destructive break-words', compact && 'rounded-lg border border-border bg-card px-3 py-2')}>{problem}</div>}
         {searching && (
           <ChatSearch
             items={chat.items}
@@ -537,14 +565,16 @@ export function ChatPane({
           onStop={interrupt}
           onSetMode={setMode}
           onStopAgent={stopAgent}
+          session={session}
+          onSetModel={setModel}
         />
         )}
-        <TerminalStatusBar
+        {!compact && <TerminalStatusBar
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
-          modelSlot={<div className="-my-3 md:my-0"><ModelPicker chat={chat} onSetModel={setModel} /></div>}
-          className="-mt-1 border-t-0 px-1 pt-0.5 text-muted-foreground md:mt-0"
-        />
+          modelSlot={<div><ModelPicker chat={chat} onSetModel={setModel} /></div>}
+          className="mt-0 border-t-0 px-1 pt-0.5 text-muted-foreground"
+        />}
       </div>
     </div>
   );

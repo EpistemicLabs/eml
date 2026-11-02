@@ -1,12 +1,14 @@
 // The input: text, the `/` command menu, the mode switch and what runs in the
-// background, one container. The model picker sits in the status bar below it.
+// background, one container. The model picker sits in the status bar below it,
+// and on a phone, where there is no status bar, behind the context chip.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, Cpu, Loader2, Paperclip, Shield, Square, Terminal, Users, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, X } from 'lucide-react';
 
-import { modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
+import type { ProjectSession } from '@/types/app';
 
 import { currentModelOption, matchCommands, sentMessages, stepHistory, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
@@ -15,14 +17,15 @@ import { TARGET } from './tool-icons';
 
 /** A small button opening a list above it. */
 function ChipMenu({
-  label, icon, title, children, align = 'left', disabled = false,
+  label, icon, title, children, align = 'left', disabled = false, chevron = true,
 }: {
   label: ReactNode;
   icon: ReactNode;
   title: string;
   children: (close: () => void) => ReactNode;
-  align?: 'left' | 'center';
+  align?: 'left' | 'center' | 'right';
   disabled?: boolean;
+  chevron?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -52,14 +55,14 @@ function ChipMenu({
       >
         {icon}
         <span className="truncate">{label}</span>
-        {!disabled && <ChevronDown className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}
+        {chevron && !disabled && <ChevronDown className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}
       </button>
       {open && (
         <div
           role="menu"
           className={cn(
             'absolute bottom-full z-30 mb-1 max-h-72 w-80 max-w-[80vw] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg',
-            align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0',
+            align === 'center' ? 'left-1/2 -translate-x-1/2' : align === 'right' ? 'right-0' : 'left-0',
           )}
         >
           {children(() => setOpen(false))}
@@ -110,6 +113,44 @@ export function ModelPicker({ chat, onSetModel }: { chat: ChatState; onSetModel:
             onSelect={() => { onSetModel(option.id); close(); }}
           />
         ))}
+      </ChipMenu>
+    </div>
+  );
+}
+
+/** The phone's short context reading; a tap gives the rest of the desktop status bar. */
+function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: ProjectSession | null; onSetModel: (model: string) => boolean }) {
+  const current = currentModelOption(chat);
+  const tokens = chat.context?.usedTokens ?? session?.contextTokens ?? null;
+  const model = chat.model ?? session?.model ?? null;
+  const maxTokens = chat.context?.maxTokens ?? contextWindow(model);
+  const percent = tokens !== null ? `${Math.min(100, Math.round((tokens / maxTokens) * 100))}%` : '—';
+  const lastMessageAt = session?.lastMessageAt ?? null;
+  return (
+    <div className="flex-shrink-0">
+      <ChipMenu label={percent} title="Session details" align="right" chevron={false} icon={<Gauge className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}>
+        {(close) => (
+          <>
+            <div className="flex justify-between gap-2 px-2 py-1">
+              <span className="text-muted-foreground">Context</span>
+              <span>{tokens !== null ? `${formatTokens(tokens)} / ${formatTokens(maxTokens)} · ${percent}` : '—'}</span>
+            </div>
+            <div className="flex justify-between gap-2 px-2 py-1">
+              <span className="text-muted-foreground">Last message</span>
+              <span>{lastMessageAt ? formatAge(lastMessageAt, new Date()) : 'none yet'}</span>
+            </div>
+            <div className="mt-1 border-t border-border px-2 pt-2 pb-1 text-muted-foreground">Model</div>
+            {chat.models.map((option) => (
+              <MenuOption
+                key={option.id}
+                label={option.label}
+                description={option.description}
+                checked={option === current}
+                onSelect={() => { onSetModel(option.id); close(); }}
+              />
+            ))}
+          </>
+        )}
       </ChipMenu>
     </div>
   );
@@ -190,7 +231,7 @@ interface Attachment {
 }
 
 export function Composer({
-  sessionId, running, status, chat, onUse, onSend, onStop, onSetMode, onStopAgent,
+  sessionId, running, status, chat, onUse, onSend, onStop, onSetMode, onStopAgent, session, onSetModel,
 }: {
   sessionId: string;
   running: boolean;
@@ -203,6 +244,8 @@ export function Composer({
   onStop: () => void;
   onSetMode: (mode: string) => boolean;
   onStopAgent: (taskId: string) => void;
+  session: ProjectSession | null;
+  onSetModel: (model: string) => boolean;
 }) {
   const compact = useCompactLayout();
   const [draft, setDraft] = useState(() => readDraft(sessionId));
@@ -327,7 +370,7 @@ export function Composer({
     <div className="relative">
       {matches.length > 0 && <CommandMenu commands={matches} active={selected} onHover={setActive} onPick={insert} />}
       <div
-        className="rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-foreground/30 focus-within:shadow-md"
+        className={compact ? 'glass-field rounded-3xl' : 'rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-foreground/30 focus-within:shadow-md'}
         onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
         onDrop={(event) => {
           const files = Array.from(event.dataTransfer.files);
@@ -412,7 +455,8 @@ export function Composer({
             ))}
           </ChipMenu>
           <BackgroundChip chat={chat} onStop={onStopAgent} />
-          <div role="status" className="min-w-0 flex-1 truncate px-1 text-right text-muted-foreground">{status}</div>
+          <div role="status" className={cn('min-w-0 flex-1 truncate px-1', compact ? 'text-left text-foreground' : 'text-right text-muted-foreground')}>{status}</div>
+          {compact && <ContextChip chat={chat} session={session} onSetModel={onSetModel} />}
           {running && (
             <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-foreground/5')}>
               <Square className="h-3.5 w-3.5" />

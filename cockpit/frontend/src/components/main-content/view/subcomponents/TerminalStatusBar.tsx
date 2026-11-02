@@ -46,7 +46,7 @@ export function modelLabel(model: string): string {
 // cockpit 2026-09-21: Sonnet 5 and Fable 5.1 report 1m). The current
 // generation — Fable 5/5.1, Mythos 5/5.1, Opus 5/4.8/4.7/4.6, Sonnet 5/4.6 —
 // has 1M; Haiku 4.5 and the 4.5 generation have 200k.
-function contextWindow(model: string | null | undefined): number {
+export function contextWindow(model: string | null | undefined): number {
   if (!model) return 1_000_000;
   if (/haiku-4-5|sonnet-4-5|opus-4-5|sonnet-3|opus-3|haiku-3/.test(model)) return 200_000;
   return 1_000_000;
@@ -68,7 +68,7 @@ function formatClock(iso: string): string {
   return `${date} ${time}`;
 }
 
-function formatAge(iso: string, now: Date): string {
+export function formatAge(iso: string, now: Date): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const minutes = Math.floor(Math.max(0, now.getTime() - d.getTime()) / 60_000);
