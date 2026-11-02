@@ -69,6 +69,8 @@ export interface LedgerEntry {
   wakeable: boolean
   /** How it stands for someone, why, and since when; null when nobody has anything to do. */
   attention: { kind: WorkerStatus; reason: string | null; at: string } | null
+  /** It is the main pane of a desk. Saved here, beside the pin, so every device lists it as a main session. */
+  deskMain: boolean
   /** The session that started this one; null for one started by hand or from before this was recorded. */
   parentSessionId: string | null
   /** When someone last opened it. Finished work stays listed after that, marked as read. */
@@ -121,6 +123,7 @@ function load(): LedgerFile {
           attention: entry.attention && typeof entry.attention.kind === 'string'
             ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null, at: typeof entry.attention.at === 'string' ? entry.attention.at : entry.lastAttached }
             : null,
+          deskMain: entry.deskMain === true,
           parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
           readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
@@ -192,6 +195,7 @@ export class SessionLedger {
       chatModel: prev?.chatModel ?? null,
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
+      deskMain: prev?.deskMain ?? false,
       parentSessionId: prev?.parentSessionId ?? this.expectedParents.get(sessionId) ?? null,
       readAt: prev?.readAt ?? null,
       archivedAt: prev?.archivedAt ?? null,
@@ -244,6 +248,14 @@ export class SessionLedger {
     entry.archivedAt = new Date().toISOString()
     entry.attention = null
     entry.pinned = false
+    entry.deskMain = false
+    this.persist()
+  }
+
+  setDeskMain(sessionId: string, deskMain: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.deskMain === deskMain) return
+    entry.deskMain = deskMain
     this.persist()
   }
 

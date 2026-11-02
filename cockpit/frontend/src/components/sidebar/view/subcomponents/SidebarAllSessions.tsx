@@ -50,13 +50,15 @@ function ReplyBox({ session, controller }: { session: AllSession; controller: Si
   );
 }
 
-function AllSessionRow({ session, spaces, controller, sessions, detail, leading, nested, plain }: {
+function AllSessionRow({ session, spaces, controller, sessions, detail, counts, leading, nested, plain }: {
   session: AllSession;
   spaces: SpaceInfo[];
   controller: SidebarController;
   /** Every session, to name a worker's parent. */
   sessions: AllSession[];
   detail?: string;
+  /** Its workers in words: shown after the reason on a row that has one. */
+  counts?: string;
   leading?: React.ReactNode;
   nested?: boolean;
   /** No mark: a row under its parent, or found by search. */
@@ -96,7 +98,7 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, leading,
         agent={{ letter: agentLetter(space), name: agentLabel(space) }}
         mark={mark}
         detail={detail}
-        context={parent ? sessionDisplayName(parent) : undefined}
+        context={[parent && sessionDisplayName(parent), counts].filter(Boolean).join(' · ') || undefined}
         leading={leading}
         nested={nested}
         actions={{
@@ -111,10 +113,19 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, leading,
   );
 }
 
-function MainRow({ item, spaces, controller, sessions }: { item: MainItem; spaces: SpaceInfo[]; controller: SidebarController; sessions: AllSession[] }) {
+/** A session with its workers under an arrow, in whichever section it is. */
+function SessionWithWorkers({ session, item, spaces, controller, sessions, marked }: {
+  session: AllSession;
+  item: MainItem | undefined;
+  spaces: SpaceInfo[];
+  controller: SidebarController;
+  sessions: AllSession[];
+  /** The row says how the session stands, with the counts behind it. */
+  marked?: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  const { session, workers, counts } = item;
-  const line = countsLine(counts);
+  const workers = item?.workers ?? [];
+  const line = item ? countsLine(item.counts) : '';
   const expandable = workers.length > 0;
   return (
     <div className="space-y-0.5">
@@ -123,8 +134,9 @@ function MainRow({ item, spaces, controller, sessions }: { item: MainItem; space
         spaces={spaces}
         controller={controller}
         sessions={sessions}
-        plain
-        detail={line || undefined}
+        plain={!marked}
+        detail={marked ? undefined : line || undefined}
+        counts={marked ? line || undefined : undefined}
         leading={expandable ? (
           <span
             role="button"
@@ -182,7 +194,7 @@ export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller
   const needsYou = sections.needsYou.filter(here);
   const toReview = sections.toReview.filter(here);
   const row = (session: AllSession) => (
-    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
+    <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} marked />
   );
   const waiting = needsYou.length + toReview.length;
   if (waiting === 0) return null;
@@ -223,7 +235,7 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
   if (allSessions.length === 0) return <SidebarStateBlock icon={MessageSquare} text="No sessions yet" />;
 
   const row = (session: AllSession) => (
-    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} plain />
+    <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} />
   );
   const searching = query.trim() !== '';
   const recent = sections.recent
@@ -241,9 +253,17 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
             <div key={group.space.id} className="space-y-0.5">
               <AgentName space={group.space} />
               {group.items.map((item) => (
-                <MainRow key={item.session.id} item={item} spaces={spaces} controller={controller} sessions={sessions} />
+                <SessionWithWorkers key={item.session.id} session={item.session} item={item} spaces={spaces} controller={controller} sessions={sessions} />
               ))}
             </div>
+          ))}
+        </div>
+      )}
+      {sections.working.length > 0 && (
+        <div className="space-y-0.5">
+          <SidebarGroupHeader>Working · {sections.working.length}</SidebarGroupHeader>
+          {sections.working.map((item) => (
+            <SessionWithWorkers key={item.session.id} session={item.session} item={item} spaces={spaces} controller={controller} sessions={sessions} />
           ))}
         </div>
       )}

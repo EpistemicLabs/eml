@@ -25,6 +25,7 @@ import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
 import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { setSessionDeskMain } from '@/lib/session-actions';
 import { api } from '@/utils/api';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -204,6 +205,16 @@ function AppContentInner() {
   // ── Pane state (desks) ─────────────────────────────────────────────
   const desks = paneStore.useDesks();
   const activeDeskIdForSeen = paneStore.useActiveDeskId();
+
+  // Which sessions are main goes to the host, like a pin, so every device lists them.
+  // Only what changes here: a device whose desks have no main pane clears nobody's.
+  const sentMainSessions = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = paneStore.deskMainSessions(desks);
+    for (const id of current) if (!sentMainSessions.current.has(id)) void setSessionDeskMain(id, true);
+    for (const id of sentMainSessions.current) if (!current.has(id)) void setSessionDeskMain(id, false);
+    sentMainSessions.current = current;
+  }, [desks]);
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window

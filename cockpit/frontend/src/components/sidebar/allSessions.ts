@@ -1,6 +1,6 @@
 // The sidebar's sessions sorted into its sections: what needs an answer, what is
-// finished and waits to be looked at, the main sessions with their workers under
-// them, and the rest. Pure, so the rules (no session twice, a worker under its top
+// finished and waits to be looked at, the sessions chosen as main, what is working,
+// and the rest. Workers sit under their parent in all of them. Pure, so the rules (no session twice, a worker under its top
 // session, finished work staying until archived) are tested without a browser.
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo, TurnState } from '@/stores/useTurnStateStore';
@@ -37,13 +37,17 @@ export interface MainItem {
 export interface AllSections {
   needsYou: AllSession[];
   toReview: AllSession[];
+  /** Pinned, or the main pane of a desk. */
   main: Array<{ space: SpaceInfo; items: MainItem[] }>;
+  /** Working now, itself or through its workers, and not main. */
+  working: MainItem[];
+  /** Any session's item: its workers and counts, wherever its row is. */
+  items: Map<string, MainItem>;
   recent: AgentGroup[];
   /** Workers under their parent: no row of their own, but search finds them. */
   searchOnly: AllSession[];
 }
 
-const RECENT_MS = 24 * 60 * 60 * 1000;
 const QUIET_MS = 30 * 60 * 1000;
 
 /** What a session's row says about it; null: nothing, it reads as a plain row. */
@@ -105,10 +109,12 @@ const stableOrder = (a: AllSession, b: AllSession) =>
   (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id);
 
 /** The session at the top of a worker's line of parents; the session itself when its parent left the list. */
-function topSession(session: AllSession, live: Map<string, AllSession>): AllSession {
+function topSession(session: AllSession, live: Map<string, AllSession>, chosen: (session: AllSession) => boolean): AllSession {
   const seen = new Set([session.id]);
   let top = session;
   for (;;) {
+    // A session chosen as main has its own row, and the workers below it.
+    if (chosen(top)) return top;
     const parent = top.parentSessionId ? live.get(top.parentSessionId) : undefined;
     if (!parent || seen.has(parent.id)) return top;
     seen.add(parent.id);
@@ -164,13 +170,14 @@ export function groupAllSessions(
   now: number = Date.now(),
   queued: QueuedWorker[] = [],
 ): AllSections {
-  const empty: AllSections = { needsYou: [], toReview: [], main: [], recent: [], searchOnly: [] };
+  const empty: AllSections = { needsYou: [], toReview: [], main: [], working: [], items: new Map(), recent: [], searchOnly: [] };
   if (spaces.length === 0) return empty;
   const live = new Map(sessions.filter((session) => !session.archivedAt).map((session) => [session.id, session]));
+  const chosen = (session: AllSession) => isPinned(session) || session.deskMain === true;
   const workersOf = new Map<string, AllSession[]>();
   const tops: AllSession[] = [];
   for (const session of live.values()) {
-    const top = topSession(session, live);
+    const top = topSession(session, live, chosen);
     if (top === session) tops.push(session);
     else workersOf.set(top.id, [...(workersOf.get(top.id) ?? []), session]);
   }
@@ -178,29 +185,32 @@ export function groupAllSessions(
   for (const { parentSessionId } of queued) {
     const parent = live.get(parentSessionId);
     if (!parent) continue;
-    const top = topSession(parent, live);
+    const top = topSession(parent, live, chosen);
     queuedOf.set(top.id, (queuedOf.get(top.id) ?? 0) + 1);
   }
+
+  const itemOf = (session: AllSession): MainItem => {
+    const workers = (workersOf.get(session.id) ?? []).slice().sort(stableOrder);
+    return { session, workers, counts: workerCounts(workers, queuedOf.get(session.id) ?? 0, turns, now) };
+  };
+  const items = new Map(tops.map((session) => [session.id, itemOf(session)]));
 
   const needsYou: AllSession[] = [];
   const toReview: AllSession[] = [];
   const main: AllSession[] = [];
+  const working: AllSession[] = [];
   // Archived sessions read like any older chat: they only leave the sections above.
   const recent = sessions.filter((session) => session.archivedAt);
   const searchOnly: AllSession[] = [];
   for (const session of live.values()) {
     const turn = turns[session.id];
     const mark = sessionMark(session, turn);
-    const state = allSessionState(session, turn);
-    const hasWorkers = (workersOf.get(session.id)?.length ?? 0) > 0 || queuedOf.has(session.id);
-    const isTop = topSession(session, live) === session;
+    const item = items.get(session.id);
     if (mark && NEEDS_YOU.includes(mark)) needsYou.push(session);
     else if (mark) toReview.push(session);
-    else if (!isTop) searchOnly.push(session);
-    else if (isPinned(session) || state === 'working' || session.state === 'running') main.push(session);
-    else if (hasWorkers && workersOf.get(session.id)?.some((worker) => allSessionState(worker, turns[worker.id]) === 'working' || sessionMark(worker, turns[worker.id]))) main.push(session);
-    else if (queuedOf.has(session.id)) main.push(session);
-    else if (!session.worker && now - Date.parse(activityOf(session)) < RECENT_MS) main.push(session);
+    else if (!item) searchOnly.push(session);
+    else if (chosen(session)) main.push(session);
+    else if (allSessionState(session, turn) === 'working' || item.counts.working > 0 || item.counts.queued > 0) working.push(session);
     else recent.push(session);
   }
 
@@ -220,13 +230,9 @@ export function groupAllSessions(
   return {
     needsYou: needsYou.sort(newestFirst),
     toReview: toReview.sort(reviewOrder),
-    main: byAgent(main, pinnedFirst).map(({ space, sessions: list }) => ({
-      space,
-      items: list.map((session) => {
-        const workers = (workersOf.get(session.id) ?? []).slice().sort(stableOrder);
-        return { session, workers, counts: workerCounts(workers, queuedOf.get(session.id) ?? 0, turns, now) };
-      }),
-    })),
+    main: byAgent(main, pinnedFirst).map(({ space, sessions: list }) => ({ space, items: list.map(itemOf) })),
+    working: working.sort(newestFirst).map(itemOf),
+    items,
     recent: byAgent(recent, newestFirst),
     searchOnly,
   };

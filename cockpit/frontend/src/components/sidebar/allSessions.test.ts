@@ -50,14 +50,18 @@ describe('groupAllSessions', () => {
       session('f', { attention: attention('failed'), worker: true }),
       session('r', { attention: attention('review'), worker: true }),
       session('d', { attention: attention('done'), worker: true }),
-      session('live', { state: 'running' }),
+      session('pin', { isPinned: true }),
+      session('desk', { deskMain: true }),
+      session('busy', { state: 'running' }),
+      session('open', { state: 'running' }),
       session('today', { lastActivity: FRESH }),
       session('old'),
-    ]);
+    ], { busy: turn('working') });
     expect(ids(sections.needsYou).sort()).toEqual(['f', 'q']);
     expect(ids(sections.toReview).sort()).toEqual(['d', 'r']);
-    expect(mainIds(sections).sort()).toEqual(['live', 'today']);
-    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['old']);
+    expect(mainIds(sections).sort()).toEqual(['desk', 'pin']);
+    expect(sections.working.map((item) => item.session.id)).toEqual(['busy']);
+    expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['old', 'open', 'today']);
   });
 
   it('opening does not take finished work out of To review, it only reads it', () => {
@@ -80,34 +84,55 @@ describe('groupAllSessions', () => {
     expect(ids(sections.toReview)).toEqual(['review', 'done', 'read-review']);
   });
 
-  it('keeps workers under their top session, however deep', () => {
+  it('keeps workers under their top session, however deep, and shows it as working', () => {
     const sections = group([
       session('p', { lastActivity: FRESH }),
       session('w1', { worker: true, parentSessionId: 'p', state: 'running' }),
       session('w2', { worker: true, parentSessionId: 'w1', state: 'running' }),
     ], { w1: turn('working'), w2: turn('working') });
-    expect(mainIds(sections)).toEqual(['p']);
-    const [item] = sections.main[0].items;
+    expect(mainIds(sections)).toEqual([]);
+    const [item] = sections.working;
+    expect(item.session.id).toBe('p');
     expect(ids(item.workers).sort()).toEqual(['w1', 'w2']);
     expect(item.counts.working).toBe(2);
     expect(ids(sections.searchOnly).sort()).toEqual(['w1', 'w2']);
   });
 
-  it('a worker that needs you moves up, and its parent counts it', () => {
+  it('a main session keeps its workers and stays main while they work', () => {
     const sections = group([
-      session('p', { lastActivity: FRESH }),
-      session('w', { worker: true, parentSessionId: 'p', attention: attention('question') }),
-    ]);
-    expect(ids(sections.needsYou)).toEqual(['w']);
-    expect(sections.main[0].items[0].counts.needsYou).toBe(1);
-  });
-
-  it('an old parent with a live worker comes back to Main sessions', () => {
-    const sections = group([
-      session('p'),
+      session('p', { deskMain: true }),
       session('w', { worker: true, parentSessionId: 'p', state: 'running' }),
     ], { w: turn('working') });
     expect(mainIds(sections)).toEqual(['p']);
+    expect(sections.working).toEqual([]);
+    expect(sections.main[0].items[0].counts.working).toBe(1);
+  });
+
+  it('a worker chosen as main stands on its own, with the workers below it', () => {
+    const sections = group([
+      session('p'),
+      session('w', { worker: true, parentSessionId: 'p', isPinned: true }),
+      session('below', { worker: true, parentSessionId: 'w' }),
+    ]);
+    expect(mainIds(sections)).toEqual(['w']);
+    expect(ids(sections.items.get('w')?.workers ?? [])).toEqual(['below']);
+    expect(sections.items.get('p')?.workers).toEqual([]);
+  });
+
+  it('a worker that needs you moves up, and its parent counts it from wherever it is', () => {
+    const sections = group([
+      session('p'),
+      session('w', { worker: true, parentSessionId: 'p', attention: attention('question') }),
+    ]);
+    expect(ids(sections.needsYou)).toEqual(['w']);
+    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['p']);
+    expect(sections.items.get('p')?.counts.needsYou).toBe(1);
+  });
+
+  it('a quiet parent sits in Recent, its finished workers still under it', () => {
+    const sections = group([session('p'), session('w', { worker: true, parentSessionId: 'p' })]);
+    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['p']);
+    expect(sections.items.get('p')?.counts.finished).toBe(1);
   });
 
   it('a worker whose parent left the list stands on its own', () => {
@@ -116,18 +141,17 @@ describe('groupAllSessions', () => {
       session('w', { worker: true, parentSessionId: 'gone', state: 'running' }),
       session('ended', { worker: true, parentSessionId: 'unknown' }),
     ], { w: turn('working') });
-    expect(mainIds(sections)).toEqual(['w']);
+    expect(sections.working.map((item) => item.session.id)).toEqual(['w']);
     expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['ended', 'gone']);
   });
 
-  it('a stopped main session stays for 24 hours', () => {
-    expect(mainIds(group([session('a', { lastActivity: '2026-01-31T13:00:00.000Z' })]))).toEqual(['a']);
-    expect(mainIds(group([session('a', { lastActivity: '2026-01-31T11:00:00.000Z' })]))).toEqual([]);
+  it('being used today or left open does not make a session main', () => {
+    expect(mainIds(group([session('a', { lastActivity: FRESH, state: 'running' })]))).toEqual([]);
   });
 
-  it('pin keeps a session in Main sessions, on top of its agent', () => {
-    const sections = group([session('today', { lastActivity: FRESH }), session('pinned', { isPinned: true })]);
-    expect(mainIds(sections)).toEqual(['pinned', 'today']);
+  it('pin and desk both make a session main, pinned on top of its agent', () => {
+    const sections = group([session('desk', { deskMain: true }), session('pinned', { isPinned: true })]);
+    expect(mainIds(sections)).toEqual(['pinned', 'desk']);
   });
 
   it('a pinned session that needs you moves up and comes back', () => {
@@ -148,8 +172,8 @@ describe('groupAllSessions', () => {
   });
 
   it('counts what a parent has waiting for memory', () => {
-    const sections = group([session('p', { lastActivity: FRESH })], {}, [{ id: 'x', parentSessionId: 'p' }, { id: 'y', parentSessionId: 'nobody' }]);
-    expect(sections.main[0].items[0].counts.queued).toBe(1);
+    const sections = group([session('p')], {}, [{ id: 'x', parentSessionId: 'p' }, { id: 'y', parentSessionId: 'nobody' }]);
+    expect(sections.working[0].counts.queued).toBe(1);
   });
 
   it('survives a loop of parents', () => {

@@ -200,11 +200,14 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   }
 
   const entry = ledger.get(id)
-  if (!action || !['read', 'clear', 'archive', 'stop', 'answer'].includes(action)) return false
+  if (!action || !['read', 'clear', 'archive', 'stop', 'answer', 'desk-main'].includes(action)) return false
   if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
 
   if (action === 'read') {
     ledger.markRead(id)
+  } else if (action === 'desk-main') {
+    const body = await readJson(req)
+    ledger.setDeskMain(id, body.main === true)
   } else if (action === 'clear') {
     ledger.setAttention(id, null)
     if (deps.turns.get(id)?.state === 'waiting') deps.turns.apply({ sessionId: id, state: 'done' })
@@ -265,6 +268,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     runtime: entry.runtime,
     attention: entry.attention,
     worker: entry.worker,
+    deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,
     readAt: entry.readAt,
     archivedAt: entry.archivedAt,

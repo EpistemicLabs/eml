@@ -958,6 +958,16 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
   }
 }
 
+/** The sessions shown in a desk's main pane, on this device. */
+export function deskMainSessions(desks: DeskState[]): Set<string> {
+  const ids = new Set<string>();
+  for (const desk of desks) {
+    const sessionId = desk.panes.find(p => p.id === desk.mainPaneId)?.sessionId;
+    if (sessionId) ids.add(sessionId);
+  }
+  return ids;
+}
+
 /** The pane showing a session, on any desk. */
 export function paneHoldingSession(sessionId: string): PaneState | undefined {
   return snapshot.desks.flatMap(s => s.panes).find(p => p.sessionId === sessionId);

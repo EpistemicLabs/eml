@@ -30,6 +30,8 @@ export interface ProjectSession {
   turnSince?: string | null;
   /** How it stands for the user, why, and since when; saved by the host, it outlives the process. */
   attention?: { kind: 'question' | 'review' | 'failed' | 'done'; reason: string | null; at: string } | null;
+  /** The main pane of a desk, on any device. */
+  deskMain?: boolean;
   /** Started by another session. */
   worker?: boolean;
   parentSessionId?: string | null;

@@ -30,6 +30,7 @@ async function post(sessionId: string, action: string, body?: unknown): Promise<
 export const markSessionRead = (sessionId: string) => post(sessionId, 'read');
 /** Nothing left to do for it; it stays where it was otherwise (a pinned session goes back to its place). */
 export const clearSession = (sessionId: string) => post(sessionId, 'clear');
+export const setSessionDeskMain = (sessionId: string, main: boolean) => post(sessionId, 'desk-main', { main });
 export const stopSession = (sessionId: string) => post(sessionId, 'stop');
 export const answerSession = (sessionId: string, text: string) => post(sessionId, 'answer', { text });
 
