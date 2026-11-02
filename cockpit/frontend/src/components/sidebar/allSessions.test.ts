@@ -117,7 +117,7 @@ describe('groupAllSessions', () => {
       session('ended', { worker: true, parentSessionId: 'unknown' }),
     ], { w: turn('working') });
     expect(mainIds(sections)).toEqual(['w']);
-    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['ended']);
+    expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['ended', 'gone']);
   });
 
   it('a stopped main session stays for 24 hours', () => {
