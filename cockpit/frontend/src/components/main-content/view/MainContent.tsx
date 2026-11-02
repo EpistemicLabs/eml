@@ -27,7 +27,6 @@ import TerminalStatusBar from './subcomponents/TerminalStatusBar';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
-import { ReviewBar } from '@/components/review/ReviewBar';
 
 function MainContent({
   isActive = true,
@@ -123,7 +122,6 @@ function MainContent({
       {/* Body area: title (top-left), floating toolbar (top-right of THIS
           area), and the pane body. */}
       <div className="relative flex min-h-0 min-w-[280px] flex-1 flex-col overflow-hidden">
-        <ReviewBar paneId={paneId} />
         {/* pr-64 keeps the title clear of the absolutely positioned tab
             switcher. It must not be overridden by a responsive px-* (a
             former sm:px-4 reset it to 1rem, and long titles ran under the

@@ -35,7 +35,7 @@ export interface SessionRowProps {
   mark?: SessionMark | null;
   /** A second line without a mark: a parent's worker counts. */
   detail?: string;
-  /** What leads the second line: the session a worker belongs to. */
+  /** What ends the second line: the session a worker belongs to. */
   context?: string;
   /** The row is one of a parent's workers. */
   nested?: boolean;
@@ -96,7 +96,7 @@ export function SidebarSessionRow({
   const unread = Boolean(mark) && (!session.attention || !isRead(session));
   const reason = session.attention?.reason?.replace(/\s+/g, ' ').trim();
   const secondLine = mark
-    ? [context, MARK_WORD[mark] + (reason ? `: ${reason}` : session.attention ? ': no summary' : '')].filter(Boolean).join(' · ')
+    ? [MARK_WORD[mark] + (reason ? `: ${reason}` : session.attention ? ': no summary' : ''), context].filter(Boolean).join(' · ')
     : detail;
 
   return (
@@ -135,7 +135,7 @@ export function SidebarSessionRow({
               {agent.letter}
             </span>
           )}
-          <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />
+          {!mark && <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />}
           <div className="min-w-0 flex-1">
             <div
               className={cn(

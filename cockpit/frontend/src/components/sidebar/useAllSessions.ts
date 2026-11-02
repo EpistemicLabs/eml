@@ -10,9 +10,13 @@ import type { AllSession, QueuedWorker } from './allSessions';
 const POLL_INTERVAL_MS = 15_000;
 const TURN_REFETCH_DELAY_MS = 1_000;
 
+// The last answer: a list opening later (the review bar) starts from it instead of from nothing.
+let lastSessions: AllSession[] | null = null;
+let lastQueued: QueuedWorker[] = [];
+
 export function useAllSessions(enabled: boolean) {
-  const [sessions, setSessions] = useState<AllSession[] | null>(null);
-  const [queued, setQueued] = useState<QueuedWorker[]>([]);
+  const [sessions, setSessions] = useState<AllSession[] | null>(lastSessions);
+  const [queued, setQueued] = useState<QueuedWorker[]>(lastQueued);
   const { turns } = useTurnStore();
 
   const refresh = useCallback(async () => {
@@ -20,8 +24,10 @@ export function useAllSessions(enabled: boolean) {
       const response = await fetch('/api/sessions/all');
       if (!response.ok) return;
       const body = (await response.json()) as { sessions?: AllSession[]; queued?: QueuedWorker[] };
-      setSessions(body.sessions ?? []);
-      setQueued(body.queued ?? []);
+      lastSessions = body.sessions ?? [];
+      lastQueued = body.queued ?? [];
+      setSessions(lastSessions);
+      setQueued(lastQueued);
     } catch { /* host unreachable: the list stays */ }
   }, []);
 

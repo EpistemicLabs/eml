@@ -471,9 +471,11 @@ export class ChatBridge {
       this.ctx.events.reset(sessionId)
       try {
         provider.trustProject(path, sessionSpaceOf(space))
-        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, true, null, space.ledgerKey)
+        // Started by hand it is the user's own session, in the mode they use: only a session's worker runs unattended.
+        const worker = request.fromSessionId !== null
+        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, null, space.ledgerKey)
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
-        this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+        if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)

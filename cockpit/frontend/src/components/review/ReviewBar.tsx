@@ -48,6 +48,7 @@ function ActiveReviewBar() {
 
   const move = (step: 1 | -1) => stepReview(step, known, spaces);
   const finish = () => {
+    if (!current) return;
     setError(null);
     void finishCurrent(action, known, spaces).then(setError);
   };
