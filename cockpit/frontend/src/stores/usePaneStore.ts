@@ -944,6 +944,11 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
   }
 }
 
+/** The pane showing a session, on any desk. */
+export function paneHoldingSession(sessionId: string): PaneState | undefined {
+  return snapshot.desks.flatMap(s => s.panes).find(p => p.sessionId === sessionId);
+}
+
 /**
  * Open `target` where the user will see it, and return the pane id:
  * 1. a pane already holds it → leave the Brain tab, switch to its desk, focus

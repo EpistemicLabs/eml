@@ -23,7 +23,7 @@ import { findProjectOwningSession, projectsOfSpace, spaceLoaded, useProjectsStat
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
-import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
 import { api } from '@/utils/api';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -126,7 +126,7 @@ function AppContentInner() {
 
   useEffect(() => {
     const onTurn = (event: TurnEvent) => {
-      if (event.state !== 'done' || !readSettings().notifyOnDone) return;
+      if ((event.state !== 'done' && event.state !== 'waiting') || event.silent || event.repeated || !readSettings().notifyOnDone) return;
       if (document.visibilityState === 'visible' && document.hasFocus()) return;
       if (!('Notification' in window) || Notification.permission !== 'granted') return;
       const session = projectsRef.current
@@ -138,8 +138,10 @@ function AppContentInner() {
         // banner back — so only a session's first turn alerted. Closing the
         // session's previous notification keeps one entry per session.
         sessionNotifications.current.get(event.sessionId)?.close();
-        const notification = new Notification('Session finished', {
-          body: session?.summary || 'Claude finished a turn',
+        const name = event.title || session?.summary;
+        const heading = event.state === 'waiting' ? 'Needs you' : event.batch && event.batch > 1 ? `All ${event.batch} workers finished` : 'Session finished';
+        const notification = new Notification(heading, {
+          body: name || (event.state === 'waiting' ? 'A session is waiting for you' : 'Claude finished a turn'),
           tag: `${event.sessionId}:${Date.now()}`,
         });
         sessionNotifications.current.set(event.sessionId, notification);
@@ -171,6 +173,8 @@ function AppContentInner() {
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
+        // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
+        if (request.fromSessionId && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };
@@ -225,7 +229,7 @@ function AppContentInner() {
   }, [desks, activeDeskIdForSeen, turnSnapshot]);
 
   const unseenTotal = useMemo(
-    () => countNeedsYou(turnSnapshot, desks.flatMap((desk) => desk.panes.map((pane) => pane.sessionId))),
+    () => countNeedsYou(turnSnapshot, [...new Set([...desks.flatMap((desk) => desk.panes.map((pane) => pane.sessionId)), ...waitingSessions(turnSnapshot)])]),
     [desks, turnSnapshot],
   );
   const activeDeskId = paneStore.useActiveDeskId();

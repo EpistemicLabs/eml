@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { Check, Edit2, MoreHorizontal, Pin, Trash2, X } from 'lucide-react';
+import { useRef, type ReactNode } from 'react';
+import { Archive, Check, Edit2, MessageSquareReply, MoreHorizontal, Pin, Square, Trash2, X } from 'lucide-react';
 
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
 import { useLongPress } from '@/hooks/useLongPress';
@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
-import { allSessionState } from '../../allSessions';
+import { MARK_SYMBOL, MARK_WORD, allSessionState, isRead, type SessionMark } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
 import { useRowMenu } from '../rowMenuContext';
 
@@ -31,6 +31,18 @@ export interface SessionRowProps {
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
   /** Given in the All view: the agent the session belongs to, marked with its letter. */
   agent?: { letter: string; name: string };
+  /** How the session stands for the user: a second line, with the word and the reason. */
+  mark?: SessionMark | null;
+  /** A second line without a mark: a parent's worker counts. */
+  detail?: string;
+  /** What leads the second line: the session a worker belongs to. */
+  context?: string;
+  /** The row is one of a parent's workers. */
+  nested?: boolean;
+  /** Before the name: the arrow opening a parent's workers. */
+  leading?: ReactNode;
+  /** Row actions for what the session needs (answer, clear, archive, stop). */
+  actions?: { onAnswer?: () => void; onClear?: () => void; onArchive?: () => void; onStop?: () => void };
 }
 
 function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView: boolean }) {
@@ -65,6 +77,12 @@ export function SidebarSessionRow({
   onRequestDelete,
   pin,
   agent,
+  mark,
+  detail,
+  context,
+  nested,
+  leading,
+  actions,
 }: SessionRowProps) {
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
@@ -75,21 +93,40 @@ export function SidebarSessionRow({
   const rowRef = useRef<HTMLDivElement>(null);
   const openMenu = () => menu?.open({ kind: 'session', session, projectId }, rowRef.current);
   const longPress = useLongPress(openMenu);
+  const unread = Boolean(mark) && (!session.attention || !isRead(session));
+  const reason = session.attention?.reason?.replace(/\s+/g, ' ').trim();
+  const secondLine = mark
+    ? [context, MARK_WORD[mark] + (reason ? `: ${reason}` : session.attention ? ': no summary' : '')].filter(Boolean).join(' · ')
+    : detail;
 
   return (
     <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
-      <StatusDot session={session} inAllView={Boolean(agent)} />
+      {!mark && <StatusDot session={session} inAllView={Boolean(agent)} />}
       <Button
         variant="ghost"
         className={cn(
           'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
-          menu ? 'h-10 pr-10' : 'h-7.5',
+          secondLine ? (menu ? 'h-13 pr-10' : 'h-11') : menu ? 'h-10 pr-10' : 'h-7.5',
+          nested && 'pl-6',
           isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}
         onClick={() => onSelect(session, projectId)}
       >
         <div className="flex w-full min-w-0 items-center gap-2">
+          {leading}
+          {mark && (
+            <span
+              aria-hidden="true"
+              className={cn(
+                'w-3 flex-shrink-0 text-center text-xs font-semibold',
+                mark === 'failed' ? 'text-destructive' : 'text-primary',
+                !unread && 'text-muted-foreground',
+              )}
+            >
+              {!unread && (mark === 'review' || mark === 'done') ? '○' : MARK_SYMBOL[mark]}
+            </span>
+          )}
           {agent && (
             <span
               title={agent.name}
@@ -106,7 +143,10 @@ export function SidebarSessionRow({
                 !menu && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
               )}
             >
-              <span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+              <span className={cn('min-w-0 truncate text-xs text-foreground', mark ? (unread ? 'font-semibold' : 'font-normal') : 'font-medium')}>{name}</span>
+              {session.archivedAt && (
+                <span className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground">archived</span>
+              )}
               {session.taskId && (
                 <span
                   className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground"
@@ -130,6 +170,18 @@ export function SidebarSessionRow({
                 </span>
               )}
             </div>
+            {secondLine && (
+              <div
+                title={secondLine}
+                className={cn(
+                  'truncate text-[11px] leading-4 font-normal',
+                  mark === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+                  !menu && (pin ? 'group-hover:pr-40' : 'group-hover:pr-32'),
+                )}
+              >
+                {secondLine}
+              </div>
+            )}
           </div>
         </div>
       </Button>
@@ -191,6 +243,26 @@ export function SidebarSessionRow({
           </>
         ) : (
           <>
+            {actions?.onAnswer && (
+              <button type="button" title="Answer" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onAnswer?.(); }}>
+                <MessageSquareReply className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onStop && (
+              <button type="button" title="Stop: ends the process, the conversation stays" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onStop?.(); }}>
+                <Square className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onClear && (
+              <button type="button" title="Clear: nothing left to do here" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onClear?.(); }}>
+                <Check className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onArchive && (
+              <button type="button" title="Archive: leaves the lists, stays in search" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onArchive?.(); }}>
+                <Archive className="h-3 w-3" />
+              </button>
+            )}
             {pin && (
               <button
                 type="button"

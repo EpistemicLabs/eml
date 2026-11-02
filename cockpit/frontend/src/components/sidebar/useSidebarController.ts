@@ -73,7 +73,7 @@ export function useSidebarController(props: SidebarProps) {
     propsRef.current = props;
   });
   const allView = useAllView();
-  const { sessions: allSessions, refresh: refreshAllSessions } = useAllSessions(allView);
+  const { sessions: allSessions, queued: queuedWorkers, refresh: refreshAllSessions } = useAllSessions(true);
   const refreshList = useCallback(async () => {
     await Promise.all([propsRef.current.onRefresh(), refreshAllSessions()]);
   }, [refreshAllSessions]);
@@ -506,6 +506,8 @@ export function useSidebarController(props: SidebarProps) {
     setViewMode,
     allView,
     allSessions,
+    queuedWorkers,
+    reportError,
     isPinnedOpen,
     togglePinnedOpen,
     showHidden,

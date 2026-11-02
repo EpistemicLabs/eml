@@ -7,7 +7,7 @@ import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
 // reconnecting would take it back.
-const NO_RECONNECT = new Set(['superseded', 'deleted', 'timed out']);
+const NO_RECONNECT = new Set(['superseded', 'deleted', 'timed out', 'archived', 'stopped']);
 const RECONNECT_MAX_MS = 5_000;
 
 export type PermissionReply =

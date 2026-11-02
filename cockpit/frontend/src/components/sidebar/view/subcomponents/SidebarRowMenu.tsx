@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Edit2, Eye, EyeOff, FolderPlus, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
+import { Archive, Check, Edit2, Eye, EyeOff, FolderPlus, MessageSquareReply, Pin, PinOff, Square, Trash2, type LucideIcon } from 'lucide-react';
 
 import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { useArchiveNote, useRenameNote } from '@/lib/notes';
+import { archiveSession, clearSession, setAnswering, stopSession } from '@/lib/session-actions';
 import { cn } from '@/lib/utils';
 import { forgetNoteInPanes } from '@/stores/usePaneStore';
 import type { SidebarController } from '../../useSidebarController';
@@ -112,6 +113,12 @@ export function SidebarRowMenu({
   const actions: Array<{ label: string; Icon: LucideIcon; onClick: () => void; destructive?: boolean }> = [];
   if (target.kind === 'session') {
     const pinned = controller.isSessionPinned(target.session);
+    const { session } = target;
+    const whenDone = (error: string | null) => { if (error) controller.reportError(error); };
+    if (session.attention?.kind === 'question') actions.push({ label: 'Answer', Icon: MessageSquareReply, onClick: run(() => setAnswering(session.id)) });
+    if (session.attention && pinned) actions.push({ label: 'Clear', Icon: Check, onClick: run(() => void clearSession(session.id).then(whenDone)) });
+    if (session.state === 'running' || session.state === 'detached') actions.push({ label: 'Stop', Icon: Square, onClick: run(() => void stopSession(session.id).then(whenDone)) });
+    if (!session.archivedAt) actions.push({ label: 'Archive', Icon: Archive, onClick: run(() => void archiveSession(session.id).then(whenDone)) });
     actions.push(
       { label: pinned ? 'Unpin' : 'Pin', Icon: pinned ? PinOff : Pin, onClick: run(() => void controller.toggleSessionPin(target.session)) },
       { label: 'Rename', Icon: Edit2, onClick: startRename },

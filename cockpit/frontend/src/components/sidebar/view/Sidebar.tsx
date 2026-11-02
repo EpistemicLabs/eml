@@ -8,7 +8,8 @@ import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
 import { RowMenuContext, type RowMenuApi, type RowMenuTarget } from './rowMenuContext';
 import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
-import { SidebarAllSessions } from './subcomponents/SidebarAllSessions';
+import { SidebarAllSessions, SidebarInbox } from './subcomponents/SidebarAllSessions';
+import { SidebarNewSession } from './subcomponents/SidebarNewSession';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
 import { SidebarModals } from './subcomponents/SidebarModals';
 import { SidebarProjectTree } from './subcomponents/SidebarProjectTree';
@@ -65,6 +66,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
       <div className="flex-shrink-0 px-1 pb-1">
         <SpaceSwitch variant="sidebar" />
       </div>
+      <SidebarNewSession controller={controller} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <SidebarScrollRegion
         refreshing={controller.refreshing}
@@ -73,10 +75,15 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
       >
         {controller.allView ? (
           <SidebarAllSessions controller={controller} />
-        ) : controller.viewMode === 'conversations' ? (
-          <SidebarConversations controller={controller} />
         ) : (
-          <SidebarProjectTree controller={controller} />
+          <>
+            <SidebarInbox controller={controller} onlyOpenSpace />
+            {controller.viewMode === 'conversations' ? (
+              <SidebarConversations controller={controller} />
+            ) : (
+              <SidebarProjectTree controller={controller} />
+            )}
+          </>
         )}
       </SidebarScrollRegion>
       <SidebarFooter onShowSettings={controller.onShowSettings} />

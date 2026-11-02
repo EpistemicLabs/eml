@@ -28,6 +28,13 @@ export interface ProjectSession {
   /** Value at fetch time; the live source is the turn store. */
   turnState?: TurnState;
   turnSince?: string | null;
+  /** How it stands for the user, why, and since when; saved by the host, it outlives the process. */
+  attention?: { kind: 'question' | 'review' | 'failed' | 'done'; reason: string | null; at: string } | null;
+  /** Started by another session. */
+  worker?: boolean;
+  parentSessionId?: string | null;
+  readAt?: string | null;
+  archivedAt?: string | null;
   __provider?: LLMProvider;
   /** The owning project's id. */
   __projectId?: string;
