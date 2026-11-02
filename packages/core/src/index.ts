@@ -3,7 +3,7 @@ import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
-import { commandStores, takeRelayed, writeOp } from './log/apply-op'
+import { commandStores, takeRelayed, writeOp, type Taken } from './log/apply-op'
 import { brainIdOf, teamBrainOf, type RelayedEntry } from './log/log'
 import { stateDump, stateHash } from './log/snapshot'
 import type { OpEnvelope } from '@engramprotocol/protocol/log'
@@ -90,9 +90,9 @@ export class EML {
   /**
    * v0.21: takes one entry its relay delivered into this shared brain — the
    * replica's write path (log/apply-op.ts takeRelayed): `op` applied, or the
-   * entry kept as rejected. Returns why it was rejected, or null when applied.
+   * entry kept as rejected. Returns the command's result or why it was rejected.
    */
-  takeRelayed(entry: RelayedEntry, op: OpEnvelope | null): string | null {
+  takeRelayed(entry: RelayedEntry, op: OpEnvelope | null): Taken {
     return takeRelayed(commandStores(this, this.db), entry, op)
   }
 
@@ -194,6 +194,7 @@ export {
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
 export { RelayOrderError, type RelayedEntry } from './log/log'
+export type { Taken } from './log/apply-op'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
 export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'

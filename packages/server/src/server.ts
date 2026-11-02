@@ -64,7 +64,7 @@ import * as http from 'http'
 import type { IncomingMessage, ServerResponse } from 'http'
 import * as path from 'path'
 import * as fs from 'fs'
-import type Database from 'better-sqlite3'
+import Database from 'better-sqlite3'
 import {
   EML,
   initControlDatabase,
@@ -96,7 +96,10 @@ import {
 import { ConnectionPool } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
-import { applyWrite, SharedBrainReadOnly } from './write'
+import { applyWrite, SharedWriteError } from './write'
+import { Sync } from './sync/sync'
+import { readTeamFile } from './sync/team-file'
+import { ready } from '@engramprotocol/protocol'
 
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
@@ -195,6 +198,36 @@ if (migrationReport.migratedCount > 0) {
 // v0.21: a brain's id is in its genesis; a control row naming another is refused until fixed.
 for (const m of checkBrainIds({ control: controlDb, dataDir: DATA_DIR })) {
   console.error(`[brains] ${m.brainId} (${m.brainName}): its genesis names brain ${m.genesisId ?? 'none'} — set to needs_intervention`)
+}
+
+// v0.21: a shared brain — one with a team file, <data-dir>/team/<brain id>.json —
+// is synced with its relay through its own connection to the brain file
+// (sync/sync.ts); its writes go through it (write.ts).
+const syncs = new Map<string, Sync>()
+function startSyncs(): void {
+  let ids: string[]
+  try {
+    ids = fs.readdirSync(path.join(DATA_DIR, 'team')).filter(n => n.endsWith('.json')).map(n => n.slice(0, -'.json'.length))
+  } catch {
+    return
+  }
+  for (const id of ids) {
+    const row = controlDb.prepare(`SELECT brain_file FROM brains WHERE id = ? AND status = 'ok'`).get(id) as { brain_file: string } | undefined
+    if (!row) {
+      console.error(`[sync] ${id}: a team file without a usable brain; not synced`)
+      continue
+    }
+    try {
+      const team = readTeamFile(DATA_DIR, id)
+      if (!team) continue
+      const file = path.isAbsolute(row.brain_file) ? row.brain_file : path.join(DATA_DIR, row.brain_file)
+      const sync = new Sync(new Database(file, { fileMustExist: true }), team)
+      syncs.set(id, sync)
+      sync.start()
+    } catch (err) {
+      console.error(`[sync] ${id}: ${(err as Error).message}`)
+    }
+  }
 }
 
 // --- Helpers ---
@@ -410,6 +443,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
   const defaultAgent = routingResult.ctx.brainName
+  const sync = syncs.get(routingResult.ctx.brainId)
 
   try {
     // POST /boot
@@ -479,7 +513,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = applyWrite(eml, { name: 'engram.create', input }, env)
+      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -487,7 +521,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env)
+      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
@@ -496,13 +530,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       // id → learning.add_evidence; without → engram.create of a learning with its first evidence
       if (body.id !== undefined) {
-        const r = applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env)
+        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync)
         return json(res, 201, { written: true, ...r })
       }
       const { source, happened, quote, stance, rule_id, ...lesson } = body
       const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
       try {
-        const { learning, ...engram } = applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env)
+        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync)
         return json(res, 201, { written: true, engram, learning })
       } catch (err) {
         // the topic check found a match: nothing written, the matches named (as since v0.19)
@@ -586,7 +620,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env)
+      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -595,7 +629,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env)
+      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync)
       return json(res, 200, { engram })
     }
 
@@ -615,12 +649,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env)
+        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env)
+        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync)
         return json(res, 200, result)
       }
     }
@@ -629,7 +663,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      const { created } = applyWrite(eml, { name: 'relation.create', input: body as never }, env)
+      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync)
       return json(res, 201, { ok: true, created })
     }
 
@@ -830,7 +864,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   } catch (err: unknown) { const e = err as Error;
     // v0.21: a write to a shared brain that is read-only right now
-    if (err instanceof SharedBrainReadOnly) return json(res, 503, { error: err.message, code: err.code })
+    // v0.21: a write to a shared brain that did not happen as asked (write.ts, sync/sync.ts)
+    if (err instanceof SharedWriteError) return json(res, err.status, { error: err.message, code: err.code })
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
       // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev
@@ -854,14 +889,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 // --- Server ---
 const server = http.createServer(handleRequest)
 
-server.listen(PORT, HOST, () => {
-  console.log(`EML API v${SERVER_VERSION} running on http://${HOST}:${PORT}`)
-  console.log(`Data dir: ${DATA_DIR}  |  Pool cap=${POOL_CAP}, idle=${POOL_IDLE_MIN}min`)
+// v0.21: libsodium first (the protocol's crypto), then each shared brain's
+// connection to its relay, then the API.
+ready().then(() => {
+  startSyncs()
+  server.listen(PORT, HOST, () => {
+    console.log(`EML API v${SERVER_VERSION} running on http://${HOST}:${PORT}`)
+    console.log(`Data dir: ${DATA_DIR}  |  Pool cap=${POOL_CAP}, idle=${POOL_IDLE_MIN}min`)
+  })
 })
 
 // Graceful shutdown — close pool + control DB; per-request EML.fromConnection
 // has ownsConnection=false, so nothing is closed twice.
 function shutdown(): void {
+  for (const sync of syncs.values()) sync.close()
   try { pool.close() } catch { /* best-effort */ }
   try { controlDb.close() } catch { /* best-effort */ }
   server.close(() => process.exit(0))
