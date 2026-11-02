@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers } from './chat-store';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers, showSentMessage } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
@@ -35,6 +35,10 @@ const BUSY_RETRY_MS = 3_000;
 export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false) {
   const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  // The host has this socket on the session: until then frames wait here, so a
+  // message sent while the view connects or loads still goes out.
+  const joinedRef = useRef(false);
+  const waitingRef = useRef<Array<Record<string, unknown>>>([]);
   // Bumped by "Reconnect": starts the effect over.
   const [attempt, setAttempt] = useState(0);
 
@@ -59,6 +63,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       const socket = nonce ? new WebSocket(`${scheme}//${window.location.host}/ws/chat?nonce=${encodeURIComponent(nonce)}`) : null;
       if (!socket) { schedule(); return; }
       socketRef.current = socket;
+      joinedRef.current = false;
       const sendInit = (wait: boolean) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         const desk = paneStore.getDeskOfPane(paneId);
@@ -77,6 +82,11 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
         const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
+        if (frame.type === 'joined') {
+          joinedRef.current = true;
+          for (const waiting of waitingRef.current.splice(0)) socket.send(JSON.stringify(waiting));
+          return;
+        }
         if (frame.type === 'terminal_busy') {
           setTerminalBusy(sessionId, frame.state ?? 'working');
           busyRetry = setTimeout(() => sendInit(true), BUSY_RETRY_MS);
@@ -86,13 +96,17 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
-        } else if (frame.type === 'reset' && typeof frame.epoch === 'number') resetChat(sessionId, frame.epoch);
+        } else if (frame.type === 'reset' && typeof frame.epoch === 'number') {
+          resetChat(sessionId, frame.epoch);
+          for (const waiting of waitingRef.current) if (waiting.type === 'send') showSentMessage(sessionId, waiting.id as string, waiting.text as string);
+        }
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
         else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
       socket.onclose = (event) => {
         if (socketRef.current === socket) socketRef.current = null;
+        joinedRef.current = false;
         clearBusy();
         if (disposed) return;
         if (NO_RECONNECT.has(event.reason)) { setConnection(sessionId, 'superseded'); return; }
@@ -128,8 +142,17 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
   }, []);
 
   return {
-    send: useCallback((text: string, images: string[] = []) => sendFrame({ type: 'send', text, ...(images.length > 0 ? { images } : {}) }), [sendFrame]),
-    start: useCallback(() => sendFrame({ type: 'start' }), [sendFrame]),
+    send: useCallback((text: string, images: string[] = []) => {
+      const id = `sent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      showSentMessage(sessionId, id, text);
+      const frame = { type: 'send', id, text, ...(images.length > 0 ? { images } : {}) };
+      if (!joinedRef.current || !sendFrame(frame)) waitingRef.current.push(frame);
+      return true;
+    }, [sendFrame, sessionId]),
+    start: useCallback(() => {
+      if (joinedRef.current) sendFrame({ type: 'start' });
+      else if (!waitingRef.current.some((frame) => frame.type === 'start')) waitingRef.current.push({ type: 'start' });
+    }, [sendFrame]),
     interrupt: useCallback(() => sendFrame({ type: 'interrupt' }), [sendFrame]),
     answer: useCallback((requestId: string, answer: PermissionReply) => sendFrame({ type: 'answer', requestId, answer }), [sendFrame]),
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),

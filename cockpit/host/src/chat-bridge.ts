@@ -27,7 +27,7 @@ import { attentionAfterTurn, shouldAskForStatus } from './domain/session-attenti
  * Wire protocol:
  *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle?, readOnly? }
  *   client → { type:'start' }                        (a read-only view is about to be used)
- *   client → { type:'send', text }
+ *   client → { type:'send', text, id? }              (`id`: the one the view already shows it under)
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
  *   client → { type:'tool_servers' }
@@ -37,6 +37,7 @@ import { attentionAfterTurn, shouldAskForStatus } from './domain/session-attenti
  *   client → { type:'stop_agent', taskId }
  *   host   → { type:'terminal_busy', state }        (init with whenIdle refused: send it again later)
  *   host   → { type:'switching', reason }           (the handoff is under way)
+ *   host   → { type:'joined' }                      (the session takes messages from this socket now)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
  *   host   → { type:'tool_servers', servers, error }  (a snapshot, not part of the event log)
@@ -79,6 +80,8 @@ interface ChatEntry {
   lastActivity: number
   /** Being closed: a message now would go down with the process. */
   closing: boolean
+  /** Resolves once a closing entry is gone. */
+  closed: Promise<void> | null
   /** This turn the worker said how it stands, or was asked to. */
   declared: boolean
   askedStatus: boolean
@@ -102,6 +105,7 @@ export interface ChatContext {
 }
 
 type ClientMessage = {
+  id?: unknown
   readOnly?: unknown
   whenIdle?: unknown
   images?: unknown
@@ -193,7 +197,13 @@ export class ChatBridge {
   async end(sessionId: string, reason = 'superseded'): Promise<void> {
     const entry = this.entries.get(sessionId)
     if (!entry) return
+    if (entry.closed) return entry.closed
     entry.closing = true
+    entry.closed = this.close(entry, sessionId, reason)
+    return entry.closed
+  }
+
+  private async close(entry: ChatEntry, sessionId: string, reason: string): Promise<void> {
     const runtime = entry.runtime
     if (runtime) {
       if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
@@ -270,7 +280,7 @@ export class ChatBridge {
         const entry = this.entries.get(sessionId)
         if (!entry?.clients.has(ws)) return
         if (data.type === 'start') this.ensureStarted(entry)
-        else if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images))
+        else if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images), text(data.id))
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)
@@ -371,6 +381,10 @@ export class ChatBridge {
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
     const { sessionId, paneId, projectId, projectPath, space, provider } = opts
+    // Being closed: wait it out and start over. Joining would go down with it.
+    const closing = this.entries.get(sessionId)
+    if (closing?.closed) await closing.closed
+    if (ws.readyState !== WebSocket.OPEN) return
     const existing = this.entries.get(sessionId)
     if (existing) {
       this.join(existing, ws, opts.epoch, opts.after)
@@ -383,7 +397,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -395,12 +409,16 @@ export class ChatBridge {
       for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.agent)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
-    if (opts.readOnly) return
-    this.startEntry(entry, provider, space, paneId, resume)
+    if (opts.readOnly) {
+      if (!entry.runtime) this.emit(entry, { kind: 'process', state: 'stopped' })
+    } else this.startEntry(entry, provider, space, paneId, resume)
+    send(ws, { type: 'joined' })
   }
 
   /** The session gets its process here, once someone uses it. */
   private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean): void {
+    // A message can arrive while the view still loads, and it starts the session first.
+    if (entry.runtime) return
     const { sessionId, projectId, projectPath } = entry
     provider.trustProject(projectPath, sessionSpaceOf(space))
     this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey)
@@ -447,7 +465,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -495,7 +513,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, declared: false, askedStatus: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -536,6 +554,7 @@ export class ChatBridge {
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
     const stored = this.ctx.ledger.get(sessionId)
+    this.emit(entry, { kind: 'process', state: 'starting' })
     entry.runtime = this.ctx.runtimes.start({
       sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
       cwd: projectPath, env, address,
@@ -630,12 +649,13 @@ export class ChatBridge {
     }
   }
 
-  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = []): void {
+  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = [], clientId = ''): void {
     if (!message.trim() && imageNames.length === 0) return
+    if (entry.closing) throw new Error('This session is closing. Send that again in a moment.')
     // First: an image that can't be read must not leave half a message behind.
     const images = imageNames.map(readPastedImage)
     this.ensureStarted(entry)
-    const id = randomUUID()
+    const id = SAFE_ID.test(clientId) ? clientId : randomUUID()
     this.emit(entry, {
       kind: 'user_message', id, text: message, queued: entry.active,
       ...(images.length > 0 ? { images: images.map(({ url }) => ({ url })) } : {}),
@@ -688,6 +708,7 @@ export class ChatBridge {
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })
     for (const stored of this.ctx.events.after(entry.sessionId, from)) send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    send(ws, { type: 'joined' })
   }
 
   private projectFor(space: BrainSpace, projectId: string): ProjectEntry | null {

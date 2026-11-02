@@ -313,6 +313,50 @@ describe('ChatBridge', () => {
     expect(inFlight()).toBe(true)
   })
 
+  it('says when no process runs, when one is starting, and when a socket can send', async () => {
+    const { bridge } = setup({ transcript: true, runtimeOf: 'terminal' })
+    const ws = connect(bridge, { readOnly: true })
+    await flush()
+    expect(ws.events().filter((event) => event.kind === 'process')).toEqual([{ kind: 'process', state: 'stopped' }])
+    expect(ws.frames.at(-1)?.type).toBe('joined')
+    ws.client({ type: 'start' })
+    expect(ws.events().at(-1)).toEqual({ kind: 'process', state: 'starting' })
+  })
+
+  it('a message keeps the id the view already shows it under', async () => {
+    const { bridge } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: 'hi', id: 'local-1' })
+    ws.client({ type: 'send', text: 'odd', id: 'not safe!' })
+    const ids = ws.events().flatMap((event) => (event.kind === 'user_message' ? [event.id] : []))
+    expect(ids[0]).toBe('local-1')
+    expect(ids[1]).not.toBe('not safe!')
+  })
+
+  it('a tab that comes back while the session closes waits and gets a fresh start, not a dying one', async () => {
+    const { bridge, runtimes } = setup()
+    const first = connect(bridge)
+    await flush()
+    first.emit('close')
+    const closing = bridge.end('s1', 'timed out')
+    const second = connect(bridge)
+    await closing
+    await flush()
+    expect(second.closes).toEqual([])
+    expect(runtimes).toHaveLength(2)
+    expect(bridge.isRunning('s1')).toBe(true)
+  })
+
+  it('a message sent while a view loads does not start a second process', async () => {
+    const { bridge, runtimes } = setup({ transcript: true, runtimeOf: 'terminal' })
+    const ws = connect(bridge)
+    ws.client({ type: 'send', text: 'quick' })
+    await flush()
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].sent).toEqual(['quick'])
+  })
+
   it('a worker that cannot start says why and leaves nothing behind', () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })
@@ -351,7 +395,7 @@ describe('ChatBridge', () => {
     expect(terminal.ended).toBe(1)
     expect(runtimes[0].start.resume).toBe(true)
     const kinds = ws.events().map((e) => e.kind)
-    expect(kinds).toEqual(['user_message', 'history_end', 'notice'])
+    expect(kinds).toEqual(['user_message', 'history_end', 'notice', 'process'])
     expect(ledgerEntries.get('s1')?.keepRunning).toBe(false)
   })
 
@@ -373,7 +417,7 @@ describe('ChatBridge', () => {
     runtimes[0].emit({ kind: 'text', blockId: 'a', text: 'one' })
     runtimes[0].emit({ kind: 'text', blockId: 'b', text: 'two' })
     const reset = first.frames.find((f) => f.type === 'reset') as { epoch: number }
-    const [firstSeq] = first.seqs()
+    const firstSeq = first.seqs()[first.seqs().length - 2]
     first.emit('close')
 
     const again = connect(bridge, { epoch: reset.epoch, after: firstSeq })
@@ -383,7 +427,7 @@ describe('ChatBridge', () => {
     const stale = connect(bridge, { epoch: reset.epoch + 100, after: 99 })
     await flush()
     expect(stale.frames[0]).toMatchObject({ type: 'reset' })
-    expect(stale.events()).toHaveLength(2)
+    expect(stale.events().filter((event) => event.kind === 'text')).toHaveLength(2)
   })
 
   it('a second client joins: one runtime, both get every event, and either can send', async () => {

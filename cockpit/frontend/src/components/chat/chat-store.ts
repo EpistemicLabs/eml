@@ -82,6 +82,15 @@ export function resetChat(sessionId: string, epoch: number): void {
   publish(store, { chat: EMPTY_CHAT, switching: null, problem: null });
 }
 
+/** A message goes on screen when it is sent; the host's copy under the same id takes its place. */
+export function showSentMessage(sessionId: string, id: string, text: string): void {
+  const store = storeOf(sessionId);
+  flush(store);
+  let chat = reduceChat(store.snapshot.chat, { kind: 'user_message', id, text, queued: store.snapshot.chat.activity !== 'idle' }, store.seq);
+  if (chat.process !== 'ready') chat = reduceChat(chat, { kind: 'process', state: 'starting' }, store.seq);
+  publish(store, { chat });
+}
+
 export function setConnection(sessionId: string, connection: Connection): void {
   const store = storeOf(sessionId);
   flush(store);

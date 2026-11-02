@@ -130,6 +130,8 @@ export type RuntimeEvent =
   | { kind: 'compaction' }
   /** The stored conversation is in; everything after it is live. */
   | { kind: 'history_end' }
+  /** Whether a process runs the session: none yet (a read-only view), or one just starting. `capabilities` says it is ready. */
+  | { kind: 'process'; state: 'stopped' | 'starting' }
   /** Something the user should know that is not the agent's output (a handoff, a lost grant). */
   | { kind: 'notice'; text: string }
   | { kind: 'error'; message: string }

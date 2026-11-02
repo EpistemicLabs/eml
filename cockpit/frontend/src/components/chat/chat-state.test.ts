@@ -248,7 +248,7 @@ describe('reduceChat', () => {
   it('a process that dies does not leave the status stuck', () => {
     const state = fold([{ kind: 'activity', state: 'working' }, tool('t1'), { kind: 'runtime_exit', expected: false }]);
     expect(state.activity).toBe('idle');
-    expect(statusLine(state)).toBeNull();
+    expect(statusLine(state)).toBe('Session stopped. It starts when you send a message.');
   });
 
   it('a queued message loses its mark when the turn before it ends', () => {
@@ -301,5 +301,43 @@ describe('groupItems', () => {
   it('an empty thinking block does not split a run', () => {
     const state = fold([tool('a'), { kind: 'thinking', blockId: 'x', text: '' }, tool('b')]);
     expect(groupItems(state.items)).toHaveLength(1);
+  });
+});
+
+describe('whether a process runs', () => {
+  it('starts unknown, so the view can say it still loads', () => {
+    expect(EMPTY_CHAT.process).toBe('unknown');
+  });
+
+  it('says it is starting until the session shows it runs', () => {
+    const starting = fold([{ kind: 'process', state: 'starting' }]);
+    expect(statusLine(starting)).toBe('Starting session…');
+    expect(statusLine(fold([{ kind: 'activity', state: 'working' }], starting))).toBe('Starting session…');
+    const ready = fold([{ kind: 'capabilities', models: [], modes: [] }], starting);
+    expect(ready.process).toBe('ready');
+    expect(statusLine(fold([{ kind: 'activity', state: 'working' }], ready))).toBe('Working…');
+  });
+
+  it('text also shows it runs, should the capabilities never come', () => {
+    expect(fold([{ kind: 'process', state: 'starting' }, { kind: 'text', blockId: 'b', text: 'hi' }]).process).toBe('ready');
+  });
+
+  it('says a stopped session starts on the next message; a new empty one has nothing to say', () => {
+    const message = { kind: 'user_message', id: 'u', text: 'hi', queued: false } as const;
+    expect(statusLine(fold([message, { kind: 'process', state: 'stopped' }]))).toBe('Session stopped. It starts when you send a message.');
+    expect(statusLine(fold([{ kind: 'process', state: 'stopped' }]))).toBeNull();
+  });
+
+  it('a process that exits counts as stopped', () => {
+    expect(fold([{ kind: 'process', state: 'starting' }, { kind: 'runtime_exit', expected: false }]).process).toBe('stopped');
+  });
+});
+
+describe('a message shown when sent', () => {
+  it('stays one message when the host sends it back under the same id', () => {
+    const sent = { kind: 'user_message', id: 'sent-1', text: 'hi', queued: false } as const;
+    const state = fold([sent, { ...sent, queued: true }]);
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ queued: true, text: 'hi' });
   });
 });

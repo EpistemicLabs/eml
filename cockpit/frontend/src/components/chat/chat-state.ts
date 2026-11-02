@@ -96,6 +96,7 @@ export type ChatEvent =
   | { kind: 'turn_end'; reason: 'success' | 'interrupted' | 'error' }
   | { kind: 'compaction' }
   | { kind: 'history_end' }
+  | { kind: 'process'; state: 'stopped' | 'starting' }
   | { kind: 'notice'; text: string }
   | { kind: 'error'; message: string }
   | { kind: 'runtime_exit'; expected: boolean };
@@ -127,10 +128,12 @@ export interface ChatState {
   agentTools: Record<string, AgentTool[]>;
   /** The last turn ended in a failure; cleared by the next one. */
   failed: boolean;
+  /** Whether a process runs the session. `unknown`: the host has not said yet, so the view still loads. */
+  process: 'unknown' | 'stopped' | 'starting' | 'ready';
 }
 
 export const EMPTY_CHAT: ChatState = {
-  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], agentTools: {}, failed: false,
+  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], agentTools: {}, failed: false, process: 'unknown',
 };
 
 function indexOfItem(items: ChatItem[], type: ChatItem['type'], id: string): number {
@@ -211,7 +214,14 @@ function unqueueFirst(items: ChatItem[]): ChatItem[] {
   return replaceAt(items, index, { ...(items[index] as Extract<ChatItem, { type: 'user' }>), queued: false });
 }
 
+const SHOWS_IT_RUNS = new Set<ChatEvent['kind']>(['capabilities', 'text_delta', 'text', 'thinking_delta', 'thinking', 'tool_call', 'turn_end']);
+
 export function reduceChat(state: ChatState, event: ChatEvent, seq: number): ChatState {
+  const next = foldEvent(state, event, seq);
+  return next.process === 'starting' && SHOWS_IT_RUNS.has(event.kind) ? { ...next, process: 'ready' } : next;
+}
+
+function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
   const { items } = state;
   switch (event.kind) {
     case 'settings':
@@ -220,6 +230,8 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
         ...(event.model !== undefined ? { model: event.model } : {}),
         ...(event.mode !== undefined ? { mode: event.mode } : {}),
       };
+    case 'process':
+      return { ...state, process: event.state };
     case 'capabilities':
       return { ...state, models: event.models, modes: event.modes };
     case 'commands':
@@ -237,12 +249,19 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
         ...state, agents: [], shells: [], agentTools: {}, context: null, failed: false,
         items: [{ type: 'notice', id: `s${seq}`, text: 'Started a new conversation.' }],
       };
-    case 'user_message':
+    case 'user_message': {
+      // The view shows a message from the moment it is sent; here it comes back from the host.
+      const shown = indexOfItem(items, 'user', event.id);
+      if (shown >= 0) {
+        const item = items[shown] as Extract<ChatItem, { type: 'user' }>;
+        return { ...state, failed: false, items: replaceAt(items, shown, { ...item, queued: event.queued, images: event.images ?? item.images }) };
+      }
       return {
         ...state,
         failed: false,
         items: [...items, { type: 'user', id: event.id, text: event.text, queued: event.queued, images: event.images ?? [] }],
       };
+    }
     case 'text_delta':
     case 'thinking_delta': {
       const type = event.kind === 'text_delta' ? 'assistant' : 'thinking';
@@ -314,7 +333,7 @@ export function reduceChat(state: ChatState, event: ChatEvent, seq: number): Cha
       return { ...state, items: [...items, { type: 'error', id: `s${seq}`, text: event.message }] };
     case 'runtime_exit':
       // Whatever was running or asking went with the process; the status line must not stay stuck.
-      return { ...state, activity: 'idle', items: settleTools(items),
+      return { ...state, activity: 'idle', process: 'stopped', items: settleTools(items),
         agents: stopAgents(state.agents, false),
         shells: state.shells.map((shell) => (shell.status === 'running' ? { ...shell, status: 'stopped' } : shell)),
       };
@@ -540,7 +559,10 @@ export function statusLine(state: ChatState): string | null {
     return 'Waiting for your answer';
   }
   if (state.activity === 'waiting') return 'Waiting for your answer';
+  if (state.process === 'starting') return 'Starting session…';
   if (state.activity === 'working') return 'Working…';
   if (state.failed) return 'The last turn failed';
+  // An empty new session has nothing that stopped.
+  if (state.process === 'stopped' && state.items.length > 0) return 'Session stopped. It starts when you send a message.';
   return null;
 }

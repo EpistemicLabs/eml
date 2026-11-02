@@ -507,6 +507,9 @@ export function ChatPane({
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + 60px)', paddingBottom: 'calc(var(--composer-offset) + 12px)' } : undefined}>
           <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
+          {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
+            <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
+          )}
           {connection === 'superseded' && (
             <div className={cn(COLUMN, 'flex items-center gap-2 pb-1 text-muted-foreground')}>
               This session moved to the terminal.
