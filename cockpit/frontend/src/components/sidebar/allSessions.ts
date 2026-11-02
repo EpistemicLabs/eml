@@ -39,14 +39,11 @@ export interface AllSections {
   toReview: AllSession[];
   main: Array<{ space: SpaceInfo; items: MainItem[] }>;
   recent: AgentGroup[];
-  /** Workers under their parent and archived sessions: no row of their own, but search finds them. */
+  /** Workers under their parent: no row of their own, but search finds them. */
   searchOnly: AllSession[];
-  /** Old workers nobody has anything to do with; offered for archiving once. */
-  oldWorkers: string[];
 }
 
 const RECENT_MS = 24 * 60 * 60 * 1000;
-const OLD_WORKER_MS = 7 * RECENT_MS;
 const QUIET_MS = 30 * 60 * 1000;
 
 /** What a session's row says about it; null: nothing, it reads as a plain row. */
@@ -167,7 +164,7 @@ export function groupAllSessions(
   now: number = Date.now(),
   queued: QueuedWorker[] = [],
 ): AllSections {
-  const empty: AllSections = { needsYou: [], toReview: [], main: [], recent: [], searchOnly: [], oldWorkers: [] };
+  const empty: AllSections = { needsYou: [], toReview: [], main: [], recent: [], searchOnly: [] };
   if (spaces.length === 0) return empty;
   const live = new Map(sessions.filter((session) => !session.archivedAt).map((session) => [session.id, session]));
   const workersOf = new Map<string, AllSession[]>();
@@ -188,17 +185,15 @@ export function groupAllSessions(
   const needsYou: AllSession[] = [];
   const toReview: AllSession[] = [];
   const main: AllSession[] = [];
-  const recent: AllSession[] = [];
-  const searchOnly = sessions.filter((session) => session.archivedAt);
-  const oldWorkers: string[] = [];
+  // Archived sessions read like any older chat: they only leave the sections above.
+  const recent = sessions.filter((session) => session.archivedAt);
+  const searchOnly: AllSession[] = [];
   for (const session of live.values()) {
     const turn = turns[session.id];
     const mark = sessionMark(session, turn);
     const state = allSessionState(session, turn);
     const hasWorkers = (workersOf.get(session.id)?.length ?? 0) > 0 || queuedOf.has(session.id);
     const isTop = topSession(session, live) === session;
-    if (session.worker && !mark && session.state === 'ended' && !isPinned(session)
-      && now - Date.parse(activityOf(session)) >= OLD_WORKER_MS) oldWorkers.push(session.id);
     if (mark && NEEDS_YOU.includes(mark)) needsYou.push(session);
     else if (mark) toReview.push(session);
     else if (!isTop) searchOnly.push(session);
@@ -234,7 +229,6 @@ export function groupAllSessions(
     })),
     recent: byAgent(recent, newestFirst),
     searchOnly,
-    oldWorkers,
   };
 }
 

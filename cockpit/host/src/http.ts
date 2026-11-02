@@ -199,19 +199,6 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     return true
   }
 
-  // Once, on the user's word: the old workers the sidebar counted leave the lists.
-  if (id === 'archive-old' && !action) {
-    const body = await readJson(req)
-    const ids = Array.isArray(body.ids) ? body.ids.filter((one): one is string => typeof one === 'string') : []
-    const old = ids.filter((one) => {
-      const entry = ledger.get(one)
-      return entry?.worker && !entry.pinned && !entry.archivedAt && !entry.attention && !deps.chat.isRunning(one) && !deps.bridge.isRunning(one)
-    })
-    for (const one of old) ledger.archive(one)
-    json(res, 200, { archived: old.length })
-    return true
-  }
-
   const entry = ledger.get(id)
   if (!action || !['read', 'clear', 'archive', 'stop', 'answer'].includes(action)) return false
   if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }

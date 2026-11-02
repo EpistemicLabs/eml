@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChevronRight, MessageSquare } from 'lucide-react';
 
 import { startReview } from '@/lib/review-flow';
-import { answerSession, archiveOldWorkers, archiveSession, clearSession, markSessionRead, setAnswering, stopSession, useAnswering } from '@/lib/session-actions';
+import { answerSession, archiveSession, clearSession, markSessionRead, setAnswering, stopSession, useAnswering } from '@/lib/session-actions';
 import { cn } from '@/lib/utils';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -213,24 +213,6 @@ export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller
   );
 }
 
-function OldWorkers({ ids, controller }: { ids: string[]; controller: SidebarController }) {
-  const [confirming, setConfirming] = useState(false);
-  if (ids.length === 0) return null;
-  const className = 'w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground';
-  if (!confirming) {
-    return <button type="button" className={className} onClick={() => setConfirming(true)}>Archive {ids.length} old workers</button>;
-  }
-  return (
-    <button
-      type="button"
-      className={cn(className, 'font-medium text-foreground')}
-      onClick={() => void archiveOldWorkers(ids).then((error) => { if (error) controller.reportError(error); setConfirming(false); })}
-    >
-      Yes, archive {ids.length}. They stay in search.
-    </button>
-  );
-}
-
 export function SidebarAllSessions({ controller }: { controller: SidebarController }) {
   const { sections, spaces, sessions } = useSections(controller);
   const [query, setQuery] = useState('');
@@ -273,7 +255,7 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search sessions"
-            aria-label="Search sessions, also archived ones"
+            aria-label="Search sessions"
             className="w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
           />
         </div>
@@ -300,7 +282,6 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
         {searching && recent.length === 0 && found.length === 0 && (
           <p className="px-2 py-1 text-[11px] text-muted-foreground">No matching sessions</p>
         )}
-        {!searching && <OldWorkers ids={sections.oldWorkers} controller={controller} />}
       </div>
     </div>
   );

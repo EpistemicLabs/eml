@@ -42,20 +42,6 @@ export async function archiveSession(sessionId: string): Promise<string | null> 
   return null;
 }
 
-export async function archiveOldWorkers(ids: string[]): Promise<string | null> {
-  try {
-    const response = await fetch('/api/sessions/archive-old', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
-    window.dispatchEvent(new CustomEvent(SESSIONS_CHANGED_EVENT));
-    return response.ok ? null : FALLBACK;
-  } catch {
-    return FALLBACK;
-  }
-}
-
 // The one row whose reply box is open, whichever way it was asked for (hover chip, phone menu).
 let answering: string | null = null;
 const listeners = new Set<() => void>();

@@ -137,24 +137,19 @@ describe('groupAllSessions', () => {
     expect(mainIds(group([{ ...waiting, attention: null }]))).toEqual(['a']);
   });
 
-  it('archived sessions only show in search', () => {
-    const sections = group([session('a', { archivedAt: FRESH, attention: null })]);
+  it('archived sessions go to Recent like any older chat, workers too', () => {
+    const sections = group([
+      session('chat', { archivedAt: FRESH, lastActivity: FRESH, attention: null }),
+      session('worker', { archivedAt: FRESH, worker: true, parentSessionId: 'chat', attention: null }),
+    ]);
     expect(mainIds(sections)).toEqual([]);
-    expect(sections.recent).toEqual([]);
-    expect(ids(sections.searchOnly)).toEqual(['a']);
+    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['chat', 'worker']);
+    expect(sections.searchOnly).toEqual([]);
   });
 
-  it('counts what a parent has waiting for memory, and only old idle workers as old', () => {
-    const sections = group([
-      session('p', { lastActivity: FRESH }),
-      session('old', { worker: true }),
-      session('recent', { worker: true, lastActivity: FRESH }),
-      session('asks', { worker: true, attention: attention('question') }),
-      session('pin', { worker: true, isPinned: true }),
-    ], {}, [{ id: 'x', parentSessionId: 'p' }, { id: 'y', parentSessionId: 'nobody' }]);
-    const parent = sections.main[0].items.find((item) => item.session.id === 'p');
-    expect(parent?.counts.queued).toBe(1);
-    expect(sections.oldWorkers).toEqual(['old']);
+  it('counts what a parent has waiting for memory', () => {
+    const sections = group([session('p', { lastActivity: FRESH })], {}, [{ id: 'x', parentSessionId: 'p' }, { id: 'y', parentSessionId: 'nobody' }]);
+    expect(sections.main[0].items[0].counts.queued).toBe(1);
   });
 
   it('survives a loop of parents', () => {
