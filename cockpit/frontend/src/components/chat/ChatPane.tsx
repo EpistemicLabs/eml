@@ -501,7 +501,7 @@ export function ChatPane({
       ref={rootRef}
       className="chat-pane relative flex h-full min-h-0 flex-col"
       // 6 px above the keyboard; with it closed, partly into the home indicator's inset.
-      style={compact ? ({ '--composer-bottom': 'max(6px, calc(var(--bottom-inset, 0px) - 14px))', '--composer-offset': 'calc(var(--composer-height, 96px) + var(--composer-bottom))' } as React.CSSProperties) : undefined}
+      style={compact ? ({ '--composer-bottom': 'max(6px, calc(var(--bottom-inset, 0px) - 6px))', '--composer-offset': 'calc(var(--composer-height, 96px) + var(--composer-bottom))' } as React.CSSProperties) : undefined}
     >
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
