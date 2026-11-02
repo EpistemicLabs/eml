@@ -7,14 +7,16 @@ import { encryptionKeyFromSeed, signingKeyFromSeed, type DeviceKeys } from '@eng
 // What this device holds for one shared brain, outside brains/ and its
 // backups: <data-dir>/team/<team brain id>.json, owner-only. It is named by the
 // team brain id the brain's genesis carries; nothing here is derived locally.
-// It holds the device's seeds and nothing the log already says: the member and
-// its handle come from the log, the brain keys from the relay (wrapped for
-// this device), and stay in memory.
+// It holds the relay and the device's seeds, nothing the log already says:
+// the member and its handle come from the log, the brain keys from the relay
+// (wrapped for this device), and stay in memory.
 
 export interface TeamFile {
   v: 1
   /** the team brain id, as the genesis names it */
   brain: string
+  /** the relay's origin, wss://<host> (ws:// only for a local test relay) */
+  relay: string
   device: DeviceKeys
 }
 
@@ -31,12 +33,14 @@ export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
-  const raw = JSON.parse(text) as { v?: unknown, brain?: unknown, device?: { sign_seed?: unknown, enc_seed?: unknown } }
+  const raw = JSON.parse(text) as { v?: unknown, brain?: unknown, relay?: unknown, device?: { sign_seed?: unknown, enc_seed?: unknown } }
   if (raw.v !== 1) throw new Error(`team file of ${brain}: version ${String(raw.v)} is not 1`)
   if (raw.brain !== brain) throw new Error(`team file of ${brain}: it is for brain ${String(raw.brain)}`)
+  if (typeof raw.relay !== 'string' || !/^wss?:\/\/[^/]+$/.test(raw.relay)) throw new Error(`team file of ${brain}: relay is not a ws(s):// origin`)
   return {
     v: 1,
     brain,
+    relay: raw.relay,
     device: { sign: signingKeyFromSeed(seed(raw.device?.sign_seed)), enc: encryptionKeyFromSeed(seed(raw.device?.enc_seed)) },
   }
 }
@@ -48,6 +52,7 @@ export function writeTeamFile(dataDir: string, file: TeamFile): void {
   const body = {
     v: file.v,
     brain: file.brain,
+    relay: file.relay,
     device: { sign_seed: Buffer.from(file.device.sign.seed).toString('base64url'), enc_seed: Buffer.from(file.device.enc.seed).toString('base64url') },
   }
   fs.writeFileSync(target, JSON.stringify(body, null, 2) + '\n', { mode: 0o600 })

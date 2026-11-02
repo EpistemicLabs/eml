@@ -2,10 +2,10 @@ import type Database from 'better-sqlite3'
 import {
   DivergedError, GENESIS_PREV_HASH, ProtocolError, UnsupportedVersionError,
   applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall,
-  memberHandles, openRecord, unwrapKey,
-  type MemberSet, type OpenedOp, type TeamOp,
+  memberHandles, memberOfDevice, openRecord, unwrapKey,
+  type BrainKey, type MemberSet, type OpenedOp, type TeamOp,
 } from '@engramprotocol/protocol'
-import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError } from '@engramprotocol/core'
+import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
 import type { TeamFile } from './team-file'
 
 // --- The replica (v0.21, spec team-brain-sync-client-spec §4) ---------------------
@@ -25,9 +25,10 @@ export interface Delivered {
 }
 
 export type Outcome =
-  | { kind: 'applied' }
-  /** kept in the log, changed nothing */
-  | { kind: 'rejected', why: string }
+  /** the command's result */
+  | { kind: 'applied', result?: unknown }
+  /** kept in the log, changed nothing; `error` when the brain refused the op */
+  | { kind: 'rejected', why: string, error?: CommandError }
   /** nothing written: the device has no key for the brain's current epoch yet (addKey) */
   | { kind: 'waiting', epoch: number }
   /** the brain stops: replicas went apart, or the relay's log is not one */
@@ -161,13 +162,13 @@ export class Replica {
       throw err
     }
 
-    const why = this.eml.takeRelayed(this.entry(seq, at, opened), op)
-    if (why !== null) return { kind: 'rejected', why }
+    const taken = this.eml.takeRelayed(this.entry(seq, at, opened), op)
+    if (taken.rejected !== null) return { kind: 'rejected', why: taken.rejected, ...(taken.error ? { error: taken.error } : {}) }
     if (next !== set) {
       this.set = next
       this.handles = null
     }
-    return { kind: 'applied' }
+    return { kind: 'applied', result: taken.result }
   }
 
   /** A record that did not open: a newer protocol stops; otherwise it is kept as rejected, as delivered. */
@@ -188,8 +189,25 @@ export class Replica {
     return { seq, at, op_id: opened.envelope.op_id, payload: opened.payload, signature: Buffer.from(opened.sig, 'base64url'), rejected: null }
   }
 
-  private head(): { seq: number } {
-    return this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM op_log').get() as { seq: number }
+  /** The log's head: its seq and chain link (seq 0 before the genesis). */
+  head(): { seq: number, hash: string } {
+    const head = this.db.prepare('SELECT seq, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, hash: string } | undefined
+    return head ?? { seq: 0, hash: GENESIS_PREV_HASH }
+  }
+
+  /** The key a write of this device is sealed under: the brain's current epoch's, when this device holds it. */
+  currentKey(): BrainKey | undefined {
+    if (!this.set) return undefined
+    const key = this.keys.get(this.set.epoch)
+    return key ? { epoch: this.set.epoch, key } : undefined
+  }
+
+  /** The handle the log binds to this device's member — what its writes name — or null. */
+  ownHandle(): string | null {
+    if (!this.set) return null
+    const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
+    if (!member) return null
+    return (this.handles ??= memberHandles(this.set, epoch => this.keys.get(epoch)))[member] ?? null
   }
 
   /** The chain link after `seq` (the genesis's prev_hash before seq 1). */

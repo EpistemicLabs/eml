@@ -3,7 +3,7 @@ import { provenanceProblem, type Json, type OpEnvelope, type Provenance } from '
 import type { EML } from '../index'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from '../control'
 import { runCommand, type CommandMap, type CommandName } from '../commands'
-import { asCommandError, type CommandContext } from '../commands/types'
+import { CommandError, asCommandError, type CommandContext } from '../commands/types'
 import type { Actor, Env } from '../env'
 import { INGESTION_METHODS } from '../types'
 import { RelayOrderError, appendOp, appendRelayed, teamBrainOf, type RelayedEntry } from './log'
@@ -79,17 +79,17 @@ export function applyOp(stores: Stores, op: OpEnvelope, at: string, teamBrain: s
  * Takes one relayed entry of a shared brain (spec team-brain-sync-client-spec
  * §4): appended at its seq and time and, unless the replica already refused
  * it (entry.rejected), `op` applied — in one transaction. An op the brain
- * refuses is kept as rejected ("INVALID: …"); returns why the entry was
- * rejected, or null when it was applied. The genesis at seq 1 founds the log: the brain must be
+ * refuses is kept as rejected ("INVALID: …", with its CommandError). Returns
+ * what the entry came to: the command's result, or why it was rejected. The genesis at seq 1 founds the log: the brain must be
  * in the state it names, which becomes the snapshot at seq 1. Throws
  * RelayOrderError for an entry out of order and Error for a genesis whose
  * state is not this brain's: the replica stops.
  */
-export function takeRelayed(stores: Stores, entry: RelayedEntry, op: OpEnvelope | null): string | null {
+export function takeRelayed(stores: Stores, entry: RelayedEntry, op: OpEnvelope | null): Taken {
   const { db } = stores
   if (entry.rejected !== null) {
     db.transaction(() => appendRelayed(db, entry))()
-    return entry.rejected
+    return { rejected: entry.rejected }
   }
   if (op === null) throw new Error('a relayed entry is applied with its op or kept as rejected')
   if (entry.seq === 1 && op.call === 'brain.genesis') {
@@ -100,18 +100,24 @@ export function takeRelayed(stores: Stores, entry: RelayedEntry, op: OpEnvelope 
       if (hash !== (op.args as { state_hash?: unknown }).state_hash) throw new Error('the genesis names another state than this brain\'s')
       db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (1, ?, ?, ?)').run(op.schema, hash, encodeSnapshot(dump))
     })()
-    return null
+    return { rejected: null, result: undefined }
   }
   try {
-    db.transaction(() => { appendRelayed(db, entry); applyOp(stores, op, entry.at, teamBrainOf(db)) })()
-    return null
+    const result = db.transaction(() => { appendRelayed(db, entry); return applyOp(stores, op, entry.at, teamBrainOf(db)) })()
+    return { rejected: null, result }
   } catch (err) {
     if (err instanceof RelayOrderError) throw err
-    const why = `INVALID: ${(err as Error).message}`
+    const error = asCommandError(err)
+    const why = `INVALID: ${(error as Error).message}`
     db.transaction(() => appendRelayed(db, { ...entry, rejected: why }))()
-    return why
+    return error instanceof CommandError ? { rejected: why, error } : { rejected: why }
   }
 }
+
+/** What a relayed entry came to: applied with the command's result, or rejected — with the CommandError when the brain refused the op. */
+export type Taken =
+  | { rejected: null, result: unknown }
+  | { rejected: string, error?: CommandError }
 
 /**
  * The actor an op writes as: its provenance, checked field by field — in a

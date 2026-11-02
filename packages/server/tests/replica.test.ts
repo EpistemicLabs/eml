@@ -3,124 +3,22 @@ import { mkdtempSync, rmSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type Database from 'better-sqlite3'
-import {
-  GENESIS_PREV_HASH, applyMembership, certifyDevice, clearOp, genesisMembers, keyId, newBrainKey, newDeviceKeys, newSigningKey,
-  openRecord, ready, rotateKey, sealHandle, sealOp, wrapKey,
-  type BrainKey, type DeviceKeys, type KeyPair, type MemberSet, type TeamOp,
-} from '@engramprotocol/protocol'
+import { newBrainKey, newDeviceKeys, ready, wrapKey } from '@engramprotocol/protocol'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '@engramprotocol/core'
 import { verify } from '../../core/src/log/rebuild'
 import { validNote } from '../../core/tests/fixtures'
 import { Replica } from '../src/sync/replica'
+import { BRAIN, OTHER, Team, json, person, time } from './team'
 import { readTeamFile, teamFilePath, writeTeamFile } from '../src/sync/team-file'
 
 // v0.21 replica (spec team-brain-sync-client-spec §4): a shared brain takes
 // the entries its relay delivers. The test plays the relay: records built with
 // the protocol package, delivered at the next seq, a second apart.
 
-const BRAIN = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
-const OTHER = '0f8fad5b-d9cb-469f-a165-70867728950e'
-const T0 = Date.parse('2026-10-28T08:00:00.000Z')
-const NONE = { handle: null, agent: null, ingestion_method: null, session_id: null, model: null, harness: null }
-
-interface Person { identity: KeyPair, device: DeviceKeys, handle: string }
-const person = (handle: string): Person => ({ identity: newSigningKey(), device: newDeviceKeys(), handle })
-const cert = (p: Person) => certifyDevice(p.identity, { brain: BRAIN, device_sign: p.device.sign.publicKey, device_enc: p.device.enc.publicKey, created_at: '2026-10-28T08:00:00.000Z' })
-const json = (value: unknown): Record<string, unknown> => JSON.parse(JSON.stringify(value))
-const time = (seq: number): string => new Date(T0 + seq * 1000).toISOString()
-
-/**
- * A team brain: its owner juno, whose device this replica runs on, the brain
- * keys, and the member set as the relay's log has it. Records are built
- * against the replica's own log (base_seq = its head).
- */
-class Team {
-  readonly owner = person('juno')
-  readonly keys: BrainKey[] = [newBrainKey(0)]
-  readonly db: Database.Database
-  replica: Replica
-  set!: MemberSet
-
-  constructor() {
-    const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    this.db = (eml as any).db
-    this.db.exec('DELETE FROM op_snapshots; DELETE FROM op_log')  // a new brain file writes a private genesis
-    this.replica = new Replica(this.db, { v: 1, brain: BRAIN, device: this.owner.device })
-  }
-
-  get head(): number {
-    return (this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS n FROM op_log').get() as { n: number }).n
-  }
-
-  /** The genesis: juno founds the brain as its root, epoch 0, at the empty state. */
-  genesis(): Record<string, unknown> {
-    const op_id = crypto.randomUUID()
-    const member = this.owner.identity.publicKey
-    const record = json(clearOp(this.envelope(this.owner, 'brain.genesis', {
-      brain: BRAIN,
-      state_hash: EML.fromConnection(this.db, 'test').stateHash(),
-      root: { member, device_cert: cert(this.owner), handle: sealHandle(this.owner.handle, { brain: BRAIN, op_id, member }, this.keys[0]), key_id: keyId(this.keys[0].key) },
-    }, op_id), this.owner.device.sign).record)
-    this.set = genesisMembers(openRecord(record, BRAIN, () => undefined))
-    return record
-  }
-
-  /** A sealed op by `author` (default: an engram.create titled `title`) under the current epoch. */
-  write(author: Person, title: string, opts: { epoch?: number, handle?: string, args?: unknown, call?: string, schema?: number, team?: Partial<TeamOp['team']> } = {}): Record<string, unknown> {
-    const env = this.envelope(author, opts.call ?? 'engram.create', opts.args ?? validNote({ title }), crypto.randomUUID(), opts.team)
-    env.provenance = { ...NONE, handle: opts.handle ?? author.handle, ingestion_method: 'mcp' }
-    if (opts.schema !== undefined) env.schema = opts.schema
-    return json(sealOp(env, author.device.sign, this.keys[opts.epoch ?? this.set.epoch]).record)
-  }
-
-  /** juno adds `joiner`; the relay's member set follows (unless it refuses the record). */
-  addMember(joiner: Person): Record<string, unknown> {
-    const op_id = crypto.randomUUID()
-    const member = joiner.identity.publicKey
-    const handle = sealHandle(joiner.handle, { brain: BRAIN, op_id, member }, this.keys[this.set.epoch])
-    return this.membership(this.envelope(this.owner, 'team.add_member', { member, role: 'member', device_cert: cert(joiner), handle }, op_id))
-  }
-
-  /** juno rotates to the next brain key; the relay's member set follows. */
-  rotate(): Record<string, unknown> {
-    const { next, args } = rotateKey(this.set, this.keys[this.set.epoch])
-    this.keys.push(next)
-    return this.membership(this.envelope(this.owner, 'team.rotate_key', args))
-  }
-
-  /** The key of `epoch`, wrapped by juno for `device` (default: this replica's). */
-  wrapped(epoch: number, device = this.owner.device): unknown {
-    return json(wrapKey(this.set, this.keys[epoch], device.sign.publicKey, this.owner.device.sign))
-  }
-
-  deliver(record: unknown, seq = this.head + 1, at = time(seq)) {
-    return this.replica.take({ seq, at, record })
-  }
-
-  private membership(env: TeamOp): Record<string, unknown> {
-    const record = json(clearOp(env, this.owner.device.sign).record)
-    try {
-      this.set = applyMembership(this.set, openRecord(record, BRAIN, () => undefined))
-    } catch {
-      // a record the member set refuses: the log keeps it, the set stays
-    }
-    return record
-  }
-
-  private envelope(author: Person, call: string, args: unknown, op_id: string = crypto.randomUUID(), team: Partial<TeamOp['team']> = {}): TeamOp {
-    const head = this.head
-    const link = head === 0 ? GENESIS_PREV_HASH : (this.db.prepare('SELECT hash FROM op_log WHERE seq = ?').get(head) as { hash: string }).hash
-    return {
-      op_id, schema: CURRENT_BRAIN_SCHEMA_VERSION, call, args: args as never, provenance: NONE,
-      team: { brain: BRAIN, device: author.device.sign.publicKey, base_seq: head, head_hash: link, ...team },
-    }
-  }
-}
-
 /** A team whose genesis the replica took, holding the epoch-0 key. */
 function founded(): Team {
   const team = new Team()
-  expect(team.deliver(team.genesis())).toEqual({ kind: 'applied' })
+  expect(team.deliver(team.genesis())).toMatchObject({ kind: 'applied' })
   team.replica.addKey(team.wrapped(0))
   return team
 }
@@ -135,12 +33,12 @@ describe('the replica', () => {
   it('replays a log from its genesis: the genesis, members, a rotation and their writes', () => {
     const team = founded()
     const ava = person('ava')
-    expect(team.deliver(team.write(team.owner, 't-juno'))).toEqual({ kind: 'applied' })
-    expect(team.deliver(team.addMember(ava))).toEqual({ kind: 'applied' })
-    expect(team.deliver(team.write(ava, 't-ava'))).toEqual({ kind: 'applied' })
-    expect(team.deliver(team.rotate())).toEqual({ kind: 'applied' })
+    expect(team.deliver(team.write(team.owner, 't-juno'))).toMatchObject({ kind: 'applied' })
+    expect(team.deliver(team.addMember(ava))).toMatchObject({ kind: 'applied' })
+    expect(team.deliver(team.write(ava, 't-ava'))).toMatchObject({ kind: 'applied' })
+    expect(team.deliver(team.rotate())).toMatchObject({ kind: 'applied' })
     team.replica.addKey(team.wrapped(1))
-    expect(team.deliver(team.write(ava, 't-ava-1'))).toEqual({ kind: 'applied' })
+    expect(team.deliver(team.write(ava, 't-ava-1'))).toMatchObject({ kind: 'applied' })
     expect(titles(team.db)).toEqual(['t-ava', 't-ava-1', 't-juno'])
     const byAva = team.db.prepare(`SELECT ingested_by FROM engrams WHERE title = 't-ava'`).get() as { ingested_by: string }
     expect(byAva.ingested_by).toBe('ava')
@@ -152,13 +50,13 @@ describe('the replica', () => {
 
   it('waits for the key of the current epoch, writes nothing, and goes on once the key is there', () => {
     const team = new Team()
-    expect(team.deliver(team.genesis())).toEqual({ kind: 'applied' })
+    expect(team.deliver(team.genesis())).toMatchObject({ kind: 'applied' })
     const write = team.write(team.owner, 't-later')
     expect(team.deliver(write)).toEqual({ kind: 'waiting', epoch: 0 })
     expect(team.replica.state).toEqual({ kind: 'waiting', epoch: 0 })
     expect(team.head).toBe(1)
     team.replica.addKey(team.wrapped(0))
-    expect(team.deliver(write)).toEqual({ kind: 'applied' })
+    expect(team.deliver(write)).toMatchObject({ kind: 'applied' })
     expect(team.replica.state).toEqual({ kind: 'live' })
   })
 
@@ -174,7 +72,7 @@ describe('the replica', () => {
     it('a record whose op_id is in the log already, unopened', () => {
       const team = founded()
       const write = team.write(team.owner, 't-once')
-      expect(team.deliver(write)).toEqual({ kind: 'applied' })
+      expect(team.deliver(write)).toMatchObject({ kind: 'applied' })
       const again = team.deliver(write)
       expect(again).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^DUPLICATE: /) })
       const dup = team.db.prepare('SELECT op_id, payload, signature FROM op_log WHERE seq = 3').get() as { op_id: string, payload: string, signature: Buffer | null }
@@ -191,14 +89,14 @@ describe('the replica', () => {
       const nameless = { ...team.write(team.owner, 't-nameless'), op_id: 'not-a-uuid' }
       expect(team.deliver(nameless)).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^UNOPENABLE: /) })
       expect(entries(team.db).slice(1).map(e => e.op_id)).toEqual([garbled.op_id, null])
-      expect(team.deliver(team.write(team.owner, 't-after'))).toEqual({ kind: 'applied' })
+      expect(team.deliver(team.write(team.owner, 't-after'))).toMatchObject({ kind: 'applied' })
       expect(titles(team.db)).toEqual(['t-after'])
       expect(verify(team.db)).toMatchObject({ ok: true, entries: 4 })
     })
 
     it('a sealed record under an older epoch, unopened, though this device holds that key', () => {
       const team = founded()
-      expect(team.deliver(team.rotate())).toEqual({ kind: 'applied' })
+      expect(team.deliver(team.rotate())).toMatchObject({ kind: 'applied' })
       team.replica.addKey(team.wrapped(1))
       const stale = team.write(team.owner, 't-stale', { epoch: 0 })
       expect(team.deliver(stale)).toEqual({ kind: 'rejected', why: 'REFUSED: the op is sealed under epoch 0, the brain is at 1' })
@@ -223,7 +121,7 @@ describe('the replica', () => {
     it('a membership record the member set does not allow', () => {
       const team = founded()
       const ava = person('ava')
-      expect(team.deliver(team.addMember(ava))).toEqual({ kind: 'applied' })
+      expect(team.deliver(team.addMember(ava))).toMatchObject({ kind: 'applied' })
       expect(team.deliver(team.addMember(ava))).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: .*member already/) })
     })
 
@@ -235,16 +133,16 @@ describe('the replica', () => {
     it('an op the brain refuses, and a rebuild skips it', () => {
       const team = founded()
       expect(team.deliver(team.write(team.owner, 't-empty', { args: { ...validNote({ title: 't-empty' }), content: '' } }))).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^INVALID: /) })
-      expect(team.deliver(team.write(team.owner, 't-kept'))).toEqual({ kind: 'applied' })
+      expect(team.deliver(team.write(team.owner, 't-kept'))).toMatchObject({ kind: 'applied' })
       expect(titles(team.db)).toEqual(['t-kept'])
       expect(verify(team.db)).toMatchObject({ ok: true, entries: 3 })
     })
 
     it('a checkpoint before the head: its format is checked, not its hash', () => {
       const team = founded()
-      expect(team.deliver(team.write(team.owner, 't-1'))).toEqual({ kind: 'applied' })
+      expect(team.deliver(team.write(team.owner, 't-1'))).toMatchObject({ kind: 'applied' })
       const old = team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 1, state_hash: 'f'.repeat(64) }, team: { base_seq: 1, head_hash: (team.db.prepare('SELECT hash FROM op_log WHERE seq = 1').get() as { hash: string }).hash } })
-      expect(team.deliver(old)).toEqual({ kind: 'applied' })
+      expect(team.deliver(old)).toMatchObject({ kind: 'applied' })
       const malformed = team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 3, state_hash: 'nope' } })
       expect(team.deliver(malformed)).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: state_hash/) })
     })
@@ -310,7 +208,7 @@ describe('the replica', () => {
 
     it('when the team file is for another brain than the genesis names', () => {
       const team = founded()
-      const elsewhere = new Replica(team.db, { v: 1, brain: OTHER, device: team.owner.device })
+      const elsewhere = new Replica(team.db, { v: 1, brain: OTHER, relay: 'wss://relay.test', device: team.owner.device })
       expect(elsewhere.state).toMatchObject({ kind: 'stopped', why: expect.stringMatching(/team file/) })
     })
   })
@@ -320,9 +218,9 @@ describe('the replica', () => {
     const ava = person('ava')
     team.deliver(team.addMember(ava))
     team.deliver(team.rotate())
-    team.replica = new Replica(team.db, { v: 1, brain: BRAIN, device: team.owner.device })
+    team.replica = new Replica(team.db, { v: 1, brain: BRAIN, relay: 'wss://relay.test', device: team.owner.device })
     team.replica.addKey(team.wrapped(1))
-    expect(team.deliver(team.write(ava, 't-ava-after-restart'))).toEqual({ kind: 'applied' })
+    expect(team.deliver(team.write(ava, 't-ava-after-restart'))).toMatchObject({ kind: 'applied' })
     expect(team.deliver(team.write(team.owner, 't-posing-after-restart', { handle: 'ava' }))).toMatchObject({ kind: 'rejected' })
   })
 })
@@ -333,7 +231,7 @@ describe('the team file', () => {
     try {
       const device = newDeviceKeys()
       expect(readTeamFile(dir, BRAIN)).toBeNull()
-      writeTeamFile(dir, { v: 1, brain: BRAIN, device })
+      writeTeamFile(dir, { v: 1, brain: BRAIN, relay: 'wss://relay.test', device })
       const back = readTeamFile(dir, BRAIN)
       expect(back?.device.sign.publicKey).toBe(device.sign.publicKey)
       expect(back?.device.enc.publicKey).toBe(device.enc.publicKey)

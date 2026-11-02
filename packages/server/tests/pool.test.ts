@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import { ConnectionPool } from '../src/pool'
+import { ConnectionPool, openBrain } from '../src/pool'
 
 // v0.10.10 C3: the pool now opens brain files with { fileMustExist: true } — a
 // registered brain whose file is missing must throw, not silently materialize an
@@ -47,6 +47,13 @@ describe('ConnectionPool', () => {
       expect(journal).toBe('wal')
       const fk = db.pragma('foreign_keys', { simple: true })
       expect(fk).toBe(1)
+    })
+
+    it('opens through openBrain, the opener a shared brain\'s sync connection uses too', () => {
+      const db = openBrain(join(dataDir, 'b2.db'))
+      expect((db.pragma('journal_mode', { simple: true }) as string).toLowerCase()).toBe('wal')
+      expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
+      db.close()
     })
 
     it('grows up to cap', () => {

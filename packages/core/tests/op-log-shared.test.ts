@@ -49,7 +49,7 @@ function sharedBrain(): EML {
 
 /** How a replica takes a relayed op (EML.takeRelayed): applied, or kept as rejected. */
 function take(eml: EML, seq: number, op: OpEnvelope, at = time(seq)): string | null {
-  return eml.takeRelayed({ seq, at, op_id: op.op_id, payload: plainJson(op), signature: null, rejected: null }, op)
+  return eml.takeRelayed({ seq, at, op_id: op.op_id, payload: plainJson(op), signature: null, rejected: null }, op).rejected
 }
 
 const count = (eml: EML, title: string): number =>
