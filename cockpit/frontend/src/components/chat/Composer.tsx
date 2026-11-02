@@ -139,7 +139,10 @@ function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: 
               <span className="text-muted-foreground">Last message</span>
               <span>{lastMessageAt ? formatAge(lastMessageAt, new Date()) : 'none yet'}</span>
             </div>
-            <div className="mt-1 border-t border-border px-2 pt-2 pb-1 text-muted-foreground">Model</div>
+            <div className="mt-1 flex justify-between gap-2 border-t border-border px-2 pt-2 pb-1">
+              <span className="text-muted-foreground">Model</span>
+              <span>{model ? modelLabel(model) : current?.label ?? '—'}</span>
+            </div>
             {chat.models.map((option) => (
               <MenuOption
                 key={option.id}

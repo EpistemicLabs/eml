@@ -108,7 +108,9 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
           // Sized to the visible viewport like the app: searching raises the keyboard, which would cover its lower part.
           style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
           className={cn(
-            'fixed top-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover shadow-2xl select-none',
+            'fixed top-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover select-none',
+            // Off screen its shadow would still fall on the page's left edge.
+            drawer.open && 'shadow-2xl',
             'pt-[env(safe-area-inset-top)] transition-transform duration-200 [-webkit-touch-callout:none]',
             !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]',
             drawer.open ? 'translate-x-0' : '-translate-x-full',
