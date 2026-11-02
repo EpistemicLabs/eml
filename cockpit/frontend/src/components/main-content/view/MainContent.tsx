@@ -37,6 +37,8 @@ function MainContent({
   paneView,
   onSetPaneView,
   onClosePane,
+  isMainPane,
+  onToggleMainPane,
   paneLabel,
 }: MainContentProps) {
   // The shell command queued by an external spawn for this pane, taken once the
@@ -104,9 +106,10 @@ function MainContent({
   if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {
     return (
       <div className="relative flex h-full flex-col">
-        {onClosePane && !compact && (
+        {/* A main pane can't be closed, but must stay able to stop being main. */}
+        {(onClosePane || isMainPane) && !compact && (
           <div className={cn('pointer-events-auto absolute top-0 right-0 z-30 pt-2 pr-2 pb-2 sm:pt-3 sm:pr-3', toolbarReveal)}>
-            <MainContentTabSwitcher paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} />
+            <MainContentTabSwitcher paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} isMainPane={isMainPane} onToggleMainPane={onToggleMainPane} />
           </div>
         )}
         <MainContentStateView mode="empty" />
@@ -119,7 +122,7 @@ function MainContent({
       {/* Body area: title (top-left), floating toolbar (top-right of THIS
           area), and the pane body. */}
       <div className="relative flex min-h-0 min-w-[280px] flex-1 flex-col overflow-hidden">
-        {/* pr-56 keeps the title clear of the absolutely positioned tab
+        {/* pr-64 keeps the title clear of the absolutely positioned tab
             switcher. It must not be overridden by a responsive px-* (a
             former sm:px-4 reset it to 1rem, and long titles ran under the
             icons). */}
@@ -127,7 +130,7 @@ function MainContent({
             panes, so the pane gives that height to its content. */}
         {!compact && (
           <>
-            <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-56 pb-1 pl-3 sm:pl-4">
+            <div className="flex flex-shrink-0 items-center gap-2 pt-2 pr-64 pb-1 pl-3 sm:pl-4">
               <MainContentTitle
                 paneId={paneId}
                 selectedProject={selectedProject}
@@ -142,6 +145,8 @@ function MainContent({
                 onSetPaneView={onSetPaneView}
                 onClosePane={onClosePane}
                 onAddPane={handleAddPane}
+                isMainPane={isMainPane}
+                onToggleMainPane={onToggleMainPane}
                 switchBlocked={switchBlocked}
               />
             </div>

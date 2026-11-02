@@ -29,7 +29,7 @@ import { endPaneDrag, getDraggedPane } from './paneDrag';
  *                         if the desk still holds a live session)
  *  • + (per section)    → create a new desk in that space, straight into rename
  *  • drag a tab         → reorder it among the desks of its space
- *  • drop a pane title  → move that pane to the desk (same space only)
+ *  • drop a pane title  → move that pane to the desk (same space only; pinned and main panes stay)
  *  • ⌘/Ctrl 1–9         → the Nth desk in bar order
  */
 export default function DeskTabBar() {

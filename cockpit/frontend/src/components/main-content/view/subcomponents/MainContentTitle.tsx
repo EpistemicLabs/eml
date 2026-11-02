@@ -13,7 +13,7 @@ import { usePaletteOps } from '@/contexts/PaletteOpsContext';
 import { useNote, useRenameNote } from '@/lib/notes';
 import { useProviders } from '@/lib/providers';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
-import { usePane, renamePane } from '@/stores/usePaneStore';
+import { isPaneProtected, usePane, renamePane } from '@/stores/usePaneStore';
 import { endPaneDrag, startPaneDrag } from '@/components/app/paneDrag';
 import type { Project, ProjectSession } from '@/types/app';
 import { api } from '@/utils/api';
@@ -190,7 +190,8 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
               className="w-full min-w-0 rounded border border-border bg-transparent px-1 py-0.5 text-body leading-tight font-semibold text-foreground outline-none focus:border-foreground/40"
             />
           ) : (
-            // Drag the title onto a desk tab to move the pane there (pinned panes stay put).
+            // Drag the title onto another pane to swap the two (PaneGrid), or onto a
+            // desk tab to move the pane there (pinned and main panes stay on their desk).
             <div
               className="flex min-w-0 items-center"
               draggable={!pane?.pinned}
@@ -214,7 +215,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
               }}
               title={[
                 canRename && (isNoteView ? 'Click to rename the note' : 'Click to rename'),
-                !pane?.pinned && 'drag onto a desk tab to move the pane',
+                !pane?.pinned && (isPaneProtected(paneId) ? 'drag onto a pane to swap' : 'drag onto a pane to swap, onto a desk tab to move'),
               ].filter(Boolean).join(' · ') || undefined}
               className={`${canRename ? 'cursor-text hover:bg-foreground/5' : ''} truncate rounded px-1 text-body leading-tight font-semibold text-foreground transition-colors`}
             >

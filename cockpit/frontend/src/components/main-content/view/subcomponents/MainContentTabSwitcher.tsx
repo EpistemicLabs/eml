@@ -1,7 +1,7 @@
 // Adapted: VIEW_MODES = terminal | brain (decision cockpit-pane-types).
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { useEffect, useRef, useState } from 'react';
-import { Brain, MessageSquare, NotebookPen, Plus, Terminal, X, type LucideIcon } from 'lucide-react';
+import { Brain, MessageSquare, NotebookPen, PanelLeft, Plus, Terminal, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import Tooltip from '@/shared/view/ui/Tooltip';
@@ -22,6 +22,9 @@ type MainContentTabSwitcherProps = {
   // With more than one agent CLI set up, the menu offers a session per CLI
   // (like the sidebar's "+"); `provider` is then the chosen one.
   onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
+  // This pane is its desk's main pane; the toggle makes it one, or ends that.
+  isMainPane?: boolean;
+  onToggleMainPane?: () => void;
   // A terminal/chat handoff is under way: why those two can't be switched now.
   switchBlocked?: string | null;
 };
@@ -57,6 +60,8 @@ export default function MainContentTabSwitcher({
   onSetPaneView,
   onClosePane,
   onAddPane,
+  isMainPane = false,
+  onToggleMainPane,
   switchBlocked = null,
 }: MainContentTabSwitcherProps) {
   const closeLabel = 'Close this pane';
@@ -119,7 +124,24 @@ export default function MainContentTabSwitcher({
         })}
       </div>
 
-      {(onAddPane || onClosePane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
+      {(onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
+
+      {onToggleMainPane && (
+        <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">
+          <button
+            type="button"
+            onClick={onToggleMainPane}
+            aria-label={isMainPane ? 'Stop being the main pane' : 'Make main pane'}
+            aria-pressed={isMainPane}
+            className={cn(
+              'flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground',
+              isMainPane ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground/80',
+            )}
+          >
+            <PanelLeft className="h-4 w-4" strokeWidth={isMainPane ? 2.2 : 1.8} />
+          </button>
+        </Tooltip>
+      )}
 
       {onAddPane && (
         <div ref={addRef} className="relative">

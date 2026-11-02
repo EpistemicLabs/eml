@@ -22,8 +22,8 @@ export default function CompactNavBar({ onOpenMenu }: { onOpenMenu: () => void }
   const capsule = cn('rounded-full', overChat ? 'glass-bar' : 'glass-solid');
 
   // As in the desktop pane toolbar: the last pane closes only when it holds
-  // something, and a pinned pane never.
-  const canClose = !!shownPane && !shownPane.pinned && (panes.length > 1 || shownPane.projectId !== null);
+  // something, and a pinned or main pane never.
+  const canClose = !!shownPane && !paneStore.isPaneProtected(shownPane.id) && (panes.length > 1 || shownPane.projectId !== null);
 
   return (
     <>

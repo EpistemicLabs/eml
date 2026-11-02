@@ -119,6 +119,14 @@ export interface DeskState {
   defaultProjectId: string | null;
   panes: PaneState[];
   activePaneId: string;
+  /**
+   * The desk's main pane: full height in a column at the left, the other panes
+   * in the even grid beside it. Always the first of `panes` (setSnapshot keeps
+   * it there), so lists of a desk's panes show it first. Unset → the even grid.
+   */
+  mainPaneId?: string;
+  /** The main column's share of the desk's width; kept while main is off. Unset → the default. */
+  mainWidth?: number;
 }
 
 interface PaneStoreSnapshot {
@@ -192,6 +200,21 @@ const normalizeTerminalLabels = (panes: PaneState[]): PaneState[] => {
   return changed ? next : panes;
 };
 
+/**
+ * Hold up the main pane's rules: it exists on the desk, and it comes first.
+ * Returns the same desk when nothing changed.
+ */
+const normalizeMainPane = (desk: DeskState): DeskState => {
+  if (!desk.mainPaneId) return desk;
+  const main = desk.panes.find(p => p.id === desk.mainPaneId);
+  if (!main) {
+    const { mainPaneId: _mainPaneId, ...rest } = desk;
+    return rest;
+  }
+  if (desk.panes[0] === main) return desk;
+  return { ...desk, panes: [main, ...desk.panes.filter(p => p !== main)] };
+};
+
 const createPane = (paneView: PaneView = 'terminal', projectId: string | null = null): PaneState => ({
   id: generateId(),
   projectId,
@@ -263,6 +286,10 @@ const resolveActivePaneId = (panes: PaneState[], wanted: unknown): string => {
   return panes.some(p => p.id === w) ? w : panes[0].id;
 };
 
+// A stored share outside this range is not one a drag can produce: ignore it.
+const parseMainWidth = (raw: unknown): number | undefined =>
+  typeof raw === 'number' && raw > 0.05 && raw < 0.95 ? raw : undefined;
+
 const parseDesk = (
   entry: unknown,
   sessionViews: Record<string, PaneView>,
@@ -283,7 +310,7 @@ const parseDesk = (
   const name = slug === 'dev' && rawName === 'Dev'
     ? 'Desk 1'
     : rawName.replace(/^Space (\d+)$/, 'Desk $1');
-  return {
+  return normalizeMainPane({
     id: e.id,
     spaceId: typeof e.spaceId === 'string' && e.spaceId ? e.spaceId : null,
     slug,
@@ -291,7 +318,9 @@ const parseDesk = (
     defaultProjectId: typeof e.defaultProjectId === 'string' ? e.defaultProjectId : null,
     panes,
     activePaneId: resolveActivePaneId(panes, e.activePaneId),
-  };
+    mainPaneId: typeof e.mainPaneId === 'string' && e.mainPaneId ? e.mainPaneId : undefined,
+    mainWidth: parseMainWidth(e.mainWidth),
+  });
 };
 
 const parseSessionViews = (raw: unknown): Record<string, PaneView> => {
@@ -370,9 +399,10 @@ const setSnapshot = (next: PaneStoreSnapshot): void => {
   let desksChanged = false;
   const desks = next.desks.map(desk => {
     const panes = normalizeTerminalLabels(desk.panes);
-    if (panes === desk.panes) return desk;
+    const normalized = normalizeMainPane(panes === desk.panes ? desk : { ...desk, panes });
+    if (normalized === desk) return desk;
     desksChanged = true;
-    return { ...desk, panes };
+    return normalized;
   });
   snapshot = desksChanged ? { ...next, desks } : next;
   const active = snapshot.desks.find(s => s.id === snapshot.activeDeskId);
@@ -672,9 +702,9 @@ export function removePane(id: string): void {
   const loc = findPaneLocation(id);
   if (!loc) return;
   const { desk } = loc;
-  // Pinned panes are never removed. The last pane of a desk is not removed
-  // either — it goes back to the empty "Choose Your Project" state.
-  if (loc.pane.pinned) return;
+  // Pinned and main panes are never removed. The last pane of a desk is not
+  // removed either — it goes back to the empty "Choose Your Project" state.
+  if (loc.pane.pinned || desk.mainPaneId === id) return;
   if (desk.panes.length <= 1) {
     clearPane(id);
     return;
@@ -693,18 +723,66 @@ export function removePane(id: string): void {
   setSnapshot({ ...snapshot, desks });
 }
 
+/** Pinned and main panes: can't be closed, and stay on their desk. */
+export function isPaneProtected(paneId: string): boolean {
+  const loc = findPaneLocation(paneId);
+  return Boolean(loc && (loc.pane.pinned || loc.desk.mainPaneId === paneId));
+}
+
+/** Make a pane its desk's main pane, or, if it is, return the desk to the even grid. */
+export function toggleMainPane(paneId: string): void {
+  const loc = findPaneLocation(paneId);
+  if (!loc) return;
+  const mainPaneId = loc.desk.mainPaneId === paneId ? undefined : paneId;
+  const desks = snapshot.desks.map(s => (s.id === loc.desk.id ? { ...s, mainPaneId } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
+/** Remember how wide a desk's main column is, as a share of the desk's width. */
+export function setMainWidth(deskId: string, mainWidth: number): void {
+  const desk = snapshot.desks.find(s => s.id === deskId);
+  if (!desk || desk.mainWidth === mainWidth) return;
+  const desks = snapshot.desks.map(s => (s.id === deskId ? { ...s, mainWidth } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
+/** Whether `swapPanes(a, b)` would do anything: two panes of one desk, neither pinned. */
+export function canSwapPanes(a: string, b: string): boolean {
+  if (a === b) return false;
+  const first = findPaneLocation(a);
+  const second = findPaneLocation(b);
+  return Boolean(first && second && first.desk.id === second.desk.id && !first.pane.pinned && !second.pane.pinned);
+}
+
+/**
+ * Two panes of a desk trade places. Main is a place, not a property of the
+ * pane: whatever lands in the main column is the main pane from then on.
+ */
+export function swapPanes(a: string, b: string): void {
+  if (!canSwapPanes(a, b)) return;
+  const { desk } = findPaneLocation(a)!;
+  const panes = desk.panes.map((pane) => {
+    if (pane.id === a) return findPaneLocation(b)!.pane;
+    if (pane.id === b) return findPaneLocation(a)!.pane;
+    return pane;
+  });
+  const mainPaneId = desk.mainPaneId === a ? b : desk.mainPaneId === b ? a : desk.mainPaneId;
+  const desks = snapshot.desks.map(s => (s.id === desk.id ? { ...s, panes, mainPaneId } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
 /** Whether `movePaneToDesk(paneId, deskId)` would move anything. */
 export function canMovePaneToDesk(paneId: string, deskId: string): boolean {
   const loc = findPaneLocation(paneId);
   const target = snapshot.desks.find(s => s.id === deskId);
-  return Boolean(loc && target && !loc.pane.pinned && loc.desk.id !== target.id && loc.desk.spaceId === target.spaceId);
+  return Boolean(loc && target && !isPaneProtected(paneId) && loc.desk.id !== target.id && loc.desk.spaceId === target.spaceId);
 }
 
 /**
  * Move a pane to the end of another desk of the same space and show it there.
  * Only the view moves: its session keeps running on the host, and the
- * terminal reattaches to it on the target desk. Pinned panes stay on their
- * desk. On a desk that only shows the empty "Choose Your Project" pane, the
+ * terminal reattaches to it on the target desk. Pinned and main panes stay on
+ * their desk. On a desk that only shows the empty "Choose Your Project" pane, the
  * moved pane takes its place; a desk the move leaves empty gets a fresh empty
  * pane, the state closing its last pane leads to.
  */
