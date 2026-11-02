@@ -6,6 +6,30 @@ export type WorkerStatus = 'done' | Attention
 
 export const WORKER_STATUSES: readonly [WorkerStatus, ...WorkerStatus[]] = ['done', 'question', 'review', 'failed']
 
+/** Only these hold a turn open for someone: review and done are finished work, waiting to be looked at. */
+export function needsAnswer(kind: WorkerStatus): boolean {
+  return kind === 'question' || kind === 'failed'
+}
+
+/** How long a worker that reported done stays around after someone opened it. */
+export const READ_DONE_KEEP_MS = 3 * 24 * 60 * 60 * 1000
+
+/** A worker that said nobody needs to act, and that someone has looked at, leaves by itself. Nothing else does. */
+export function shouldAutoArchive(facts: {
+  worker: boolean
+  pinned: boolean
+  archived: boolean
+  busy: boolean
+  kind: WorkerStatus | null
+  /** Since when it counts as read (ms); null: nobody has opened it since it reported. */
+  readAt: number | null
+  now: number
+}): boolean {
+  if (!facts.worker || facts.pinned || facts.archived || facts.busy) return false
+  if (facts.kind !== 'done' || facts.readAt === null) return false
+  return facts.now - facts.readAt >= READ_DONE_KEEP_MS
+}
+
 interface TurnFacts {
   worker: boolean
   /** Someone has the session open and sees for themselves. */

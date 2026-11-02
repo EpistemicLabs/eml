@@ -423,7 +423,8 @@ export function startingMode(chosen: string | null, setting: string): string {
 const STATUS_TOOL = 'session_status'
 const STATUS_TOOL_DESCRIPTION = 'Say how you stand when you end your turn. Nobody watches you run, so this is how people learn you need them. '
   + 'done: finished, nobody needs to act. question: only a person can decide; ask it in your reply too. '
-  + 'review: finished, and someone should look at the result. failed: you could not do it.'
+  + 'review: finished, and someone should look at the result. failed: you could not do it. '
+  + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
 
 /** The status tool and the check before a worker's turn ends, in this process: no extra server per worker. */
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {

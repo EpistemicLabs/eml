@@ -3,15 +3,15 @@
  *
  *   node "$COCKPIT_SPAWN_JS" --project <brain project id | name | folder path>
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
- *        [--provider <claude | codex>] [--wakeable]
+ *        [--provider <claude | codex>] [--open] [--wakeable]
  *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which
  * the host puts into every session's env; without network (a sandboxed
  * session) the request goes as a file into COCKPIT_SPAWN_DIR. The worker
- * opens as a new pane next to this session and starts with the prompt as its
- * first message; with no cockpit tab open the host starts it without a pane
- * (worker-start.ts), and it shows in the sidebar. A prompt file keeps
+ * starts right away without a pane, with the prompt as its first message, and
+ * shows in the sidebar under this session; --open gives it a pane next to this
+ * session instead (with no cockpit tab open it starts without one). A prompt file keeps
  * multi-line prompts free of shell quoting. --provider picks the agent CLI the
  * worker runs with; without it the worker uses the cockpit's default. For a
  * worker that can message other sessions, the CLI prints its address. --wakeable
@@ -46,13 +46,16 @@ async function main(): Promise<void> {
     title: arg('title'),
     provider: arg('provider'),
     fromSession: process.env.COCKPIT_SESSION_ID,
+    ...(process.argv.includes('--open') ? { open: true } : {}),
     ...(process.argv.includes('--wakeable') ? { wakeable: true } : {}),
     ...(list('deny-tools') ? { deniedTools: list('deny-tools') } : {}),
     ...(list('mcp-servers') ? { mcpServers: list('mcp-servers') } : {}),
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
-  process.stdout.write(`Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds (in the sidebar, and in the Claude app with Remote Control), or as soon as fewer than 3 workers run without a pane.\n`)
+  process.stdout.write(process.argv.includes('--open')
+    ? `Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds and it shows in the sidebar.\n`
+    : `Worker requested in project ${answer.body.projectId} — it runs without a pane and shows in the sidebar under this session. It starts as soon as the machine has room.\n`)
   if (answer.body.address) process.stdout.write(`Worker address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
 }
 

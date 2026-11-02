@@ -102,6 +102,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       touch: () => {},
       setAgentTitle: () => {},
       setTurnInFlight: (id: string, inFlight: boolean) => { const entry = ledgerEntries.get(id) as unknown as { inFlight?: boolean } | undefined; if (entry) entry.inFlight = inFlight },
+      unarchive: () => {},
       setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
@@ -215,7 +216,8 @@ describe('ChatBridge', () => {
     expect(worker?.onTurnEnding()).toBeNull()
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect((ledgerEntries.get('s1') as unknown as { attention: unknown }).attention).toEqual({ kind: 'review', reason: null })
-    expect(turns).toContainEqual(['s1', 'waiting'])
+    // Finished work waits to be looked at; it holds no turn open.
+    expect(turns).not.toContainEqual(['s1', 'waiting'])
   })
 
   it('a worker that says it needs someone keeps that until a new message comes', () => {
@@ -230,12 +232,13 @@ describe('ChatBridge', () => {
     expect(attention()).toBeNull()
   })
 
-  it('a worker that says done leaves nothing, and other sessions get no status tool', async () => {
+  it('a worker that says done stays listed without a turn held open, and other sessions get no status tool', async () => {
     const worker = setup()
     worker.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     worker.runtimes[0].start.worker?.report('done', null)
     worker.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
-    expect((worker.ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention ?? null).toBeNull()
+    expect((worker.ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toEqual({ kind: 'done', reason: null })
+    expect(worker.turns).not.toContainEqual(['s1', 'waiting'])
     const own = setup()
     connect(own.bridge)
     await flush()

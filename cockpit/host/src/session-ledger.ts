@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
 import { PROVIDER_IDS, type ProviderId, type SessionAgent, type SessionRef } from './domain/agent-provider.js'
 import type { SessionRuntimeKind } from './domain/session-runtime.js'
-import type { Attention } from './domain/session-attention.js'
+import type { WorkerStatus } from './domain/session-attention.js'
 import type { ToolProfile } from './domain/tool-profile.js'
 
 /**
@@ -67,8 +67,14 @@ export interface LedgerEntry {
   chatModel: string | null
   /** An outside service may send it messages (cockpit message endpoint). */
   wakeable: boolean
-  /** It waits for someone, and why; null when not. */
-  attention: { kind: Attention; reason: string | null } | null
+  /** How it stands for someone, why, and since when; null when nobody has anything to do. */
+  attention: { kind: WorkerStatus; reason: string | null; at: string } | null
+  /** The session that started this one; null for one started by hand or from before this was recorded. */
+  parentSessionId: string | null
+  /** When someone last opened it. Finished work stays listed after that, marked as read. */
+  readAt: string | null
+  /** Out of the lists since then; the conversation stays and a new message brings it back. */
+  archivedAt: string | null
   /** What the session may use, for its whole life; null: no limits. */
   toolProfile: ToolProfile | null
   /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
@@ -113,8 +119,11 @@ function load(): LedgerFile {
           chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
           wakeable: entry.wakeable === true,
           attention: entry.attention && typeof entry.attention.kind === 'string'
-            ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null }
+            ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null, at: typeof entry.attention.at === 'string' ? entry.attention.at : entry.lastAttached }
             : null,
+          parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
+          readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
+          archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
         }
@@ -128,6 +137,8 @@ function load(): LedgerFile {
 
 export class SessionLedger {
   private data: LedgerFile = load()
+  /** Who asked for a worker that has no entry yet: its first spawn takes it. */
+  private expectedParents = new Map<string, string>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -181,6 +192,9 @@ export class SessionLedger {
       chatModel: prev?.chatModel ?? null,
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
+      parentSessionId: prev?.parentSessionId ?? this.expectedParents.get(sessionId) ?? null,
+      readAt: prev?.readAt ?? null,
+      archivedAt: prev?.archivedAt ?? null,
       toolProfile: prev?.toolProfile ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
     }
@@ -203,11 +217,40 @@ export class SessionLedger {
     this.persist()
   }
 
-  /** Record that the session waits for someone, or no longer does. */
-  setAttention(sessionId: string, attention: LedgerEntry['attention']): void {
+  /** Record how the session stands for someone, or that nobody has anything to do. */
+  setAttention(sessionId: string, attention: { kind: WorkerStatus; reason: string | null } | null): void {
     const entry = this.data.sessions[sessionId]
     if (!entry || (entry.attention === null && attention === null)) return
-    entry.attention = attention
+    entry.attention = attention && { ...attention, at: new Date().toISOString() }
+    this.persist()
+  }
+
+  /** A worker was asked for by this session; recorded when it starts, however it starts. */
+  expectParent(sessionId: string, parentSessionId: string): void {
+    this.expectedParents.set(sessionId, parentSessionId)
+  }
+
+  markRead(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.readAt = new Date().toISOString()
+    this.persist()
+  }
+
+  /** Out of the lists: nothing is left to do for it and it no longer holds a pin. */
+  archive(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.archivedAt = new Date().toISOString()
+    entry.attention = null
+    entry.pinned = false
+    this.persist()
+  }
+
+  unarchive(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.archivedAt === null) return
+    entry.archivedAt = null
     this.persist()
   }
 

@@ -104,6 +104,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     ...(provider ? { provider: provider.id } : {}),
     title: typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 60) : null,
     fromSessionId,
+    ...(body.open === true ? { open: true } : {}),
     ...(body.wakeable === true ? { wakeable: true } : {}),
     ...(toolProfile ? { toolProfile } : {}),
     // Named for a further space only; main is the default on both sides.

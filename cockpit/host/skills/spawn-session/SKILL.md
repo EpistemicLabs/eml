@@ -6,9 +6,11 @@ description: Open a worker session in the EML cockpit — a new agent session in
 
 # spawn-session
 
-Starts a worker: a new cockpit session in its own pane on this desk, next to
-this session. It boots from the same brain (identity, rules, open tasks) and
-starts with your prompt as its first message. You keep working here.
+Starts a worker: a new cockpit session that runs without a pane and shows in
+the sidebar under this session. It boots from the same brain (identity, rules,
+open tasks) and starts with your prompt as its first message. You keep working
+here. The user goes through finished workers when they are done, so its status
+reason is what they read first.
 
 ## When it fits
 
@@ -65,7 +67,9 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
 - `--project`: the brain project id (as in `eml_show project.<id>` — pass just
   `<id>`), the project's name, or a folder path the cockpit knows. An unknown
   project fails with the list of known ones.
-- `--title`: optional, a few words — shown as the pane title.
+- `--title`: optional, a few words — shown as the session's name.
+- `--open`: optional — opens a pane next to this session. Use it for a fresh-session
+  handoff, or when the user asked to watch this worker.
 - `--provider`: optional, `claude` or `codex` — the agent CLI the worker runs with. Leave it out
   unless the user asked for a specific one; the worker then uses the cockpit's default.
 

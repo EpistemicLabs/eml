@@ -61,7 +61,7 @@ describe('sessions across spaces', () => {
         killSession: () => {},
       },
       chat: { isRunning: () => false, kill: async () => {} },
-      spawns: { on: () => {}, off: () => {} },
+      spawns: { on: () => {}, off: () => {}, list: () => [] },
       spawnToken: 'spawn-token',
       hookToken: 'hook-token',
       turnHookConfig: '',

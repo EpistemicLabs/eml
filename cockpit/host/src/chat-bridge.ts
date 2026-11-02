@@ -16,7 +16,7 @@ import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop } from './domain/session-lifecycle.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, shouldAskForStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, needsAnswer, shouldAskForStatus } from './domain/session-attention.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -61,7 +61,7 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
 
-const STATUS_REMINDER = 'You have not said how you stand. Call session_status: done, or question, review or failed with a reason. Then end your turn.'
+const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then end your turn.'
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
@@ -570,8 +570,8 @@ export class ChatBridge {
     return {
       report: (status, reason) => {
         entry.declared = true
-        this.ctx.ledger.setAttention(entry.sessionId, status === 'done' ? null : { kind: status, reason })
-        if (status !== 'done') this.ctx.onTurn(entry.sessionId, 'waiting')
+        this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
+        if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
         const ask = shouldAskForStatus({ worker: true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
@@ -618,7 +618,7 @@ export class ChatBridge {
         })
         if (attention) {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
-          this.ctx.onTurn(entry.sessionId, 'waiting')
+          if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         break
       }
@@ -665,6 +665,7 @@ export class ChatBridge {
     entry.declared = false
     entry.askedStatus = false
     this.ctx.ledger.setAttention(entry.sessionId, null)
+    this.ctx.ledger.unarchive(entry.sessionId)
     this.ctx.ledger.setTurnInFlight(entry.sessionId, true)
     if (!entry.active) {
       entry.active = true

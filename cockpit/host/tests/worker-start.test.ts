@@ -22,8 +22,8 @@ class FakeBridge {
   }
 }
 
-const request = (spawns: SpawnQueue, fromSessionId: string | null = 'requester') =>
-  spawns.add({ projectId: 'bp-eml', prompt: 'do it', title: null, fromSessionId })
+const request = (spawns: SpawnQueue, fromSessionId: string | null = 'requester', open = true) =>
+  spawns.add({ projectId: 'bp-eml', prompt: 'do it', title: null, fromSessionId, open })
 
 describe('worker start without a tab', () => {
   let spawns: SpawnQueue
@@ -46,6 +46,15 @@ describe('worker start without a tab', () => {
     starter.tick()
     expect(bridge.started.map((s) => s.id)).toEqual([r.id])
     expect(spawns.list()).toEqual([])
+  })
+
+  it('starts a worker nobody asked a pane for at once, tabs or not', () => {
+    const leave = spawns.watch()
+    const r = request(spawns, 'requester', false)
+    now = Date.parse(r.createdAt)
+    starter.tick()
+    expect(bridge.started.map((s) => s.id)).toEqual([r.id])
+    leave()
   })
 
   it('leaves a request to an open tab during the grace time, then starts it', () => {

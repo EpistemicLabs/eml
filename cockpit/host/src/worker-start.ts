@@ -2,11 +2,11 @@ import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
 import type { WorkerTurnOf } from './pty-bridge.js'
 
 /**
- * Workers start without a cockpit tab. A worker a session asked for goes to the
- * open tabs first (spawn-queue.ts); when no tab follows the requests, or none
- * claims it within GRACE_MS, the host claims it and starts it without a pane
- * (PtyBridge.startWorker). It shows in the sidebar like any session, and with
- * Remote Control in the Claude app; a pane opened later takes it over.
+ * Workers start without a cockpit tab. A worker a session asked for starts right
+ * away without a pane and shows in the sidebar under its parent; a pane opened
+ * later joins it. One asked for with `open` goes to the open tabs first
+ * (spawn-queue.ts); when no tab follows the requests, or none claims it within
+ * GRACE_MS, the host starts that one without a pane too.
  *
  * A worker that is not working and has been quiet for IDLE_MS is ended, and a
  * session with no window whose time is up (chatSessionShouldStop) too; a working
@@ -54,7 +54,7 @@ export class WorkerStarter {
   start(): void {
     this.deps.spawns.on('spawn', (request: SpawnRequest) => {
       if (!request.fromSessionId) return
-      if (this.deps.spawns.watchers() === 0) this.tick()
+      if (!request.open || this.deps.spawns.watchers() === 0) this.tick()
       else setTimeout(() => this.tick(), this.graceMs).unref()
     })
     this.timer = setInterval(() => this.tick(), this.deps.sweepMs ?? SWEEP_MS)
@@ -73,7 +73,7 @@ export class WorkerStarter {
     const noTabs = this.deps.spawns.watchers() === 0
     const due = this.deps.spawns.list()
       .filter((request) => request.fromSessionId)
-      .filter((request) => noTabs || this.now() - Date.parse(request.createdAt) >= this.graceMs)
+      .filter((request) => !request.open || noTabs || this.now() - Date.parse(request.createdAt) >= this.graceMs)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     for (const request of due) {
       if (!this.deps.bridge.hasRoom()) {

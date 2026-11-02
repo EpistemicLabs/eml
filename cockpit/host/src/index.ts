@@ -21,6 +21,8 @@ import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { recoverWorkers } from './application/recover-workers.js'
+import { needsAnswer, shouldAutoArchive } from './domain/session-attention.js'
+import type { SpawnRequest } from './domain/spawn-request.js'
 import { loadMessageToken } from './message-token.js'
 import { sessionAddress } from './session-address.js'
 import { InMemoryEventStore } from './application/session-events.js'
@@ -216,7 +218,8 @@ async function main() {
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
   // Turn state starts empty; what a session waits for someone about is saved.
-  for (const { sessionId, attention } of ledger.list()) if (attention) turns.apply({ sessionId, state: 'waiting' })
+  for (const { sessionId, attention } of ledger.list()) if (attention && needsAnswer(attention.kind)) turns.apply({ sessionId, state: 'waiting' })
+  spawns.on('spawn', (request: SpawnRequest) => { if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId) })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
     runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
@@ -261,7 +264,18 @@ async function main() {
     bridge: {
       startWorker: (request) => startWorker.withoutPane(request),
       hasRoom: () => startWorker.hasRoom(),
-      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf) + chat.sweepIdle(),
+      sweepIdleWorkers: (idleMs, turnOf) => {
+        for (const entry of ledger.list()) {
+          const readAt = entry.readAt && entry.attention && entry.readAt >= entry.attention.at ? Date.parse(entry.readAt) : null
+          if (!shouldAutoArchive({
+            worker: entry.worker, pinned: entry.pinned, archived: entry.archivedAt !== null, busy: turns.get(entry.sessionId)?.state === 'working',
+            kind: entry.attention?.kind ?? null, readAt, now: Date.now(),
+          })) continue
+          ledger.archive(entry.sessionId)
+          log(`[worker] archived ${entry.sessionId}: done and read`)
+        }
+        return bridge.sweepIdleWorkers(idleMs, turnOf) + chat.sweepIdle()
+      },
     },
     turnOf: (sessionId) => {
       const turn = turns.get(sessionId)

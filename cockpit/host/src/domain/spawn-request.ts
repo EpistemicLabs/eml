@@ -21,6 +21,8 @@ export interface SpawnRequest {
    * cockpit switches to the desk. Default: added next to the requester.
    */
   placement?: 'append' | 'replace-empty-desk'
+  /** Open a pane for it. Without this a worker a session asked for runs without one and shows under its parent. */
+  open?: boolean
   /** An outside service may send the worker messages. */
   wakeable?: boolean
   /** What the worker may use; its limits hold only in the chat runtime or a host-started process. */

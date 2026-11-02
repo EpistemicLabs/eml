@@ -1,9 +1,12 @@
 import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import type { StartWorker } from './application/start-worker.js'
+import { planArchive } from './application/archive-session.js'
+import { needsAnswer } from './domain/session-attention.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
@@ -158,6 +161,97 @@ function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): v
 }
 
 // ── Project + session views ───────────────────────
+/** What a notification about this change says: a batch of workers speaks up once, when its last one finishes. */
+function turnNotice(deps: HostDeps, event: TurnEvent): { title: string | null; silent?: true; batch?: number } {
+  const ledger = deps.bridge.ledger
+  const entry = ledger.get(event.sessionId)
+  const title = entry?.title ?? entry?.agentTitle ?? null
+  if (event.state !== 'done' || !entry?.parentSessionId) return { title }
+  const batch = ledger.list().filter((other) => other.parentSessionId === entry.parentSessionId && !other.archivedAt)
+  if (batch.some((other) => other.sessionId !== event.sessionId && deps.turns.get(other.sessionId)?.state === 'working')) return { title, silent: true }
+  return { title, batch: batch.length }
+}
+
+/** What the sidebar and the review pane do to a session. All are the page's own: the same-origin guard holds them. */
+async function handleSessionActions(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps, resource: string | undefined, id: string | undefined, action: string | undefined, method: string): Promise<boolean> {
+  if (resource !== 'sessions' || method !== 'POST' || !id) return false
+  const ledger = deps.bridge.ledger
+  const stop = async (sessionId: string, reason: string) => {
+    deps.bridge.killSession(sessionId)
+    await deps.chat.end(sessionId, reason)
+    deps.turns.forget(sessionId)
+  }
+
+  // Start a session by hand from the sidebar: on the host, so it needs no pane.
+  if (id === 'start' && !action) {
+    const body = await readJson(req)
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+    const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+    if (!prompt || !projectId) { json(res, 400, { error: { code: 'INVALID', message: 'A project and a prompt are required' } }); return true }
+    const sessionId = randomUUID()
+    const problem = deps.chat.startWorker({
+      id: sessionId, projectId, prompt, fromSessionId: null, createdAt: new Date().toISOString(),
+      title: prompt.split('\n')[0].slice(0, 60),
+      ...(typeof body.spaceId === 'string' && body.spaceId ? { spaceId: body.spaceId } : {}),
+    })
+    if (problem) json(res, 409, { error: { code: 'NOT_STARTED', message: problem } })
+    else json(res, 200, { id: sessionId, runtime: 'sdk' })
+    return true
+  }
+
+  // Once, on the user's word: the old workers the sidebar counted leave the lists.
+  if (id === 'archive-old' && !action) {
+    const body = await readJson(req)
+    const ids = Array.isArray(body.ids) ? body.ids.filter((one): one is string => typeof one === 'string') : []
+    const old = ids.filter((one) => {
+      const entry = ledger.get(one)
+      return entry?.worker && !entry.pinned && !entry.archivedAt && !entry.attention && !deps.chat.isRunning(one) && !deps.bridge.isRunning(one)
+    })
+    for (const one of old) ledger.archive(one)
+    json(res, 200, { archived: old.length })
+    return true
+  }
+
+  const entry = ledger.get(id)
+  if (!action || !['read', 'clear', 'archive', 'stop', 'answer'].includes(action)) return false
+  if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
+
+  if (action === 'read') {
+    ledger.markRead(id)
+  } else if (action === 'clear') {
+    ledger.setAttention(id, null)
+    if (deps.turns.get(id)?.state === 'waiting') deps.turns.apply({ sessionId: id, state: 'done' })
+  } else if (action === 'stop') {
+    await stop(id, 'stopped')
+  } else if (action === 'archive') {
+    const plan = planArchive(id, ledger.list().map((session) => ({
+      sessionId: session.sessionId, parentSessionId: session.parentSessionId,
+      working: deps.turns.get(session.sessionId)?.state === 'working',
+      needsAnswer: session.attention ? needsAnswer(session.attention.kind) : deps.turns.get(session.sessionId)?.state === 'waiting',
+    })))
+    if ('blockedBy' in plan) {
+      const message = plan.reason === 'working' ? 'Still working. Stop it or wait until it finishes.' : 'A worker of this session still needs an answer.'
+      json(res, 409, { error: { code: 'BUSY', message, sessionId: plan.blockedBy } })
+      return true
+    }
+    for (const sessionId of plan.archive) {
+      await stop(sessionId, 'archived')
+      ledger.archive(sessionId)
+    }
+    json(res, 200, { success: true, archived: plan.archive })
+    return true
+  } else {
+    const body = await readJson(req)
+    const text = typeof body.text === 'string' ? body.text.trim() : ''
+    if (!text) { json(res, 400, { error: { code: 'INVALID_TEXT', message: 'text is required' } }); return true }
+    const outcome = await deps.deliver({ target: id, text, from: null, caller: 'session' })
+    json(res, outcome === 'delivered' || outcome === 'resumed' ? 200 : 409, { outcome })
+    return true
+  }
+  json(res, 200, { success: true })
+  return true
+}
+
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
   const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null))
   // The last real message, not the last reattach: a reload or a click on a
@@ -183,6 +277,10 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
     runtime: entry.runtime,
     attention: entry.attention,
+    worker: entry.worker,
+    parentSessionId: entry.parentSessionId,
+    readAt: entry.readAt,
+    archivedAt: entry.archivedAt,
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
     __provider: deps.providers.forSession(entry.sessionId).id,
@@ -199,6 +297,7 @@ function folderKind(project: ProjectEntry): 'user' | 'cockpit' | 'none' {
 
 function projectView(deps: HostDeps, space: BrainSpace, project: ProjectEntry, brain: BrainProject | null = null) {
   const sessions = deps.bridge.ledger.list(project.projectId, space.ledgerKey)
+    .filter((entry) => !entry.archivedAt)
     .map((entry) => sessionView(deps, project, entry))
     .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
   return {
@@ -382,9 +481,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         return { ...sessionView(deps, entry.projectId ? owner.registry.get(entry.projectId) : undefined, entry), spaceId: owner.id }
       })
       .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
-    json(res, 200, { sessions })
+    // Workers waiting for free memory have no entry yet: their parents count them.
+    const queued = deps.spawns.list().flatMap((request) => (request.fromSessionId && !request.open ? [{ id: request.id, parentSessionId: request.fromSessionId }] : []))
+    json(res, 200, { sessions, queued })
     return true
   }
+
+  if (await handleSessionActions(req, res, deps, resource, id, parts[3], method)) return true
 
   // Every other route works in one space.
   const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
@@ -630,7 +733,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       res.write('retry: 2000\n\n')
       send('snapshot', deps.turns.snapshot())
-      const onTurn = (event: TurnEvent) => send('turn', event)
+      const onTurn = (event: TurnEvent) => send('turn', { ...event, ...turnNotice(deps, event) })
       deps.turns.on('turn', onTurn)
       const detachSpawns = attachSpawnEvents(deps.spawns, send)
       // Note changes of every space, each tagged with its space (null = main,
@@ -731,6 +834,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     if (resource === 'sessions' && !id && method === 'GET') {
       const projectId = url.searchParams.get('projectId') ?? undefined
       const sessions = deps.bridge.ledger.list(projectId, space.ledgerKey)
+        .filter((entry) => !entry.archivedAt)
         .map((entry) => sessionView(deps, entry.projectId ? space.registry.get(entry.projectId) : undefined, entry))
         .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
       json(res, 200, { sessions })
