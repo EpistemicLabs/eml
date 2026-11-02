@@ -8,7 +8,8 @@ import type { Sync } from './sync/sync'
  * confirmed write); without a live connection it is read-only.
  */
 export async function applyWrite<N extends CommandName>(eml: EML, command: { name: N, input: CommandMap[N][0] }, env: Env, sync: Sync | undefined): Promise<CommandMap[N][1]> {
-  if (eml.teamBrain() === null) return eml.apply(command, env)
+  // a brain with a sync is shared even before its genesis arrived from the relay
+  if (!sync && eml.teamBrain() === null) return eml.apply(command, env)
   if (!sync) throw readOnly('it is not connected to its relay')
   return await sync.write(command, env) as CommandMap[N][1]
 }

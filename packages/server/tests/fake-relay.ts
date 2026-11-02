@@ -26,6 +26,10 @@ export class FakeRelay {
   hold = false
   /** the next append is taken, then the session closes before the answer goes out */
   dropNextAnswer = false
+  /** the session closes on the next append, before it is taken */
+  dropNextAppend = false
+  /** the op_id of every append frame received, resends included */
+  readonly appends: string[] = []
 
   private constructor(private readonly wss: WebSocketServer, readonly brain: string, genesis: Record<string, unknown>) {
     this.set = genesisMembers(openRecord(genesis, brain, () => undefined))
@@ -95,6 +99,12 @@ export class FakeRelay {
           s.subscribed = true
           return
         case 'append': {
+          this.appends.push(String(frame.record.op_id))
+          if (this.dropNextAppend) {
+            this.dropNextAppend = false
+            ws.close(1001)
+            return
+          }
           const bytes = JSON.stringify(frame.record)
           const known = this.log.find(e => e.opId === frame.record.op_id)
           if (known) {

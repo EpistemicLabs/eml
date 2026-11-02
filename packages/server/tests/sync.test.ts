@@ -3,7 +3,7 @@ import { ready } from '@engramprotocol/protocol'
 import { EML, CommandError } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
 import { Sync, type SyncState } from '../src/sync/sync'
-import { SharedWriteError } from '../src/write'
+import { SharedWriteError, applyWrite } from '../src/write'
 import { FakeRelay } from './fake-relay'
 import { BRAIN, Team, person } from './team'
 
@@ -91,12 +91,25 @@ describe('a shared brain\'s sync', () => {
     expect((err as Error).message).toMatch(/may still land/)
   })
 
-  it('resends an unanswered write after a reconnect; it lands once', async () => {
+  it('does not resend a write whose answer was lost: its entry comes in after the reconnect, and it lands once', async () => {
     const { sync, eml, relay } = await connected()
     relay.dropNextAnswer = true
+    const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-answer-lost' }) }, env(eml))
+    expect(engram).toMatchObject({ title: 't-answer-lost' })
+    await until(() => sync.state.kind === 'live')
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-after' }) }, env(eml))  // a resend would reach the relay before it
+    expect(relay.appends).toHaveLength(2)
+    expect(new Set(relay.appends).size).toBe(2)
+    expect(relay.log).toHaveLength(3)
+    expect(titles(eml)).toEqual(['t-after', 't-answer-lost'])
+  })
+
+  it('resends a write the relay did not take after a reconnect; it lands once', async () => {
+    const { sync, eml, relay } = await connected()
+    relay.dropNextAppend = true
     const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-resent' }) }, env(eml))
     expect(engram).toMatchObject({ title: 't-resent' })
-    await until(() => sync.state.kind === 'live')
+    expect(relay.appends).toHaveLength(2)
     expect(relay.log).toHaveLength(2)
     expect(titles(eml)).toEqual(['t-resent'])
   })
@@ -121,6 +134,17 @@ describe('a shared brain\'s sync', () => {
     relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
     await until(() => sync.state.kind === 'live')
     expect(titles(eml)).toEqual(['t-from-another-device'])
+  })
+
+  it('is shared before its genesis arrived: a write is read-only, not written privately', async () => {
+    const team = new Team()
+    relay = await FakeRelay.start(BRAIN, team.genesis())
+    sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { backoffMs: [20, 100] })
+    const eml = EML.fromConnection(team.db, 'test')
+    expect(eml.teamBrain()).toBeNull()
+    const err = await failure(applyWrite(eml, { name: 'engram.create', input: validNote({ title: 't-early' }) }, env(eml), sync))
+    expect(err).toMatchObject({ status: 503, code: 'SHARED_BRAIN_READ_ONLY' })
+    expect(titles(eml)).toEqual([])
   })
 
   it('stops when the relay\'s log is shorter than this brain\'s', async () => {

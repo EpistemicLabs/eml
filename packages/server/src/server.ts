@@ -64,7 +64,7 @@ import * as http from 'http'
 import type { IncomingMessage, ServerResponse } from 'http'
 import * as path from 'path'
 import * as fs from 'fs'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import {
   EML,
   initControlDatabase,
@@ -93,7 +93,7 @@ import {
   type SubjectStatus,
   type EngramInput,
 } from '@engramprotocol/core'
-import { ConnectionPool } from './pool'
+import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
 import { applyWrite, SharedWriteError } from './write'
@@ -221,7 +221,7 @@ function startSyncs(): void {
       const team = readTeamFile(DATA_DIR, id)
       if (!team) continue
       const file = path.isAbsolute(row.brain_file) ? row.brain_file : path.join(DATA_DIR, row.brain_file)
-      const sync = new Sync(new Database(file, { fileMustExist: true }), team)
+      const sync = new Sync(openBrain(file), team)
       syncs.set(id, sync)
       sync.start()
     } catch (err) {

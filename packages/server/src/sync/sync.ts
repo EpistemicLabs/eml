@@ -247,7 +247,10 @@ export class Sync {
         return
       }
       const opId = (entry.record as { op_id?: unknown }).op_id
-      if (typeof opId === 'string') this.settle(opId, outcome)
+      if (typeof opId === 'string') {
+        this.unconfirmed.delete(opId)  // its entry is in the log, whether the relay's answer came or not
+        this.settle(opId, outcome)
+      }
     }
   }
 
