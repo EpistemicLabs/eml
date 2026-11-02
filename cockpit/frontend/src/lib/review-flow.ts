@@ -1,7 +1,7 @@
 import { closePane } from '@/lib/pane-close';
-import { archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
+import { answerSession, archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
 import { openSessionInSpace, paneHoldingSession } from '@/stores/usePaneStore';
-import { getReview, setReview } from '@/stores/useReviewStore';
+import { getReview, queueAfter, setReview } from '@/stores/useReviewStore';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
@@ -41,6 +41,15 @@ export function stepReview(step: 1 | -1, sessions: AllSession[], spaces: SpaceIn
   if (session) show(session, spaces, review.queue, index);
 }
 
+function moveOn(sessions: AllSession[], spaces: SpaceInfo[]): void {
+  const review = getReview();
+  if (!review) return;
+  const { queue, index } = queueAfter(review.queue, review.index);
+  const session = sessions.find((candidate) => candidate.id === queue[index]);
+  if (session) show(session, spaces, queue, index);
+  else endReview();
+}
+
 /** Take the current one out (archive, or clear for a pinned one) and go on; after the last the flow ends. */
 export async function finishCurrent(
   action: 'archive' | 'clear',
@@ -50,12 +59,16 @@ export async function finishCurrent(
   const review = getReview();
   if (!review) return null;
   const id = review.queue[review.index];
-  const queue = review.queue.filter((candidate) => candidate !== id);
-  const session = sessions.find((candidate) => candidate.id === queue[review.index])
-    ?? sessions.find((candidate) => candidate.id === queue[review.index - 1]);
-  const index = session ? queue.indexOf(session.id) : -1;
   // The pane moves on first: archiving closes a pane still showing the session.
-  if (session) show(session, spaces, queue, index);
-  else endReview();
+  moveOn(sessions, spaces);
   return action === 'archive' ? archiveSession(id) : clearSession(id);
+}
+
+/** Answer the current one and go on. If it did not get the answer the flow stays, so the answer isn't lost. */
+export async function answerCurrent(text: string, sessions: AllSession[], spaces: SpaceInfo[]): Promise<string | null> {
+  const review = getReview();
+  if (!review) return null;
+  const error = await answerSession(review.queue[review.index], text);
+  if (!error) moveOn(sessions, spaces);
+  return error;
 }

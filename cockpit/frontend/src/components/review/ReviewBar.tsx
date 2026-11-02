@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Check, ChevronLeft, ChevronRight, MessageSquareReply, X } from 'lucide-react';
+import { Archive, Check, ChevronLeft, ChevronRight, MessageSquareReply, Send, X } from 'lucide-react';
 
 import { MARK_WORD, sessionMark, type AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { endReview, finishCurrent, stepReview } from '@/lib/review-flow';
+import { answerCurrent, endReview, finishCurrent, stepReview } from '@/lib/review-flow';
 import { useReview } from '@/stores/useReviewStore';
 import { useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
@@ -24,8 +24,9 @@ const isTyping = (target: EventTarget | null): boolean => {
 
 /**
  * The review flow's bar on top of its pane: where it is in the queue, and what
- * takes the session out. J and K move, E takes it out and goes on, R goes to the
- * reply box, Esc ends the flow. A phone gets the same buttons.
+ * the session asks for. A question gets an answer box with the cursor in it;
+ * anything else is taken out with E. J and K move, R goes to the reply box, Esc
+ * ends the flow (in the answer box it only leaves the box). A phone gets the same buttons.
  */
 export function ReviewBar({ paneId }: { paneId: string }) {
   const review = useReview();
@@ -39,7 +40,9 @@ function ActiveReviewBar() {
   const { turns } = useTurnStore();
   const { sessions } = useAllSessions(true);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const barRef = useRef<HTMLDivElement>(null);
+  const answerRef = useRef<HTMLInputElement>(null);
 
   const known = useMemo<AllSession[]>(() => sessions ?? [], [sessions]);
   const current = known.find((session) => session.id === review?.queue[review.index]);
@@ -47,12 +50,30 @@ function ActiveReviewBar() {
   const action: 'archive' | 'clear' = pinned ? 'clear' : 'archive';
 
   const move = (step: 1 | -1) => stepReview(step, known, spaces);
+  const isQuestion = current?.attention?.kind === 'question';
   const finish = () => {
     if (!current) return;
     setError(null);
     void finishCurrent(action, known, spaces).then(setError);
   };
+  const answer = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setError(null);
+    void answerCurrent(text, known, spaces).then((problem) => {
+      setError(problem);
+      if (!problem) setDraft('');
+    });
+  };
+  // Each session starts clean, and a question with the cursor in its box.
+  const currentId = current?.id;
+  useEffect(() => {
+    setDraft('');
+    setError(null);
+    if (isQuestion) answerRef.current?.focus();
+  }, [currentId, isQuestion]);
   const reply = () => {
+    if (isQuestion) { answerRef.current?.focus(); return; }
     const pane = barRef.current?.parentElement;
     pane?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
   };
@@ -60,9 +81,10 @@ function ActiveReviewBar() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-      if (event.key === 'j') move(1);
-      else if (event.key === 'k') move(-1);
-      else if (event.key === 'e') finish();
+      // Consumed: the next session's answer box takes the focus before the key would land.
+      if (event.key === 'j') { event.preventDefault(); move(1); }
+      else if (event.key === 'k') { event.preventDefault(); move(-1); }
+      else if (event.key === 'e') { if (isQuestion) { event.preventDefault(); reply(); } else finish(); }
       else if (event.key === 'r') { event.preventDefault(); reply(); }
       else if (event.key === 'Escape') endReview();
     };
@@ -85,13 +107,21 @@ function ActiveReviewBar() {
         <button type="button" className={BUTTON} disabled={review.index >= review.queue.length - 1} onClick={() => move(1)} aria-label="Next">
           <KeyHint>J</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
         </button>
-        <button type="button" className={BUTTON} onClick={reply}>
-          <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
-        </button>
-        <button type="button" className={`${BUTTON} font-medium`} onClick={finish}>
-          {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-          {pinned ? 'Clear' : 'Archive'} &amp; next <KeyHint>E</KeyHint>
-        </button>
+        {isQuestion ? (
+          <button type="button" className={BUTTON} onClick={finish} aria-label={pinned ? 'Clear without answering' : 'Archive without answering'} title={pinned ? 'Clear without answering' : 'Archive without answering'}>
+            {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+          </button>
+        ) : (
+          <>
+            <button type="button" className={BUTTON} onClick={reply}>
+              <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
+            </button>
+            <button type="button" className={`${BUTTON} font-medium`} onClick={finish}>
+              {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+              {pinned ? 'Clear' : 'Archive'} &amp; next <KeyHint>E</KeyHint>
+            </button>
+          </>
+        )}
         <button type="button" className={BUTTON} onClick={endReview} aria-label="End review">
           <X className="h-3.5 w-3.5" />
         </button>
@@ -100,6 +130,28 @@ function ActiveReviewBar() {
         <p className="mt-1 truncate text-[11px] text-muted-foreground" title={current.attention?.reason ?? undefined}>
           {MARK_WORD[mark]}{current.attention?.reason ? `: ${current.attention.reason}` : ''}
         </p>
+      )}
+      {isQuestion && (
+        <div className="mt-1 flex gap-1.5">
+          <input
+            ref={answerRef}
+            type="text"
+            value={draft}
+            enterKeyHint="send"
+            aria-label="Your answer"
+            placeholder="Your answer"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') answer();
+              else if (event.key === 'Escape') answerRef.current?.blur();
+            }}
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
+          />
+          <button type="button" className={`${BUTTON} font-medium`} disabled={!draft.trim()} onClick={answer}>
+            <Send className="h-3.5 w-3.5" /> Answer &amp; next
+          </button>
+        </div>
       )}
       {error && <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p>}
     </div>

@@ -184,9 +184,19 @@ export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller
   const row = (session: AllSession) => (
     <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
   );
-  if (needsYou.length === 0 && toReview.length === 0) return null;
+  const waiting = needsYou.length + toReview.length;
+  if (waiting === 0) return null;
   return (
     <div className={cn('space-y-3', onlyOpenSpace && 'pb-3')}>
+      <div className="px-2">
+        <button
+          type="button"
+          onClick={() => startReview([...needsYou, ...toReview], spaces)}
+          className="w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          Review {waiting} ▶
+        </button>
+      </div>
       {needsYou.length > 0 && (
         <div className="space-y-0.5">
           <SidebarGroupHeader>Needs you · {needsYou.length}</SidebarGroupHeader>
@@ -195,16 +205,7 @@ export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller
       )}
       {toReview.length > 0 && (
         <div className="space-y-0.5">
-          <div className="flex items-center justify-between pr-2">
-            <SidebarGroupHeader>To review · {toReview.length}</SidebarGroupHeader>
-            <button
-              type="button"
-              onClick={() => startReview(toReview, spaces)}
-              className="rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              Review ▶
-            </button>
-          </div>
+          <SidebarGroupHeader>To review · {toReview.length}</SidebarGroupHeader>
           {toReview.map(row)}
         </div>
       )}

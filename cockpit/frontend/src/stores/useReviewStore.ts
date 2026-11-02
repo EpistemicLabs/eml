@@ -1,6 +1,6 @@
-// The review flow: one pane going through finished sessions. The queue is fixed
-// when it starts, so rows don't move under the user as they are read; finished
-// work that arrives later joins at the end.
+// The review flow: one pane going through what waits for the user, what needs an
+// answer first. The queue is fixed when it starts, so rows don't move under the
+// user as they are read; what arrives later waits for the next round.
 import { useSyncExternalStore } from 'react';
 
 export type ReviewState = {
@@ -11,6 +11,12 @@ export type ReviewState = {
   /** The flow opened that pane, so it closes it again; a pane the user had open stays. */
   ownsPane: boolean;
 };
+
+/** The queue without its current session, and where the flow goes on: the next one, else the one before. */
+export function queueAfter(queue: string[], index: number): { queue: string[]; index: number } {
+  const rest = queue.filter((_, position) => position !== index);
+  return { queue: rest, index: rest.length === 0 ? -1 : Math.min(index, rest.length - 1) };
+}
 
 let state: ReviewState | null = null;
 const listeners = new Set<() => void>();
