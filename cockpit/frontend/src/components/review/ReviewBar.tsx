@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Archive, Check, ChevronLeft, ChevronRight, MessageSquareReply, Send, X } from 'lucide-react';
+import { Archive, Check, ChevronLeft, ChevronRight, MessageSquareReply, X } from 'lucide-react';
 
 import { MARK_WORD, sessionMark, type AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { answerCurrent, endReview, finishCurrent, liveQueue, stepReview } from '@/lib/review-flow';
+import { endReview, finishCurrent, liveQueue, stepReview } from '@/lib/review-flow';
 import { setReviewBarFocus, useReview } from '@/stores/useReviewStore';
 import { useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
@@ -21,7 +21,7 @@ function KeyHint({ children }: { children: string }) {
   );
 }
 
-/** Keys only while nothing is being typed: the answer box keeps its own. */
+/** Keys only while nothing is being typed. */
 const isTyping = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null;
   return Boolean(element?.closest?.('input, textarea, select, [contenteditable="true"], .xterm'));
@@ -31,11 +31,12 @@ const isTyping = (target: EventTarget | null): boolean => {
  * The review flow's bar on top of its pane: where it is in the queue, and what
  * the session asks for. The bar holds the keyboard: after every step the focus
  * is on it, and its pane's terminal or chat input takes it only on R or a click;
- * a reply sent from the chat input gives it back.
- * D goes on (right), A goes back (left), E takes the session out (on a question it goes to the answer
- * box), R goes to the reply box, Esc ends the flow (in the answer box it only
- * comes back to the bar). The keys act only here, never on another desk. A
- * phone gets the same buttons, and no keyboard opens on its own.
+ * a reply sent from the chat input gives it back. Answers go in the session's
+ * own input at the bottom of the pane, a question's too.
+ * D goes on (right), A goes back (left), E takes the session out (on a question
+ * it goes to the input, so a question is not archived unanswered by accident),
+ * R goes to the input, Esc ends the flow. The keys act only here, never on
+ * another desk. A phone gets the same buttons, and no keyboard opens on its own.
  */
 export function ReviewBar({ paneId }: { paneId: string }) {
   const review = useReview();
@@ -49,9 +50,7 @@ function ActiveReviewBar() {
   const { turns } = useTurnStore();
   const { sessions } = useAllSessions(true);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
   const barRef = useRef<HTMLDivElement>(null);
-  const answerRef = useRef<HTMLInputElement>(null);
 
   const known = useMemo<AllSession[]>(() => sessions ?? [], [sessions]);
   const current = known.find((session) => session.id === review?.queue[review.index]);
@@ -68,19 +67,9 @@ function ActiveReviewBar() {
     setError(null);
     void finishCurrent(how, known, spaces).then(setError);
   };
-  const answer = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setError(null);
-    void answerCurrent(text, known, spaces).then((problem) => {
-      setError(problem);
-      if (!problem) setDraft('');
-    });
-  };
   // Each session starts clean, with the keyboard on the bar: a key never lands in an input by itself.
   const currentId = review?.queue[review.index];
   useEffect(() => {
-    setDraft('');
     setError(null);
     barRef.current?.focus({ preventScroll: true });
   }, [currentId]);
@@ -89,7 +78,6 @@ function ActiveReviewBar() {
     return () => setReviewBarFocus(null);
   }, []);
   const reply = () => {
-    if (isQuestion) { answerRef.current?.focus(); return; }
     const pane = barRef.current?.parentElement;
     pane?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
   };
@@ -135,9 +123,14 @@ function ActiveReviewBar() {
           <KeyHint>D</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
         </button>
         {isQuestion ? (
-          <button type="button" className={BUTTON} onClick={() => finish()} aria-label={pinned ? 'Done without answering' : 'Archive without answering'} title={pinned ? 'Done without answering' : 'Archive without answering'}>
-            {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-          </button>
+          <>
+            <button type="button" className={`${BUTTON} font-medium`} onClick={reply}>
+              <MessageSquareReply className="h-3.5 w-3.5" /> Answer <KeyHint>R</KeyHint>
+            </button>
+            <button type="button" className={BUTTON} onClick={() => finish()} aria-label={pinned ? 'Done without answering' : 'Archive without answering'} title={pinned ? 'Done without answering' : 'Archive without answering'}>
+              {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+            </button>
+          </>
         ) : (
           <>
             <button type="button" className={BUTTON} onClick={reply}>
@@ -162,29 +155,6 @@ function ActiveReviewBar() {
         <p className="mt-1 truncate text-[11px] text-muted-foreground" title={current.attention?.reason ?? undefined}>
           {word}{current.attention?.reason ? `: ${current.attention.reason}` : ''}
         </p>
-      )}
-      {isQuestion && (
-        <div className="mt-1 flex items-center gap-1.5">
-          <input
-            ref={answerRef}
-            type="text"
-            value={draft}
-            enterKeyHint="send"
-            aria-label="Your answer"
-            placeholder="Your answer"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === 'Enter') answer();
-              else if (event.key === 'Escape') barRef.current?.focus({ preventScroll: true });
-            }}
-            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
-          />
-          <KeyHint>R</KeyHint>
-          <button type="button" className={`${BUTTON} font-medium`} disabled={!draft.trim()} onClick={answer}>
-            <Send className="h-3.5 w-3.5" /> Answer &amp; next
-          </button>
-        </div>
       )}
       {error && <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p>}
     </div>

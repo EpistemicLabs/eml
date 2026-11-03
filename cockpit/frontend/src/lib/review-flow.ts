@@ -1,5 +1,5 @@
 import { closePane } from '@/lib/pane-close';
-import { answerSession, archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
+import { archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
 import {
   getActiveDesk,
   getActiveSpaceId,
@@ -124,13 +124,4 @@ export async function finishCurrent(
   // The pane moves on first: archiving closes a pane still showing the session.
   moveOn(sessions, spaces);
   return action === 'archive' ? archiveSession(id) : clearSession(id);
-}
-
-/** Answer the current one and go on. If it did not get the answer the flow stays, so the answer isn't lost. */
-export async function answerCurrent(text: string, sessions: AllSession[], spaces: SpaceInfo[]): Promise<string | null> {
-  const review = getReview();
-  if (!review) return null;
-  const error = await answerSession(review.queue[review.index], text);
-  if (!error) moveOn(sessions, spaces);
-  return error;
 }

@@ -6,6 +6,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 
 // The review bar holds the keyboard: D, A, E, R and Esc act on it alone, a key
 // never lands in an input by itself, and Esc does not reach the pane below.
+// Answers go in the session's own input; the bar has none.
 
 let sessions: AllSession[] = [];
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions, queued: [], refresh: () => {} }) }));
@@ -14,7 +15,6 @@ const flow = vi.hoisted(() => ({
   stepReview: vi.fn(),
   endReview: vi.fn(),
   finishCurrent: vi.fn(() => Promise.resolve(null)),
-  answerCurrent: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock('@/lib/review-flow', async (original) => ({ ...(await original<typeof import('@/lib/review-flow')>()), ...flow }));
 
@@ -77,18 +77,20 @@ describe('the review bar', () => {
     expect(flow.stepReview).not.toHaveBeenCalled();
   });
 
-  it('keeps the cursor out of a question\'s answer box until R', () => {
+  it('answers a question in the session\'s own input, on R', () => {
     open(question);
-    const box = screen.getByLabelText('Your answer');
+    expect(screen.queryByLabelText('Your answer')).toBeNull();
     expect(document.activeElement).toBe(bar());
+    // The pane's chat input sits next to the bar, inside the same pane.
+    const input = document.createElement('textarea');
+    bar().parentElement!.appendChild(input);
     fireEvent.keyDown(bar(), { key: 'r' });
-    expect(document.activeElement).toBe(box);
-    fireEvent.keyDown(box, { key: 'd' });
-    expect(flow.stepReview).not.toHaveBeenCalled();
-    fireEvent.keyDown(box, { key: 'Escape' });
-    expect(document.activeElement).toBe(bar());
-    expect(flow.endReview).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(bar(), { key: 'e' });
+    expect(flow.finishCurrent).not.toHaveBeenCalled();
+    input.remove();
   });
+
   it('takes the keyboard back after a reply is sent from its pane', () => {
     open(result);
     const input = document.createElement('textarea');

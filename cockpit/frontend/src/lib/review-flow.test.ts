@@ -20,7 +20,6 @@ vi.mock('@/utils/api', () => ({
 }));
 vi.mock('@/lib/session-actions', () => ({
   markSessionRead: () => Promise.resolve(null),
-  answerSession: () => Promise.resolve(null),
   clearSession: () => Promise.resolve(null),
   archiveSession: () => Promise.resolve(null),
 }));

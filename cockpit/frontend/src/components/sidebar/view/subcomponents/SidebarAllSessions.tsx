@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ChevronRight, MessageSquare } from 'lucide-react';
 
 import { startReview } from '@/lib/review-flow';
-import { answerSession, archiveSession, clearSession, markSessionRead, setAnswering, stopSession, useAnswering } from '@/lib/session-actions';
+import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
 import { cn } from '@/lib/utils';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -17,38 +17,6 @@ import { SidebarSessionRow } from './SidebarSessionRow';
 
 const RECENT_PER_AGENT = 5;
 const SHOW_MORE_STEP = 20;
-
-function ReplyBox({ session, controller }: { session: AllSession; controller: SidebarController }) {
-  const [draft, setDraft] = useState('');
-  const send = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setAnswering(null);
-    void answerSession(session.id, text).then((error) => { if (error) controller.reportError(error); });
-  };
-  return (
-    <div className="flex gap-1 px-2 pt-0.5 pb-1">
-      <input
-        autoFocus
-        type="text"
-        value={draft}
-        enterKeyHint="send"
-        aria-label={`Answer ${sessionDisplayName(session)}`}
-        placeholder="Your answer"
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-          if (event.key === 'Enter') send();
-          else if (event.key === 'Escape') setAnswering(null);
-        }}
-        className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
-      />
-      <button type="button" onClick={send} disabled={!draft.trim()} className="rounded-md border border-border px-2 text-xs text-foreground hover:bg-accent disabled:opacity-40">
-        Send
-      </button>
-    </div>
-  );
-}
 
 function AllSessionRow({ session, spaces, controller, sessions, detail, counts, leading, nested, plain }: {
   session: AllSession;
@@ -66,7 +34,6 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, counts, 
 }) {
   const { sessionRename } = controller;
   const { turns } = useTurnStore();
-  const answering = useAnswering();
   const space = spaces.find((candidate) => candidate.id === session.spaceId) ?? spaces[0];
   const mark = plain ? null : sessionMark(session, turns[session.id]);
   const parent = session.parentSessionId ? sessions.find((candidate) => candidate.id === session.parentSessionId) : undefined;
@@ -102,13 +69,11 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, counts, 
         leading={leading}
         nested={nested}
         actions={{
-          onAnswer: session.attention?.kind === 'question' ? () => setAnswering(session.id) : undefined,
           onStop: running && working ? () => void stopSession(session.id).then(whenDone) : undefined,
           onClear: session.attention?.kind === 'review' || (session.attention && pinned) ? () => void clearSession(session.id).then(whenDone) : undefined,
           onArchive: !session.archivedAt && !working ? () => void archiveSession(session.id).then(whenDone) : undefined,
         }}
       />
-      {answering === session.id && <ReplyBox session={session} controller={controller} />}
     </div>
   );
 }
