@@ -200,6 +200,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   whatever is added to the shared config, and claude.ai connectors are off. MCP servers get only the environment
   their definition names, plus a few basics (`CLAUDE_CODE_MCP_ALLOWLIST_ENV`).
 - **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
+- **Browser:** an agent's sessions get no Claude in Chrome unless its `agent.json` says `"chrome": true`. Chrome reaches every site the browser is signed in to, so give an agent its own browser profile.
 - **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
   setup-token mode does not apply to these sessions.
 - **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A chat session with a window keeps running;

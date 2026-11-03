@@ -69,6 +69,8 @@ export interface SessionAgent {
   configDirs: Partial<Record<ProviderId, string>>
   /** The agent's own temp folder. */
   tempDir: string
+  /** Its sessions get browser control (Claude in Chrome). */
+  chrome: boolean
   /** Why a session of this CLI must not start right now, or null. Looks at the files on every call. */
   problem(provider: ProviderId): string | null
   /** Record what the boot found wrong; from then on `problem` answers with it. */
