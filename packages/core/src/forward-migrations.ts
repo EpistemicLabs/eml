@@ -349,6 +349,7 @@ export function checkBrainIds(opts: { control: Database_t.Database, dataDir: str
  * pre-migration backup and the source backup of a cross-brain move.
  */
 export function backupBrain(db: Database_t.Database, backupPath: string): void {
+  mkdirSync(path.dirname(backupPath), { recursive: true, mode: 0o700 })
   db.prepare('VACUUM INTO ?').run(backupPath)
   chmodSync(backupPath, 0o600)
   withDb(backupPath, db => assertIntegrity(db, 'backup'))
