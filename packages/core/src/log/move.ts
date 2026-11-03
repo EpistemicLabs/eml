@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import { CommandError } from '../commands/types'
 import { scopeObject } from '../validate'
-import { canonicalJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
+import { canonicalJson, sha256Hex } from '@engramprotocol/protocol/log'
+import { brainIdOf } from './log'
 
 // --- Moving engrams between brains (v0.21) ---------------------------------------
 //
@@ -31,7 +32,9 @@ import { canonicalJson, sha256Hex, type OpEnvelope } from '@engramprotocol/proto
 // leaves the set in both brains, never in neither; the same move called again
 // finds its import in the target's log and writes only the move_out.
 //
-// Not reachable by agents: no route and no MCP tool calls these.
+// A project moves as a whole with its sub-projects (projectSet; move-engrams.ts
+// moveProject), and only once its rows name people, not agents, as authors
+// (legacyAuthorship). Not reachable by agents: no route and no MCP tool calls these.
 
 /** The columns carried per table, in insert order of the tables: every stored column but ord. */
 export const MOVED_COLUMNS = {
@@ -164,10 +167,61 @@ function projectsWithParents(db: Database.Database, engrams: MovedRow[]): MovedR
   return out
 }
 
-/** A brain as the other side of a move names it: its genesis op_id and its head seq. */
+/**
+ * A brain as the other side of a move names it: its id — the one its genesis
+ * carries (args.brain, brainIdOf: the control db's id, what a cross-brain
+ * relation names too) — and its head seq.
+ */
 export function brainRef(db: Database.Database): { brain: string, head_seq: number } {
-  const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined
-  if (!genesis) throw new Error('the brain has no op log')
+  const brain = brainIdOf(db)
+  if (brain === null) throw new Error('the brain has no genesis naming its id')
   const head = db.prepare('SELECT MAX(seq) AS seq FROM op_log').get() as { seq: number }
-  return { brain: (JSON.parse(genesis.payload) as OpEnvelope).op_id, head_seq: head.seq }
+  return { brain, head_seq: head.seq }
+}
+
+/** A project of a move's tree: its id and how many engrams of the set live in it. */
+export interface ProjectTreeEntry { id: string, engrams: number }
+
+/**
+ * What a project move takes (decision move-project-deterministic-ui): the
+ * engrams of project `id` and of every sub-project under it, in ord order,
+ * with the tree they come from — parents before children. A sub-project
+ * without engrams is listed with 0: its row stays, since a project row moves
+ * only with an engram that lives in it. An unknown project is NOT_FOUND.
+ */
+export function projectSet(db: Database.Database, id: string): { tree: ProjectTreeEntry[], ids: string[] } {
+  if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id)) throw new CommandError('NOT_FOUND', `project ${id} not found`)
+  const tree = db.prepare(`
+    WITH RECURSIVE tree(id, depth) AS (
+      SELECT id, 0 FROM projects WHERE id = ?
+      UNION ALL
+      SELECT p.id, t.depth + 1 FROM projects p JOIN tree t ON p.parent_project = t.id
+    )
+    SELECT t.id, (SELECT COUNT(*) FROM engrams e WHERE e.scope = 'project.' || t.id) AS engrams
+    FROM tree t ORDER BY t.depth, t.id`).all(id) as ProjectTreeEntry[]
+  const ids = (db.prepare(`SELECT id FROM engrams WHERE scope IN (SELECT 'project.' || value FROM json_each(?)) ORDER BY ord`)
+    .all(JSON.stringify(tree.map(t => t.id))) as Array<{ id: string }>).map(r => r.id)
+  return { tree, ids }
+}
+
+/** Rows of a set written under an agent's name: how many, and which agents. */
+export interface LegacyAuthorship { engrams: number, entries: number, agents: string[] }
+
+/**
+ * The rows of `ids` whose author is an agent of this brain rather than a
+ * person: ingested_by (engrams) or author (entries) equal to an id of the
+ * agents table — how a token named after the agent stamped writes before the
+ * agent-brain upgrade (agent-brain-spec §4). A project move refuses them: in a
+ * team brain the handle is the member, and the upgrade re-stamps them first.
+ */
+export function legacyAuthorship(db: Database.Database, ids: readonly string[]): LegacyAuthorship {
+  const json = JSON.stringify(ids)
+  const S = 'SELECT value FROM json_each(?)'
+  const engrams = db.prepare(`SELECT ingested_by AS agent, COUNT(*) AS n FROM engrams WHERE id IN (${S}) AND ingested_by IN (SELECT id FROM agents) GROUP BY ingested_by`).all(json) as Array<{ agent: string, n: number }>
+  const entries = db.prepare(`SELECT author AS agent, COUNT(*) AS n FROM entries WHERE engram_id IN (${S}) AND author IN (SELECT id FROM agents) GROUP BY author`).all(json) as Array<{ agent: string, n: number }>
+  return {
+    engrams: engrams.reduce((n, r) => n + r.n, 0),
+    entries: entries.reduce((n, r) => n + r.n, 0),
+    agents: [...new Set([...engrams, ...entries].map(r => r.agent))].sort(),
+  }
 }

@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import {
-  ProtocolError, encodeFrame, loginResponse, openAccept, parseRelayFrame, sealOp, syncPath,
-  type ClientFrame, type RelayFrame, type TeamOp,
+  ProtocolError, checkpointArgs, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, parseRelayFrame, sealOp, syncPath,
+  type ClientFrame, type Provenance, type RelayFrame, type Role, type TeamOp,
 } from '@engramprotocol/protocol'
-import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
+import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, NO_ACTOR, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
 import { Replica, type Outcome } from './replica'
 import type { TeamFile } from './team-file'
 import { SharedWriteError, readOnly } from '../write'
@@ -31,6 +31,13 @@ import { SharedWriteError, readOnly } from '../write'
 // the owner's add_member is in the log and the login goes through — takes
 // its first key from the inviter's device only, and replays the log from 1.
 // The invite closing under it (taken, cancelled, expired) stops the brain.
+//
+// Checkpoints (§10, spec §5): a sealed `brain.checkpoint` states the hash of
+// the state after its author's head; it counts when it lands right after
+// that head, so checkpoint() tries again when another write came in between
+// (three attempts). Every device writes one by itself once the log grew by
+// CHECKPOINT_EVERY entries since the last one; the inviter writes one before
+// it accepts a join (the membership flows call checkpoint()).
 
 export type SyncState =
   /** not connected: connecting, or waiting to reconnect */
@@ -51,17 +58,57 @@ export type SyncState =
   | { kind: 'stopped', why: string, relay?: { code: string, message: string } }
   | { kind: 'update_needed', why: string }
 
+/** A device writes a checkpoint by itself once the log grew by this many entries since the last one. */
+export const CHECKPOINT_EVERY = 200
+
 export interface SyncOptions {
   /** how long a write waits for its entry (ms); default 30 s */
   deadlineMs?: number
+  /** entries between the checkpoints a device writes by itself; default CHECKPOINT_EVERY */
+  checkpointEvery?: number
   /** the first and the longest pause before a reconnect (ms); default 1 s and 60 s */
   backoffMs?: [number, number]
   /** keeps the team file as a creation or join advances (the server writes it to disk); a Sync without one keeps nothing */
   persist?: (file: TeamFile) => void
 }
 
+/** A submitted op's entry as the replica took it: the command's result and its seq. */
+interface Landed { result: unknown, seq: number }
+
+/** A member as GET /team shows it: who they are in the log, never a key. */
+export interface MemberView {
+  /** the member's identity key, base64url */
+  id: string
+  fingerprint: string
+  /** null while this device cannot open it (no key of its epoch yet) */
+  handle: string | null
+  role: Role
+  devices: number
+  /** this device's member */
+  self: boolean
+}
+
+/**
+ * The shared brain as the host shows it (GET /team; spec
+ * team-brain-membership-flows-spec §2): its state, the one text a write would
+ * get while it takes none, its member, and the member set in join order.
+ */
+export interface TeamSnapshot {
+  shared: true
+  brain: string
+  relay: string
+  mode: 'create' | 'join' | 'member'
+  state: SyncState
+  /** the 503 SHARED_BRAIN_READ_ONLY text a write gets right now; null when the brain is live */
+  read_only: string | null
+  member: MemberView | null
+  members: MemberView[]
+  /** open invites this device made — the membership flows' (block 2); none yet */
+  invites: never[]
+}
+
 interface Writer {
-  resolve(result: unknown): void
+  resolve(landed: Landed): void
   reject(err: Error): void
   timer: NodeJS.Timeout
 }
@@ -76,6 +123,7 @@ export class Sync {
   private readonly url: string
   private readonly host: string
   private readonly deadlineMs: number
+  private readonly checkpointEvery: number
   private readonly backoff: [number, number]
   private readonly persist: (file: TeamFile) => void
   private ws: WebSocket | null = null
@@ -102,6 +150,10 @@ export class Sync {
   private unconfirmed = new Map<string, Record<string, unknown>>()
   /** the key_put the relay has not answered */
   private keyPut: number | null = null
+  /** entries in the log since the last checkpoint that counts (or the genesis) */
+  private sinceCheckpoint: number
+  /** a checkpoint of this device is on its way */
+  private checkpointing = false
   /** callers of whenLive */
   private waiters: Array<(state: SyncState) => void> = []
   private halt: Halt | null = null
@@ -115,6 +167,8 @@ export class Sync {
     this.url = `${team.relay}${syncPath(team.brain)}`
     this.host = new URL(team.relay).host
     this.deadlineMs = opts.deadlineMs ?? 30_000
+    this.checkpointEvery = opts.checkpointEvery ?? CHECKPOINT_EVERY
+    this.sinceCheckpoint = Math.max(0, this.replica.head().seq - this.replica.lastCheckpointSeq())
     this.backoff = opts.backoffMs ?? [1_000, 60_000]
     this.persist = opts.persist ?? (() => undefined)
     this.delay = this.backoff[0]
@@ -169,6 +223,44 @@ export class Sync {
     return this.replica.ownHandle()
   }
 
+  /** Why a write would be refused in `state` — the 503 a write gets — or null when the brain takes writes. */
+  private readOnlyFor(state: SyncState): SharedWriteError | null {
+    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && state.kind !== 'joining' && this.replica.head().seq === 0) return readOnly('it is not created yet')
+    if (state.kind !== 'live') return readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
+    if (!this.replica.currentKey()) return readOnly('this device has no key for it yet')
+    if (this.replica.ownHandle() === null) return readOnly('this device\'s member has no handle in it')
+    return null
+  }
+
+  /** The brain as the host shows it (GET /team): state, the read-only text a write would get, its member and the member set. */
+  snapshot(): TeamSnapshot {
+    const state = this.state
+    const set = this.replica.members()
+    const own = set ? memberOfDevice(set, this.team.device.sign.publicKey) : undefined
+    const members: MemberView[] = set
+      ? Object.entries(set.members).map(([id, m]) => ({
+        id, fingerprint: fingerprint(id), handle: this.replica.handleOf(id), role: m.role, devices: Object.keys(m.devices).length, self: id === own,
+      }))
+      : []
+    return {
+      shared: true,
+      brain: this.team.brain,
+      relay: this.team.relay,
+      mode: this.mode,
+      state,
+      read_only: this.readOnlyFor(state)?.message ?? null,
+      member: members.find(m => m.self) ?? null,
+      members,
+      invites: [],
+    }
+  }
+
+  /** Closes the connection and the brain file: the brain is discarded (DELETE /team, a creation the relay never took). */
+  discard(): void {
+    this.close()
+    this.replica.close()
+  }
+
   /**
    * A confirmed write: the command as an op of this device's member, sealed
    * under the current key and appended; resolves with the command's result
@@ -176,21 +268,71 @@ export class Sync {
    * said. Read-only unless the brain is live.
    */
   async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env): Promise<CommandMap[N][1]> {
-    const state = this.state
-    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && state.kind !== 'joining' && this.replica.head().seq === 0) throw readOnly('it is not created yet')
-    if (state.kind !== 'live') throw readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
+    const refusal = this.readOnlyFor(this.state)
+    if (refusal) throw refusal
+    // the member's handle, as the log binds it; the agent is not stamped yet
+    // the member's handle, as the log binds it; the agent as the host stamped it (x-eml-agent)
+    const landed = await this.submit(command.name, command.input, { ...env.actor, handle: this.replica.ownHandle() as string }, env.newId())
+    return landed.result as CommandMap[N][1]
+  }
+
+  /**
+   * A checkpoint: the hash of the brain's state after this device's head,
+   * sealed and appended (PROTOCOL.md §10). It counts only right after that
+   * head, so when another write came in between it is written again at the
+   * new head — three attempts, then SharedWriteError CHECKPOINT_NOT_ADJACENT.
+   * Resolves with the seq of the entry that counts. Read-only unless the
+   * brain is live, as a write.
+   */
+  checkpoint(): Promise<{ seq: number }> {
+    return this.writeCheckpoint(false)
+  }
+
+  /** The attempts of checkpoint(); `auto` is the policy's own, which gives up once another device's checkpoint counted meanwhile. */
+  private async writeCheckpoint(auto: boolean): Promise<{ seq: number }> {
+    this.checkpointing = true
+    try {
+      for (let attempt = 1; ; attempt++) {
+        const refusal = this.readOnlyFor(this.state)
+        if (refusal) throw refusal
+        const head = this.replica.head()
+        const landed = await this.submit('brain.checkpoint', checkpointArgs(head.seq, this.replica.stateHash()), { ...NO_ACTOR, handle: this.replica.ownHandle() as string }, crypto.randomUUID())
+        if (landed.seq === head.seq + 1) return { seq: landed.seq }
+        if (auto && this.sinceCheckpoint < this.checkpointEvery) return { seq: landed.seq - this.sinceCheckpoint }
+        if (attempt >= 3) {
+          throw new SharedWriteError(409, 'CHECKPOINT_NOT_ADJACENT',
+            'The checkpoint did not land right after the state it names; other writes came in between. Try again.')
+        }
+      }
+    } finally {
+      this.checkpointing = false
+    }
+  }
+
+  /** The policy: a checkpoint by this device once the log grew by checkpointEvery entries, while live and none of its own on the way. */
+  private autoCheckpoint(): void {
+    if (this.checkpointing || this.sinceCheckpoint < this.checkpointEvery || this.state.kind !== 'live') return
+    this.writeCheckpoint(true).catch((err: unknown) => {
+      // by code only: a relay's text never reaches the log unsanitized
+      this.log(`the automatic checkpoint did not land (${(err as { code?: string }).code ?? 'error'})`)
+    })
+  }
+
+  /**
+   * An op of this device's member — `call` with `args` — sealed under the
+   * current key and appended; resolves once the replica took its entry, with
+   * the result and the seq, or throws what the brain or the relay said.
+   */
+  private submit(call: string, args: unknown, provenance: Provenance, opId: string): Promise<Landed> {
     const key = this.replica.currentKey()
     if (!key) throw readOnly('this device has no key for it yet')
-    const handle = this.replica.ownHandle()
-    if (handle === null) throw readOnly('this device\'s member has no handle in it')
     const head = this.replica.head()
     const op: TeamOp = {
-      op_id: env.newId(),
+      op_id: opId,
       schema: CURRENT_BRAIN_SCHEMA_VERSION,
-      call: command.name,
-      args: command.input as never,
-      // the member's handle, as the log binds it; the agent as the host stamped it (x-eml-agent)
-      provenance: { ...env.actor, handle },
+      call,
+      args: args as never,
+      provenance,
       team: { brain: this.team.brain, device: this.team.device.sign.publicKey, base_seq: head.seq, head_hash: head.hash },
     }
     let record: Record<string, unknown>
@@ -205,7 +347,7 @@ export class Sync {
         this.writers.delete(op.op_id)
         reject(pending())
       }, this.deadlineMs)
-      this.writers.set(op.op_id, { resolve: resolve as (r: unknown) => void, reject, timer })
+      this.writers.set(op.op_id, { resolve, reject, timer })
       this.unconfirmed.set(op.op_id, record)
       this.append(op.op_id, record)
     })
@@ -288,6 +430,7 @@ export class Sync {
         if (frame.seq < this.from - 1) return this.stop('the relay\'s log is shorter than this brain\'s')
         this.caughtUp = true
         for (const [opId, record] of this.unconfirmed) this.append(opId, record)
+        this.autoCheckpoint()
         return
       case 'appended': {
         const asked = this.requests.get(frame.req)
@@ -446,20 +589,23 @@ export class Sync {
         return
       }
       if (entry.seq === 1) this.publishKey()
+      // the genesis states the hash of the state it starts from: a checkpoint too
+      this.sinceCheckpoint = entry.seq === 1 || (outcome.kind === 'applied' && outcome.checkpoint) ? 0 : this.sinceCheckpoint + 1
       const opId = (entry.record as { op_id?: unknown }).op_id
       if (typeof opId === 'string') {
         this.unconfirmed.delete(opId)  // its entry is in the log, whether the relay's answer came or not
-        this.settle(opId, outcome)
+        this.settle(opId, outcome, entry.seq)
       }
     }
+    this.autoCheckpoint()
   }
 
-  private settle(opId: string, outcome: Extract<Outcome, { kind: 'applied' | 'rejected' }>): void {
+  private settle(opId: string, outcome: Extract<Outcome, { kind: 'applied' | 'rejected' }>, seq: number): void {
     const writer = this.writers.get(opId)
     if (!writer) return
     this.writers.delete(opId)
     clearTimeout(writer.timer)
-    if (outcome.kind === 'applied') writer.resolve(outcome.result)
+    if (outcome.kind === 'applied') writer.resolve({ result: outcome.result, seq })
     else writer.reject(outcome.error ?? new SharedWriteError(409, 'SHARED_WRITE_REJECTED',
       `The shared brain kept this write as rejected: ${outcome.why}. Nothing changed.`))
   }

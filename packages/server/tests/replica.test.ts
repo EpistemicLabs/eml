@@ -121,6 +121,16 @@ describe('the replica', () => {
       expect(team.deliver(team.addMember(ava))).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: .*member already/) })
     })
 
+    it('a checkpoint right after the state it names, by another member\'s device: compared, and it counts', () => {
+      const team = founded()
+      const mira = person('mira')
+      expect(team.deliver(team.addMember(mira))).toMatchObject({ kind: 'applied' })
+      expect(team.deliver(team.write(mira, 't-by-mira'))).toMatchObject({ kind: 'applied' })
+      expect(team.deliver(team.write(mira, '', { call: 'brain.checkpoint', args: { seq: 3, state_hash: team.stateHash() } }))).toEqual({ kind: 'applied', result: undefined, checkpoint: true })
+      expect(team.replica.lastCheckpointSeq()).toBe(4)
+      expect(team.replica.state).toEqual({ kind: 'live' })
+    })
+
     it('an op written after its own seq', () => {
       const team = founded()
       expect(team.deliver(team.write(team.owner, 't-future', { team: { base_seq: 2 } }))).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: base_seq 2/) })
@@ -138,7 +148,8 @@ describe('the replica', () => {
       const team = founded()
       expect(team.deliver(team.write(team.owner, 't-1'))).toMatchObject({ kind: 'applied' })
       const old = team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 1, state_hash: 'f'.repeat(64) }, team: { base_seq: 1, head_hash: (team.db.prepare('SELECT hash FROM op_log WHERE seq = 1').get() as { hash: string }).hash } })
-      expect(team.deliver(old)).toMatchObject({ kind: 'applied' })
+      expect(team.deliver(old)).toEqual({ kind: 'applied', result: undefined, checkpoint: false })
+      expect(team.replica.lastCheckpointSeq()).toBe(1)
       const malformed = team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 3, state_hash: 'nope' } })
       expect(team.deliver(malformed)).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: state_hash/) })
     })

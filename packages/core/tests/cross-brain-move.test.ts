@@ -460,7 +460,11 @@ describe('moveEngrams', () => {
     return eml
   }
   const args = (s: ReturnType<typeof source>, to: EML, backup_path: string) =>
-    ({ source: raw(s.eml), target: raw(to), ids: s.set, drop_relations: exportSet(raw(s.eml), s.set).crossing.map(r => r.id), backup_path })
+    ({ source: raw(s.eml), target: { db: raw(to) }, ids: s.set, plan_hash: planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).plan_hash, backup_path })
+  const rejected = async (f: () => Promise<unknown>): Promise<CommandError> => {
+    try { await f() } catch (e) { if (e instanceof CommandError) return e; throw e }
+    throw new Error('not rejected')
+  }
   /** The env of a move whose source write fails: the import commits, then the move_out cannot draw its op_id. */
   const crashAfterImport = (env: Env): Env => {
     let n = 0
@@ -496,12 +500,12 @@ describe('moveEngrams', () => {
     to.close(); s.eml.close()
   })
 
-  it('moves the mixed set: in the target as it was, gone from the source, the source backed up; both verify', () => {
+  it('moves the mixed set: in the target as it was, gone from the source, the source backed up; both verify', async () => {
     const s = source()
     const to = target()
     const set = exportSet(raw(s.eml), s.set)
     const backup = join(dir(), 'source.db')
-    const result = moveEngrams(args(s, to, backup), s.eml.env({ handle: 'mover', ingestion_method: 'other' }))
+    const result = await moveEngrams(args(s, to, backup), s.eml.env({ handle: 'mover', ingestion_method: 'other' }))
 
     const last = (eml: EML) => raw(eml).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()
     expect(result).toEqual({
@@ -524,18 +528,19 @@ describe('moveEngrams', () => {
     to.close(); s.eml.close()
   })
 
-  it('an import the target refuses: both brains unchanged, the source unlocked', () => {
+  it('an import the target refuses: both brains unchanged, the source unlocked', async () => {
     const s = source()
     const status = writes(s.eml).store(validStatus({ scope: 'project.p' }))
     const to = target()
     createObject(to, 'project', { id: 'p', name: 'P' })
     writes(to).store(validStatus({ scope: 'project.p' }))
     const before = [opCount(s.eml), opCount(to)]
-    const err = reject(() => moveEngrams({ ...args(s, to, join(dir(), 'a.db')), ids: [...s.set, status.id] }, s.eml.env()))
+    const ids = [...s.set, status.id]
+    const err = await rejected(() => moveEngrams({ ...args(s, to, join(dir(), 'a.db')), ids, plan_hash: planMove({ source: raw(s.eml), target: raw(to), ids }).plan_hash }, s.eml.env()))
     expect(err.code).toBe('CONFLICT')
     expect(err.message).toMatch(/project\.p has an active status/)
-    // drop_relations that do not name the crossing ones: refused before the import
-    expect(reject(() => moveEngrams({ ...args(s, to, join(dir(), 'b.db')), drop_relations: [] }, s.eml.env())).message).toMatch(/nothing was moved/)
+    // a plan that is not the current one: refused before the import
+    expect((await rejected(() => moveEngrams({ ...args(s, to, join(dir(), 'b.db')), plan_hash: 'stale' }, s.eml.env()))).message).toMatch(/plan changed .* Nothing was moved/)
     expect([opCount(s.eml), opCount(to)]).toEqual(before)
     unlocked(s.eml)
     expect(verify(raw(s.eml))).toMatchObject({ ok: true })
@@ -543,18 +548,18 @@ describe('moveEngrams', () => {
     to.close(); s.eml.close()
   })
 
-  it('a failure between the two commits: the set is in both; the same move again resumes', () => {
+  it('a failure between the two commits: the set is in both; the same move again resumes', async () => {
     const s = source()
     const to = target()
     const before = opCount(s.eml)
-    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash between the commits/)
+    await expect(moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).rejects.toThrow(/crash between the commits/)
     expect(opCount(s.eml)).toBe(before)
     expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(6)
     expect(count(to, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(6)
     unlocked(s.eml)
     const imported = raw(to).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()
 
-    const result = moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
+    const result = await moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
     expect(result.resumed).toBe(true)
     expect(result.import).toEqual(imported)
     expect(result.created).toEqual({ projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] })
@@ -566,23 +571,23 @@ describe('moveEngrams', () => {
     to.close(); s.eml.close()
   })
 
-  it('an id named twice: INVALID before the backup', () => {
+  it('an id named twice: INVALID before the backup', async () => {
     const s = source()
     const to = target()
     const backup = join(dir(), 'a.db')
-    const err = reject(() => moveEngrams({ ...args(s, to, backup), ids: [...s.set, s.task.id] }, s.eml.env()))
+    const err = await rejected(() => moveEngrams({ ...args(s, to, backup), ids: [...s.set, s.task.id] }, s.eml.env()))
     expect(err.code).toBe('INVALID')
     expect(existsSync(backup)).toBe(false)
     to.close(); s.eml.close()
   })
 
-  it('a registry edit in the source between the commits: the resume still goes through', () => {
+  it('a registry edit in the source between the commits: the resume still goes through', async () => {
     const s = source()
     const to = target()
-    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash/)
+    await expect(moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).rejects.toThrow(/crash/)
     updateObject(s.eml, 'project', 'p', { description: 'edited after the import' })
     updateObject(s.eml, 'subject', 'launch', { description: 'edited too' })
-    const result = moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
+    const result = await moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env())
     expect(result.resumed).toBe(true)
     expect(count(s.eml, 'engrams WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(s.set))).toBe(0)
     // the target keeps the registry rows it got with the import
@@ -592,13 +597,13 @@ describe('moveEngrams', () => {
     to.close(); s.eml.close()
   })
 
-  it('a resume after the source changed is refused; both keep their rows', () => {
+  it('a resume after the source changed is refused; both keep their rows', async () => {
     const s = source()
     const to = target()
-    expect(() => moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).toThrow(/crash/)
+    await expect(moveEngrams(args(s, to, join(dir(), 'a.db')), crashAfterImport(s.eml.env()))).rejects.toThrow(/crash/)
     writes(s.eml).trackTask(s.task.id, { text: 'written after the failed move' })
     const before = [opCount(s.eml), opCount(to)]
-    const err = reject(() => moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env()))
+    const err = await rejected(() => moveEngrams(args(s, to, join(dir(), 'b.db')), s.eml.env()))
     expect(err.code).toBe('CONFLICT')
     expect(err.message).toMatch(/already in this brain/)
     expect([opCount(s.eml), opCount(to)]).toEqual(before)

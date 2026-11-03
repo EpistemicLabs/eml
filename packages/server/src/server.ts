@@ -40,6 +40,8 @@
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
  *   POST /team/create       { relay, grant, handle }                 → Found a team brain in this new, empty brain (v0.21; host-facing)
  *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
+ *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
+ *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
@@ -248,9 +250,26 @@ const bodyText = (value: unknown): string | null => typeof value === 'string' &&
 
 /** v0.21: a creation the relay never took leaves nothing behind — the Sync, its team file — and the brain is new and empty again. */
 function discardTeam(brainId: string, sync: Sync): void {
-  sync.close()
+  sync.discard()
   syncs.delete(brainId)
   removeTeamFile(DATA_DIR, brainId)
+}
+
+/**
+ * v0.21: discards a brain that has no log yet — a shared brain that never came
+ * to life, or an empty brain the host provisioned for one (DELETE /team): the
+ * Sync and its team file, the pool's connection, the brain file, and the
+ * control rows (brains; members, migrations and tokens go with it).
+ */
+function discardBrain(brainId: string, brainFile: string): void {
+  const sync = syncs.get(brainId)
+  if (sync instanceof Sync) sync.discard()
+  syncs.delete(brainId)
+  removeTeamFile(DATA_DIR, brainId)
+  pool.evict(brainId)
+  const file = path.resolve(DATA_DIR, brainFile)
+  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${file}${suffix}`, { force: true })
+  controlDb.prepare('DELETE FROM brains WHERE id = ?').run(brainId)
 }
 
 /** v0.20: the review_due list filter (true · false). */
@@ -647,6 +666,30 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return json(res, 502, { error: `The relay did not take the join: ${state.why}.`, code: 'TEAM_JOIN_FAILED' })
       }
       return json(res, 202, { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: routingResult.ctx.brainId, member: joining.team.identity ? fingerprint(joining.team.identity.publicKey) : null, handle })
+    }
+
+    // GET /team — the shared brain as the host shows it (v0.21, spec
+    // team-brain-membership-flows-spec §2): its sync state, the read-only text a
+    // write would get, its member and the member set. A private brain: shared false.
+    if (url === '/team' && method === 'GET') {
+      if (sync === undefined) return json(res, 200, { shared: false })
+      if (sync instanceof Error) {
+        const state = { kind: 'stopped', why: `its team file cannot be used (${sync.message})` }
+        return json(res, 200, { shared: true, brain: routingResult.ctx.brainId, relay: null, mode: null, state, read_only: readOnly(`it stopped: ${state.why}`, true).message, member: null, members: [], invites: [] })
+      }
+      return json(res, 200, sync.snapshot())
+    }
+
+    // DELETE /team — discards a brain that has no log yet: a shared brain that
+    // never came to life (a stopped join, a creation the relay refused) or an
+    // empty brain the host provisioned for one. The host's cleanup; a brain
+    // with a log is not discarded here.
+    if (url === '/team' && method === 'DELETE') {
+      if (eml.hasGenesis()) return json(res, 409, { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' })
+      discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
+      res.writeHead(204)
+      res.end()
+      return
     }
 
     // POST /engram/:type — create an engram. The body is flat: the universal

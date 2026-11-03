@@ -47,6 +47,14 @@ export interface OpEnvelope {
   team?: TeamFields
 }
 
+/**
+ * The largest payload, in bytes of UTF-8: 16 MiB. The largest op is an
+ * engram.import of a big set — a whole brain of ~1400 engrams with their
+ * journals and relations is ~6.5 MiB of JSON — so this leaves room, and caps
+ * what a member can make every replica (and the relay) hold for one op.
+ */
+export const MAX_PAYLOAD = 16 * 1024 * 1024
+
 const PROVENANCE_FIELDS = ['handle', 'agent', 'ingestion_method', 'session_id', 'model', 'harness']
 
 /**

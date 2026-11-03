@@ -25,8 +25,8 @@ export interface Delivered {
 }
 
 export type Outcome =
-  /** the command's result */
-  | { kind: 'applied', result?: unknown }
+  /** the command's result; `checkpoint`: whether a checkpoint sat right after the state it names and was compared with this replica's (PROTOCOL.md §10) */
+  | { kind: 'applied', result?: unknown, checkpoint?: boolean }
   /** kept in the log, changed nothing; `error` when the brain refused the op */
   | { kind: 'rejected', why: string, error?: CommandError }
   /** nothing written: the device has no key for the brain's current epoch yet (addKey) */
@@ -171,8 +171,11 @@ export class Replica {
         next = applyMembership(set, opened)
       } else {
         checkAuthor(set, opened, this.handles ??= memberHandles(set, keyFor))
-        // a live replica has only its head's state hash; an older checkpoint
-        // gets the format check, and is compared by a device joining (block 6)
+        // a checkpoint counts when it sits right after the state it names:
+        // this replica is at that state now and compares. One that another
+        // entry slipped in before gets the format check only — every replica
+        // has its head's hash only, and a device replaying the log passes
+        // every seq in order, so it meets each adjacent checkpoint the same way.
         if (op.call === 'brain.checkpoint') checkCheckpoint(opened, s => s === head.seq ? this.eml.stateHash() : (op.args as { state_hash: string }).state_hash)
       }
     } catch (err) {
@@ -187,6 +190,7 @@ export class Replica {
       this.set = next
       this.handles = null
     }
+    if (op.call === 'brain.checkpoint') return { kind: 'applied', result: taken.result, checkpoint: op.team.base_seq === head.seq }
     return { kind: 'applied', result: taken.result }
   }
 
@@ -208,6 +212,21 @@ export class Replica {
     return { seq, at, op_id: opened.envelope.op_id, payload: opened.payload, signature: Buffer.from(opened.sig, 'base64url'), rejected: null }
   }
 
+  /** The hash of the brain's state as it is now — what a checkpoint at the head states. */
+  stateHash(): string {
+    return this.eml.stateHash()
+  }
+
+  /**
+   * The seq of the last applied checkpoint that sits right after the state it
+   * names, or 1 — the genesis states the hash of the state it starts from —
+   * or 0 before the genesis. What the checkpoint policy counts from.
+   */
+  lastCheckpointSeq(): number {
+    const row = this.db.prepare(`SELECT seq FROM op_log WHERE rejected IS NULL AND json_extract(payload, '$.call') = 'brain.checkpoint' AND json_extract(payload, '$.args.seq') = seq - 1 ORDER BY seq DESC LIMIT 1`).get() as { seq: number } | undefined
+    return row?.seq ?? Math.min(this.head().seq, 1)
+  }
+
   /** The log's head: its seq and chain link (seq 0 before the genesis). */
   head(): { seq: number, hash: string } {
     const head = this.db.prepare('SELECT seq, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, hash: string } | undefined
@@ -226,7 +245,23 @@ export class Replica {
     if (!this.set) return null
     const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
     if (!member) return null
+    return this.handleOf(member)
+  }
+
+  /** The member set at the head, null before the genesis. */
+  members(): MemberSet | null {
+    return this.set
+  }
+
+  /** The handle the log binds to `member`, or null while this device cannot open it (no key of that epoch yet). */
+  handleOf(member: string): string | null {
+    if (!this.set) return null
     return (this.handles ??= memberHandles(this.set, epoch => this.keys.get(epoch)))[member] ?? null
+  }
+
+  /** Closes this replica's connection to the brain file (the brain is discarded or the server stops). */
+  close(): void {
+    this.db.close()
   }
 
   /** The chain link after `seq` (the genesis's prev_hash before seq 1). */
