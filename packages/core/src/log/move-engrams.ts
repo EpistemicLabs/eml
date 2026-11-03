@@ -56,6 +56,8 @@ export interface MoveArgs {
 
 export interface MoveResult {
   backup_path: string
+  /** The engrams that moved: what a cross-brain reference elsewhere may name (remoteReferences, relation.move_end). */
+  ids: string[]
   import: { seq: number, op_id: string }
   move_out: { seq: number, op_id: string }
   moved: { engrams: number, entries: number, relations: number }
@@ -114,7 +116,7 @@ async function runMove(
   }, env)
   const head = source.prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, op_id: string }
   return {
-    backup_path: m.backup_path, import: imported, move_out: head, moved: plan.moved, created,
+    backup_path: m.backup_path, ids, import: imported, move_out: head, moved: plan.moved, created,
     dropped_relations: out.dropped_relations, external_refs: set.external_refs, incoming_refs: set.incoming_refs, resumed,
   }
 }

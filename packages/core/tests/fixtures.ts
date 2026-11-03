@@ -213,6 +213,13 @@ export function writeEverything(eml: EML): void {
   // v0.21: a cockpit that stamped the agent's name as the handle sets the record straight
   eml.apply({ name: 'provenance.restamp', input: { from_handle: 'juno', to_handle: 'ada', agent: 'juno' } }, ada)
 
+  // v0.21: a reference into another brain follows the engram it names when that one moves on
+  const ELSEWHERE = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const MOVED_TO = '1f8fad5b-d9cb-469f-a165-70867728950e'
+  writes(eml).relate({ source_id: learned.engram.id, target_id: '2f8fad5b-d9cb-469f-a165-70867728950e', relation: 'refines', detection_method: 'manual', target_brain: ELSEWHERE }, juno)
+  const reference = (eml as any).db.prepare('SELECT id FROM relations WHERE target_brain = ?').get(ELSEWHERE).id as string
+  eml.apply({ name: 'relation.move_end', input: { from_brain: ELSEWHERE, to_brain: MOVED_TO, relations: [reference] } }, juno)
+
   // v0.21: engrams from another brain, with their history and their project
   const other = otherBrain()
   const set = exportSet((other as any).db, (((other as any).db.prepare('SELECT id FROM engrams').all()) as Array<{ id: string }>).map(r => r.id))

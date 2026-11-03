@@ -28,7 +28,7 @@ describe('the command set', () => {
     expect(COMMAND_NAMES).toEqual([
       'engram.create', 'engram.update', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
-      'engram.import', 'engram.move_out', 'provenance.restamp',
+      'engram.import', 'engram.move_out', 'provenance.restamp', 'relation.move_end',
     ])
     const WRITE = /^(store|create|update|track|learn$|addEvidence|confirm|relate|insert|append|link|supersede|close|move|replace|set|delete)/i
     const methods = (o: object): string[] => {

@@ -225,3 +225,15 @@ export function legacyAuthorship(db: Database.Database, ids: readonly string[]):
     agents: [...new Set([...engrams, ...entries].map(r => r.agent))].sort(),
   }
 }
+
+/**
+ * The relations of this brain whose remote end is one of `ids` in `brain`
+ * (source_brain or target_brain names it): the cross-brain references a move
+ * of those engrams has to point elsewhere (relation.move_end), in ord order.
+ */
+export function remoteReferences(db: Database.Database, brain: string, ids: readonly string[]): string[] {
+  const json = JSON.stringify(ids)
+  const S = 'SELECT value FROM json_each(?)'
+  return (db.prepare(`SELECT id FROM relations WHERE (source_brain = ? AND source_id IN (${S})) OR (target_brain = ? AND target_id IN (${S})) ORDER BY ord`)
+    .all(brain, json, brain, json) as Array<{ id: string }>).map(r => r.id)
+}
