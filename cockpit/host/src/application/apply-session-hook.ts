@@ -40,6 +40,9 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   deps.ledger.bindProviderSession(sessionId, signal.providerSessionId)
   // A terminal process dies with the host without a word, so its hooks are all there is to go by.
   if (signal.state === 'working' || signal.state === 'done') deps.ledger.setTurnInFlight(sessionId, signal.state === 'working')
+  // A chat session's result comes from its own turn end (chat-bridge.ts); only a terminal has its hooks to go by.
+  if (signal.state === 'working') deps.ledger.setResult(sessionId, false)
+  else if (signal.state === 'done' && deps.ledger.get(sessionId)?.runtime === 'terminal') deps.ledger.setResult(sessionId, true)
   // A session that said it needs an answer still does once its turn is over.
   const attention = deps.ledger.get(sessionId)?.attention
   const state = signal.state === 'done' && attention && needsAnswer(attention.kind) ? 'waiting' : signal.state

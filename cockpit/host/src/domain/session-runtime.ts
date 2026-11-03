@@ -184,8 +184,10 @@ export interface SessionRuntimeStart {
   /** Built-in tools this session may not use (its tool profile). */
   deniedTools?: string[]
   onEvent: (event: RuntimeEvent) => void
-  /** A worker reports how it stands; absent for other sessions. */
+  /** The session reports how it stands. Only a worker is sent back when it stays silent. */
   worker?: {
+    /** Added to the next prompt, unseen in the chat; null: nothing. */
+    onPrompt?: () => string | null
     report(status: WorkerStatus, reason: string | null): void
     /** Its turn is about to end: what to tell it instead of letting it stop; null lets it stop. */
     onTurnEnding(): string | null

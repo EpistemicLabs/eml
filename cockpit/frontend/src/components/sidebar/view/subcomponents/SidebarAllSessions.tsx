@@ -8,7 +8,7 @@ import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, sessionMark, type AllSession, type MainItem,
+  agentLabel, agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSession, type MainItem,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
@@ -88,7 +88,7 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, counts, 
         onCancelRename={controller.cancelSessionRename}
         onSelect={(picked, projectId) => {
           controller.selectSession({ ...picked, __spaceKey: paneSpaceKey(space) }, projectId);
-          if (session.attention) void markSessionRead(session.id);
+          if (isUnseen(session)) void markSessionRead(session.id);
         }}
         onRequestDelete={controller.requestSessionDelete}
         pin={{
@@ -104,7 +104,7 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, counts, 
         actions={{
           onAnswer: session.attention?.kind === 'question' ? () => setAnswering(session.id) : undefined,
           onStop: running && working ? () => void stopSession(session.id).then(whenDone) : undefined,
-          onClear: session.attention && pinned ? () => void clearSession(session.id).then(whenDone) : undefined,
+          onClear: session.attention?.kind === 'review' || (session.attention && pinned) ? () => void clearSession(session.id).then(whenDone) : undefined,
           onArchive: !session.archivedAt && !working ? () => void archiveSession(session.id).then(whenDone) : undefined,
         }}
       />

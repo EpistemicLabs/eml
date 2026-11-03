@@ -51,7 +51,7 @@ export interface AllSections {
 const QUIET_MS = 30 * 60 * 1000;
 
 /** What a session's row says about it; null: nothing, it reads as a plain row. */
-export type SessionMark = 'question' | 'failed' | 'waiting' | 'review' | 'done';
+export type SessionMark = 'question' | 'failed' | 'waiting' | 'review' | 'result';
 
 const NEEDS_YOU: readonly SessionMark[] = ['question', 'failed', 'waiting'];
 
@@ -60,7 +60,7 @@ export const MARK_WORD: Record<SessionMark, string> = {
   failed: 'Failed',
   waiting: 'Waiting for you',
   review: 'Check this',
-  done: 'Reports done',
+  result: 'New result',
 };
 
 export const MARK_SYMBOL: Record<SessionMark, string> = {
@@ -68,7 +68,7 @@ export const MARK_SYMBOL: Record<SessionMark, string> = {
   failed: '!',
   waiting: '?',
   review: '●',
-  done: '●',
+  result: '●',
 };
 
 /** What a space's sessions are labelled with: its agent, else the space's name (host spaceLabel). */
@@ -86,14 +86,24 @@ export function allSessionState(session: ProjectSession, turn: TurnInfo | undefi
 }
 
 /**
- * How the session stands for the user. What a worker reported is saved and holds
- * after its process stopped; only a new turn or the user's own action ends it.
+ * How the session stands for the user. The one model for every session: a request
+ * stays until it is dealt with; a result without a request stays until someone has
+ * seen it. What is saved holds after the process stopped.
  */
 export function sessionMark(session: ProjectSession, turn: TurnInfo | undefined): SessionMark | null {
   const state = allSessionState(session, turn);
   if (state === 'working') return null;
-  if (session.attention) return session.attention.kind;
-  return state === 'waiting' ? 'waiting' : null;
+  const kind = session.attention?.kind;
+  if (kind === 'question' || kind === 'failed') return kind;
+  if (state === 'waiting') return 'waiting';
+  if (kind === 'review') return 'review';
+  if (session.resultAt || (kind === 'done' && !isRead(session))) return 'result';
+  return null;
+}
+
+/** Whether seeing it now would change anything: what makes the host worth telling. */
+export function isUnseen(session: ProjectSession): boolean {
+  return Boolean(session.resultAt) || (Boolean(session.attention) && !isRead(session));
 }
 
 /** Whether the user has opened it since it reported. Marks the row as read; it stays listed. */
@@ -221,10 +231,10 @@ export function groupAllSessions(
   // Pinned first in its agent's group, each part in a stable order.
   const pinnedFirst = (a: AllSession, b: AllSession) =>
     Number(isPinned(b)) - Number(isPinned(a)) || stableOrder(a, b);
-  // Unread first, then what the worker wants checked over what it reports as done.
+  // Unread first, then what asks to be checked over a plain result.
   const reviewOrder = (a: AllSession, b: AllSession) =>
     Number(isRead(a)) - Number(isRead(b))
-    || Number(a.attention?.kind === 'done') - Number(b.attention?.kind === 'done')
+    || Number(b.attention?.kind === 'review') - Number(a.attention?.kind === 'review')
     || newestFirst(a, b);
 
   return {

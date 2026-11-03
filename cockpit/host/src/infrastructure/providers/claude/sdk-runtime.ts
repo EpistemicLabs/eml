@@ -421,7 +421,7 @@ export function startingMode(chosen: string | null, setting: string): string {
 }
 
 const STATUS_TOOL = 'session_status'
-const STATUS_TOOL_DESCRIPTION = 'Say how you stand when you end your turn. Nobody watches you run, so this is how people learn you need them. '
+const STATUS_TOOL_DESCRIPTION = 'Say how you stand when you end your turn, whenever someone has to act; this is how people learn you need them. '
   + 'done: finished, nobody needs to act. question: only a person can decide; ask it in your reply too. '
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
   + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
@@ -441,6 +441,12 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
     // Nobody may be there to answer a card about the tool that says so.
     allowedTools: [`mcp__cockpit__${STATUS_TOOL}`],
     hooks: {
+      UserPromptSubmit: [{
+        hooks: [async () => {
+          const additionalContext = worker.onPrompt?.()
+          return additionalContext ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext } } : {}
+        }],
+      }],
       Stop: [{
         hooks: [async () => {
           const reason = worker.onTurnEnding()

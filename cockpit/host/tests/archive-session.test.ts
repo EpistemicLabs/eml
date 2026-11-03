@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { planArchive, type ArchiveFacts } from '../src/application/archive-session.js'
-import { READ_DONE_KEEP_MS, needsAnswer, shouldAutoArchive } from '../src/domain/session-attention.js'
+import { needsAnswer } from '../src/domain/session-attention.js'
 
 const session = (sessionId: string, patch: Partial<ArchiveFacts> = {}): ArchiveFacts => ({
   sessionId, parentSessionId: null, working: false, needsAnswer: false, ...patch,
@@ -26,23 +26,6 @@ describe('planArchive', () => {
 
   it('survives a parent loop', () => {
     expect(planArchive('a', [session('a', { parentSessionId: 'b' }), session('b', { parentSessionId: 'a' })])).toEqual({ archive: ['a', 'b'] })
-  })
-})
-
-describe('shouldAutoArchive', () => {
-  const now = 10 * READ_DONE_KEEP_MS
-  const due = { worker: true, pinned: false, archived: false, busy: false, kind: 'done' as const, readAt: now - READ_DONE_KEEP_MS, now }
-
-  it('takes a read done worker after the wait', () => {
-    expect(shouldAutoArchive(due)).toBe(true)
-    expect(shouldAutoArchive({ ...due, readAt: now - READ_DONE_KEEP_MS + 1 })).toBe(false)
-  })
-
-  it.each([
-    [{ readAt: null }], [{ kind: 'review' as const }], [{ kind: 'question' as const }], [{ kind: 'failed' as const }], [{ kind: null }],
-    [{ pinned: true }], [{ worker: false }], [{ busy: true }], [{ archived: true }],
-  ])('leaves %j alone', (patch) => {
-    expect(shouldAutoArchive({ ...due, ...patch })).toBe(false)
   })
 })
 

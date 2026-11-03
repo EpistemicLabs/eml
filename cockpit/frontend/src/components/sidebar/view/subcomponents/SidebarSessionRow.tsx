@@ -50,7 +50,8 @@ function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView:
   const state = inAllView
     ? allSessionState(session, turns.turns[session.id])
     : turns.turns[session.id]?.state ?? session.turnState ?? 'idle';
-  const unseenDone = isUnseenDone(turns, session.id);
+  // In the All view a result has its own row in To review, seen on any device.
+  const unseenDone = !inAllView && isUnseenDone(turns, session.id);
   if (state !== 'working' && state !== 'waiting' && !unseenDone) return null;
   const title =
     state === 'working' ? 'Claude is working' : state === 'waiting' ? 'Waiting for your input' : 'Finished — not seen yet';
@@ -94,9 +95,10 @@ export function SidebarSessionRow({
   const openMenu = () => menu?.open({ kind: 'session', session, projectId }, rowRef.current);
   const longPress = useLongPress(openMenu);
   const unread = Boolean(mark) && (!session.attention || !isRead(session));
+  const noSummary = session.attention && mark !== 'result' ? ': no summary' : '';
   const reason = session.attention?.reason?.replace(/\s+/g, ' ').trim();
   const secondLine = mark
-    ? [MARK_WORD[mark] + (reason ? `: ${reason}` : session.attention ? ': no summary' : ''), context].filter(Boolean).join(' · ')
+    ? [MARK_WORD[mark] + (reason ? `: ${reason}` : noSummary), context].filter(Boolean).join(' · ')
     : detail;
 
   return (
@@ -124,7 +126,7 @@ export function SidebarSessionRow({
                 !unread && 'text-muted-foreground',
               )}
             >
-              {!unread && (mark === 'review' || mark === 'done') ? '○' : MARK_SYMBOL[mark]}
+              {!unread && mark === 'review' ? '○' : MARK_SYMBOL[mark]}
             </span>
           )}
           {agent && (
@@ -254,7 +256,7 @@ export function SidebarSessionRow({
               </button>
             )}
             {actions?.onClear && (
-              <button type="button" title="Clear: nothing left to do here" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onClear?.(); }}>
+              <button type="button" title="Done: nothing left to do here" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onClear?.(); }}>
                 <Check className="h-3 w-3" />
               </button>
             )}

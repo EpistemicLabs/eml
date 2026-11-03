@@ -61,6 +61,9 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
 
+// Without this a session started by hand stays nameless: the greeting that used to ask has gone.
+const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
+
 const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then end your turn.'
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
@@ -565,20 +568,24 @@ export class ChatBridge {
       files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.agent || !!launch.limits?.mcpConfig,
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
-      ...(stored?.worker ? { worker: this.workerReporting(entry) } : {}),
+      worker: this.reporting(entry),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
     })
   }
 
-  private workerReporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
+  private reporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
     return {
+      onPrompt: () => {
+        const stored = this.ctx.ledger.get(entry.sessionId)
+        return stored && !stored.worker && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+      },
       report: (status, reason) => {
         entry.declared = true
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
         if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
-        const ask = shouldAskForStatus({ worker: true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
+        const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
         if (!ask) return null
         entry.askedStatus = true
         return STATUS_REMINDER
@@ -624,6 +631,8 @@ export class ChatBridge {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
           if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
+        // An interrupted turn left nothing to look at, and a host going down is not its end.
+        if (!entry.closing && event.reason !== 'interrupted') this.ctx.ledger.setResult(entry.sessionId, true)
         break
       }
       case 'runtime_exit':
@@ -669,6 +678,7 @@ export class ChatBridge {
     entry.declared = false
     entry.askedStatus = false
     this.ctx.ledger.setAttention(entry.sessionId, null)
+    this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)
     this.ctx.ledger.setTurnInFlight(entry.sessionId, true)
     if (!entry.active) {

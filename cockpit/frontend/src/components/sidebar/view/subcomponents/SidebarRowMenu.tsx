@@ -116,7 +116,7 @@ export function SidebarRowMenu({
     const { session } = target;
     const whenDone = (error: string | null) => { if (error) controller.reportError(error); };
     if (session.attention?.kind === 'question') actions.push({ label: 'Answer', Icon: MessageSquareReply, onClick: run(() => setAnswering(session.id)) });
-    if (session.attention && pinned) actions.push({ label: 'Clear', Icon: Check, onClick: run(() => void clearSession(session.id).then(whenDone)) });
+    if (session.attention?.kind === 'review' || (session.attention && pinned)) actions.push({ label: 'Done', Icon: Check, onClick: run(() => void clearSession(session.id).then(whenDone)) });
     if (session.state === 'running' || session.state === 'detached') actions.push({ label: 'Stop', Icon: Square, onClick: run(() => void stopSession(session.id).then(whenDone)) });
     if (!session.archivedAt) actions.push({ label: 'Archive', Icon: Archive, onClick: run(() => void archiveSession(session.id).then(whenDone)) });
     actions.push(

@@ -73,8 +73,10 @@ export interface LedgerEntry {
   deskMain: boolean
   /** The session that started this one; null for one started by hand or from before this was recorded. */
   parentSessionId: string | null
-  /** When someone last opened it. Finished work stays listed after that, marked as read. */
+  /** When someone last saw it, on any device. */
   readAt: string | null
+  /** A turn ended and nobody has seen the result; null once someone has. */
+  resultAt: string | null
   /** Out of the lists since then; the conversation stays and a new message brings it back. */
   archivedAt: string | null
   /** What the session may use, for its whole life; null: no limits. */
@@ -126,6 +128,7 @@ function load(): LedgerFile {
           deskMain: entry.deskMain === true,
           parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
           readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
+          resultAt: typeof entry.resultAt === 'string' ? entry.resultAt : null,
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
@@ -198,6 +201,7 @@ export class SessionLedger {
       deskMain: prev?.deskMain ?? false,
       parentSessionId: prev?.parentSessionId ?? this.expectedParents.get(sessionId) ?? null,
       readAt: prev?.readAt ?? null,
+      resultAt: prev?.resultAt ?? null,
       archivedAt: prev?.archivedAt ?? null,
       toolProfile: prev?.toolProfile ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
@@ -238,6 +242,15 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     entry.readAt = new Date().toISOString()
+    entry.resultAt = null
+    this.persist()
+  }
+
+  /** A turn ended, or a new one started and whatever it left no longer waits. */
+  setResult(sessionId: string, waiting: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || (entry.resultAt === null && !waiting)) return
+    entry.resultAt = waiting ? new Date().toISOString() : null
     this.persist()
   }
 
@@ -247,6 +260,7 @@ export class SessionLedger {
     if (!entry) return
     entry.archivedAt = new Date().toISOString()
     entry.attention = null
+    entry.resultAt = null
     entry.pinned = false
     entry.deskMain = false
     this.persist()

@@ -26,6 +26,7 @@ import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
 import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
 import { setSessionDeskMain } from '@/lib/session-actions';
+import { useSeenResults } from './useSeenResults';
 import { api } from '@/utils/api';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -215,6 +216,8 @@ function AppContentInner() {
     for (const id of sentMainSessions.current) if (!current.has(id)) void setSessionDeskMain(id, false);
     sentMainSessions.current = current;
   }, [desks]);
+
+  useSeenResults(compact);
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window

@@ -103,6 +103,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       setAgentTitle: () => {},
       setTurnInFlight: (id: string, inFlight: boolean) => { const entry = ledgerEntries.get(id) as unknown as { inFlight?: boolean } | undefined; if (entry) entry.inFlight = inFlight },
       unarchive: () => {},
+      setResult: (id: string, waiting: boolean) => { const entry = ledgerEntries.get(id) as unknown as { result?: boolean } | undefined; if (entry) entry.result = waiting },
       setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
@@ -232,17 +233,38 @@ describe('ChatBridge', () => {
     expect(attention()).toBeNull()
   })
 
-  it('a worker that says done stays listed without a turn held open, and other sessions get no status tool', async () => {
+  it('a worker that says done stays listed without a turn held open', async () => {
     const worker = setup()
     worker.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     worker.runtimes[0].start.worker?.report('done', null)
     worker.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect((worker.ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toEqual({ kind: 'done', reason: null })
     expect(worker.turns).not.toContainEqual(['s1', 'waiting'])
+  })
+
+  it('a session started by hand can report and name itself, is never sent back, and a silent turn just leaves a result', async () => {
     const own = setup()
     connect(own.bridge)
     await flush()
-    expect(own.runtimes[0].start.worker).toBeUndefined()
+    const reporting = own.runtimes[0].start.worker
+    expect(reporting?.onTurnEnding()).toBeNull()
+    const entry = own.ledgerEntries.get('s1') as unknown as { attention?: unknown; result?: boolean; agentTitle?: string }
+    expect(reporting?.onPrompt?.()).toContain('COCKPIT_TITLE_JS')
+    entry.agentTitle = 'Named'
+    expect(reporting?.onPrompt?.()).toBeNull()
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(entry.attention ?? null).toBeNull()
+    expect(entry.result).toBe(true)
+    reporting?.report('question', 'A or B?')
+    expect(own.turns).toContainEqual(['s1', 'waiting'])
+  })
+
+  it('an interrupted turn leaves no result', async () => {
+    const own = setup()
+    connect(own.bridge)
+    await flush()
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
+    expect((own.ledgerEntries.get('s1') as unknown as { result?: boolean }).result ?? false).toBe(false)
   })
 
   it('a worker keeps its tool profile on the runtime', () => {

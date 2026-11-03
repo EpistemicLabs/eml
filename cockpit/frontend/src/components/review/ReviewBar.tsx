@@ -47,14 +47,17 @@ function ActiveReviewBar() {
   const known = useMemo<AllSession[]>(() => sessions ?? [], [sessions]);
   const current = known.find((session) => session.id === review?.queue[review.index]);
   const pinned = Boolean(current?.isPinned);
-  const action: 'archive' | 'clear' = pinned ? 'clear' : 'archive';
+  const mark = current ? sessionMark(current, turns[current.id]) : null;
+  // A check is settled by Done; what else stays gets taken out, and a pinned session keeps its place.
+  const settles = mark === 'review' || pinned;
+  const action: 'archive' | 'clear' = settles ? 'clear' : 'archive';
 
   const move = (step: 1 | -1) => stepReview(step, known, spaces);
   const isQuestion = current?.attention?.kind === 'question';
-  const finish = () => {
+  const finish = (how: 'archive' | 'clear' = action) => {
     if (!current) return;
     setError(null);
-    void finishCurrent(action, known, spaces).then(setError);
+    void finishCurrent(how, known, spaces).then(setError);
   };
   const answer = () => {
     const text = draft.trim();
@@ -93,7 +96,8 @@ function ActiveReviewBar() {
   });
 
   if (!review) return null;
-  const mark = current ? sessionMark(current, turns[current.id]) : null;
+  // Opened, a result without a request has left the list: the bar keeps saying what it was.
+  const word = mark ? MARK_WORD[mark] : current?.attention?.kind === 'done' ? MARK_WORD.result : null;
   return (
     <div ref={barRef} className="flex-shrink-0 border-b border-border bg-muted/40 px-2 py-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -108,7 +112,7 @@ function ActiveReviewBar() {
           <KeyHint>J</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
         </button>
         {isQuestion ? (
-          <button type="button" className={BUTTON} onClick={finish} aria-label={pinned ? 'Clear without answering' : 'Archive without answering'} title={pinned ? 'Clear without answering' : 'Archive without answering'}>
+          <button type="button" className={BUTTON} onClick={() => finish()} aria-label={pinned ? 'Done without answering' : 'Archive without answering'} title={pinned ? 'Done without answering' : 'Archive without answering'}>
             {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
           </button>
         ) : (
@@ -116,9 +120,14 @@ function ActiveReviewBar() {
             <button type="button" className={BUTTON} onClick={reply}>
               <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
             </button>
-            <button type="button" className={`${BUTTON} font-medium`} onClick={finish}>
-              {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-              {pinned ? 'Clear' : 'Archive'} &amp; next <KeyHint>E</KeyHint>
+            {mark === 'review' && !pinned && (
+              <button type="button" className={BUTTON} onClick={() => finish('archive')} aria-label="Archive" title="Archive">
+                <Archive className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button type="button" className={`${BUTTON} font-medium`} onClick={() => finish()}>
+              {settles ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+              {settles ? 'Done' : 'Archive'} &amp; next <KeyHint>E</KeyHint>
             </button>
           </>
         )}
@@ -126,9 +135,9 @@ function ActiveReviewBar() {
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      {current && mark && (
+      {current && word && (
         <p className="mt-1 truncate text-[11px] text-muted-foreground" title={current.attention?.reason ?? undefined}>
-          {MARK_WORD[mark]}{current.attention?.reason ? `: ${current.attention.reason}` : ''}
+          {word}{current.attention?.reason ? `: ${current.attention.reason}` : ''}
         </p>
       )}
       {isQuestion && (

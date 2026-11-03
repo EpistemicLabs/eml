@@ -210,6 +210,7 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     ledger.setDeskMain(id, body.main === true)
   } else if (action === 'clear') {
     ledger.setAttention(id, null)
+    ledger.setResult(id, false)
     if (deps.turns.get(id)?.state === 'waiting') deps.turns.apply({ sessionId: id, state: 'done' })
   } else if (action === 'stop') {
     await stop(id, 'stopped')
@@ -271,6 +272,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,
     readAt: entry.readAt,
+    resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
-import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, sessionMark, type AllSession } from './allSessions';
+import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
 
 const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, label: 'Alpha' };
 const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, label: 'Beta' };
@@ -30,7 +30,7 @@ const mainIds = (sections: ReturnType<typeof group>) => sections.main.flatMap((g
 describe('sessionMark', () => {
   it('keeps what a worker reported after its process stopped', () => {
     expect(sessionMark(session('a', { state: 'ended', attention: attention('question') }), undefined)).toBe('question');
-    expect(sessionMark(session('a', { state: 'ended', attention: attention('done') }), undefined)).toBe('done');
+    expect(sessionMark(session('a', { state: 'ended', attention: attention('review') }), undefined)).toBe('review');
   });
 
   it('a new turn takes it away', () => {
@@ -40,6 +40,45 @@ describe('sessionMark', () => {
   it('a permission card without a report still waits', () => {
     expect(sessionMark(session('a', { state: 'running' }), turn('waiting'))).toBe('waiting');
     expect(sessionMark(session('a', { state: 'ended' }), turn('waiting'))).toBeNull();
+  });
+});
+
+describe('the one model for every session', () => {
+  const seen = '2026-02-01T11:30:00.000Z';
+
+  it('a result without a request leaves once seen, whoever started the session', () => {
+    expect(sessionMark(session('a', { resultAt: FRESH }), undefined)).toBe('result');
+    expect(sessionMark(session('a', { resultAt: null, readAt: seen }), undefined)).toBeNull();
+    expect(sessionMark(session('w', { worker: true, attention: attention('done') }), undefined)).toBe('result');
+    expect(sessionMark(session('w', { worker: true, attention: attention('done'), readAt: seen }), undefined)).toBeNull();
+  });
+
+  it('a check stays after it is read, until it is dealt with', () => {
+    const read = session('r', { attention: attention('review'), resultAt: null, readAt: seen });
+    expect(sessionMark(read, undefined)).toBe('review');
+    expect(isRead(read)).toBe(true);
+  });
+
+  it('a question or failure stays after it is read', () => {
+    expect(sessionMark(session('q', { attention: attention('question'), readAt: seen }), undefined)).toBe('question');
+    expect(sessionMark(session('f', { attention: attention('failed'), readAt: seen }), undefined)).toBe('failed');
+  });
+
+  it('what a session asks outranks its result', () => {
+    expect(sessionMark(session('a', { state: 'running', resultAt: FRESH }), turn('waiting'))).toBe('waiting');
+    expect(sessionMark(session('a', { attention: attention('question'), resultAt: FRESH }), undefined)).toBe('question');
+    expect(sessionMark(session('a', { attention: attention('review'), resultAt: FRESH }), undefined)).toBe('review');
+  });
+
+  it('a new turn hides the mark', () => {
+    expect(sessionMark(session('a', { state: 'running', resultAt: FRESH }), turn('working'))).toBeNull();
+  });
+
+  it('only what seeing would change counts as unseen', () => {
+    expect(isUnseen(session('a', { resultAt: FRESH }))).toBe(true);
+    expect(isUnseen(session('a', { attention: attention('review') }))).toBe(true);
+    expect(isUnseen(session('a', { attention: attention('review'), readAt: seen }))).toBe(false);
+    expect(isUnseen(session('a'))).toBe(false);
   });
 });
 
