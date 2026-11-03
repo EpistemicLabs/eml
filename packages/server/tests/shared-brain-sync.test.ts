@@ -168,7 +168,11 @@ describe('a shared brain through the server', () => {
     expect(await post(JOINED, '/team/join', { link: 'https://relay.test/i/1/x', handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE', error: 'This is not an invite link for this brain.' } })
     expect(await post(JOINED, '/team/join', { link: inviteLink(newInvite(joinRelay.host, BRAIN, NOW)), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
     expect(await post(JOINED, '/team/join', { link, handle: 'Lasse!' })).toMatchObject({ status: 400, body: { code: 'INVALID_HANDLE' } })
+    // a host that is no relay origin: credentials, a path before the invite path
+    expect(await post(JOINED, '/team/join', { link: link.replace('https://', 'https://user@'), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
+    expect(await post(JOINED, '/team/join', { link: link.replace('/i/1/', '/path/i/1/'), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
     expect(joinRelay.joins).toEqual([])
+    expect(existsSync(teamFilePath(tmpDir, JOINED))).toBe(false)
   })
 
   it('a join of an invite the relay does not have: 410 INVITE_CLOSED, and the brain stays new and empty', async () => {
