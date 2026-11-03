@@ -243,9 +243,10 @@ export class Sync {
    * A confirmed write: the command as an op of this device's member, sealed
    * under the current key and appended; resolves with the command's result
    * once the replica took its entry, or throws what the brain or the relay
-   * said. Read-only unless the brain is live.
+   * said. Read-only unless the brain is live. `deadlineMs` for this one write
+   * when it carries more than a usual one (a project move's import).
    */
-  async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env): Promise<CommandMap[N][1]> {
+  async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env, opts: { deadlineMs?: number } = {}): Promise<CommandMap[N][1]> {
     const refusal = this.readOnlyFor(this.state)
     if (refusal) throw refusal
     const key = this.replica.currentKey() as BrainKey
@@ -271,7 +272,7 @@ export class Sync {
       const timer = setTimeout(() => {
         this.writers.delete(op.op_id)
         reject(pending())
-      }, this.deadlineMs)
+      }, opts.deadlineMs ?? this.deadlineMs)
       this.writers.set(op.op_id, { resolve: resolve as (r: unknown) => void, reject, timer })
       this.unconfirmed.set(op.op_id, record)
       this.append(op.op_id, record)
