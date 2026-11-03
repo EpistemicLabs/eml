@@ -2,8 +2,8 @@ import type Database from 'better-sqlite3'
 import {
   DivergedError, GENESIS_PREV_HASH, ProtocolError, UnsupportedVersionError,
   applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall,
-  memberHandles, memberOfDevice, openRecord, unwrapKey, wrapKey,
-  type BrainKey, type MemberSet, type OpenedOp, type TeamOp, type WrappedKey,
+  memberHandles, memberOfDevice, openRecord, unwrapInviteKey, unwrapKey, wrapKey,
+  type BrainKey, type DeviceCert, type MemberSet, type OpenedOp, type TeamOp, type WrappedKey,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
 import type { TeamFile } from './team-file'
@@ -68,10 +68,16 @@ export class Replica {
     return this.halt ?? (this.waiting !== null ? { kind: 'waiting', epoch: this.waiting } : { kind: 'live' })
   }
 
-  /** Takes a wrapped key the relay holds for this device: that epoch's key and every older one. Throws ProtocolError when it is not the log's. */
-  addKey(wrapped: unknown): void {
+  /**
+   * Takes a wrapped key the relay holds for this device: that epoch's key and
+   * every older one. A device that joined takes its first key only from the
+   * `inviter` its accept named (PROTOCOL.md §8). Throws ProtocolError when the
+   * key is not the log's, or not the inviter's.
+   */
+  addKey(wrapped: unknown, inviter?: DeviceCert): void {
     if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
-    for (const k of epochKeys(this.set, unwrapKey(this.set, wrapped, this.team.device))) this.keys.set(k.epoch, k.key)
+    const key = inviter ? unwrapInviteKey(this.set, wrapped, this.team.device, inviter) : unwrapKey(this.set, wrapped, this.team.device)
+    for (const k of epochKeys(this.set, key)) this.keys.set(k.epoch, k.key)
     this.handles = null
   }
 

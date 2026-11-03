@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
-import { ready } from '@engramprotocol/protocol'
+import { inviteLink, inviteNotice, joinAccept, newInvite, openJoin, ready, type Invite } from '@engramprotocol/protocol'
 import { EML, CommandError, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
 import { Sync, untrusted, type SyncState } from '../src/sync/sync'
 import { createTeamBrain } from '../src/sync/create'
+import { joinTeamBrain } from '../src/sync/join'
 import type { TeamFile } from '../src/sync/team-file'
 import { SharedWriteError, applyWrite } from '../src/write'
 import { FakeRelay, GRANT } from './fake-relay'
-import { BRAIN, Team, person } from './team'
+import { BRAIN, Team, cert, person } from './team'
 
 // v0.21 sync (spec team-brain-sync-client-spec §4): a shared brain's
 // connection to its relay — login, keys, the log stream into the replica, and
@@ -321,5 +322,162 @@ describe('a text the relay sent', () => {
   it('loses its control characters and is capped at 200 characters', () => {
     expect(untrusted('ok\u0000\u001b[31m fine\u007f\u0085')).toBe('ok[31m fine')
     expect(untrusted('x'.repeat(300))).toHaveLength(200)
+  })
+})
+
+describe('joining a team brain', () => {
+  const NOW = '2026-11-03T08:00:00.000Z'
+  const READ_ONLY = 'This shared brain is read-only right now: it is still joining its team brain. Reads still work; try the write again once it is back.'
+  /** what the team file held each time the Sync persisted it */
+  const persisted: string[][] = []
+  const persist = (file: TeamFile) => { persisted.push((['join', 'accept', 'identity', 'key'] as const).filter(k => file[k] !== undefined)) }
+  beforeEach(() => { persisted.length = 0 })
+
+  /** juno's team at its relay, juno's own replica holding the log, and an open invite. */
+  async function invited(): Promise<{ team: Team, invite: Invite, link: string }> {
+    const team = new Team()
+    relay = await FakeRelay.start(BRAIN, team.genesis())
+    team.deliver(relay.log[0].record, 1, relay.log[0].at)  // juno's replica holds the log as the relay has it: the anchor comes from it
+    relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
+    const invite = newInvite(relay.host, BRAIN, NOW)
+    relay.openInvite(inviteNotice(invite, team.owner.device.sign))
+    return { team, invite, link: inviteLink(invite) }
+  }
+  /** An empty brain and its join (team file in memory). */
+  function joiner(link: string, handle = 'lasse') {
+    const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    return { db, eml: EML.fromConnection(db, 'test'), file: joinTeamBrain({ brain: BRAIN, link, handle, now: NOW }) }
+  }
+  const started = (db: ReturnType<typeof initDatabase>, file: TeamFile, opts: { persist?: (f: TeamFile) => void } = {}): Sync => {
+    sync = new Sync(db, file, { deadlineMs: 3000, backoffMs: [20, 100], persist: opts.persist ?? persist })
+    sync.start()
+    return sync
+  }
+  /** The inviter's moves, one at a time: open and accept the join, add the member, wrap the key for the joiner's device. */
+  function inviter(team: Team, invite: Invite) {
+    return {
+      accept() {
+        const join = openJoin(invite, relay!.joinOf(invite.invite_id), NOW)
+        relay!.acceptJoin(joinAccept(invite, join.join_hash, cert(team.owner), team.anchor()))
+        return join
+      },
+      add(join: ReturnType<typeof openJoin>) { relay!.inject(team.addJoiner(join)) },
+      key(deviceSign: string, wrapper = team.owner.device) { relay!.putKey(deviceSign, team.wrappedFor(0, deviceSign, wrapper)) },
+    }
+  }
+  const waiting = (s: Sync) => s.state.kind === 'joining' ? s.state.waiting : s.state.kind
+
+  it('joins: the join to the relay, the accept, the login once the owner added the member, the key from the inviter, then live and writable as the member', async () => {
+    const { team, invite, link } = await invited()
+    const { db, eml, file } = joiner(link)
+    const sync = started(db, file)
+    expect(sync.mode).toBe('join')
+    expect(await sync.whenLive()).toEqual({ kind: 'joining', waiting: 'accept' })
+    expect(relay.joins).toHaveLength(1)
+    expect(relay.joinOf(invite.invite_id)).toEqual(file.join!.request)
+    expect((await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-joining' }) }, env(eml))) as Error).message).toBe(READ_ONLY)
+    const play = inviter(team, invite)
+    const join = play.accept()
+    expect(join.handle).toBe('lasse')
+    await until(() => waiting(sync) === 'membership')
+    expect(file.join).toBeUndefined()
+    expect(file.accept?.inviter).toEqual(cert(team.owner))
+    expect(file.accept?.anchor).toEqual(team.anchor())
+    // the login is tried again and again while the owner has not added the member
+    await new Promise(resolve => setTimeout(resolve, 250))
+    expect(waiting(sync)).toBe('membership')
+    expect(relay.joins).toHaveLength(1)
+    play.add(join)
+    await until(() => waiting(sync) === 'key')
+    expect(eml.teamBrain()).toBe(BRAIN)
+    expect((await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-no-key' }) }, env(eml))) as Error).message).toBe(READ_ONLY)
+    play.key(file.device.sign.publicKey)
+    await until(() => sync.state.kind === 'live')
+    expect(file.accept).toBeUndefined()
+    expect(sync.ownHandle()).toBe('lasse')
+    expect(persisted).toEqual([['accept', 'identity'], ['identity']])
+    const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-joined' }) }, env(eml))
+    expect(engram).toMatchObject({ title: 't-joined', ingested_by: 'lasse' })
+    expect(relay.log).toHaveLength(3)
+  })
+
+  it('takes its first key from the inviter\'s device only', async () => {
+    const { team, invite, link } = await invited()
+    const mira = person('mira')
+    relay.inject(team.addMember(mira))
+    const { db, file } = joiner(link)
+    const sync = started(db, file)
+    await sync.whenLive()
+    const play = inviter(team, invite)
+    const join = play.accept()
+    play.add(join)
+    play.key(file.device.sign.publicKey, mira.device)  // mira is a member, but not the inviter
+    await until(() => waiting(sync) === 'key')
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(waiting(sync)).toBe('key')
+    expect(file.accept).toBeDefined()
+    play.key(file.device.sign.publicKey)
+    await until(() => sync.state.kind === 'live')
+    expect(file.accept).toBeUndefined()
+  })
+
+  it('stops when the invite closes under it: cancelled, taken by another join, or not open at the relay', async () => {
+    const { invite, link } = await invited()
+    const first = joiner(link)
+    const sync = started(first.db, first.file)
+    await sync.whenLive()
+    const second = joiner(link, 'nilo')
+    const other = new Sync(second.db, second.file, { deadlineMs: 3000, backoffMs: [20, 100] })
+    other.start()
+    try {
+      expect(await other.whenLive()).toEqual({ kind: 'stopped', why: 'its invite was closed (taken)', relay: { code: 'invite_closed', message: 'taken' } })
+    } finally {
+      other.close()
+    }
+    relay.closeInvite(invite.invite_id, 'cancelled')
+    await until(() => sync.state.kind === 'stopped')
+    expect(sync.state).toEqual({ kind: 'stopped', why: 'its invite was closed (cancelled)', relay: { code: 'invite_closed', message: 'cancelled' } })
+    expect(first.eml.hasGenesis()).toBe(false)
+    expect(first.file.join).toBeDefined()
+    sync.close()
+    const unknown = joiner(inviteLink(newInvite(relay.host, BRAIN, NOW)))
+    const stray = started(unknown.db, unknown.file)
+    expect(await stray.whenLive()).toEqual({ kind: 'stopped', why: 'its invite was closed (unknown)', relay: { code: 'invite_closed', message: 'unknown' } })
+    expect(persisted).toEqual([])
+  })
+
+  it('sends the same join again after a restart or a closed connection, and logs in straight away once the accept is in the file', async () => {
+    const { team, invite, link } = await invited()
+    const { db, file } = joiner(link)
+    let sync = started(db, file)
+    await sync.whenLive()
+    relay.closeAll(1000)  // the relay waits only so long for an accept
+    await until(() => relay!.joins.length === 2 && waiting(sync) === 'accept')
+    sync.close()
+    sync = started(db, file)
+    expect(await sync.whenLive()).toEqual({ kind: 'joining', waiting: 'accept' })
+    expect(relay.joins).toHaveLength(3)
+    expect(new Set(relay.joins).size).toBe(1)
+    const play = inviter(team, invite)
+    const join = play.accept()
+    await until(() => waiting(sync) === 'membership')
+    sync.close()
+    sync = started(db, file)
+    play.add(join)
+    play.key(file.device.sign.publicKey)
+    await until(() => sync.state.kind === 'live')
+    expect(relay.joins).toHaveLength(3)
+  })
+
+  it('stops when the accept cannot be kept in the team file, with the join still there for a restart', async () => {
+    const { team, invite, link } = await invited()
+    const { db, file } = joiner(link)
+    const sync = started(db, file, { persist: () => { throw new Error('disk full') } })
+    await sync.whenLive()
+    inviter(team, invite).accept()
+    await until(() => sync.state.kind === 'stopped')
+    expect(sync.state).toEqual({ kind: 'stopped', why: 'its team file could not be written' })
+    expect(file.join).toBeDefined()
+    expect(file.accept).toBeUndefined()
   })
 })

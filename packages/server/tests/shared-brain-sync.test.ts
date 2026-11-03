@@ -3,28 +3,34 @@ import { spawn, type ChildProcess } from 'child_process'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { newDeviceKeys, ready } from '@engramprotocol/protocol'
+import { inviteLink, inviteNotice, joinAccept, newDeviceKeys, newInvite, openJoin, ready, type Invite } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, initControlDatabase, initDatabase, issueToken, provisionUser } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
 import { teamFilePath, writeTeamFile } from '../src/sync/team-file'
 import { FakeRelay, GRANT } from './fake-relay'
 import { request, waitForReady, flat } from './http-helpers'
-import { BRAIN, OTHER } from './team'
+import { BRAIN, OTHER, Team, cert } from './team'
 
 // v0.21 end to end: the spawned server founds a team brain in an empty brain
-// (POST /team/create), syncs it with its relay, and an HTTP write to it is a
-// confirmed write through the relay. A brain whose team file cannot be used is
-// shared and read-only, with a fixed reason.
+// (POST /team/create) or joins one with an invite link (POST /team/join, the
+// inviter played here with the protocol package), syncs it with its relay,
+// and an HTTP write to it is a confirmed write through the relay. A brain
+// whose team file cannot be used is shared and read-only, with a fixed reason.
 
 const BROKEN = '1c9e6679-7425-40de-944b-e07fc1f90a01'  // its team file is cut off in the middle of a seed
 const RETRY = '2c9e6679-7425-40de-944b-e07fc1f90a02'   // created with a stale grant first
-const EMPTY = '3c9e6679-7425-40de-944b-e07fc1f90a03'   // provisioned for a creation that never happens; discarded
+const EMPTY = '4c9e6679-7425-40de-944b-e07fc1f90a04'   // provisioned for a creation that never happens; discarded
+const JOINED = '3c9e6679-7425-40de-944b-e07fc1f90a03'  // juno's team brain at another relay, which lasse's server joins
+const NOW = '2026-11-03T08:00:00.000Z'
 
 describe('a shared brain through the server', () => {
   let serverProc: ChildProcess
   let tmpDir: string
   let relay: FakeRelay
   let retryRelay: FakeRelay
+  let joinRelay: FakeRelay
+  let juno: Team
+  let invite: Invite
   let stderr = ''
   let seed: string
   const tokens: Record<string, string> = {}
@@ -41,7 +47,7 @@ describe('a shared brain through the server', () => {
     const control = initControlDatabase(join(tmpDir, 'control.db'))
     control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'juno@example.com')`).run()
     // empty brains as the host provisions them for a creation: the schema, no rows, no log
-    for (const id of [BRAIN, BROKEN, RETRY, EMPTY]) {
+    for (const id of [BRAIN, BROKEN, RETRY, EMPTY, JOINED]) {
       const brainFile = `brains/${id}.db`
       initDatabase(join(tmpDir, brainFile), undefined, id, { log: false }).close()
       control.prepare('INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES (?, ?, ?, ?, ?)').run(id, 'team', 'u1', brainFile, CURRENT_BRAIN_SCHEMA_VERSION)
@@ -61,6 +67,13 @@ describe('a shared brain through the server', () => {
 
     relay = await FakeRelay.start(BRAIN)
     retryRelay = await FakeRelay.start(RETRY)
+    // juno's brain JOINED at its relay, with an open invite for lasse
+    juno = new Team(JOINED)
+    joinRelay = await FakeRelay.start(JOINED, juno.genesis())
+    juno.deliver(joinRelay.log[0].record, 1, joinRelay.log[0].at)
+    joinRelay.putKey(juno.owner.device.sign.publicKey, juno.wrapped(0))
+    invite = newInvite(joinRelay.host, JOINED, NOW)
+    joinRelay.openInvite(inviteNotice(invite, juno.owner.device.sign))
     serverProc = spawn('node', [join(__dirname, '..', 'dist', 'server.js')], {
       env: { ...process.env, EML_PORT: String(port), EML_HOST: '127.0.0.1', EML_DATA_DIR: tmpDir },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -73,6 +86,7 @@ describe('a shared brain through the server', () => {
     if (serverProc && serverProc.exitCode === null) await new Promise((resolve) => { serverProc.once('exit', resolve); serverProc.kill('SIGTERM') })
     await relay?.stop()
     await retryRelay?.stop()
+    await joinRelay?.stop()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -188,6 +202,57 @@ describe('a shared brain through the server', () => {
     expect(existsSync(join(tmpDir, 'brains', `${BROKEN}.db`))).toBe(false)
     expect((await get(BROKEN, '/team')).status).toBe(401)
   })
+
+  it('refuses a join with a link that is no invite link for this brain, or a handle that is none', async () => {
+    const link = inviteLink(invite)
+    expect(await post(JOINED, '/team/join', { link: 'https://relay.test/i/1/x', handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE', error: 'This is not an invite link for this brain.' } })
+    expect(await post(JOINED, '/team/join', { link: inviteLink(newInvite(joinRelay.host, BRAIN, NOW)), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
+    expect(await post(JOINED, '/team/join', { link, handle: 'Lasse!' })).toMatchObject({ status: 400, body: { code: 'INVALID_HANDLE' } })
+    // a host that is no relay origin: credentials, a path before the invite path
+    expect(await post(JOINED, '/team/join', { link: link.replace('https://', 'https://user@'), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
+    expect(await post(JOINED, '/team/join', { link: link.replace('/i/1/', '/path/i/1/'), handle: 'lasse' })).toMatchObject({ status: 400, body: { code: 'INVALID_INVITE' } })
+    expect(joinRelay.joins).toEqual([])
+    expect(existsSync(teamFilePath(tmpDir, JOINED))).toBe(false)
+  })
+
+  it('a join of an invite the relay does not have: 410 INVITE_CLOSED, and the brain stays new and empty', async () => {
+    const r = await post(JOINED, '/team/join', { link: inviteLink(newInvite(joinRelay.host, JOINED, NOW)), handle: 'lasse' })
+    expect(r).toMatchObject({ status: 410, body: { code: 'INVITE_CLOSED', error: 'This invite is closed (unknown); ask the owner for a new link.' } })
+    expect(joinRelay.joins).toHaveLength(1)
+    expect(existsSync(teamFilePath(tmpDir, JOINED))).toBe(false)
+  })
+
+  it('joins the team brain: 202 while the owner has not accepted, read-only meanwhile, 201 once the member is added and holds the key, then writes as the member', async () => {
+    const link = inviteLink(invite)
+    const r = await post(JOINED, '/team/join', { link, handle: 'lasse' })
+    expect(r).toMatchObject({ status: 202, body: { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: JOINED, handle: 'lasse' } })
+    expect(r.body.member).toMatch(/^([0-9a-f]{5} ){7}[0-9a-f]{5}$/)
+    const note = flat(validNote({ title: 't-while-joining' }))
+    const early = await post(JOINED, `/engram/${note.type}`, note.body)
+    expect(early).toMatchObject({ status: 503, body: { code: 'SHARED_BRAIN_READ_ONLY' } })
+    expect(early.body.error).toBe('This shared brain is read-only right now: it is still joining its team brain. Reads still work; try the write again once it is back.')
+    expect((await get(JOINED, '/list')).status).toBe(200)
+    // the inviter: opens the join, accepts it, adds the member, wraps the key for lasse's device
+    const join = openJoin(invite, joinRelay.joinOf(invite.invite_id), NOW)
+    expect(join.handle).toBe('lasse')
+    joinRelay.acceptJoin(joinAccept(invite, join.join_hash, cert(juno.owner, JOINED), juno.anchor()))
+    joinRelay.inject(juno.addJoiner(join))
+    joinRelay.putKey(join.device_cert.device_sign, juno.wrappedFor(0, join.device_cert.device_sign))
+    let again = await post(JOINED, '/team/join', { link, handle: 'lasse' })
+    for (let i = 0; i < 60 && again.status !== 201; i++) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      again = await post(JOINED, '/team/join', { link, handle: 'lasse' })
+    }
+    expect(again).toMatchObject({ status: 201, body: { brain: JOINED, member: r.body.member, handle: 'lasse' } })
+    const file = JSON.parse(readFileSync(teamFilePath(tmpDir, JOINED), 'utf-8'))
+    expect(file.join).toBeUndefined()
+    expect(file.accept).toBeUndefined()
+    expect(file.identity).toBeDefined()
+    const written = await post(JOINED, `/engram/${note.type}`, note.body)
+    expect(written).toMatchObject({ status: 201, body: { title: 't-while-joining', ingested_by: 'lasse' } })
+    expect(joinRelay.log).toHaveLength(3)
+    expect(joinRelay.joins).toHaveLength(2)
+  }, 30000)
 
   it('is read-only while the relay is away', async () => {
     await relay.stop()

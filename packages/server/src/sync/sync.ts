@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import {
-  ProtocolError, encodeFrame, fingerprint, loginResponse, memberOfDevice, parseRelayFrame, sealOp, syncPath,
+  ProtocolError, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, parseRelayFrame, sealOp, syncPath,
   type BrainKey, type ClientFrame, type RelayFrame, type Role, type TeamOp,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
@@ -24,6 +24,13 @@ import { SharedWriteError, readOnly } from '../write'
 // epoch-0 key for itself. What the relay has taken is dropped from the team
 // file as it goes, so a restart continues where it stopped; a relay that has
 // the brain already is just logged in to.
+//
+// A brain being joined (§5; its team file carries the join with its link)
+// sends the join before the login and waits for the inviter's accept; with
+// the accept in hand it logs in on a new connection — again and again until
+// the owner's add_member is in the log and the login goes through — takes
+// its first key from the inviter's device only, and replays the log from 1.
+// The invite closing under it (taken, cancelled, expired) stops the brain.
 
 export type SyncState =
   /** not connected: connecting, or waiting to reconnect */
@@ -33,6 +40,13 @@ export type SyncState =
   | { kind: 'live' }
   /** an entry waits for the key of its epoch */
   | { kind: 'waiting_key', epoch: number }
+  /**
+   * joining: `relay` — the relay has not answered the join; `accept` — it holds
+   * the join, the inviter has not accepted; `membership` — accepted, the login
+   * waits for the owner's add_member; `key` — logged in, the brain key the
+   * inviter wrapped for this device is not in yet
+   */
+  | { kind: 'joining', waiting: 'relay' | 'accept' | 'membership' | 'key' }
   /** `relay`: what the relay answered, when it stopped the brain (a creation it refused) */
   | { kind: 'stopped', why: string, relay?: { code: string, message: string } }
   | { kind: 'update_needed', why: string }
@@ -42,7 +56,7 @@ export interface SyncOptions {
   deadlineMs?: number
   /** the first and the longest pause before a reconnect (ms); default 1 s and 60 s */
   backoffMs?: [number, number]
-  /** keeps the team file as a creation advances (the server writes it to disk); a Sync without one keeps nothing */
+  /** keeps the team file as a creation or join advances (the server writes it to disk); a Sync without one keeps nothing */
   persist?: (file: TeamFile) => void
 }
 
@@ -68,7 +82,7 @@ export interface TeamSnapshot {
   shared: true
   brain: string
   relay: string
-  mode: 'create' | 'member'
+  mode: 'create' | 'join' | 'member'
   state: SyncState
   /** the 503 SHARED_BRAIN_READ_ONLY text a write gets right now; null when the brain is live */
   read_only: string | null
@@ -88,8 +102,8 @@ type Halt = Extract<SyncState, { kind: 'stopped' | 'update_needed' }>
 type Request = { kind: 'keys' } | { kind: 'append', opId: string } | { kind: 'key_put' }
 
 export class Sync {
-  /** `create` for a Sync started with a creation to send; `member` otherwise */
-  readonly mode: 'create' | 'member'
+  /** `create` for a Sync started with a creation to send, `join` with a join under way; `member` otherwise */
+  readonly mode: 'create' | 'join' | 'member'
   private readonly replica: Replica
   private readonly url: string
   private readonly host: string
@@ -103,6 +117,8 @@ export class Sync {
   private challenge: unknown = null
   /** the relay answered brain_exists to the creation: the login decides whether the brain is this device's */
   private existed = false
+  /** the relay holds this connection's join and waits for the accept with it */
+  private joinWaiting = false
   /** the seq the subscription started from */
   private from = 0
   /** delivered entries the replica has not taken yet, in order */
@@ -126,7 +142,7 @@ export class Sync {
   private retry: NodeJS.Timeout | null = null
 
   constructor(db: Database.Database, readonly team: TeamFile, opts: SyncOptions = {}) {
-    this.mode = team.create ? 'create' : 'member'
+    this.mode = team.create ? 'create' : team.join || team.accept ? 'join' : 'member'
     this.replica = new Replica(db, team)
     this.url = `${team.relay}${syncPath(team.brain)}`
     this.host = new URL(team.relay).host
@@ -140,6 +156,8 @@ export class Sync {
     const replica = this.replica.state
     if (replica.kind === 'stopped' || replica.kind === 'update_needed') return replica
     if (this.halt) return this.halt
+    if (this.team.join) return { kind: 'joining', waiting: this.joinWaiting ? 'accept' : 'relay' }
+    if (this.team.accept) return { kind: 'joining', waiting: this.loggedIn ? 'key' : 'membership' }
     if (!this.loggedIn) return { kind: 'offline' }
     if (replica.kind === 'waiting') return { kind: 'waiting_key', epoch: replica.epoch }
     if (!this.caughtUp || this.queue.length > 0) return { kind: 'catching_up' }
@@ -161,8 +179,9 @@ export class Sync {
 
   /**
    * Resolves once the brain is live, or when it stopped (with that state),
-   * or — after the write deadline — with the state as it is then; never
-   * rejects. What a route waits on after starting a creation.
+   * or once the relay has its join or the inviter's accept, or — after the
+   * write deadline — with the state as it is then; never rejects. What a
+   * route waits on after starting a creation or a join.
    */
   whenLive(): Promise<SyncState> {
     const now = this.state
@@ -184,7 +203,7 @@ export class Sync {
 
   /** Why a write would be refused in `state` — the 503 a write gets — or null when the brain takes writes. */
   private readOnlyFor(state: SyncState): SharedWriteError | null {
-    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && this.replica.head().seq === 0) return readOnly('it is not created yet')
+    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && state.kind !== 'joining' && this.replica.head().seq === 0) return readOnly('it is not created yet')
     if (state.kind !== 'live') return readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
     if (!this.replica.currentKey()) return readOnly('this device has no key for it yet')
     if (this.replica.ownHandle() === null) return readOnly('this device\'s member has no handle in it')
@@ -291,7 +310,17 @@ export class Sync {
         this.challenge = frame.challenge
         // a creation goes first: the relay has no brain to log in to yet
         if (this.team.create) return this.send({ t: 'create', genesis: this.team.create.genesis, grant: this.team.create.grant }, false)
+        // a join too: this device is no member to log in as yet
+        if (this.team.join) return this.send({ t: 'join', join: this.team.join.request as unknown as Record<string, unknown> }, false)
         return this.login()
+      case 'join_waiting':
+        this.joinWaiting = true
+        this.delay = this.backoff[0]
+        return
+      case 'accept':
+        return this.accepted(frame.accept)
+      case 'invite_closed':
+        return this.inviteClosed(frame.reason)
       case 'created':
         if (!this.took('create')) return
         return this.login()
@@ -345,9 +374,34 @@ export class Sync {
       case 'error':
         return this.failed(frame)
       default:
-        // invites and joins are the membership flows' (block 6b)
+        // a join pushed to the inviter's device: the membership flows'
         return
     }
+  }
+
+  /** The inviter's accept of this device's join: checked under the invite secret, kept; the login follows on a new connection. */
+  private accepted(value: unknown): void {
+    const join = this.team.join
+    if (!join) return
+    let opened
+    try {
+      opened = openAccept(join.link, join.request, value)
+    } catch (err) {
+      if (!(err instanceof ProtocolError)) throw err
+      this.log(`an accept that does not answer this device's join: ${err.message}`)
+      return
+    }
+    this.team.accept = { inviter: opened.inviter, anchor: opened.anchor }
+    delete this.team.join
+    if (!this.kept(() => { this.team.join = join; delete this.team.accept })) return
+    this.joinWaiting = false
+    this.delay = this.backoff[0]
+    this.ws?.close()  // an invitee logs in on a new connection
+  }
+
+  /** The invite closed before the inviter accepted: the brain stops; `unknown` when the relay has no open invite with this id. */
+  private inviteClosed(reason: string): void {
+    this.halted({ kind: 'stopped', why: `its invite was closed (${reason})`, relay: { code: 'invite_closed', message: reason } })
   }
 
   /** An error frame: the answer to a request, to the creation, or the relay's own. */
@@ -367,6 +421,13 @@ export class Sync {
       this.log(`the relay did not keep this device's key (${frame.code}): ${message}`)
       return
     }
+    if (!this.loggedIn && this.team.join) {
+      // the answer to the join
+      if (frame.code === 'invite_closed') return this.inviteClosed('unknown')
+      if (frame.code === 'rate_limited') return  // the relay closes; the join is sent again after the pause
+      return this.halted({ kind: 'stopped', why: `the relay did not take the join (${frame.code}): ${message}`, relay: { code: frame.code, message } })
+    }
+    if (!this.loggedIn && this.team.accept && frame.code === 'login_failed') return  // not a member yet: the login is tried again
     if (!this.loggedIn && this.team.create) {
       // the answer to the creation
       if (frame.code === 'brain_exists' && !this.existed) {
@@ -398,15 +459,20 @@ export class Sync {
    * the file. False when the file could not be written — the brain stops,
    * since a restart would send it again as if the relay had not.
    */
-  private took(section: 'create' | 'key'): boolean {
+  private took(section: 'create' | 'key' | 'accept'): boolean {
     if (!this.team[section]) return true
     const kept = this.team[section]
     delete this.team[section]
+    return this.kept(() => { this.team[section] = kept as never })
+  }
+
+  /** Writes the team file as it is now; on failure `undo` restores it and the brain stops (see took). */
+  private kept(undo: () => void): boolean {
     try {
       this.persist(this.team)
       return true
     } catch (err) {
-      this.team[section] = kept as never
+      undo()
       this.log(`the team file could not be written: ${(err as Error).message}`)
       this.stop('its team file could not be written')
       return false
@@ -478,11 +544,12 @@ export class Sync {
     for (const opId of [...this.writers.keys()]) this.settleError(opId, pending())
   }
 
-  /** Tells whoever waits for the brain to be live once it is, or once it stopped. */
+  /** Tells whoever waits for the brain to be live once it is, once it stopped, or once its join got past the relay. */
   private settleWaiters(): void {
     if (this.waiters.length === 0) return
     const state = this.state
-    if (state.kind !== 'live' && state.kind !== 'stopped' && state.kind !== 'update_needed' && !this.closed) return
+    const joined = state.kind === 'joining' && state.waiting !== 'relay'
+    if (state.kind !== 'live' && state.kind !== 'stopped' && state.kind !== 'update_needed' && !joined && !this.closed) return
     const waiters = this.waiters
     this.waiters = []
     for (const settle of waiters) settle(state)
@@ -500,9 +567,11 @@ export class Sync {
     return this.pendingKeys.length < before
   }
 
+  /** A device that joined takes its first key from the inviter's device only; the accept is done with once it has. */
   private tryKey(wrapped: unknown): boolean {
     try {
-      this.replica.addKey(wrapped)
+      this.replica.addKey(wrapped, this.team.accept?.inviter)
+      if (this.team.accept) this.took('accept')
       return true
     } catch (err) {
       if (!(err instanceof ProtocolError)) throw err
@@ -526,6 +595,7 @@ export class Sync {
     this.loggedIn = false
     this.caughtUp = false
     this.challenge = null
+    this.joinWaiting = false
     this.queue = []
     this.requests.clear()
     this.keyPut = null
@@ -563,6 +633,7 @@ function reason(state: SyncState): string {
     case 'offline': return 'it is not connected to its relay'
     case 'catching_up': return 'it is catching up with its relay'
     case 'waiting_key': return 'this device has no key for it yet'
+    case 'joining': return 'it is still joining its team brain'
     case 'stopped': return `it stopped: ${state.why}`
     case 'update_needed': return `this cockpit needs an update: ${state.why}`
     case 'live': return 'it is live'
