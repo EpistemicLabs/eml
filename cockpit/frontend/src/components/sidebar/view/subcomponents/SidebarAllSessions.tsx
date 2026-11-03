@@ -171,35 +171,45 @@ function AgentName({ space }: { space: SpaceInfo }) {
   );
 }
 
-function useSections(controller: SidebarController) {
-  const spaces = useSpaces();
+/** The sections over every space, or, with onlyOpenSpace, over the open one. */
+function useSections(controller: SidebarController, onlyOpenSpace: boolean) {
+  const allSpaces = useSpaces();
+  const openSpace = useActiveSpaceId();
   const { turns } = useTurnStore();
   const { allSessions, queuedWorkers, isSessionPinned, now } = controller;
-  const sections = useMemo(
-    () => groupAllSessions(allSessions ?? [], spaces, turns, isSessionPinned, now.getTime(), queuedWorkers),
-    [allSessions, spaces, turns, isSessionPinned, now, queuedWorkers],
+  const spaces = useMemo(
+    () => (onlyOpenSpace ? allSpaces.filter((space) => paneSpaceKey(space) === openSpace) : allSpaces),
+    [allSpaces, onlyOpenSpace, openSpace],
   );
-  return { sections, spaces, sessions: allSessions ?? [] };
+  const sessions = useMemo(() => {
+    if (!onlyOpenSpace) return allSessions ?? [];
+    const shown = new Set(spaces.map((space) => space.id));
+    return (allSessions ?? []).filter((session) => shown.has(session.spaceId));
+  }, [allSessions, onlyOpenSpace, spaces]);
+  const sections = useMemo(
+    () => groupAllSessions(sessions, spaces, turns, isSessionPinned, now.getTime(), queuedWorkers),
+    [sessions, spaces, turns, isSessionPinned, now, queuedWorkers],
+  );
+  return { sections, spaces, sessions };
 }
 
-/** What needs the user and what is finished: on top of every view. */
-export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller: SidebarController; onlyOpenSpace?: boolean }) {
-  const { sections, spaces, sessions } = useSections(controller);
-  const openSpace = useActiveSpaceId();
-  const here = (session: AllSession) => {
-    if (!onlyOpenSpace) return true;
-    const space = spaces.find((candidate) => candidate.id === session.spaceId);
-    return space ? paneSpaceKey(space) === openSpace : false;
-  };
-  const needsYou = sections.needsYou.filter(here);
-  const toReview = sections.toReview.filter(here);
+/** How many wait for the user: what the overview's tab says while another view is open. */
+export function useWaitingCount(controller: SidebarController, onlyOpenSpace: boolean): number {
+  const { sections } = useSections(controller, onlyOpenSpace);
+  return sections.needsYou.length + sections.toReview.length;
+}
+
+/** What needs the user and what is finished: on top of the overview. */
+function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
+  const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
+  const { needsYou, toReview } = sections;
   const row = (session: AllSession) => (
     <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} marked />
   );
   const waiting = needsYou.length + toReview.length;
   if (waiting === 0) return null;
   return (
-    <div className={cn('space-y-3', onlyOpenSpace && 'pb-3')}>
+    <div className="space-y-3">
       <div className="px-2">
         <button
           type="button"
@@ -225,14 +235,13 @@ export function SidebarInbox({ controller, onlyOpenSpace = false }: { controller
   );
 }
 
-export function SidebarAllSessions({ controller }: { controller: SidebarController }) {
-  const { sections, spaces, sessions } = useSections(controller);
+/** The overview (beta): of every space under All spaces, else of the open one. */
+export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
+  const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
   const [query, setQuery] = useState('');
   const [extra, setExtra] = useState<Record<string, number>>({});
-  const { allSessions } = controller;
-
-  if (allSessions === null) return <SidebarStateBlock spinner text="Loading sessions…" />;
-  if (allSessions.length === 0) return <SidebarStateBlock icon={MessageSquare} text="No sessions yet" />;
+  if (controller.allSessions === null) return <SidebarStateBlock spinner text="Loading sessions…" />;
+  if (sessions.length === 0) return <SidebarStateBlock icon={MessageSquare} text="No sessions yet" />;
 
   const row = (session: AllSession) => (
     <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} />
@@ -245,7 +254,7 @@ export function SidebarAllSessions({ controller }: { controller: SidebarControll
 
   return (
     <div className="space-y-3">
-      <SidebarInbox controller={controller} />
+      <SidebarInbox controller={controller} onlyOpenSpace={onlyOpenSpace} />
       {sections.main.length > 0 && (
         <div className="space-y-0.5">
           <SidebarGroupHeader>Main sessions</SidebarGroupHeader>

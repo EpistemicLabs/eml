@@ -1,6 +1,7 @@
 import type { Project, ProjectSession } from '@/types/app';
 
-export type SidebarViewMode = 'projects' | 'conversations';
+/** Projects is the default; the overview (beta) is what needs the user, what is finished, and the rest. */
+export type SidebarViewMode = 'projects' | 'conversations' | 'overview';
 
 export type ProjectSortOrder = 'name' | 'date';
 

@@ -36,8 +36,12 @@ function writeStorage(key: string, value: string): void {
   }
 }
 
-export const readViewMode = (): SidebarViewMode =>
-  readStorage(VIEW_MODE_KEY) === 'conversations' ? 'conversations' : 'projects';
+const VIEW_MODES: readonly SidebarViewMode[] = ['projects', 'conversations', 'overview'];
+
+export const readViewMode = (): SidebarViewMode => {
+  const stored = readStorage(VIEW_MODE_KEY);
+  return VIEW_MODES.find((mode) => mode === stored) ?? 'projects';
+};
 
 export const writeViewMode = (mode: SidebarViewMode): void => writeStorage(VIEW_MODE_KEY, mode);
 
