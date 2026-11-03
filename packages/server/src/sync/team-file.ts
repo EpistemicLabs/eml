@@ -19,7 +19,10 @@ import {
 // relay created the brain, the epoch-0 key until it is put for this device.
 // While a join is under way (§5) it carries the join with its invite link
 // until the inviter's accept is in, then the accept until the brain key the
-// inviter wrapped for this device is taken.
+// inviter wrapped for this device is taken. An owner's open invites live here
+// too (spec team-brain-membership-flows-spec §3): their secrets are what opens
+// a join and MACs the accept, so they have to survive a restart; each leaves
+// once it is accepted, cancelled or expired.
 
 export interface TeamFile {
   v: 1
@@ -38,6 +41,15 @@ export interface TeamFile {
   join?: { link: string, request: JoinRequest }
   /** an accepted join whose brain key is not in yet: the inviter's device, which alone wraps this device's first key, and the log anchor it named */
   accept?: { inviter: DeviceCert, anchor: LogAnchor }
+  /** the open invites this device made, by their secret: what opens a join and answers it */
+  invites?: StoredInvite[]
+}
+
+/** An invite as the team file keeps it: the id the relay knows, the secret only this device knows, and when it expires. */
+export interface StoredInvite {
+  invite_id: string
+  secret: Uint8Array
+  expires_at: string
 }
 
 /** Why a team file cannot be used — a fixed reason, never the file's text or a field's value. */
@@ -51,6 +63,9 @@ export class TeamFileError extends Error {
 /** Seeds and brain keys are 32 bytes: 43 characters of base64url. */
 const SEED_BYTES = 32
 const SEED_TEXT = /^[A-Za-z0-9_-]{43}$/
+/** An invite id is 16 bytes: 22 characters of base64url. */
+const INVITE_ID_TEXT = /^[A-Za-z0-9_-]{22}$/
+const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 export function teamFilePath(dataDir: string, brain: string): string {
   return path.join(dataDir, 'team', `${brain}.json`)
@@ -112,6 +127,16 @@ export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
     }
     file.accept = { inviter: accept.inviter as unknown as DeviceCert, anchor: { genesis: anchor.genesis, seq: anchor.seq as number, head_hash: anchor.head_hash } }
   }
+  if (raw.invites !== undefined) {
+    if (!Array.isArray(raw.invites)) throw new TeamFileError('its invites are malformed')
+    file.invites = raw.invites.map((value): StoredInvite => {
+      const invite = field(value)
+      if (typeof invite.invite_id !== 'string' || !INVITE_ID_TEXT.test(invite.invite_id) || typeof invite.expires_at !== 'string' || !ISO_MS.test(invite.expires_at)) {
+        throw new TeamFileError('an invite is malformed')
+      }
+      return { invite_id: invite.invite_id, secret: seed(invite.secret), expires_at: invite.expires_at }
+    })
+  }
   return file
 }
 
@@ -138,6 +163,7 @@ export function writeTeamFile(dataDir: string, file: TeamFile): void {
     ...(file.key ? { key: { epoch: file.key.epoch, key: text(file.key.key) } } : {}),
     ...(file.join ? { join: file.join } : {}),
     ...(file.accept ? { accept: file.accept } : {}),
+    ...(file.invites && file.invites.length > 0 ? { invites: file.invites.map(i => ({ invite_id: i.invite_id, secret: text(i.secret), expires_at: i.expires_at })) } : {}),
   }
   const tmp = `${target}.tmp`
   fs.rmSync(tmp, { force: true })  // a leftover (a crash, or made with wider bits) would keep its mode

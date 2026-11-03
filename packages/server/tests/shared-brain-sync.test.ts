@@ -3,8 +3,10 @@ import { spawn, type ChildProcess } from 'child_process'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { inviteLink, inviteNotice, joinAccept, newDeviceKeys, newInvite, openJoin, ready, type Invite } from '@engramprotocol/protocol'
-import { CURRENT_BRAIN_SCHEMA_VERSION, initControlDatabase, initDatabase, issueToken, provisionUser } from '@engramprotocol/core'
+import { fingerprint, inviteLink, inviteNotice, joinAccept, newDeviceKeys, newInvite, openJoin, ready, type Invite } from '@engramprotocol/protocol'
+import { CURRENT_BRAIN_SCHEMA_VERSION, EML, initControlDatabase, initDatabase, issueToken, provisionUser } from '@engramprotocol/core'
+import { Sync } from '../src/sync/sync'
+import { joinTeamBrain } from '../src/sync/join'
 import { validNote } from '../../core/tests/fixtures'
 import { teamFilePath, writeTeamFile } from '../src/sync/team-file'
 import { FakeRelay, GRANT } from './fake-relay'
@@ -253,6 +255,62 @@ describe('a shared brain through the server', () => {
     expect(joinRelay.log).toHaveLength(3)
     expect(joinRelay.joins).toHaveLength(2)
   }, 30000)
+
+  it('invites and confirms through the server: the link from the owner, the join from another brain, the pending join in GET /team, the accept, both live', async () => {
+    expect(await post(OTHER, '/team/invites', {})).toMatchObject({ status: 409, body: { code: 'NOT_SHARED', error: 'This brain is not a shared brain.' } })
+    const invited = await post(BRAIN, '/team/invites', {})
+    expect(invited.status).toBe(201)
+    expect(invited.body.link).toMatch(new RegExp(`^https://${relay.host}/i/1/${BRAIN}/${invited.body.invite_id}#[A-Za-z0-9_-]{43}$`))
+    expect((await get(BRAIN, '/team')).body.invites).toEqual([{ invite_id: invited.body.invite_id, expires_at: invited.body.expires_at, pending: null }])
+    expect(JSON.stringify((await get(BRAIN, '/team')).body)).not.toContain(invited.body.link.split('#')[1])
+    // lasse joins from another cockpit: an empty brain with the team brain's id, its Sync in join mode (here in-process), through the same relay
+    const lasseDb = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    const lasseFile = joinTeamBrain({ brain: BRAIN, link: invited.body.link, handle: 'lasse', now: NOW })
+    const lasse = new Sync(lasseDb, lasseFile, { deadlineMs: 3000, backoffMs: [20, 100] })
+    lasse.start()
+    try {
+      expect(await lasse.whenLive()).toEqual({ kind: 'joining', waiting: 'accept' })
+      const lasseFingerprint = fingerprint(lasseFile.identity!.publicKey)
+      let team = await get(BRAIN, '/team')
+      for (let i = 0; i < 40 && !team.body.invites[0]?.pending; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        team = await get(BRAIN, '/team')
+      }
+      expect(team.body.invites[0].pending).toMatchObject({ handle: 'lasse', fingerprint: lasseFingerprint })
+      expect(await post(BRAIN, `/team/invites/${invited.body.invite_id}/accept`, { role: 'admin' })).toMatchObject({ status: 400, body: { code: 'INVALID_ROLE' } })
+      expect(await post(BRAIN, '/team/invites/AAAAAAAAAAAAAAAAAAAAAA/accept', {})).toMatchObject({ status: 404, body: { code: 'NO_PENDING_JOIN', error: 'This invite has no join to confirm.' } })
+      const confirmed = await post(BRAIN, `/team/invites/${invited.body.invite_id}/accept`, {})
+      expect(confirmed).toMatchObject({ status: 200, body: { member: { handle: 'lasse', role: 'member', devices: 1, self: false, fingerprint: lasseFingerprint } } })
+      expect((await get(BRAIN, '/team')).body.invites).toEqual([])
+      for (let i = 0; i < 100 && lasse.state.kind !== 'live'; i++) await new Promise(resolve => setTimeout(resolve, 50))
+      expect(lasse.state).toEqual({ kind: 'live' })
+      expect(lasse.ownHandle()).toBe('lasse')
+      const lasseEml = EML.fromConnection(lasseDb, 'test')
+      const written = await lasse.write({ name: 'engram.create', input: validNote({ title: 't-by-lasse' }) }, lasseEml.env({ handle: 'x', ingestion_method: 'mcp' }))
+      expect(written).toMatchObject({ title: 't-by-lasse', ingested_by: 'lasse' })
+      let owner = await get(BRAIN, '/team')
+      for (let i = 0; i < 40 && owner.body.members.length < 2; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        owner = await get(BRAIN, '/team')
+      }
+      expect(owner.body.members.map((m: { handle: string, role: string, self: boolean }) => [m.handle, m.role, m.self])).toEqual([['juno', 'owner', true], ['lasse', 'member', false]])
+      expect(lasse.snapshot().member).toMatchObject({ handle: 'lasse', role: 'member', self: true })
+      expect((await get(BRAIN, '/list')).body.engrams ?? (await get(BRAIN, '/list')).body).toBeTruthy()
+    } finally {
+      lasse.close()
+    }
+  }, 30000)
+
+  it('cancels an invite: gone from GET /team, a second cancel is 404', async () => {
+    const invited = await post(BRAIN, '/team/invites', {})
+    expect(invited.status).toBe(201)
+    expect((await get(BRAIN, '/team')).body.invites.map((i: { invite_id: string }) => i.invite_id)).toEqual([invited.body.invite_id])
+    expect(await post(BRAIN, `/team/invites/${invited.body.invite_id}/cancel`, {})).toMatchObject({ status: 200, body: { invite_id: invited.body.invite_id, cancelled: true } })
+    expect((await get(BRAIN, '/team')).body.invites).toEqual([])
+    expect(await post(BRAIN, `/team/invites/${invited.body.invite_id}/cancel`, {})).toMatchObject({ status: 404, body: { code: 'NO_SUCH_INVITE' } })
+    const file = JSON.parse(readFileSync(teamFilePath(tmpDir, BRAIN), 'utf-8'))
+    expect(file.invites).toBeUndefined()
+  })
 
   it('is read-only while the relay is away', async () => {
     await relay.stop()
