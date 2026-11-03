@@ -1,6 +1,6 @@
 import { canonicalJson, plainJson } from './canonical'
 import { signText, verifyText, type KeyPair } from './keys'
-import { provenanceProblem, sha256Hex, type OpEnvelope, type TeamFields } from './op'
+import { MAX_PAYLOAD, provenanceProblem, sha256Hex, type OpEnvelope, type TeamFields } from './op'
 import {
   HASH, KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, SIG_BYTES, TAG_BYTES, UUID,
   asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url, utf8,
@@ -58,13 +58,7 @@ export interface OpenedOp {
 
 const OP_DOMAIN = 'eml-op-v1\n'
 
-/**
- * The largest payload, in bytes of UTF-8: 16 MiB. The largest op is an
- * engram.import of a big set — a whole brain of ~1400 engrams with their
- * journals and relations is ~6.5 MiB of JSON — so this leaves room, and caps
- * what a member can make every replica (and the relay) hold for one op.
- */
-export const MAX_PAYLOAD = 16 * 1024 * 1024
+export { MAX_PAYLOAD } from './op'
 const CALL = /^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/
 const ENVELOPE_FIELDS = ['op_id', 'schema', 'call', 'args', 'provenance', 'team']
 const TEAM_FIELDS = ['brain', 'device', 'base_seq', 'head_hash']
