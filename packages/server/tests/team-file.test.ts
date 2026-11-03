@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { newBrainKey, newDeviceKeys, newSigningKey, ready } from '@engramprotocol/protocol'
-import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, teamFilePath, writeTeamFile, type TeamFile } from '../src/sync/team-file'
+import { certifyDevice, newBrainKey, newDeviceKeys, newSigningKey, ready } from '@engramprotocol/protocol'
+import { TeamFileError, isRelayOrigin, readTeamFile, relayOriginFor, removeTeamFile, teamFilePath, writeTeamFile, type TeamFile } from '../src/sync/team-file'
 import { BRAIN, OTHER } from './team'
 
 // v0.21 (spec team-brain-sync-client-spec §4): what this device keeps for a
@@ -50,6 +50,25 @@ describe('the team file', () => {
     expect(again.create).toBeUndefined()
     expect(again.key).toBeUndefined()
     expect(again.identity?.publicKey).toBe(identity.publicKey)
+  })
+
+  it('keeps a join under way with its link, then the accept, and drops each when written without', () => {
+    const identity = newSigningKey()
+    const device = newDeviceKeys()
+    const inviter = certifyDevice(identity, { brain: BRAIN, device_sign: device.sign.publicKey, device_enc: device.enc.publicKey, created_at: '2026-11-03T08:00:00.000Z' })
+    const join = { link: `https://relay.test/i/1/${BRAIN}/AAAAAAAAAAAAAAAAAAAAAA#${'B'.repeat(43)}`, request: { v: 1 as const, brain: BRAIN, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA', member: identity.publicKey, device_cert: inviter, handle: { nonce: 'n', ct: 'c' }, sig: 's' } }
+    writeTeamFile(dir, file({ identity, join }))
+    const back = readTeamFile(dir, BRAIN)!
+    expect(back.join).toEqual(join)
+    expect(back.accept).toBeUndefined()
+    const accept = { inviter, anchor: { genesis: '3b241101-e2bb-4255-8caf-4136c566a962', seq: 3, head_hash: 'ab'.repeat(32) } }
+    writeTeamFile(dir, { ...back, join: undefined, accept })
+    const again = readTeamFile(dir, BRAIN)!
+    expect(again.join).toBeUndefined()
+    expect(again.accept).toEqual(accept)
+    expect(again.identity?.publicKey).toBe(identity.publicKey)
+    writeTeamFile(dir, { ...again, accept: undefined })
+    expect(readTeamFile(dir, BRAIN)?.accept).toBeUndefined()
   })
 
   it('is written whole: owner-only again after a file with wider bits, and no temporary file stays', () => {
@@ -127,6 +146,14 @@ describe('the team file', () => {
       expect(reason()).toBe('its creation is malformed')
       written(JSON.stringify({ ...ok, key: { epoch: -1, key: 'x' } }))
       expect(reason()).toBe('its key is malformed')
+      written(JSON.stringify({ ...ok, join: { link: 'https://relay.test/i/1/x/y#z' } }))
+      expect(reason()).toBe('its join is malformed')
+      written(JSON.stringify({ ...ok, join: { link: 42, request: {} } }))
+      expect(reason()).toBe('its join is malformed')
+      written(JSON.stringify({ ...ok, accept: { inviter: {}, anchor: { genesis: 'g', seq: 'one', head_hash: 'h' } } }))
+      expect(reason()).toBe('its accept is malformed')
+      written(JSON.stringify({ ...ok, accept: { inviter: 'x', anchor: { genesis: 'g', seq: 1, head_hash: 'h' } } }))
+      expect(reason()).toBe('its accept is malformed')
     })
 
     it('a file cut off in the middle of a seed: nothing of the seed is in the reason', () => {
@@ -140,6 +167,15 @@ describe('the team file', () => {
       expect(why).toBe('it is not valid JSON')
       for (let i = 0; i + 8 <= seed.length; i++) expect(why).not.toContain(seed.slice(i, i + 8))
     })
+  })
+
+  it('speaks wss:// to the host an invite link names, ws:// only to a loopback host', () => {
+    expect(relayOriginFor('relay.engramprotocol.com')).toBe('wss://relay.engramprotocol.com')
+    expect(relayOriginFor('relay.test:8443')).toBe('wss://relay.test:8443')
+    expect(relayOriginFor('127.0.0.1:4321')).toBe('ws://127.0.0.1:4321')
+    expect(relayOriginFor('localhost:4321')).toBe('ws://localhost:4321')
+    expect(relayOriginFor('[::1]:4321')).toBe('ws://[::1]:4321')
+    for (const host of ['relay.engramprotocol.com', '127.0.0.1:4321']) expect(isRelayOrigin(relayOriginFor(host))).toBe(true)
   })
 
   it('knows a relay origin: scheme and host, no path, no credentials; ws:// only to a loopback host', () => {

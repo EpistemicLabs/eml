@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import {
   GENESIS_PREV_HASH, applyMembership, certifyDevice, clearOp, genesisMembers, keyId, newBrainKey, newDeviceKeys, newSigningKey,
   openRecord, rotateKey, sealHandle, sealOp, wrapKey,
-  type BrainKey, type DeviceKeys, type KeyPair, type MemberSet, type TeamOp,
+  type BrainKey, type DeviceCert, type DeviceKeys, type KeyPair, type MemberSet, type TeamOp,
 } from '@engramprotocol/protocol'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
@@ -18,14 +18,14 @@ export const NONE = { handle: null, agent: null, ingestion_method: null, session
 
 export interface Person { identity: KeyPair, device: DeviceKeys, handle: string }
 export const person = (handle: string): Person => ({ identity: newSigningKey(), device: newDeviceKeys(), handle })
-export const cert = (p: Person) => certifyDevice(p.identity, { brain: BRAIN, device_sign: p.device.sign.publicKey, device_enc: p.device.enc.publicKey, created_at: '2026-10-28T08:00:00.000Z' })
+export const cert = (p: Person, brain = BRAIN) => certifyDevice(p.identity, { brain, device_sign: p.device.sign.publicKey, device_enc: p.device.enc.publicKey, created_at: '2026-10-28T08:00:00.000Z' })
 export const json = (value: unknown): Record<string, unknown> => JSON.parse(JSON.stringify(value))
 export const time = (seq: number): string => new Date(T0 + seq * 1000).toISOString()
 
 /**
- * A team brain: its owner juno, whose device this replica runs on, the brain
- * keys, and the member set as the relay's log has it. Records are built
- * against the replica's own log (base_seq = its head).
+ * A team brain (`brain`, default BRAIN): its owner juno, whose device this
+ * replica runs on, the brain keys, and the member set as the relay's log has
+ * it. Records are built against the replica's own log (base_seq = its head).
  */
 export class Team {
   readonly owner = person('juno')
@@ -34,9 +34,9 @@ export class Team {
   replica: Replica
   set!: MemberSet
 
-  constructor() {
-    this.db = initDatabase(':memory:', undefined, BRAIN, { log: false })  // the schema, no rows, no log: its genesis comes from the relay
-    this.replica = new Replica(this.db, { v: 1, brain: BRAIN, relay: 'wss://relay.test', device: this.owner.device })
+  constructor(readonly brain = BRAIN) {
+    this.db = initDatabase(':memory:', undefined, brain, { log: false })  // the schema, no rows, no log: its genesis comes from the relay
+    this.replica = new Replica(this.db, { v: 1, brain, relay: 'wss://relay.test', device: this.owner.device })
   }
 
   get head(): number {
@@ -48,11 +48,11 @@ export class Team {
     const op_id = crypto.randomUUID()
     const member = this.owner.identity.publicKey
     const record = json(clearOp(this.envelope(this.owner, 'brain.genesis', {
-      brain: BRAIN,
+      brain: this.brain,
       state_hash: EML.fromConnection(this.db, 'test').stateHash(),
-      root: { member, device_cert: cert(this.owner), handle: sealHandle(this.owner.handle, { brain: BRAIN, op_id, member }, this.keys[0]), key_id: keyId(this.keys[0].key) },
+      root: { member, device_cert: cert(this.owner, this.brain), handle: sealHandle(this.owner.handle, { brain: this.brain, op_id, member }, this.keys[0]), key_id: keyId(this.keys[0].key) },
     }, op_id), this.owner.device.sign).record)
-    this.set = genesisMembers(openRecord(record, BRAIN, () => undefined))
+    this.set = genesisMembers(openRecord(record, this.brain, () => undefined))
     return record
   }
 
@@ -66,10 +66,14 @@ export class Team {
 
   /** juno adds `joiner`; the relay's member set follows (unless it refuses the record). */
   addMember(joiner: Person): Record<string, unknown> {
+    return this.addJoiner({ member: joiner.identity.publicKey, device_cert: cert(joiner, this.brain), handle: joiner.handle })
+  }
+
+  /** juno adds the member of a join it opened: as addMember, from the join's parts. */
+  addJoiner(join: { member: string, device_cert: DeviceCert, handle: string }): Record<string, unknown> {
     const op_id = crypto.randomUUID()
-    const member = joiner.identity.publicKey
-    const handle = sealHandle(joiner.handle, { brain: BRAIN, op_id, member }, this.keys[this.set.epoch])
-    return this.membership(this.envelope(this.owner, 'team.add_member', { member, role: 'member', device_cert: cert(joiner), handle }, op_id))
+    const handle = sealHandle(join.handle, { brain: this.brain, op_id, member: join.member }, this.keys[this.set.epoch])
+    return this.membership(this.envelope(this.owner, 'team.add_member', { member: join.member, role: 'member', device_cert: join.device_cert, handle }, op_id))
   }
 
   /** juno rotates to the next brain key; the relay's member set follows. */
@@ -81,7 +85,18 @@ export class Team {
 
   /** The key of `epoch`, wrapped by juno for `device` (default: this replica's). */
   wrapped(epoch: number, device = this.owner.device): unknown {
-    return json(wrapKey(this.set, this.keys[epoch], device.sign.publicKey, this.owner.device.sign))
+    return this.wrappedFor(epoch, device.sign.publicKey)
+  }
+
+  /** The key of `epoch`, wrapped for the device with signing key `deviceSign` by `wrapper` (default: juno's device). */
+  wrappedFor(epoch: number, deviceSign: string, wrapper = this.owner.device): unknown {
+    return json(wrapKey(this.set, this.keys[epoch], deviceSign, wrapper.sign))
+  }
+
+  /** The log anchor an accept names: the genesis op_id, this replica's head and its chain link. */
+  anchor(): { genesis: string, seq: number, head_hash: string } {
+    const rows = this.db.prepare('SELECT seq, op_id, hash FROM op_log ORDER BY seq').all() as Array<{ seq: number, op_id: string, hash: string }>
+    return { genesis: rows[0].op_id, seq: rows[rows.length - 1].seq, head_hash: rows[rows.length - 1].hash }
   }
 
   deliver(record: unknown, seq = this.head + 1, at = time(seq)) {
@@ -91,7 +106,7 @@ export class Team {
   private membership(env: TeamOp): Record<string, unknown> {
     const record = json(clearOp(env, this.owner.device.sign).record)
     try {
-      this.set = applyMembership(this.set, openRecord(record, BRAIN, () => undefined))
+      this.set = applyMembership(this.set, openRecord(record, this.brain, () => undefined))
     } catch {
       // a record the member set refuses: the log keeps it, the set stays
     }
@@ -103,7 +118,7 @@ export class Team {
     const link = head === 0 ? GENESIS_PREV_HASH : (this.db.prepare('SELECT hash FROM op_log WHERE seq = ?').get(head) as { hash: string }).hash
     return {
       op_id, schema: CURRENT_BRAIN_SCHEMA_VERSION, call, args: args as never, provenance: NONE,
-      team: { brain: BRAIN, device: author.device.sign.publicKey, base_seq: head, head_hash: link, ...team },
+      team: { brain: this.brain, device: author.device.sign.publicKey, base_seq: head, head_hash: link, ...team },
     }
   }
 }

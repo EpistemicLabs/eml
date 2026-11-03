@@ -1,19 +1,21 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { AddressInfo } from 'net'
 import {
-  CLOSE, applyMembership, checkWrappedKey, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyLogin,
-  type LoginChallenge, type MemberSet, type RelayFrame,
+  CLOSE, applyMembership, canonicalJson, checkAccept, checkJoin, checkWrappedKey, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyLogin,
+  type InviteClosedReason, type InviteNotice, type JoinAccept, type JoinRequest, type LoginChallenge, type MemberSet, type RelayFrame,
 } from '@engramprotocol/protocol'
 
 // A relay for the sync tests, in-process on a random port: the session, the
 // log and wrapped keys of PROTOCOL.md §13 for one brain — create with a grant,
 // login, subscribe with backlog and live push, append with seq/at and the
-// idempotent resend, key_put, keys and the key push. The real relay (eml-ops)
-// checks much more; the tests steer this one (refuse, hold or drop an append,
-// close a session).
+// idempotent resend, key_put, keys and the key push, and the invitee's side
+// of §8 — a join against a notice the test opened, join_waiting, the accept
+// the test gives, invite_closed. The real relay (eml-ops) checks much more;
+// the tests steer this one (refuse, hold or drop an append, close a session).
 
 interface Entry { seq: number, at: string, opId: string, bytes: string, record: Record<string, unknown> }
-interface Session { ws: WebSocket, device: string | null, subscribed: boolean }
+interface Session { ws: WebSocket, device: string | null, subscribed: boolean, waitingOn: string | null }
+interface OpenInvite { notice: InviteNotice, join: JoinRequest | null, accept: JoinAccept | null, closed: InviteClosedReason | null }
 
 /** The one grant this relay accepts for a creation. */
 export const GRANT = 'grant-for-the-test-relay'
@@ -38,6 +40,9 @@ export class FakeRelay {
   readonly creates: string[] = []
   /** every key_put taken: the recipient */
   readonly keyPuts: string[] = []
+  /** every join frame received: the join's canonical text */
+  readonly joins: string[] = []
+  private readonly invites = new Map<string, OpenInvite>()
 
   private constructor(private readonly wss: WebSocketServer, readonly brain: string, genesis: Record<string, unknown> | undefined) {
     if (genesis) this.found(genesis)
@@ -75,6 +80,31 @@ export class FakeRelay {
     for (const s of this.sessions) if (s.device === recipient) this.send(s, { t: 'key', wrapped: record as Record<string, unknown> })
   }
 
+  /** An invite an owner put: a join is checked against its notice. */
+  openInvite(notice: InviteNotice): void {
+    this.invites.set(notice.invite_id, { notice, join: null, accept: null, closed: null })
+  }
+
+  /** The join the invite holds, once an invitee sent one. */
+  joinOf(inviteId: string): JoinRequest | null {
+    return this.invites.get(inviteId)?.join ?? null
+  }
+
+  /** The inviter's accept: kept, pushed to every session waiting on the invite. */
+  acceptJoin(accept: JoinAccept): void {
+    const invite = this.invites.get(accept.invite_id)
+    if (!invite?.join) throw new Error('the invite has no join yet')
+    invite.accept = checkAccept(accept, invite.join)
+    for (const s of this.sessions) if (s.waitingOn === accept.invite_id) this.send(s, { t: 'accept', accept: { ...accept } })
+  }
+
+  /** The invite closes (cancelled, expired): every session waiting on it hears so. */
+  closeInvite(inviteId: string, reason: InviteClosedReason): void {
+    const invite = this.invites.get(inviteId)
+    if (invite) invite.closed = reason
+    for (const s of this.sessions) if (s.waitingOn === inviteId) this.send(s, { t: 'invite_closed', invite_id: inviteId, reason })
+  }
+
   /** Closes every session with `code`. */
   closeAll(code = 1001): void {
     for (const s of this.sessions) s.ws.close(code)
@@ -91,7 +121,7 @@ export class FakeRelay {
   }
 
   private session(ws: WebSocket): void {
-    const s: Session = { ws, device: null, subscribed: false }
+    const s: Session = { ws, device: null, subscribed: false, waitingOn: null }
     this.sessions.add(s)
     ws.on('close', () => this.sessions.delete(s))
     const issued = loginChallenge(this.host, this.brain, this.now())
@@ -112,7 +142,27 @@ export class FakeRelay {
           this.send(s, { t: 'created', seq: 1, at: this.log[0].at })
           return
         }
+        case 'join': {
+          this.joins.push(canonicalJson(frame.join))
+          const inviteId = (frame.join as { invite_id?: unknown }).invite_id
+          const invite = typeof inviteId === 'string' ? this.invites.get(inviteId) : undefined
+          if (!invite) return this.send(s, { t: 'error', req: null, code: 'invite_closed', message: 'there is no open invite with this id' })
+          let join: JoinRequest
+          try {
+            join = checkJoin(frame.join, invite.notice)
+          } catch (err) {
+            return this.send(s, { t: 'error', req: null, code: 'refused', message: (err as Error).message })
+          }
+          if (invite.closed) return this.send(s, { t: 'invite_closed', invite_id: invite.notice.invite_id, reason: invite.closed })
+          if (invite.join && canonicalJson(invite.join) !== canonicalJson(join)) return this.send(s, { t: 'invite_closed', invite_id: invite.notice.invite_id, reason: 'taken' })
+          invite.join = join
+          s.waitingOn = invite.notice.invite_id
+          this.send(s, { t: 'join_waiting', invite_id: invite.notice.invite_id })
+          if (invite.accept) this.send(s, { t: 'accept', accept: { ...invite.accept } })
+          return
+        }
         case 'login': {
+          if (s.waitingOn !== null) return this.send(s, { t: 'error', req: null, code: 'forbidden', message: 'an invitee logs in on a new connection' })
           if (!this.set) {
             this.send(s, { t: 'error', req: null, code: 'unknown_brain', message: 'the relay has no such brain' })
             return ws.close(CLOSE.login_failed)
