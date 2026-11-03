@@ -37,9 +37,20 @@ export function validTask(overrides: Overrides = {}): Typed<'task'> {
   return build('task', {}, overrides)
 }
 
-/** A rule the user agreed to (always, unless properties say otherwise). */
+/** A rule the user agreed to (always, unless properties say otherwise). v0.21: a rule has an owner — agent.assistant unless the test says. */
 export function validRule(overrides: Overrides = {}): Typed<'rule'> {
-  return build('rule', { applies: 'always', why: 'test why', agreed: 'yes' }, { content: 'Do the test thing.', ...overrides })
+  return build('rule', { applies: 'always', why: 'test why', agreed: 'yes' }, { content: 'Do the test thing.', scope: 'agent.assistant', ...overrides })
+}
+
+/**
+ * A rule in global as it sits in a brain written before v0.21 (no rule is
+ * written there any more): stored in `owner`, then re-scoped raw.
+ */
+export function legacyGlobalRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, owner = 'agent.assistant'): StoredEngram {
+  const r = writes(eml).store({ ...input, type: 'rule', scope: owner } as EngramInput)
+  ;(eml as any).db.prepare(`UPDATE engrams SET scope = 'global' WHERE id = ?`).run(r.id)
+  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = 'global' WHERE id = ?`).run(r.id)
+  return { ...r, scope: 'global' }
 }
 
 export function validNote(overrides: Overrides = {}): Typed<'note'> {
@@ -198,6 +209,9 @@ export function writeEverything(eml: EML): void {
   moveOut(eml, [leaving.id], juno)
 
   updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
+
+  // v0.21: a cockpit that stamped the agent's name as the handle sets the record straight
+  eml.apply({ name: 'provenance.restamp', input: { from_handle: 'juno', to_handle: 'ada', agent: 'juno' } }, ada)
 
   // v0.21: engrams from another brain, with their history and their project
   const other = otherBrain()

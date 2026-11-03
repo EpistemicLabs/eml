@@ -131,6 +131,14 @@ const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
 ]
 
 /**
+ * v0.21 (decision rules-need-a-scope-no-global-rules): a rule has an owner —
+ * the agent whose way of working it is, the person it is about, or the project
+ * it governs. There are no global rules; global keeps facts.
+ */
+export const RULE_SCOPE = /^(agent|user|project)\./
+export const RULE_SCOPE_MESSAGE = 'Invalid engram: a rule needs an owner — scope agent.<id> (how this agent works), user.<id> (how this person wants to be worked with) or project.<id> (work in that project); global holds no rules.'
+
+/**
  * v0.8 C3: pattern validation.
  * Throws if scope does not match one of the allowed patterns.
  * (e.g. 'project' without an ID, or 'foo.bar' with an unknown prefix.)

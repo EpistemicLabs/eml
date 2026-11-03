@@ -12,9 +12,10 @@ import { brainIdOf } from './log'
 // What moves: the engrams as stored (ids, authorship, times, rev), their
 // entries, the relations inside the set, their tag and subject links, and the
 // registry rows they need — scope objects (a project with its parents), tags
-// and subjects. ord is not carried; the target appends the rows in their source
-// order. What does not: relations crossing the set (dropped in the source, and
-// the caller names them) and entries naming an engram on the other side of the
+// and subjects, and a relation's end in another brain (source_brain /
+// target_brain) with its local engram. ord is not carried; the target appends
+// the rows in their source order. What does not: relations crossing the set —
+// a local end outside it (dropped in the source, and the caller names them) and entries naming an engram on the other side of the
 // set's edge, either way (kept, the id stays as text). The source keeps its
 // registry rows; the target keeps the ones it has and creates the rest.
 //
@@ -45,7 +46,7 @@ export const MOVED_COLUMNS = {
   subjects: ['id', 'name', 'description', 'status', 'created_at', 'updated_at'],
   engrams: ['id', 'type', 'scope', 'title', 'content', 'status', 'significance', 'properties', 'origin', 'ingested_by', 'agent', 'ingestion_method', 'session_id', 'model', 'harness', 'created_at', 'updated_at', 'rev'],
   entries: ['id', 'engram_id', 'kind', 'at', 'author', 'agent', 'session_id', 'model', 'stage', 'text', 'source', 'stance', 'quote', 'rule_id'],
-  relations: ['id', 'source_id', 'target_id', 'relation', 'detection_method', 'strength', 'explanation', 'metadata', 'created_at'],
+  relations: ['id', 'source_id', 'target_id', 'relation', 'detection_method', 'strength', 'explanation', 'metadata', 'created_at', 'source_brain', 'target_brain'],
   engram_tags: ['engram_id', 'tag_id', 'created_at'],
   engram_subjects: ['engram_id', 'subject_id', 'created_at'],
 } as const
@@ -111,7 +112,8 @@ export function exportSet(db: Database.Database, ids: readonly string[]): Export
     subjects: all(`SELECT ${cols('subjects')} FROM subjects WHERE id IN (SELECT subject_id FROM engram_subjects WHERE engram_id IN (${S})) ORDER BY id`, json),
     engrams,
     entries: all(`SELECT ${cols('entries')} FROM entries WHERE engram_id IN (${S}) ORDER BY ord`, json),
-    relations: all(`SELECT ${cols('relations')} FROM relations WHERE source_id IN (${S}) AND target_id IN (${S}) ORDER BY ord`, json, json),
+    // a relation is the set's when every local end is in it; a remote end (source_brain/target_brain) rides with its local engram
+    relations: all(`SELECT ${cols('relations')} FROM relations WHERE (source_id IN (${S}) OR source_brain IS NOT NULL) AND (target_id IN (${S}) OR target_brain IS NOT NULL) ORDER BY ord`, json, json),
     engram_tags: all(`SELECT ${cols('engram_tags')} FROM engram_tags WHERE engram_id IN (${S}) ORDER BY engram_id, tag_id`, json),
     engram_subjects: all(`SELECT ${cols('engram_subjects')} FROM engram_subjects WHERE engram_id IN (${S}) ORDER BY engram_id, subject_id`, json),
   }
@@ -122,8 +124,10 @@ export function exportSet(db: Database.Database, ids: readonly string[]): Export
     if (missing.length > 0) throw new CommandError('NOT_FOUND', `${table} ${missing.join(', ')} not found in the source brain (the scope of an engram in the set)`)
   }
 
-  const crossing = db.prepare(`SELECT id, source_id, target_id, relation FROM relations WHERE (source_id IN (${S})) <> (target_id IN (${S})) ORDER BY ord`)
-    .all(json, json) as CrossingRelation[]
+  const crossing = db.prepare(`SELECT id, source_id, target_id, relation FROM relations
+    WHERE (source_id IN (${S})) <> (target_id IN (${S}))
+      AND NOT ((source_id IN (${S}) OR source_brain IS NOT NULL) AND (target_id IN (${S}) OR target_brain IS NOT NULL))
+    ORDER BY ord`).all(json, json, json, json) as CrossingRelation[]
   const external_refs = rows.entries
     .filter(e => e.rule_id !== null && !inSet.has(e.rule_id as string))
     .map(e => ({ entry_id: e.id as string, engram_id: e.engram_id as string, rule_id: e.rule_id as string }))

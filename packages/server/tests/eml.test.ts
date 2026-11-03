@@ -1537,7 +1537,7 @@ describe('EML v0.2', () => {
     it('default setter: rule gets review_due_at = now + 90d', () => {
       const t0 = Date.now()
       const e = writes(eml).store(validRule({
-        content: 'r', scope: 'global',
+        content: 'r',
         properties: { applies: 'situational', trigger: 'when it applies' },
       }))
       const dueMs = new Date((e.properties as any).review_due_at).getTime()

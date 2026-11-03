@@ -9,6 +9,7 @@ import { appendEntry } from '../entries'
 import { addDays } from '../env'
 import { renderLogContent, CONFLICT_TYPES, STORE_INPUT_KEYS, createInputKeys } from '../engrams'
 import { validateScope } from '../write/scope'
+import { RULE_SCOPE, RULE_SCOPE_MESSAGE } from '../validate'
 import { planSupersedes, applySupersedes, supersede, activeStatusState, autoSupersedeCoreProfile, autoSupersedeStatusEngrams } from '../write/supersede'
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, insertEngramTags, insertEngramSubjects } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
@@ -137,6 +138,7 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   if (type === 'profile' && !/^(agent|user|entity)\./.test(input.scope)) {
     throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
   }
+  if (type === 'rule' && !RULE_SCOPE.test(input.scope)) throw new Error(RULE_SCOPE_MESSAGE)
   if (input.from_learning !== undefined && type !== 'rule') {
     throw new Error('Invalid engram: from_learning is only for a rule that grows from learnings.')
   }

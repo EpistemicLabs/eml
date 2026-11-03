@@ -12,6 +12,7 @@ import { objectCreate, type ObjectCreateInput } from './object-create'
 import { objectUpdate, type ObjectUpdateInput } from './object-update'
 import { engramImport, type EngramImportInput, type EngramImportResult } from './engram-import'
 import { engramMoveOut, type EngramMoveOutInput, type EngramMoveOutResult } from './engram-move-out'
+import { provenanceRestamp, type ProvenanceRestampInput, type ProvenanceRestampResult } from './provenance-restamp'
 
 /** The closed command set: name → [input, result]. */
 export interface CommandMap {
@@ -25,6 +26,7 @@ export interface CommandMap {
   'object.update': [ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }]
   'engram.import': [EngramImportInput, EngramImportResult]
   'engram.move_out': [EngramMoveOutInput, EngramMoveOutResult]
+  'provenance.restamp': [ProvenanceRestampInput, ProvenanceRestampResult]
 }
 export type CommandName = keyof CommandMap
 export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] } }[CommandName]
@@ -40,6 +42,7 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
   'object.update': objectUpdate,
   'engram.import': engramImport,
   'engram.move_out': engramMoveOut,
+  'provenance.restamp': provenanceRestamp,
 }
 
 export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
@@ -72,3 +75,4 @@ export type { ObjectCreateInput } from './object-create'
 export type { ObjectUpdateInput } from './object-update'
 export type { EngramImportInput, EngramImportResult } from './engram-import'
 export type { EngramMoveOutInput, EngramMoveOutResult } from './engram-move-out'
+export type { ProvenanceRestampInput, ProvenanceRestampResult } from './provenance-restamp'

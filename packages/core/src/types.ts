@@ -286,6 +286,9 @@ export interface RelationInput {
   strength?: number
   explanation?: string
   metadata?: Record<string, unknown>
+  /** v0.21: the brain holding source_id when it is another brain (a cross-brain reference); at most one of the two. */
+  source_brain?: string
+  target_brain?: string
 }
 
 // === Stored types ===
@@ -503,6 +506,9 @@ export interface Relation {
   explanation: string | null
   metadata: Record<string, unknown> | null
   created_at: string
+  /** v0.21: the brain holding the end that is not in this brain (null = this brain); never both. */
+  source_brain: string | null
+  target_brain: string | null
 }
 
 // === Entities (v0.8 C6) — external parties (people, orgs, assets) ===
