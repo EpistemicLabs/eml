@@ -71,8 +71,9 @@ export interface MoveResult {
 
 /**
  * Moves engrams `ids` with their history from `source` into `target`, as one
- * engram.import there and one engram.move_out here. The backup is written
- * before the source is locked; the lock holds until the move_out commits and
+ * engram.import there and one engram.move_out here. A move the plan refuses
+ * now is refused before anything is written; otherwise the backup is written,
+ * then the source is locked; the lock holds until the move_out commits and
  * is released on any failure. Rejects with what a command throws (CONFLICT:
  * the plan changed, the target refused …) or what the target's write throws
  * (a write that may still land); the target then has the import only if it
@@ -82,6 +83,8 @@ export async function moveEngrams(args: MoveArgs, env: Env): Promise<MoveResult>
   const { source, target, ids, plan_hash, backup_path } = args
   checkIds(ids)
   const { from, to } = ends(source, target.db)
+  // refused before the backup when the plan says so now; checked again under the lock
+  refusalOf({ target, ids, ...planned(source, target.db, ids), plan_hash, from })
   backupBrain(source, backup_path)
   return locked(source, async () => {
     const { plan, set } = planned(source, target.db, ids)
@@ -97,14 +100,10 @@ async function runMove(
   env: Env,
 ): Promise<MoveResult> {
   const { source, target, ids, plan, set, from, to } = m
-  if (plan.plan_hash !== m.plan_hash) {
-    throw new CommandError('CONFLICT', 'move refused: the plan changed since it was made (what moves or what is dropped differs); make the plan again. Nothing was moved.', { plan_hash: plan.plan_hash })
-  }
-  let imported = importOf(target.db, from, set.set_hash, ids)
+  let imported = refusalOf(m)
   const resumed = imported !== undefined
   let created = empty()
   if (!imported) {
-    if (plan.collisions.length > 0) throw new CommandError('CONFLICT', `move refused: ${plan.collisions.join('; ')}. Nothing was moved.`)
     const input: EngramImportInput = { source: brainRef(source), set_hash: set.set_hash, rows: set.rows }
     created = (await writeTarget(target, { name: 'engram.import', input }, env)).created
     imported = importOf(target.db, from, set.set_hash, ids)
@@ -118,6 +117,19 @@ async function runMove(
     backup_path: m.backup_path, import: imported, move_out: head, moved: plan.moved, created,
     dropped_relations: out.dropped_relations, external_refs: set.external_refs, incoming_refs: set.incoming_refs, resumed,
   }
+}
+
+/**
+ * Why the move does not run: the plan is not the one confirmed, or — unless
+ * the import is in the target already (a resume, returned) — the plan refuses.
+ */
+function refusalOf(m: { target: MoveTarget, ids: string[], plan: MovePlan, set: ExportedSet, plan_hash: string, from: string }): { seq: number, op_id: string } | undefined {
+  if (m.plan.plan_hash !== m.plan_hash) {
+    throw new CommandError('CONFLICT', 'move refused: the plan changed since it was made (what moves or what is dropped differs); make the plan again. Nothing was moved.', { plan_hash: m.plan.plan_hash })
+  }
+  const imported = importOf(m.target.db, m.from, m.set.set_hash, m.ids)
+  if (!imported && m.plan.collisions.length > 0) throw new CommandError('CONFLICT', `move refused: ${m.plan.collisions.join('; ')}. Nothing was moved.`)
+  return imported
 }
 
 /** A write to the target where its writes go: through the relay for a shared brain, writeOp for a private one. */
@@ -271,6 +283,11 @@ function projectPlanned(source: Database.Database, target: Database.Database, pr
   return { plan: { ...plan, project, tree, legacy }, set, ids }
 }
 
+/** Legacy authorship refuses a project move whatever else the plan says, a resume included. */
+function refuseLegacy(plan: ProjectMovePlan): void {
+  if (plan.legacy.engrams + plan.legacy.entries > 0) throw new CommandError('CONFLICT', `move refused: ${plan.collisions[0]}. Nothing was moved.`)
+}
+
 export interface ProjectMoveArgs {
   source: Database.Database
   target: MoveTarget
@@ -295,13 +312,15 @@ export interface ProjectMoveResult extends MoveResult {
  */
 export async function moveProject(args: ProjectMoveArgs, env: Env): Promise<ProjectMoveResult> {
   const { source, target, project, plan_hash, backup_path } = args
-  // the selection is checked before the backup; the plan is made again under the lock
-  if (projectSet(source, project).ids.length === 0) throw new CommandError('INVALID', `Invalid move: project ${project} has no engrams to move.`)
   const { from, to } = ends(source, target.db)
+  // refused before the backup when the plan says so now; made and checked again under the lock
+  const first = projectPlanned(source, target.db, project)
+  refuseLegacy(first.plan)
+  refusalOf({ target, ids: first.ids, plan: first.plan, set: first.set, plan_hash, from })
   backupBrain(source, backup_path)
   return locked(source, async () => {
     const { plan, set, ids } = projectPlanned(source, target.db, project)
-    if (plan.legacy.engrams + plan.legacy.entries > 0) throw new CommandError('CONFLICT', `move refused: ${plan.collisions[0]}. Nothing was moved.`)
+    refuseLegacy(plan)
     const result = await runMove({ source, target, ids, plan, set, plan_hash, backup_path, from, to }, env)
     const stores = commandStores(EML.fromConnection(source, 'move'), source)
     const archived: string[] = []
