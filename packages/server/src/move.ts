@@ -16,7 +16,12 @@ import { Sync } from './sync/sync'
 // server owns the relay connection. The import goes through that connection
 // as a confirmed write with a longer deadline; the source is opened once more
 // for the move alone, so the lock it holds across the wait is on no one
-// else's connection (the pool's serves the other requests meanwhile).
+// else's connection; a write of another request to that brain meanwhile is
+// refused at once (write.ts busy, through `moving`) instead of waiting on
+// the lock.
+
+/** The brains a move holds right now: their writes are refused at once (write.ts busy) instead of waiting on the move's lock. */
+export const moving = new Set<string>()
 
 /** What the move's routes need of the server. */
 export interface MoveContext {
@@ -81,6 +86,7 @@ export function planMoveRoute(ctx: MoveContext, source: { brainId: string, db: D
  * the target write's own error through (503 read-only, 504 pending).
  */
 export async function moveRoute(ctx: MoveContext, source: { brainId: string, brainFile: string }, body: { target?: unknown, project?: unknown, plan_hash?: unknown }, env: Env): Promise<ProjectMoveResult> {
+  if (moving.has(source.brainId)) throw new MoveRouteError(409, 'MOVE_REFUSED', 'move refused: a move out of this brain is under way. Nothing was moved.')
   const target = targetOf(ctx, body.target, source.brainId)
   if (target.refusal) throw new MoveRouteError(409, 'MOVE_REFUSED', `move refused: ${target.refusal}. Nothing was moved.`)
   const project = projectOf(body.project)
@@ -89,6 +95,7 @@ export async function moveRoute(ctx: MoveContext, source: { brainId: string, bra
   const moveTarget: MoveTarget = { db: target.db, write: (command) => sync.write(command, env, { deadlineMs: ctx.deadlineMs }) }
   const backup_path = path.join(ctx.backupDir, 'move', `${source.brainId}-${env.now().replace(/[:.]/g, '-')}.db`)
   const db = openBrain(path.resolve(ctx.dataDir, source.brainFile))
+  moving.add(source.brainId)
   try {
     return await moveProject({ source: db, target: moveTarget, project, plan_hash: body.plan_hash, backup_path }, env)
   } catch (err) {
@@ -98,6 +105,7 @@ export async function moveRoute(ctx: MoveContext, source: { brainId: string, bra
     }
     throw err
   } finally {
+    moving.delete(source.brainId)
     db.close()
   }
 }

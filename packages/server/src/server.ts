@@ -106,7 +106,7 @@ import { applyWrite, SharedWriteError, readOnly } from './write'
 import { Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
-import { MoveRouteError, moveRoute, planMoveRoute } from './move'
+import { MoveRouteError, moveRoute, moving, planMoveRoute } from './move'
 import { joinTeamBrain } from './sync/join'
 import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parseInviteLink, ready } from '@engramprotocol/protocol'
 
@@ -487,6 +487,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
   const defaultAgent = routingResult.ctx.brainName
   const sync = syncs.get(routingResult.ctx.brainId)
+  // v0.21: a project move holds this brain (move.ts); its writes are refused at once
+  const held = moving.has(routingResult.ctx.brainId)
 
   try {
     // POST /boot
@@ -703,7 +705,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync, held)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -711,7 +713,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync)
+      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
@@ -720,13 +722,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       // id → learning.add_evidence; without → engram.create of a learning with its first evidence
       if (body.id !== undefined) {
-        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync)
+        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync, held)
         return json(res, 201, { written: true, ...r })
       }
       const { source, happened, quote, stance, rule_id, ...lesson } = body
       const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
       try {
-        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync)
+        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync, held)
         return json(res, 201, { written: true, engram, learning })
       } catch (err) {
         // the topic check found a match: nothing written, the matches named (as since v0.19)
@@ -810,7 +812,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -819,7 +821,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync, held)
       return json(res, 200, { engram })
     }
 
@@ -839,12 +841,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync)
+        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync, held)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync)
+        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync, held)
         return json(res, 200, result)
       }
     }
@@ -853,7 +855,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync)
+      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync, held)
       return json(res, 201, { ok: true, created })
     }
 

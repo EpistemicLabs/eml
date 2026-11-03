@@ -125,17 +125,31 @@ describe('moving a project into a team brain', () => {
     const plan = (await post(own.tokenPlaintext, '/move/plan', { target: BRAIN, project: 'top' })).body
     const before = opLog(own.brainFile)
     relay.dropNextAnswer = true
-    const pending = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })
+    const move = post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })
+    // meanwhile a write to the source: refused at once, nothing written, reads still work
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const started = Date.now()
+    const during = flat(validNote({ scope: 'project.elsewhere', title: 'during-the-move' }))
+    const refused = await post(own.tokenPlaintext, `/engram/${during.type}`, during.body)
+    expect(Date.now() - started).toBeLessThan(300)
+    expect(refused).toMatchObject({ status: 503, body: { code: 'BRAIN_BUSY', error: 'This brain is busy right now: a project is being moved out of it. Reads still work; try the write again in a moment.' } })
+    expect((await get(own.tokenPlaintext, `/engram/${ids.outside}`)).status).toBe(200)
+    expect(await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })).toMatchObject({ status: 409, body: { code: 'MOVE_REFUSED', error: 'move refused: a move out of this brain is under way. Nothing was moved.' } })
+    const pending = await move
     expect(pending).toMatchObject({ status: 504, body: { code: 'SHARED_WRITE_PENDING' } })
     expect(opLog(own.brainFile)).toBe(before)
+    // the move let go: the source takes writes again
+    const after = flat(validNote({ scope: 'project.elsewhere', title: 'after-the-pending-move' }))
+    expect((await post(own.tokenPlaintext, `/engram/${after.type}`, after.body)).status).toBe(201)
     expect((await get(own.tokenPlaintext, '/project/top')).body.project.status).toBe('active')
     // the plan is the same: the source did not change
     expect((await post(own.tokenPlaintext, '/move/plan', { target: BRAIN, project: 'top' })).body.plan_hash).toBe(plan.plan_hash)
     // the import landed in the relay's log; the sync reconnects and the replica takes it
     const imports = relay.log.filter(e => e.seq > 1)
     expect(imports).toHaveLength(1)
-    for (let i = 0; i < 100 && (await get(tokens[BRAIN], `/engram/${ids.task}`)).status !== 200; i++) await new Promise(resolve => setTimeout(resolve, 100))
-    expect((await get(tokens[BRAIN], `/engram/${ids.task}`)).status).toBe(200)
+    const live = async () => (await get(tokens[BRAIN], '/team')).body.state.kind === 'live' && (await get(tokens[BRAIN], `/engram/${ids.task}`)).status === 200
+    for (let i = 0; i < 100 && !(await live()); i++) await new Promise(resolve => setTimeout(resolve, 100))
+    expect(await live()).toBe(true)
 
     const r = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })
     expect(r.status).toBe(200)
@@ -162,8 +176,8 @@ describe('moving a project into a team brain', () => {
     expect(top).toMatchObject({ status: 'archived', metadata: { moved_to: BRAIN, moved_at: expect.stringMatching(/^\d{4}-/) } })
     expect((await get(own.tokenPlaintext, '/project/child')).body.project.metadata).toMatchObject({ moved_to: BRAIN })
     expect((await get(own.tokenPlaintext, `/engram/${ids.outside}?with_relations=true`)).body.relations).toEqual([])
-    // move_out and two archive ops in the source's log; a backup of the source before the move
-    expect(opLog(own.brainFile)).toBe(before + 3)
+    // the note after the pending move, then move_out and two archive ops in the source's log; a backup of the source before the move
+    expect(opLog(own.brainFile)).toBe(before + 4)
     expect(opLog(own.brainFile, `SELECT COUNT(*) AS n FROM op_log WHERE json_extract(payload, '$.call') = 'engram.move_out'`)).toBe(1)
     // one backup per attempt that got past the plan: the lost answer and the resume
     const backups = readdirSync(join(tmpDir, 'backups', 'move')).sort()
