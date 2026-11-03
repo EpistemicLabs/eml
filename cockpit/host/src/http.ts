@@ -33,6 +33,7 @@ import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './bra
 import { PasteImageError, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
+import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
@@ -330,6 +331,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     json(res, 200, { model, provider: entry.provider })
     return true
   }
+
+  // The EML account (Settings › Account): sign-in by email code, the account
+  // and its team brains, sign-out. The session stays in the host (account.ts).
+  if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
 
   // Spaces: the list, and a new local one (Settings › Brain).
   if (resource === 'spaces' && !id && method === 'GET') {
