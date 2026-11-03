@@ -36,6 +36,8 @@ export class FakeRelay {
   dropNextAppend = false
   /** the op_id of every append frame received, resends included */
   readonly appends: string[] = []
+  /** runs when an append arrives, before it is taken, with its count (a test slips another device's record in) */
+  onAppend: ((count: number) => void) | null = null
   /** every create frame received: its grant */
   readonly creates: string[] = []
   /** every key_put taken: the recipient */
@@ -203,6 +205,7 @@ export class FakeRelay {
           return
         case 'append': {
           this.appends.push(String(frame.record.op_id))
+          this.onAppend?.(this.appends.length)
           if (this.dropNextAppend) {
             this.dropNextAppend = false
             ws.close(1001)
