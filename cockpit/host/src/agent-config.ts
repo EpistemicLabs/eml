@@ -17,10 +17,8 @@ import type { ProviderId, SessionAgent } from './domain/agent-provider.js'
  * the cockpit config (config.ts), not the presence of a folder: a deleted agent
  * must stop the space's sessions, not send them into the shared folder.
  *
- * The session's identity comes from the host, not the brain's name: the session
- * files name the agent the session boots as (EML_AGENT), and the agent has its
- * own token, whose name the brain server stamps into new engrams. So one brain
- * can have several agents, each with its record on its own person's machine.
+ * This is the runtime only. The brain is not touched: sessions boot as the agent
+ * the brain is named after, and new engrams carry the person behind the token.
  *
  * This separates context, not access: every agent runs as the same OS user, so
  * one agent's shell can read another agent's folder and login.

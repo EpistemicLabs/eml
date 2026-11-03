@@ -187,7 +187,7 @@ skill list. A space without one behaves as described above; the main space keeps
 Stop the cockpit, then set one up. Start it again and run `/login` once in a session of the space:
 
 ```bash
-eml-cockpit agent create <id> --space <name|brain id> [--name <display name>] [--profile <text>] \
+eml-cockpit agent create <id> --space <name|brain id> \
   [--mcp a,b --mcp-from <json with mcpServers>] [--skills x,y] [--skills-from <folder>]
 eml-cockpit agent status [<id>]        # reads the files only; never starts `claude`
 eml-cockpit agent sync-skills <id>     # copy the listed skills in again
@@ -221,10 +221,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
 - **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
   missing, or the record does not fit, the session does not start and the pane says why. It never falls back to the
   shared folder, and nothing recreates the folder.
-- **Identity:** the host writes the agent id into the session files (`EML_AGENT`), so boot and `eml_boot` load
-  `agent.<id>`. The agent has its own token named after it, so new engrams show it in `ingested_by`. Old rows stay as
-  they are, the brain keeps its name, and workers run in their requester's space with the same files. Rules under
-  another `agent.*` scope are no longer in its boot; write them anew under the new scope if they should apply.
+- **Identity** stays in the brain: `agent create` writes nothing there and keeps the space's token. Sessions boot
+  as the agent the brain is named after, and new engrams carry the person behind the token in `ingested_by`.
+  Workers run in their requester's space with the same files.
 - **`eml-cockpit rotate-brain-token <main|name|brain id>`** replaces a brain token with the cockpit stopped: new token
   under the same name, stored in the cockpit config, old one revoked.
 
