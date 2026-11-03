@@ -144,6 +144,18 @@ describe('provenance.restamp', () => {
     expect(verify(raw(eml))).toMatchObject({ ok: true })
   })
 
+  it('is refused in a shared brain: a relayed restamp is kept as rejected and changes nothing', () => {
+    const { shared, op, take } = sharedBrain()
+    expect(take(2, op(2, 'object.create', { object: 'project', fields: { id: 'p', name: 'P' } }))).toBeNull()
+    expect(take(3, op(3, 'engram.create', validNote({ scope: 'project.p', title: 'by-juno' })))).toBeNull()
+    expect(take(4, op(4, 'provenance.restamp', { from_handle: 'juno', to_handle: 'lasse', agent: 'x' })))
+      .toBe('INVALID: Invalid command: a shared brain takes no provenance.restamp — authorship in a team brain is never rewritten.')
+    expect(raw(shared).prepare('SELECT ingested_by, agent FROM engrams WHERE title = ?').get('by-juno')).toEqual({ ingested_by: 'juno', agent: null })
+    expect(raw(shared).prepare('SELECT seq, rejected FROM op_log WHERE seq = 4').get()).toMatchObject({ seq: 4, rejected: expect.stringMatching(/^INVALID: /) })
+    expect(verify(raw(shared))).toMatchObject({ ok: true })
+    shared.close()
+  })
+
   it('takes exactly from_handle, to_handle and agent in the handle charset, and two different handles', () => {
     const run = (input: unknown) => reject(() => eml.apply({ name: 'provenance.restamp', input } as never)).message
     expect(run({ from_handle: 'motti', to_handle: 'dominik' })).toBe('Invalid command: provenance.restamp needs agent.')

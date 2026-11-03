@@ -9,6 +9,10 @@ import { CommandError, inputObject, requireText, type CommandModule } from './ty
 // becomes to_handle via agent. Rows that already name an agent, and rows of
 // other handles, stay. It is an op like any write, so a rebuild replays it;
 // rev does not move — provenance is attribution, not content.
+//
+// A shared brain refuses it: a member could otherwise seal it as an op and
+// rewrite another member's authorship on every replica. The restamp is for a
+// private brain written before the agent brain (the cockpit's upgrade).
 
 export interface ProvenanceRestampInput {
   from_handle: string
@@ -40,6 +44,7 @@ export const provenanceRestamp: CommandModule<ProvenanceRestampInput, Provenance
     return out as unknown as ProvenanceRestampInput
   },
   apply(ctx, input) {
+    if (ctx.eml.teamBrain() !== null) throw new CommandError('INVALID', 'Invalid command: a shared brain takes no provenance.restamp — authorship in a team brain is never rewritten.')
     const engrams = ctx.db.prepare('UPDATE engrams SET ingested_by = ?, agent = ? WHERE ingested_by = ? AND agent IS NULL')
       .run(input.to_handle, input.agent, input.from_handle).changes
     const entries = ctx.db.prepare('UPDATE entries SET author = ?, agent = ? WHERE author = ? AND agent IS NULL')
