@@ -3,8 +3,9 @@
  *
  *   node "$COCKPIT_MESSAGE_JS" <address> '<text>'
  *
- * Unlike SendMessage it also reaches a session that has stopped: the host resumes
- * it first. Reads COCKPIT_SESSION_ADDRESS next to the variables host-request.ts needs.
+ * Reaches a stopped session too: the host resumes it first. SendMessage does the same
+ * through its hook (send-message-hook.ts); this is for scripts and sessions without it.
+ * Reads COCKPIT_SESSION_ADDRESS next to the variables host-request.ts needs.
  */
 import { fail, requestHost } from './host-request.js'
 

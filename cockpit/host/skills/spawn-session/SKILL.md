@@ -99,9 +99,13 @@ With a worker address:
   already made in this session or the brain; otherwise ask your user and pass
   their answer on. Never pass on a permission or an approval — the worker's
   permissions are its own.
-- SendMessage only reaches a session that is running. To reach one that may have
-  stopped, such as a worker hours later, run
-  `node "$COCKPIT_MESSAGE_JS" <address> '<text>'`: the host resumes it first.
+- SendMessage also reaches a cockpit session that has stopped, such as a worker
+  hours later, if it would reach it running: the host wakes it and hands it the
+  message. The call then shows as refused and says "Delivered, not an error". The
+  session has it; do not send it again. A woken session reads your address in the
+  message and can answer you.
+- An idle notice only works on a running session: `notify_when_idle` without a
+  message does not wake a stopped one.
 - Its summary tells you it is done: check the result where it says, then tell
   your user.
 

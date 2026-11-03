@@ -191,6 +191,10 @@ async function main() {
     runsInChat: (sessionId) => providers.forSession(sessionId)
       .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
     chatRuns: (sessionId) => chat.isRunning(sessionId),
+    sameReach: (fromSessionId, sessionId) => {
+      const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent?.id ?? null
+      return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
+    },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
   watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })

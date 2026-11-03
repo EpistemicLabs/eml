@@ -211,7 +211,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
   `review`. After a host restart a worker cut off mid-turn gets one message to continue, then is marked `failed`.
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
-  (`application/deliver-message.ts`); a session in a terminal answers busy. Sessions use `$COCKPIT_MESSAGE_JS`. An outside
+  (`application/deliver-message.ts`); a session in a terminal answers busy. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
+  stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
+  one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same

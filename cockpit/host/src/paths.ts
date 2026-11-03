@@ -97,6 +97,8 @@ export function stableAppPath(file: string): string {
 export const HOOK_MCP_CLI_JS = stableAppPath(MCP_CLI_JS)
 // The turn-state hook (turn-hook.ts), named the same way.
 export const HOOK_TURN_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'turn-hook.js'))
+// The hook that lets SendMessage reach a stopped session (send-message-hook.ts), named the same way.
+export const HOOK_SEND_MESSAGE_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'send-message-hook.js'))
 export const HOOK_NODE = path.join(COCKPIT_HOME, 'bin', 'node')
 export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } chmod 600 (local loopback token)
 // Optional setup-token (Settings › Models › Advanced), injected per session only

@@ -135,7 +135,7 @@ export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, b
   return { status: 200, payload: { title } }
 }
 
-const DELIVERY_STATUS: Record<DeliveryOutcome, number> = { delivered: 200, resumed: 200, busy: 409, unknown: 404, refused: 403 }
+const DELIVERY_STATUS: Record<DeliveryOutcome, number> = { delivered: 200, resumed: 200, busy: 409, unknown: 404, refused: 403, running: 409 }
 
 /**
  * A message for a session — the one rule for all ways it arrives (POST
@@ -148,7 +148,7 @@ export async function requestMessage(
   if (!text || text.length > MAX_PROMPT) return { status: 400, payload: { error: { code: 'INVALID_TEXT', message: `text is required (max ${MAX_PROMPT} chars)` } } }
   if (typeof target !== 'string' || !target) return { status: 400, payload: { error: { code: 'INVALID_TARGET', message: 'target is required' } } }
   const from = typeof body.from === 'string' ? body.from.replace(INVISIBLE, '').trim().slice(0, MAX_TITLE) : ''
-  const outcome = await deps.deliver({ target, text, from: from || null, caller })
+  const outcome = await deps.deliver({ target, text, from: from || null, caller, ...(typeof body.onlyIfStoppedFor === 'string' ? { onlyIfStoppedFor: body.onlyIfStoppedFor } : {}) })
   return { status: DELIVERY_STATUS[outcome], payload: { outcome } }
 }
 

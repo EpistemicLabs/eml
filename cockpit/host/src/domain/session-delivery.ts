@@ -5,5 +5,6 @@
  *   busy       it can't take it now (in a terminal, or being switched); try again
  *   unknown    no such session
  *   refused    this caller may not message it, or it can't run in chat
+ *   running    it runs, so the sender's own way reaches it; nothing was sent (asked with onlyIfStopped)
  */
-export type DeliveryOutcome = 'delivered' | 'resumed' | 'busy' | 'unknown' | 'refused'
+export type DeliveryOutcome = 'delivered' | 'resumed' | 'busy' | 'unknown' | 'refused' | 'running'
