@@ -42,6 +42,8 @@
  *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
  *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
  *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
+ *   POST /move/plan         { target, project }                      → What moving a project into another brain of this server would do (v0.21; host-facing)
+ *   POST /move              { target, project, plan_hash }           → Move the project as planned: one import op in the target, one move_out here (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
@@ -106,6 +108,7 @@ import { applyWrite, SharedWriteError, readOnly } from './write'
 import { Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
+import { MoveRouteError, moveRoute, moving, planMoveRoute } from './move'
 import { joinTeamBrain } from './sync/join'
 import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parseInviteLink, ready } from '@engramprotocol/protocol'
 
@@ -153,6 +156,8 @@ const DATA_DIR = path.resolve(
 // Pre-migration backups land in <backup-dir>/pre-migration (default <data-dir>/backups).
 const BACKUP_DIR = path.resolve(getArg('backup-dir', process.env.EML_BACKUP_DIR) ?? path.join(DATA_DIR, 'backups'))
 const POOL_CAP = parseInt(process.env.EML_POOL_CAP || '50', 10)
+// v0.21: how long a project move waits for its import to be confirmed through the relay (one op of a few MB, applied on every replica)
+const MOVE_DEADLINE_MS = parseInt(process.env.EML_MOVE_DEADLINE_MS || String(5 * 60_000), 10)
 const POOL_IDLE_MIN = parseInt(process.env.EML_POOL_IDLE_TIMEOUT_MIN || '15', 10)
 
 // v0.9: version from our own package.json. Loaded synchronously at module import
@@ -487,6 +492,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
   const defaultAgent = routingResult.ctx.brainName
   const sync = syncs.get(routingResult.ctx.brainId)
+  // v0.21: a project move holds this brain (move.ts); its writes are refused at once
+  const held = moving.has(routingResult.ctx.brainId)
 
   try {
     // POST /boot
@@ -680,6 +687,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 200, sync.snapshot())
     }
 
+    // POST /move/plan, POST /move — a project with its sub-projects leaves this
+    // brain for a team brain of this server (v0.21, spec team-brain-move-project-spec;
+    // move.ts). The plan is read only and lists every reason the move would be
+    // refused; the run takes the plan's hash as the confirmation.
+    if ((url === '/move/plan' || url === '/move') && method === 'POST') {
+      const body = await readBody(req)
+      const moveCtx = { controlDb, pool, syncs, dataDir: DATA_DIR, backupDir: BACKUP_DIR, deadlineMs: MOVE_DEADLINE_MS }
+      if (url === '/move/plan') return json(res, 200, planMoveRoute(moveCtx, { brainId: routingResult.ctx.brainId, db: routingResult.ctx.brainDb }, body))
+      if (sync !== undefined) return json(res, 409, { error: 'move refused: a project moves out of a private brain only. Nothing was moved.', code: 'MOVE_REFUSED' })
+      return json(res, 200, await moveRoute(moveCtx, { brainId: routingResult.ctx.brainId, brainFile: routingResult.ctx.brainFile }, body, env))
+    }
+
     // DELETE /team — discards a brain that has no log yet: a shared brain that
     // never came to life (a stopped join, a creation the relay refused) or an
     // empty brain the host provisioned for one. The host's cleanup; a brain
@@ -704,7 +723,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync, held)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -712,7 +731,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync)
+      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
@@ -721,13 +740,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       // id → learning.add_evidence; without → engram.create of a learning with its first evidence
       if (body.id !== undefined) {
-        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync)
+        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync, held)
         return json(res, 201, { written: true, ...r })
       }
       const { source, happened, quote, stance, rule_id, ...lesson } = body
       const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
       try {
-        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync)
+        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync, held)
         return json(res, 201, { written: true, engram, learning })
       } catch (err) {
         // the topic check found a match: nothing written, the matches named (as since v0.19)
@@ -811,7 +830,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -820,7 +839,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync)
+      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync, held)
       return json(res, 200, { engram })
     }
 
@@ -840,12 +859,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync)
+        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync, held)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync)
+        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync, held)
         return json(res, 200, result)
       }
     }
@@ -854,7 +873,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync)
+      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync, held)
       return json(res, 201, { ok: true, created })
     }
 
@@ -1057,6 +1076,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.21: a write to a shared brain that is read-only right now
     // v0.21: a write to a shared brain that did not happen as asked (write.ts, sync/sync.ts)
     if (err instanceof SharedWriteError) return json(res, err.status, { error: err.message, code: err.code })
+    // v0.21: a project move the server or core refused (move.ts)
+    if (err instanceof MoveRouteError) return json(res, err.status, { error: err.message, code: err.code, ...err.data })
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
       // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev

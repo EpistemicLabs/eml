@@ -265,13 +265,14 @@ export class Sync {
    * A confirmed write: the command as an op of this device's member, sealed
    * under the current key and appended; resolves with the command's result
    * once the replica took its entry, or throws what the brain or the relay
-   * said. Read-only unless the brain is live.
+   * said. Read-only unless the brain is live. `deadlineMs` for this one write
+   * when it carries more than a usual one (a project move's import).
    */
-  async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env): Promise<CommandMap[N][1]> {
+  async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env, opts: { deadlineMs?: number } = {}): Promise<CommandMap[N][1]> {
     const refusal = this.readOnlyFor(this.state)
     if (refusal) throw refusal
     // the member's handle, as the log binds it; the agent as the host stamped it (x-eml-agent)
-    const landed = await this.submit(command.name, command.input, { ...env.actor, handle: this.replica.ownHandle() as string }, env.newId())
+    const landed = await this.submit(command.name, command.input, { ...env.actor, handle: this.replica.ownHandle() as string }, env.newId(), opts.deadlineMs)
     return landed.result as CommandMap[N][1]
   }
 
@@ -322,7 +323,7 @@ export class Sync {
    * current key and appended; resolves once the replica took its entry, with
    * the result and the seq, or throws what the brain or the relay said.
    */
-  private submit(call: string, args: unknown, provenance: Provenance, opId: string): Promise<Landed> {
+  private submit(call: string, args: unknown, provenance: Provenance, opId: string, deadlineMs = this.deadlineMs): Promise<Landed> {
     const key = this.replica.currentKey()
     if (!key) throw readOnly('this device has no key for it yet')
     const head = this.replica.head()
@@ -345,7 +346,7 @@ export class Sync {
       const timer = setTimeout(() => {
         this.writers.delete(op.op_id)
         reject(pending())
-      }, this.deadlineMs)
+      }, deadlineMs)
       this.writers.set(op.op_id, { resolve, reject, timer })
       this.unconfirmed.set(op.op_id, record)
       this.append(op.op_id, record)
