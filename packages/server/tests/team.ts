@@ -93,6 +93,11 @@ export class Team {
     return json(wrapKey(this.set, this.keys[epoch], deviceSign, wrapper.sign))
   }
 
+  /** The hash of the state this replica holds — what a checkpoint at its head states. */
+  stateHash(): string {
+    return EML.fromConnection(this.db, 'test').stateHash()
+  }
+
   /** The log anchor an accept names: the genesis op_id, this replica's head and its chain link. */
   anchor(): { genesis: string, seq: number, head_hash: string } {
     const rows = this.db.prepare('SELECT seq, op_id, hash FROM op_log ORDER BY seq').all() as Array<{ seq: number, op_id: string, hash: string }>
