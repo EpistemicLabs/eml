@@ -28,7 +28,7 @@ describe('the command set', () => {
     expect(COMMAND_NAMES).toEqual([
       'engram.create', 'engram.update', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
-      'engram.import', 'engram.move_out',
+      'engram.import', 'engram.move_out', 'provenance.restamp',
     ])
     const WRITE = /^(store|create|update|track|learn$|addEvidence|confirm|relate|insert|append|link|supersede|close|move|replace|set|delete)/i
     const methods = (o: object): string[] => {
@@ -130,7 +130,7 @@ describe('the command set', () => {
       const rel = (extra: Record<string, unknown>) => ({ name: 'relation.create' as const, input: { source_id: a.id, target_id: b.id, relation: 'supports', ...extra } as never })
       const before = count('relations')
       expect(reject(() => eml.apply(rel({ scope: 'global', bogus: 1 })))).toMatchObject({
-        code: 'INVALID', message: 'unknown fields scope, bogus — a relation takes source_id, target_id, relation, detection_method, strength, explanation, metadata',
+        code: 'INVALID', message: 'unknown fields scope, bogus — a relation takes source_id, target_id, relation, detection_method, strength, explanation, metadata, source_brain, target_brain',
       })
       expect(reject(() => eml.apply(rel({ detection_method: 'bogus' })))).toMatchObject({
         code: 'INVALID', message: 'invalid detection_method "bogus" — one of manual, agent_declared, auto_temporal, auto_semantic',

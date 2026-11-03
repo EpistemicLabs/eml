@@ -15,12 +15,12 @@
       "properties": { "applies": "always", "why": "A failing build reached the shop once and took an evening to roll back.", "agreed": "Alex, when the brain was set up" }
     },
     {
-      "key": "r-commit-english", "type": "rule", "scope": "global", "title": "commit-messages-english", "age_days": 110,
+      "key": "r-commit-english", "type": "rule", "scope": "agent.assistant", "title": "commit-messages-english", "age_days": 110,
       "content": "Write commit messages in English, imperative mood, one change per commit.",
       "properties": { "applies": "always", "why": "The repository is shared with a freelance developer who reads English.", "agreed": "Alex, when the brain was set up" }
     },
     {
-      "key": "r-no-friday-deploys", "type": "rule", "scope": "global", "title": "no-friday-deploys", "age_days": 90,
+      "key": "r-no-friday-deploys", "type": "rule", "scope": "agent.assistant", "title": "no-friday-deploys", "age_days": 90,
       "content": "No production deploys on Fridays after 14:00; wait until Monday morning.",
       "properties": { "applies": "situational", "trigger": "deploying anything to production", "why": "A Friday deploy broke checkout once and nobody was around to fix it over the weekend.", "agreed": "Alex, after that weekend" }
     },

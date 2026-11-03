@@ -54,13 +54,13 @@ describe('v0.19 write model', () => {
     it('checks field kinds and enums', () => {
       expect(() => writes(eml).store(validEvent({ properties: { change_type: 'launched' } }))).toThrow(/change_type must be one of created, started/)
       expect(() => writes(eml).store(validEvent({ properties: { occurred_at: 'yesterday' } }))).toThrow(/occurred_at must be an ISO date/)
-      expect(() => writes(eml).store(validRule({ properties: { rule_type: 'guideline' } }))).toThrow(/rule_type must be one of/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', properties: { rule_type: 'guideline' } }))).toThrow(/rule_type must be one of/)
       expect(() => writes(eml).store(validStatus({ properties: { blockers: 'one' } }))).toThrow(/blockers must be a list of text/)
       expect(() => writes(eml).store(validProfile({ properties: { core: 'yes' } }))).toThrow(/core must be true or false/)
     })
 
     it('every type needs its required fields; a rule needs why and agreed', () => {
-      expect(() => writes(eml).store({ type: 'rule', scope: 'global', title: 'r', content: 'Do X.', properties: { applies: 'always' } }))
+      expect(() => writes(eml).store({ type: 'rule', scope: 'agent.juno', title: 'r', content: 'Do X.', properties: { applies: 'always' } }))
         .toThrow('Invalid engram: a rule needs why. a rule needs agreed.')
       expect(() => writes(eml).store({ type: 'reference', scope: 'global', title: 'r', content: 'x' })).toThrow('a reference needs source.')
       expect(() => writes(eml).store({ type: 'log', scope: 'global', title: 'l', content: 'x' })).toThrow('a log needs what.')
@@ -372,7 +372,7 @@ describe('v0.19 write model', () => {
     })
 
     it('confirmReview needs text for a decision, rule or profile and writes the same review entry', () => {
-      const r = writes(eml).store(validRule())
+      const r = writes(eml).store(validRule({ scope: 'agent.juno' }))
       expect(() => writes(eml).confirmReview(r.id)).toThrow('Invalid engram: confirming a review needs text — why it still holds.')
       writes(eml).confirmReview(r.id, 'still how we work', ctx())
       expect(eml.engrams.entries(r.id).map(e => `${e.kind}:${e.text}`)).toEqual(['review:still how we work'])
@@ -501,8 +501,8 @@ describe('v0.19 write model', () => {
       expect(statusOf(a.engram.id)).toBe('superseded')
       expect(edge(rule.id, a.engram.id, 'supersedes')).toBeTruthy()
       expect(() => writes(eml).store(validNote({ from_learning: [a.engram.id] }))).toThrow(/from_learning is only for a rule/)
-      expect(() => writes(eml).store(validRule({ from_learning: [a.engram.id] }))).toThrow(/is superseded, not active/)
-      expect(() => writes(eml).store(validRule({ from_learning: [rule.id] }))).toThrow(/is not a learning/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', from_learning: [a.engram.id] }))).toThrow(/is superseded, not active/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', from_learning: [rule.id] }))).toThrow(/is not a learning/)
       expect(() => writes(eml).learn({ id: a.engram.id, source: 'self', happened: 'x' })).toThrow(/evidence goes to an active learning/)
     })
 

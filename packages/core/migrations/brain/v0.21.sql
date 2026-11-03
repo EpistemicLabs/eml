@@ -155,7 +155,10 @@ CREATE TABLE relations (
   metadata            TEXT,
   created_at          TEXT NOT NULL,
   ord                 INTEGER NOT NULL,           -- insertion order (v0.21), as engrams.ord
-  UNIQUE(source_id, target_id, relation)
+  source_brain        TEXT,                       -- the brain holding source_id when it is not this one (v0.21, cross-brain reference)
+  target_brain        TEXT,                       -- as source_brain for target_id; at least one end is in this brain
+  UNIQUE(source_id, target_id, relation),
+  CHECK(source_brain IS NULL OR target_brain IS NULL)
 );
 CREATE INDEX idx_relations_source         ON relations(source_id);
 CREATE INDEX idx_relations_target         ON relations(target_id);

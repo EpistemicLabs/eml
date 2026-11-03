@@ -71,6 +71,7 @@ describe('writes through the op log', () => {
     other.close()
     const importOp = payloadOf(last(eml)).op_id
     write('engram.move_out', { ids: [l.id], set_hash: exportSet(raw(eml), [l.id]).set_hash, drop_relations: [], target: { brain: 'elsewhere', op_id: importOp } })
+    write('provenance.restamp', { from_handle: 'juno', to_handle: 'ada', agent: 'juno' })
     expect([...used].sort()).toEqual([...COMMAND_NAMES].sort())
     eml.close()
   })

@@ -24,6 +24,8 @@ export interface EngramRow {
 export interface RelationRow {
   id: string, source_id: string, target_id: string, relation: string, detection_method: string,
   strength: number, explanation: string | null, metadata: string | null, created_at: string,
+  /** v0.21: the brain of a remote end (cross-brain reference), null = this brain. */
+  source_brain?: string | null, target_brain?: string | null,
 }
 
 /** An engram row as given, its search entry and the next ord. */
@@ -60,12 +62,13 @@ export function insertEngram(ctx: WriteContext, row: {
 /** A relation row as given with the next ord, unless the same (source, target, relation) exists; true when it is new. */
 export function insertRelationRow(db: Database.Database, row: RelationRow): boolean {
   const info = db.prepare(`
-    INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ord)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations))
+    INSERT INTO relations (id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ord, source_brain, target_brain)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(ord), 0) + 1 FROM relations), ?, ?)
     ON CONFLICT(source_id, target_id, relation) DO NOTHING
   `).run(
     row.id, row.source_id, row.target_id, row.relation, row.detection_method,
     row.strength, row.explanation, row.metadata, row.created_at,
+    row.source_brain ?? null, row.target_brain ?? null,
   )
   return info.changes > 0
 }
@@ -74,11 +77,13 @@ export function insertRelationRow(db: Database.Database, row: RelationRow): bool
 export function insertRelation(ctx: WriteContext, rel: {
   source_id: string, target_id: string, relation: string, detection_method: string,
   strength?: number, explanation?: string | null, metadata?: string | null,
+  source_brain?: string | null, target_brain?: string | null,
 }): boolean {
   return insertRelationRow(ctx.db, {
     id: ctx.stamp.newId(), source_id: rel.source_id, target_id: rel.target_id,
     relation: rel.relation, detection_method: rel.detection_method,
     strength: rel.strength ?? 1.0, explanation: rel.explanation ?? null, metadata: rel.metadata ?? null,
     created_at: ctx.stamp.at,
+    source_brain: rel.source_brain ?? null, target_brain: rel.target_brain ?? null,
   })
 }

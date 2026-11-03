@@ -279,10 +279,39 @@ const LEARNING_CHECKS: readonly HygieneCheck[] = [
   },
 ]
 
+// --- Schema 21 (agent brain) -----------------------------------------------------
+//
+// Rules have an owner (decision rules-need-a-scope-no-global-rules): a new rule
+// is refused in global; one written before v0.21 sits there until it is
+// re-scoped. The cockpit's upgrade moves a space's global rules to its bound
+// agent; a brain outside the cockpit gets this check.
+
+const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'rule-in-global-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A rule has an owner: agent.<id> for how an agent works, user.<id> for how a person wants to be worked with, ' +
+      'project.<id> for work in a project. Global holds no rules.',
+    how:
+      'Re-scope the rule with eml_update(scope): agent.<id> when it says how the agent works (the usual case for a ' +
+      'rule written before v0.21), user.<id> when it is about the person, project.<id> when it governs that project. ' +
+      'In a brain with one agent, that agent is the owner. Unsure between agent and user → ask the user.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && c.scope === 'global')
+        .map(c => finding(c, 'a rule in global has no owner.'))
+    },
+  },
+]
+
 /** Every check, migration checks by schema, then the recurring review. */
 export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
   ...SCHEMA_19_CHECKS,
+  ...SCHEMA_21_CHECKS,
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
   ...LEARNING_CHECKS,
 ]

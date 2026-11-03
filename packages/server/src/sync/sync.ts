@@ -271,8 +271,8 @@ export class Sync {
   async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env, opts: { deadlineMs?: number } = {}): Promise<CommandMap[N][1]> {
     const refusal = this.readOnlyFor(this.state)
     if (refusal) throw refusal
-    // the member's handle, as the log binds it; the agent is not stamped yet
-    const landed = await this.submit(command.name, command.input, { ...env.actor, handle: this.replica.ownHandle() as string, agent: null }, env.newId(), opts.deadlineMs)
+    // the member's handle, as the log binds it; the agent as the host stamped it (x-eml-agent)
+    const landed = await this.submit(command.name, command.input, { ...env.actor, handle: this.replica.ownHandle() as string }, env.newId(), opts.deadlineMs)
     return landed.result as CommandMap[N][1]
   }
 

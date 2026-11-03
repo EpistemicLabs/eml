@@ -15,7 +15,7 @@ describe('rule and profile format', () => {
   afterEach(() => { eml.close() })
 
   const storeRule = (content: string, properties: Record<string, unknown>) =>
-    writes(eml).store({ type: 'rule', scope: 'global', title: 'r', content, properties: { why: 'w', agreed: 'yes', ...properties } })
+    writes(eml).store({ type: 'rule', scope: 'agent.assistant', title: 'r', content, properties: { why: 'w', agreed: 'yes', ...properties } })
 
   // A legacy entry as it sits in an existing brain (written before the format).
   const plantLegacy = (id: string, content: string, properties?: Record<string, unknown>) => {

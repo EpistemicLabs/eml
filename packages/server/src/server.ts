@@ -83,6 +83,8 @@ import {
   renderRecallMarkdown,
   renderBrainStateMarkdown,
   ALL_RULES,
+  BOOT_PARTS,
+  type BootPart,
   ENGRAM_TYPES,
   UPGRADE_HINT,
   splitFields,
@@ -421,6 +423,9 @@ function rejectNestedProperties(type: EngramType, body: RequestBody): void {
   }
 }
 
+/** An agent as provenance names it (core apply-op.ts AGENT; decision provenance-agent-field). */
+const AGENT_HEADER = /^[a-z0-9_-]{1,63}$/
+
 const header = (req: IncomingMessage, name: string): string | null => {
   const v = req.headers[name]
   const s = Array.isArray(v) ? v[0] : v
@@ -499,11 +504,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // hook passes the limit of the harness it serves (core/boot.ts, "Size budget").
       const budget = typeof body.budget === 'number' && Number.isFinite(body.budget) && body.budget > 0
         ? Math.floor(body.budget) : undefined
+      // part: the cockpit host composes a session's boot from the agent's brain
+      // (identity) and this server's system rules (core/boot.ts BootPart).
+      if (body.part !== undefined && !BOOT_PARTS.includes(body.part)) {
+        return json(res, 400, { error: `part must be one of ${BOOT_PARTS.join(', ')}` })
+      }
       const result = boot(eml, body.agent || defaultAgent, {
         reviewDays,
         version: SERVER_VERSION,
         systemRules: ALL_RULES,
         ...(budget !== undefined && { budget }),
+        ...(body.part !== undefined && { part: body.part as BootPart }),
       })
       return json(res, 200, result)
     }
@@ -519,8 +530,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.19: who writes. The token gives the handle; the MCP server adds the
     // session, model and harness it runs in. Other callers write as 'direct'.
     // v0.20: the write env — the brain's clock and ids with this actor.
+    // v0.21: x-eml-agent names the agent that writes for the handle — set by
+    // the cockpit host from the space's binding (decision cockpit-identity-agent-brain).
+    const agent = header(req, 'x-eml-agent')
+    if (agent !== null && !AGENT_HEADER.test(agent)) {
+      return json(res, 400, { error: 'x-eml-agent is 1–63 characters of a-z, 0-9, _ and -' })
+    }
     const env = eml.env({
       handle: authCtx.caller ?? null,
+      agent,
       session_id: header(req, 'x-eml-session') ?? null,
       model: header(req, 'x-eml-model') ?? null,
       harness: header(req, 'x-eml-harness') ?? null,

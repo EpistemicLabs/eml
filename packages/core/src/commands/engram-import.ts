@@ -12,6 +12,7 @@ import {
 import { activeCoreProfileIn, activeStatusIn } from '../write/supersede'
 import { insertEngramTagRow, insertEngramSubjectRow } from '../write/tags-subjects'
 import { MOVED_COLUMNS, setHash, type MovedRow, type MovedRows, type MovedTable } from '../log/move'
+import { teamBrainOf } from '../log/log'
 import { CommandError, inputObject, type CommandModule } from './types'
 
 /** What an import carries: the rows of the set (log/move.ts exportSet), their hash and the brain they come from. */
@@ -213,8 +214,10 @@ function checkLinks(rows: MovedRows): void {
   for (const e of rows.entries) outside(`entry ${e.id} belongs to engram`, e.engram_id, engrams)
   const triples = new Set<string>()
   for (const r of rows.relations) {
-    outside(`relation ${r.id} starts at engram`, r.source_id, engrams)
-    outside(`relation ${r.id} ends at engram`, r.target_id, engrams)
+    // an end in another brain (v0.21 cross-brain reference) is that brain's to have
+    if (r.source_brain === null) outside(`relation ${r.id} starts at engram`, r.source_id, engrams)
+    if (r.target_brain === null) outside(`relation ${r.id} ends at engram`, r.target_id, engrams)
+    if (r.source_brain !== null && r.target_brain !== null) invalid(`relation ${r.id} has both ends in another brain`)
     const triple = `${r.source_id} ${r.relation} ${r.target_id}`
     if (triples.has(triple)) invalid(`relation ${r.id} repeats ${triple}`)
     triples.add(triple)
@@ -304,6 +307,12 @@ export function importProblems(stores: ImportStores, rows: MovedRows): string[] 
     if (!created.has(p.parent_project as string) && !stores.projects.exists(p.parent_project as string)) {
       problems.push(`project ${p.id} needs its parent ${p.parent_project}, which is neither carried nor in this brain`)
     }
+  }
+  // v0.21 cross-brain references: a shared brain holds none (relation.create
+  // refuses them, so would the replay); the plan says so before anything moves
+  if (teamBrainOf(db) !== null) {
+    const remote = rows.relations.filter(r => r.source_brain !== null || r.target_brain !== null).map(r => r.id)
+    if (remote.length > 0) problems.push(`relation${remote.length > 1 ? 's' : ''} ${remote.join(', ')} point${remote.length > 1 ? '' : 's'} into another brain, which a shared brain holds no relation into`)
   }
   return problems
 }
