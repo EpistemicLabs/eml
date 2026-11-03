@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import { CommandError } from '../commands/types'
 import { scopeObject } from '../validate'
-import { canonicalJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
+import { canonicalJson, sha256Hex } from '@engramprotocol/protocol/log'
+import { brainIdOf } from './log'
 
 // --- Moving engrams between brains (v0.21) ---------------------------------------
 //
@@ -162,12 +163,16 @@ function projectsWithParents(db: Database.Database, engrams: MovedRow[]): MovedR
   return out
 }
 
-/** A brain as the other side of a move names it: its genesis op_id and its head seq. */
+/**
+ * A brain as the other side of a move names it: its id — the one its genesis
+ * carries (args.brain, brainIdOf: the control db's id, what a cross-brain
+ * relation names too) — and its head seq.
+ */
 export function brainRef(db: Database.Database): { brain: string, head_seq: number } {
-  const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined
-  if (!genesis) throw new Error('the brain has no op log')
+  const brain = brainIdOf(db)
+  if (brain === null) throw new Error('the brain has no genesis naming its id')
   const head = db.prepare('SELECT MAX(seq) AS seq FROM op_log').get() as { seq: number }
-  return { brain: (JSON.parse(genesis.payload) as OpEnvelope).op_id, head_seq: head.seq }
+  return { brain, head_seq: head.seq }
 }
 
 /** A project of a move's tree: its id and how many engrams of the set live in it. */
