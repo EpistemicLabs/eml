@@ -73,7 +73,8 @@ export function rehome(source: ProjectRegistry, target: ProjectRegistry, brainPr
 function carry(target: ProjectRegistry, brainProjectId: string, entry: ProjectEntry): void {
   target.ensureBrain(brainProjectId, entry.displayName)
   const projectId = projectIdForBrain(brainProjectId)
-  target.update(projectId, { displayName: entry.customName, starred: entry.starred, hidden: entry.hidden })
+  // the brain's name as the registry knew it is the display name's fallback when there is no custom one
+  target.update(projectId, { displayName: entry.customName, brainName: entry.displayName, starred: entry.starred, hidden: entry.hidden })
   if (entry.path) {
     try {
       target.update(projectId, { path: entry.path })
