@@ -46,6 +46,18 @@ export function reviewHoldsFocus(paneId: string): boolean {
   return state?.paneId === paneId;
 }
 
+// The bar on screen registers how it takes the keyboard back.
+let focusBar: (() => void) | null = null;
+
+export function setReviewBarFocus(focus: (() => void) | null): void {
+  focusBar = focus;
+}
+
+/** A reply sent from the review pane: the keyboard goes back to the bar, so D and A step again. */
+export function returnToReviewBar(paneId: string): void {
+  if (reviewHoldsFocus(paneId)) focusBar?.();
+}
+
 export function useReview(): ReviewState | null {
   return useSyncExternalStore(
     (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },

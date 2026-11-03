@@ -9,6 +9,7 @@ import {
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { returnToReviewBar } from '@/stores/useReviewStore';
 import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
@@ -469,9 +470,13 @@ export function ChatPane({
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
     const sent = send(text, images);
-    if (sent) pinWhenSentArrives.current = true;
+    if (sent) {
+      pinWhenSentArrives.current = true;
+      // Replied during a review: the keyboard goes back to its bar, the session stays on screen.
+      returnToReviewBar(paneId);
+    }
     return sent;
-  }, [send]);
+  }, [send, paneId]);
 
   // Pinned on arrival, not on send: the message comes back from the host, and an input
   // shrinking in between scrolls the view up, which the library takes for the reader's doing.

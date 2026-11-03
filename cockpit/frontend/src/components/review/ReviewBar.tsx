@@ -5,7 +5,7 @@ import { MARK_WORD, sessionMark, type AllSession } from '@/components/sidebar/al
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { answerCurrent, endReview, finishCurrent, liveQueue, stepReview } from '@/lib/review-flow';
-import { useReview } from '@/stores/useReviewStore';
+import { setReviewBarFocus, useReview } from '@/stores/useReviewStore';
 import { useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -30,7 +30,8 @@ const isTyping = (target: EventTarget | null): boolean => {
 /**
  * The review flow's bar on top of its pane: where it is in the queue, and what
  * the session asks for. The bar holds the keyboard: after every step the focus
- * is on it, and its pane's terminal or chat input takes it only on R or a click.
+ * is on it, and its pane's terminal or chat input takes it only on R or a click;
+ * a reply sent from the chat input gives it back.
  * D goes on (right), A goes back (left), E takes the session out (on a question it goes to the answer
  * box), R goes to the reply box, Esc ends the flow (in the answer box it only
  * comes back to the bar). The keys act only here, never on another desk. A
@@ -83,6 +84,10 @@ function ActiveReviewBar() {
     setError(null);
     barRef.current?.focus({ preventScroll: true });
   }, [currentId]);
+  useEffect(() => {
+    setReviewBarFocus(() => barRef.current?.focus({ preventScroll: true }));
+    return () => setReviewBarFocus(null);
+  }, []);
   const reply = () => {
     if (isQuestion) { answerRef.current?.focus(); return; }
     const pane = barRef.current?.parentElement;

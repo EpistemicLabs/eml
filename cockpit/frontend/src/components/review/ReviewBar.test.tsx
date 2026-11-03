@@ -19,7 +19,7 @@ const flow = vi.hoisted(() => ({
 vi.mock('@/lib/review-flow', async (original) => ({ ...(await original<typeof import('@/lib/review-flow')>()), ...flow }));
 
 const { ReviewBar } = await import('./ReviewBar');
-const { setReview } = await import('@/stores/useReviewStore');
+const { returnToReviewBar, setReview } = await import('@/stores/useReviewStore');
 
 const result = { id: 'a', spaceId: 'main', summary: 'First', attention: { kind: 'done', at: '2026-11-03T00:00:00Z' } } as unknown as AllSession;
 const question = { id: 'q', spaceId: 'main', summary: 'Asks', attention: { kind: 'question', at: '2026-11-03T00:00:00Z', reason: 'Which one?' } } as unknown as AllSession;
@@ -88,5 +88,16 @@ describe('the review bar', () => {
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(document.activeElement).toBe(bar());
     expect(flow.endReview).not.toHaveBeenCalled();
+  });
+  it('takes the keyboard back after a reply is sent from its pane', () => {
+    open(result);
+    const input = document.createElement('textarea');
+    document.body.appendChild(input);
+    input.focus();
+    act(() => returnToReviewBar('other-pane'));
+    expect(document.activeElement).toBe(input);
+    act(() => returnToReviewBar('pane'));
+    expect(document.activeElement).toBe(bar());
+    input.remove();
   });
 });
