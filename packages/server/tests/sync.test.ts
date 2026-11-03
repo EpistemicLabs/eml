@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
-import { inviteLink, inviteNotice, joinAccept, newInvite, openJoin, ready, type Invite } from '@engramprotocol/protocol'
+import { inviteLink, inviteNotice, joinAccept, newInvite, openJoin, openRecord, ready, type Invite } from '@engramprotocol/protocol'
 import { EML, CommandError, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
-import { Sync, untrusted, type SyncState } from '../src/sync/sync'
+import { CHECKPOINT_EVERY, Sync, untrusted, type SyncState } from '../src/sync/sync'
 import { createTeamBrain } from '../src/sync/create'
 import { joinTeamBrain } from '../src/sync/join'
 import type { TeamFile } from '../src/sync/team-file'
@@ -26,11 +26,11 @@ afterEach(async () => {
 })
 
 /** juno's team, its relay holding the genesis (and juno's epoch-0 key unless `withKey` is false), and juno's device synced to it. */
-async function connected(opts: { withKey?: boolean, deadlineMs?: number } = {}): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML }> {
+async function connected(opts: { withKey?: boolean, deadlineMs?: number, checkpointEvery?: number } = {}): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML }> {
   const team = new Team()
   relay = await FakeRelay.start(BRAIN, team.genesis())
   if (opts.withKey !== false) relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
-  sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: opts.deadlineMs ?? 3000, backoffMs: [20, 100] })
+  sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: opts.deadlineMs ?? 3000, backoffMs: [20, 100], checkpointEvery: opts.checkpointEvery })
   sync.start()
   await until(() => sync!.state.kind === 'live')
   return { team, relay, sync, eml: EML.fromConnection(team.db, 'test') }
@@ -469,6 +469,39 @@ describe('joining a team brain', () => {
     expect(relay.joins).toHaveLength(3)
   })
 
+  /** The inviter's checkpoint right after the member was added, with `stateHash` (default: the right one), in the relay's log. */
+  function checkpointed(team: Team, join: ReturnType<typeof openJoin>, stateHash?: string): void {
+    const added = team.addJoiner(join)
+    relay!.inject(added)
+    team.deliver(added, 2, relay!.log[1].at)
+    relay!.inject(team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 2, state_hash: stateHash ?? team.stateHash() } }))
+  }
+
+  it('replays the checkpoint the inviter wrote and reaches the state it names', async () => {
+    const { team, invite, link } = await invited()
+    const { db, eml, file } = joiner(link)
+    const sync = started(db, file)
+    await sync.whenLive()
+    const play = inviter(team, invite)
+    checkpointed(team, play.accept())
+    play.key(file.device.sign.publicKey)
+    await until(() => sync.state.kind === 'live')
+    expect(eml.hasGenesis()).toBe(true)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM op_log WHERE rejected IS NULL').get()).toEqual({ n: 3 })
+  })
+
+  it('stops when the checkpoint the inviter wrote names another state', async () => {
+    const { team, invite, link } = await invited()
+    const { db, file } = joiner(link)
+    const sync = started(db, file)
+    await sync.whenLive()
+    const play = inviter(team, invite)
+    checkpointed(team, play.accept(), 'f'.repeat(64))
+    play.key(file.device.sign.publicKey)
+    await until(() => sync.state.kind === 'stopped')
+    expect(sync.state).toEqual({ kind: 'stopped', why: 'the state at seq 2 differs from the checkpoint' })
+  })
+
   it('stops when the accept cannot be kept in the team file, with the join still there for a restart', async () => {
     const { team, invite, link } = await invited()
     const { db, file } = joiner(link)
@@ -479,5 +512,95 @@ describe('joining a team brain', () => {
     expect(sync.state).toEqual({ kind: 'stopped', why: 'its team file could not be written' })
     expect(file.join).toBeDefined()
     expect(file.accept).toBeUndefined()
+  })
+})
+
+describe('checkpoints', () => {
+  /** The opened envelope of a relay log entry (juno's team holds every epoch key). */
+  const opened = (team: Team, entry: { record: Record<string, unknown> }) => openRecord(entry.record, BRAIN, epoch => team.keys[epoch]?.key).envelope
+  const checkpoint = (team: Team, entry: { record: Record<string, unknown> }, seq: number) => {
+    const op = opened(team, entry)
+    expect(op.call).toBe('brain.checkpoint')
+    expect(op.args).toEqual({ seq, state_hash: team.stateHash() })
+    expect(op.provenance.handle).toBe('juno')
+  }
+  /** mira, a member whose device writes from elsewhere. */
+  async function withMira(): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML, mira: ReturnType<typeof person> }> {
+    const c = await connected()
+    const mira = person('mira')
+    c.relay.inject(c.team.addMember(mira))
+    await until(() => c.team.head === 2)
+    return { ...c, mira }
+  }
+
+  it('writes the hash of the state after its head, right after it, as a sealed op of its member', async () => {
+    const { team, relay, sync, eml } = await connected()
+    expect(await sync.checkpoint()).toEqual({ seq: 2 })
+    checkpoint(team, relay.log[1], 1)
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-after' }) }, env(eml))
+    expect(await sync.checkpoint()).toEqual({ seq: 4 })
+    checkpoint(team, relay.log[3], 3)
+    expect(relay.log).toHaveLength(4)
+    expect(CHECKPOINT_EVERY).toBe(200)
+  })
+
+  it('tries again when another write came in between — three times, then CHECKPOINT_NOT_ADJACENT', async () => {
+    const { team, relay, sync, mira } = await withMira()
+    relay.onAppend = (n) => { if (n <= 2) relay.inject(team.write(mira, `t-slip-${n}`)) }
+    expect(await sync.checkpoint()).toEqual({ seq: 7 })  // 3 slip, 4 stale, 5 slip, 6 stale, 7 counts
+    expect(relay.appends).toHaveLength(3)
+    checkpoint(team, relay.log[6], 6)
+    relay.onAppend = (n) => relay.inject(team.write(mira, `t-slip-${n}`))
+    const err = await failure(sync.checkpoint())
+    expect(err).toBeInstanceOf(SharedWriteError)
+    expect(err).toMatchObject({ status: 409, code: 'CHECKPOINT_NOT_ADJACENT', message: 'The checkpoint did not land right after the state it names; other writes came in between. Try again.' })
+    expect(relay.appends).toHaveLength(6)
+    expect(relay.log).toHaveLength(13)
+    relay.onAppend = null
+    expect(await sync.checkpoint()).toEqual({ seq: 14 })
+  })
+
+  it('is read-only like a write', async () => {
+    const { relay, sync } = await connected()
+    relay.closeAll()
+    await until(() => sync.state.kind === 'offline')
+    expect(((await failure(sync.checkpoint())) as Error).message).toMatch(/read-only right now: it is not connected to its relay/)
+  })
+
+  it('writes one by itself once the log grew by checkpointEvery entries, and stands back when another device\'s counted first', async () => {
+    const { team, relay, sync, mira } = await (async () => {
+      const c = await connected({ checkpointEvery: 4 })
+      const mira = person('mira')
+      c.relay.inject(c.team.addMember(mira))  // entry 2: one since the genesis
+      await until(() => c.team.head === 2)
+      return { ...c, mira }
+    })()
+    for (let i = 1; i <= 3; i++) relay.inject(team.write(mira, `t-${i}`))  // 3, 4, 5: four since the genesis
+    await until(() => relay!.log.length === 6)
+    checkpoint(team, relay.log[5], 5)
+    expect(relay.appends).toHaveLength(1)
+    // mira's checkpoint lands before this device's: the own one is not tried again
+    relay.onAppend = () => relay.inject(team.write(mira, '', { call: 'brain.checkpoint', args: { seq: team.head, state_hash: team.stateHash() } }))
+    for (let i = 4; i <= 7; i++) relay.inject(team.write(mira, `t-${i}`))  // 7..10
+    await until(() => relay!.log.length === 12)  // 11 mira's checkpoint, 12 this device's, stale
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(relay.log).toHaveLength(12)
+    expect(relay.appends).toHaveLength(2)
+    expect(sync.state).toEqual({ kind: 'live' })
+  })
+
+  it('counts from the last checkpoint in the log when it starts', async () => {
+    const team = new Team()
+    relay = await FakeRelay.start(BRAIN, team.genesis())
+    relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
+    const other = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: 3000, backoffMs: [20, 100], checkpointEvery: 1000 })
+    other.start()
+    await until(() => other.state.kind === 'live')
+    for (let i = 1; i <= 3; i++) await other.write({ name: 'engram.create', input: validNote({ title: `t-${i}` }) }, env(EML.fromConnection(team.db, 'test')))
+    other.close()
+    sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: 3000, backoffMs: [20, 100], checkpointEvery: 3 })
+    sync.start()
+    await until(() => relay!.log.length === 5)
+    checkpoint(team, relay.log[4], 4)
   })
 })
