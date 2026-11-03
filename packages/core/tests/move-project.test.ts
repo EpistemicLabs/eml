@@ -258,7 +258,9 @@ describe('moveProject', () => {
     const s = source(file)
     const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
     // another connection to the source, as another request of the server would hold one
-    const other = EML.fromConnection(new Database(file, { timeout: 50 }), 'other')
+    // (closed by hand below: an EML over a borrowed connection does not close it)
+    const otherDb = new Database(file, { timeout: 50 })
+    const other = EML.fromConnection(otherDb, 'other')
     let busy: unknown
     const t = sharedTarget(shared, {
       before: async () => {
@@ -278,7 +280,7 @@ describe('moveProject', () => {
     writes(other).store(validNote({ scope: 'project.elsewhere', title: 'after-the-move' }))
     expect(verify(raw(s.eml))).toMatchObject({ ok: true })
     expect(verify(raw(shared))).toMatchObject({ ok: true })
-    other.close(); shared.close(); s.eml.close()
+    otherDb.close(); shared.close(); s.eml.close()
   })
 
   it('a write that may still land: nothing removed, the source unlocked; the same plan again resumes without a second import', async () => {
