@@ -1,0 +1,92 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { AllSession } from '@/components/sidebar/allSessions';
+
+// The review bar holds the keyboard: J, K, E, R and Esc act on it alone, a key
+// never lands in an input by itself, and Esc does not reach the pane below.
+
+let sessions: AllSession[] = [];
+vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions, queued: [], refresh: () => {} }) }));
+vi.mock('@/stores/useTurnStateStore', () => ({ useTurnStore: () => ({ turns: {} }) }));
+const flow = vi.hoisted(() => ({
+  stepReview: vi.fn(),
+  endReview: vi.fn(),
+  finishCurrent: vi.fn(() => Promise.resolve(null)),
+  answerCurrent: vi.fn(() => Promise.resolve(null)),
+}));
+vi.mock('@/lib/review-flow', async (original) => ({ ...(await original<typeof import('@/lib/review-flow')>()), ...flow }));
+
+const { ReviewBar } = await import('./ReviewBar');
+const { setReview } = await import('@/stores/useReviewStore');
+
+const result = { id: 'a', spaceId: 'main', summary: 'First', attention: { kind: 'done', at: '2026-11-03T00:00:00Z' } } as unknown as AllSession;
+const question = { id: 'q', spaceId: 'main', summary: 'Asks', attention: { kind: 'question', at: '2026-11-03T00:00:00Z', reason: 'Which one?' } } as unknown as AllSession;
+
+const bar = () => screen.getByLabelText('Review');
+
+describe('the review bar', () => {
+  beforeEach(() => {
+    Object.values(flow).forEach((fn) => fn.mockClear());
+  });
+  afterEach(() => {
+    cleanup();
+    act(() => setReview(null));
+  });
+
+  const open = (current: AllSession) => {
+    sessions = [current, { ...result, id: 'b' }];
+    act(() => setReview({ queue: [current.id, 'b'], index: 0, paneId: 'pane', ownsPane: true }));
+    render(<ReviewBar paneId="pane" />);
+  };
+
+  it('takes the focus, and J, K and E act on it', () => {
+    open(result);
+    expect(document.activeElement).toBe(bar());
+    fireEvent.keyDown(bar(), { key: 'j' });
+    expect(flow.stepReview).toHaveBeenLastCalledWith(1, expect.anything(), expect.anything());
+    fireEvent.keyDown(bar(), { key: 'k' });
+    expect(flow.stepReview).toHaveBeenLastCalledWith(-1, expect.anything(), expect.anything());
+    fireEvent.keyDown(bar(), { key: 'e' });
+    expect(flow.finishCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for a key pressed elsewhere', () => {
+    open(result);
+    fireEvent.keyDown(document.body, { key: 'j' });
+    fireEvent.keyDown(document.body, { key: 'e' });
+    expect(flow.stepReview).not.toHaveBeenCalled();
+    expect(flow.finishCurrent).not.toHaveBeenCalled();
+  });
+
+  it('ends on Escape without it reaching the pane', () => {
+    open(result);
+    const below = vi.fn();
+    window.addEventListener('keydown', below);
+    fireEvent.keyDown(bar(), { key: 'Escape' });
+    window.removeEventListener('keydown', below);
+    expect(flow.endReview).toHaveBeenCalledTimes(1);
+    expect(below).not.toHaveBeenCalled();
+  });
+
+  it('leaves Cmd and Ctrl to the browser', () => {
+    open(result);
+    fireEvent.keyDown(bar(), { key: 'j', ctrlKey: true });
+    fireEvent.keyDown(bar(), { key: 'j', metaKey: true });
+    expect(flow.stepReview).not.toHaveBeenCalled();
+  });
+
+  it('keeps the cursor out of a question\'s answer box until R', () => {
+    open(question);
+    const box = screen.getByLabelText('Your answer');
+    expect(document.activeElement).toBe(bar());
+    fireEvent.keyDown(bar(), { key: 'r' });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: 'j' });
+    expect(flow.stepReview).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(document.activeElement).toBe(bar());
+    expect(flow.endReview).not.toHaveBeenCalled();
+  });
+});

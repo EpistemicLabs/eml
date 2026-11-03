@@ -8,6 +8,7 @@
 // A desk may have a main pane: a full-height column at the left, resized by its
 // divider (paneLayout.ts). Dragging a pane title onto another pane swaps the two.
 import { ReviewBar } from '@/components/review/ReviewBar';
+import { reviewHoldsFocus } from '@/stores/useReviewStore';
 import React, { useCallback, useRef, useState } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
@@ -263,8 +264,10 @@ function PaneSlot({
   // go to whichever input is focused.
   const paneRootRef = useRef<HTMLDivElement>(null);
   const handlePaneHover = useCallback(() => {
+    // The review pane: its bar holds the keyboard, a key for it must not land in the input.
+    if (reviewHoldsFocus(paneId)) return;
     focusPaneInput(paneRootRef.current);
-  }, []);
+  }, [paneId]);
 
   const onClosePane = useCallback(() => {
     closePane(paneId);

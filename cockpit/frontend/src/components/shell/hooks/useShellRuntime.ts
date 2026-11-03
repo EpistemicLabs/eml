@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
+import { reviewHoldsFocus } from '@/stores/useReviewStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
   ERROR_NO_IDENTITY,
@@ -496,14 +497,15 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   }, [autoConnect, initialized, connecting, connected, superseded, connect]);
 
   useEffect(() => {
-    if (!isActive || !initialized || !connected) return;
+    // In the review flow's pane the review bar holds the keyboard: a key for it must not land here.
+    if (!isActive || !initialized || !connected || (options.paneId && reviewHoldsFocus(options.paneId))) return;
     const frame = window.requestAnimationFrame(() => terminalRef.current?.focus());
     const timer = window.setTimeout(() => terminalRef.current?.focus(), 0);
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [isActive, initialized, connected]);
+  }, [isActive, initialized, connected, options.paneId]);
 
   // A soft keyboard types into xterm's helper textarea: keep it from
   // correcting, capitalizing or suggesting, which would rewrite commands.

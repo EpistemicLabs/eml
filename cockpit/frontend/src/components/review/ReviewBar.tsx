@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Archive, Check, ChevronLeft, ChevronRight, MessageSquareReply, Send, X } from 'lucide-react';
 
 import { MARK_WORD, sessionMark, type AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { answerCurrent, endReview, finishCurrent, stepReview } from '@/lib/review-flow';
+import { answerCurrent, endReview, finishCurrent, liveQueue, stepReview } from '@/lib/review-flow';
 import { useReview } from '@/stores/useReviewStore';
 import { useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
@@ -12,11 +12,16 @@ import { useTurnStore } from '@/stores/useTurnStateStore';
 const BUTTON =
   'flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40';
 
+// Dimmed while the bar doesn't hold the keyboard: then the keys go elsewhere.
 function KeyHint({ children }: { children: string }) {
-  return <kbd className="hidden rounded border border-border px-1 text-[10px] text-muted-foreground md:inline">{children}</kbd>;
+  return (
+    <kbd className="hidden rounded border border-border px-1 text-[10px] text-muted-foreground opacity-40 group-focus-within:opacity-100 md:inline">
+      {children}
+    </kbd>
+  );
 }
 
-/** Keys only while nothing is being typed: a chat input and a terminal keep theirs. */
+/** Keys only while nothing is being typed: the answer box keeps its own. */
 const isTyping = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null;
   return Boolean(element?.closest?.('input, textarea, select, [contenteditable="true"], .xterm'));
@@ -24,9 +29,12 @@ const isTyping = (target: EventTarget | null): boolean => {
 
 /**
  * The review flow's bar on top of its pane: where it is in the queue, and what
- * the session asks for. A question gets an answer box with the cursor in it;
- * anything else is taken out with E. J and K move, R goes to the reply box, Esc
- * ends the flow (in the answer box it only leaves the box). A phone gets the same buttons.
+ * the session asks for. The bar holds the keyboard: after every step the focus
+ * is on it, and its pane's terminal or chat input takes it only on R or a click.
+ * J and K move, E takes the session out (on a question it goes to the answer
+ * box), R goes to the reply box, Esc ends the flow (in the answer box it only
+ * comes back to the bar). The keys act only here, never on another desk. A
+ * phone gets the same buttons, and no keyboard opens on its own.
  */
 export function ReviewBar({ paneId }: { paneId: string }) {
   const review = useReview();
@@ -68,47 +76,57 @@ function ActiveReviewBar() {
       if (!problem) setDraft('');
     });
   };
-  // Each session starts clean, and a question with the cursor in its box.
-  const currentId = current?.id;
+  // Each session starts clean, with the keyboard on the bar: a key never lands in an input by itself.
+  const currentId = review?.queue[review.index];
   useEffect(() => {
     setDraft('');
     setError(null);
-    if (isQuestion) answerRef.current?.focus();
-  }, [currentId, isQuestion]);
+    barRef.current?.focus({ preventScroll: true });
+  }, [currentId]);
   const reply = () => {
     if (isQuestion) { answerRef.current?.focus(); return; }
     const pane = barRef.current?.parentElement;
     pane?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
   };
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-      // Consumed: the next session's answer box takes the focus before the key would land.
-      if (event.key === 'j') { event.preventDefault(); move(1); }
-      else if (event.key === 'k') { event.preventDefault(); move(-1); }
-      else if (event.key === 'e') { if (isQuestion) { event.preventDefault(); reply(); } else finish(); }
-      else if (event.key === 'r') { event.preventDefault(); reply(); }
-      else if (event.key === 'Escape') endReview();
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
+    const keys: Record<string, () => void> = {
+      j: () => move(1),
+      k: () => move(-1),
+      e: () => (isQuestion ? reply() : finish()),
+      r: reply,
+      Escape: endReview,
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
+    const run = keys[event.key];
+    if (!run) return;
+    // Handled here and nowhere else: Escape must not also stop the session in the pane.
+    event.preventDefault();
+    event.stopPropagation();
+    run();
+  };
 
   if (!review) return null;
+  const live = liveQueue(review, known);
   // Opened, a result without a request has left the list: the bar keeps saying what it was.
   const word = mark ? MARK_WORD[mark] : current?.attention?.kind === 'done' ? MARK_WORD.result : null;
   return (
-    <div ref={barRef} className="flex-shrink-0 border-b border-border bg-muted/40 px-2 py-1.5">
+    <div
+      ref={barRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      aria-label="Review"
+      className="group flex-shrink-0 border-b border-border bg-muted/40 px-2 py-1.5 outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+    >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <span className="mr-auto min-w-0 truncate text-xs text-foreground">
           <span className="font-medium">{current ? sessionDisplayName(current) : 'Review'}</span>
-          <span className="pl-1.5 text-muted-foreground">{review.index + 1} of {review.queue.length}</span>
+          <span className="pl-1.5 text-muted-foreground">{live.index + 1} of {live.queue.length}</span>
         </span>
-        <button type="button" className={BUTTON} disabled={review.index === 0} onClick={() => move(-1)} aria-label="Previous">
+        <button type="button" className={BUTTON} disabled={live.index <= 0} onClick={() => move(-1)} aria-label="Previous">
           <ChevronLeft className="h-3.5 w-3.5" /> <KeyHint>K</KeyHint>
         </button>
-        <button type="button" className={BUTTON} disabled={review.index >= review.queue.length - 1} onClick={() => move(1)} aria-label="Next">
+        <button type="button" className={BUTTON} disabled={live.index >= live.queue.length - 1} onClick={() => move(1)} aria-label="Next">
           <KeyHint>J</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
         </button>
         {isQuestion ? (
@@ -141,7 +159,7 @@ function ActiveReviewBar() {
         </p>
       )}
       {isQuestion && (
-        <div className="mt-1 flex gap-1.5">
+        <div className="mt-1 flex items-center gap-1.5">
           <input
             ref={answerRef}
             type="text"
@@ -153,10 +171,11 @@ function ActiveReviewBar() {
             onKeyDown={(event) => {
               event.stopPropagation();
               if (event.key === 'Enter') answer();
-              else if (event.key === 'Escape') answerRef.current?.blur();
+              else if (event.key === 'Escape') barRef.current?.focus({ preventScroll: true });
             }}
             className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
           />
+          <KeyHint>R</KeyHint>
           <button type="button" className={`${BUTTON} font-medium`} disabled={!draft.trim()} onClick={answer}>
             <Send className="h-3.5 w-3.5" /> Answer &amp; next
           </button>
