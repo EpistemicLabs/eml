@@ -26,4 +26,8 @@ describe('client config', () => {
       EML_URL: '$(rm -rf /)',
     })
   })
+
+  it('parseConfig keeps the agent the embedding app names', () => {
+    expect(parseConfig('EML_URL=u\nEML_API_TOKEN=t\nEML_AGENT=helper\n').EML_AGENT).toBe('helper')
+  })
 })

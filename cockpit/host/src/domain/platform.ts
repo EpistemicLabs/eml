@@ -22,6 +22,9 @@ export interface Platform {
    */
   runtimeKey(opts?: { musl?: boolean }): string
 
+  /** Free memory in bytes; null where the system's number says little (macOS counts file cache as used). */
+  freeMemory(): number | null
+
   /** Variables a session inherits from the host on top of the common ones (pty-bridge.ts). */
   readonly sessionEnvKeys: readonly string[]
   /** The LANG a session gets when the host has no locale at all; null: none needed. */

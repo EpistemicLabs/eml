@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../node_modules/streamdown/dist/*.js";
 
 /* Two palettes (herdr-style: monospace, coral/purple accents): light in @theme,
    dark under html.dark. ThemeContext sets the class from the user's choice
@@ -83,6 +84,14 @@
   --type-learning: #5f6b12;
   --subject-active: #186c53;
   --hash-lightness: 38%;
+  --glass-bar: rgba(255, 255, 255, .70);
+  --glass-field: rgba(255, 255, 255, .88);
+  --glass-solid: #fff;
+  --glass-rim: rgba(255, 255, 255, .70);
+  --glass-line-bar: rgba(0, 0, 0, .10);
+  --glass-line-field: rgba(0, 0, 0, .42);
+  --glass-shadow: 0 8px 24px rgba(16, 24, 40, .12), 0 1px 2px rgba(16, 24, 40, .08);
+  --glass-edge: 246 247 249;
 }
 
 html.dark {
@@ -98,6 +107,14 @@ html.dark {
   --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
+  --glass-bar: rgba(26, 30, 36, .62);
+  --glass-field: rgba(26, 30, 36, .86);
+  --glass-solid: #1b1f26;
+  --glass-rim: rgba(255, 255, 255, .10);
+  --glass-line-bar: rgba(255, 255, 255, .16);
+  --glass-line-field: rgba(255, 255, 255, .34);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, .45), 0 1px 2px rgba(0, 0, 0, .40);
+  --glass-edge: 11 13 16;
   --color-review: #d9a441;
   --color-background: #0b0d10;
   --color-foreground: #e6e8ec;
@@ -132,6 +149,40 @@ body {
   font-size: 13px;
 }
 
+/* The chat view's type: 14px text, 16px headings, 12px for everything secondary,
+   which is what is muted, plus preformatted output. Gaps sit on a 4px grid. Not in
+   a layer, so it wins over the utilities the markdown renderer brings. */
+.chat-pane {
+  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-pane * { font-size: inherit; line-height: inherit; }
+.chat-pane .text-muted-foreground, .chat-pane pre { font-size: 12px; line-height: 18px; }
+.chat-pane [class*="font-mono"], .chat-pane code, .chat-pane pre { font-family: var(--font-mono); font-variant-ligatures: none; }
+.chat-pane [data-streamdown^="heading-"] { margin-top: 20px; margin-bottom: 8px; font-size: 16px; line-height: 24px; font-weight: 600; }
+.chat-pane [data-streamdown="ordered-list"], .chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="code-block"],
+.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: 12px; margin-bottom: 12px; }
+.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: 4px; margin-bottom: 4px; }
+.chat-pane p { margin-top: 12px; margin-bottom: 12px; }
+/* Prose stays at about 100 characters a line; code, tables and tools take the pane. */
+.chat-pane p, .chat-pane [data-streamdown^="heading-"], .chat-pane [data-streamdown="ordered-list"],
+.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 720px; }
+.chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
+.chat-pane p:last-child { margin-bottom: 0; }
+/* What the agent did reads as one stream; the wider gaps stay around the conversation. */
+/* A quote in a reply is text to read, however the markdown renderer mutes it. */
+.chat-pane [data-streamdown="blockquote"] { font-size: 14px; line-height: 22px; font-style: normal; color: var(--color-foreground); }
+.chat-pane .chat-work + .chat-work { margin-top: 4px; }
+/* Tables keep one line per row and show all their rows: wide ones scroll sideways, none scrolls down. */
+.chat-pane [data-streamdown="table-wrapper"] > div:has(> table) { max-height: none !important; overflow-y: hidden; }
+.chat-pane [data-streamdown="table-cell"] { white-space: nowrap; }
+.chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
+/* Below 16px, iOS zooms the page when a field takes the focus. */
+@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
+
 /* Structural utilities the sidebar uses; they resolve against the current
    palette. */
 @utility frosted {
@@ -139,6 +190,40 @@ body {
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border: 1px solid var(--color-border);
+}
+
+/* Frosted glass on the phone. The filter values are literal: Safari is reported not
+   to resolve custom properties inside -webkit-backdrop-filter. */
+.glass-bar, .glass-field { box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
+.glass-bar { background: var(--glass-bar); border: 1px solid var(--glass-line-bar); }
+.glass-field { background: var(--glass-field); border: 1px solid var(--glass-line-field); }
+.glass-solid { background: var(--glass-solid); border: 1px solid var(--glass-line-field); box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
+.glass-bar, .glass-field {
+  -webkit-backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
+  backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
+}
+html.dark .glass-bar, html.dark .glass-field {
+  -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(.55);
+  backdrop-filter: blur(18px) saturate(170%) brightness(.55);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-bar, .glass-field { background: var(--glass-solid); border-color: var(--glass-line-field); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-bar, .glass-field, html.dark .glass-bar, html.dark .glass-field {
+    background: var(--glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-color: var(--glass-line-field);
+  }
+}
+/* Scroll edges fade without blur: a gradient costs almost nothing. */
+.glass-edge-top { background: linear-gradient(to bottom, rgb(var(--glass-edge)) 0, rgb(var(--glass-edge) / .96) env(safe-area-inset-top), rgb(var(--glass-edge) / .55) calc(env(safe-area-inset-top) + 28px), rgb(var(--glass-edge) / 0) 100%); }
+.glass-edge-bottom { background: linear-gradient(to top, rgb(var(--glass-edge) / .92) 0, rgb(var(--glass-edge) / .6) 45%, rgb(var(--glass-edge) / 0) 100%); }
+/* Readable secondary text in the chat, phone only. */
+@media (max-width: 767px) {
+  .chat-pane { --color-muted-foreground: #4a5260; }
+  html.dark .chat-pane { --color-muted-foreground: #9aa4b1; }
 }
 
 @utility nav-divider {

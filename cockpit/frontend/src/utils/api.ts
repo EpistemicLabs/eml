@@ -40,6 +40,8 @@ export const api = {
     fetch('/api/agents/login', jsonInit('PATCH', { permissionMode })),
   setRenderer: (renderer: 'default' | 'fullscreen') =>
     fetch('/api/agents/login', jsonInit('PATCH', { renderer })),
+  setWorkersInChat: (workersInChat: boolean) =>
+    fetch('/api/agents/login', jsonInit('PATCH', { workersInChat })),
   setRemoteControl: (remoteControl: boolean) =>
     fetch('/api/agents/login', jsonInit('PATCH', { remoteControl })),
   setClaudeLogin: (token: string) => fetch('/api/agents/login', jsonInit('PUT', { token })),

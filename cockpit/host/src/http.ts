@@ -1,12 +1,17 @@
 import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { attachSpawnEvents, handleSpawnApi } from './spawn-api.js'
+import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import type { StartWorker } from './application/start-worker.js'
+import { planArchive } from './application/archive-session.js'
+import { needsAnswer } from './domain/session-attention.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
-import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces } from './brain-space.js'
+import type { ChatBridge } from './chat-bridge.js'
+import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { provisionSpace } from './provision.js'
 import {
   ProjectPathError,
@@ -30,7 +35,7 @@ import type { TurnEvent, TurnTracker } from './turn-state.js'
 import { requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
-import { PasteImageError, savePastedImage } from './paste-images.js'
+import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
@@ -83,10 +88,16 @@ export interface HostDeps {
   turnHookConfig: string
   /** Worker-session requests from sessions (spawn-api.ts). */
   spawns: SpawnQueue
+  workers: StartWorker
   /** Per-boot secret sessions send with POST /api/spawn. */
   spawnToken: string
+  /** What an outside service sends with a message for a session (message-token.ts). */
+  outsideToken: string
+  deliver: SpawnDeps['deliver']
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
+  /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
+  chat: ChatBridge
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -140,13 +151,101 @@ async function providerViews(deps: HostDeps) {
 }
 
 /** A project folder is opened by sessions of any provider — none of them should ask about trust. */
-function trustProject(deps: HostDeps, projectPath: string): void {
-  for (const provider of deps.providers.all()) provider.trustProject(projectPath)
+function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): void {
+  const sessionSpace = sessionSpaceOf(space)
+  for (const provider of deps.providers.all()) {
+    // An agent's project stays out of the configs of the CLIs it does not run with.
+    if (space.agent && !space.agent.configDirs[provider.id]) continue
+    provider.trustProject(projectPath, sessionSpace)
+  }
 }
 
 // ── Project + session views ───────────────────────
+/** What a notification about this change says: a batch of workers speaks up once, when its last one finishes. */
+function turnNotice(deps: HostDeps, event: TurnEvent): { title: string | null; silent?: true; batch?: number } {
+  const ledger = deps.bridge.ledger
+  const entry = ledger.get(event.sessionId)
+  const title = entry?.title ?? entry?.agentTitle ?? null
+  if (event.state !== 'done' || !entry?.parentSessionId) return { title }
+  const batch = ledger.list().filter((other) => other.parentSessionId === entry.parentSessionId && !other.archivedAt)
+  if (batch.some((other) => other.sessionId !== event.sessionId && deps.turns.get(other.sessionId)?.state === 'working')) return { title, silent: true }
+  return { title, batch: batch.length }
+}
+
+/** What the sidebar and the review pane do to a session. All are the page's own: the same-origin guard holds them. */
+async function handleSessionActions(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps, resource: string | undefined, id: string | undefined, action: string | undefined, method: string): Promise<boolean> {
+  if (resource !== 'sessions' || method !== 'POST' || !id) return false
+  const ledger = deps.bridge.ledger
+  const stop = async (sessionId: string, reason: string) => {
+    deps.bridge.killSession(sessionId)
+    await deps.chat.end(sessionId, reason)
+    deps.turns.forget(sessionId)
+  }
+
+  // Start a session by hand from the sidebar: on the host, so it needs no pane.
+  if (id === 'start' && !action) {
+    const body = await readJson(req)
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+    const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+    if (!prompt || !projectId) { json(res, 400, { error: { code: 'INVALID', message: 'A project and a prompt are required' } }); return true }
+    const sessionId = randomUUID()
+    const problem = deps.chat.startWorker({
+      id: sessionId, projectId, prompt, fromSessionId: null, createdAt: new Date().toISOString(),
+      // It names itself; until then the list shows its first prompt.
+      title: null,
+      ...(typeof body.spaceId === 'string' && body.spaceId ? { spaceId: body.spaceId } : {}),
+    })
+    if (problem) json(res, 409, { error: { code: 'NOT_STARTED', message: problem } })
+    else json(res, 200, { id: sessionId, runtime: 'sdk' })
+    return true
+  }
+
+  const entry = ledger.get(id)
+  if (!action || !['read', 'clear', 'archive', 'stop', 'answer', 'desk-main'].includes(action)) return false
+  if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
+
+  if (action === 'read') {
+    ledger.markRead(id)
+  } else if (action === 'desk-main') {
+    const body = await readJson(req)
+    ledger.setDeskMain(id, body.main === true)
+  } else if (action === 'clear') {
+    ledger.setAttention(id, null)
+    ledger.setResult(id, false)
+    if (deps.turns.get(id)?.state === 'waiting') deps.turns.apply({ sessionId: id, state: 'done' })
+  } else if (action === 'stop') {
+    await stop(id, 'stopped')
+  } else if (action === 'archive') {
+    const plan = planArchive(id, ledger.list().map((session) => ({
+      sessionId: session.sessionId, parentSessionId: session.parentSessionId,
+      working: deps.turns.get(session.sessionId)?.state === 'working',
+      needsAnswer: session.attention ? needsAnswer(session.attention.kind) : deps.turns.get(session.sessionId)?.state === 'waiting',
+    })))
+    if ('blockedBy' in plan) {
+      const message = plan.reason === 'working' ? 'Still working. Stop it or wait until it finishes.' : 'A worker of this session still needs an answer.'
+      json(res, 409, { error: { code: 'BUSY', message, sessionId: plan.blockedBy } })
+      return true
+    }
+    for (const sessionId of plan.archive) {
+      await stop(sessionId, 'archived')
+      ledger.archive(sessionId)
+    }
+    json(res, 200, { success: true, archived: plan.archive })
+    return true
+  } else {
+    const body = await readJson(req)
+    const text = typeof body.text === 'string' ? body.text.trim() : ''
+    if (!text) { json(res, 400, { error: { code: 'INVALID_TEXT', message: 'text is required' } }); return true }
+    const outcome = await deps.deliver({ target: id, text, from: null, caller: 'session' })
+    json(res, outcome === 'delivered' || outcome === 'resumed' ? 200 : 409, { outcome })
+    return true
+  }
+  json(res, 200, { success: true })
+  return true
+}
+
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
-  const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.ledger.ref(entry.sessionId, project?.path ?? null))
+  const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null))
   // The last real message, not the last reattach: a reload or a click on a
   // pane bumps lastAttached and would show every open session as "<1m".
   const lastActivity = summary.lastMessageAt ?? summary.lastActivity ?? entry.createdAt
@@ -167,7 +266,15 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     isPinned: entry.pinned,
     paneId: entry.paneId,
     taskId: entry.taskId,
-    state: deps.bridge.sessionState(entry.sessionId),
+    state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
+    runtime: entry.runtime,
+    attention: entry.attention,
+    worker: entry.worker,
+    deskMain: entry.deskMain,
+    parentSessionId: entry.parentSessionId,
+    readAt: entry.readAt,
+    resultAt: entry.resultAt,
+    archivedAt: entry.archivedAt,
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
     __provider: deps.providers.forSession(entry.sessionId).id,
@@ -184,6 +291,7 @@ function folderKind(project: ProjectEntry): 'user' | 'cockpit' | 'none' {
 
 function projectView(deps: HostDeps, space: BrainSpace, project: ProjectEntry, brain: BrainProject | null = null) {
   const sessions = deps.bridge.ledger.list(project.projectId, space.ledgerKey)
+    .filter((entry) => !entry.archivedAt)
     .map((entry) => sessionView(deps, project, entry))
     .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
   return {
@@ -309,7 +417,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).
@@ -322,7 +430,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const entry = deps.bridge.ledger.get(id)
     if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
     const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
-    const summary = deps.providers.forSession(id).summary(deps.bridge.ledger.ref(id, project?.path ?? null))
+    const summary = deps.providers.forSession(id).summary(deps.bridge.sessionRef(id, project?.path ?? null))
     json(res, 200, { model: summary.model, provider: entry.provider })
     return true
   }
@@ -358,6 +466,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     return true
   }
+
+  // The sessions of every space (the sidebar's All view), each resolved in its own space.
+  if (resource === 'sessions' && id === 'all' && method === 'GET') {
+    const sessions = deps.bridge.ledger.list()
+      .map((entry) => {
+        const owner = deps.spaces.resolve(entry.spaceId)
+        return { ...sessionView(deps, entry.projectId ? owner.registry.get(entry.projectId) : undefined, entry), spaceId: owner.id }
+      })
+      .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
+    // Workers waiting for free memory have no entry yet: their parents count them.
+    const queued = deps.spawns.list().flatMap((request) => (request.fromSessionId && !request.open ? [{ id: request.id, parentSessionId: request.fromSessionId }] : []))
+    json(res, 200, { sessions, queued })
+    return true
+  }
+
+  if (await handleSessionActions(req, res, deps, resource, id, parts[3], method)) return true
 
   // Every other route works in one space.
   const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
@@ -424,6 +548,15 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         if (!(error instanceof PasteImageError)) throw error
         json(res, error.status, { error: { code: 'BAD_IMAGE', message: error.message } })
       }
+      return true
+    }
+
+    // A pasted image as the chat view shows it.
+    if (resource === 'paste-image' && id && method === 'GET') {
+      const image = pastedImageFile(id)
+      if (!image) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Image not found' } }); return true }
+      res.writeHead(200, { 'Content-Type': image.mediaType, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=86400' })
+      fs.createReadStream(image.file).pipe(res)
       return true
     }
 
@@ -549,7 +682,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         return true
       }
       if (method === 'PUT' || method === 'PATCH') {
-        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
+        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown; workersInChat?: unknown }
         const error = method === 'PUT' ? writeClaudeLogin(body?.token) : writeAgentPatch(body)
         if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
         invalidateAccountCache()
@@ -594,7 +727,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       res.write('retry: 2000\n\n')
       send('snapshot', deps.turns.snapshot())
-      const onTurn = (event: TurnEvent) => send('turn', event)
+      const onTurn = (event: TurnEvent) => send('turn', { ...event, ...turnNotice(deps, event) })
       deps.turns.on('turn', onTurn)
       const detachSpawns = attachSpawnEvents(deps.spawns, send)
       // Note changes of every space, each tagged with its space (null = main,
@@ -626,7 +759,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         typeof body.path === 'string' ? body.path : '',
         typeof body.customName === 'string' ? body.customName : null,
       )
-      if (project.path) trustProject(deps, project.path)
+      if (project.path) trustProject(deps, space, project.path)
       json(res, created ? 201 : 200, { success: true, created, project: projectView(deps, space, project) })
       return true
     }
@@ -672,7 +805,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       })
       // The registry keeps a copy of the brain name for when the brain is unreachable.
       if (brainName !== null && entry.brainProjectId) project = space.registry.ensureBrain(entry.brainProjectId, brainName)
-      if (typeof requestedPath === 'string' && project.path) trustProject(deps, project.path)
+      if (typeof requestedPath === 'string' && project.path) trustProject(deps, space, project.path)
       json(res, 200, { success: true, project: projectView(deps, space, project, renamedBrain) })
       return true
     }
@@ -681,8 +814,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       if (!project) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Project not found' } }); return true }
       const deleteData = url.searchParams.get('deleteData') === '1'
       deps.bridge.killProjectSessions(id, space.ledgerKey)
+      deps.chat.killProjectSessions(id, space.ledgerKey)
       for (const entry of deps.bridge.ledger.list(id, space.ledgerKey)) {
-        if (deleteData) deps.providers.forSession(entry.sessionId).deleteTranscript(deps.bridge.ledger.ref(entry.sessionId, project.path))
+        if (deleteData) deps.providers.forSession(entry.sessionId).deleteTranscript(deps.bridge.sessionRef(entry.sessionId, project.path))
         deps.bridge.ledger.remove(entry.sessionId)
       }
       space.registry.remove(id)
@@ -694,6 +828,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     if (resource === 'sessions' && !id && method === 'GET') {
       const projectId = url.searchParams.get('projectId') ?? undefined
       const sessions = deps.bridge.ledger.list(projectId, space.ledgerKey)
+        .filter((entry) => !entry.archivedAt)
         .map((entry) => sessionView(deps, entry.projectId ? space.registry.get(entry.projectId) : undefined, entry))
         .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity))
       json(res, 200, { sessions })
@@ -706,7 +841,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         pinned: typeof body.isPinned === 'boolean' ? body.isPinned : undefined,
       })
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-      const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
+      // The session's own space, not the shown one: the All view acts on any space's sessions.
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       json(res, 200, { success: true, session: sessionView(deps, project, { sessionId: id, ...entry }) })
       return true
     }
@@ -723,9 +859,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const entry = deps.bridge.ledger.get(id)
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
       deps.bridge.killSession(id)
+      await deps.chat.kill(id)
       deps.turns.forget(id)
-      const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
-      deps.providers.forSession(id).deleteTranscript(deps.bridge.ledger.ref(id, project?.path ?? null))
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+      deps.providers.forSession(id).deleteTranscript(deps.bridge.sessionRef(id, project?.path ?? null))
       deps.bridge.ledger.remove(id)
       json(res, 200, { success: true })
       return true
@@ -746,6 +883,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     // PTY attach handshake
     if (resource === 'pty' && method === 'POST') {
       json(res, 200, deps.bridge.mintNonce())
+      return true
+    }
+
+    // Chat view attach handshake
+    if (resource === 'chat' && method === 'POST') {
+      json(res, 200, deps.chat.mintNonce())
       return true
     }
   } catch (err) {
@@ -837,13 +980,14 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // real brain): every state-changing /api/* call must carry an allowlisted
     // Origin — the cockpit's own page. The token-authenticated machine endpoints
     // carry no Origin and are exempt: /api/hook (session hooks, per-boot token in
-    // the x-cockpit-hook header), /api/spawn (worker spawn) and
-    // /api/session-title/<id> (a session naming itself), both X-Cockpit-Token. Reads
+    // the x-cockpit-hook header), /api/spawn (worker spawn),
+    // /api/session-title/<id> (a session naming itself) and
+    // /api/sessions/<target>/message, all X-Cockpit-Token. Reads
     // (GET/HEAD) are open; a cross-origin page still can't read the response.
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
+      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
       if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
@@ -866,17 +1010,18 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false })
   server.on('upgrade', (req, socket, head) => {
     const { pathname, searchParams } = new URL(req.url ?? '', 'http://127.0.0.1')
-    if (pathname !== '/ws/shell') { socket.destroy(); return }
+    if (pathname !== '/ws/shell' && pathname !== '/ws/chat') { socket.destroy(); return }
     const gate = requestGate(req, allowedOrigins)
     const origin = req.headers.origin
     if (!gate.allowed || !origin || !gate.origins.includes(origin)) { socket.destroy(); return }
     const nonce = searchParams.get('nonce') ?? ''
-    if (!deps.bridge.consumeNonce(nonce)) { socket.destroy(); return }
+    const side = pathname === '/ws/chat' ? deps.chat : deps.bridge
+    if (!side.consumeNonce(nonce)) { socket.destroy(); return }
     wss.handleUpgrade(req, socket, head, (ws) => {
       // Disable Nagle on loopback — it only delays small frames.
       const tcp = (ws as unknown as { _socket?: { setNoDelay?: (f: boolean) => void } })._socket
       tcp?.setNoDelay?.(true)
-      deps.bridge.attach(ws)
+      side.attach(ws)
     })
   })
 

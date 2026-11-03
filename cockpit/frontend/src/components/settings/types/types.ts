@@ -26,5 +26,7 @@ export type CockpitSettings = {
   notifyOnDone: boolean;
   /** A plain new session opens with a greeting and the project's state (default on). */
   greetOnStart: boolean;
+  /** Claude sessions open in the chat view instead of the terminal (default on). */
+  chatDefault: boolean;
   lastUpdated?: string;
 };

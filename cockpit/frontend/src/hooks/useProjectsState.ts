@@ -37,6 +37,9 @@ const spaceKey = (spaceId: string | null): string => spaceId ?? '';
 /** Projects of each space seen in this tab, by space id ('' = main). */
 export type ProjectsBySpace = Readonly<Record<string, Project[]>>;
 
+/** Whether this tab has seen the space's project list yet. */
+export const spaceLoaded = (bySpace: ProjectsBySpace, spaceId: string | null): boolean => spaceKey(spaceId) in bySpace;
+
 /** One space's projects; a stable empty list for a space not loaded yet. */
 export function projectsOfSpace(bySpace: ProjectsBySpace, spaceId: string | null): Project[] {
   return bySpace[spaceKey(spaceId)] ?? NO_PROJECTS;
@@ -126,7 +129,7 @@ export function useProjectsState() {
   const handleSessionDelete = useCallback((sessionId: string) => {
     for (const pane of paneStore.getPanes()) {
       if (pane.sessionId !== sessionId) continue;
-      if (pane.pinned) paneStore.clearPane(pane.id);
+      if (paneStore.isPaneProtected(pane.id)) paneStore.clearPane(pane.id);
       else paneStore.removePane(pane.id);
     }
     setProjects((previous) =>

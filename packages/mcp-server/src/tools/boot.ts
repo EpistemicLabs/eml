@@ -16,10 +16,10 @@ export function registerBootTool(server: McpServer, http: HttpClient): void {
         'memory" use eml_recall / eml_show — boot is identity, not topic lookup.',
       inputSchema: z.object({
         agent: z.string().optional().describe(
-          'Agent ID. Omit for the brain default; set only to inspect a different agent.',
+          'Agent ID. Omit for this session\'s own agent; set only to inspect a different agent.',
         ),
       }).strict(),
     },
-    async (args) => callTool(() => http.post('/boot', { agent: args.agent })),
+    async (args) => callTool(() => http.post('/boot', { agent: args.agent ?? process.env.EML_AGENT })),
   )
 }

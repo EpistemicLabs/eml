@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { useNotes, useUnseenNotes } from '@/lib/notes';
 import type { Project } from '@/types/app';
 import type { SidebarController } from '../../useSidebarController';
+import { useRowMenu } from '../rowMenuContext';
 import { isSessionRecent, readShowOlderIds, storeShowOlder } from '../../utils';
 import { SidebarProjectActions } from './SidebarProjectActions';
 import { NewPaneButton, SidebarGroupLabel, SidebarProjectNotes, isRecentNote } from './SidebarProjectNotes';
@@ -31,6 +32,7 @@ function SessionsSkeleton() {
 }
 
 export function SidebarSessionsArea({ project, controller }: { project: Project; controller: SidebarController }) {
+  const menu = useRowMenu();
   const {
     now,
     selectedSessionId,
@@ -126,14 +128,16 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
               <span className="text-[10px] tabular-nums">{olderCount}</span>
             </button>
           )}
-          <SidebarProjectActions
-            project={project}
-            onToggleStar={(target) => void controller.toggleProjectStar(target)}
-            onStartRename={controller.startProjectRename}
-            onSetFolder={controller.onSetFolder}
-            onToggleHidden={(projectId) => void controller.toggleProjectHidden(projectId)}
-            onRequestRemove={controller.requestProjectDelete}
-          />
+          {!menu && (
+            <SidebarProjectActions
+              project={project}
+              onToggleStar={(target) => void controller.toggleProjectStar(target)}
+              onStartRename={controller.startProjectRename}
+              onSetFolder={controller.onSetFolder}
+              onToggleHidden={(projectId) => void controller.toggleProjectHidden(projectId)}
+              onRequestRemove={controller.requestProjectDelete}
+            />
+          )}
         </div>
       </div>
       {notesShown && <SidebarGroupLabel>Sessions</SidebarGroupLabel>}

@@ -121,6 +121,11 @@ describe('brain spaces', () => {
     expect(hooks.SessionStart[1].matcher).toBeUndefined()
     expect(line(hooks.SessionStart[1].hooks[0])).toContain(`hook project-block --config ${quoted(space.files.emlConfig)}`)
     expect(hooks.UserPromptSubmit).toHaveLength(2)
+    // SendMessage asks the host first, and waits for the answer (send-message-hook.ts).
+    expect(hooks.PreToolUse).toHaveLength(1)
+    expect(hooks.PreToolUse[0].matcher).toBe('SendMessage')
+    expect(line(hooks.PreToolUse[0].hooks[0])).toContain('send-message-hook.js')
+    expect(hooks.PreToolUse[0].hooks[0].async).toBeUndefined()
     expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
     expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)

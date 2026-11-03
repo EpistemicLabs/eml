@@ -6,18 +6,29 @@ description: Open a worker session in the EML cockpit — a new agent session in
 
 # spawn-session
 
-Starts a worker: a new cockpit session in its own pane on this desk, next to
-this session. It boots from the same brain (identity, rules, open tasks) and
-starts with your prompt as its first message. You keep working here.
+Starts a worker: a new cockpit session that runs without a pane and shows in
+the sidebar under this session. It boots from the same brain (identity, rules,
+open tasks) and starts with your prompt as its first message. You keep working
+here. The user goes through finished workers when they are done, so its status
+reason is what they read first.
 
 ## When it fits
+
+A worker is a full session: its own process and MCP servers for as long as it
+runs, and the user can talk to it. Use it for work that needs the user along
+the way (decisions, approvals, a longer back-and-forth), or when the user asks
+for a new session:
 
 - The task is self-contained: a fresh session with the prompt plus the brain
   can do it without this conversation's context.
 - It would otherwise block or bloat this session (long build, broad
-  investigation, a review with fresh eyes).
+  investigation that the user wants to follow).
 - A fresh-session handoff: consolidate first (the log is what the worker docks
   onto), then spawn the continuation.
+
+Research, audits and reviews whose result goes to the brain or back to you
+need no one along the way: run them as a subagent of this session instead
+(your agent tool). It costs no extra process and reports back to you.
 
 Not for tiny steps — doing them here is cheaper than briefing a worker.
 
@@ -56,7 +67,9 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
 - `--project`: the brain project id (as in `eml_show project.<id>` — pass just
   `<id>`), the project's name, or a folder path the cockpit knows. An unknown
   project fails with the list of known ones.
-- `--title`: optional, a few words — shown as the pane title.
+- `--title`: optional, a few words — shown as the session's name.
+- `--open`: optional — opens a pane next to this session. Use it for a fresh-session
+  handoff, or when the user asked to watch this worker.
 - `--provider`: optional, `claude` or `codex` — the agent CLI the worker runs with. Leave it out
   unless the user asked for a specific one; the worker then uses the cockpit's default.
 
@@ -68,8 +81,11 @@ say so instead of trying another way.
 ## After spawning
 
 Tell the user what the worker was asked to do and that its pane opened next to
-this one (or opens as soon as a cockpit tab is open). Then keep working; don't
-wait for it.
+this one. With no cockpit tab open, the host starts it without a pane: it shows
+in the sidebar (and in the Claude app with Remote Control), and opening it there
+attaches to the running session. It keeps running while it works and stops after
+24 hours idle; a new worker waits while the machine has little free memory.
+Then keep working; don't wait for it.
 
 With a worker address:
 
@@ -83,6 +99,13 @@ With a worker address:
   already made in this session or the brain; otherwise ask your user and pass
   their answer on. Never pass on a permission or an approval — the worker's
   permissions are its own.
+- SendMessage also reaches a cockpit session that has stopped, such as a worker
+  hours later, if it would reach it running: the host wakes it and hands it the
+  message. The call then shows as refused and says "Delivered, not an error". The
+  session has it; do not send it again. A woken session reads your address in the
+  message and can answer you.
+- An idle notice only works on a running session: `notify_when_idle` without a
+  message does not wake a stopped one.
 - Its summary tells you it is done: check the result where it says, then tell
   your user.
 

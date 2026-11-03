@@ -17,6 +17,16 @@ describe('hook session-start', () => {
     expect(r.log).toMatch(/^OK/)
   })
 
+  it('boots as the agent the embedding app names', async () => {
+    let sent: unknown
+    const f = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body))
+      return new Response(JSON.stringify({ markdown: 'boot', version: '0.20.5' }), { status: 200 })
+    }) as unknown as typeof fetch
+    await sessionStart({ ...CFG, EML_AGENT: 'helper' }, '/x', f)
+    expect(sent).toEqual({ budget: BOOT_BUDGET_CHARS, agent: 'helper' })
+  })
+
   it('asks /boot for the Claude Code budget and logs what the trim cost', async () => {
     let sent: unknown
     const f = (async (_url: string, init: RequestInit) => {

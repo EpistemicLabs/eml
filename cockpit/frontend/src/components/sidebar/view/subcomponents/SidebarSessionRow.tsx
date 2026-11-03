@@ -1,11 +1,15 @@
-import { Check, Edit2, Pin, Trash2, X } from 'lucide-react';
+import { useRef, type ReactNode } from 'react';
+import { Archive, Check, Edit2, MessageSquareReply, MoreHorizontal, Pin, Square, Trash2, X } from 'lucide-react';
 
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
+import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
+import { MARK_SYMBOL, MARK_WORD, allSessionState, isRead, type SessionMark } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
+import { useRowMenu } from '../rowMenuContext';
 
 const CHIP =
   'flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground';
@@ -25,12 +29,29 @@ export interface SessionRowProps {
   onRequestDelete: (projectId: string, session: ProjectSession) => void;
   /** Given only where the row offers the pin chip (the conversations view). */
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
+  /** Given in the All view: the agent the session belongs to, marked with its letter. */
+  agent?: { letter: string; name: string };
+  /** How the session stands for the user: a second line, with the word and the reason. */
+  mark?: SessionMark | null;
+  /** A second line without a mark: a parent's worker counts. */
+  detail?: string;
+  /** What ends the second line: the session a worker belongs to. */
+  context?: string;
+  /** The row is one of a parent's workers. */
+  nested?: boolean;
+  /** Before the name: the arrow opening a parent's workers. */
+  leading?: ReactNode;
+  /** Row actions for what the session needs (answer, clear, archive, stop). */
+  actions?: { onAnswer?: () => void; onClear?: () => void; onArchive?: () => void; onStop?: () => void };
 }
 
-function StatusDot({ session }: { session: ProjectSession }) {
+function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView: boolean }) {
   const turns = useTurnStore();
-  const state = turns.turns[session.id]?.state ?? session.turnState ?? 'idle';
-  const unseenDone = isUnseenDone(turns, session.id);
+  const state = inAllView
+    ? allSessionState(session, turns.turns[session.id])
+    : turns.turns[session.id]?.state ?? session.turnState ?? 'idle';
+  // In the All view a result has its own row in To review, seen on any device.
+  const unseenDone = !inAllView && isUnseenDone(turns, session.id);
   if (state !== 'working' && state !== 'waiting' && !unseenDone) return null;
   const title =
     state === 'working' ? 'Claude is working' : state === 'waiting' ? 'Waiting for your input' : 'Finished — not seen yet';
@@ -56,34 +77,78 @@ export function SidebarSessionRow({
   onSelect,
   onRequestDelete,
   pin,
+  agent,
+  mark,
+  detail,
+  context,
+  nested,
+  leading,
+  actions,
 }: SessionRowProps) {
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
   const age = compactAge(sessionTimeString(session), now);
-  const isRenaming = renameDraft !== null;
+  const menu = useRowMenu();
+  // In the compact layout the menu does the renaming.
+  const isRenaming = !menu && renameDraft !== null;
+  const rowRef = useRef<HTMLDivElement>(null);
+  const openMenu = () => menu?.open({ kind: 'session', session, projectId }, rowRef.current);
+  const longPress = useLongPress(openMenu);
+  const unread = Boolean(mark) && (!session.attention || !isRead(session));
+  const noSummary = session.attention && mark !== 'result' ? ': no summary' : '';
+  const reason = session.attention?.reason?.replace(/\s+/g, ' ').trim();
+  const secondLine = mark
+    ? [MARK_WORD[mark] + (reason ? `: ${reason}` : noSummary), context].filter(Boolean).join(' · ')
+    : detail;
 
   return (
-    <div className="group relative">
-      <StatusDot session={session} />
+    <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
+      {!mark && <StatusDot session={session} inAllView={Boolean(agent)} />}
       <Button
         variant="ghost"
         className={cn(
-          'h-7.5 w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
+          'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
+          secondLine ? (menu ? 'h-13 pr-10' : 'h-11') : menu ? 'h-10 pr-10' : 'h-7.5',
+          nested && 'pl-6',
           isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}
         onClick={() => onSelect(session, projectId)}
       >
         <div className="flex w-full min-w-0 items-center gap-2">
-          <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />
+          {leading}
+          {mark && (
+            <span
+              aria-hidden="true"
+              className={cn(
+                'w-3 flex-shrink-0 text-center text-xs font-semibold',
+                mark === 'failed' ? 'text-destructive' : 'text-primary',
+                !unread && 'text-muted-foreground',
+              )}
+            >
+              {!unread && mark === 'review' ? '○' : MARK_SYMBOL[mark]}
+            </span>
+          )}
+          {agent && (
+            <span
+              title={agent.name}
+              className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border text-[9px] font-semibold text-muted-foreground"
+            >
+              {agent.letter}
+            </span>
+          )}
+          {!mark && <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />}
           <div className="min-w-0 flex-1">
             <div
               className={cn(
                 'flex min-w-0 items-center gap-1.5',
-                isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15',
+                !menu && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
               )}
             >
-              <span className="min-w-0 truncate text-xs font-medium text-foreground">{name}</span>
+              <span className={cn('min-w-0 truncate text-xs text-foreground', mark ? (unread ? 'font-semibold' : 'font-normal') : 'font-medium')}>{name}</span>
+              {session.archivedAt && (
+                <span className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground">archived</span>
+              )}
               {session.taskId && (
                 <span
                   className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground"
@@ -92,10 +157,14 @@ export function SidebarSessionRow({
                   task
                 </span>
               )}
+              {menu?.isSessionPinned(session) && (
+                <Pin aria-label="Pinned" className="flex-shrink-0 fill-current text-muted-foreground" />
+              )}
               {age && (
                 <span
                   className={cn(
-                    'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground group-hover:hidden',
+                    'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground',
+                    !menu && 'group-hover:hidden',
                     isRenaming && 'hidden',
                   )}
                 >
@@ -103,10 +172,32 @@ export function SidebarSessionRow({
                 </span>
               )}
             </div>
+            {secondLine && (
+              <div
+                title={secondLine}
+                className={cn(
+                  'truncate text-[11px] leading-4 font-normal',
+                  mark === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+                  !menu && (pin ? 'group-hover:pr-40' : 'group-hover:pr-32'),
+                )}
+              >
+                {secondLine}
+              </div>
+            )}
           </div>
         </div>
       </Button>
 
+      {menu ? (
+        <button
+          type="button"
+          aria-label={`Actions for ${name}`}
+          className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
+          onClick={openMenu}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      ) : (
       <div
         className={cn(
           'absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 transition-opacity duration-200',
@@ -154,6 +245,26 @@ export function SidebarSessionRow({
           </>
         ) : (
           <>
+            {actions?.onAnswer && (
+              <button type="button" title="Answer" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onAnswer?.(); }}>
+                <MessageSquareReply className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onStop && (
+              <button type="button" title="Stop: ends the process, the conversation stays" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onStop?.(); }}>
+                <Square className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onClear && (
+              <button type="button" title="Done: nothing left to do here" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onClear?.(); }}>
+                <Check className="h-3 w-3" />
+              </button>
+            )}
+            {actions?.onArchive && (
+              <button type="button" title="Archive: leaves the lists, stays in search" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onArchive?.(); }}>
+                <Archive className="h-3 w-3" />
+              </button>
+            )}
             {pin && (
               <button
                 type="button"
@@ -192,6 +303,7 @@ export function SidebarSessionRow({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

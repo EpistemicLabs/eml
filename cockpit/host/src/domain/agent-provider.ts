@@ -1,3 +1,5 @@
+import type { ToolProfile } from './tool-profile.js'
+
 /**
  * The agent CLI a cockpit session runs, as the host sees it (ARCHITECTURE.md,
  * "First step: agent providers"). The host owns panes, the ledger, turn state
@@ -42,6 +44,8 @@ export interface IsolationContext {
  */
 export interface SessionSpace {
   id: string
+  /** The space's own agent (agent-config.ts); absent = the provider's shared config. */
+  agent?: SessionAgent | null
   /** Base URL and token of the space's brain. */
   url: string
   token: string
@@ -53,6 +57,22 @@ export interface SessionSpace {
     /** The EML client config (URL + token) the EML hooks of this space read. */
     emlConfig: string
   }
+}
+
+/**
+ * A brain space's own agent as a session sees it: everything the session keeps
+ * goes into this agent's folders, never into the shared config.
+ */
+export interface SessionAgent {
+  id: string
+  /** The agent's config folder per agent CLI, as stored in its record. A CLI not named here cannot run this agent. */
+  configDirs: Partial<Record<ProviderId, string>>
+  /** The agent's own temp folder. */
+  tempDir: string
+  /** Why a session of this CLI must not start right now, or null. Looks at the files on every call. */
+  problem(provider: ProviderId): string | null
+  /** Record what the boot found wrong; from then on `problem` answers with it. */
+  setProblem(why: string): void
 }
 
 export interface LaunchRequest {
@@ -70,6 +90,14 @@ export interface LaunchRequest {
   initialPrompt: string | null
   /** Nobody is watching this session (a worker): it must not stop to ask for permission. */
   unattended: boolean
+  /**
+   * An unattended worker the host started without a pane (worker-start.ts): reachable
+   * from outside the cockpit (Claude Code: Remote Control) like an attended session,
+   * since that is the only way to follow it without a cockpit tab.
+   */
+  reachable?: boolean
+  /** What the session may use. */
+  toolProfile?: ToolProfile | null
 }
 
 /** Binary, arguments and the provider's own environment for one session process. */
@@ -83,6 +111,8 @@ export interface LaunchSpec {
    * after a host restart, until the user closes it.
    */
   keepRunning: boolean
+  /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */
+  limits?: { mcpConfig: string | null; deniedTools: string[] }
 }
 
 export interface SessionRef {
@@ -101,6 +131,8 @@ export interface SessionRef {
    * null when the ledger does not know (an entry from before it recorded this).
    */
   greeted: boolean | null
+  /** The agent of the session's space; absent = the provider's shared config. */
+  agent?: SessionAgent | null
 }
 
 /** Best-effort display data for the sidebar, read from the provider's transcript. */
@@ -210,7 +242,9 @@ export interface AgentProvider {
   /** Write the isolated config: brain MCP, session hooks, EML hooks, skills. Once per boot, before any launch. */
   prepare(ctx: IsolationContext): void
   /** Let sessions open this folder without the provider's trust prompt. Idempotent. */
-  trustProject(projectPath: string): void
+  trustProject(projectPath: string, space?: SessionSpace): void
+  /** Whether a worker of this space runs through the chat runtime rather than a terminal. */
+  workerRunsInChat(space: SessionSpace): boolean
   launch(req: LaunchRequest): LaunchSpec
   /** Whether the provider has a stored conversation for this session. */
   canResume(session: SessionRef): boolean

@@ -28,9 +28,22 @@ export interface ProjectSession {
   /** Value at fetch time; the live source is the turn store. */
   turnState?: TurnState;
   turnSince?: string | null;
+  /** How it stands for the user, why, and since when; saved by the host, it outlives the process. */
+  attention?: { kind: 'question' | 'review' | 'failed' | 'done'; reason: string | null; at: string } | null;
+  /** The main pane of a desk, on any device. */
+  deskMain?: boolean;
+  /** Started by another session. */
+  worker?: boolean;
+  parentSessionId?: string | null;
+  readAt?: string | null;
+  /** A turn ended and nobody has seen the result. */
+  resultAt?: string | null;
+  archivedAt?: string | null;
   __provider?: LLMProvider;
   /** The owning project's id. */
   __projectId?: string;
+  /** Set by the All view: the pane store's key of the session's space (null = main); the click opens it there. */
+  __spaceKey?: string | null;
   [key: string]: unknown;
 }
 

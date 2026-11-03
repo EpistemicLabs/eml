@@ -18,7 +18,8 @@ export function installSpaceHeader(): void {
     const space = getActiveSpaceId();
     if (!space || !isHostApi(input)) return original(input, init);
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    headers.set(SPACE_HEADER, space);
+    // A request that names its space itself keeps it (New session picks a project of any agent).
+    if (!headers.has(SPACE_HEADER)) headers.set(SPACE_HEADER, space);
     return original(input, { ...init, headers });
   };
 }

@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useDesks } from '@/stores/usePaneStore';
 import { api } from '@/utils/api';
+import { useAllView } from '@/stores/useSpaceStore';
 import type { Project, ProjectSession } from '@/types/app';
+import { useAllSessions } from './useAllSessions';
 import type {
   ConversationEntry,
   PendingProjectDelete,
@@ -70,9 +72,11 @@ export function useSidebarController(props: SidebarProps) {
   useEffect(() => {
     propsRef.current = props;
   });
+  const allView = useAllView();
+  const { sessions: allSessions, queued: queuedWorkers, refresh: refreshAllSessions } = useAllSessions(true);
   const refreshList = useCallback(async () => {
-    await propsRef.current.onRefresh();
-  }, []);
+    await Promise.all([propsRef.current.onRefresh(), refreshAllSessions()]);
+  }, [refreshAllSessions]);
 
   // ── Errors (user actions only) ─────────────────────────────────────
   const [error, setError] = useState<SidebarError | null>(null);
@@ -237,14 +241,14 @@ export function useSidebarController(props: SidebarProps) {
     refreshingRef.current = true;
     setRefreshing(true);
     try {
-      await propsRef.current.onRefresh();
+      await refreshList();
     } catch (refreshError) {
       console.error('[Sidebar] Refresh failed:', refreshError);
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, []);
+  }, [refreshList]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -416,10 +420,7 @@ export function useSidebarController(props: SidebarProps) {
     [],
   );
   const cancelSessionDelete = useCallback(() => setPendingSessionDelete(null), []);
-  const confirmSessionDelete = useCallback(async () => {
-    if (!pendingSessionDelete) return;
-    const { sessionId } = pendingSessionDelete;
-    setPendingSessionDelete(null);
+  const deleteSession = useCallback(async (sessionId: string) => {
     try {
       const response = await api.deleteSession(sessionId);
       if (!response.ok) {
@@ -436,7 +437,13 @@ export function useSidebarController(props: SidebarProps) {
       console.error('[Sidebar] Error deleting session:', deleteError);
       reportError(FALLBACK_ERROR_MESSAGE);
     }
-  }, [pendingSessionDelete, reportError, actionSucceeded, refreshList]);
+  }, [reportError, actionSucceeded, refreshList]);
+  const confirmSessionDelete = useCallback(async () => {
+    if (!pendingSessionDelete) return;
+    const { sessionId } = pendingSessionDelete;
+    setPendingSessionDelete(null);
+    await deleteSession(sessionId);
+  }, [pendingSessionDelete, deleteSession]);
 
   // ── Remove a folder project ────────────────────────────────────────
   const [pendingProjectDelete, setPendingProjectDelete] = useState<PendingProjectDelete | null>(null);
@@ -497,6 +504,10 @@ export function useSidebarController(props: SidebarProps) {
     now,
     viewMode,
     setViewMode,
+    allView,
+    allSessions,
+    queuedWorkers,
+    reportError,
     isPinnedOpen,
     togglePinnedOpen,
     showHidden,
@@ -544,6 +555,7 @@ export function useSidebarController(props: SidebarProps) {
     pendingSessionDelete,
     requestSessionDelete,
     confirmSessionDelete,
+    deleteSession,
     cancelSessionDelete,
     // wizard
     wizardOpen,

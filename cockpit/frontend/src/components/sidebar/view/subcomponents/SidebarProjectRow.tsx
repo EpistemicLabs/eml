@@ -1,9 +1,12 @@
-import { Brain, Check, ChevronDown, ChevronRight, Folder, FolderOpen, X } from 'lucide-react';
+import { useRef } from 'react';
+import { Brain, Check, ChevronDown, ChevronRight, Folder, FolderOpen, MoreHorizontal, X } from 'lucide-react';
 
+import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
 import { Button, Tooltip } from '@/shared/view/ui';
 import type { Project } from '@/types/app';
 import type { SidebarController } from '../../useSidebarController';
+import { useRowMenu } from '../rowMenuContext';
 import { SidebarSessionsArea } from './SidebarSessionsArea';
 
 const ROW_SHAPE = 'h-7.5 w-full justify-between gap-2 rounded-md px-2 font-normal [&_svg]:size-3';
@@ -75,7 +78,12 @@ export function SidebarProjectRow({
   const isSelected = controller.selectedProjectId === project.projectId;
   const isDeleting = controller.deleting.has(project.projectId);
   const isDimmed = Boolean(project.hidden) || project.brainStatus === 'archived';
-  const rename = controller.projectRename?.id === project.projectId ? controller.projectRename : null;
+  const menu = useRowMenu();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const openMenu = () => menu?.open({ kind: 'project', project }, rowRef.current);
+  const longPress = useLongPress(openMenu);
+  // In the compact layout the menu does the renaming.
+  const rename = !menu && controller.projectRename?.id === project.projectId ? controller.projectRename : null;
   const selectedTone = isSelected && 'bg-accent text-accent-foreground';
 
   const archivedPill = project.brainStatus === 'archived' && (
@@ -126,9 +134,10 @@ export function SidebarProjectRow({
           </div>
         </div>
       ) : (
+        <div ref={rowRef} className="relative" {...(menu ? longPress : {})}>
         <Button
           variant="ghost"
-          className={cn('group', ROW_SHAPE, 'hover:bg-accent/50', selectedTone, isSelected && 'hover:bg-accent')}
+          className={cn('group', ROW_SHAPE, 'hover:bg-accent/50', selectedTone, isSelected && 'hover:bg-accent', menu && 'h-10 pr-10')}
           onClick={() => controller.selectAndToggleProject(project)}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -144,6 +153,17 @@ export function SidebarProjectRow({
             )}
           </div>
         </Button>
+        {menu && (
+          <button
+            type="button"
+            aria-label={`Actions for ${project.displayName}`}
+            className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
+            onClick={openMenu}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+        )}
+        </div>
       )}
       {isExpanded && <SidebarSessionsArea project={project} controller={controller} />}
     </div>

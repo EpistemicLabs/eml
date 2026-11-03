@@ -1,6 +1,5 @@
 import { Eye, EyeOff, Folder } from 'lucide-react';
 
-import SpaceSwitch from '@/components/app/SpaceSwitch';
 import type { Project } from '@/types/app';
 import type { SidebarController } from '../../useSidebarController';
 import { SidebarGroupHeader, SidebarStateBlock } from './SidebarParts';
@@ -68,7 +67,6 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
   if (showStatePanel) {
     return (
       <div className="space-y-3">
-        <SpaceSwitch variant="sidebar" />
         <StatePanel controller={controller} />
         <HiddenToggle controller={controller} />
       </div>
@@ -78,7 +76,6 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
   const { pinned, brain, folder } = controller.projectGroups;
   return (
     <div className="space-y-3">
-      <SpaceSwitch variant="sidebar" />
       <ProjectGroup header="Pinned" projects={pinned} kindIcons controller={controller} />
       <ProjectGroup
         header={pinned.length > 0 ? 'Projects' : null}

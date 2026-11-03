@@ -22,9 +22,10 @@ export interface CockpitConfig {
   mainName?: string
   /**
    * Further local brain spaces (brain-space.ts): token + display name each;
-   * which brain a token belongs to comes from control.db at boot. Absent = main only.
+   * which brain a token belongs to comes from control.db at boot. `agent` binds
+   * the space to its own agent (agent-config.ts). Absent = main only.
    */
-  spaces?: Array<{ token: string; name?: string }>
+  spaces?: Array<{ token: string; name?: string; agent?: string }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
   hygiene?: Record<string, HygieneState>
 }
@@ -44,8 +45,12 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
     if (!parsed.token) return null
     const spaces = Array.isArray(parsed.spaces)
       ? parsed.spaces
-          .filter((s): s is { token: string; name?: string } => !!s && typeof s.token === 'string' && !!s.token)
-          .map((s) => ({ token: s.token, ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}) }))
+          .filter((s): s is { token: string; name?: string; agent?: string } => !!s && typeof s.token === 'string' && !!s.token)
+          .map((s) => ({
+            token: s.token,
+            ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}),
+            ...(typeof s.agent === 'string' && s.agent ? { agent: s.agent } : {}),
+          }))
       : []
     return {
       token: parsed.token,

@@ -1,8 +1,10 @@
+import * as os from 'node:os'
 import * as path from 'node:path'
 import type { Platform } from '../../domain/platform.js'
 import { archKey, detached, isMuslLinux, posixBase, runFile } from './common.js'
 
 export const linux: Platform = {
+  freeMemory: () => os.freemem(),
   ...posixBase,
   os: 'linux',
   runtimeKey: (opts) => `linux-${archKey()}${opts?.musl && isMuslLinux() ? '-musl' : ''}`,

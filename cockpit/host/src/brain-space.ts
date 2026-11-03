@@ -1,9 +1,12 @@
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BrainProjectsClient } from './brain-projects.js'
 import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
-import { writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
-import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME } from './paths.js'
+import { agentMcpConfigPath, writeAgentFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
+import { openSpaceAgent, type SpaceAgent } from './agent-config.js'
+import type { SessionSpace } from './domain/agent-provider.js'
+import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
 /**
@@ -27,6 +30,8 @@ export interface BrainSpace {
   brainName: string
   /** The space the home was provisioned with. */
   main: boolean
+  /** The space's own agent (agent-config.ts); null = the shared config. */
+  agent: SpaceAgent | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
   ledgerKey: string | null
   /** Base URL of the brain server this space's brain lives on. */
@@ -42,14 +47,31 @@ export interface BrainSpace {
   notes: NotesWatcher
 }
 
+/** The space as a session gets it. Both ways of running a session start from this, so an agent cannot be left behind on one. */
+export function sessionSpaceOf(space: BrainSpace): SessionSpace {
+  return { id: space.id, url: space.url, token: space.token, files: space.files, ...(space.agent ? { agent: space.agent } : {}) }
+}
+
 /** What the UI gets to see of a space (GET /api/spaces). */
 export interface SpaceView {
   id: string
   name: string
   main: boolean
+  /** What the space's sessions are marked with (spaceLabel). */
+  label: string
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main })
+/**
+ * The name for a space's sessions: its agent, else for main the agent the brain
+ * was set up with. Further brains copy that name, so a further space without
+ * its own agent goes by its display name.
+ */
+export function spaceLabel(space: BrainSpace): string {
+  const agentId = space.agent?.id ?? (space.main && space.brainName !== 'main' ? space.brainName : null)
+  return agentId ? agentId.charAt(0).toUpperCase() + agentId.slice(1) : space.name
+}
+
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, label: spaceLabel(space) })
 
 export interface OpenSpaceOptions {
   id: string
@@ -60,6 +82,8 @@ export interface OpenSpaceOptions {
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
   turnHookConfig: string
+  /** The agent the cockpit config binds to this space. */
+  agentId?: string
 }
 
 /** Where a non-main space keeps its local state. */
@@ -67,7 +91,19 @@ const spaceStateDir = (spaceId: string) => path.join(COCKPIT_HOME, 'spaces', spa
 
 /** Write the space's session files and open its clients. */
 export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
-  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig)
+  const agent = opts.agentId
+    ? openSpaceAgent(opts.agentId, opts.id, (configDir) => agentMcpConfigPath(configDir, opts.id))
+    : null
+  let files: SpaceFiles
+  if (agent) {
+    // A copy of the token left from before the agent has no reader anymore.
+    fs.rmSync(spaceConfigDir(opts.id), { recursive: true, force: true })
+    writeAgentFiles(agent, opts.id, opts.url, opts.token, opts.turnHookConfig)
+    const dir = path.dirname(agentMcpConfigPath(agent.configDirs.claude ?? '', opts.id))
+    files = { mcpConfig: path.join(dir, 'mcp.json'), settings: path.join(dir, 'settings.json'), emlConfig: path.join(spaceEmlDir(opts.id), 'config') }
+  } else {
+    files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig)
+  }
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main
@@ -78,6 +114,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     name: opts.name,
     brainName: opts.brainName,
     main: opts.main,
+    agent,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
     token: opts.token,

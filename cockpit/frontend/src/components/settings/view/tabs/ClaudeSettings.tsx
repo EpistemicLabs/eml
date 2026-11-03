@@ -27,6 +27,7 @@ type LoginStatus = {
   permissionMode: PermissionMode;
   renderer: Renderer;
   remoteControl: boolean;
+  workersInChat: boolean;
   token: { set: boolean; prefix: string | null };
   account: Account | null;
 };
@@ -102,6 +103,8 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const pinnedInput = status?.renderer === 'fullscreen';
   const setRemoteControl = (on: boolean) => run(() => api.setRemoteControl(on));
   const remoteControl = status?.remoteControl === true;
+  const setWorkersInChat = (on: boolean) => run(() => api.setWorkersInChat(on));
+  const workersInChat = status?.workersInChat !== false;
 
   const tokenMode = status?.mode === 'token';
   const showTokenForm = editing || status?.token.set === false;
@@ -197,6 +200,21 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
               checked={pinnedInput}
               onChange={(checked: boolean) => void setRenderer(checked ? 'fullscreen' : 'default')}
               ariaLabel="Keep the input at the bottom"
+              disabled={busy || status === null}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label="Workers run in chat"
+            description={
+              workersInChat
+                ? 'On: workers other sessions start run in the chat view. They cannot be followed in the Claude app.'
+                : 'Off: workers start in a terminal.'
+            }
+          >
+            <SettingsToggle
+              checked={workersInChat}
+              onChange={(checked: boolean) => void setWorkersInChat(checked)}
+              ariaLabel="Workers run in chat"
               disabled={busy || status === null}
             />
           </SettingsRow>

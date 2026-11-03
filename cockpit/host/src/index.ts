@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -16,14 +16,28 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
+import { ChatBridge } from './chat-bridge.js'
+import { terminalBusyState } from './domain/session-lifecycle.js'
+import { StartWorker } from './application/start-worker.js'
+import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
+import { recoverWorkers } from './application/recover-workers.js'
+import { needsAnswer } from './domain/session-attention.js'
+import type { SpawnRequest } from './domain/spawn-request.js'
+import { loadMessageToken } from './message-token.js'
+import { sessionAddress } from './session-address.js'
+import { InMemoryEventStore } from './application/session-events.js'
+import { SessionHandoff } from './application/session-handoff.js'
+import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
 import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace } from './brain-space.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
+import { WorkerStarter } from './worker-start.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
+import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
 
@@ -33,7 +47,8 @@ import { platform } from './infrastructure/platform/index.js'
  * start the http+ws host → open the tab.
  *
  * `eml-cockpit service …` (autostart install/uninstall/status) and
- * `eml-cockpit diagnose` (redacted diagnostics for an issue) are handled first
+ * `eml-cockpit diagnose` (redacted diagnostics for an issue) and
+ * `eml-cockpit agent …` (a space's own agent, agent-command.ts) are handled first
  * and exit; with no subcommand the host boots normally.
  */
 
@@ -137,8 +152,11 @@ async function main() {
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
       id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
-      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, agentId: extra.agent,
     }))
+    const agent = spaces.get(extraRow.id)?.agent
+    const problem = agent?.problem('claude')
+    if (agent) log(`space ${extra.name ?? extraRow.name}: agent ${agent.id}${problem ? ` — ${problem}` : ''}`)
   }
   log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
 
@@ -152,6 +170,8 @@ async function main() {
     COCKPIT_SPAWN_JS: SPAWN_CLI_JS,
     // A greeted session names itself once it knows what it is about (session-greeting.ts).
     COCKPIT_TITLE_JS: SESSION_TITLE_CLI_JS,
+    // A message that also reaches a stopped session (session-message-cli.ts).
+    COCKPIT_MESSAGE_JS: SESSION_MESSAGE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,
@@ -162,11 +182,54 @@ async function main() {
     COCKPIT_TASKS_DIR: TASKS_DIR,
   }
   fs.mkdirSync(TASKS_DIR, { recursive: true })
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers })
-  const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv })
+  const deliver = (request: MessageRequest) => deliverMessage({
+    find: (target) => {
+      const found = ledger.list().find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)
+      return found ? { sessionId: found.sessionId, wakeable: found.wakeable } : null
+    },
+    terminalRuns: (sessionId) => bridge.isRunning(sessionId),
+    runsInChat: (sessionId) => providers.forSession(sessionId)
+      .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
+    chatRuns: (sessionId) => chat.isRunning(sessionId),
+    sameReach: (fromSessionId, sessionId) => {
+      const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent?.id ?? null
+      return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
+    },
+    deliver: (sessionId, text) => chat.deliver(sessionId, text),
+  }, request)
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
+  // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
+  const handoff = (): SessionHandoff => sessionHandoff
+  const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId) })
   const swept = bridge.sweepEmptySessions()
   if (swept > 0) process.stderr.write(`[pty] forgot ${swept} session(s) that never ran a turn\n`)
   const turns = new TurnTracker()
+  const chat = new ChatBridge({
+    ledger, providers, spaces, sessionEnv,
+    runtimes: createClaudeSdkRuntimes(),
+    events: new InMemoryEventStore(),
+    onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+    onExit: (sessionId) => turns.forget(sessionId),
+    terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
+    terminalBusy: (sessionId): 'working' | 'waiting' | null => {
+      const turn = turns.get(sessionId)
+      return terminalBusyState({
+        running: bridge.isRunning(sessionId),
+        turn: turn ? { state: turn.state, since: Date.parse(turn.since) } : null,
+        promptAt: bridge.promptAt(sessionId),
+      })
+    },
+  }, handoff)
+  const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
+  // Turn state starts empty; what a session waits for someone about is saved.
+  for (const { sessionId, attention } of ledger.list()) if (attention && needsAnswer(attention.kind)) turns.apply({ sessionId, state: 'waiting' })
+  spawns.on('spawn', (request: SpawnRequest) => { if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId) })
+  const startWorker = new StartWorker({
+    chat, terminal: bridge, log,
+    runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
+      .workerRunsInChat(sessionSpaceOf(spaces.resolve(request.spaceId ?? null))),
+    freeMemory: () => platform.freeMemory(),
+  })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -174,7 +237,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene },
+    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
     origins,
   )
 
@@ -187,6 +250,32 @@ async function main() {
   // once the host answers their hooks.
   const kept = bridge.resumeKeptSessions()
   if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
+  // Workers a restart cut off mid-turn carry on, once the host answers their hooks.
+  void recoverWorkers({
+    interrupted: () => ledger.list().flatMap(({ sessionId, turnInFlight }) => (turnInFlight ? [{ sessionId, retried: turnInFlight.retried }] : [])),
+    markRetried: (sessionId) => ledger.markTurnRetried(sessionId),
+    giveUp: (sessionId, kind, reason) => {
+      ledger.setTurnInFlight(sessionId, false)
+      ledger.setAttention(sessionId, { kind, reason })
+      turns.apply({ sessionId, state: 'waiting' })
+    },
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    log,
+  }).then((recovered) => { if (recovered > 0) log(`[worker] ${recovered} worker(s) continue after the restart`) })
+  // A worker no tab takes starts without a pane (worker-start.ts).
+  const workers = new WorkerStarter({
+    spawns, log,
+    bridge: {
+      startWorker: (request) => startWorker.withoutPane(request),
+      hasRoom: () => startWorker.hasRoom(),
+      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf) + chat.sweepIdle(),
+    },
+    turnOf: (sessionId) => {
+      const turn = turns.get(sessionId)
+      return { state: turn?.state ?? 'idle', since: turn ? Date.parse(turn.since) : null }
+    },
+  })
+  workers.start()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -198,7 +287,9 @@ async function main() {
   if (brain.reused) openBrowser(url)
 
   const shutdown = () => {
+    workers.stop()
     try { bridge.dispose() } catch { /* best-effort */ }
+    void chat.dispose()
     try { server.proc.kill('SIGTERM') } catch { /* best-effort */ }
     try { host.close() } catch { /* best-effort */ }
     process.exit(0)
@@ -217,5 +308,6 @@ async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
 runServiceCommand(process.argv.slice(2))
   .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
+  .then(async (handled) => handled || runAgentCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

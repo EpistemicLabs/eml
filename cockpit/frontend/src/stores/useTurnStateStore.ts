@@ -9,7 +9,17 @@ import type { LLMProvider } from '@/types/app';
 
 export type TurnState = 'idle' | 'working' | 'done' | 'waiting';
 export type TurnInfo = { state: TurnState; since: string };
-export type TurnEvent = TurnInfo & { sessionId: string };
+export type TurnEvent = TurnInfo & {
+  sessionId: string;
+  /** What a notification calls the session (host turnNotice). */
+  title?: string | null;
+  /** A worker of a batch that is still running: the batch speaks up once, at its last. */
+  silent?: boolean;
+  /** This worker finished its batch of this many. */
+  batch?: number;
+  /** The session was in this state already: nothing new to tell. */
+  repeated?: boolean;
+};
 
 type Snapshot = {
   turns: Record<string, TurnInfo>;
@@ -53,6 +63,11 @@ export function isUnseenDone(snap: Snapshot, sessionId: string): boolean {
  * permission prompt, a question dialog) or finished without being seen.
  * Drives the desk-tab badges and the title count.
  */
+/** Every session waiting for an answer, pane or not: the title counts those too. */
+export function waitingSessions(snap: Snapshot): string[] {
+  return Object.keys(snap.turns).filter((id) => snap.turns[id]?.state === 'waiting');
+}
+
 export function countNeedsYou(snap: Snapshot, ids: Array<string | null | undefined>): number {
   let n = 0;
   for (const id of ids) if (id && (snap.turns[id]?.state === 'waiting' || isUnseenDone(snap, id))) n += 1;
@@ -104,6 +119,8 @@ export type SpawnRequest = {
   createdAt: string;
   /** The agent CLI the worker runs with; unset → the cockpit's default. */
   provider?: LLMProvider;
+  /** It asked for a pane. Without one a session's worker just runs and shows under its parent. */
+  open?: boolean;
 };
 
 export function connectTurnEvents(
@@ -135,11 +152,12 @@ export function connectTurnEvents(
 
   source.addEventListener('turn', (message) => {
     const event = JSON.parse((message as MessageEvent<string>).data) as TurnEvent;
+    const repeated = snapshot.turns[event.sessionId]?.state === event.state;
     const turns = { ...snapshot.turns };
     if (event.state === 'idle') delete turns[event.sessionId];
     else turns[event.sessionId] = { state: event.state, since: event.since };
     setTurns(turns);
-    onTurn?.(event);
+    onTurn?.({ ...event, repeated });
   });
 
   return () => source.close();
