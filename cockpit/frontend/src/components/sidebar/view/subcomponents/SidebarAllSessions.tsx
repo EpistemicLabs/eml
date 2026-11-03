@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, MessageSquare } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 
 import { startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
-import { cn } from '@/lib/utils';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSession, type MainItem,
+  agentLabel, agentLetter, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSession,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
@@ -18,18 +17,14 @@ import { SidebarSessionRow } from './SidebarSessionRow';
 const RECENT_PER_AGENT = 5;
 const SHOW_MORE_STEP = 20;
 
-function AllSessionRow({ session, spaces, controller, sessions, detail, counts, leading, nested, plain }: {
+/** One session, on its own row: a worker's says where it comes from. */
+function AllSessionRow({ session, spaces, controller, sessions, plain }: {
   session: AllSession;
   spaces: SpaceInfo[];
   controller: SidebarController;
   /** Every session, to name a worker's parent. */
   sessions: AllSession[];
-  detail?: string;
-  /** Its workers in words: shown after the reason on a row that has one. */
-  counts?: string;
-  leading?: React.ReactNode;
-  nested?: boolean;
-  /** No mark: a row under its parent, or found by search. */
+  /** No mark: a row outside what needs the user. */
   plain?: boolean;
 }) {
   const { sessionRename } = controller;
@@ -64,66 +59,13 @@ function AllSessionRow({ session, spaces, controller, sessions, detail, counts, 
         }}
         agent={{ letter: agentLetter(space), name: agentLabel(space) }}
         mark={mark}
-        detail={detail}
-        context={[parent && sessionDisplayName(parent), counts].filter(Boolean).join(' · ') || undefined}
-        leading={leading}
-        nested={nested}
+        context={parent ? `from ${sessionDisplayName(parent)}` : undefined}
         actions={{
           onStop: running && working ? () => void stopSession(session.id).then(whenDone) : undefined,
           onClear: session.attention?.kind === 'review' || (session.attention && pinned) ? () => void clearSession(session.id).then(whenDone) : undefined,
           onArchive: !session.archivedAt && !working ? () => void archiveSession(session.id).then(whenDone) : undefined,
         }}
       />
-    </div>
-  );
-}
-
-/** A session with its workers under an arrow, in whichever section it is. */
-function SessionWithWorkers({ session, item, spaces, controller, sessions, marked }: {
-  session: AllSession;
-  item: MainItem | undefined;
-  spaces: SpaceInfo[];
-  controller: SidebarController;
-  sessions: AllSession[];
-  /** The row says how the session stands, with the counts behind it. */
-  marked?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const workers = item?.workers ?? [];
-  const line = item ? countsLine(item.counts) : '';
-  const expandable = workers.length > 0;
-  return (
-    <div className="space-y-0.5">
-      <AllSessionRow
-        session={session}
-        spaces={spaces}
-        controller={controller}
-        sessions={sessions}
-        plain={!marked}
-        detail={marked ? undefined : line || undefined}
-        counts={marked ? line || undefined : undefined}
-        leading={expandable ? (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={open ? 'Hide workers' : 'Show workers'}
-            aria-expanded={open}
-            className="-ml-1 flex h-5 w-4 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-            onClick={(event) => { event.stopPropagation(); setOpen(!open); }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              event.stopPropagation();
-              setOpen(!open);
-            }}
-          >
-            <ChevronRight className={cn('transition-transform', open && 'rotate-90')} />
-          </span>
-        ) : undefined}
-      />
-      {open && workers.map((worker) => (
-        <AllSessionRow key={worker.id} session={worker} spaces={spaces} controller={controller} sessions={sessions} nested />
-      ))}
     </div>
   );
 }
@@ -169,7 +111,7 @@ function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarContro
   const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
   const { needsYou, toReview } = sections;
   const row = (session: AllSession) => (
-    <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} marked />
+    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
   );
   const waiting = needsYou.length + toReview.length;
   if (waiting === 0) return null;
@@ -178,7 +120,7 @@ function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarContro
       <div className="px-2">
         <button
           type="button"
-          onClick={() => startReview([...needsYou, ...toReview], spaces)}
+          onClick={() => startReview([...needsYou, ...toReview])}
           className="w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
         >
           Review {waiting} ▶
@@ -209,7 +151,7 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
   if (sessions.length === 0) return <SidebarStateBlock icon={MessageSquare} text="No sessions yet" />;
 
   const row = (session: AllSession) => (
-    <SessionWithWorkers key={session.id} session={session} item={sections.items.get(session.id)} spaces={spaces} controller={controller} sessions={sessions} />
+    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} plain />
   );
   const searching = query.trim() !== '';
   const recent = sections.recent
@@ -227,7 +169,7 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
             <div key={group.space.id} className="space-y-0.5">
               <AgentName space={group.space} />
               {group.items.map((item) => (
-                <SessionWithWorkers key={item.session.id} session={item.session} item={item} spaces={spaces} controller={controller} sessions={sessions} />
+                <AllSessionRow key={item.session.id} session={item.session} spaces={spaces} controller={controller} sessions={sessions} plain />
               ))}
             </div>
           ))}
@@ -237,7 +179,7 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
         <div className="space-y-0.5">
           <SidebarGroupHeader>Working · {sections.working.length}</SidebarGroupHeader>
           {sections.working.map((item) => (
-            <SessionWithWorkers key={item.session.id} session={item.session} item={item} spaces={spaces} controller={controller} sessions={sessions} />
+            <AllSessionRow key={item.session.id} session={item.session} spaces={spaces} controller={controller} sessions={sessions} plain />
           ))}
         </div>
       )}

@@ -4,13 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-// The review bar holds the keyboard: D, A, E, R and Esc act on it alone, a key
-// never lands in an input by itself, and Esc does not reach the pane below.
-// Answers go in the session's own input; the bar has none.
+// The review screen's bar holds the keyboard: D, A, E, R and Esc act on it alone,
+// a key never lands in an input by itself, and Esc does not reach the session
+// below. Answers go in the session's own input; a reply gives the keyboard back.
 
 let sessions: AllSession[] = [];
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions, queued: [], refresh: () => {} }) }));
 vi.mock('@/stores/useTurnStateStore', () => ({ useTurnStore: () => ({ turns: {} }) }));
+// The session's own view: its input at the bottom.
+vi.mock('@/components/chat/ChatPane', () => ({ ChatPane: () => <textarea aria-label="Message" /> }));
+vi.mock('@/components/standalone-shell/view/StandaloneShell', () => ({ default: () => <div>terminal</div> }));
 const flow = vi.hoisted(() => ({
   stepReview: vi.fn(),
   endReview: vi.fn(),
@@ -18,15 +21,16 @@ const flow = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/review-flow', async (original) => ({ ...(await original<typeof import('@/lib/review-flow')>()), ...flow }));
 
-const { ReviewBar } = await import('./ReviewBar');
-const { returnToReviewBar, setReview } = await import('@/stores/useReviewStore');
+const { ReviewScreen } = await import('./ReviewScreen');
+const { returnToReviewBar, setReview, REVIEW_PANE_ID } = await import('@/stores/useReviewStore');
 
-const result = { id: 'a', spaceId: 'main', summary: 'First', attention: { kind: 'done', at: '2026-11-03T00:00:00Z' } } as unknown as AllSession;
-const question = { id: 'q', spaceId: 'main', summary: 'Asks', attention: { kind: 'question', at: '2026-11-03T00:00:00Z', reason: 'Which one?' } } as unknown as AllSession;
+const result = { id: 'a', spaceId: 'main', __projectId: 'p', runtime: 'sdk', summary: 'First', attention: { kind: 'done', at: '2026-11-03T00:00:00Z' } } as unknown as AllSession;
+const question = { ...result, id: 'q', summary: 'Asks', attention: { kind: 'question', at: '2026-11-03T00:00:00Z', reason: 'Which one?' } } as unknown as AllSession;
 
 const bar = () => screen.getByLabelText('Review');
+const input = () => screen.getByLabelText('Message');
 
-describe('the review bar', () => {
+describe('the review screen', () => {
   beforeEach(() => {
     Object.values(flow).forEach((fn) => fn.mockClear());
   });
@@ -37,30 +41,30 @@ describe('the review bar', () => {
 
   const open = (current: AllSession) => {
     sessions = [current, { ...result, id: 'b' }];
-    act(() => setReview({ queue: [current.id, 'b'], index: 0, paneId: 'pane', ownPaneId: 'pane' }));
-    render(<ReviewBar paneId="pane" />);
+    act(() => setReview({ queue: [current.id, 'b'], index: 0 }));
+    render(<ReviewScreen />);
   };
 
   it('takes the focus, and D, A and E act on it', () => {
     open(result);
     expect(document.activeElement).toBe(bar());
     fireEvent.keyDown(bar(), { key: 'd' });
-    expect(flow.stepReview).toHaveBeenLastCalledWith(1, expect.anything(), expect.anything());
+    expect(flow.stepReview).toHaveBeenLastCalledWith(1, expect.anything());
     fireEvent.keyDown(bar(), { key: 'a' });
-    expect(flow.stepReview).toHaveBeenLastCalledWith(-1, expect.anything(), expect.anything());
+    expect(flow.stepReview).toHaveBeenLastCalledWith(-1, expect.anything());
     fireEvent.keyDown(bar(), { key: 'e' });
     expect(flow.finishCurrent).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing for a key pressed elsewhere', () => {
+  it('does nothing for a key typed in the session\'s input', () => {
     open(result);
-    fireEvent.keyDown(document.body, { key: 'd' });
-    fireEvent.keyDown(document.body, { key: 'e' });
+    fireEvent.keyDown(input(), { key: 'd' });
+    fireEvent.keyDown(input(), { key: 'e' });
     expect(flow.stepReview).not.toHaveBeenCalled();
     expect(flow.finishCurrent).not.toHaveBeenCalled();
   });
 
-  it('ends on Escape without it reaching the pane', () => {
+  it('goes back to the desks on Escape without it reaching the session', () => {
     open(result);
     const below = vi.fn();
     window.addEventListener('keydown', below);
@@ -77,29 +81,23 @@ describe('the review bar', () => {
     expect(flow.stepReview).not.toHaveBeenCalled();
   });
 
-  it('answers a question in the session\'s own input, on R', () => {
+  it('answers a question in the session\'s own input, and E does not archive it', () => {
     open(question);
-    expect(screen.queryByLabelText('Your answer')).toBeNull();
-    expect(document.activeElement).toBe(bar());
-    // The pane's chat input sits next to the bar, inside the same pane.
-    const input = document.createElement('textarea');
-    bar().parentElement!.appendChild(input);
+    expect(screen.getByText(/Answer/)).toBeTruthy();
     fireEvent.keyDown(bar(), { key: 'r' });
-    expect(document.activeElement).toBe(input);
+    expect(document.activeElement).toBe(input());
+    act(() => bar().focus());
     fireEvent.keyDown(bar(), { key: 'e' });
+    expect(document.activeElement).toBe(input());
     expect(flow.finishCurrent).not.toHaveBeenCalled();
-    input.remove();
   });
 
-  it('takes the keyboard back after a reply is sent from its pane', () => {
+  it('takes the keyboard back after a reply is sent from its input', () => {
     open(result);
-    const input = document.createElement('textarea');
-    document.body.appendChild(input);
-    input.focus();
-    act(() => returnToReviewBar('other-pane'));
-    expect(document.activeElement).toBe(input);
-    act(() => returnToReviewBar('pane'));
+    act(() => input().focus());
+    act(() => returnToReviewBar('some-pane'));
+    expect(document.activeElement).toBe(input());
+    act(() => returnToReviewBar(REVIEW_PANE_ID));
     expect(document.activeElement).toBe(bar());
-    input.remove();
   });
 });

@@ -421,10 +421,19 @@ export function startingMode(chosen: string | null, setting: string): string {
 }
 
 const STATUS_TOOL = 'session_status'
-const STATUS_TOOL_DESCRIPTION = 'Say how you stand when you end your turn, whenever someone has to act; this is how people learn you need them. '
-  + 'done: finished, nobody needs to act. question: only a person can decide; ask it in your reply too. '
+const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, whenever someone has to act; this is how people learn you need them. '
+  + 'Call it first, then write your closing reply: the person reads that reply, never this call or your thinking. '
+  + 'done: finished, nobody needs to act. question: only a person can decide. '
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
   + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
+
+// The result is what the model reads next: it asks for the closing summary right there.
+const NEXT_STEP: Record<string, string> = {
+  done: 'Now write your closing summary as visible text: what was asked, what you did, what changed (files, links).',
+  question: 'Now write your closing summary as visible text: what was asked, what you did, then the questions as a numbered list.',
+  review: 'Now write your closing summary as visible text: what was asked, what you did, what changed, then what to check.',
+  failed: 'Now write your closing summary as visible text: what was asked, what you tried, what went wrong.',
+}
 
 /** The status tool and the check before a worker's turn ends, in this process: no extra server per worker. */
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
@@ -432,7 +441,7 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
     name: 'cockpit',
     tools: [tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
       worker.report(status, reason ?? null)
-      return { content: [{ type: 'text', text: `Recorded: ${status}.` }] }
+      return { content: [{ type: 'text', text: `Recorded: ${status}. ${NEXT_STEP[status] ?? ''}`.trim() }] }
       // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
     }, { alwaysLoad: true })],
   })

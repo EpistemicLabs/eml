@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
-import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-// The review flow goes through sessions in one pane. Pressing D must not open
-// panes or move the layout: the flow's pane swaps its session in place.
+// The review is a screen of its own: it goes through the queue without touching
+// the desks, drops what was archived elsewhere, and goes back to the desks at the end.
 
 const storage = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -14,119 +13,72 @@ vi.stubGlobal('localStorage', {
 });
 vi.stubGlobal('window', { localStorage: globalThis.localStorage, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true });
 
-const released: Array<[string, string]> = [];
-vi.mock('@/utils/api', () => ({
-  api: { releaseSession: (sessionId: string, paneId: string) => { released.push([sessionId, paneId]); return Promise.resolve(); } },
-}));
+const read: string[] = [];
 vi.mock('@/lib/session-actions', () => ({
-  markSessionRead: () => Promise.resolve(null),
+  markSessionRead: (id: string) => { read.push(id); return Promise.resolve(null); },
   clearSession: () => Promise.resolve(null),
   archiveSession: () => Promise.resolve(null),
 }));
 
-const MAIN: SpaceInfo = { id: 'main', name: 'Main', main: true };
-const OTHER: SpaceInfo = { id: 'other', name: 'Other', main: false };
-const SPACES = [MAIN, OTHER];
-
-const session = (id: string, spaceId = 'main', extra: Partial<AllSession> = {}): AllSession =>
-  ({ id, spaceId, __projectId: 'p', ...extra }) as AllSession;
+const session = (id: string, extra: Partial<AllSession> = {}): AllSession => ({ id, spaceId: 'main', __projectId: 'p', ...extra }) as AllSession;
+const ARCHIVED = { archivedAt: '2026-11-03T00:00:00Z' };
 
 describe('the review flow', () => {
-  let store: typeof import('@/stores/usePaneStore');
   let flow: typeof import('./review-flow');
   let review: typeof import('@/stores/useReviewStore');
+  let top: typeof import('@/stores/useTopViewStore');
+  let panes: typeof import('@/stores/usePaneStore');
 
   beforeEach(async () => {
     vi.resetModules();
     storage.clear();
-    released.length = 0;
-    store = await import('@/stores/usePaneStore');
+    read.length = 0;
     flow = await import('./review-flow');
     review = await import('@/stores/useReviewStore');
-    store.setEmptyPaneTest((pane) => !pane.projectId);
-    // A desk with work on it: the review opens next to it.
-    store.openInPane({ surface: 'terminal', projectId: 'p', sessionId: 'mine' });
+    top = await import('@/stores/useTopViewStore');
+    panes = await import('@/stores/usePaneStore');
+    panes.openInPane({ surface: 'terminal', projectId: 'p', sessionId: 'mine' });
   });
 
-  const paneCount = () => store.getDesks().reduce((count, desk) => count + desk.panes.length, 0);
+  const layout = () => JSON.stringify(panes.getDesks().map((desk) => desk.panes.map((pane) => pane.sessionId)));
 
-  it('goes through five sessions in one pane, swapped in place', () => {
-    const sessions = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => session(id));
-    flow.startReview(sessions, SPACES);
-    const paneId = review.getReview()?.paneId;
-    const panes = paneCount();
-    for (let step = 0; step < 5; step += 1) flow.stepReview(1, sessions, SPACES);
-    expect(review.getReview()?.paneId).toBe(paneId);
-    expect(store.getPane(paneId!)?.sessionId).toBe('f');
-    expect(paneCount()).toBe(panes);
-    expect(released.map(([id]) => id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  it('opens its own screen in the order given and leaves the desks as they are', () => {
+    const before = layout();
+    const sessions = [session('q'), session('a'), session('mine')];
+    flow.startReview(sessions);
+    expect(top.getTopView()).toBe('review');
+    for (let step = 0; step < 2; step += 1) flow.stepReview(1, sessions);
+    expect(review.getReview()).toEqual({ queue: ['q', 'a', 'mine'], index: 2 });
+    expect(read).toEqual(['q', 'a', 'mine']);
+    expect(layout()).toBe(before);
   });
 
-  it('closes its pane at the end and leaves the user\'s', () => {
-    const sessions = [session('a'), session('b')];
-    flow.startReview(sessions, SPACES);
+  it('goes back to the desks at the end', () => {
+    flow.startReview([session('a')]);
     flow.endReview();
-    expect(paneCount()).toBe(1);
-    expect(store.paneHoldingSession('mine')).toBeDefined();
+    expect(top.getTopView()).toBe('desks');
+    expect(review.getReview()).toBeNull();
   });
 
-  it('shows a session in the user\'s pane on this desk without changing the layout', () => {
-    const sessions = [session('a'), session('mine'), session('c')];
-    flow.startReview(sessions, SPACES);
-    const own = review.getReview()!.paneId!;
-    const panes = paneCount();
-    flow.stepReview(1, sessions, SPACES);
-    const mine = store.paneHoldingSession('mine');
-    expect(review.getReview()).toMatchObject({ paneId: mine?.id, ownPaneId: own });
-    expect(paneCount()).toBe(panes);
-    flow.stepReview(1, sessions, SPACES);
-    expect(review.getReview()).toMatchObject({ paneId: own, ownPaneId: own });
-    expect(store.getPane(own)?.sessionId).toBe('c');
-    expect(paneCount()).toBe(panes);
-    flow.stepReview(-1, sessions, SPACES);
-    flow.endReview();
-    expect(store.paneHoldingSession('mine')).toBeDefined();
-    expect(store.getPane(own)).toBeUndefined();
-  });
-
-  it('keeps swapping in a review pane the user made the main pane', () => {
-    const sessions = [session('a'), session('b'), session('c')];
-    flow.startReview(sessions, SPACES);
-    const paneId = review.getReview()!.paneId!;
-    store.toggleMainPane(paneId);
-    flow.stepReview(1, sessions, SPACES);
-    flow.stepReview(1, sessions, SPACES);
-    expect(review.getReview()?.paneId).toBe(paneId);
-    expect(paneCount()).toBe(2);
-  });
-
-  it('takes the open space first and changes the desk once for another space', () => {
-    const sessions = [session('x', 'other'), session('a'), session('y', 'other'), session('b')];
-    flow.startReview(sessions, SPACES);
-    expect(review.getReview()?.queue).toEqual(['a', 'b', 'x', 'y']);
-    flow.stepReview(1, sessions, SPACES);
-    expect(store.getActiveSpaceId()).toBeNull();
-    flow.stepReview(1, sessions, SPACES);
-    const inOther = review.getReview()!.paneId!;
-    expect(store.getDeskOfPane(inOther)?.spaceId).toBe('other');
-    flow.stepReview(1, sessions, SPACES);
-    expect(review.getReview()?.paneId).toBe(inOther);
-    expect(store.getPane(inOther)?.sessionId).toBe('y');
+  it('is never restored after a reload', async () => {
+    flow.startReview([session('a')]);
+    vi.resetModules();
+    top = await import('@/stores/useTopViewStore');
+    expect(top.getTopView()).toBe('desks');
   });
 
   it('skips a session archived elsewhere instead of stopping', () => {
-    const sessions = [session('a'), session('b'), session('c')];
-    flow.startReview(sessions, SPACES);
-    const later = [session('a'), session('b', 'main', { archivedAt: '2026-11-03T00:00:00Z' }), session('c')];
-    flow.stepReview(1, later, SPACES);
-    expect(review.getReview()).toMatchObject({ queue: ['a', 'c'], index: 1 });
+    flow.startReview([session('a'), session('b'), session('c')]);
+    flow.stepReview(1, [session('a'), session('b', ARCHIVED), session('c')]);
+    expect(review.getReview()).toEqual({ queue: ['a', 'c'], index: 1 });
   });
 
-  it('goes on after Archive & next past a session archived elsewhere', async () => {
-    const sessions = [session('a'), session('b'), session('c')];
-    flow.startReview(sessions, SPACES);
-    const later = [session('a'), session('b', 'main', { archivedAt: '2026-11-03T00:00:00Z' }), session('c')];
-    await flow.finishCurrent('archive', later, SPACES);
-    expect(review.getReview()).toMatchObject({ queue: ['c'], index: 0 });
+  it('goes on after Archive & next past a session archived elsewhere, and ends after the last', async () => {
+    flow.startReview([session('a'), session('b'), session('c')]);
+    await flow.finishCurrent('archive', [session('a'), session('b', ARCHIVED), session('c')]);
+    expect(review.getReview()).toEqual({ queue: ['c'], index: 0 });
+    await flow.finishCurrent('clear', [session('c')]);
+    expect(review.getReview()).toBeNull();
+    expect(top.getTopView()).toBe('desks');
   });
 });

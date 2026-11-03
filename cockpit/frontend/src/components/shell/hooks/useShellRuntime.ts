@@ -6,8 +6,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
+import { RECLAIM_TERMINAL_EVENT } from '@/stores/useReviewStore';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
-import { reviewHoldsFocus } from '@/stores/useReviewStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
   ERROR_NO_IDENTITY,
@@ -60,6 +60,8 @@ export interface ShellRuntimeOptions {
    * autocorrect, capitalize or suggest, which would rewrite commands.
    */
   touchInput: boolean;
+  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  spaceId?: string | null;
 }
 
 /** Input from outside the terminal: the compact layout's key row and its extras. */
@@ -271,7 +273,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
           greet: readSettings().greetOnStart,
           taskId: pane?.taskId ?? null,
           provider: pane?.provider ?? null,
-          spaceId: desk?.spaceId ?? null,
+          spaceId: latestRef.current.spaceId !== undefined ? latestRef.current.spaceId : desk?.spaceId ?? null,
           isDarkMode: document.documentElement.classList.contains('dark'),
         });
         if (sent) lastSentSizeRef.current = size;
@@ -496,16 +498,24 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     if (autoConnect && initialized && !connecting && !connected && !superseded) void connect();
   }, [autoConnect, initialized, connecting, connected, superseded, connect]);
 
+  // The review screen borrowed this terminal's session and is done with it: take it back.
   useEffect(() => {
-    // In the review flow's pane the review bar holds the keyboard: a key for it must not land here.
-    if (!isActive || !initialized || !connected || (options.paneId && reviewHoldsFocus(options.paneId))) return;
+    const onReclaim = (event: Event) => {
+      if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setSuperseded(false);
+    };
+    window.addEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
+    return () => window.removeEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!isActive || !initialized || !connected) return;
     const frame = window.requestAnimationFrame(() => terminalRef.current?.focus());
     const timer = window.setTimeout(() => terminalRef.current?.focus(), 0);
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [isActive, initialized, connected, options.paneId]);
+  }, [isActive, initialized, connected]);
 
   // A soft keyboard types into xterm's helper textarea: keep it from
   // correcting, capitalizing or suggesting, which would rewrite commands.

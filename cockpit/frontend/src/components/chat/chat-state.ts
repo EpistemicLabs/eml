@@ -348,7 +348,14 @@ export type FoldedItem = Extract<ChatItem, { type: 'tool' | 'thinking' }>;
 export type RenderGroup =
   | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' | 'thinking' }> }
   | { kind: 'tools'; id: string; tools: FoldedItem[] }
-  | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> };
+  | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
+  | { kind: 'status'; id: string; status: string; reason: string | null };
+
+/** How a session said it stands (the cockpit's status tool): shown as a label, not folded away with the tools. */
+export function statusOfTool(item: Extract<ChatItem, { type: 'tool' }>): { status: string; reason: string | null } | null {
+  if (!/(^|__)session_status$/.test(item.name) || typeof item.input.status !== 'string') return null;
+  return { status: item.input.status, reason: typeof item.input.reason === 'string' ? item.input.reason : null };
+}
 
 /**
  * Looking around folds: adjacent reads, searches and thinking sit in one group, named
@@ -367,7 +374,11 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
     if (item.type === 'thinking') {
       if (item.text) run.push(item);
     } else if (item.type === 'tool') {
-      if (item.toolKind === 'agent') {
+      const said = statusOfTool(item);
+      if (said) {
+        flush();
+        groups.push({ kind: 'status', id: item.id, ...said });
+      } else if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });
       } else if (item.status === 'failed' || item.toolKind === 'edit' || item.toolKind === 'execute') {

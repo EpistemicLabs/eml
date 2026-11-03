@@ -1038,26 +1038,6 @@ export function openSessionInSpace(spaceId: string | null, target: OpenTarget): 
   return openInPane(target);
 }
 
-/**
- * Show another session in a pane, in place, and make the pane active: no pane
- * is added or removed, so the layout stays put (the review flow's one pane).
- * The caller keeps the rule that a session lives in one pane.
- */
-export function showSessionInPane(paneId: string, target: { projectId: string | null; sessionId: string; chat?: boolean }): void {
-  setTopView('desks');
-  const paneView: PaneView = target.chat || snapshot.sessionViews[target.sessionId] === 'chat' ? 'chat' : 'terminal';
-  const { desks, changed } = mapPaneInDesks(paneId, (pane) => ({
-    ...pane,
-    projectId: target.projectId,
-    sessionId: target.sessionId,
-    paneView,
-    provider: undefined,
-    title: undefined,
-  }));
-  if (changed) setSnapshot({ ...snapshot, desks });
-  activatePane(paneId);
-}
-
 /** Show a note (openInPane). */
 export function openNote(noteId: string, projectId: string | null): string {
   return openInPane({ surface: 'note', noteId, projectId });

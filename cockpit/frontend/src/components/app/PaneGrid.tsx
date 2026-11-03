@@ -7,8 +7,6 @@
 // picker switches); the others stay mounted, hidden, so their terminals run on.
 // A desk may have a main pane: a full-height column at the left, resized by its
 // divider (paneLayout.ts). Dragging a pane title onto another pane swaps the two.
-import { ReviewBar } from '@/components/review/ReviewBar';
-import { getReview } from '@/stores/useReviewStore';
 import React, { useCallback, useRef, useState } from 'react';
 
 import MainContent from '../main-content/view/MainContent';
@@ -264,8 +262,6 @@ function PaneSlot({
   // go to whichever input is focused.
   const paneRootRef = useRef<HTMLDivElement>(null);
   const handlePaneHover = useCallback(() => {
-    // While a review runs its bar holds the keyboard: passing over any pane must not take it.
-    if (getReview()) return;
     focusPaneInput(paneRootRef.current);
   }, []);
 
@@ -285,7 +281,6 @@ function PaneSlot({
       className="flex h-full min-h-0 w-full min-w-0 flex-col"
       onMouseEnter={slotDeps.compact ? undefined : handlePaneHover}
     >
-      <ReviewBar paneId={paneId} />
       <div className="min-h-0 flex-1">
       <MainContent
         isActive={isActive}

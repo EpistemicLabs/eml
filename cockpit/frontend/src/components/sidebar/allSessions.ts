@@ -1,7 +1,8 @@
 // The sidebar's sessions sorted into its sections: what needs an answer, what is
 // finished and waits to be looked at, the sessions chosen as main, what is working,
-// and the rest. Workers sit under their parent in all of them. Pure, so the rules (no session twice, a worker under its top
-// session, finished work staying until archived) are tested without a browser.
+// and the rest. A worker has its own row, by its own state, saying where it comes
+// from. Pure, so the rules (no session twice, finished work staying until
+// archived) are tested without a browser.
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo, TurnState } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
@@ -216,11 +217,11 @@ export function groupAllSessions(
     const turn = turns[session.id];
     const mark = sessionMark(session, turn);
     const item = items.get(session.id);
+    // Every session has its own row where its own state puts it; a worker's says where it comes from.
     if (mark && NEEDS_YOU.includes(mark)) needsYou.push(session);
     else if (mark) toReview.push(session);
-    else if (!item) searchOnly.push(session);
-    else if (chosen(session)) main.push(session);
-    else if (allSessionState(session, turn) === 'working' || item.counts.working > 0 || item.counts.queued > 0) working.push(session);
+    else if (item && chosen(session)) main.push(session);
+    else if (allSessionState(session, turn) === 'working' || (item?.counts.queued ?? 0) > 0) working.push(session);
     else recent.push(session);
   }
 
