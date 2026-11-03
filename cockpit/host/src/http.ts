@@ -191,7 +191,8 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     const sessionId = randomUUID()
     const problem = deps.chat.startWorker({
       id: sessionId, projectId, prompt, fromSessionId: null, createdAt: new Date().toISOString(),
-      title: prompt.split('\n')[0].slice(0, 60),
+      // It names itself; until then the list shows its first prompt.
+      title: null,
       ...(typeof body.spaceId === 'string' && body.spaceId ? { spaceId: body.spaceId } : {}),
     })
     if (problem) json(res, 409, { error: { code: 'NOT_STARTED', message: problem } })
