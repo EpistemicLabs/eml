@@ -77,9 +77,23 @@ export function readAccountFile(): AccountFile | null {
   }
 }
 
+/**
+ * Writes the file whole: into a temporary file next to it, owner-only from
+ * the first byte, then renamed over the old one — so a session is never
+ * readable through an older file's wider bits, and a crash leaves the old
+ * file or the new one, never a torn one (the team file's pattern).
+ */
 function writeAccountFile(file: AccountFile): void {
-  fs.writeFileSync(ACCOUNT_FILE, JSON.stringify(file, null, 2) + '\n', { mode: 0o600 })
-  fs.chmodSync(ACCOUNT_FILE, 0o600)
+  const tmp = `${ACCOUNT_FILE}.tmp`
+  fs.rmSync(tmp, { force: true })  // a leftover (a crash, or made with wider bits) would keep its mode
+  const fd = fs.openSync(tmp, 'wx', 0o600)
+  try {
+    fs.writeFileSync(fd, JSON.stringify(file, null, 2) + '\n')
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+  fs.renameSync(tmp, ACCOUNT_FILE)
 }
 
 function clearAccountFile(): void {

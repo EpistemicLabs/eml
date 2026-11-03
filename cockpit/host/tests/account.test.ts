@@ -79,6 +79,14 @@ describe('account', () => {
     expect(existsSync(file)).toBe(false)
   })
 
+  it('replaces a file with wider bits owner-only, with no temp file left', async () => {
+    writeFileSync(file, '{}', { mode: 0o644 })
+    await signedIn()
+    expectOwnerOnly(file)
+    expect(existsSync(`${file}.tmp`)).toBe(false)
+    expect(JSON.parse(readFileSync(file, 'utf8')).email).toBe('dominik@example.com')
+  })
+
   it('drops the file when the service no longer knows the session', async () => {
     await signedIn()
     answers['/v1/me'] = { status: 401, body: { error: 'unauthorized' } }
