@@ -1,6 +1,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { encryptionKeyFromSeed, signingKeyFromSeed, type BrainKey, type DeviceKeys, type KeyPair } from '@engramprotocol/protocol'
+import {
+  encryptionKeyFromSeed, signingKeyFromSeed,
+  type BrainKey, type DeviceCert, type DeviceKeys, type JoinRequest, type KeyPair, type LogAnchor,
+} from '@engramprotocol/protocol'
 
 // --- The team file (v0.21, spec team-brain-sync-client-spec §4) -------------------
 //
@@ -14,6 +17,9 @@ import { encryptionKeyFromSeed, signingKeyFromSeed, type BrainKey, type DeviceKe
 // device), and stay in memory. While a creation is under way it also carries
 // what the relay has not taken yet: the genesis with its grant until the
 // relay created the brain, the epoch-0 key until it is put for this device.
+// While a join is under way (§5) it carries the join with its invite link
+// until the inviter's accept is in, then the accept until the brain key the
+// inviter wrapped for this device is taken.
 
 export interface TeamFile {
   v: 1
@@ -28,6 +34,10 @@ export interface TeamFile {
   create?: { genesis: Record<string, unknown>, grant: string }
   /** a brain key this device holds but has not put at the relay for itself yet */
   key?: BrainKey
+  /** a join the inviter has not accepted yet: the invite link (it holds the secret the accept is checked with) and the join as sent */
+  join?: { link: string, request: JoinRequest }
+  /** an accepted join whose brain key is not in yet: the inviter's device, which alone wraps this device's first key, and the log anchor it named */
+  accept?: { inviter: DeviceCert, anchor: LogAnchor }
 }
 
 /** Why a team file cannot be used — a fixed reason, never the file's text or a field's value. */
@@ -89,7 +99,24 @@ export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
     if (!Number.isSafeInteger(key.epoch) || (key.epoch as number) < 0) throw new TeamFileError('its key is malformed')
     file.key = { epoch: key.epoch as number, key: seed(key.key) }
   }
+  if (raw.join !== undefined) {
+    const join = field(raw.join)
+    if (typeof join.link !== 'string' || !isObject(join.request)) throw new TeamFileError('its join is malformed')
+    file.join = { link: join.link, request: join.request as unknown as JoinRequest }
+  }
+  if (raw.accept !== undefined) {
+    const accept = field(raw.accept)
+    const anchor = accept.anchor
+    if (!isObject(accept.inviter) || !isObject(anchor) || typeof anchor.genesis !== 'string' || !Number.isSafeInteger(anchor.seq) || typeof anchor.head_hash !== 'string') {
+      throw new TeamFileError('its accept is malformed')
+    }
+    file.accept = { inviter: accept.inviter as unknown as DeviceCert, anchor: { genesis: anchor.genesis, seq: anchor.seq as number, head_hash: anchor.head_hash } }
+  }
   return file
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -109,6 +136,8 @@ export function writeTeamFile(dataDir: string, file: TeamFile): void {
     ...(file.identity ? { identity: { seed: text(file.identity.seed) } } : {}),
     ...(file.create ? { create: file.create } : {}),
     ...(file.key ? { key: { epoch: file.key.epoch, key: text(file.key.key) } } : {}),
+    ...(file.join ? { join: file.join } : {}),
+    ...(file.accept ? { accept: file.accept } : {}),
   }
   const tmp = `${target}.tmp`
   fs.rmSync(tmp, { force: true })  // a leftover (a crash, or made with wider bits) would keep its mode
@@ -146,6 +175,12 @@ export function isRelayOrigin(value: string): boolean {
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
+
+/** The relay origin for the host an invite link names: wss://<host>, or ws://<host> for a loopback host (a local test relay). */
+export function relayOriginFor(host: string): string {
+  const hostname = new URL(`wss://${host}`).hostname
+  return `${LOOPBACK.has(hostname) ? 'ws' : 'wss'}://${host}`
+}
 
 /** The rename is durable once the directory is: fsync it (Windows cannot open a directory for that). */
 function syncDir(dir: string): void {
