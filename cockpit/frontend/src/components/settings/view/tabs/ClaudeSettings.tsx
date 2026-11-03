@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { Button, Input } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import { getActivePane, isEmptyPane } from '@/stores/usePaneStore';
+import { setHostChatView } from '../../utils/settingsStorage';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -27,7 +28,7 @@ type LoginStatus = {
   permissionMode: PermissionMode;
   renderer: Renderer;
   remoteControl: boolean;
-  workersInChat: boolean;
+  chatView: boolean;
   token: { set: boolean; prefix: string | null };
   account: Account | null;
 };
@@ -103,8 +104,8 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const pinnedInput = status?.renderer === 'fullscreen';
   const setRemoteControl = (on: boolean) => run(() => api.setRemoteControl(on));
   const remoteControl = status?.remoteControl === true;
-  const setWorkersInChat = (on: boolean) => run(() => api.setWorkersInChat(on));
-  const workersInChat = status?.workersInChat !== false;
+  const setChatView = (on: boolean) => run(() => api.setChatView(on), () => setHostChatView(on));
+  const chatView = status?.chatView !== false;
 
   const tokenMode = status?.mode === 'token';
   const showTokenForm = editing || status?.token.set === false;
@@ -204,17 +205,17 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
             />
           </SettingsRow>
           <SettingsRow
-            label="Workers run in chat"
+            label="Chat view"
             description={
-              workersInChat
-                ? 'On: workers other sessions start run in the chat view. They cannot be followed in the Claude app.'
-                : 'Off: workers start in a terminal.'
+              chatView
+                ? 'On: Claude sessions open in the chat view, and workers other sessions start run there; they cannot be followed in the Claude app. A browser can choose otherwise in Preferences.'
+                : 'Off: sessions and workers start in a terminal. A browser can choose otherwise in Preferences.'
             }
           >
             <SettingsToggle
-              checked={workersInChat}
-              onChange={(checked: boolean) => void setWorkersInChat(checked)}
-              ariaLabel="Workers run in chat"
+              checked={chatView}
+              onChange={(checked: boolean) => void setChatView(checked)}
+              ariaLabel="Chat view"
               disabled={busy || status === null}
             />
           </SettingsRow>

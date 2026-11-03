@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgent, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, readWorkersInChat, sessionToken } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readChatView, readPermissionMode, readRemoteControl, readRenderer, sessionToken, writeChatView } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -59,6 +59,12 @@ class ClaudeProvider implements AgentProvider {
     invalidate: () => invalidateAccountCache(),
   }
 
+  /** The chat view switch, read by the browser at start for the view a new session opens in. */
+  readonly settings = {
+    read: () => ({ chatView: readChatView() }),
+    write: (patch: Record<string, unknown>) => (patch.chatView === undefined ? 'Nothing to change.' : writeChatView(patch.chatView)),
+  }
+
   /** The shared files; a space's mcp.json and settings.json are written by brain-space.ts (writeSpaceFiles). */
   prepare(ctx: IsolationContext): void {
     this.isolation = writeIsolationFiles(ctx.hookUrl, ctx.hookToken)
@@ -85,7 +91,7 @@ class ClaudeProvider implements AgentProvider {
 
   /** The chat runtime passes no login token: token mode stays in the terminal, except for an agent, which has its own login. */
   workerRunsInChat(space: SessionSpace): boolean {
-    return readWorkersInChat() && (!!space.agent || !sessionToken())
+    return readChatView() && (!!space.agent || !sessionToken())
   }
 
   launch(req: LaunchRequest): LaunchSpec {
