@@ -72,6 +72,11 @@ describe('writes through the op log', () => {
     const importOp = payloadOf(last(eml)).op_id
     write('engram.move_out', { ids: [l.id], set_hash: exportSet(raw(eml), [l.id]).set_hash, drop_relations: [], target: { brain: 'elsewhere', op_id: importOp } })
     write('provenance.restamp', { from_handle: 'juno', to_handle: 'ada', agent: 'juno' })
+    const ELSEWHERE = '0f8fad5b-d9cb-469f-a165-70867728950e'
+    const here = write<{ id: string }>('engram.create', { type: 'note', scope: 'global', title: 'here', content: 'A note that points into another brain.' })
+    write('relation.create', { source_id: here.id, target_id: '2f8fad5b-d9cb-469f-a165-70867728950e', relation: 'refines', detection_method: 'manual', target_brain: ELSEWHERE })
+    const reference = (raw(eml).prepare('SELECT id FROM relations WHERE target_brain = ?').get(ELSEWHERE) as { id: string }).id
+    write('relation.move_end', { from_brain: ELSEWHERE, to_brain: '1f8fad5b-d9cb-469f-a165-70867728950e', relations: [reference] })
     expect([...used].sort()).toEqual([...COMMAND_NAMES].sort())
     eml.close()
   })

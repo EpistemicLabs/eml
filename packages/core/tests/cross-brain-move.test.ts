@@ -509,7 +509,7 @@ describe('moveEngrams', () => {
 
     const last = (eml: EML) => raw(eml).prepare('SELECT seq, op_id FROM op_log ORDER BY seq DESC LIMIT 1').get()
     expect(result).toEqual({
-      backup_path: backup, import: last(to), move_out: last(s.eml),
+      backup_path: backup, ids: s.set, import: last(to), move_out: last(s.eml),
       moved: { engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length },
       created: { projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] },
       dropped_relations: set.crossing.map(r => r.id).sort(), external_refs: set.external_refs, incoming_refs: [], resumed: false,

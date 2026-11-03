@@ -13,6 +13,7 @@ import { objectUpdate, type ObjectUpdateInput } from './object-update'
 import { engramImport, type EngramImportInput, type EngramImportResult } from './engram-import'
 import { engramMoveOut, type EngramMoveOutInput, type EngramMoveOutResult } from './engram-move-out'
 import { provenanceRestamp, type ProvenanceRestampInput, type ProvenanceRestampResult } from './provenance-restamp'
+import { relationMoveEnd, type RelationMoveEndInput, type RelationMoveEndResult } from './relation-move-end'
 
 /** The closed command set: name → [input, result]. */
 export interface CommandMap {
@@ -27,6 +28,7 @@ export interface CommandMap {
   'engram.import': [EngramImportInput, EngramImportResult]
   'engram.move_out': [EngramMoveOutInput, EngramMoveOutResult]
   'provenance.restamp': [ProvenanceRestampInput, ProvenanceRestampResult]
+  'relation.move_end': [RelationMoveEndInput, RelationMoveEndResult]
 }
 export type CommandName = keyof CommandMap
 export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] } }[CommandName]
@@ -43,6 +45,7 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
   'engram.import': engramImport,
   'engram.move_out': engramMoveOut,
   'provenance.restamp': provenanceRestamp,
+  'relation.move_end': relationMoveEnd,
 }
 
 export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
@@ -74,5 +77,6 @@ export type { EngramConfirmReviewInput } from './engram-confirm-review'
 export type { ObjectCreateInput } from './object-create'
 export type { ObjectUpdateInput } from './object-update'
 export type { EngramImportInput, EngramImportResult } from './engram-import'
+export type { RelationMoveEndInput, RelationMoveEndResult } from './relation-move-end'
 export type { EngramMoveOutInput, EngramMoveOutResult } from './engram-move-out'
 export type { ProvenanceRestampInput, ProvenanceRestampResult } from './provenance-restamp'

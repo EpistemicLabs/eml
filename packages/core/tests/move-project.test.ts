@@ -8,7 +8,7 @@ import { plainJson, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, type Env } from '../src'
 import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
-import { legacyAuthorship, projectSet } from '../src/log/move'
+import { legacyAuthorship, projectSet, remoteReferences } from '../src/log/move'
 import { moveEngrams, moveProject, planMove, planProjectMove, type MoveTarget } from '../src/log/move-engrams'
 import { createObject, validDecision, validNote, validTask, writes } from './fixtures'
 
@@ -344,3 +344,70 @@ async function importInput(s: ReturnType<typeof source>, to: EML) {
   void to
   return { source: brainRef(raw(s.eml)), set_hash: set.set_hash, rows: set.rows }
 }
+
+describe('relation.move_end', () => {
+  // spec team-brain-move-project-spec §4: a cross-brain reference keeps the
+  // engram id and gets the brain id rewritten when the engram moves on.
+  const OTHER = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const MOVED_TO = '1f8fad5b-d9cb-469f-a165-70867728950e'
+  const REMOTE_TASK = '2f8fad5b-d9cb-469f-a165-70867728950e'
+  const REMOTE_LOG = '3f8fad5b-d9cb-469f-a165-70867728950e'
+
+  /** An agent brain: a learning refining a task in OTHER, and a log of OTHER related to the learning. */
+  function agentBrain() {
+    const eml = brain('agent')
+    createObject(eml, 'project', { id: 'elsewhere', name: 'Elsewhere' })
+    const l = writes(eml).store(validNote({ scope: 'project.elsewhere', title: 'a-lesson' }))
+    writes(eml).relate({ source_id: l.id, target_id: REMOTE_TASK, relation: 'refines', detection_method: 'manual', target_brain: OTHER })
+    writes(eml).relate({ source_id: REMOTE_LOG, target_id: l.id, relation: 'related_to', detection_method: 'manual', source_brain: OTHER })
+    const local = writes(eml).store(validNote({ scope: 'project.elsewhere', title: 'local' }))
+    writes(eml).relate({ source_id: local.id, target_id: l.id, relation: 'supports', detection_method: 'manual' })
+    const rels = (where: string) => (raw(eml).prepare(`SELECT id, source_brain, target_brain FROM relations WHERE ${where} ORDER BY ord`).all() as Array<{ id: string, source_brain: string | null, target_brain: string | null }>)
+    return { eml, l, rels }
+  }
+
+  it('remoteReferences names the relations whose remote end is one of the ids in that brain', () => {
+    const a = agentBrain()
+    const [out, into] = a.rels('source_brain IS NOT NULL OR target_brain IS NOT NULL')
+    expect(remoteReferences(raw(a.eml), OTHER, [REMOTE_TASK, REMOTE_LOG])).toEqual([out.id, into.id])
+    expect(remoteReferences(raw(a.eml), OTHER, [REMOTE_TASK])).toEqual([out.id])
+    expect(remoteReferences(raw(a.eml), MOVED_TO, [REMOTE_TASK, REMOTE_LOG])).toEqual([])
+    expect(remoteReferences(raw(a.eml), OTHER, [a.l.id])).toEqual([])
+    a.eml.close()
+  })
+
+  it('rewrites the brain of each named reference, on whichever side names it; local relations stay; a rebuild replays it', () => {
+    const a = agentBrain()
+    const ids = remoteReferences(raw(a.eml), OTHER, [REMOTE_TASK, REMOTE_LOG])
+    expect(a.eml.apply({ name: 'relation.move_end', input: { from_brain: OTHER, to_brain: MOVED_TO, relations: ids } })).toEqual({ relations: 2 })
+    expect(a.rels('1 = 1').map(r => [r.source_brain, r.target_brain])).toEqual([[null, MOVED_TO], [MOVED_TO, null], [null, null]])
+    expect(remoteReferences(raw(a.eml), OTHER, [REMOTE_TASK, REMOTE_LOG])).toEqual([])
+    expect(remoteReferences(raw(a.eml), MOVED_TO, [REMOTE_TASK, REMOTE_LOG])).toEqual(ids)
+    expect(verify(raw(a.eml))).toMatchObject({ ok: true })
+    a.eml.close()
+  })
+
+  it('refuses, and rewrites nothing: an unknown relation, one without an end in from_brain, this brain as to_brain, a shared brain, bad shapes', () => {
+    const a = agentBrain()
+    const ids = remoteReferences(raw(a.eml), OTHER, [REMOTE_TASK, REMOTE_LOG])
+    const local = a.rels('source_brain IS NULL AND target_brain IS NULL')[0].id
+    const attempt = (input: unknown) => { try { a.eml.apply({ name: 'relation.move_end', input: input as never }); throw new Error('not rejected') } catch (e) { if (e instanceof CommandError) return e; throw e } }
+    const before = a.rels('1 = 1')
+    expect(attempt({ from_brain: OTHER, to_brain: MOVED_TO, relations: ['nowhere'] })).toMatchObject({ code: 'NOT_FOUND' })
+    expect(attempt({ from_brain: OTHER, to_brain: MOVED_TO, relations: [ids[0], local] }).message).toBe(`Invalid command: relation ${local} has no end in ${OTHER}.`)
+    expect(attempt({ from_brain: MOVED_TO, to_brain: OTHER, relations: ids }).message).toMatch(/has no end in/)
+    expect(attempt({ from_brain: OTHER, to_brain: a.eml.brainId(), relations: ids }).message).toMatch(/is this brain — a cross-brain reference names another one/)
+    expect(attempt({ from_brain: OTHER, to_brain: OTHER, relations: ids }).message).toMatch(/must differ/)
+    expect(attempt({ from_brain: OTHER, to_brain: 'main', relations: ids }).message).toMatch(/to_brain is a brain id/)
+    expect(attempt({ from_brain: OTHER, to_brain: MOVED_TO, relations: [] }).message).toMatch(/relations is a list of relation ids/)
+    expect(attempt({ from_brain: OTHER, to_brain: MOVED_TO, relations: [ids[0], ids[0]] }).message).toMatch(/appears twice/)
+    expect(attempt({ from_brain: OTHER, to_brain: MOVED_TO, relations: ids, extra: 1 }).message).toMatch(/unknown field extra/)
+    expect(a.rels('1 = 1')).toEqual(before)
+
+    const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
+    const t = sharedTarget(shared)
+    return expect(t.write({ name: 'relation.move_end', input: { from_brain: OTHER, to_brain: MOVED_TO, relations: ['x'] } } as never))
+      .rejects.toThrow(/a shared brain holds no relation into another brain/)
+      .then(() => { shared.close(); a.eml.close() })
+  })
+})
