@@ -29,7 +29,7 @@ import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessio
 import { setSessionDeskMain } from '@/lib/session-actions';
 import { useSeenResults } from './useSeenResults';
 import { api } from '@/utils/api';
-import { readSettings } from '@/components/settings/utils/settingsStorage';
+import { readSettings, setHostChatView } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
 import type { Project, ProjectSession } from '@/types/app';
@@ -108,6 +108,10 @@ function AppContentInner() {
   refreshProjectsRef.current = refreshProjectsSilently;
   const { data: providers } = useProviders();
   paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
+  const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;
+  React.useEffect(() => {
+    if (typeof hostChatView === 'boolean') setHostChatView(hostChatView);
+  }, [hostChatView]);
   // One test for "empty pane" everywhere: a terminal pane whose projectId and
   // pre-minted session both resolve to no project (Choose Your Project), or a
   // note pane with neither a note nor a project (Pick a project…). Against the

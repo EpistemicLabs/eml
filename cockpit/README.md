@@ -207,8 +207,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   with none it stops 30 minutes after its last activity, a worker or an open card after 24 hours, never mid-turn or
   with background work. Opening a chat only shows it: the process starts when the input is used or a message arrives.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
-  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models off stay in
-  the terminal. There is no worker cap; new workers wait while free memory is low. In chat a worker reports
+  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models › Chat view off
+  stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
+  chat or terminal for itself in Preferences. There is no worker cap; new workers wait while free memory is low. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
   `review`. After a host restart a worker cut off mid-turn gets one message to continue, then is marked `failed`.
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped

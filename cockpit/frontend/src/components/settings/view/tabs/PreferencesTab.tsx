@@ -33,7 +33,7 @@ export default function PreferencesTab({
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
-  const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
+  const chatOverride = useSyncExternalStore(subscribeSettings, () => readSettings().chatOverride);
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -78,14 +78,19 @@ export default function PreferencesTab({
             />
           </SettingsRow>
           <SettingsRow
-            label="Open sessions in chat"
-            description="Claude sessions open in the chat view instead of the terminal, unless you picked the terminal for that session. A turn running in the terminal is not interrupted. This browser only."
+            label="Open sessions in"
+            description='Where Claude sessions open in this browser, unless you picked the view for that session. "As the cockpit" follows Settings › Models › Chat view. A turn running in the terminal is not interrupted.'
           >
-            <SettingsToggle
-              checked={chatDefault}
-              onChange={(checked) => writeSettings({ chatDefault: checked })}
-              ariaLabel="Open sessions in chat"
-            />
+            <select
+              value={chatOverride === undefined ? 'cockpit' : chatOverride ? 'chat' : 'terminal'}
+              onChange={(event) => writeSettings({ chatOverride: event.target.value === 'cockpit' ? null : event.target.value === 'chat' })}
+              className={`${inlineSelectClass} w-36`}
+              aria-label="Open sessions in"
+            >
+              <option value="cockpit">As the cockpit</option>
+              <option value="chat">Chat</option>
+              <option value="terminal">Terminal</option>
+            </select>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
