@@ -112,7 +112,7 @@ function sharedBrain() {
     team: { brain: BRAIN, device: 'a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4', base_seq: n - 1, head_hash: '0'.repeat(64) },
   })
   const take = (n: number, o: OpEnvelope) => shared.takeRelayed({ seq: n, at: `2026-10-27T08:00:0${n}.000Z`, op_id: o.op_id, payload: plainJson(o), signature: null, rejected: null }, o).rejected
-  expect(take(1, op(1, 'brain.genesis', { state_hash: shared.stateHash() }))).toBeNull()
+  expect(take(1, op(1, 'brain.genesis', { brain: BRAIN, state_hash: shared.stateHash() }))).toBeNull()
   return { shared, op, take }
 }
 
