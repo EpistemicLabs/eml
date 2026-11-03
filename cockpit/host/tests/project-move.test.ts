@@ -135,3 +135,17 @@ describe('rehome', () => {
     expect(tgt.get(projectIdForBrain('never-registered'))).toBeUndefined()
   })
 })
+
+describe('who can call the move routes', () => {
+  // The host's write routes are behind the Origin gate (http.ts createHostServer):
+  // a write without the cockpit page's Origin is 403, except the three routes a
+  // session reaches with its per-boot token. The move is not one of them.
+  it('the move is not a token endpoint: a write without the page Origin is refused', async () => {
+    const { isTokenEndpoint } = await import('../src/http.js')
+    expect(isTokenEndpoint('/api/projects/bp-top/move')).toBe(false)
+    expect(isTokenEndpoint('/api/projects/bp-top/move-plan?target=x')).toBe(false)
+    expect(isTokenEndpoint('/api/spawn')).toBe(true)
+    expect(isTokenEndpoint('/api/hook')).toBe(true)
+    expect(isTokenEndpoint('/api/session-title/0f8fad5b-d9cb-469f-a165-70867728950e')).toBe(true)
+  })
+})

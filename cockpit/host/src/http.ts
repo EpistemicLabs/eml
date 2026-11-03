@@ -847,6 +847,16 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
     '<p>Host is up. Frontend not built yet — run the frontend build.</p>')
 }
 
+/**
+ * The write routes a session reaches with its own per-boot token instead of
+ * the page's Origin: /api/hook, /api/spawn, /api/session-title/<id>. Every
+ * other write — a project's move into a shared space among them — needs the
+ * cockpit page's Origin.
+ */
+export function isTokenEndpoint(url: string): boolean {
+  return /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
+}
+
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/'
@@ -875,8 +885,7 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
-      if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
+      if (write && !isTokenEndpoint(url) && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }
