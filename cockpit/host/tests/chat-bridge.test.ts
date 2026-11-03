@@ -226,11 +226,26 @@ describe('ChatBridge', () => {
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const attention = () => (ledgerEntries.get('s1') as unknown as { attention: unknown }).attention
     runtimes[0].start.worker?.report('question', 'A or B?')
+    runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'Which one: A or B?' })
     expect(runtimes[0].start.worker?.onTurnEnding()).toBeNull()
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toEqual({ kind: 'question', reason: 'A or B?' })
     void bridge.deliver('s1', 'A')
     expect(attention()).toBeNull()
+  })
+
+  it('sends a turn back once when its reply does not show the summary or the questions', () => {
+    const { bridge, runtimes } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const worker = runtimes[0].start.worker!
+    worker.report('question', 'confirm start date, terms, usage')
+    runtimes[0].emit({ kind: 'thinking', blockId: 't1', text: 'Which start date? Which terms?' })
+    runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'I need those three answers before I change anything.' })
+    expect(worker.onTurnEnding()).toMatch(/numbered list/)
+    expect(worker.onTurnEnding()).toBeNull()
+    void bridge.deliver('s1', 'next')
+    worker.report('done', 'finished')
+    expect(worker.onTurnEnding()).toMatch(/closing summary/)
   })
 
   it('a worker that says done stays listed without a turn held open', async () => {

@@ -13,6 +13,8 @@ interface TerminalPaneProps {
   initialCommand: string | null;
   isActive: boolean;
   autoConnect: boolean;
+  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  spaceId?: string | null;
 }
 
 export default function TerminalPane({ sessionTitle, ...runtimeOptions }: TerminalPaneProps) {

@@ -9,6 +9,7 @@ import {
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { returnToReviewBar } from '@/stores/useReviewStore';
 import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
@@ -352,6 +353,26 @@ function PinOnSend({ pinRef, unpinRef }: { pinRef: React.MutableRefObject<(() =>
   return null;
 }
 
+const STATUS_WORD: Record<string, string> = { done: 'Done', question: 'Question', review: 'Check this', failed: 'Failed' };
+
+/** How the session said it stands at the end of its turn: a label above its closing summary. */
+function StatusLabel({ status, reason }: { status: string; reason: string | null }) {
+  const needsYou = status === 'question' || status === 'failed';
+  return (
+    <div className="flex min-w-0 items-baseline gap-2 px-1">
+      <span
+        className={cn(
+          'flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium',
+          status === 'failed' ? 'bg-destructive/15 text-destructive' : needsYou ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
+        )}
+      >
+        {STATUS_WORD[status] ?? status}
+      </span>
+      {reason && <span className="min-w-0 text-muted-foreground break-words">{reason}</span>}
+    </div>
+  );
+}
+
 const Messages = memo(function Messages({
   items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent,
 }: {
@@ -382,6 +403,7 @@ const Messages = memo(function Messages({
           );
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
+        if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
         const { item } = group;
         switch (item.type) {
           case 'user':
@@ -426,10 +448,14 @@ const Messages = memo(function Messages({
 });
 
 export function ChatPane({
-  paneId, projectId, sessionId, session, isActive, whenIdle = false,
-}: { paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean }) {
+  paneId, projectId, sessionId, session, isActive, whenIdle = false, spaceId,
+}: {
+  paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean;
+  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  spaceId?: string | null;
+}) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
-  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle);
+  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -469,9 +495,13 @@ export function ChatPane({
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
     const sent = send(text, images);
-    if (sent) pinWhenSentArrives.current = true;
+    if (sent) {
+      pinWhenSentArrives.current = true;
+      // Replied during a review: the keyboard goes back to its bar, the session stays on screen.
+      returnToReviewBar(paneId);
+    }
     return sent;
-  }, [send]);
+  }, [send, paneId]);
 
   // Pinned on arrival, not on send: the message comes back from the host, and an input
   // shrinking in between scrolls the view up, which the library takes for the reader's doing.

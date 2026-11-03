@@ -16,7 +16,7 @@ import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop } from './domain/session-lifecycle.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, needsAnswer, shouldAskForStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -64,7 +64,12 @@ const WORKER_MODE = 'auto'
 // Without this a session started by hand stays nameless: the greeting that used to ask has gone.
 const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
 
-const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then end your turn.'
+const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your closing summary as visible text.'
+
+// What the person reads is the reply after the status, never the status call or thinking.
+const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what changed (files, links); then, for a question, the questions as a numbered list, for review what to check, for failed what went wrong.'
+const SUMMARY_REMINDER = `Your turn ends without a visible reply. Write your closing summary now, as text, not in thinking. ${SUMMARY_SHAPE}`
+const QUESTIONS_REMINDER = `You said you have a question, but your reply does not ask it. Write the questions as visible text, as a numbered list, each one answerable on its own. ${SUMMARY_SHAPE}`
 
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
@@ -88,6 +93,10 @@ interface ChatEntry {
   /** This turn the worker said how it stands, or was asked to. */
   declared: boolean
   askedStatus: boolean
+  /** The status said this turn, and the visible text written after it: the closing summary. */
+  status: WorkerStatus | null
+  textAfterStatus: string
+  askedSummary: boolean
 }
 
 export interface ChatContext {
@@ -400,7 +409,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -468,7 +477,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -520,7 +529,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -581,14 +590,21 @@ export class ChatBridge {
       },
       report: (status, reason) => {
         entry.declared = true
+        entry.status = status
+        entry.textAfterStatus = ''
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
         if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
-        if (!ask) return null
-        entry.askedStatus = true
-        return STATUS_REMINDER
+        if (ask) {
+          entry.askedStatus = true
+          return STATUS_REMINDER
+        }
+        const missing = missingSummary({ status: entry.status, textAfter: entry.textAfterStatus, asked: entry.askedSummary })
+        if (!missing) return null
+        entry.askedSummary = true
+        return missing === 'questions' ? QUESTIONS_REMINDER : SUMMARY_REMINDER
       },
     }
   }
@@ -618,6 +634,9 @@ export class ChatBridge {
       case 'agent_task':
         if (event.status === 'running') entry.backgroundTasks.add(event.taskId)
         else if (event.status) entry.backgroundTasks.delete(event.taskId)
+        break
+      case 'text':
+        if (entry.status) entry.textAfterStatus += event.text
         break
       case 'turn_end': {
         entry.active = false
@@ -677,6 +696,9 @@ export class ChatBridge {
     // A new turn: whoever it waited for has answered.
     entry.declared = false
     entry.askedStatus = false
+    entry.status = null
+    entry.textAfterStatus = ''
+    entry.askedSummary = false
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)

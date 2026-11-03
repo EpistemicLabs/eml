@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils';
 import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarController } from '../useSidebarController';
 import { RowMenuContext, type RowMenuApi, type RowMenuTarget } from './rowMenuContext';
-import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarRail } from './subcomponents/SidebarChrome';
-import { SidebarAllSessions, SidebarInbox } from './subcomponents/SidebarAllSessions';
+import { SidebarErrorLine, SidebarFooter, SidebarHeader, SidebarModes, SidebarRail } from './subcomponents/SidebarChrome';
+import { SidebarAllSessions, useWaitingCount } from './subcomponents/SidebarAllSessions';
 import { SidebarNewSession } from './subcomponents/SidebarNewSession';
 import { SidebarConversations } from './subcomponents/SidebarConversations';
 import { SidebarModals } from './subcomponents/SidebarModals';
@@ -51,21 +51,21 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
 
   const isOpen =
     controller.isPinnedOpen || hovered || controller.projectRename !== null || controller.sessionRename !== null;
-  const showModes = !controller.allView && controller.projects.length > 0 && !controller.isLoading;
+  // All spaces reaches only the overview: projects and conversations are the open space's.
+  const onlyOpenSpace = !controller.allView;
+  const waiting = useWaitingCount(controller, onlyOpenSpace);
 
   const panel = (
     <>
       <SidebarHeader
-        showModes={showModes}
-        viewMode={controller.viewMode}
-        onViewModeChange={controller.setViewMode}
         isPinnedOpen={controller.isPinnedOpen}
         onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
-        onAddProject={controller.allView ? undefined : controller.openWizard}
+        onAddProject={controller.viewMode === 'overview' ? undefined : controller.openWizard}
       />
       <div className="flex-shrink-0 px-1 pb-1">
         <SpaceSwitch variant="sidebar" />
       </div>
+      <SidebarModes viewMode={controller.viewMode} onViewModeChange={controller.setViewMode} waiting={waiting} />
       <SidebarNewSession controller={controller} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <SidebarScrollRegion
@@ -73,17 +73,12 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         isRefreshInFlight={() => controller.refreshingRef.current}
         onRefresh={() => void controller.runManualRefresh()}
       >
-        {controller.allView ? (
-          <SidebarAllSessions controller={controller} />
+        {controller.viewMode === 'overview' ? (
+          <SidebarAllSessions controller={controller} onlyOpenSpace={onlyOpenSpace} />
+        ) : controller.viewMode === 'conversations' ? (
+          <SidebarConversations controller={controller} />
         ) : (
-          <>
-            <SidebarInbox controller={controller} onlyOpenSpace />
-            {controller.viewMode === 'conversations' ? (
-              <SidebarConversations controller={controller} />
-            ) : (
-              <SidebarProjectTree controller={controller} />
-            )}
-          </>
+          <SidebarProjectTree controller={controller} />
         )}
       </SidebarScrollRegion>
       <SidebarFooter onShowSettings={controller.onShowSettings} />
