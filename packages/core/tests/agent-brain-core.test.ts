@@ -4,7 +4,8 @@ import { plainJson, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, boot, hygieneCheck, initDatabase, ALL_RULES } from '../src'
 import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
-import { exportSet } from '../src/log/move'
+import { brainRef, exportSet } from '../src/log/move'
+import { planMove } from '../src/log/move-engrams'
 import { validNote, validTask, validRule, writes, legacyGlobalRule } from './fixtures'
 
 // v0.21, decision cockpit-identity-agent-brain: what core gives the agent brain —
@@ -73,15 +74,7 @@ describe('a relation with one end in another brain', () => {
   })
 
   it('is refused in a shared brain: nothing of an agent reaches a team brain', () => {
-    const BRAIN = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
-    const shared = EML.fromConnection(initDatabase(':memory:', undefined, BRAIN, { log: false }), 'test')
-    const op = (n: number, call: string, args: unknown): OpEnvelope => ({
-      op_id: uuidv5(BRAIN, `op ${n}`), schema: CURRENT_BRAIN_SCHEMA_VERSION, call, args: args as never,
-      provenance: { handle: call === 'brain.genesis' ? null : 'juno', agent: null, ingestion_method: null, session_id: null, model: null, harness: null },
-      team: { brain: BRAIN, device: 'a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4', base_seq: n - 1, head_hash: '0'.repeat(64) },
-    })
-    const take = (n: number, o: OpEnvelope) => shared.takeRelayed({ seq: n, at: `2026-10-27T08:00:0${n}.000Z`, op_id: o.op_id, payload: plainJson(o), signature: null, rejected: null }, o).rejected
-    expect(take(1, op(1, 'brain.genesis', { state_hash: shared.stateHash() }))).toBeNull()
+    const { shared, op, take } = sharedBrain()
     expect(take(2, op(2, 'object.create', { object: 'project', fields: { id: 'p', name: 'P' } }))).toBeNull()
     const noteOp = op(3, 'engram.create', validNote({ scope: 'project.p', title: 'n' }))
     expect(take(3, noteOp)).toBeNull()
@@ -91,7 +84,37 @@ describe('a relation with one end in another brain', () => {
     expect(raw(shared).prepare('SELECT COUNT(*) AS n FROM relations').get()).toEqual({ n: 0 })
     shared.close()
   })
+
+  it('a set carrying one is refused by a shared target at plan, and by its import', () => {
+    const l = learning()
+    eml.apply({ name: 'relation.create', input: { source_id: l.id, target_id: remoteTask, relation: 'refines', detection_method: 'manual', target_brain: OTHER } })
+    const { shared, op, take } = sharedBrain()
+    const set = exportSet(raw(eml), [l.id])
+    const relation = set.rows.relations[0].id
+    const reason = `relation ${relation} points into another brain, which a shared brain holds no relation into`
+    expect(planMove({ source: raw(eml), target: raw(shared), ids: [l.id] }).collisions).toEqual([reason])
+    expect(take(2, op(2, 'engram.import', { source: brainRef(raw(eml)), set_hash: set.set_hash, rows: set.rows }))).toBe(`INVALID: engram.import refused: ${reason}.`)
+    expect(raw(shared).prepare('SELECT COUNT(*) AS n FROM engrams').get()).toEqual({ n: 0 })
+    // a private target takes it, relation and all
+    const own = new EML({ dbPath: ':memory:', namespace: 'other' })
+    expect(planMove({ source: raw(eml), target: raw(own), ids: [l.id] }).collisions).toEqual([])
+    shared.close(); own.close()
+  })
 })
+
+/** A shared brain: an empty brain whose log starts with a relayed genesis for BRAIN, and how to relay an op to it. */
+function sharedBrain() {
+  const BRAIN = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+  const shared = EML.fromConnection(initDatabase(':memory:', undefined, BRAIN, { log: false }), 'test')
+  const op = (n: number, call: string, args: unknown): OpEnvelope => ({
+    op_id: uuidv5(BRAIN, `op ${n}`), schema: CURRENT_BRAIN_SCHEMA_VERSION, call, args: args as never,
+    provenance: { handle: call === 'brain.genesis' ? null : 'juno', agent: null, ingestion_method: null, session_id: null, model: null, harness: null },
+    team: { brain: BRAIN, device: 'a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4', base_seq: n - 1, head_hash: '0'.repeat(64) },
+  })
+  const take = (n: number, o: OpEnvelope) => shared.takeRelayed({ seq: n, at: `2026-10-27T08:00:0${n}.000Z`, op_id: o.op_id, payload: plainJson(o), signature: null, rejected: null }, o).rejected
+  expect(take(1, op(1, 'brain.genesis', { state_hash: shared.stateHash() }))).toBeNull()
+  return { shared, op, take }
+}
 
 describe('provenance.restamp', () => {
   let eml: EML
