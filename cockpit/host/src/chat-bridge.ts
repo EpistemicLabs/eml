@@ -49,6 +49,8 @@ import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, ty
 
 // How long a switch lets an interrupted turn finish on its own before closing it.
 const INTERRUPT_WAIT_MS = 3_000
+// The one reason a closed turn counts as cut off: the next host start carries it on.
+export const HOST_SHUTDOWN = 'host shutdown'
 // Socket buffer above which a client is too far behind to keep streaming to; it
 // reconnects and asks for what it missed.
 const WS_MAX_BUFFERED = 16 * 1024 * 1024
@@ -222,6 +224,8 @@ export class ChatBridge {
       await runtime.close()
       entry.runtime = null
     }
+    // Stopped, archived, timed out, deleted or taken over: its turn is over, not cut off.
+    if (reason !== HOST_SHUTDOWN) this.ctx.ledger.setTurnInFlight(sessionId, false)
     for (const ws of entry.clients) {
       try { ws.close(1000, reason) } catch { /* closing */ }
     }
@@ -241,7 +245,7 @@ export class ChatBridge {
 
   /** Host shutdown. Sessions resume from the ledger when a client comes back. */
   async dispose(): Promise<void> {
-    await Promise.all([...this.entries.keys()].map((id) => this.end(id, 'host shutdown').catch(() => { /* best-effort */ })))
+    await Promise.all([...this.entries.keys()].map((id) => this.end(id, HOST_SHUTDOWN).catch(() => { /* best-effort */ })))
   }
 
   /** End the sessions the lifecycle rule says should stop. They stay resumable; returns how many ended. */
@@ -641,7 +645,7 @@ export class ChatBridge {
       case 'turn_end': {
         entry.active = false
         entry.turnEnded?.()
-        // A host going down interrupts the turn on its way out: that one was cut off, not over.
+        // A closing session's turn is settled by close(): cut off by a host going down, over otherwise.
         if (!entry.closing) this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
         const attention = attentionAfterTurn({
           worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,

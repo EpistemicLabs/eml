@@ -353,6 +353,15 @@ describe('ChatBridge', () => {
     expect(inFlight()).toBe(true)
   })
 
+  it.each(['stopped', 'archived', 'timed out', 'deleted', 'superseded'])('a worker %s mid-turn is not carried on after a restart', async (reason) => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    await bridge.end('s1', reason)
+    expect(runtimes[0].interrupts).toBe(1)
+    expect((ledgerEntries.get('s1') as unknown as { inFlight?: boolean }).inFlight).toBe(false)
+  })
+
   it('says when no process runs, when one is starting, and when a socket can send', async () => {
     const { bridge } = setup({ transcript: true, runtimeOf: 'terminal' })
     const ws = connect(bridge, { readOnly: true })
