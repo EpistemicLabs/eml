@@ -158,10 +158,10 @@ export function writeSpaceFiles(
   const settings = path.join(dir, 'settings.json')
   const emlConfig = path.join(spaceEmlDir(spaceId), 'config')
 
-  writeEmlHookConfig(emlConfig, loopbackUrl, brainToken, agent?.id)
+  writeEmlHookConfig(emlConfig, loopbackUrl, brainToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { ...agent?.mcpServers, eml_brain: brainMcpServer(loopbackUrl, brainToken, agent?.id) } }),
+    JSON.stringify({ mcpServers: { ...agent?.mcpServers, eml_brain: brainMcpServer(loopbackUrl, brainToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)

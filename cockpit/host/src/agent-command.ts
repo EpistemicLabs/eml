@@ -15,13 +15,12 @@ import { AGENTS_DIR, CONFIG_DIR, CORE_INDEX, DATA_DIR } from './paths.js'
  * set up a space's own agent (agent-config.ts) and replace a brain token. No
  * command prints a credential or the value of an MCP definition.
  *
- * agent create <id> --space <name|brain id> [--name <display name>] [--profile <text>]
+ * agent create <id> --space <name|brain id>
  *              [--mcp <a,b>] [--mcp-from <json file>] [--skills <x,y>] [--skills-from <folder>]
- *   With the cockpit stopped: makes the agent's folder, adds its agent row and
- *   profile to the brain, and binds it to the space with a token of its own in
- *   place of the space's old one, so new engrams show the agent (old rows stay as
- *   they are). The brain itself keeps its name. Start the cockpit afterwards; then
- *   run /login once in a session of the space.
+ *   With the cockpit stopped: makes the agent's folder, MCP file and record, and
+ *   binds it to the space in the cockpit config. The brain is not touched: the
+ *   space keeps its token, and sessions boot as the agent the brain is named after.
+ *   Start the cockpit afterwards; then run /login once in a session of the space.
  *
  * agent status [<id>]
  *   Reads the agent's files only. Never starts `claude`: a short-lived CLI process
@@ -52,12 +51,6 @@ interface Core {
   verifyToken(control: ControlDb, token: string): { tokenId: string; userId: string; brainId: string; caller: string | null } | null
   issueToken(control: ControlDb, opts: { userId: string; brainId: string; name?: string | null }): { plaintext: string }
   revokeToken(control: ControlDb, tokenId: string): boolean
-  EML: new (config: { dbPath: string; namespace: string }) => {
-    agents: { exists(id: string): boolean }
-    env(actor: { ingestion_method: string; handle: string }): unknown
-    apply(command: { name: string; input: unknown }, env: unknown): unknown
-    close(): void
-  }
 }
 
 const loadCore = () => require(CORE_INDEX) as Core
@@ -79,8 +72,6 @@ function parseCreate(argv: string[]) {
   if (!spaceName) throw new Error('agent create: --space <name|brain id> is required (the main space keeps the shared config)')
   return {
     agentId, spaceName,
-    name: flag(argv, 'name') ?? agentId,
-    profile: flag(argv, 'profile'),
     mcp: names(flag(argv, 'mcp')),
     mcpFrom: flag(argv, 'mcp-from'),
     skills: names(flag(argv, 'skills')),
@@ -118,8 +109,6 @@ async function createAgent(argv: string[]): Promise<void> {
   try {
     const space = findSpace(config, control, core, opts.spaceName)
     if (!space) throw new Error(`agent create: no further space "${opts.spaceName}" (the main space keeps the shared config)`)
-    const brain = control.prepare('SELECT brain_file FROM brains WHERE id = ?').get(space.verified.brainId) as { brain_file: string } | undefined
-    if (!brain) throw new Error('agent create: the space\'s brain is not in control.db')
 
     const dir = agentDir(opts.agentId)
     const configDir = path.join(dir, 'claude-config')
@@ -138,36 +127,11 @@ async function createAgent(argv: string[]): Promise<void> {
       harnesses: { claude: { configDir } },
     }
     writeAgentRecord(record)
-
-    // The identity. The brain server boots the agent the brain is named after,
-    // and stamps the token's name into every new engram; both are read per request.
-    const eml = new core.EML({ dbPath: path.join(DATA_DIR, brain.brain_file), namespace: opts.agentId })
-    try {
-      if (!eml.agents.exists(opts.agentId)) {
-        const env = eml.env({ ingestion_method: 'direct', handle: opts.agentId })
-        eml.apply({ name: 'object.create', input: { object: 'agent', fields: { id: opts.agentId, name: opts.name } } }, env)
-        eml.apply({
-          name: 'engram.create',
-          input: {
-            type: 'profile',
-            scope: `agent.${opts.agentId}`,
-            title: `${opts.agentId}-identity`,
-            content: opts.profile ?? `I am ${opts.name}, the agent of the brain space "${space.name ?? opts.spaceName}". The brain makes me ${opts.name} across sessions: it is canonical, the conversation is supplementary.`,
-            properties: { core: true },
-          },
-        }, env)
-      }
-    } finally {
-      eml.close()
-    }
-    // The token's name is what the brain server stamps into new engrams.
-    const issued = core.issueToken(control, { userId: space.verified.userId, brainId: space.verified.brainId, name: opts.agentId })
     // Last, so a failed run above leaves the space as it was.
     await updateCockpitConfig((current) => current && ({
       ...current,
-      spaces: (current.spaces ?? []).map((s) => (s.token === space.token ? { ...s, token: issued.plaintext, agent: opts.agentId } : s)),
+      spaces: (current.spaces ?? []).map((s) => (s.token === space.token ? { ...s, agent: opts.agentId } : s)),
     }))
-    core.revokeToken(control, space.verified.tokenId)
     say(`agent ${opts.agentId}: created for brain ${space.verified.brainId} (${opts.mcp.length} MCP servers + the brain, ${opts.skills.length} skills + the managed ones)`)
     say(`config folder: ${configDir}`)
     say('Start the cockpit, then run /login once in a session of this space.')

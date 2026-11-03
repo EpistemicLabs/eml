@@ -98,12 +98,12 @@ describe('a space with its own agent', () => {
     if (process.platform !== 'win32') expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
   })
 
-  it('the session files name the agent: the host sets the identity, the brain keeps its name', () => {
+  it('the session files name no agent: the brain\'s name decides who boots', () => {
     writeAgent()
     const space = open(AGENT)
     expect(space.brainName).toBe('main-agent')
-    expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_AGENT=${AGENT}\n`)
-    expect(JSON.parse(readFileSync(mcpFile, 'utf8')).mcpServers.eml_brain.env.EML_AGENT).toBe(AGENT)
+    expect(readFileSync(space.files.emlConfig, 'utf8')).not.toContain('EML_AGENT')
+    expect(Object.keys(JSON.parse(readFileSync(mcpFile, 'utf8')).mcpServers.eml_brain.env).sort()).toEqual(['EML_API_TOKEN', 'EML_API_URL'])
   })
 
   it('the token mode does not override the agent\'s login', () => {
