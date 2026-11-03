@@ -17,6 +17,7 @@ import {
   type ProjectEntry,
   type ProjectRegistry,
 } from './project-registry.js'
+import { brainProjectOf, moveProject, planProjectMove } from './project-move.js'
 import { BrainRenameError, type BrainProject } from './brain-projects.js'
 import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -640,6 +641,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       json(res, created ? 201 : 200, { success: true, created, project: projectView(deps, space, project) })
       return true
     }
+    // Moving a project into a shared space (project-move.ts): the plan, then
+    // the run against the plan's hash. The source is this space, the target a
+    // space of this cockpit; the brain server does the move and its refusals.
+    if (resource === 'projects' && id && parts[3] === 'move-plan' && method === 'GET') {
+      const target = deps.spaces.get(url.searchParams.get('target') ?? '')
+      if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+      const answer = await planProjectMove(space, target, brainProjectOf(id))
+      json(res, answer.status, answer.body)
+      return true
+    }
+    if (resource === 'projects' && id && parts[3] === 'move' && method === 'POST') {
+      const body = await readJson(req)
+      const target = deps.spaces.get(typeof body.target === 'string' ? body.target : '')
+      if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+      const answer = await moveProject(space, target, brainProjectOf(id), typeof body.plan_hash === 'string' ? body.plan_hash : '')
+      json(res, answer.status, answer.body)
+      return true
+    }
     if (resource === 'projects' && id && method === 'PATCH') {
       const body = await readJson(req)
       const { entry, brain } = await resolveEntry(space, id)
@@ -828,6 +847,16 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
     '<p>Host is up. Frontend not built yet — run the frontend build.</p>')
 }
 
+/**
+ * The write routes a session reaches with its own per-boot token instead of
+ * the page's Origin: /api/hook, /api/spawn, /api/session-title/<id>. Every
+ * other write — a project's move into a shared space among them — needs the
+ * cockpit page's Origin.
+ */
+export function isTokenEndpoint(url: string): boolean {
+  return /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
+}
+
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/'
@@ -856,8 +885,7 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36})(\?|$)/.test(url)
-      if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
+      if (write && !isTokenEndpoint(url) && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }
