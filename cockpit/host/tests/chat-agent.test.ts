@@ -196,6 +196,10 @@ describe('the chat view in a space with its own agent', () => {
 
     factory.start({ ...start, strictMcp: true })
     expect(chromeArg()).not.toHaveProperty('chrome')
+
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({}))
+    factory.start({ ...start, strictMcp: true, chrome: true })
+    expect(chromeArg()).toHaveProperty('chrome', null)
   })
 
   it('reads history from each session\'s own folder, one read at a time', async () => {

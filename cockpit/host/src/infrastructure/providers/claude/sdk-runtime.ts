@@ -41,10 +41,11 @@ const MODES: ModeOption[] = [
 
 /**
  * The terminal follows Chrome's "Enabled by default" setting; an SDK session ignores
- * it and needs the flag. An agent keeps to its MCP allowlist, so it gets no browser.
+ * it and needs the flag. An agent keeps to its MCP allowlist, so it gets no browser
+ * unless its record gives it one.
  */
 function chromeForChat(request: SessionRuntimeStart): boolean {
-  if (request.strictMcp) return false
+  if (request.strictMcp) return request.chrome === true
   try {
     const configDir = request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
     const config = JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8')) as { claudeInChromeDefaultEnabled?: unknown }
