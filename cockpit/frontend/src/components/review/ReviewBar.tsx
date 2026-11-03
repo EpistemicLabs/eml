@@ -31,7 +31,7 @@ const isTyping = (target: EventTarget | null): boolean => {
  * The review flow's bar on top of its pane: where it is in the queue, and what
  * the session asks for. The bar holds the keyboard: after every step the focus
  * is on it, and its pane's terminal or chat input takes it only on R or a click.
- * J and K move, E takes the session out (on a question it goes to the answer
+ * D goes on (right), A goes back (left), E takes the session out (on a question it goes to the answer
  * box), R goes to the reply box, Esc ends the flow (in the answer box it only
  * comes back to the bar). The keys act only here, never on another desk. A
  * phone gets the same buttons, and no keyboard opens on its own.
@@ -92,8 +92,8 @@ function ActiveReviewBar() {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
     const keys: Record<string, () => void> = {
-      j: () => move(1),
-      k: () => move(-1),
+      d: () => move(1),
+      a: () => move(-1),
       e: () => (isQuestion ? reply() : finish()),
       r: reply,
       Escape: endReview,
@@ -124,10 +124,10 @@ function ActiveReviewBar() {
           <span className="pl-1.5 text-muted-foreground">{live.index + 1} of {live.queue.length}</span>
         </span>
         <button type="button" className={BUTTON} disabled={live.index <= 0} onClick={() => move(-1)} aria-label="Previous">
-          <ChevronLeft className="h-3.5 w-3.5" /> <KeyHint>K</KeyHint>
+          <ChevronLeft className="h-3.5 w-3.5" /> <KeyHint>A</KeyHint>
         </button>
         <button type="button" className={BUTTON} disabled={live.index >= live.queue.length - 1} onClick={() => move(1)} aria-label="Next">
-          <KeyHint>J</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
+          <KeyHint>D</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
         </button>
         {isQuestion ? (
           <button type="button" className={BUTTON} onClick={() => finish()} aria-label={pinned ? 'Done without answering' : 'Archive without answering'} title={pinned ? 'Done without answering' : 'Archive without answering'}>

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AllSession } from '@/components/sidebar/allSessions';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-// The review flow goes through sessions in one pane. Pressing J must not open
+// The review flow goes through sessions in one pane. Pressing D must not open
 // panes or move the layout: the flow's pane swaps its session in place.
 
 const storage = new Map<string, string>();

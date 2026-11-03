@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-// The review bar holds the keyboard: J, K, E, R and Esc act on it alone, a key
+// The review bar holds the keyboard: D, A, E, R and Esc act on it alone, a key
 // never lands in an input by itself, and Esc does not reach the pane below.
 
 let sessions: AllSession[] = [];
@@ -41,12 +41,12 @@ describe('the review bar', () => {
     render(<ReviewBar paneId="pane" />);
   };
 
-  it('takes the focus, and J, K and E act on it', () => {
+  it('takes the focus, and D, A and E act on it', () => {
     open(result);
     expect(document.activeElement).toBe(bar());
-    fireEvent.keyDown(bar(), { key: 'j' });
+    fireEvent.keyDown(bar(), { key: 'd' });
     expect(flow.stepReview).toHaveBeenLastCalledWith(1, expect.anything(), expect.anything());
-    fireEvent.keyDown(bar(), { key: 'k' });
+    fireEvent.keyDown(bar(), { key: 'a' });
     expect(flow.stepReview).toHaveBeenLastCalledWith(-1, expect.anything(), expect.anything());
     fireEvent.keyDown(bar(), { key: 'e' });
     expect(flow.finishCurrent).toHaveBeenCalledTimes(1);
@@ -54,7 +54,7 @@ describe('the review bar', () => {
 
   it('does nothing for a key pressed elsewhere', () => {
     open(result);
-    fireEvent.keyDown(document.body, { key: 'j' });
+    fireEvent.keyDown(document.body, { key: 'd' });
     fireEvent.keyDown(document.body, { key: 'e' });
     expect(flow.stepReview).not.toHaveBeenCalled();
     expect(flow.finishCurrent).not.toHaveBeenCalled();
@@ -72,8 +72,8 @@ describe('the review bar', () => {
 
   it('leaves Cmd and Ctrl to the browser', () => {
     open(result);
-    fireEvent.keyDown(bar(), { key: 'j', ctrlKey: true });
-    fireEvent.keyDown(bar(), { key: 'j', metaKey: true });
+    fireEvent.keyDown(bar(), { key: 'd', ctrlKey: true });
+    fireEvent.keyDown(bar(), { key: 'd', metaKey: true });
     expect(flow.stepReview).not.toHaveBeenCalled();
   });
 
@@ -83,7 +83,7 @@ describe('the review bar', () => {
     expect(document.activeElement).toBe(bar());
     fireEvent.keyDown(bar(), { key: 'r' });
     expect(document.activeElement).toBe(box);
-    fireEvent.keyDown(box, { key: 'j' });
+    fireEvent.keyDown(box, { key: 'd' });
     expect(flow.stepReview).not.toHaveBeenCalled();
     fireEvent.keyDown(box, { key: 'Escape' });
     expect(document.activeElement).toBe(bar());
