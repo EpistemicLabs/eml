@@ -337,7 +337,7 @@ export class Sync {
    * brain is live, as a write.
    */
   checkpoint(): Promise<{ seq: number }> {
-    return this.writeCheckpoint(false)
+    return this.writeCheckpoint(false).finally(() => this.autoCheckpoint())
   }
 
   /** The attempts of checkpoint(); `auto` is the policy's own, which gives up once another device's checkpoint counted meanwhile. */
@@ -361,10 +361,16 @@ export class Sync {
     }
   }
 
-  /** The policy: a checkpoint by this device once the log grew by checkpointEvery entries, while live and none of its own on the way. */
+  /**
+   * The policy: a checkpoint by this device once the log grew by
+   * checkpointEvery entries, while live and none of its own on the way. Asked
+   * again once a checkpoint is done: entries delivered in one burst are taken
+   * before the finished one's promise settles, so a checkpoint that fell due
+   * meanwhile would otherwise wait for the next entry, or forever.
+   */
   private autoCheckpoint(): void {
     if (this.checkpointing || this.sinceCheckpoint < this.checkpointEvery || this.state.kind !== 'live') return
-    this.writeCheckpoint(true).catch((err: unknown) => {
+    this.writeCheckpoint(true).then(() => this.autoCheckpoint(), (err: unknown) => {
       // by code only: a relay's text never reaches the log unsanitized
       this.log(`the automatic checkpoint did not land (${(err as { code?: string }).code ?? 'error'})`)
     })
