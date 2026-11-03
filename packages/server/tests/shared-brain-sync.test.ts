@@ -19,6 +19,7 @@ import { BRAIN, OTHER, Team, cert } from './team'
 
 const BROKEN = '1c9e6679-7425-40de-944b-e07fc1f90a01'  // its team file is cut off in the middle of a seed
 const RETRY = '2c9e6679-7425-40de-944b-e07fc1f90a02'   // created with a stale grant first
+const EMPTY = '4c9e6679-7425-40de-944b-e07fc1f90a04'   // provisioned for a creation that never happens; discarded
 const JOINED = '3c9e6679-7425-40de-944b-e07fc1f90a03'  // juno's team brain at another relay, which lasse's server joins
 const NOW = '2026-11-03T08:00:00.000Z'
 
@@ -37,6 +38,7 @@ describe('a shared brain through the server', () => {
   const baseUrl = `http://127.0.0.1:${port}`
   const post = (brain: string, path: string, body: unknown) => request('POST', `${baseUrl}${path}`, { Authorization: `Bearer ${tokens[brain]}` }, JSON.stringify(body))
   const get = (brain: string, path: string) => request('GET', `${baseUrl}${path}`, { Authorization: `Bearer ${tokens[brain]}` })
+  const del = (brain: string, path: string) => request('DELETE', `${baseUrl}${path}`, { Authorization: `Bearer ${tokens[brain]}` })
 
   beforeAll(async () => {
     await ready()
@@ -45,7 +47,7 @@ describe('a shared brain through the server', () => {
     const control = initControlDatabase(join(tmpDir, 'control.db'))
     control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'juno@example.com')`).run()
     // empty brains as the host provisions them for a creation: the schema, no rows, no log
-    for (const id of [BRAIN, BROKEN, RETRY, JOINED]) {
+    for (const id of [BRAIN, BROKEN, RETRY, EMPTY, JOINED]) {
       const brainFile = `brains/${id}.db`
       initDatabase(join(tmpDir, brainFile), undefined, id, { log: false }).close()
       control.prepare('INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES (?, ?, ?, ?, ?)').run(id, 'team', 'u1', brainFile, CURRENT_BRAIN_SCHEMA_VERSION)
@@ -138,6 +140,34 @@ describe('a shared brain through the server', () => {
     expect(list.body.engrams.map((e: { title: string }) => e.title)).toContain('t-through-the-relay')
   })
 
+  it('GET /team: a private brain is not shared; the team brain shows its state, no read-only text, its member and the member set', async () => {
+    expect(await get(OTHER, '/team')).toEqual({ status: 200, body: { shared: false } })
+    const r = await get(BRAIN, '/team')
+    expect(r.status).toBe(200)
+    expect(r.body).toMatchObject({ shared: true, brain: BRAIN, relay: relay.origin, mode: 'create', state: { kind: 'live' }, read_only: null, invites: [] })
+    expect(r.body.members).toHaveLength(1)
+    expect(r.body.member).toMatchObject({ handle: 'juno', role: 'owner', devices: 1, self: true })
+    expect(r.body.member.fingerprint).toMatch(/^[0-9a-f]{5}( [0-9a-f]{5}){7}$/)
+    expect(r.body.members[0]).toEqual(r.body.member)
+  })
+
+  it('DELETE /team discards an empty brain — its file and its control rows — and refuses a brain with a log', async () => {
+    expect(await get(EMPTY, '/team')).toEqual({ status: 200, body: { shared: false } })
+    expect(await del(OTHER, '/team')).toMatchObject({ status: 409, body: { code: 'TEAM_BRAIN_HAS_LOG', error: 'A shared brain with a log is not discarded here.' } })
+    expect(await del(BRAIN, '/team')).toMatchObject({ status: 409, body: { code: 'TEAM_BRAIN_HAS_LOG' } })
+    expect((await del(EMPTY, '/team')).status).toBe(204)
+    expect(existsSync(join(tmpDir, 'brains', `${EMPTY}.db`))).toBe(false)
+    expect((await get(EMPTY, '/list')).status).toBe(401)  // its token is gone with the brain
+    const control = initControlDatabase(join(tmpDir, 'control.db'))
+    try {
+      expect(control.prepare('SELECT COUNT(*) AS n FROM brains WHERE id = ?').get(EMPTY)).toEqual({ n: 0 })
+      expect(control.prepare('SELECT COUNT(*) AS n FROM tokens WHERE brain_id = ?').get(EMPTY)).toEqual({ n: 0 })
+      expect(control.prepare('SELECT COUNT(*) AS n FROM brain_members WHERE brain_id = ?').get(EMPTY)).toEqual({ n: 0 })
+    } finally {
+      control.close()
+    }
+  })
+
   it('a creation the relay refuses leaves the brain new and empty: 403 GRANT_INVALID, then created with a good grant', async () => {
     const r = await post(RETRY, '/team/create', { relay: retryRelay.origin, grant: 'stale', handle: 'juno' })
     expect(r).toMatchObject({ status: 403, body: { code: 'GRANT_INVALID', error: 'The relay did not accept the creation grant: the grant is not good for this brain. Try again.' } })
@@ -161,6 +191,16 @@ describe('a shared brain through the server', () => {
       expect(stderr).not.toContain(seed.slice(i, i + 8))
     }
     expect((await get(BROKEN, '/list')).status).toBe(200)
+    const team = await get(BROKEN, '/team')
+    expect(team.status).toBe(200)
+    expect(team.body).toEqual({ shared: true, brain: BROKEN, relay: null, mode: null, state: { kind: 'stopped', why: 'its team file cannot be used (it is not valid JSON)' }, read_only: r.body.error, member: null, members: [], invites: [] })
+  })
+
+  it('DELETE /team discards a shared brain that never came to life, its unusable team file with it', async () => {
+    expect((await del(BROKEN, '/team')).status).toBe(204)
+    expect(existsSync(teamFilePath(tmpDir, BROKEN))).toBe(false)
+    expect(existsSync(join(tmpDir, 'brains', `${BROKEN}.db`))).toBe(false)
+    expect((await get(BROKEN, '/team')).status).toBe(401)
   })
 
   it('refuses a join with a link that is no invite link for this brain, or a handle that is none', async () => {

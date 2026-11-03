@@ -5,7 +5,7 @@ import { join } from 'path'
 import type Database from 'better-sqlite3'
 import { initControlDatabase, CURRENT_BRAIN_SCHEMA_VERSION } from '../src/control'
 import { verifyToken } from '../src/tokens'
-import { provisionUser } from '../src/provisioning'
+import { provisionBrain, provisionUser } from '../src/provisioning'
 import { EML, checkBrainIds } from '../src'
 
 describe('provisionUser', () => {
@@ -124,6 +124,57 @@ describe('provisionUser', () => {
       } finally {
         eml.close()
       }
+    })
+  })
+
+  describe('provisionBrain (v0.21): an empty brain under a given id', () => {
+    const TEAM = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+    it('registers the brain like provisionUser — the given id, the space name, the handle as token name — and the file has the schema, no rows and no genesis', () => {
+      const result = provisionBrain({ email: 'a@b.de', brainId: TEAM, name: 'EML team', control, dataDir, tokenName: 'alice' })
+      expect(result.brainId).toBe(TEAM)
+      expect(result.brainFile).toBe(`brains/${TEAM}.db`)
+      const brain = control.prepare('SELECT name, owner_id, schema_version, status FROM brains WHERE id = ?').get(TEAM) as { name: string, owner_id: string, schema_version: number, status: string }
+      expect(brain).toEqual({ name: 'EML team', owner_id: result.userId, schema_version: CURRENT_BRAIN_SCHEMA_VERSION, status: 'ok' })
+      expect(control.prepare('SELECT role FROM brain_members WHERE brain_id = ?').get(TEAM)).toEqual({ role: 'owner' })
+      expect(control.prepare('SELECT schema_version FROM brain_migrations WHERE brain_id = ?').get(TEAM)).toEqual({ schema_version: CURRENT_BRAIN_SCHEMA_VERSION })
+      expect(verifyToken(control, result.tokenPlaintext)).toMatchObject({ brainId: TEAM, caller: 'alice' })
+      const eml = new EML({ dbPath: join(dataDir, result.brainFile), namespace: 'team' })
+      try {
+        expect(eml.hasGenesis()).toBe(false)
+        expect(eml.brainId()).toBeNull()
+        expect(eml.engrams.query({})).toHaveLength(0)
+        expect(eml.agents.list()).toHaveLength(0)
+      } finally {
+        eml.close()
+      }
+    })
+
+    it('reuses the owner row of a provisioned user', () => {
+      const own = provisionUser({ email: 'a@b.de', agentId: 'assistant', userId: 'alice', control, dataDir })
+      const team = provisionBrain({ email: 'a@b.de', brainId: TEAM, name: 'EML team', control, dataDir, tokenName: 'alice' })
+      expect(team.userId).toBe(own.userId)
+      expect(control.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 1 })
+    })
+
+    it('refuses an id that is not a lowercase UUID, and a brain that exists already; nothing is left behind', () => {
+      expect(() => provisionBrain({ email: 'a@b.de', brainId: 'Not-A-UUID', name: 'x', control, dataDir, tokenName: 'alice' })).toThrow(/not a lowercase UUID/)
+      provisionBrain({ email: 'a@b.de', brainId: TEAM, name: 'EML team', control, dataDir, tokenName: 'alice' })
+      expect(() => provisionBrain({ email: 'a@b.de', brainId: TEAM, name: 'again', control, dataDir, tokenName: 'alice' })).toThrow(/exists already/)
+      expect(control.prepare('SELECT COUNT(*) AS n FROM brains').get()).toEqual({ n: 1 })
+      expect(control.prepare('SELECT COUNT(*) AS n FROM tokens').get()).toEqual({ n: 1 })
+      expect(existsSync(join(dataDir, `brains/${TEAM}.db`))).toBe(true)
+    })
+
+    it('removes the file again when the control plane refuses the row', () => {
+      control.prepare(`INSERT INTO users (id, email) VALUES ('u-x', 'x@b.de')`).run()
+      control.prepare('INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES (?, ?, ?, ?, ?)').run(TEAM, 'taken', 'u-x', 'brains/other.db', CURRENT_BRAIN_SCHEMA_VERSION)
+      // the id is taken, so provisionBrain refuses before any file; force the control-plane failure through a dropped table instead
+      const OTHER_ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+      control.prepare('DROP TABLE brain_migrations').run()
+      expect(() => provisionBrain({ email: 'a@b.de', brainId: OTHER_ID, name: 'x', control, dataDir, tokenName: 'alice' })).toThrow()
+      expect(existsSync(join(dataDir, `brains/${OTHER_ID}.db`))).toBe(false)
+      expect(control.prepare('SELECT COUNT(*) AS n FROM brains WHERE id = ?').get(OTHER_ID)).toEqual({ n: 0 })
     })
   })
 

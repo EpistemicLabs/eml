@@ -228,6 +228,22 @@ describe('creating a team brain', () => {
     expect(await sync.whenLive()).toEqual({ kind: 'live' })
   })
 
+  it('snapshot: the read-only text a write would get while it is not created, then live with the member and the member set', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { db, team } = creation()
+    const sync = started(db, team)
+    const early = sync.snapshot()
+    expect(early).toMatchObject({ shared: true, brain: BRAIN, relay: relay.origin, mode: 'create', member: null, members: [], invites: [] })
+    expect(early.read_only).toBe('This shared brain is read-only right now: it is not created yet. Reads still work; try the write again once it is back.')
+    expect(await sync.whenLive()).toEqual({ kind: 'live' })
+    const live = sync.snapshot()
+    expect(live.state).toEqual({ kind: 'live' })
+    expect(live.read_only).toBeNull()
+    expect(live.members).toHaveLength(1)
+    expect(live.member).toEqual({ id: team.identity!.publicKey, fingerprint: expect.stringMatching(/^[0-9a-f]{5}( [0-9a-f]{5}){7}$/), handle: 'juno', role: 'owner', devices: 1, self: true })
+    expect(JSON.stringify(live)).not.toContain(Buffer.from(team.device.sign.seed).toString('base64url'))
+  })
+
   it('stops when the relay does not accept the grant: nothing created, the creation kept for a retry', async () => {
     relay = await FakeRelay.start(BRAIN)
     const { db, team } = creation({ grant: 'stale' })
