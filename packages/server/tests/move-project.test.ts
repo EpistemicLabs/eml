@@ -22,6 +22,8 @@ describe('moving a project into a team brain', () => {
   let relay: FakeRelay
   let own: ProvisionResult
   let other: ProvisionResult
+  /** a private brain holding a reference into the source: an agent brain's learning about the task */
+  let agent: ProvisionResult
   let stderr = ''
   const tokens: Record<string, string> = {}
   const port = 31780 + Math.floor(Math.random() * 100)
@@ -48,6 +50,7 @@ describe('moving a project into a team brain', () => {
     // the private source, and another private brain
     own = provisionUser({ email: 'juno@example.com', agentId: 'pilot', userId: 'juno', control, dataDir: tmpDir })
     other = provisionUser({ email: 'other@example.com', agentId: 'pilot', userId: 'juno', control, dataDir: tmpDir })
+    agent = provisionUser({ email: 'agent@example.com', agentId: 'pilot', userId: 'juno', control, dataDir: tmpDir })
     control.close()
     relay = await FakeRelay.start(BRAIN)
     serverProc = spawn('node', [join(__dirname, '..', 'dist', 'server.js')], {
@@ -74,6 +77,10 @@ describe('moving a project into a team brain', () => {
     const outside = flat(validNote({ scope: 'project.elsewhere', title: 'outside' }))
     ids.outside = (await post(t, `/engram/${outside.type}`, outside.body)).body.id
     expect((await post(t, '/relate', { source_id: ids.note, target_id: ids.outside, relation: 'related_to', detection_method: 'manual' })).status).toBe(201)
+    // the agent brain: a lesson that refines the task in the source (a cross-brain reference, spec §4)
+    const lesson = flat(validNote({ scope: 'global', title: 'a-lesson' }))
+    ids.lesson = (await post(agent.tokenPlaintext, `/engram/${lesson.type}`, lesson.body)).body.id
+    expect((await post(agent.tokenPlaintext, '/relate', { source_id: ids.lesson, target_id: ids.task, relation: 'refines', detection_method: 'manual', target_brain: own.brainId })).status).toBe(201)
   }, 15000)
 
   afterAll(async () => {
@@ -160,6 +167,11 @@ describe('moving a project into a team brain', () => {
       dropped_relations: plan.crossing.map((c: { id: string }) => c.id),
     })
     ids.import = r.body.import.op_id
+    // the agent brain's reference names the team brain now; the other private brain held none
+    expect(r.body.references).toEqual([{ brain: agent.brainId, relations: 1 }])
+    const lesson = await get(agent.tokenPlaintext, `/engram/${ids.lesson}?with_relations=true`)
+    expect(lesson.body.relations).toEqual([expect.objectContaining({ target_id: ids.task, source_brain: null, target_brain: BRAIN })])
+    expect(r.body.ids).toEqual([ids.task, ids.note])
     // still the one import in the relay's log
     expect(relay.log.filter(e => e.seq > 1)).toHaveLength(1)
     // the set is in the team brain, readable, as it was

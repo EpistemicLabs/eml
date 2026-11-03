@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import * as path from 'path'
-import { CommandError, type Env } from '@engramprotocol/core'
+import { CommandError, EML, type Env } from '@engramprotocol/core'
+import { remoteReferences } from '@engramprotocol/core/dist/log/move'
 import { moveProject, planProjectMove, type MoveTarget, type ProjectMovePlan, type ProjectMoveResult } from '@engramprotocol/core/dist/log/move-engrams'
 import { openBrain, type ConnectionPool } from './pool'
 import { route } from './middleware/routing'
@@ -18,7 +19,10 @@ import { Sync } from './sync/sync'
 // for the move alone, so the lock it holds across the wait is on no one
 // else's connection; a write of another request to that brain meanwhile is
 // refused at once (write.ts busy, through `moving`) instead of waiting on
-// the lock.
+// the lock. Once the move committed, every other private brain of this
+// server that holds a reference into the source at one of the moved engrams
+// (an agent brain's learning refining a task, spec §4) gets one
+// relation.move_end op, so the reference names the target now.
 
 /** The brains a move holds right now: their writes are refused at once (write.ts busy) instead of waiting on the move's lock. */
 export const moving = new Set<string>()
@@ -37,6 +41,11 @@ export interface MoveContext {
 
 /** The plan as the host gets it: core's, with the target's own refusal first when it has one. */
 export type MovePlanView = ProjectMovePlan
+
+/** The move's answer: core's result, and per other brain the references the move pointed at the target. */
+export interface MoveRouteResult extends ProjectMoveResult {
+  references: Array<{ brain: string, relations: number, error?: string }>
+}
 
 export class MoveRouteError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly data: Record<string, unknown> = {}) {
@@ -85,7 +94,7 @@ export function planMoveRoute(ctx: MoveContext, source: { brainId: string, db: D
  * (409 MOVE_REFUSED; 409 PLAN_CHANGED with the current plan_hash), and lets
  * the target write's own error through (503 read-only, 504 pending).
  */
-export async function moveRoute(ctx: MoveContext, source: { brainId: string, brainFile: string }, body: { target?: unknown, project?: unknown, plan_hash?: unknown }, env: Env): Promise<ProjectMoveResult> {
+export async function moveRoute(ctx: MoveContext, source: { brainId: string, brainFile: string }, body: { target?: unknown, project?: unknown, plan_hash?: unknown }, env: Env): Promise<MoveRouteResult> {
   if (moving.has(source.brainId)) throw new MoveRouteError(409, 'MOVE_REFUSED', 'move refused: a move out of this brain is under way. Nothing was moved.')
   const target = targetOf(ctx, body.target, source.brainId)
   if (target.refusal) throw new MoveRouteError(409, 'MOVE_REFUSED', `move refused: ${target.refusal}. Nothing was moved.`)
@@ -96,8 +105,9 @@ export async function moveRoute(ctx: MoveContext, source: { brainId: string, bra
   const backup_path = path.join(ctx.backupDir, 'move', `${source.brainId}-${env.now().replace(/[:.]/g, '-')}.db`)
   const db = openBrain(path.resolve(ctx.dataDir, source.brainFile))
   moving.add(source.brainId)
+  let result: ProjectMoveResult
   try {
-    return await moveProject({ source: db, target: moveTarget, project, plan_hash: body.plan_hash, backup_path }, env)
+    result = await moveProject({ source: db, target: moveTarget, project, plan_hash: body.plan_hash, backup_path }, env)
   } catch (err) {
     if (err instanceof CommandError && err.code === 'CONFLICT') {
       if (typeof err.data?.plan_hash === 'string') throw new MoveRouteError(409, 'PLAN_CHANGED', err.message, { plan_hash: err.data.plan_hash })
@@ -108,6 +118,33 @@ export async function moveRoute(ctx: MoveContext, source: { brainId: string, bra
     moving.delete(source.brainId)
     db.close()
   }
+  return { ...result, references: pointReferences(ctx, source.brainId, target.brainId, result.ids, env) }
+}
+
+/**
+ * The references other brains of this server hold into `from` at the moved
+ * engrams now name `to`: one relation.move_end op per private brain that has
+ * any (a shared brain holds none). The move is done by now, so a brain that
+ * cannot be written is reported, not thrown — the audit lists what is left.
+ */
+function pointReferences(ctx: MoveContext, from: string, to: string, ids: string[], env: Env): MoveRouteResult['references'] {
+  const out: MoveRouteResult['references'] = []
+  const brains = ctx.controlDb.prepare(`SELECT id, name FROM brains WHERE status = 'ok' AND id NOT IN (?, ?) ORDER BY id`).all(from, to) as Array<{ id: string, name: string }>
+  for (const brain of brains) {
+    const routed = route(ctx.controlDb, ctx.pool, brain.id)
+    if (!routed.ok) { out.push({ brain: brain.id, relations: 0, error: routed.error }); continue }
+    const eml = EML.fromConnection(routed.ctx.brainDb, routed.ctx.brainName)
+    if (eml.teamBrain() !== null) continue
+    const relations = remoteReferences(routed.ctx.brainDb, from, ids)
+    if (relations.length === 0) continue
+    try {
+      eml.apply({ name: 'relation.move_end', input: { from_brain: from, to_brain: to, relations } }, env)
+      out.push({ brain: brain.id, relations: relations.length })
+    } catch (err) {
+      out.push({ brain: brain.id, relations: relations.length, error: (err as Error).message })
+    }
+  }
+  return out
 }
 
 function projectOf(value: unknown): string {
