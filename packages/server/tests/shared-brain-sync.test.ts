@@ -76,6 +76,7 @@ describe('a shared brain through the server', () => {
 
   it('refuses a creation with a relay that is no origin, a handle that is none, or without a grant', async () => {
     expect(await post(BRAIN, '/team/create', { relay: 'https://relay.test', grant: GRANT, handle: 'juno' })).toMatchObject({ status: 400, body: { code: 'INVALID_RELAY', error: 'The relay is a wss:// origin (scheme and host, no path).' } })
+    expect(await post(BRAIN, '/team/create', { relay: 'ws://relay.test', grant: GRANT, handle: 'juno' })).toMatchObject({ status: 400, body: { code: 'INVALID_RELAY' } })
     expect(await post(BRAIN, '/team/create', { relay: relay.origin, grant: GRANT, handle: 'Juno!' })).toMatchObject({ status: 400, body: { code: 'INVALID_HANDLE', error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.' } })
     expect(await post(BRAIN, '/team/create', { relay: relay.origin, handle: 'juno' })).toMatchObject({ status: 400, body: { error: 'grant required' } })
     expect(relay.creates).toEqual([])
@@ -93,11 +94,15 @@ describe('a shared brain through the server', () => {
     expect(r.body.error).toBe('This shared brain is read-only right now: it is not created yet. Reads still work; try the write again once it is back.')
   })
 
-  it('founds the team brain: 201 once live, again when asked again, and its team file holds no pending creation', async () => {
-    const r = await post(BRAIN, '/team/create', { relay: relay.origin, grant: GRANT, handle: 'juno' })
+  it('founds the team brain once for two requests that arrive together: 201 for both with the same member, again when asked again, and its team file holds no pending creation', async () => {
+    const [r, twin] = await Promise.all([
+      post(BRAIN, '/team/create', { relay: relay.origin, grant: GRANT, handle: 'juno' }),
+      post(BRAIN, '/team/create', { relay: relay.origin, grant: GRANT, handle: 'juno' }),
+    ])
     expect(r.status).toBe(201)
     expect(r.body).toMatchObject({ brain: BRAIN, handle: 'juno' })
     expect(r.body.member).toMatch(/^([0-9a-f]{5} ){7}[0-9a-f]{5}$/)
+    expect(twin).toMatchObject({ status: 201, body: r.body })
     expect(relay.log).toHaveLength(1)
     const again = await post(BRAIN, '/team/create', { relay: relay.origin, grant: GRANT, handle: 'juno' })
     expect(again).toMatchObject({ status: 201, body: r.body })

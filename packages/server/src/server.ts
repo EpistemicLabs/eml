@@ -525,7 +525,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // way, it waits on the same creation.
     if (url === '/team/create' && method === 'POST') {
       const body = await readBody(req)
-      if (sync instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${sync.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+      // read again after the body: a creation another request started while
+      // this body was read is in the map now; from here to syncs.set nothing waits
+      const current = syncs.get(routingResult.ctx.brainId)
+      if (current instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${current.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
       const relay = bodyText(body.relay)
       const handle = bodyText(body.handle)
       const grant = bodyText(body.grant)
@@ -537,7 +540,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return json(res, 400, { error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.', code: 'INVALID_HANDLE' })
       }
       if (grant === null) return json(res, 400, { error: 'grant required' })
-      let creation = sync
+      let creation = current
       // a creation that stopped before the relay took it (a stale grant after a restart): this one replaces it
       if (creation?.team.create && (creation.state.kind === 'stopped' || creation.state.kind === 'update_needed')) {
         discardCreation(routingResult.ctx.brainId, creation)

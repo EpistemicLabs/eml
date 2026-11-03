@@ -111,7 +111,8 @@ export function writeTeamFile(dataDir: string, file: TeamFile): void {
     ...(file.key ? { key: { epoch: file.key.epoch, key: text(file.key.key) } } : {}),
   }
   const tmp = `${target}.tmp`
-  const fd = fs.openSync(tmp, 'w', 0o600)
+  fs.rmSync(tmp, { force: true })  // a leftover (a crash, or made with wider bits) would keep its mode
+  const fd = fs.openSync(tmp, 'wx', 0o600)
   try {
     fs.writeFileSync(fd, JSON.stringify(body, null, 2) + '\n')
     fs.fsyncSync(fd)
@@ -128,16 +129,23 @@ export function removeTeamFile(dataDir: string, brain: string): void {
   syncDir(path.join(dataDir, 'team'))
 }
 
-/** True for a relay as the team file and the create route take it: a ws(s):// origin — scheme and host, no path. */
+/**
+ * True for a relay as the team file and the create route take it: a wss://
+ * origin — scheme and host, no path. ws:// only to a loopback host, for a
+ * local test relay; a relay elsewhere is reached over TLS or not at all.
+ */
 export function isRelayOrigin(value: string): boolean {
   if (!/^wss?:\/\/[^/?#@]+$/.test(value)) return false
   try {
     const url = new URL(value)
-    return url.origin === value || url.href === `${value}/`
+    if (url.origin !== value && url.href !== `${value}/`) return false
+    return url.protocol === 'wss:' || LOOPBACK.has(url.hostname)
   } catch {
     return false
   }
 }
+
+const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
 /** The rename is durable once the directory is: fsync it (Windows cannot open a directory for that). */
 function syncDir(dir: string): void {

@@ -61,6 +61,16 @@ describe('the team file', () => {
     expect(readdirSync(join(dir, 'team'))).toEqual([`${BRAIN}.json`])
   })
 
+  it('does not take the mode of a temporary file left behind with wider bits', () => {
+    if (process.platform === 'win32') return
+    mkdirSync(join(dir, 'team'), { recursive: true })
+    writeFileSync(`${teamFilePath(dir, BRAIN)}.tmp`, '{}', { mode: 0o644 })
+    writeTeamFile(dir, file())
+    expect(mode()).toBe(0o600)
+    expect(readdirSync(join(dir, 'team'))).toEqual([`${BRAIN}.json`])
+    expect(readTeamFile(dir, BRAIN)).not.toBeNull()
+  })
+
   it('is removed with removeTeamFile, also when it is not there', () => {
     writeTeamFile(dir, file())
     removeTeamFile(dir, BRAIN)
@@ -97,6 +107,10 @@ describe('the team file', () => {
       expect(reason()).toBe('the relay is not a ws(s):// origin')
       written(JSON.stringify({ ...good(), relay: 'wss://relay.test/path' }))
       expect(reason()).toBe('the relay is not a ws(s):// origin')
+      written(JSON.stringify({ ...good(), relay: 'ws://relay.test' }))
+      expect(reason()).toBe('the relay is not a ws(s):// origin')
+      written(JSON.stringify({ ...good(), relay: 'ws://127.0.0.1:4321' }))
+      expect(readTeamFile(dir, BRAIN)?.relay).toBe('ws://127.0.0.1:4321')
     })
 
     it('a seed that is not one, a creation or key that is malformed', () => {
@@ -128,9 +142,14 @@ describe('the team file', () => {
     })
   })
 
-  it('knows a relay origin: scheme and host, no path, no credentials', () => {
+  it('knows a relay origin: scheme and host, no path, no credentials; ws:// only to a loopback host', () => {
     expect(isRelayOrigin('wss://relay.engramprotocol.com')).toBe(true)
     expect(isRelayOrigin('ws://127.0.0.1:4321')).toBe(true)
+    expect(isRelayOrigin('ws://localhost:4321')).toBe(true)
+    expect(isRelayOrigin('ws://[::1]:4321')).toBe(true)
+    expect(isRelayOrigin('ws://relay.engramprotocol.com')).toBe(false)
+    expect(isRelayOrigin('ws://10.0.0.7:4321')).toBe(false)
+    expect(isRelayOrigin('ws://relay.test:4321')).toBe(false)
     expect(isRelayOrigin('wss://relay.test/')).toBe(false)
     expect(isRelayOrigin('wss://relay.test/sync')).toBe(false)
     expect(isRelayOrigin('wss://relay.test?x=1')).toBe(false)
