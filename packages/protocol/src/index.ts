@@ -18,7 +18,7 @@ export {
 } from './membership'
 export { newBrainKey, keyId, rotateKey, epochKeys, wrapKey, checkWrappedKey, unwrapKey, unwrapInviteKey, type WrappedKey } from './brainkey'
 export {
-  INVITE_DAYS, newInvite, inviteLink, parseInviteLink, inviteNotice, verifyInviteNotice, checkInviteOpen, checkJoin, checkAccept,
+  INVITE_DAYS, NOTICE_SKEW_MS, newInvite, inviteLink, parseInviteLink, inviteNotice, verifyInviteNotice, checkInviteOpen, checkJoin, checkAccept,
   joinRequest, openJoin, joinAccept, openAccept, checkAnchor,
   type Invite, type InviteNotice, type JoinRequest, type JoinAccept, type LogAnchor,
 } from './invite'

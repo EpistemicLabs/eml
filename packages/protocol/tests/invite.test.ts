@@ -5,7 +5,7 @@ import { join } from 'path'
 import {
   GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAccept, checkAnchor, checkJoin, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
   joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
-  unwrapKey, verifyInviteNotice, wrapKey, type Invite,
+  unwrapKey, verifyInviteNotice, wrapKey, NOTICE_SKEW_MS, type Invite,
 } from '../src'
 import { joinRequestWith } from '../src/invite'
 import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, sha } from './helpers'
@@ -144,9 +144,11 @@ describe('the relay\'s notice', () => {
     expect(() => verifyInviteNotice(two, { ...notice, brain: '00000000-0000-4000-8000-000000000000' }, NOW)).toThrow(/another brain/)
     expect(() => verifyInviteNotice(two, { ...notice, v: 2 }, NOW)).toThrow(UnsupportedVersionError)
     expect(() => verifyInviteNotice(two, { ...notice, secret: 'x' }, NOW)).toThrow(/no field secret/)
-    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner
-    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.001Z' }, ada.device.sign)
+    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner — a minute of clock skew is allowed
+    expect(NOTICE_SKEW_MS).toBe(60_000)
+    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.001Z' }, ada.device.sign)
     expect(() => verifyInviteNotice(two, long, NOW)).toThrow(/at most 7 days/)
+    expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:01:00.000Z')
     expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:00:00.000Z')
   })
 })
@@ -291,6 +293,28 @@ describe('the accept anchors the log the invitee replays', () => {
     const fakeKey = wrapKey(fakeSet, fake.keys[0], bo.device.sign.publicKey, relayOwner.device.sign)
     expect(unwrapKey(fakeSet, fakeKey, bo.device)).toEqual(fake.keys[0])  // by the fake log alone it would pass
     expect(() => unwrapInviteKey(fakeSet, fakeKey, bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+  })
+
+  it('the joiner unwraps its key at the genesis, before its own add_member is replayed — a sealed entry ahead of it does not stall the join', () => {
+    const { ada, bo, keys, two, link, request, accept } = invited()
+    const { inviter } = openAccept(link, request, accept)
+    const { set: genesisOnly } = found(ada)  // not bo's log: only the set as the joiner has it at seq 1 — ada alone, epoch 0
+    const atGenesis = { ...genesisOnly, brain: two.brain, keys: two.keys }
+    const wrapped = wrapKey(two, keys[0], bo.device.sign.publicKey, ada.device.sign)
+    // by the member set at seq 1 alone, bo's device is nobody's: unwrapKey refuses; the accept vouches for the wrapper, so unwrapInviteKey opens it
+    expect(() => unwrapKey(atGenesis, wrapped, bo.device)).toThrow(/recipient is not a current device/)
+    expect(unwrapInviteKey(atGenesis, wrapped, bo.device, inviter)).toEqual(keys[0])
+    // still refused: another wrapper, another brain, a forged signature, a key the log does not name, another recipient
+    const mira = person('mira')
+    const three = applyMembership(two, addMember(two, keys, ada, mira, 'owner'))
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(three, keys[0], bo.device.sign.publicKey, mira.device.sign), bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+    expect(() => unwrapInviteKey({ ...atGenesis, brain: '00000000-0000-4000-8000-000000000000' }, wrapped, bo.device, inviter)).toThrow(/another brain/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, epoch: 1 }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, sig: wrapped.sig.slice(0, -2) + 'AA' }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, mira.device, inviter)).toThrow(/for another device/)
+    const otherKey = { epoch: 0, key: keys[0].key.map(b => b ^ 1) }
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(two, otherKey, bo.device.sign.publicKey, ada.device.sign), bo.device, inviter)).toThrow(/not the key the log names/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, extra: 1 }, bo.device, inviter)).toThrow(/no field extra/)
   })
 
   it('the real genesis with another history, or a log that stops short, is refused', () => {

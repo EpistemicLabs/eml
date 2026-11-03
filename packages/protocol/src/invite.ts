@@ -78,6 +78,8 @@ export interface JoinAccept {
 
 /** An invite is good for this many days. */
 export const INVITE_DAYS = 7
+/** How far an inviter's clock may run ahead of the relay's: a notice may expire this much later than INVITE_DAYS after the relay's now. */
+export const NOTICE_SKEW_MS = 60_000
 
 const SECRET_BYTES = KEY_BYTES
 export const INVITE_ID_BYTES = 16
@@ -131,7 +133,7 @@ export function inviteNotice(invite: Invite, owner: KeyPair): InviteNotice {
   return { ...body, sig: signText(owner, NOTICE_DOMAIN, canonicalJson(body)) }
 }
 
-/** The relay's check of a notice at `now`: exactly one, for this brain, expiring within INVITE_DAYS, with a join key, signed by a current device of an owner. */
+/** The relay's check of a notice at `now`: exactly one, for this brain, expiring within INVITE_DAYS (plus NOTICE_SKEW_MS of clock skew), with a join key, signed by a current device of an owner. */
 export function verifyInviteNotice(set: MemberSet, value: unknown, now: string): InviteNotice {
   if (!ISO_MS.test(now)) throw new ProtocolError('now is ISO-8601 UTC with milliseconds')
   const n = asObject(value, 'an invite notice')
@@ -141,7 +143,7 @@ export function verifyInviteNotice(set: MemberSet, value: unknown, now: string):
   fromBase64url(n.invite_id, INVITE_ID_BYTES, 'the invite id')
   fromBase64url(n.join_key, KEY_BYTES, 'the join key')
   if (typeof n.expires_at !== 'string' || !ISO_MS.test(n.expires_at)) throw new ProtocolError('expires_at is not ISO-8601 UTC with milliseconds')
-  if (Date.parse(n.expires_at) > Date.parse(now) + INVITE_DAYS * 86400_000) throw new ProtocolError(`an invite is open for at most ${INVITE_DAYS} days`)
+  if (Date.parse(n.expires_at) > Date.parse(now) + INVITE_DAYS * 86400_000 + NOTICE_SKEW_MS) throw new ProtocolError(`an invite is open for at most ${INVITE_DAYS} days`)
   const member = memberOfDevice(set, n.inviter)
   if (!member || set.members[member].role !== 'owner') throw new ProtocolError('the invite is not from a current device of an owner')
   const { sig, ...body } = n

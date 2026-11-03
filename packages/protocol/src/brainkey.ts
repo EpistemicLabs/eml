@@ -120,7 +120,11 @@ export function checkWrappedKey(set: MemberSet, record: unknown): WrappedKey {
  * that epoch. Throws ProtocolError otherwise.
  */
 export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): BrainKey {
-  const r = checkWrappedKey(set, record)
+  return open(set, checkWrappedKey(set, record), device)
+}
+
+/** The key in a checked wrapped-key record, for `device`, for an epoch the log has reached, the key the log names. */
+function open(set: MemberSet, r: WrappedKey, device: DeviceKeys): BrainKey {
   if (r.recipient !== device.sign.publicKey) throw new ProtocolError('the wrapped key is for another device')
   if (r.epoch > set.epoch) throw new ProtocolError(`the brain has no epoch ${r.epoch}`)
   const own = sodium.crypto_box_seed_keypair(device.enc.seed)
@@ -136,16 +140,28 @@ export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): 
 }
 
 /**
- * unwrapKey for a device that just joined: the key must also be wrapped by
- * the inviter's device from the accept — not by any owner the log it was
- * served names, since that log may be the relay's own. The device unwraps
- * first (the chain links need the payload hashes inside the sealed records),
- * but writes nothing and treats the served log as genuine only once
- * checkAnchor has passed.
+ * unwrapKey for a device that just joined: the key must be wrapped by the
+ * inviter's device from the accept — not by any owner the log it was served
+ * names, since that log may be the relay's own. The accept, checked under
+ * the invite secret, vouches for that device, so the member set is not asked
+ * whether the wrapper or the recipient are current devices: the joiner
+ * unwraps at the genesis, before its own joining record is replayed, and a
+ * sealed entry ahead of that record does not stall the join. The device
+ * unwraps first (the chain links need the payload hashes inside the sealed
+ * records), but writes nothing and treats the served log as genuine only
+ * once checkAnchor has passed.
  */
 export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert): BrainKey {
-  if (asObject(record, 'a wrapped key').wrapper !== inviter.device_sign) throw new ProtocolError('the key is not wrapped by the inviter\'s device')
-  return unwrapKey(set, record, device)
+  const r = asObject(record, 'a wrapped key')
+  checkVersion(r.v)
+  exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
+  if (r.brain !== set.brain) throw new ProtocolError('the wrapped key is for another brain')
+  if (!Number.isSafeInteger(r.epoch) || (r.epoch as number) < 0) throw new ProtocolError('the epoch is not a non-negative integer')
+  if (r.wrapper !== inviter.device_sign) throw new ProtocolError('the key is not wrapped by the inviter\'s device')
+  fromBase64url(r.sealed, SEAL_BYTES, 'sealed')
+  const { sig, ...body } = r
+  if (!verifyText(r.wrapper as string, WRAP_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the wrapped key is not signed by its wrapper')
+  return open(set, r as unknown as WrappedKey, device)
 }
 
 function prevAad(brain: string, epoch: number): string {
