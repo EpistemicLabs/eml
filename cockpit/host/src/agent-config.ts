@@ -39,7 +39,7 @@ export interface AgentRecord {
   harnesses: Partial<Record<ProviderId, { configDir: string }>>
 }
 
-/** Also the agent's name in the brain (scope agent.<id>) and, for now, its token's name. */
+/** Also the agent's name in the brain (scope agent.<id>). */
 export const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/
 /** The MCP server name of the brain, which the host always adds itself. */
 export const BRAIN_MCP_SERVER = 'eml_brain'
