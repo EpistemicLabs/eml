@@ -1,15 +1,19 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { encryptionKeyFromSeed, signingKeyFromSeed, type DeviceKeys } from '@engramprotocol/protocol'
+import { encryptionKeyFromSeed, signingKeyFromSeed, type BrainKey, type DeviceKeys, type KeyPair } from '@engramprotocol/protocol'
 
 // --- The team file (v0.21, spec team-brain-sync-client-spec §4) -------------------
 //
 // What this device holds for one shared brain, outside brains/ and its
-// backups: <data-dir>/team/<team brain id>.json, owner-only. It is named by the
-// team brain id the brain's genesis carries; nothing here is derived locally.
-// It holds the relay and the device's seeds, nothing the log already says:
-// the member and its handle come from the log, the brain keys from the relay
-// (wrapped for this device), and stay in memory.
+// backups: <data-dir>/team/<team brain id>.json, owner-only, written whole or
+// not at all. It is named by the team brain id the brain's genesis carries;
+// nothing here is derived locally. It holds the relay, the device's seeds and
+// — from create or join on — the member's identity seed (decision
+// team-file-keeps-member-identity-seed), nothing the log already says: the
+// handle comes from the log, the brain keys from the relay (wrapped for this
+// device), and stay in memory. While a creation is under way it also carries
+// what the relay has not taken yet: the genesis with its grant until the
+// relay created the brain, the epoch-0 key until it is put for this device.
 
 export interface TeamFile {
   v: 1
@@ -18,13 +22,34 @@ export interface TeamFile {
   /** the relay's origin, wss://<host> (ws:// only for a local test relay) */
   relay: string
   device: DeviceKeys
+  /** the member's identity key — on the device that created or joined as the member; it certifies further devices */
+  identity?: KeyPair
+  /** a creation the relay has not confirmed yet: the genesis record and the grant to send with it */
+  create?: { genesis: Record<string, unknown>, grant: string }
+  /** a brain key this device holds but has not put at the relay for itself yet */
+  key?: BrainKey
 }
+
+/** Why a team file cannot be used — a fixed reason, never the file's text or a field's value. */
+export class TeamFileError extends Error {
+  constructor(reason: string) {
+    super(reason)
+    this.name = 'TeamFileError'
+  }
+}
+
+/** Seeds and brain keys are 32 bytes: 43 characters of base64url. */
+const SEED_BYTES = 32
+const SEED_TEXT = /^[A-Za-z0-9_-]{43}$/
 
 export function teamFilePath(dataDir: string, brain: string): string {
   return path.join(dataDir, 'team', `${brain}.json`)
 }
 
-/** The team file of `brain`, or null when this server has none. Throws when it is malformed or for another brain. */
+/**
+ * The team file of `brain`, or null when this server has none. Throws
+ * TeamFileError with a fixed reason when it is malformed or for another brain.
+ */
 export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
   let text: string
   try {
@@ -33,32 +58,117 @@ export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
-  const raw = JSON.parse(text) as { v?: unknown, brain?: unknown, relay?: unknown, device?: { sign_seed?: unknown, enc_seed?: unknown } }
-  if (raw.v !== 1) throw new Error(`team file of ${brain}: version ${String(raw.v)} is not 1`)
-  if (raw.brain !== brain) throw new Error(`team file of ${brain}: it is for brain ${String(raw.brain)}`)
-  if (typeof raw.relay !== 'string' || !/^wss?:\/\/[^/]+$/.test(raw.relay)) throw new Error(`team file of ${brain}: relay is not a ws(s):// origin`)
-  return {
+  let raw: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
+    raw = parsed as Record<string, unknown>
+  } catch {
+    throw new TeamFileError('it is not valid JSON')
+  }
+  if (raw.v !== 1) throw new TeamFileError('its version is not 1')
+  if (raw.brain !== brain) throw new TeamFileError('it is for another brain')
+  if (typeof raw.relay !== 'string' || !isRelayOrigin(raw.relay)) throw new TeamFileError('the relay is not a ws(s):// origin')
+  const device = field(raw.device)
+  const file: TeamFile = {
     v: 1,
     brain,
     relay: raw.relay,
-    device: { sign: signingKeyFromSeed(seed(raw.device?.sign_seed)), enc: encryptionKeyFromSeed(seed(raw.device?.enc_seed)) },
+    device: { sign: signingKeyFromSeed(seed(device.sign_seed)), enc: encryptionKeyFromSeed(seed(device.enc_seed)) },
   }
+  if (raw.identity !== undefined) file.identity = signingKeyFromSeed(seed(field(raw.identity).seed))
+  if (raw.create !== undefined) {
+    const create = field(raw.create)
+    if (typeof create.genesis !== 'object' || create.genesis === null || Array.isArray(create.genesis) || typeof create.grant !== 'string') {
+      throw new TeamFileError('its creation is malformed')
+    }
+    file.create = { genesis: create.genesis as Record<string, unknown>, grant: create.grant }
+  }
+  if (raw.key !== undefined) {
+    const key = field(raw.key)
+    if (!Number.isSafeInteger(key.epoch) || (key.epoch as number) < 0) throw new TeamFileError('its key is malformed')
+    file.key = { epoch: key.epoch as number, key: seed(key.key) }
+  }
+  return file
 }
 
-/** Writes the team file, owner-only. */
+/**
+ * Writes the team file whole: into a temporary file next to it, owner-only,
+ * synced, then renamed over the old one — a crash leaves the old file or the
+ * new one, never a torn one.
+ */
 export function writeTeamFile(dataDir: string, file: TeamFile): void {
   const target = teamFilePath(dataDir, file.brain)
-  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 })
+  const dir = path.dirname(target)
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   const body = {
     v: file.v,
     brain: file.brain,
     relay: file.relay,
-    device: { sign_seed: Buffer.from(file.device.sign.seed).toString('base64url'), enc_seed: Buffer.from(file.device.enc.seed).toString('base64url') },
+    device: { sign_seed: text(file.device.sign.seed), enc_seed: text(file.device.enc.seed) },
+    ...(file.identity ? { identity: { seed: text(file.identity.seed) } } : {}),
+    ...(file.create ? { create: file.create } : {}),
+    ...(file.key ? { key: { epoch: file.key.epoch, key: text(file.key.key) } } : {}),
   }
-  fs.writeFileSync(target, JSON.stringify(body, null, 2) + '\n', { mode: 0o600 })
+  const tmp = `${target}.tmp`
+  const fd = fs.openSync(tmp, 'w', 0o600)
+  try {
+    fs.writeFileSync(fd, JSON.stringify(body, null, 2) + '\n')
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+  fs.renameSync(tmp, target)
+  syncDir(dir)
 }
 
+/** Removes the team file of `brain` (a creation that never reached the relay). */
+export function removeTeamFile(dataDir: string, brain: string): void {
+  fs.rmSync(teamFilePath(dataDir, brain), { force: true })
+  syncDir(path.join(dataDir, 'team'))
+}
+
+/** True for a relay as the team file and the create route take it: a ws(s):// origin — scheme and host, no path. */
+export function isRelayOrigin(value: string): boolean {
+  if (!/^wss?:\/\/[^/?#@]+$/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.origin === value || url.href === `${value}/`
+  } catch {
+    return false
+  }
+}
+
+/** The rename is durable once the directory is: fsync it (Windows cannot open a directory for that). */
+function syncDir(dir: string): void {
+  if (process.platform === 'win32') return
+  let fd: number
+  try {
+    fd = fs.openSync(dir, 'r')
+  } catch {
+    return  // the directory is gone (nothing to make durable)
+  }
+  try {
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function text(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('base64url')
+}
+
+/** A section of the file as an object; TeamFileError (fixed reason) otherwise. */
+function field(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TeamFileError('a section is malformed')
+  return value as Record<string, unknown>
+}
+
+/** A 32-byte seed or key from its text form; TeamFileError (fixed reason) otherwise. */
 function seed(value: unknown): Uint8Array {
-  if (typeof value !== 'string') throw new Error('team file: a seed is a base64url string')
-  return new Uint8Array(Buffer.from(value, 'base64url'))
+  if (typeof value !== 'string' || !SEED_TEXT.test(value)) throw new TeamFileError('a seed is malformed')
+  const bytes = new Uint8Array(Buffer.from(value, 'base64url'))
+  if (bytes.length !== SEED_BYTES) throw new TeamFileError('a seed is malformed')
+  return bytes
 }

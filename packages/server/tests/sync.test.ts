@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { ready } from '@engramprotocol/protocol'
-import { EML, CommandError } from '@engramprotocol/core'
+import { EML, CommandError, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
-import { Sync, type SyncState } from '../src/sync/sync'
+import { Sync, untrusted, type SyncState } from '../src/sync/sync'
+import { createTeamBrain } from '../src/sync/create'
+import type { TeamFile } from '../src/sync/team-file'
 import { SharedWriteError, applyWrite } from '../src/write'
-import { FakeRelay } from './fake-relay'
+import { FakeRelay, GRANT } from './fake-relay'
 import { BRAIN, Team, person } from './team'
 
 // v0.21 sync (spec team-brain-sync-client-spec §4): a shared brain's
@@ -166,5 +168,142 @@ describe('a shared brain\'s sync', () => {
     await until(() => sync.state.kind === 'stopped')
     const err = await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-gone' }) }, env(eml)))
     expect((err as Error).message).toMatch(/read-only right now: it stopped: this device or its member left the brain\. Reads still work; this needs the user — tell them\.$/)
+  })
+})
+
+// v0.21 create (spec §5, block 6a): the owner's device founds the brain at the
+// relay from an empty brain file — genesis and grant first, then the login,
+// the genesis back through the log, and its own epoch-0 key put for itself.
+
+describe('creating a team brain', () => {
+  const NOW = '2026-11-03T08:00:00.000Z'
+  /** An empty brain, its creation (team file in memory) and what the Sync persisted of it. */
+  function creation(opts: { grant?: string, handle?: string } = {}) {
+    const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    const eml = EML.fromConnection(db, 'test')
+    const team = createTeamBrain({ brain: BRAIN, relay: relay!.origin, grant: opts.grant ?? GRANT, handle: opts.handle ?? 'juno', stateHash: eml.stateHash(), now: NOW })
+    return { db, eml, team }
+  }
+  const persisted: TeamFile[] = []
+  const persist = (file: TeamFile) => { persisted.push(JSON.parse(JSON.stringify({ create: file.create ?? null, key: file.key ? 'held' : null, identity: file.identity ? 'held' : null }))) }
+  const started = (db: ReturnType<typeof initDatabase>, team: TeamFile, opts: { persist?: (f: TeamFile) => void, deadlineMs?: number } = {}): Sync => {
+    sync = new Sync(db, team, { deadlineMs: opts.deadlineMs ?? 3000, backoffMs: [20, 100], persist: opts.persist ?? persist })
+    sync.start()
+    return sync
+  }
+  beforeEach(() => { persisted.length = 0 })
+
+  it('founds the brain: genesis and grant to the relay, the genesis back through the log, the key put for itself, then live and writable as the member', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { eml, db, team } = creation()
+    expect(eml.hasGenesis()).toBe(false)
+    const sync = started(db, team)
+    expect(sync.mode).toBe('create')
+    expect(await sync.whenLive()).toEqual({ kind: 'live' })
+    expect(relay.creates).toEqual([GRANT])
+    expect(relay.log).toHaveLength(1)
+    expect(eml.brainId()).toBe(BRAIN)
+    expect(eml.teamBrain()).toBe(BRAIN)
+    expect(sync.ownHandle()).toBe('juno')
+    await until(() => relay!.keyPuts.length === 1)
+    expect(relay.keyPuts).toEqual([team.device.sign.publicKey])
+    expect(team.create).toBeUndefined()
+    await until(() => team.key === undefined)
+    expect(persisted.map(p => [p.create === null, p.key])).toEqual([[true, 'held'], [true, null]])
+    expect(persisted.every(p => p.identity === 'held')).toBe(true)
+    const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-founded' }) }, env(eml))
+    expect(engram).toMatchObject({ title: 't-founded', ingested_by: 'juno' })
+    expect(relay.log).toHaveLength(2)
+  })
+
+  it('is read-only as not created yet until the genesis is in', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { eml, db, team } = creation()
+    const sync = started(db, team)
+    const err = await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-too-early' }) }, env(eml)))
+    expect((err as Error).message).toBe('This shared brain is read-only right now: it is not created yet. Reads still work; try the write again once it is back.')
+    const direct = await failure(applyWrite(eml, { name: 'engram.create', input: validNote({ title: 't-too-early' }) }, env(eml), undefined))
+    expect((direct as Error).message).toMatch(/read-only right now: it is not created yet\./)
+    expect(await sync.whenLive()).toEqual({ kind: 'live' })
+  })
+
+  it('stops when the relay does not accept the grant: nothing created, the creation kept for a retry', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { db, team } = creation({ grant: 'stale' })
+    const sync = started(db, team)
+    const state = await sync.whenLive()
+    expect(state).toEqual({ kind: 'stopped', why: 'the relay did not accept the creation grant: the grant is not good for this brain', relay: { code: 'grant_invalid', message: 'the grant is not good for this brain' } })
+    expect(relay.log).toHaveLength(0)
+    expect(team.create).toBeDefined()
+    expect(persisted).toEqual([])
+  })
+
+  it('after a restart with the creation still in the file, logs in when the relay has the brain already', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const first = creation()
+    const asWritten: TeamFile = { ...first.team, create: JSON.parse(JSON.stringify(first.team.create)), key: { epoch: 0, key: new Uint8Array(first.team.key!.key) } }
+    expect(await started(first.db, first.team).whenLive()).toEqual({ kind: 'live' })
+    sync!.close()
+    // the same device again, its file as before the relay answered
+    const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    const team = asWritten
+    const again = started(db, team)
+    expect(await again.whenLive()).toEqual({ kind: 'live' })
+    expect(relay.creates).toHaveLength(2)
+    expect(relay.log).toHaveLength(1)
+    expect(team.create).toBeUndefined()
+    expect(again.ownHandle()).toBe('juno')
+  })
+
+  it('stops when the relay has a brain with this id that is not this device\'s', async () => {
+    const other = new Team()
+    relay = await FakeRelay.start(BRAIN, other.genesis())
+    const { db, team } = creation()
+    const sync = started(db, team)
+    const state = await sync.whenLive()
+    expect(state).toMatchObject({ kind: 'stopped', relay: { code: 'brain_exists' } })
+    expect((state as { why: string }).why).toBe('the relay has a brain with this id that this device is no member of')
+    expect(team.create).toBeDefined()
+  })
+
+  it('puts its key again after a restart that left it in the file', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const first = creation()
+    const key = { epoch: 0, key: new Uint8Array(first.team.key!.key) }
+    expect(await started(first.db, first.team).whenLive()).toEqual({ kind: 'live' })
+    await until(() => relay!.keyPuts.length === 1)
+    sync!.close()
+    const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    const team: TeamFile = { ...first.team, key }
+    delete team.create
+    const again = started(db, team)
+    expect(again.mode).toBe('member')
+    expect(await again.whenLive()).toEqual({ kind: 'live' })
+    await until(() => relay!.keyPuts.length === 2)
+    await until(() => team.key === undefined)
+  })
+
+  it('stops when the team file cannot be written once the relay took the genesis', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { db, team } = creation()
+    const sync = started(db, team, { persist: () => { throw new Error('disk full') } })
+    expect(await sync.whenLive()).toEqual({ kind: 'stopped', why: 'its team file could not be written' })
+    expect(team.create).toBeDefined()
+    expect(relay.log).toHaveLength(1)
+  })
+
+  it('answers whenLive with the state as it is once the deadline passed', async () => {
+    relay = await FakeRelay.start(BRAIN)
+    const { db, team } = creation()
+    await relay.stop()  // nobody answers
+    const sync = started(db, team, { deadlineMs: 100 })
+    expect(await sync.whenLive()).toEqual({ kind: 'offline' })
+  })
+})
+
+describe('a text the relay sent', () => {
+  it('loses its control characters and is capped at 200 characters', () => {
+    expect(untrusted('ok\u0000\u001b[31m fine\u007f\u0085')).toBe('ok[31m fine')
+    expect(untrusted('x'.repeat(300))).toHaveLength(200)
   })
 })

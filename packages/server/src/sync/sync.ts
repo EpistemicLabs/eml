@@ -17,6 +17,13 @@ import { SharedWriteError, readOnly } from '../write'
 // appended, and answered once the replica took the entry the relay gave them.
 // A lost connection is retried; until the replica is caught up again the brain
 // is read-only.
+//
+// A brain being created (§5; its team file carries the genesis and the grant)
+// sends them before the login: the relay creates the brain, the device logs
+// in, takes the genesis back through the log like any entry, and puts its
+// epoch-0 key for itself. What the relay has taken is dropped from the team
+// file as it goes, so a restart continues where it stopped; a relay that has
+// the brain already is just logged in to.
 
 export type SyncState =
   /** not connected: connecting, or waiting to reconnect */
@@ -26,7 +33,8 @@ export type SyncState =
   | { kind: 'live' }
   /** an entry waits for the key of its epoch */
   | { kind: 'waiting_key', epoch: number }
-  | { kind: 'stopped', why: string }
+  /** `relay`: what the relay answered, when it stopped the brain (a creation it refused) */
+  | { kind: 'stopped', why: string, relay?: { code: string, message: string } }
   | { kind: 'update_needed', why: string }
 
 export interface SyncOptions {
@@ -34,6 +42,8 @@ export interface SyncOptions {
   deadlineMs?: number
   /** the first and the longest pause before a reconnect (ms); default 1 s and 60 s */
   backoffMs?: [number, number]
+  /** keeps the team file as a creation advances (the server writes it to disk); a Sync without one keeps nothing */
+  persist?: (file: TeamFile) => void
 }
 
 interface Writer {
@@ -43,40 +53,54 @@ interface Writer {
 }
 
 type Halt = Extract<SyncState, { kind: 'stopped' | 'update_needed' }>
+type Request = { kind: 'keys' } | { kind: 'append', opId: string } | { kind: 'key_put' }
 
 export class Sync {
+  /** `create` for a Sync started with a creation to send; `member` otherwise */
+  readonly mode: 'create' | 'member'
   private readonly replica: Replica
   private readonly url: string
   private readonly host: string
   private readonly deadlineMs: number
   private readonly backoff: [number, number]
+  private readonly persist: (file: TeamFile) => void
   private ws: WebSocket | null = null
   private loggedIn = false
   private caughtUp = false
+  /** the challenge of this connection, held while the creation goes first */
+  private challenge: unknown = null
+  /** the relay answered brain_exists to the creation: the login decides whether the brain is this device's */
+  private existed = false
   /** the seq the subscription started from */
   private from = 0
   /** delivered entries the replica has not taken yet, in order */
   private queue: Array<{ seq: number, at: string, record: unknown }> = []
   private nextReq = 1
-  /** answers awaited: a keys request, or an append (by op_id) */
-  private requests = new Map<number, { kind: 'keys' } | { kind: 'append', opId: string }>()
+  /** answers awaited: a keys request, a key_put, or an append (by op_id) */
+  private requests = new Map<number, Request>()
   /** writes whose entry has not arrived, by op_id */
   private writers = new Map<string, Writer>()
   /** wrapped keys the replica cannot take yet: before the genesis, or for the next epoch before its rotation is in the log */
   private pendingKeys: unknown[] = []
   /** sealed records the relay has not acknowledged yet — resent byte-identical after a reconnect */
   private unconfirmed = new Map<string, Record<string, unknown>>()
+  /** the key_put the relay has not answered */
+  private keyPut: number | null = null
+  /** callers of whenLive */
+  private waiters: Array<(state: SyncState) => void> = []
   private halt: Halt | null = null
   private closed = false
   private delay: number
   private retry: NodeJS.Timeout | null = null
 
-  constructor(db: Database.Database, private readonly team: TeamFile, opts: SyncOptions = {}) {
+  constructor(db: Database.Database, readonly team: TeamFile, opts: SyncOptions = {}) {
+    this.mode = team.create ? 'create' : 'member'
     this.replica = new Replica(db, team)
     this.url = `${team.relay}${syncPath(team.brain)}`
     this.host = new URL(team.relay).host
     this.deadlineMs = opts.deadlineMs ?? 30_000
     this.backoff = opts.backoffMs ?? [1_000, 60_000]
+    this.persist = opts.persist ?? (() => undefined)
     this.delay = this.backoff[0]
   }
 
@@ -100,6 +124,30 @@ export class Sync {
     if (this.retry) clearTimeout(this.retry)
     this.ws?.close()
     this.failWriters()
+    this.settleWaiters()
+  }
+
+  /**
+   * Resolves once the brain is live, or when it stopped (with that state),
+   * or — after the write deadline — with the state as it is then; never
+   * rejects. What a route waits on after starting a creation.
+   */
+  whenLive(): Promise<SyncState> {
+    const now = this.state
+    if (now.kind === 'live' || now.kind === 'stopped' || now.kind === 'update_needed' || this.closed) return Promise.resolve(now)
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter(w => w !== settle)
+        resolve(this.state)
+      }, this.deadlineMs)
+      const settle = (state: SyncState) => { clearTimeout(timer); resolve(state) }
+      this.waiters.push(settle)
+    })
+  }
+
+  /** The handle the log binds to this device's member, once the log says. */
+  ownHandle(): string | null {
+    return this.replica.ownHandle()
   }
 
   /**
@@ -110,6 +158,7 @@ export class Sync {
    */
   async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env): Promise<CommandMap[N][1]> {
     const state = this.state
+    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && this.replica.head().seq === 0) throw readOnly('it is not created yet')
     if (state.kind !== 'live') throw readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
     const key = this.replica.currentKey()
     if (!key) throw readOnly('this device has no key for it yet')
@@ -162,22 +211,28 @@ export class Sync {
       this.ws?.close()
       return
     }
+    try {
+      this.handle(frame)
+    } finally {
+      this.settleWaiters()
+    }
+  }
+
+  private handle(frame: RelayFrame): void {
     switch (frame.t) {
-      case 'challenge': {
-        let response
-        try {
-          response = loginResponse(frame.challenge, this.host, this.team.brain, this.team.device.sign)
-        } catch (err) {
-          this.log(`login challenge refused: ${(err as Error).message}`)
-          this.ws?.close()
-          return
-        }
-        this.send({ t: 'login', response: response as unknown as Record<string, unknown> }, false)
-        return
-      }
+      case 'challenge':
+        this.challenge = frame.challenge
+        // a creation goes first: the relay has no brain to log in to yet
+        if (this.team.create) return this.send({ t: 'create', genesis: this.team.create.genesis, grant: this.team.create.grant }, false)
+        return this.login()
+      case 'created':
+        if (!this.took('create')) return
+        return this.login()
       case 'welcome': {
         this.loggedIn = true
         this.delay = this.backoff[0]
+        // the brain exists at the relay and this device is its member's: the creation is over
+        if (this.team.create && !this.took('create')) return
         if (frame.head.seq < this.replica.head().seq) return this.stop('the relay\'s log is shorter than this brain\'s')
         const req = this.nextReq++
         this.requests.set(req, { kind: 'keys' })
@@ -187,6 +242,7 @@ export class Sync {
       case 'keys': {
         this.requests.delete(frame.req)
         for (const wrapped of frame.wrapped) this.addKey(wrapped)
+        this.publishKey()
         this.from = this.replica.head().seq + 1
         this.send({ t: 'subscribe', from: this.from })
         return
@@ -210,23 +266,100 @@ export class Sync {
         if (asked?.kind === 'append') this.unconfirmed.delete(asked.opId)
         return
       }
-      case 'error': {
-        const asked = frame.req === null ? undefined : this.requests.get(frame.req)
-        if (frame.req !== null) this.requests.delete(frame.req)
-        if (frame.code === 'unsupported_version') return this.updateNeeded('the relay speaks a newer protocol')
-        if (asked?.kind === 'append') {
-          this.unconfirmed.delete(asked.opId)
-          this.settleError(asked.opId, new SharedWriteError(409, 'SHARED_WRITE_REFUSED',
-            `The shared brain's relay refused this write (${frame.code}): ${frame.message}. Nothing was written.`))
-          return
+      case 'ok': {
+        const asked = this.requests.get(frame.req)
+        this.requests.delete(frame.req)
+        if (asked?.kind === 'key_put') {
+          this.keyPut = null
+          this.took('key')
         }
-        this.log(`relay error ${frame.code}: ${frame.message}`)
         return
       }
+      case 'error':
+        return this.failed(frame)
       default:
-        // invites and joins are the membership flows' (block 6)
+        // invites and joins are the membership flows' (block 6b)
         return
     }
+  }
+
+  /** An error frame: the answer to a request, to the creation, or the relay's own. */
+  private failed(frame: Extract<RelayFrame, { t: 'error' }>): void {
+    const asked = frame.req === null ? undefined : this.requests.get(frame.req)
+    if (frame.req !== null) this.requests.delete(frame.req)
+    const message = untrusted(frame.message)
+    if (frame.code === 'unsupported_version') return this.updateNeeded('the relay speaks a newer protocol')
+    if (asked?.kind === 'append') {
+      this.unconfirmed.delete(asked.opId)
+      this.settleError(asked.opId, new SharedWriteError(409, 'SHARED_WRITE_REFUSED',
+        `The shared brain's relay refused this write (${frame.code}): ${message}. Nothing was written.`))
+      return
+    }
+    if (asked?.kind === 'key_put') {
+      this.keyPut = null
+      this.log(`the relay did not keep this device's key (${frame.code}): ${message}`)
+      return
+    }
+    if (!this.loggedIn && this.team.create) {
+      // the answer to the creation
+      if (frame.code === 'brain_exists' && !this.existed) {
+        this.existed = true
+        return this.login()
+      }
+      const relay = { code: frame.code, message }
+      if (frame.code === 'grant_invalid') return this.halted({ kind: 'stopped', why: `the relay did not accept the creation grant: ${message}`, relay })
+      if (frame.code === 'login_failed' && this.existed) return this.halted({ kind: 'stopped', why: 'the relay has a brain with this id that this device is no member of', relay: { code: 'brain_exists', message } })
+      return this.halted({ kind: 'stopped', why: `the relay did not create the brain (${frame.code}): ${message}`, relay })
+    }
+    this.log(`relay error ${frame.code}: ${message}`)
+  }
+
+  private login(): void {
+    let response
+    try {
+      response = loginResponse(this.challenge, this.host, this.team.brain, this.team.device.sign)
+    } catch (err) {
+      this.log(`login challenge refused: ${(err as Error).message}`)
+      this.ws?.close()
+      return
+    }
+    this.send({ t: 'login', response: response as unknown as Record<string, unknown> }, false)
+  }
+
+  /**
+   * The relay took what `section` of the team file held for it: dropped from
+   * the file. False when the file could not be written — the brain stops,
+   * since a restart would send it again as if the relay had not.
+   */
+  private took(section: 'create' | 'key'): boolean {
+    if (!this.team[section]) return true
+    const kept = this.team[section]
+    delete this.team[section]
+    try {
+      this.persist(this.team)
+      return true
+    } catch (err) {
+      this.team[section] = kept as never
+      this.log(`the team file could not be written: ${(err as Error).message}`)
+      this.stop('its team file could not be written')
+      return false
+    }
+  }
+
+  /** Puts the key this device holds itself (a created brain's epoch-0 key) at the relay, once the genesis is in. */
+  private publishKey(): void {
+    if (!this.team.key || !this.loggedIn || this.keyPut !== null) return
+    let wrapped
+    try {
+      wrapped = this.replica.takeOwnKey(this.team.key)
+    } catch (err) {
+      if (!(err instanceof ProtocolError)) throw err
+      return  // before the genesis: again once it is in
+    }
+    const req = this.nextReq++
+    this.requests.set(req, { kind: 'key_put' })
+    this.keyPut = req
+    this.send({ t: 'key_put', req, wrapped: wrapped as unknown as Record<string, unknown> })
   }
 
   /** Hands queued entries to the replica in order, until one waits for a key or the replica stops. */
@@ -246,6 +379,7 @@ export class Sync {
         this.failWriters()
         return
       }
+      if (entry.seq === 1) this.publishKey()
       const opId = (entry.record as { op_id?: unknown }).op_id
       if (typeof opId === 'string') {
         this.unconfirmed.delete(opId)  // its entry is in the log, whether the relay's answer came or not
@@ -275,6 +409,16 @@ export class Sync {
   /** Every write still waiting: it may still land, nobody here will see it. */
   private failWriters(): void {
     for (const opId of [...this.writers.keys()]) this.settleError(opId, pending())
+  }
+
+  /** Tells whoever waits for the brain to be live once it is, or once it stopped. */
+  private settleWaiters(): void {
+    if (this.waiters.length === 0) return
+    const state = this.state
+    if (state.kind !== 'live' && state.kind !== 'stopped' && state.kind !== 'update_needed' && !this.closed) return
+    const waiters = this.waiters
+    this.waiters = []
+    for (const settle of waiters) settle(state)
   }
 
   /** Takes a wrapped key now, or keeps it for when the log has reached what it needs. */
@@ -314,11 +458,13 @@ export class Sync {
     this.ws = null
     this.loggedIn = false
     this.caughtUp = false
+    this.challenge = null
     this.queue = []
     this.requests.clear()
+    this.keyPut = null
     if (code === 4004) return this.stop('this device or its member left the brain')
     if (code === 4001) return this.updateNeeded('the relay speaks a newer protocol')
-    if (this.closed || this.halt) return
+    if (this.closed || this.halt) return this.settleWaiters()
     this.retry = setTimeout(() => { this.retry = null; this.connect() }, this.delay)
     this.delay = Math.min(this.delay * 2, this.backoff[1])
   }
@@ -336,6 +482,7 @@ export class Sync {
     this.log(`${halt.kind === 'stopped' ? 'stopped' : 'update needed'}: ${halt.why}`)
     this.ws?.close()
     this.failWriters()
+    this.settleWaiters()
   }
 
   private log(line: string): void {
@@ -359,4 +506,9 @@ function reason(state: SyncState): string {
 function pending(): SharedWriteError {
   return new SharedWriteError(504, 'SHARED_WRITE_PENDING',
     'The write was sent to the shared brain\'s relay but not confirmed in time; it may still land — check before writing it again.')
+}
+
+/** A text the relay sent, as it may be logged or shown: no control characters, at most 200 characters. */
+export function untrusted(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, 200)
 }

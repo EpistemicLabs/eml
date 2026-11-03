@@ -276,6 +276,6 @@ export function box(value: unknown, what: string, plainBytes: number): Box {
  * normalization or case folding, whose tables differ between runtimes and
  * would let two replicas disagree on whether a handle is taken.
  */
-function checkHandle(handle: string): void {
+export function checkHandle(handle: string): void {
   if (!HANDLE.test(handle)) throw new ProtocolError(`a handle is 1–${HANDLE_BYTES - 1} characters of a-z, 0-9, _ and -`)
 }

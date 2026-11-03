@@ -38,6 +38,7 @@
  *   POST /engram/:id/confirm-review { text }                          → Confirm a review (v0.8 C9; v0.15: tasks too; v0.19: a review entry)
  *   GET  /entities          ?kind=                                   → List entities (v0.8 C6)
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
+ *   POST /team/create       { relay, grant, handle }                 → Found a team brain in this new, empty brain (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
@@ -96,10 +97,11 @@ import {
 import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
-import { applyWrite, SharedWriteError } from './write'
+import { applyWrite, SharedWriteError, readOnly } from './write'
 import { Sync } from './sync/sync'
-import { readTeamFile } from './sync/team-file'
-import { ready } from '@engramprotocol/protocol'
+import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
+import { createTeamBrain } from './sync/create'
+import { ProtocolError, checkHandle, fingerprint, ready } from '@engramprotocol/protocol'
 
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
@@ -202,8 +204,10 @@ for (const m of checkBrainIds({ control: controlDb, dataDir: DATA_DIR })) {
 
 // v0.21: a shared brain — one with a team file, <data-dir>/team/<brain id>.json —
 // is synced with its relay through its own connection to the brain file
-// (sync/sync.ts); its writes go through it (write.ts).
-const syncs = new Map<string, Sync>()
+// (sync/sync.ts); its writes go through it (write.ts). A team file that cannot
+// be used still makes its brain shared: the Error here keeps it read-only.
+const syncs = new Map<string, Sync | Error>()
+const persistTeamFile = (file: Parameters<typeof writeTeamFile>[1]) => writeTeamFile(DATA_DIR, file)
 function startSyncs(): void {
   let ids: string[]
   try {
@@ -221,16 +225,29 @@ function startSyncs(): void {
       const team = readTeamFile(DATA_DIR, id)
       if (!team) continue
       const file = path.isAbsolute(row.brain_file) ? row.brain_file : path.join(DATA_DIR, row.brain_file)
-      const sync = new Sync(openBrain(file), team)
+      const sync = new Sync(openBrain(file), team, { persist: persistTeamFile })
       syncs.set(id, sync)
       sync.start()
     } catch (err) {
-      console.error(`[sync] ${id}: ${(err as Error).message}`)
+      // a fixed reason (team-file.ts), or an open that failed: nothing of the file itself
+      const why = err instanceof TeamFileError ? err.message : 'its brain file could not be opened'
+      syncs.set(id, new Error(why))
+      console.error(`[sync] ${id}: its team file cannot be used (${why})`)
     }
   }
 }
 
 // --- Helpers ---
+
+/** A text as the body of a request carried it, or null. */
+const bodyText = (value: unknown): string | null => typeof value === 'string' && value !== '' ? value : null
+
+/** v0.21: a creation the relay never took leaves nothing behind — the Sync, its team file — and the brain is new and empty again. */
+function discardCreation(brainId: string, sync: Sync): void {
+  sync.close()
+  syncs.delete(brainId)
+  removeTeamFile(DATA_DIR, brainId)
+}
 
 /** v0.20: the review_due list filter (true · false). */
 function reviewDueParam(q: Record<string, string | undefined>): boolean | undefined | Error {
@@ -499,6 +516,55 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const removedKind = removedInV020(url, method)
     if (removedKind) {
       return json(res, 410, { error: `${method} ${url} was removed in EML v0.20 — a ${removedKind} is an object: POST /object/${removedKind} to create, PUT /object/${removedKind}/<id> to update.` })
+    }
+
+    // POST /team/create {relay, grant, handle} — founds a team brain in this
+    // brain, which must be new and empty (v0.21, spec team-brain-sync-client-spec
+    // §5): keys, genesis and team file (sync/create.ts), then a Sync in create
+    // mode; answers once the brain is live. Called again while that is under
+    // way, it waits on the same creation.
+    if (url === '/team/create' && method === 'POST') {
+      const body = await readBody(req)
+      if (sync instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${sync.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+      const relay = bodyText(body.relay)
+      const handle = bodyText(body.handle)
+      const grant = bodyText(body.grant)
+      if (relay === null || !isRelayOrigin(relay)) return json(res, 400, { error: 'The relay is a wss:// origin (scheme and host, no path).', code: 'INVALID_RELAY' })
+      try {
+        checkHandle(handle ?? '')
+      } catch (err) {
+        if (!(err instanceof ProtocolError)) throw err
+        return json(res, 400, { error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.', code: 'INVALID_HANDLE' })
+      }
+      if (grant === null) return json(res, 400, { error: 'grant required' })
+      let creation = sync
+      // a creation that stopped before the relay took it (a stale grant after a restart): this one replaces it
+      if (creation?.team.create && (creation.state.kind === 'stopped' || creation.state.kind === 'update_needed')) {
+        discardCreation(routingResult.ctx.brainId, creation)
+        creation = undefined
+      }
+      if (!creation) {
+        if (eml.hasGenesis()) return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+        const team = createTeamBrain({ brain: routingResult.ctx.brainId, relay, grant, handle: handle as string, stateHash: eml.stateHash(), now: eml.now() })
+        writeTeamFile(DATA_DIR, team)
+        creation = new Sync(openBrain(path.resolve(DATA_DIR, routingResult.ctx.brainFile)), team, { persist: persistTeamFile })
+        syncs.set(routingResult.ctx.brainId, creation)
+        creation.start()
+      } else if (creation.mode !== 'create' && eml.hasGenesis()) {
+        return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+      }
+      const state = await creation.whenLive()
+      if (state.kind === 'live') {
+        return json(res, 201, { brain: routingResult.ctx.brainId, member: creation.team.identity ? fingerprint(creation.team.identity.publicKey) : null, handle: creation.ownHandle() ?? handle })
+      }
+      if (state.kind === 'stopped' || state.kind === 'update_needed') {
+        if (creation.team.create) discardCreation(routingResult.ctx.brainId, creation)
+        const answer = state.kind === 'stopped' ? state.relay : undefined
+        if (answer?.code === 'grant_invalid') return json(res, 403, { error: `The relay did not accept the creation grant: ${answer.message}. Try again.`, code: 'GRANT_INVALID' })
+        if (answer?.code === 'brain_exists') return json(res, 409, { error: 'The relay already has a brain with this id.', code: 'BRAIN_EXISTS' })
+        return json(res, 502, { error: `The relay did not create the brain: ${state.why}.`, code: 'TEAM_CREATE_FAILED' })
+      }
+      return json(res, 504, { error: 'The relay took the new brain but it is not live yet; it will finish on its own.', code: 'TEAM_CREATE_PENDING' })
     }
 
     // POST /engram/:type — create an engram. The body is flat: the universal
@@ -902,7 +968,7 @@ ready().then(() => {
 // Graceful shutdown — close pool + control DB; per-request EML.fromConnection
 // has ownsConnection=false, so nothing is closed twice.
 function shutdown(): void {
-  for (const sync of syncs.values()) sync.close()
+  for (const sync of syncs.values()) if (sync instanceof Sync) sync.close()
   try { pool.close() } catch { /* best-effort */ }
   try { controlDb.close() } catch { /* best-effort */ }
   server.close(() => process.exit(0))

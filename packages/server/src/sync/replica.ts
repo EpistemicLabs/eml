@@ -2,8 +2,8 @@ import type Database from 'better-sqlite3'
 import {
   DivergedError, GENESIS_PREV_HASH, ProtocolError, UnsupportedVersionError,
   applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall,
-  memberHandles, memberOfDevice, openRecord, unwrapKey,
-  type BrainKey, type MemberSet, type OpenedOp, type TeamOp,
+  memberHandles, memberOfDevice, openRecord, unwrapKey, wrapKey,
+  type BrainKey, type MemberSet, type OpenedOp, type TeamOp, type WrappedKey,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
 import type { TeamFile } from './team-file'
@@ -73,6 +73,19 @@ export class Replica {
     if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
     for (const k of epochKeys(this.set, unwrapKey(this.set, wrapped, this.team.device))) this.keys.set(k.epoch, k.key)
     this.handles = null
+  }
+
+  /**
+   * Takes a brain key this device holds itself (the epoch-0 key of a brain it
+   * created): that epoch's key and every older one, checked against the log.
+   * Returns the key wrapped for this device by itself, for the relay to keep.
+   * Throws ProtocolError before the genesis or when the key is not the log's.
+   */
+  takeOwnKey(key: BrainKey): WrappedKey {
+    if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
+    for (const k of epochKeys(this.set, key)) this.keys.set(k.epoch, k.key)
+    this.handles = null
+    return wrapKey(this.set, key, this.team.device.sign.publicKey, this.team.device.sign)
   }
 
   /** Takes the next relayed entry. */

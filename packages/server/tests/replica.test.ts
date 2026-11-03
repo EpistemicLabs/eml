@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { mkdtempSync, rmSync, statSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
 import type Database from 'better-sqlite3'
 import { newBrainKey, newDeviceKeys, ready, wrapKey } from '@engramprotocol/protocol'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '@engramprotocol/core'
@@ -9,7 +6,6 @@ import { verify } from '../../core/src/log/rebuild'
 import { validNote } from '../../core/tests/fixtures'
 import { Replica } from '../src/sync/replica'
 import { BRAIN, OTHER, Team, json, person, time } from './team'
-import { readTeamFile, teamFilePath, writeTeamFile } from '../src/sync/team-file'
 
 // v0.21 replica (spec team-brain-sync-client-spec §4): a shared brain takes
 // the entries its relay delivers. The test plays the relay: records built with
@@ -190,10 +186,8 @@ describe('the replica', () => {
 
     it('on a genesis that names another state than the empty brain\'s', () => {
       const team = new Team()
-      EML.fromConnection(team.db, 'test').apply({ name: 'engram.create', input: validNote({ title: 't-local' }) })
-      team.db.exec('DELETE FROM op_snapshots; DELETE FROM op_log')
       const genesis = team.genesis()
-      team.db.exec(`DELETE FROM engrams WHERE title = 't-local'`)
+      team.db.prepare(`INSERT INTO agents (id, name, created_at) VALUES ('stray', 'stray', '2026-10-28T08:00:00.000Z')`).run()  // a brain that is not empty any more
       expect(team.deliver(genesis)).toMatchObject({ kind: 'stopped', why: expect.stringMatching(/does not found this brain/) })
       expect(team.head).toBe(0)
     })
@@ -222,22 +216,5 @@ describe('the replica', () => {
     team.replica.addKey(team.wrapped(1))
     expect(team.deliver(team.write(ava, 't-ava-after-restart'))).toMatchObject({ kind: 'applied' })
     expect(team.deliver(team.write(team.owner, 't-posing-after-restart', { handle: 'ava' }))).toMatchObject({ kind: 'rejected' })
-  })
-})
-
-describe('the team file', () => {
-  it('round-trips, owner-only, named by the team brain', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'eml-team-file-'))
-    try {
-      const device = newDeviceKeys()
-      expect(readTeamFile(dir, BRAIN)).toBeNull()
-      writeTeamFile(dir, { v: 1, brain: BRAIN, relay: 'wss://relay.test', device })
-      const back = readTeamFile(dir, BRAIN)
-      expect(back?.device.sign.publicKey).toBe(device.sign.publicKey)
-      expect(back?.device.enc.publicKey).toBe(device.enc.publicKey)
-      if (process.platform !== 'win32') expect(statSync(teamFilePath(dir, BRAIN)).mode & 0o777).toBe(0o600)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 })

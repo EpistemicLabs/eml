@@ -4,7 +4,7 @@ import { initDatabase } from './database'
 import { EngramStore } from './engrams'
 import { type CommandMap, type CommandName } from './commands'
 import { commandStores, takeRelayed, writeOp, type Taken } from './log/apply-op'
-import { brainIdOf, teamBrainOf, type RelayedEntry } from './log/log'
+import { brainIdOf, hasGenesis, teamBrainOf, type RelayedEntry } from './log/log'
 import { stateDump, stateHash } from './log/snapshot'
 import type { OpEnvelope } from '@engramprotocol/protocol/log'
 import { AgentStore } from './agents'
@@ -80,6 +80,11 @@ export class EML {
   /** v0.21: this brain's id, as its genesis carries it; control.db's brains.id is a cache of it. */
   brainId(): string | null {
     return brainIdOf(this.db)
+  }
+
+  /** v0.21: true once this brain's log has its genesis; false while it waits for one from its relay (create or join). */
+  hasGenesis(): boolean {
+    return hasGenesis(this.db)
   }
 
   /** v0.21: the team brain this brain's log belongs to (its genesis names it), null for a private brain. */

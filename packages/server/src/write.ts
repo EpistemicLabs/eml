@@ -5,13 +5,18 @@ import type { Sync } from './sync/sync'
  * The server's one write seam (v0.21, spec team-brain-sync-client-spec §4).
  * Every write route runs its command here. A private brain writes directly
  * (eml.apply). A shared brain is written through its relay (`sync`, a
- * confirmed write); without a live connection it is read-only.
+ * confirmed write); without a live connection it is read-only. A brain whose
+ * team file exists but cannot be used (`sync` an Error) is shared and
+ * read-only until the user fixes it. A brain without a genesis — an empty
+ * brain only /team/create or /team/join act on — takes no write either.
  */
-export async function applyWrite<N extends CommandName>(eml: EML, command: { name: N, input: CommandMap[N][0] }, env: Env, sync: Sync | undefined): Promise<CommandMap[N][1]> {
+export async function applyWrite<N extends CommandName>(eml: EML, command: { name: N, input: CommandMap[N][0] }, env: Env, sync: Sync | Error | undefined): Promise<CommandMap[N][1]> {
+  if (sync instanceof Error) throw readOnly(`it stopped: its team file cannot be used (${sync.message})`, true)
+  if (sync) return await sync.write(command, env) as CommandMap[N][1]
   // a brain with a sync is shared even before its genesis arrived from the relay
-  if (!sync && eml.teamBrain() === null) return eml.apply(command, env)
-  if (!sync) throw readOnly('it is not connected to its relay')
-  return await sync.write(command, env) as CommandMap[N][1]
+  if (eml.teamBrain() !== null) throw readOnly('it is not connected to its relay')
+  if (!eml.hasGenesis()) throw readOnly('it is not created yet')
+  return eml.apply(command, env)
 }
 
 /** A write to a shared brain that did not happen as asked: its HTTP status, code and the text the caller reads. */

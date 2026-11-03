@@ -4,7 +4,7 @@ import {
   openRecord, rotateKey, sealHandle, sealOp, wrapKey,
   type BrainKey, type DeviceKeys, type KeyPair, type MemberSet, type TeamOp,
 } from '@engramprotocol/protocol'
-import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '@engramprotocol/core'
+import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
 import { Replica } from '../src/sync/replica'
 
@@ -35,9 +35,7 @@ export class Team {
   set!: MemberSet
 
   constructor() {
-    const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-    this.db = (eml as any).db
-    this.db.exec('DELETE FROM op_snapshots; DELETE FROM op_log')  // a new brain file writes a private genesis
+    this.db = initDatabase(':memory:', undefined, BRAIN, { log: false })  // the schema, no rows, no log: its genesis comes from the relay
     this.replica = new Replica(this.db, { v: 1, brain: BRAIN, relay: 'wss://relay.test', device: this.owner.device })
   }
 
