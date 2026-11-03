@@ -70,15 +70,23 @@ describe('the review flow', () => {
     expect(store.paneHoldingSession('mine')).toBeDefined();
   });
 
-  it('goes to a pane of the user\'s on this desk and leaves it open', () => {
+  it('shows a session in the user\'s pane on this desk without changing the layout', () => {
     const sessions = [session('a'), session('mine'), session('c')];
     flow.startReview(sessions, SPACES);
+    const own = review.getReview()!.paneId!;
+    const panes = paneCount();
     flow.stepReview(1, sessions, SPACES);
     const mine = store.paneHoldingSession('mine');
-    expect(review.getReview()).toMatchObject({ paneId: mine?.id, ownsPane: false });
-    expect(paneCount()).toBe(1);
+    expect(review.getReview()).toMatchObject({ paneId: mine?.id, ownPaneId: own });
+    expect(paneCount()).toBe(panes);
+    flow.stepReview(1, sessions, SPACES);
+    expect(review.getReview()).toMatchObject({ paneId: own, ownPaneId: own });
+    expect(store.getPane(own)?.sessionId).toBe('c');
+    expect(paneCount()).toBe(panes);
+    flow.stepReview(-1, sessions, SPACES);
     flow.endReview();
     expect(store.paneHoldingSession('mine')).toBeDefined();
+    expect(store.getPane(own)).toBeUndefined();
   });
 
   it('keeps swapping in a review pane the user made the main pane', () => {

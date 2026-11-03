@@ -37,7 +37,7 @@ describe('the review bar', () => {
 
   const open = (current: AllSession) => {
     sessions = [current, { ...result, id: 'b' }];
-    act(() => setReview({ queue: [current.id, 'b'], index: 0, paneId: 'pane', ownsPane: true }));
+    act(() => setReview({ queue: [current.id, 'b'], index: 0, paneId: 'pane', ownPaneId: 'pane' }));
     render(<ReviewBar paneId="pane" />);
   };
 

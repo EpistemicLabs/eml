@@ -17,36 +17,37 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 
 /**
  * Show the session in the review pane. The flow's own pane swaps its session in
- * place, so going on adds and removes no pane. A pane only opens for the first
- * session, for a session of another space (its desk decides the token), and
- * after a session the user already had open in a pane of their own.
+ * place, so going on adds and removes no pane. A session open in a pane of the
+ * user's on this desk (or one they keep) is shown there for that step, and the
+ * flow's pane stays where it is for the next one. A pane only opens for the
+ * first session and for a session of another space (its desk decides the token).
  */
 function show(session: AllSession, spaces: SpaceInfo[], queue: string[], index: number): void {
   const previous = getReview();
   const space = spaces.find((candidate) => candidate.id === session.spaceId) ?? spaces[0];
   const spaceKey = space ? paneSpaceKey(space) : null;
   const target = { surface: 'terminal', projectId: session.__projectId ?? null, sessionId: session.id, chat: session.runtime === 'sdk' } as const;
-  const own = previous?.ownsPane && previous.paneId && getPane(previous.paneId) ? previous.paneId : null;
+  const own = previous?.ownPaneId && getPane(previous.ownPaneId) ? previous.ownPaneId : null;
 
   const holder = paneHoldingSession(session.id);
   if (holder && holder.id === own) {
-    setReview({ queue, index, paneId: own, ownsPane: true });
+    setReview({ queue, index, paneId: own, ownPaneId: own });
   } else if (holder && (isPaneProtected(holder.id) || getDeskOfPane(holder.id)?.id === getActiveDesk().id)) {
-    // Open in a pane of the user's on this desk, or one they keep: go there, it stays theirs.
+    // Open in a pane of the user's on this desk, or one they keep: shown there, it stays
+    // theirs, and the flow's own pane waits where it is, so the layout doesn't change.
     openSessionInSpace(getDeskOfPane(holder.id)?.spaceId ?? spaceKey, target);
-    if (own) closePane(own);
-    setReview({ queue, index, paneId: holder.id, ownsPane: false });
+    setReview({ queue, index, paneId: holder.id, ownPaneId: own });
   } else {
     // Open on another desk: it moves into the review pane, one session in one pane.
     if (holder) closePane(holder.id);
     if (own && getDeskOfPane(own)?.spaceId === spaceKey) {
       release(own);
       showSessionInPane(own, target);
-      setReview({ queue, index, paneId: own, ownsPane: true });
+      setReview({ queue, index, paneId: own, ownPaneId: own });
     } else {
       const paneId = openSessionInSpace(spaceKey, target);
       if (own && own !== paneId) closePane(own);
-      setReview({ queue, index, paneId, ownsPane: true });
+      setReview({ queue, index, paneId, ownPaneId: paneId });
     }
   }
   void markSessionRead(session.id);
@@ -84,7 +85,7 @@ export function startReview(sessions: AllSession[], spaces: SpaceInfo[]): void {
 export function endReview(): void {
   const review = getReview();
   setReview(null);
-  if (review?.ownsPane && review.paneId) closePane(review.paneId);
+  if (review?.ownPaneId) closePane(review.ownPaneId);
 }
 
 /** The queue as it stands: what left the lists is out. */

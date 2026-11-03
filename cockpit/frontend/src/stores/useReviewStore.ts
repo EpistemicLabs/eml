@@ -7,10 +7,10 @@ import { useSyncExternalStore } from 'react';
 export type ReviewState = {
   queue: string[];
   index: number;
-  /** The pane showing the current session; the flow swaps the session in it. */
+  /** The pane showing the current session: the flow's own, or a pane of the user's that already held it. */
   paneId: string | null;
-  /** The flow opened that pane, so it closes it again; a pane the user had open stays. */
-  ownsPane: boolean;
+  /** The pane the flow opened: it swaps its session in place and closes when the flow ends. */
+  ownPaneId: string | null;
 };
 
 /** The queue without its current session, and where the flow goes on: the next one, else the one before. */
