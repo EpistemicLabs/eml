@@ -1,74 +1,55 @@
-import { closePane } from '@/lib/pane-close';
-import { answerSession, archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
-import { openSessionInSpace, paneHoldingSession } from '@/stores/usePaneStore';
-import { getReview, queueAfter, setReview } from '@/stores/useReviewStore';
-import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
+import { archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
+import { getReview, pruneQueue, queueAfter, setReview, type ReviewState } from '@/stores/useReviewStore';
+import { setTopView } from '@/stores/useTopViewStore';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-/** Show the session in the review pane: it opens, then the one before it closes if the flow opened that. */
-function show(session: AllSession, spaces: SpaceInfo[], queue: string[], index: number): void {
-  const previous = getReview();
-  const space = spaces.find((candidate) => candidate.id === session.spaceId) ?? spaces[0];
-  const ownsPane = !paneHoldingSession(session.id);
-  const paneId = openSessionInSpace(paneSpaceKey(space), {
-    surface: 'terminal',
-    projectId: session.__projectId ?? null,
-    sessionId: session.id,
-    chat: session.runtime === 'sdk',
-  });
-  if (previous?.ownsPane && previous.paneId && previous.paneId !== paneId) closePane(previous.paneId);
-  setReview({ queue, index, paneId, ownsPane });
-  void markSessionRead(session.id);
+function show(queue: string[], index: number): void {
+  setReview({ queue, index });
+  const id = queue[index];
+  if (id) void markSessionRead(id);
 }
 
-export function startReview(sessions: AllSession[], spaces: SpaceInfo[]): void {
+/** The review screen over the desks, in the order the caller gives: what needs an answer first. */
+export function startReview(sessions: AllSession[]): void {
   if (sessions.length === 0) return;
-  show(sessions[0], spaces, sessions.map((session) => session.id), 0);
+  show(sessions.map((session) => session.id), 0);
+  setTopView('review');
 }
 
+/** Back to the desks, as they were. */
 export function endReview(): void {
-  const review = getReview();
   setReview(null);
-  if (review?.ownsPane && review.paneId) closePane(review.paneId);
+  setTopView('desks');
+}
+
+/** The queue as it stands: what left the lists is out. */
+export function liveQueue(review: ReviewState, sessions: AllSession[]): { queue: string[]; index: number } {
+  const listed = new Set(sessions.filter((session) => !session.archivedAt).map((session) => session.id));
+  return pruneQueue(review.queue, review.index, listed);
 }
 
 /** Next or previous; past either end nothing happens. */
-export function stepReview(step: 1 | -1, sessions: AllSession[], spaces: SpaceInfo[]): void {
+export function stepReview(step: 1 | -1, sessions: AllSession[]): void {
   const review = getReview();
   if (!review) return;
-  const index = review.index + step;
-  const session = sessions.find((candidate) => candidate.id === review.queue[index]);
-  if (session) show(session, spaces, review.queue, index);
+  const { queue, index } = liveQueue(review, sessions);
+  if (queue[index + step] !== undefined) show(queue, index + step);
 }
 
-function moveOn(sessions: AllSession[], spaces: SpaceInfo[]): void {
+function moveOn(sessions: AllSession[]): void {
   const review = getReview();
   if (!review) return;
-  const { queue, index } = queueAfter(review.queue, review.index);
-  const session = sessions.find((candidate) => candidate.id === queue[index]);
-  if (session) show(session, spaces, queue, index);
+  const live = liveQueue(review, sessions);
+  const { queue, index } = queueAfter(live.queue, live.index);
+  if (index >= 0) show(queue, index);
   else endReview();
 }
 
 /** Take the current one out (archive, or clear for a pinned one) and go on; after the last the flow ends. */
-export async function finishCurrent(
-  action: 'archive' | 'clear',
-  sessions: AllSession[],
-  spaces: SpaceInfo[],
-): Promise<string | null> {
+export async function finishCurrent(action: 'archive' | 'clear', sessions: AllSession[]): Promise<string | null> {
   const review = getReview();
   if (!review) return null;
   const id = review.queue[review.index];
-  // The pane moves on first: archiving closes a pane still showing the session.
-  moveOn(sessions, spaces);
+  moveOn(sessions);
   return action === 'archive' ? archiveSession(id) : clearSession(id);
-}
-
-/** Answer the current one and go on. If it did not get the answer the flow stays, so the answer isn't lost. */
-export async function answerCurrent(text: string, sessions: AllSession[], spaces: SpaceInfo[]): Promise<string | null> {
-  const review = getReview();
-  if (!review) return null;
-  const error = await answerSession(review.queue[review.index], text);
-  if (!error) moveOn(sessions, spaces);
-  return error;
 }

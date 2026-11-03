@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
+import { ReviewScreen } from '../review/ReviewScreen';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
@@ -411,6 +412,8 @@ function AppContentInner() {
               <BrainDashboard />
             </div>
           )}
+          {/* The review screen lies over the desks the same way: they stay as they are. */}
+          {topView === 'review' && <ReviewScreen />}
           {/* All visited desks stay mounted, stacked in the same box; only
               the active one is shown. Hiding (not unmounting) keeps each
               desk's terminals/WebSockets alive across switches. */}

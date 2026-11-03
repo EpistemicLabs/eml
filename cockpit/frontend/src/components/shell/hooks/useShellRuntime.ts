@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
+import { RECLAIM_TERMINAL_EVENT } from '@/stores/useReviewStore';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
@@ -59,6 +60,8 @@ export interface ShellRuntimeOptions {
    * autocorrect, capitalize or suggest, which would rewrite commands.
    */
   touchInput: boolean;
+  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  spaceId?: string | null;
 }
 
 /** Input from outside the terminal: the compact layout's key row and its extras. */
@@ -270,7 +273,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
           greet: readSettings().greetOnStart,
           taskId: pane?.taskId ?? null,
           provider: pane?.provider ?? null,
-          spaceId: desk?.spaceId ?? null,
+          spaceId: latestRef.current.spaceId !== undefined ? latestRef.current.spaceId : desk?.spaceId ?? null,
           isDarkMode: document.documentElement.classList.contains('dark'),
         });
         if (sent) lastSentSizeRef.current = size;
@@ -494,6 +497,15 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   useEffect(() => {
     if (autoConnect && initialized && !connecting && !connected && !superseded) void connect();
   }, [autoConnect, initialized, connecting, connected, superseded, connect]);
+
+  // The review screen borrowed this terminal's session and is done with it: take it back.
+  useEffect(() => {
+    const onReclaim = (event: Event) => {
+      if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setSuperseded(false);
+    };
+    window.addEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
+    return () => window.removeEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!isActive || !initialized || !connected) return;
