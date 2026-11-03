@@ -226,7 +226,23 @@ export class Replica {
     if (!this.set) return null
     const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
     if (!member) return null
+    return this.handleOf(member)
+  }
+
+  /** The member set at the head, null before the genesis. */
+  members(): MemberSet | null {
+    return this.set
+  }
+
+  /** The handle the log binds to `member`, or null while this device cannot open it (no key of that epoch yet). */
+  handleOf(member: string): string | null {
+    if (!this.set) return null
     return (this.handles ??= memberHandles(this.set, epoch => this.keys.get(epoch)))[member] ?? null
+  }
+
+  /** Closes this replica's connection to the brain file (the brain is discarded or the server stops). */
+  close(): void {
+    this.db.close()
   }
 
   /** The chain link after `seq` (the genesis's prev_hash before seq 1). */

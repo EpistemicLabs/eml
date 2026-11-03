@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
 import {
-  ProtocolError, encodeFrame, loginResponse, openAccept, parseRelayFrame, sealOp, syncPath,
-  type ClientFrame, type RelayFrame, type TeamOp,
+  ProtocolError, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, parseRelayFrame, sealOp, syncPath,
+  type BrainKey, type ClientFrame, type RelayFrame, type Role, type TeamOp,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
 import { Replica, type Outcome } from './replica'
@@ -58,6 +58,38 @@ export interface SyncOptions {
   backoffMs?: [number, number]
   /** keeps the team file as a creation or join advances (the server writes it to disk); a Sync without one keeps nothing */
   persist?: (file: TeamFile) => void
+}
+
+/** A member as GET /team shows it: who they are in the log, never a key. */
+export interface MemberView {
+  /** the member's identity key, base64url */
+  id: string
+  fingerprint: string
+  /** null while this device cannot open it (no key of its epoch yet) */
+  handle: string | null
+  role: Role
+  devices: number
+  /** this device's member */
+  self: boolean
+}
+
+/**
+ * The shared brain as the host shows it (GET /team; spec
+ * team-brain-membership-flows-spec §2): its state, the one text a write would
+ * get while it takes none, its member, and the member set in join order.
+ */
+export interface TeamSnapshot {
+  shared: true
+  brain: string
+  relay: string
+  mode: 'create' | 'join' | 'member'
+  state: SyncState
+  /** the 503 SHARED_BRAIN_READ_ONLY text a write gets right now; null when the brain is live */
+  read_only: string | null
+  member: MemberView | null
+  members: MemberView[]
+  /** open invites this device made — the membership flows' (block 2); none yet */
+  invites: never[]
 }
 
 interface Writer {
@@ -169,6 +201,44 @@ export class Sync {
     return this.replica.ownHandle()
   }
 
+  /** Why a write would be refused in `state` — the 503 a write gets — or null when the brain takes writes. */
+  private readOnlyFor(state: SyncState): SharedWriteError | null {
+    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && state.kind !== 'joining' && this.replica.head().seq === 0) return readOnly('it is not created yet')
+    if (state.kind !== 'live') return readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
+    if (!this.replica.currentKey()) return readOnly('this device has no key for it yet')
+    if (this.replica.ownHandle() === null) return readOnly('this device\'s member has no handle in it')
+    return null
+  }
+
+  /** The brain as the host shows it (GET /team): state, the read-only text a write would get, its member and the member set. */
+  snapshot(): TeamSnapshot {
+    const state = this.state
+    const set = this.replica.members()
+    const own = set ? memberOfDevice(set, this.team.device.sign.publicKey) : undefined
+    const members: MemberView[] = set
+      ? Object.entries(set.members).map(([id, m]) => ({
+        id, fingerprint: fingerprint(id), handle: this.replica.handleOf(id), role: m.role, devices: Object.keys(m.devices).length, self: id === own,
+      }))
+      : []
+    return {
+      shared: true,
+      brain: this.team.brain,
+      relay: this.team.relay,
+      mode: this.mode,
+      state,
+      read_only: this.readOnlyFor(state)?.message ?? null,
+      member: members.find(m => m.self) ?? null,
+      members,
+      invites: [],
+    }
+  }
+
+  /** Closes the connection and the brain file: the brain is discarded (DELETE /team, a creation the relay never took). */
+  discard(): void {
+    this.close()
+    this.replica.close()
+  }
+
   /**
    * A confirmed write: the command as an op of this device's member, sealed
    * under the current key and appended; resolves with the command's result
@@ -176,13 +246,10 @@ export class Sync {
    * said. Read-only unless the brain is live.
    */
   async write<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env): Promise<CommandMap[N][1]> {
-    const state = this.state
-    if (state.kind !== 'stopped' && state.kind !== 'update_needed' && state.kind !== 'joining' && this.replica.head().seq === 0) throw readOnly('it is not created yet')
-    if (state.kind !== 'live') throw readOnly(reason(state), state.kind === 'stopped' || state.kind === 'update_needed')
-    const key = this.replica.currentKey()
-    if (!key) throw readOnly('this device has no key for it yet')
-    const handle = this.replica.ownHandle()
-    if (handle === null) throw readOnly('this device\'s member has no handle in it')
+    const refusal = this.readOnlyFor(this.state)
+    if (refusal) throw refusal
+    const key = this.replica.currentKey() as BrainKey
+    const handle = this.replica.ownHandle() as string
     const head = this.replica.head()
     const op: TeamOp = {
       op_id: env.newId(),

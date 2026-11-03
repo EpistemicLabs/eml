@@ -179,7 +179,9 @@ export {
 export { initDatabase } from './database'
 export {
   provisionUser,
+  provisionBrain,
   type ProvisionOptions,
+  type ProvisionBrainOptions,
   type ProvisionResult,
 } from './provisioning'
 export {
