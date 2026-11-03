@@ -139,7 +139,7 @@ export function ReviewScreen() {
         tabIndex={-1}
         onKeyDown={onKeyDown}
         aria-label="Review"
-        className="group flex-shrink-0 border-b border-border bg-muted/40 px-3 py-2 outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+        className="group flex-shrink-0 border-b border-border bg-muted/40 px-3 py-2 outline-none"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="mr-auto min-w-0 truncate text-xs text-muted-foreground">
