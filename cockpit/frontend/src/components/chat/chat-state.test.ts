@@ -341,3 +341,16 @@ describe('a message shown when sent', () => {
     expect(state.items[0]).toMatchObject({ queued: true, text: 'hi' });
   });
 });
+
+describe('the status call', () => {
+  it('shows as a label of its own, not folded with the tools', () => {
+    const tool = (id: string, name: string, input: Record<string, unknown>) =>
+      ({ type: 'tool', id, name, toolKind: 'other', title: name, input, status: 'completed', output: '' }) as const;
+    const groups = groupItems([
+      tool('t1', 'Read', { path: 'a' }),
+      tool('t2', 'mcp__cockpit__session_status', { status: 'question', reason: 'confirm start date' }),
+    ] as never);
+    expect(groups.map((group) => group.kind)).toEqual(['tools', 'status']);
+    expect(groups[1]).toMatchObject({ kind: 'status', status: 'question', reason: 'confirm start date' });
+  });
+});

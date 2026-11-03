@@ -20,7 +20,8 @@ import { ChatBridge } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
-import { recoverWorkers } from './application/recover-workers.js'
+import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
+import { shutDownOnSignal } from './application/shut-down.js'
 import { needsAnswer } from './domain/session-attention.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { loadMessageToken } from './message-token.js'
@@ -252,7 +253,7 @@ async function main() {
   if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
   // Workers a restart cut off mid-turn carry on, once the host answers their hooks.
   void recoverWorkers({
-    interrupted: () => ledger.list().flatMap(({ sessionId, turnInFlight }) => (turnInFlight ? [{ sessionId, retried: turnInFlight.retried }] : [])),
+    interrupted: () => interruptedWorkers(ledger.list()),
     markRetried: (sessionId) => ledger.markTurnRetried(sessionId),
     giveUp: (sessionId, kind, reason) => {
       ledger.setTurnInFlight(sessionId, false)
@@ -286,16 +287,19 @@ async function main() {
   // After a first-run setup the setup page is already open and reloads itself.
   if (brain.reused) openBrowser(url)
 
-  const shutdown = () => {
-    workers.stop()
-    try { bridge.dispose() } catch { /* best-effort */ }
-    void chat.dispose()
-    try { server.proc.kill('SIGTERM') } catch { /* best-effort */ }
-    try { host.close() } catch { /* best-effort */ }
-    process.exit(0)
-  }
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  const shutdown = shutDownOnSignal({
+    stop: () => {
+      workers.stop()
+      try { bridge.dispose() } catch { /* best-effort */ }
+      try { host.close() } catch { /* best-effort */ }
+    },
+    drain: () => chat.dispose(),
+    last: () => server.proc.kill('SIGTERM'),
+    exit: (code) => process.exit(code),
+    log,
+  })
+  process.on('SIGINT', () => void shutdown())
+  process.on('SIGTERM', () => void shutdown())
 }
 
 async function runDiagnoseCommand(argv: string[]): Promise<boolean> {

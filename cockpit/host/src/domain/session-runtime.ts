@@ -181,6 +181,8 @@ export interface SessionRuntimeStart {
   files: { mcpConfig: string; settings: string }
   /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with its own agent. */
   strictMcp: boolean
+  /** Browser control for a strict session: only an agent that is given it. */
+  chrome?: boolean
   /** Built-in tools this session may not use (its tool profile). */
   deniedTools?: string[]
   onEvent: (event: RuntimeEvent) => void

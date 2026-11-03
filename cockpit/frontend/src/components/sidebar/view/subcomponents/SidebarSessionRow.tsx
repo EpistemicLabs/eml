@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react';
-import { Archive, Check, Edit2, MessageSquareReply, MoreHorizontal, Pin, Square, Trash2, X } from 'lucide-react';
+import { Archive, Check, Edit2, MoreHorizontal, Pin, Square, Trash2, X } from 'lucide-react';
 
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
 import { useLongPress } from '@/hooks/useLongPress';
@@ -42,7 +42,7 @@ export interface SessionRowProps {
   /** Before the name: the arrow opening a parent's workers. */
   leading?: ReactNode;
   /** Row actions for what the session needs (answer, clear, archive, stop). */
-  actions?: { onAnswer?: () => void; onClear?: () => void; onArchive?: () => void; onStop?: () => void };
+  actions?: { onClear?: () => void; onArchive?: () => void; onStop?: () => void };
 }
 
 function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView: boolean }) {
@@ -245,11 +245,6 @@ export function SidebarSessionRow({
           </>
         ) : (
           <>
-            {actions?.onAnswer && (
-              <button type="button" title="Answer" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onAnswer?.(); }}>
-                <MessageSquareReply className="h-3 w-3" />
-              </button>
-            )}
             {actions?.onStop && (
               <button type="button" title="Stop: ends the process, the conversation stays" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onStop?.(); }}>
                 <Square className="h-3 w-3" />

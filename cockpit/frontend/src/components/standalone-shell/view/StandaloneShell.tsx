@@ -9,6 +9,8 @@ interface StandaloneShellProps {
   command?: string | null;
   isActive?: boolean;
   autoConnect?: boolean;
+  /** Outside the desks (the review screen): the session's space. */
+  spaceId?: string | null;
 }
 
 /** The terminal pane body: an agent CLI session running in a host PTY. */
@@ -20,6 +22,7 @@ export default function StandaloneShell({
   command = null,
   isActive = true,
   autoConnect = true,
+  spaceId,
 }: StandaloneShellProps) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
@@ -31,6 +34,7 @@ export default function StandaloneShell({
         initialCommand={command}
         isActive={isActive}
         autoConnect={autoConnect}
+        spaceId={spaceId}
       />
     </div>
   );

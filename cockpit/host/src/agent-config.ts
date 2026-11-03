@@ -37,6 +37,8 @@ export interface AgentRecord {
   tempDir: string
   /** What each agent CLI this agent runs with keeps per agent. */
   harnesses: Partial<Record<ProviderId, { configDir: string }>>
+  /** Browser control (Claude in Chrome): off unless set. It reaches every site the browser is signed in to. */
+  chrome?: boolean
 }
 
 /** Also the agent's name in the brain (scope agent.<id>). */
@@ -66,6 +68,7 @@ export function readAgentRecord(agentId: string): AgentRecord {
   if (typeof parsed.tempDir !== 'string' || !path.isAbsolute(parsed.tempDir)) throw new Error(`${file}: tempDir must be an absolute path`)
   const harnesses = parsed.harnesses
   if (!harnesses || typeof harnesses !== 'object') throw new Error(`${file} names no config folder`)
+  if (parsed.chrome !== undefined && typeof parsed.chrome !== 'boolean') throw new Error(`${file}: chrome must be true or false`)
   for (const harness of Object.values(harnesses)) {
     if (typeof harness?.configDir !== 'string' || !path.isAbsolute(harness.configDir)) throw new Error(`${file}: configDir must be an absolute path`)
   }
@@ -130,6 +133,7 @@ export function openSpaceAgent(agentId: string, spaceId: string, mcpConfig: (con
     record,
     configDirs: record ? Object.fromEntries(Object.entries(record.harnesses).map(([id, h]) => [id, h.configDir])) : {},
     tempDir: record?.tempDir ?? '',
+    chrome: record?.chrome === true,
     setProblem(why) { bootProblem = why },
     problem(provider) {
       if (bootProblem) return stop(agentId, bootProblem)

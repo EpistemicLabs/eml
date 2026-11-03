@@ -109,6 +109,8 @@ class ClaudeProvider implements AgentProvider {
       '--mcp-config', limitedMcp ?? req.space.files.mcpConfig,
       // A space with its own agent, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
       ...(agent || limitedMcp ? ['--strict-mcp-config'] : []),
+      // An agent given browser control: the Chrome setting lives in the shared config, not the agent's.
+      ...(agent?.chrome && !limitedMcp ? ['--chrome'] : []),
       ...(profile?.deniedTools.length ? ['--disallowedTools', profile.deniedTools.join(',')] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);

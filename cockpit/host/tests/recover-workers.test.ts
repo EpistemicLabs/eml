@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { recoverWorkers, RECOVERY_MESSAGE, type RecoverWorkersDeps } from '../src/application/recover-workers.js'
+import { interruptedWorkers, recoverWorkers, RECOVERY_MESSAGE, type RecoverWorkersDeps } from '../src/application/recover-workers.js'
 
 function setup(workers: Array<{ sessionId: string; retried: boolean }>, outcome: 'resumed' | 'refused' | 'busy' = 'resumed') {
   const sent: string[] = []
@@ -43,5 +43,16 @@ describe('recoverWorkers', () => {
     deps.deliver = async () => { if (first) { first = false; throw new Error('no') } return 'resumed' }
     expect(await recoverWorkers(deps)).toBe(1)
     expect(gaveUp).toEqual(['a'])
+  })
+})
+
+describe('interruptedWorkers', () => {
+  it('lists the workers cut off mid-turn, not archived ones or finished turns', () => {
+    expect(interruptedWorkers([
+      { sessionId: 'cut', turnInFlight: { retried: false }, archivedAt: null },
+      { sessionId: 'again', turnInFlight: { retried: true }, archivedAt: null },
+      { sessionId: 'archived', turnInFlight: { retried: false }, archivedAt: '2026-11-03T00:00:00.000Z' },
+      { sessionId: 'done', turnInFlight: null, archivedAt: null },
+    ])).toEqual([{ sessionId: 'cut', retried: false }, { sessionId: 'again', retried: true }])
   })
 })

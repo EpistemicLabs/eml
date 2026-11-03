@@ -123,28 +123,26 @@ describe('groupAllSessions', () => {
     expect(ids(sections.toReview)).toEqual(['review', 'done', 'read-review']);
   });
 
-  it('keeps workers under their top session, however deep, and shows it as working', () => {
+  it('lists each working worker on its own row, however deep, its parent by its own state', () => {
     const sections = group([
       session('p', { lastActivity: FRESH }),
       session('w1', { worker: true, parentSessionId: 'p', state: 'running' }),
       session('w2', { worker: true, parentSessionId: 'w1', state: 'running' }),
     ], { w1: turn('working'), w2: turn('working') });
     expect(mainIds(sections)).toEqual([]);
-    const [item] = sections.working;
-    expect(item.session.id).toBe('p');
-    expect(ids(item.workers).sort()).toEqual(['w1', 'w2']);
-    expect(item.counts.working).toBe(2);
-    expect(ids(sections.searchOnly).sort()).toEqual(['w1', 'w2']);
+    expect(sections.working.map((item) => item.session.id).sort()).toEqual(['w1', 'w2']);
+    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['p']);
+    expect(sections.items.get('p')?.counts.working).toBe(2);
+    expect(sections.searchOnly).toEqual([]);
   });
 
-  it('a main session keeps its workers and stays main while they work', () => {
+  it('a main session stays main while its workers work in their own rows', () => {
     const sections = group([
       session('p', { deskMain: true }),
       session('w', { worker: true, parentSessionId: 'p', state: 'running' }),
     ], { w: turn('working') });
     expect(mainIds(sections)).toEqual(['p']);
-    expect(sections.working).toEqual([]);
-    expect(sections.main[0].items[0].counts.working).toBe(1);
+    expect(sections.working.map((item) => item.session.id)).toEqual(['w']);
   });
 
   it('a worker chosen as main stands on its own, with the workers below it', () => {
@@ -168,10 +166,9 @@ describe('groupAllSessions', () => {
     expect(sections.items.get('p')?.counts.needsYou).toBe(1);
   });
 
-  it('a quiet parent sits in Recent, its finished workers still under it', () => {
+  it('a quiet parent and its finished worker both sit in Recent', () => {
     const sections = group([session('p'), session('w', { worker: true, parentSessionId: 'p' })]);
-    expect(sections.recent.flatMap((g) => ids(g.sessions))).toEqual(['p']);
-    expect(sections.items.get('p')?.counts.finished).toBe(1);
+    expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['p', 'w']);
   });
 
   it('a worker whose parent left the list stands on its own', () => {
