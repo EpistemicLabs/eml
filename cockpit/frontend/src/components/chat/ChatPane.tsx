@@ -20,6 +20,7 @@ import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
 import { ChatSearch } from './ChatSearch';
+import { replyRehypePlugins } from './reply-markdown';
 import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
@@ -41,7 +42,7 @@ const OUTCOME_LABEL: Record<RequestOutcome, string> = {
 const Assistant = memo(function Assistant({ text, streaming }: { text: string; streaming: boolean }) {
   return (
     <div className="min-w-0 break-words text-foreground">
-      <Streamdown mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}>{text}</Streamdown>
+      <Streamdown mode={streaming ? 'streaming' : 'static'} isAnimating={streaming} rehypePlugins={replyRehypePlugins}>{text}</Streamdown>
     </div>
   );
 });

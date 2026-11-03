@@ -179,6 +179,8 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   const stop = async (sessionId: string, reason: string) => {
     deps.bridge.killSession(sessionId)
     await deps.chat.end(sessionId, reason)
+    // A terminal process takes no hook with it: its turn would count as cut off on the next start.
+    ledger.setTurnInFlight(sessionId, false)
     deps.turns.forget(sessionId)
   }
 
@@ -935,7 +937,14 @@ async function proxyBrain(req: http.IncomingMessage, res: http.ServerResponse, d
   }
 }
 
+// A reply can name any image URL, and an image loads with no click: only the page's own
+// images may load (pasted ones, data: and blob: previews). The chat view turns the others
+// into links (reply-markdown.ts); this holds for every view. Images only for now: a full
+// policy would have to list what the terminal, the notes editor and the Brain views need.
+export const CONTENT_SECURITY_POLICY = "img-src 'self' data: blob:"
+
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY)
   const urlPath = (req.url ?? '/').split('?')[0]
   const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '')
   const filePath = path.join(FRONTEND_DIST, rel)
