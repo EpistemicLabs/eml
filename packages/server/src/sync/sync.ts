@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3'
 import {
-  ProtocolError, checkpointArgs, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, openRecord, parseRelayFrame, sealOp, syncPath,
-  type ClientFrame, type Provenance, type RelayFrame, type Role, type RotationAhead, type TeamOp,
+  ProtocolError, checkInviteOpen, checkpointArgs, clearOp, encodeFrame, fingerprint, inviteLink, inviteNotice, joinAccept, loginResponse, memberOfDevice,
+  newInvite, openAccept, openJoin, openRecord, parseRelayFrame, sealHandle, sealOp, syncPath, wrapKey,
+  type BrainKey, type ClientFrame, type DeviceCert, type Invite, type Provenance, type RelayFrame, type Role, type RotationAhead, type TeamOp,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, NO_ACTOR, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
 import { Replica, type Outcome } from './replica'
-import type { TeamFile } from './team-file'
+import type { StoredInvite, TeamFile } from './team-file'
 import { SharedWriteError, readOnly } from '../write'
 
 // --- A shared brain's connection to its relay (v0.21, spec team-brain-sync-client-spec §4) ---
@@ -38,6 +39,15 @@ import { SharedWriteError, readOnly } from '../write'
 // (three attempts). Every device writes one by itself once the log grew by
 // CHECKPOINT_EVERY entries since the last one; the inviter writes one before
 // it accepts a join (the membership flows call checkpoint()).
+//
+// An owner's device invites (spec team-brain-membership-flows-spec §3): it puts
+// a signed notice at the relay and keeps the invite's secret in the team file;
+// the relay pushes the invitee's join to it (live, and again after every
+// login while the join waits), which it opens with the secret and holds as
+// pending until the owner confirms. Confirming adds the member (a clear
+// record), wraps the brain key for the new device, and answers the join with
+// the accept — each step idempotent from the member set, so a confirm cut
+// short is finished by calling it again.
 
 export type SyncState =
   /** not connected: connecting, or waiting to reconnect */
@@ -103,8 +113,33 @@ export interface TeamSnapshot {
   read_only: string | null
   member: MemberView | null
   members: MemberView[]
-  /** open invites this device made — the membership flows' (block 2); none yet */
-  invites: never[]
+  /** the open invites this device made, each with the join waiting on it, if one is */
+  invites: InviteView[]
+}
+
+/** An open invite as GET /team shows it: never the secret or the link. */
+export interface InviteView {
+  invite_id: string
+  expires_at: string
+  /** the join waiting for the owner's confirmation, opened under the invite secret */
+  pending: { member: string, fingerprint: string, handle: string, received_at: string } | null
+}
+
+/** A join this device opened and holds until the owner confirms or declines it. */
+interface PendingJoin {
+  member: string
+  device_cert: DeviceCert
+  handle: string
+  join_hash: string
+  received_at: string
+}
+
+/** What an invite or confirm could not do, with the status the host gets. */
+export class InviteError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message)
+    this.name = 'InviteError'
+  }
 }
 
 interface Writer {
@@ -114,7 +149,13 @@ interface Writer {
 }
 
 type Halt = Extract<SyncState, { kind: 'stopped' | 'update_needed' }>
-type Request = { kind: 'keys' } | { kind: 'append', opId: string } | { kind: 'key_put' }
+type Request =
+  | { kind: 'keys' }
+  | { kind: 'append', opId: string }
+  /** the put of this device's own key (publishKey) */
+  | { kind: 'key_put' }
+  /** a request a caller waits on: ok resolves it, an error or a lost connection rejects it */
+  | { kind: 'ok', resolve: () => void, reject: (err: Error) => void, timer: NodeJS.Timeout }
 
 export class Sync {
   /** `create` for a Sync started with a creation to send, `join` with a join under way; `member` otherwise */
@@ -154,6 +195,8 @@ export class Sync {
   private sinceCheckpoint: number
   /** a checkpoint of this device is on its way */
   private checkpointing = false
+  /** joins the relay pushed for this device's open invites, opened, by invite id */
+  private readonly pending = new Map<string, PendingJoin>()
   /** callers of whenLive */
   private waiters: Array<(state: SyncState) => void> = []
   private halt: Halt | null = null
@@ -251,8 +294,17 @@ export class Sync {
       read_only: this.readOnlyFor(state)?.message ?? null,
       member: members.find(m => m.self) ?? null,
       members,
-      invites: [],
+      invites: this.invites(),
     }
+  }
+
+  /** The open invites this device made, expired ones dropped, each with the join waiting on it. */
+  private invites(): InviteView[] {
+    this.sweepInvites(new Date().toISOString())
+    return (this.team.invites ?? []).map(i => {
+      const join = this.pending.get(i.invite_id)
+      return { invite_id: i.invite_id, expires_at: i.expires_at, pending: join ? { member: join.member, fingerprint: fingerprint(join.member), handle: join.handle, received_at: join.received_at } : null }
+    })
   }
 
   /** Closes the connection and the brain file: the brain is discarded (DELETE /team, a creation the relay never took). */
@@ -285,7 +337,7 @@ export class Sync {
    * brain is live, as a write.
    */
   checkpoint(): Promise<{ seq: number }> {
-    return this.writeCheckpoint(false)
+    return this.writeCheckpoint(false).finally(() => this.autoCheckpoint())
   }
 
   /** The attempts of checkpoint(); `auto` is the policy's own, which gives up once another device's checkpoint counted meanwhile. */
@@ -309,10 +361,16 @@ export class Sync {
     }
   }
 
-  /** The policy: a checkpoint by this device once the log grew by checkpointEvery entries, while live and none of its own on the way. */
+  /**
+   * The policy: a checkpoint by this device once the log grew by
+   * checkpointEvery entries, while live and none of its own on the way. Asked
+   * again once a checkpoint is done: entries delivered in one burst are taken
+   * before the finished one's promise settles, so a checkpoint that fell due
+   * meanwhile would otherwise wait for the next entry, or forever.
+   */
   private autoCheckpoint(): void {
     if (this.checkpointing || this.sinceCheckpoint < this.checkpointEvery || this.state.kind !== 'live') return
-    this.writeCheckpoint(true).catch((err: unknown) => {
+    this.writeCheckpoint(true).then(() => this.autoCheckpoint(), (err: unknown) => {
       // by code only: a relay's text never reaches the log unsanitized
       this.log(`the automatic checkpoint did not land (${(err as { code?: string }).code ?? 'error'})`)
     })
@@ -342,14 +400,19 @@ export class Sync {
       if (err instanceof ProtocolError) throw new CommandError('INVALID', `Invalid command: ${err.message}`)
       throw err
     }
+    return this.landing(op.op_id, record, deadlineMs)
+  }
+
+  /** Appends `record` and resolves once the replica took its entry, with the result and the seq; the deadline gives the may-still-land error. */
+  private landing(opId: string, record: Record<string, unknown>, deadlineMs = this.deadlineMs): Promise<Landed> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.writers.delete(op.op_id)
+        this.writers.delete(opId)
         reject(pending())
       }, deadlineMs)
-      this.writers.set(op.op_id, { resolve, reject, timer })
-      this.unconfirmed.set(op.op_id, record)
-      this.append(op.op_id, record)
+      this.writers.set(opId, { resolve, reject, timer })
+      this.unconfirmed.set(opId, record)
+      this.append(opId, record)
     })
   }
 
@@ -445,14 +508,185 @@ export class Sync {
           this.keyPut = null
           this.took('key')
         }
+        if (asked?.kind === 'ok') {
+          clearTimeout(asked.timer)
+          asked.resolve()
+        }
         return
       }
+      case 'join':
+        return this.joinReceived(frame.join)
       case 'error':
         return this.failed(frame)
-      default:
-        // a join pushed to the inviter's device: the membership flows'
-        return
     }
+  }
+
+  /**
+   * A join the relay pushed for one of this device's open invites: opened
+   * under the invite's secret and held until the owner confirms or declines
+   * it. A join for an invite this device does not hold, or that does not open,
+   * is dropped; one for an expired invite drops the invite.
+   */
+  private joinReceived(value: unknown): void {
+    const inviteId = (value as { invite_id?: unknown } | null)?.invite_id
+    const stored = typeof inviteId === 'string' ? this.team.invites?.find(i => i.invite_id === inviteId) : undefined
+    if (!stored) return this.log('a join for an invite this device does not hold')
+    const now = new Date().toISOString()
+    let opened
+    try {
+      opened = openJoin(this.invite(stored), value, now)
+    } catch (err) {
+      if (!(err instanceof ProtocolError)) throw err
+      if (now >= stored.expires_at) this.dropInvite(stored.invite_id)
+      return this.log(`a join that does not open under its invite: ${err.message}`)
+    }
+    this.pending.set(stored.invite_id, { ...opened, received_at: now })
+  }
+
+  /** A stored invite as the protocol takes it. */
+  private invite(stored: StoredInvite): Invite {
+    return { relay: this.host, brain: this.team.brain, invite_id: stored.invite_id, secret: stored.secret, expires_at: stored.expires_at, redeemed: false }
+  }
+
+  /** Forgets an invite: out of the team file (persisted) and its pending join. False when the file could not be written (the brain stopped). */
+  private dropInvite(inviteId: string): boolean {
+    this.pending.delete(inviteId)
+    const before = this.team.invites
+    if (!before?.some(i => i.invite_id === inviteId)) return true
+    const after = before.filter(i => i.invite_id !== inviteId)
+    if (after.length > 0) this.team.invites = after
+    else delete this.team.invites
+    return this.kept(() => { this.team.invites = before })
+  }
+
+  /** Drops every invite that expired by `now` (checkInviteOpen is the one rule; the relay forgets them on its own). */
+  private sweepInvites(now: string): void {
+    for (const stored of [...(this.team.invites ?? [])]) {
+      try {
+        checkInviteOpen({ expires_at: stored.expires_at, redeemed: false }, now)
+      } catch {
+        this.dropInvite(stored.invite_id)
+      }
+    }
+  }
+
+  /** Requires the live brain and this device's member to be an owner; otherwise what the host answers. */
+  private owner(): void {
+    const refusal = this.readOnlyFor(this.state)
+    if (refusal) throw refusal
+    const set = this.replica.members() as NonNullable<ReturnType<Replica['members']>>
+    const own = memberOfDevice(set, this.team.device.sign.publicKey)
+    if (!own || set.members[own].role !== 'owner') throw new InviteError(403, 'NOT_OWNER', 'Only an owner can invite.')
+  }
+
+  /**
+   * A new invite into this brain, made by this owner device at `now`: the
+   * signed notice goes to the relay, the secret into the team file. Returns
+   * the link once; it is not kept.
+   */
+  async createInvite(now: string): Promise<{ invite_id: string, link: string, expires_at: string }> {
+    this.owner()
+    const invite = newInvite(this.host, this.team.brain, now)
+    await this.request({ t: 'invite_put', req: 0, notice: inviteNotice(invite, this.team.device.sign) as unknown as Record<string, unknown> })
+    const before = this.team.invites
+    this.team.invites = [...(before ?? []), { invite_id: invite.invite_id, secret: invite.secret, expires_at: invite.expires_at }]
+    if (!this.kept(() => { this.team.invites = before })) throw readOnly('its team file could not be written', true)
+    return { invite_id: invite.invite_id, link: inviteLink(invite), expires_at: invite.expires_at }
+  }
+
+  /** Cancels an open invite of this device at the relay (a waiting invitee hears so) and forgets it. False when this device holds no such invite. */
+  async cancelInvite(inviteId: string): Promise<boolean> {
+    if (!this.team.invites?.some(i => i.invite_id === inviteId)) return false
+    this.owner()
+    await this.request({ t: 'invite_cancel', req: 0, invite_id: inviteId })
+    this.dropInvite(inviteId)
+    return true
+  }
+
+  /**
+   * The owner confirmed the join waiting on `inviteId` (name and fingerprint
+   * compared): the member is added with `role` (a clear record), the current
+   * brain key is wrapped for the new device, and the join is answered with
+   * the accept naming this device and the log's anchor. Each step is skipped
+   * when the log shows it done, so a confirm cut short is finished by the
+   * next call. Null when no join waits on the invite.
+   */
+  async confirmJoin(inviteId: string, role: Role, now: string): Promise<MemberView | null> {
+    this.sweepInvites(now)
+    const stored = this.team.invites?.find(i => i.invite_id === inviteId)
+    const join = this.pending.get(inviteId)
+    if (!stored || !join) return null
+    this.owner()
+    let set = this.replica.members() as NonNullable<ReturnType<Replica['members']>>
+    if (!set.members[join.member]) {
+      if (Object.values(this.replica.handles()).includes(join.handle)) {
+        throw new InviteError(409, 'HANDLE_TAKEN', `The handle ${join.handle} is taken in this brain; the invitee has to choose another.`)
+      }
+      const op_id = crypto.randomUUID()
+      const key = this.replica.currentKey() as BrainKey
+      await this.appendClear('team.add_member', {
+        member: join.member, role, device_cert: join.device_cert,
+        handle: sealHandle(join.handle, { brain: this.team.brain, op_id, member: join.member }, key),
+      }, op_id)
+      set = this.replica.members() as NonNullable<ReturnType<Replica['members']>>
+    }
+    const key = this.replica.currentKey() as BrainKey
+    await this.request({ t: 'key_put', req: 0, wrapped: wrapKey(set, key, join.device_cert.device_sign, this.team.device.sign) as unknown as Record<string, unknown> })
+    // this device's checkpoint right before the accept: every joiner has one at or after the anchor (spec §5)
+    await this.checkpoint()
+    const head = this.replica.head()
+    const anchor = { genesis: this.replica.genesisOpId() as string, seq: head.seq, head_hash: head.hash }
+    const accept = joinAccept(this.invite(stored), join.join_hash, this.replica.ownCert() as DeviceCert, anchor)
+    try {
+      await this.request({ t: 'invite_accept', req: 0, accept: accept as unknown as Record<string, unknown> })
+    } catch (err) {
+      // the relay holds an accept of this join already (a confirm cut short after it): the join is answered
+      if (!(err instanceof InviteError && err.code === 'RELAY_REFUSED')) throw err
+      this.log(`the relay kept an earlier accept of this join: ${err.message}`)
+    }
+    this.dropInvite(inviteId)
+    return { id: join.member, fingerprint: fingerprint(join.member), handle: join.handle, role: set.members[join.member].role, devices: Object.keys(set.members[join.member].devices).length, self: false }
+  }
+
+  /**
+   * A membership record by this device — a clear record, its author the
+   * device alone — appended and resolved once the replica took its entry;
+   * throws what the brain or the relay said. Read-only unless the brain is live.
+   */
+  private async appendClear(call: 'team.add_member', args: Record<string, unknown>, op_id: string): Promise<void> {
+    const refusal = this.readOnlyFor(this.state)
+    if (refusal) throw refusal
+    const head = this.replica.head()
+    const op: TeamOp = {
+      op_id,
+      schema: CURRENT_BRAIN_SCHEMA_VERSION,
+      call,
+      args: args as never,
+      provenance: NO_ACTOR,
+      team: { brain: this.team.brain, device: this.team.device.sign.publicKey, base_seq: head.seq, head_hash: head.hash },
+    }
+    let record: Record<string, unknown>
+    try {
+      record = clearOp(op, this.team.device.sign).record as unknown as Record<string, unknown>
+    } catch (err) {
+      if (err instanceof ProtocolError) throw new CommandError('INVALID', `Invalid command: ${err.message}`)
+      throw err
+    }
+    await this.landing(op_id, record)
+  }
+
+  /** Sends a request the relay answers with ok; rejects with what it answered instead, or when the connection is lost or the deadline passes. */
+  private request(frame: Extract<ClientFrame, { req: number }>): Promise<void> {
+    if (!this.loggedIn) return Promise.reject(readOnly('it is not connected to its relay'))
+    return new Promise((resolve, reject) => {
+      const req = this.nextReq++
+      const timer = setTimeout(() => {
+        this.requests.delete(req)
+        reject(new InviteError(504, 'RELAY_PENDING', 'The shared brain\'s relay did not answer in time; try again.'))
+      }, this.deadlineMs)
+      this.requests.set(req, { kind: 'ok', resolve, reject, timer })
+      this.send({ ...frame, req })
+    })
   }
 
   /** The inviter's accept of this device's join: checked under the invite secret, kept; the login follows on a new connection. */
@@ -495,6 +729,11 @@ export class Sync {
     if (asked?.kind === 'key_put') {
       this.keyPut = null
       this.log(`the relay did not keep this device's key (${frame.code}): ${message}`)
+      return
+    }
+    if (asked?.kind === 'ok') {
+      clearTimeout(asked.timer)
+      asked.reject(new InviteError(502, 'RELAY_REFUSED', `The shared brain's relay refused this (${frame.code}): ${message}.`))
       return
     }
     if (!this.loggedIn && this.team.join) {
@@ -696,6 +935,11 @@ export class Sync {
     this.challenge = null
     this.joinWaiting = false
     this.queue = []
+    for (const asked of this.requests.values()) {
+      if (asked.kind !== 'ok') continue
+      clearTimeout(asked.timer)
+      asked.reject(readOnly('it is not connected to its relay'))
+    }
     this.requests.clear()
     this.keyPut = null
     if (code === 4004) return this.stop('this device or its member left the brain')

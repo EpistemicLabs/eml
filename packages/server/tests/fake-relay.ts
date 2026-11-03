@@ -1,7 +1,7 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { AddressInfo } from 'net'
 import {
-  CLOSE, applyMembership, canonicalJson, checkAccept, checkJoin, checkWrappedKey, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyLogin,
+  CLOSE, applyMembership, canonicalJson, checkAccept, checkJoin, checkWrappedKey, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyInviteNotice, verifyLogin,
   type InviteClosedReason, type InviteNotice, type JoinAccept, type JoinRequest, type LoginChallenge, type MemberSet, type RelayFrame,
 } from '@engramprotocol/protocol'
 
@@ -10,8 +10,11 @@ import {
 // login, subscribe with backlog and live push, append with seq/at and the
 // idempotent resend, key_put, keys and the key push, and the invitee's side
 // of §8 — a join against a notice the test opened, join_waiting, the accept
-// the test gives, invite_closed. The real relay (eml-ops) checks much more;
-// the tests steer this one (refuse, hold or drop an append, close a session).
+// the test gives, invite_closed — and the inviter's side: invite_put,
+// invite_cancel, invite_accept, the join pushed to the inviter's device (live,
+// and pending ones after its login). The real relay (eml-ops) checks much
+// more; the tests steer this one (refuse, hold or drop an append, close a
+// session).
 
 interface Entry { seq: number, at: string, opId: string, bytes: string, record: Record<string, unknown> }
 interface Session { ws: WebSocket, device: string | null, subscribed: boolean, waitingOn: string | null }
@@ -44,6 +47,10 @@ export class FakeRelay {
   readonly keyPuts: string[] = []
   /** every join frame received: the join's canonical text */
   readonly joins: string[] = []
+  /** every invite_put taken: the invite id */
+  readonly invitePuts: string[] = []
+  /** every invite_accept taken: the invite id */
+  readonly accepts: string[] = []
   private readonly invites = new Map<string, OpenInvite>()
 
   private constructor(private readonly wss: WebSocketServer, readonly brain: string, genesis: Record<string, unknown> | undefined) {
@@ -92,12 +99,20 @@ export class FakeRelay {
     return this.invites.get(inviteId)?.join ?? null
   }
 
-  /** The inviter's accept: kept, pushed to every session waiting on the invite. */
+  /** The inviter's accept: kept, pushed to every session waiting on the invite. A second, different accept is refused like the real relay does. */
   acceptJoin(accept: JoinAccept): void {
     const invite = this.invites.get(accept.invite_id)
     if (!invite?.join) throw new Error('the invite has no join yet')
-    invite.accept = checkAccept(accept, invite.join)
+    const checked = checkAccept(accept, invite.join)
+    if (invite.accept && canonicalJson(invite.accept) !== canonicalJson(checked)) throw new Error('the invite has another accept')
+    invite.accept = checked
+    this.accepts.push(accept.invite_id)
     for (const s of this.sessions) if (s.waitingOn === accept.invite_id) this.send(s, { t: 'accept', accept: { ...accept } })
+  }
+
+  /** The invite's notice, as the relay keeps it. */
+  noticeOf(inviteId: string): InviteNotice | null {
+    return this.invites.get(inviteId)?.notice ?? null
   }
 
   /** The invite closes (cancelled, expired): every session waiting on it hears so. */
@@ -157,10 +172,12 @@ export class FakeRelay {
           }
           if (invite.closed) return this.send(s, { t: 'invite_closed', invite_id: invite.notice.invite_id, reason: invite.closed })
           if (invite.join && canonicalJson(invite.join) !== canonicalJson(join)) return this.send(s, { t: 'invite_closed', invite_id: invite.notice.invite_id, reason: 'taken' })
+          const first = invite.join === null
           invite.join = join
           s.waitingOn = invite.notice.invite_id
           this.send(s, { t: 'join_waiting', invite_id: invite.notice.invite_id })
           if (invite.accept) this.send(s, { t: 'accept', accept: { ...invite.accept } })
+          if (first) for (const o of this.sessions) if (o.device === invite.notice.inviter) this.send(o, { t: 'join', join: { ...join } })
           return
         }
         case 'login': {
@@ -180,7 +197,42 @@ export class FakeRelay {
           s.device = who.device
           const head = this.log[this.log.length - 1]
           this.send(s, { t: 'welcome', member: who.member, device: who.device, head: { seq: head.seq, at: head.at } })
+          // the joins waiting for this device's accept
+          for (const invite of this.invites.values()) {
+            if (invite.notice.inviter === who.device && invite.join && !invite.accept && !invite.closed) this.send(s, { t: 'join', join: { ...invite.join } })
+          }
           return
+        }
+        case 'invite_put': {
+          let notice: InviteNotice
+          try {
+            notice = verifyInviteNotice(this.set!, frame.notice, new Date().toISOString())  // the real relay checks against its real clock
+          } catch (err) {
+            return this.send(s, { t: 'error', req: frame.req, code: 'refused', message: (err as Error).message })
+          }
+          if (notice.inviter !== s.device) return this.send(s, { t: 'error', req: frame.req, code: 'forbidden', message: 'an invite is put by the device that signed it' })
+          this.openInvite(notice)
+          this.invitePuts.push(notice.invite_id)
+          return this.send(s, { t: 'ok', req: frame.req })
+        }
+        case 'invite_cancel': {
+          const invite = this.invites.get(frame.invite_id)
+          if (!invite) return this.send(s, { t: 'error', req: frame.req, code: 'refused', message: 'there is no such invite' })
+          this.send(s, { t: 'ok', req: frame.req })
+          this.closeInvite(frame.invite_id, 'cancelled')
+          return
+        }
+        case 'invite_accept': {
+          const inviteId = (frame.accept as { invite_id?: unknown }).invite_id
+          const invite = typeof inviteId === 'string' ? this.invites.get(inviteId) : undefined
+          if (!invite || invite.closed) return this.send(s, { t: 'error', req: frame.req, code: 'refused', message: 'there is no open invite with this id' })
+          if (invite.notice.inviter !== s.device) return this.send(s, { t: 'error', req: frame.req, code: 'forbidden', message: 'an accept comes from the device that made the invite' })
+          try {
+            this.acceptJoin(frame.accept as unknown as JoinAccept)
+          } catch (err) {
+            return this.send(s, { t: 'error', req: frame.req, code: 'refused', message: (err as Error).message })
+          }
+          return this.send(s, { t: 'ok', req: frame.req })
         }
         case 'keys':
           this.send(s, { t: 'keys', req: frame.req, wrapped: this.wrapped.filter(w => w.recipient === s.device).map(w => w.record as Record<string, unknown>) })

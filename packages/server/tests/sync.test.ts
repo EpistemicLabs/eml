@@ -2,10 +2,13 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { inviteLink, inviteNotice, joinAccept, newInvite, openJoin, openRecord, ready, type Invite } from '@engramprotocol/protocol'
 import { EML, CommandError, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
-import { CHECKPOINT_EVERY, Sync, untrusted, type SyncState } from '../src/sync/sync'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { CHECKPOINT_EVERY, InviteError, Sync, untrusted, type SyncState } from '../src/sync/sync'
 import { createTeamBrain } from '../src/sync/create'
 import { joinTeamBrain } from '../src/sync/join'
-import type { TeamFile } from '../src/sync/team-file'
+import { readTeamFile, writeTeamFile, type TeamFile } from '../src/sync/team-file'
 import { SharedWriteError, applyWrite } from '../src/write'
 import { FakeRelay, GRANT } from './fake-relay'
 import { BRAIN, Team, cert, person } from './team'
@@ -625,3 +628,185 @@ describe('checkpoints', () => {
     checkpoint(team, relay.log[4], 4)
   })
 })
+
+describe('inviting into a team brain', () => {
+  const NOW = '2026-10-28T09:00:00.000Z'  // the fake relay's clock starts here; a notice may expire at most 7 days after the relay's now
+  const persisted: Array<string[]> = []
+  const persist = (file: TeamFile) => { persisted.push((file.invites ?? []).map(i => i.invite_id)) }
+  beforeEach(() => { persisted.length = 0 })
+  const others: Sync[] = []
+  afterEach(() => { for (const o of others) o.close(); others.length = 0 })
+
+  /** juno's device, live at its relay, keeping its team file through `persist`. */
+  async function owner(): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML, file: TeamFile }> {
+    const team = new Team()
+    relay = await FakeRelay.start(BRAIN, team.genesis())
+    relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
+    const file: TeamFile = { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device, identity: team.owner.identity }
+    sync = new Sync(team.db, file, { deadlineMs: 3000, backoffMs: [20, 100], persist })
+    sync.start()
+    await until(() => sync!.state.kind === 'live')
+    return { team, relay, sync, eml: EML.fromConnection(team.db, 'test'), file }
+  }
+  /** An invitee's empty brain joining with `link`; its Sync is closed with the test. */
+  function joiner(link: string, handle = 'lasse') {
+    const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
+    const file = joinTeamBrain({ brain: BRAIN, link, handle, now: NOW })
+    const s = new Sync(db, file, { deadlineMs: 3000, backoffMs: [20, 100] })
+    others.push(s)
+    s.start()
+    return { db, eml: EML.fromConnection(db, 'test'), file, sync: s }
+  }
+  const pendingOf = (s: Sync, inviteId: string) => s.snapshot().invites.find(i => i.invite_id === inviteId)?.pending ?? null
+
+  it('invites: the notice at the relay, the secret in the team file, the link once; the join comes back opened and waits for the owner', async () => {
+    const { sync, file } = await owner()
+    const invite = await sync.createInvite(NOW)
+    expect(invite.link).toBe(`https://${relay!.host}/i/1/${BRAIN}/${invite.invite_id}#${Buffer.from(file.invites![0].secret).toString('base64url')}`)
+    expect(invite.expires_at).toBe('2026-11-04T09:00:00.000Z')
+    expect(relay!.invitePuts).toEqual([invite.invite_id])
+    expect(relay!.noticeOf(invite.invite_id)).toMatchObject({ invite_id: invite.invite_id, inviter: file.device.sign.publicKey })
+    expect(persisted).toEqual([[invite.invite_id]])
+    expect(sync.snapshot().invites).toEqual([{ invite_id: invite.invite_id, expires_at: invite.expires_at, pending: null }])
+    expect(JSON.stringify(sync.snapshot())).not.toContain(Buffer.from(file.invites![0].secret).toString('base64url'))
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    expect(pendingOf(sync, invite.invite_id)).toMatchObject({ member: lasse.file.identity!.publicKey, handle: 'lasse', received_at: expect.stringMatching(/Z$/) })
+    expect(pendingOf(sync, invite.invite_id)!.fingerprint).toMatch(/^[0-9a-f]{5}( [0-9a-f]{5}){7}$/)
+    expect(lasse.sync.state).toEqual({ kind: 'joining', waiting: 'accept' })
+  })
+
+  it('confirms: the member added with the role, the key wrapped for the new device, the join answered — the joiner goes live and both see two members', async () => {
+    const { sync, team, eml } = await owner()
+    const invite = await sync.createInvite(NOW)
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    const member = await sync.confirmJoin(invite.invite_id, 'member', NOW)
+    expect(member).toMatchObject({ id: lasse.file.identity!.publicKey, handle: 'lasse', role: 'member', devices: 1, self: false })
+    expect(sync.snapshot().invites).toEqual([])
+    expect(relay!.accepts).toEqual([invite.invite_id])
+    expect(relay!.keyPuts).toContain(lasse.file.device.sign.publicKey)
+    await until(() => lasse.sync.state.kind === 'live')
+    expect(lasse.sync.ownHandle()).toBe('lasse')
+    const written = await lasse.sync.write({ name: 'engram.create', input: validNote({ title: 't-by-lasse' }) }, env(lasse.eml))
+    expect(written).toMatchObject({ title: 't-by-lasse', ingested_by: 'lasse' })
+    await until(() => titles(eml).includes('t-by-lasse'))
+    expect(sync.snapshot().members.map(m => [m.handle, m.role, m.self])).toEqual([['juno', 'owner', true], ['lasse', 'member', false]])
+    expect(lasse.sync.snapshot().members.map(m => [m.handle, m.role, m.self])).toEqual([['juno', 'owner', false], ['lasse', 'member', true]])
+    expect(team.db.prepare("SELECT COUNT(*) AS n FROM op_log WHERE json_extract(payload, '$.call') = 'team.add_member'").get()).toEqual({ n: 1 })
+  })
+
+  it('confirms as owner when asked; the new owner can invite', async () => {
+    const { sync } = await owner()
+    const invite = await sync.createInvite(NOW)
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    expect(await sync.confirmJoin(invite.invite_id, 'owner', NOW)).toMatchObject({ handle: 'lasse', role: 'owner' })
+    await until(() => lasse.sync.state.kind === 'live')
+    const second = await lasse.sync.createInvite(NOW)
+    expect(relay!.invitePuts).toEqual([invite.invite_id, second.invite_id])
+  })
+
+  it('a member who is no owner cannot invite; a confirm without a waiting join is null; nobody confirms an unknown invite', async () => {
+    const { sync } = await owner()
+    const invite = await sync.createInvite(NOW)
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    await sync.confirmJoin(invite.invite_id, 'member', NOW)
+    await until(() => lasse.sync.state.kind === 'live')
+    const err = await failure(lasse.sync.createInvite(NOW)) as InviteError
+    expect(err).toBeInstanceOf(InviteError)
+    expect([err.status, err.code, err.message]).toEqual([403, 'NOT_OWNER', 'Only an owner can invite.'])
+    expect(await sync.confirmJoin(invite.invite_id, 'member', NOW)).toBeNull()
+    expect(await sync.confirmJoin('AAAAAAAAAAAAAAAAAAAAAA', 'member', NOW)).toBeNull()
+    expect(await sync.cancelInvite('AAAAAAAAAAAAAAAAAAAAAA')).toBe(false)
+  })
+
+  it('cancels: the waiting invitee stops, the invite is gone from the file and the snapshot', async () => {
+    const { sync } = await owner()
+    const invite = await sync.createInvite(NOW)
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    expect(await sync.cancelInvite(invite.invite_id)).toBe(true)
+    await until(() => lasse.sync.state.kind === 'stopped')
+    expect(lasse.sync.state).toEqual({ kind: 'stopped', why: 'its invite was closed (cancelled)', relay: { code: 'invite_closed', message: 'cancelled' } })
+    expect(sync.snapshot().invites).toEqual([])
+    expect(persisted.at(-1)).toEqual([])
+    expect(lasse.eml.hasGenesis()).toBe(false)
+  })
+
+  it('finishes a confirm that was cut short: the member already in the log is not added again, the key is put, the join answered', async () => {
+    const { sync, team } = await owner()
+    const invite = await sync.createInvite(NOW)
+    const lasse = joiner(invite.link)
+    await until(() => pendingOf(sync, invite.invite_id) !== null)
+    // as if an earlier confirm had appended add_member and died: the record is in the relay's log already
+    const join = pendingOf(sync, invite.invite_id)!
+    relay!.inject(team.addJoiner({ member: join.member, device_cert: relay!.joinOf(invite.invite_id)!.device_cert, handle: join.handle }))
+    await until(() => sync.snapshot().members.length === 2)
+    expect(await sync.confirmJoin(invite.invite_id, 'member', NOW)).toMatchObject({ handle: 'lasse', role: 'member' })
+    expect(team.db.prepare("SELECT COUNT(*) AS n FROM op_log WHERE json_extract(payload, '$.call') = 'team.add_member'").get()).toEqual({ n: 1 })
+    await until(() => lasse.sync.state.kind === 'live')
+    expect(lasse.sync.ownHandle()).toBe('lasse')
+  })
+
+  it('refuses a join whose handle the log binds already: HANDLE_TAKEN, the invite stays open for a decline', async () => {
+    const { sync } = await owner()
+    const first = await sync.createInvite(NOW)
+    const lasse = joiner(first.link)
+    await until(() => pendingOf(sync, first.invite_id) !== null)
+    await sync.confirmJoin(first.invite_id, 'member', NOW)
+    await until(() => lasse.sync.state.kind === 'live')
+    const second = await sync.createInvite(NOW)
+    joiner(second.link, 'lasse')
+    await until(() => pendingOf(sync, second.invite_id) !== null)
+    const err = await failure(sync.confirmJoin(second.invite_id, 'member', NOW)) as InviteError
+    expect([err.status, err.code, err.message]).toEqual([409, 'HANDLE_TAKEN', 'The handle lasse is taken in this brain; the invitee has to choose another.'])
+    expect(sync.snapshot().invites.map(i => i.invite_id)).toEqual([second.invite_id])
+    expect(await sync.cancelInvite(second.invite_id)).toBe(true)
+  })
+
+  it('drops a join for an invite it does not hold, and an expired invite with its join', async () => {
+    const { sync, file } = await owner()
+    const invite = await sync.createInvite(NOW)
+    // another owner device's invite, unknown here
+    const stray = newInvite(relay!.host, BRAIN, NOW)
+    relay!.openInvite(inviteNotice(stray, file.device.sign))
+    joiner(inviteLink(stray), 'nilo')
+    await until(() => relay!.joins.length >= 1)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(sync.snapshot().invites).toEqual([{ invite_id: invite.invite_id, expires_at: invite.expires_at, pending: null }])
+    // the invite expired before its join came: both go
+    file.invites![0].expires_at = '2026-01-01T00:00:00.000Z'
+    joiner(invite.link)
+    await until(() => relay!.joins.length >= 2)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(sync.snapshot().invites).toEqual([])
+    expect(file.invites).toBeUndefined()
+  })
+
+  it('a team file keeps its invites across a restart, and a pending join is pushed again after the login', async () => {
+    const { team, relay: r, file } = await owner()
+    const invite = await sync!.createInvite(NOW)
+    joiner(invite.link)
+    await until(() => r.joins.length === 1)
+    sync!.close()
+    const written = readTeamFileRoundTrip(file)
+    expect(written.invites).toEqual([{ invite_id: invite.invite_id, secret: file.invites![0].secret, expires_at: invite.expires_at }])
+    sync = new Sync(team.db, written, { deadlineMs: 3000, backoffMs: [20, 100], persist })
+    sync.start()
+    await until(() => pendingOf(sync!, invite.invite_id) !== null)
+    expect(pendingOf(sync!, invite.invite_id)).toMatchObject({ handle: 'lasse' })
+  })
+})
+
+/** The team file as written and read back through team-file.ts, in a temporary data dir. */
+function readTeamFileRoundTrip(file: TeamFile): TeamFile {
+  const dir = mkdtempSync(join(tmpdir(), 'eml-team-file-'))
+  try {
+    writeTeamFile(dir, file)
+    return readTeamFile(dir, file.brain) as TeamFile
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}

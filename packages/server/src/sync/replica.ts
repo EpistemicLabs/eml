@@ -43,7 +43,7 @@ export class Replica {
   /** the member set at the head; null before the genesis */
   private set: MemberSet | null = null
   private readonly keys = new Map<number, Uint8Array>()
-  private handles: Record<string, string | null> | null = null
+  private handles_: Record<string, string | null> | null = null
   private halt: Halt | null = null
   private waiting: number | null = null
 
@@ -80,7 +80,7 @@ export class Replica {
       ? unwrapInviteKey(this.set, wrapped, this.team.device, inviter, ahead)
       : epochKeys(this.set, unwrapKey(this.set, wrapped, this.team.device))
     for (const k of keys) this.keys.set(k.epoch, k.key)
-    this.handles = null
+    this.handles_ = null
   }
 
   /**
@@ -92,7 +92,7 @@ export class Replica {
   takeOwnKey(key: BrainKey): WrappedKey {
     if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
     for (const k of epochKeys(this.set, key)) this.keys.set(k.epoch, k.key)
-    this.handles = null
+    this.handles_ = null
     return wrapKey(this.set, key, this.team.device.sign.publicKey, this.team.device.sign)
   }
 
@@ -178,7 +178,7 @@ export class Replica {
           if (held && keyId(held) !== key_id) return this.stop(`entry ${seq}: the key this device holds for epoch ${epoch} is not the one the log names`)
         }
       } else {
-        checkAuthor(set, opened, this.handles ??= memberHandles(set, keyFor))
+        checkAuthor(set, opened, this.handles_ ??= memberHandles(set, keyFor))
         // a checkpoint counts when it sits right after the state it names:
         // this replica is at that state now and compares. One that another
         // entry slipped in before gets the format check only — every replica
@@ -196,7 +196,7 @@ export class Replica {
     if (taken.rejected !== null) return { kind: 'rejected', why: taken.rejected, ...(taken.error ? { error: taken.error } : {}) }
     if (next !== set) {
       this.set = next
-      this.handles = null
+      this.handles_ = null
     }
     if (op.call === 'brain.checkpoint') return { kind: 'applied', result: taken.result, checkpoint: op.team.base_seq === head.seq }
     return { kind: 'applied', result: taken.result }
@@ -261,10 +261,28 @@ export class Replica {
     return this.set
   }
 
+  /** This device's certificate as the log carries it, or null while its member is not in the set. */
+  ownCert(): DeviceCert | null {
+    if (!this.set) return null
+    const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
+    return member ? this.set.members[member].devices[this.team.device.sign.publicKey] ?? null : null
+  }
+
+  /** Every handle the log binds, by member — the ones this device can open. */
+  handles(): Record<string, string | null> {
+    if (!this.set) return {}
+    return (this.handles_ ??= memberHandles(this.set, epoch => this.keys.get(epoch)))
+  }
+
+  /** The op_id of the genesis (what an accept's anchor names), or null before it. */
+  genesisOpId(): string | null {
+    return (this.db.prepare('SELECT op_id FROM op_log WHERE seq = 1').get() as { op_id: string } | undefined)?.op_id ?? null
+  }
+
   /** The handle the log binds to `member`, or null while this device cannot open it (no key of that epoch yet). */
   handleOf(member: string): string | null {
     if (!this.set) return null
-    return (this.handles ??= memberHandles(this.set, epoch => this.keys.get(epoch)))[member] ?? null
+    return this.handles()[member] ?? null
   }
 
   /** Closes this replica's connection to the brain file (the brain is discarded or the server stops). */
