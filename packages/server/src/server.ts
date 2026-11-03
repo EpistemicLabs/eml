@@ -39,6 +39,7 @@
  *   GET  /entities          ?kind=                                   → List entities (v0.8 C6)
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
  *   POST /team/create       { relay, grant, handle }                 → Found a team brain in this new, empty brain (v0.21; host-facing)
+ *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
@@ -101,7 +102,8 @@ import { applyWrite, SharedWriteError, readOnly } from './write'
 import { Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
-import { ProtocolError, checkHandle, fingerprint, ready } from '@engramprotocol/protocol'
+import { joinTeamBrain } from './sync/join'
+import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parseInviteLink, ready } from '@engramprotocol/protocol'
 
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
@@ -243,7 +245,7 @@ function startSyncs(): void {
 const bodyText = (value: unknown): string | null => typeof value === 'string' && value !== '' ? value : null
 
 /** v0.21: a creation the relay never took leaves nothing behind — the Sync, its team file — and the brain is new and empty again. */
-function discardCreation(brainId: string, sync: Sync): void {
+function discardTeam(brainId: string, sync: Sync): void {
   sync.close()
   syncs.delete(brainId)
   removeTeamFile(DATA_DIR, brainId)
@@ -543,7 +545,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       let creation = current
       // a creation that stopped before the relay took it (a stale grant after a restart): this one replaces it
       if (creation?.team.create && (creation.state.kind === 'stopped' || creation.state.kind === 'update_needed')) {
-        discardCreation(routingResult.ctx.brainId, creation)
+        discardTeam(routingResult.ctx.brainId, creation)
         creation = undefined
       }
       if (!creation) {
@@ -561,13 +563,72 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return json(res, 201, { brain: routingResult.ctx.brainId, member: creation.team.identity ? fingerprint(creation.team.identity.publicKey) : null, handle: creation.ownHandle() ?? handle })
       }
       if (state.kind === 'stopped' || state.kind === 'update_needed') {
-        if (creation.team.create) discardCreation(routingResult.ctx.brainId, creation)
+        if (creation.team.create) discardTeam(routingResult.ctx.brainId, creation)
         const answer = state.kind === 'stopped' ? state.relay : undefined
         if (answer?.code === 'grant_invalid') return json(res, 403, { error: `The relay did not accept the creation grant: ${answer.message}. Try again.`, code: 'GRANT_INVALID' })
         if (answer?.code === 'brain_exists') return json(res, 409, { error: 'The relay already has a brain with this id.', code: 'BRAIN_EXISTS' })
         return json(res, 502, { error: `The relay did not create the brain: ${state.why}.`, code: 'TEAM_CREATE_FAILED' })
       }
       return json(res, 504, { error: 'The relay took the new brain but it is not live yet; it will finish on its own.', code: 'TEAM_CREATE_PENDING' })
+    }
+
+    // POST /team/join {link, handle} — joins the team brain an invite link
+    // names, in this brain, which must be new and empty (v0.21, spec
+    // team-brain-sync-client-spec §5): keys and the join (sync/join.ts), then a
+    // Sync in join mode; answers once the relay has the join. The join goes on
+    // by itself — the inviter's accept, the owner adding the member, the key —
+    // and a call while it is under way answers where it stands. A join that
+    // stopped before anything was written (its invite closed) is discarded,
+    // so a new link starts over.
+    if (url === '/team/join' && method === 'POST') {
+      const body = await readBody(req)
+      const current = syncs.get(routingResult.ctx.brainId)
+      if (current instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${current.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+      const link = bodyText(body.link)
+      const handle = bodyText(body.handle)
+      try {
+        checkHandle(handle ?? '')
+      } catch (err) {
+        if (!(err instanceof ProtocolError)) throw err
+        return json(res, 400, { error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.', code: 'INVALID_HANDLE' })
+      }
+      const invalidInvite = () => json(res, 400, { error: 'This is not an invite link for this brain.', code: 'INVALID_INVITE' })
+      let invite
+      try {
+        invite = parseInviteLink(link ?? '')
+      } catch (err) {
+        if (err instanceof ProtocolError || err instanceof UnsupportedVersionError) return invalidInvite()
+        throw err
+      }
+      if (invite.brain !== routingResult.ctx.brainId) return invalidInvite()
+      let joining = current
+      // a join that stopped before anything was written (its invite closed, the relay refused it): this one replaces it
+      if (joining?.mode === 'join' && (joining.state.kind === 'stopped' || joining.state.kind === 'update_needed') && !eml.hasGenesis()) {
+        discardTeam(routingResult.ctx.brainId, joining)
+        joining = undefined
+      }
+      if (!joining) {
+        if (eml.hasGenesis()) return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+        const team = joinTeamBrain({ brain: routingResult.ctx.brainId, link: link as string, handle: handle as string, now: eml.now() })
+        writeTeamFile(DATA_DIR, team)
+        joining = new Sync(openBrain(path.resolve(DATA_DIR, routingResult.ctx.brainFile)), team, { persist: persistTeamFile })
+        syncs.set(routingResult.ctx.brainId, joining)
+        joining.start()
+      } else if (joining.mode !== 'join') {
+        return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+      }
+      const state = await joining.whenLive()
+      if (state.kind === 'live') {
+        return json(res, 201, { brain: routingResult.ctx.brainId, member: joining.team.identity ? fingerprint(joining.team.identity.publicKey) : null, handle: joining.ownHandle() ?? handle })
+      }
+      if (state.kind === 'stopped' || state.kind === 'update_needed') {
+        if (eml.hasGenesis()) return json(res, 503, { error: readOnly(`it stopped: ${state.why}`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+        discardTeam(routingResult.ctx.brainId, joining)
+        const answer = state.kind === 'stopped' ? state.relay : undefined
+        if (answer?.code === 'invite_closed') return json(res, 410, { error: `This invite is closed (${answer.message}); ask the owner for a new link.`, code: 'INVITE_CLOSED' })
+        return json(res, 502, { error: `The relay did not take the join: ${state.why}.`, code: 'TEAM_JOIN_FAILED' })
+      }
+      return json(res, 202, { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: routingResult.ctx.brainId, member: joining.team.identity ? fingerprint(joining.team.identity.publicKey) : null, handle })
     }
 
     // POST /engram/:type — create an engram. The body is flat: the universal
