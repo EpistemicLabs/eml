@@ -262,9 +262,13 @@ log (§4).
   device, so the joiner does not ask the member set whether the wrapper or
   itself are current devices: it unwraps at the genesis, before its own
   joining record is replayed, and a sealed entry ahead of that record does
-  not stall the join. It unwraps the key first — the chain links need the
-  payload hashes inside the sealed records — but writes nothing and treats
-  the served log as genuine only once the anchor holds.
+  not stall the join. A brain that rotated before the invite hands it a later
+  epoch's key; the rotations the served log names ahead of where it stands
+  give the chain down to the genesis key, each key checked by the id the log
+  names — read ahead for the keys, applied in order like every record. It
+  unwraps the key first — the chain links need the payload hashes inside the
+  sealed records — but writes nothing and treats the served log as genuine
+  only once the anchor holds.
 
 ## 9. Relay login
 

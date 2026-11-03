@@ -1,6 +1,6 @@
 import { canonicalJson } from './canonical'
 import { signText, verifyText, type DeviceCert, type DeviceKeys, type KeyPair } from './keys'
-import { memberOfDevice, type Box, type MemberSet } from './membership'
+import { box, memberOfDevice, type Box, type MemberSet } from './membership'
 import type { BrainKey } from './seal'
 import { KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url } from './wire'
 
@@ -139,19 +139,31 @@ function open(set: MemberSet, r: WrappedKey, device: DeviceKeys): BrainKey {
   return { epoch: r.epoch, key }
 }
 
+/** A rotation the served log names ahead of where a joiner stands: the args of a `team.rotate_key` record it has not applied yet. */
+export interface RotationAhead {
+  epoch: number
+  key_id: string
+  prev: Box
+}
+
 /**
- * unwrapKey for a device that just joined: the key must be wrapped by the
- * inviter's device from the accept — not by any owner the log it was served
- * names, since that log may be the relay's own. The accept, checked under
- * the invite secret, vouches for that device, so the member set is not asked
- * whether the wrapper or the recipient are current devices: the joiner
- * unwraps at the genesis, before its own joining record is replayed, and a
- * sealed entry ahead of that record does not stall the join. The device
- * unwraps first (the chain links need the payload hashes inside the sealed
- * records), but writes nothing and treats the served log as genuine only
- * once checkAnchor has passed.
+ * unwrapKey for a device that just joined, giving every key of the brain:
+ * the key must be wrapped by the inviter's device from the accept — not by
+ * any owner the log it was served names, since that log may be the relay's
+ * own. The accept, checked under the invite secret, vouches for that device,
+ * so the member set is not asked whether the wrapper or the recipient are
+ * current devices: the joiner unwraps at the genesis, before its own joining
+ * record is replayed, and a sealed entry ahead of that record does not stall
+ * the join. A brain that rotated before the invite hands the joiner a later
+ * epoch's key; `ahead` are the rotations the served log names between the
+ * joiner's position and that epoch, read ahead (not applied ahead): they give
+ * the chain down to the genesis key, each key checked by the id the log
+ * names, the genesis's verified already — a forged rotation yields a key
+ * that fails there. The device unwraps first (the chain links need the
+ * payload hashes inside the sealed records), but writes nothing and treats
+ * the served log as genuine only once checkAnchor has passed.
  */
-export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert): BrainKey {
+export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert, ahead: RotationAhead[] = []): BrainKey[] {
   const r = asObject(record, 'a wrapped key')
   checkVersion(r.v)
   exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
@@ -161,7 +173,19 @@ export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceK
   fromBase64url(r.sealed, SEAL_BYTES, 'sealed')
   const { sig, ...body } = r
   if (!verifyText(r.wrapper as string, WRAP_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the wrapped key is not signed by its wrapper')
-  return open(set, r as unknown as WrappedKey, device)
+  const chain = withRotationsAhead(set, ahead)
+  return epochKeys(chain, open(chain, r as unknown as WrappedKey, device))
+}
+
+/** The member set's key chain extended by the rotations the log names ahead, in order — only for opening keys, nothing else of the set moves. */
+function withRotationsAhead(set: MemberSet, ahead: RotationAhead[]): MemberSet {
+  let keys = set.keys
+  for (const rotation of ahead) {
+    if (rotation.epoch !== keys.length) throw new ProtocolError(`a rotation ahead names epoch ${rotation.epoch}, the chain stands at ${keys.length - 1}`)
+    fromBase64url(rotation.key_id, KEY_BYTES, 'a rotation\'s key_id')
+    keys = [...keys, { key_id: rotation.key_id, prev: box(rotation.prev, 'a rotation\'s prev', KEY_BYTES) }]
+  }
+  return keys === set.keys ? set : { ...set, epoch: keys.length - 1, keys }
 }
 
 function prevAad(brain: string, epoch: number): string {
