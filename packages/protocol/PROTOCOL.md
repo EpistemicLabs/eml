@@ -234,7 +234,8 @@ log (§4).
   inviter, join_key, sig}` — `join_key` the join key's public half — signed by
   an owner's device under `eml-invite-notice-v1\n`. No secret: the public key
   says nothing about `s`. The relay takes it only from a current device of an
-  owner, and only with an expiry at most 7 days ahead.
+  owner, and only with an expiry at most 7 days ahead (plus a minute, for an
+  inviter's clock running ahead of the relay's).
 - **Join** (invitee → relay → inviter): `{v: 1, brain, invite_id, member,
   device_cert, handle, sig}`; `handle` = the padded handle sealed under enc_key,
   AAD = canonicalJson({brain, invite_id, member}); `sig` = the join key's
@@ -257,9 +258,17 @@ log (§4).
   genesis op_id is the anchor's and its chain link at the anchor's seq is the
   anchor's head_hash; and it takes a wrapped brain key only from the inviter's
   device named in the accept — not from just any owner of the log it was
-  served, which the relay could have made up. It unwraps the key first — the
-  chain links need the payload hashes inside the sealed records — but writes
-  nothing and treats the served log as genuine only once the anchor holds.
+  served, which the relay could have made up. The accept vouches for that
+  device, so the joiner does not ask the member set whether the wrapper or
+  itself are current devices: it unwraps at the genesis, before its own
+  joining record is replayed, and a sealed entry ahead of that record does
+  not stall the join. A brain that rotated before the invite hands it a later
+  epoch's key; the rotations the served log names ahead of where it stands
+  give the chain down to the genesis key, each key checked by the id the log
+  names — read ahead for the keys, applied in order like every record. It
+  unwraps the key first — the chain links need the payload hashes inside the
+  sealed records — but writes nothing and treats the served log as genuine
+  only once the anchor holds.
 
 ## 9. Relay login
 

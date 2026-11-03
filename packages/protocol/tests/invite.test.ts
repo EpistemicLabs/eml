@@ -5,10 +5,10 @@ import { join } from 'path'
 import {
   GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAccept, checkAnchor, checkJoin, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
   joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
-  unwrapKey, verifyInviteNotice, wrapKey, type Invite,
+  unwrapKey, verifyInviteNotice, wrapKey, NOTICE_SKEW_MS, genesisMembers, type Invite, type RotationAhead,
 } from '../src'
 import { joinRequestWith } from '../src/invite'
-import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, sha } from './helpers'
+import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, rotation, sha } from './helpers'
 
 // v0.21 (spec team-brain-protocol-package-spec §5, block 6): the invite — the
 // link with its secret in the fragment, the notice the relay keeps, the join
@@ -144,9 +144,11 @@ describe('the relay\'s notice', () => {
     expect(() => verifyInviteNotice(two, { ...notice, brain: '00000000-0000-4000-8000-000000000000' }, NOW)).toThrow(/another brain/)
     expect(() => verifyInviteNotice(two, { ...notice, v: 2 }, NOW)).toThrow(UnsupportedVersionError)
     expect(() => verifyInviteNotice(two, { ...notice, secret: 'x' }, NOW)).toThrow(/no field secret/)
-    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner
-    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.001Z' }, ada.device.sign)
+    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner — a minute of clock skew is allowed
+    expect(NOTICE_SKEW_MS).toBe(60_000)
+    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.001Z' }, ada.device.sign)
     expect(() => verifyInviteNotice(two, long, NOW)).toThrow(/at most 7 days/)
+    expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:01:00.000Z')
     expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:00:00.000Z')
   })
 })
@@ -255,7 +257,7 @@ describe('a join played through', () => {
     expect(inviter.device_sign).toBe(wrapped.wrapper)
     // the invitee replays the log the relay serves and checks it against the anchor
     expect(() => checkAnchor(anchor, genesis.envelope.op_id, s => (s === 1 ? head : undefined))).not.toThrow()
-    expect(unwrapInviteKey(two, wrapped, bo.device, inviter)).toEqual(keys[0])
+    expect(unwrapInviteKey(two, wrapped, bo.device, inviter)).toEqual([keys[0]])
     expect(unwrapKey(two, wrapped, bo.device)).toEqual(keys[0])
     expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBe('bo')
   })
@@ -291,6 +293,45 @@ describe('the accept anchors the log the invitee replays', () => {
     const fakeKey = wrapKey(fakeSet, fake.keys[0], bo.device.sign.publicKey, relayOwner.device.sign)
     expect(unwrapKey(fakeSet, fakeKey, bo.device)).toEqual(fake.keys[0])  // by the fake log alone it would pass
     expect(() => unwrapInviteKey(fakeSet, fakeKey, bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+  })
+
+  it('the joiner unwraps its key at the genesis, before its own add_member is replayed — a sealed entry ahead of it does not stall the join', () => {
+    const { ada, bo, keys, two, link, request, accept } = invited()
+    const { inviter } = openAccept(link, request, accept)
+    const { set: genesisOnly } = found(ada)  // not bo's log: only the set as the joiner has it at seq 1 — ada alone, epoch 0
+    const atGenesis = { ...genesisOnly, brain: two.brain, keys: two.keys }
+    const wrapped = wrapKey(two, keys[0], bo.device.sign.publicKey, ada.device.sign)
+    // by the member set at seq 1 alone, bo's device is nobody's: unwrapKey refuses; the accept vouches for the wrapper, so unwrapInviteKey opens it
+    expect(() => unwrapKey(atGenesis, wrapped, bo.device)).toThrow(/recipient is not a current device/)
+    expect(unwrapInviteKey(atGenesis, wrapped, bo.device, inviter)).toEqual([keys[0]])
+    // still refused: another wrapper, another brain, a forged signature, a key the log does not name, another recipient
+    const mira = person('mira')
+    const three = applyMembership(two, addMember(two, keys, ada, mira, 'owner'))
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(three, keys[0], bo.device.sign.publicKey, mira.device.sign), bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+    expect(() => unwrapInviteKey({ ...atGenesis, brain: '00000000-0000-4000-8000-000000000000' }, wrapped, bo.device, inviter)).toThrow(/another brain/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, epoch: 1 }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, sig: wrapped.sig.slice(0, 10) + (wrapped.sig[10] === 'A' ? 'B' : 'A') + wrapped.sig.slice(11) }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, mira.device, inviter)).toThrow(/for another device/)
+    const otherKey = { epoch: 0, key: keys[0].key.map(b => b ^ 1) }
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(two, otherKey, bo.device.sign.publicKey, ada.device.sign), bo.device, inviter)).toThrow(/not the key the log names/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, extra: 1 }, bo.device, inviter)).toThrow(/no field extra/)
+  })
+
+  it('a brain that rotated before the invite: the later epoch\'s key opens every epoch through the rotations read ahead, each checked by its id', () => {
+    const { ada, bo, keys, genesis, two, link, request, accept } = invited()
+    const { inviter } = openAccept(link, request, accept)
+    const atGenesis = genesisMembers(genesis)  // where the joiner stands: ada alone, epoch 0
+    const rotated = rotation(two, keys, ada)  // keys[1] is the brain's key now
+    const three = applyMembership(two, rotated)
+    const ahead = [rotated.envelope.args as unknown as RotationAhead]
+    const wrapped = wrapKey(three, keys[1], bo.device.sign.publicKey, ada.device.sign)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter)).toThrow(/no epoch 1/)
+    expect(unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, ahead)).toEqual([keys[0], keys[1]])
+    expect(unwrapInviteKey(three, wrapped, bo.device, inviter)).toEqual([keys[0], keys[1]])  // once the log is replayed, nothing ahead
+    // a rotation ahead that does not fit the chain, or whose prev is not sealed under the key, gives no key
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], epoch: 2 }])).toThrow(/names epoch 2, the chain stands at 0/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], prev: { ...ahead[0].prev, ct: ahead[0].prev.ct.slice(0, -2) + 'AA' } }])).toThrow(/prev of epoch 1 does not open/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], key_id: ahead[0].key_id.slice(0, 10) + (ahead[0].key_id[10] === 'A' ? 'B' : 'A') + ahead[0].key_id.slice(11) }])).toThrow(/not the key the log names/)
   })
 
   it('the real genesis with another history, or a log that stops short, is refused', () => {

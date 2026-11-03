@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
 import {
-  ProtocolError, checkpointArgs, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, parseRelayFrame, sealOp, syncPath,
-  type ClientFrame, type Provenance, type RelayFrame, type Role, type TeamOp,
+  ProtocolError, checkpointArgs, encodeFrame, fingerprint, loginResponse, memberOfDevice, openAccept, openRecord, parseRelayFrame, sealOp, syncPath,
+  type ClientFrame, type Provenance, type RelayFrame, type Role, type RotationAhead, type TeamOp,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, NO_ACTOR, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
 import { Replica, type Outcome } from './replica'
@@ -649,13 +649,33 @@ export class Sync {
   /** A device that joined takes its first key from the inviter's device only; the accept is done with once it has. */
   private tryKey(wrapped: unknown): boolean {
     try {
-      this.replica.addKey(wrapped, this.team.accept?.inviter)
+      this.replica.addKey(wrapped, this.team.accept?.inviter, this.team.accept ? this.rotationsAhead() : [])
       if (this.team.accept) this.took('accept')
       return true
     } catch (err) {
       if (!(err instanceof ProtocolError)) throw err
       return false
     }
+  }
+
+  /**
+   * The rotations the delivered entries not taken yet name, in order: what a
+   * joining device reads ahead to open a key of a later epoch than its
+   * replica has reached (PROTOCOL.md §8). Clear records open without a key;
+   * one that does not open is left to the replica to refuse in its turn.
+   */
+  private rotationsAhead(): RotationAhead[] {
+    const ahead: RotationAhead[] = []
+    for (const entry of this.queue) {
+      if ((entry.record as { kind?: unknown } | null)?.kind !== 'clear') continue
+      try {
+        const opened = openRecord(entry.record, this.team.brain, () => undefined)
+        if (opened.envelope.call === 'team.rotate_key') ahead.push(opened.envelope.args as unknown as RotationAhead)
+      } catch (err) {
+        if (!(err instanceof ProtocolError)) throw err
+      }
+    }
+    return ahead
   }
 
   private append(opId: string, record: Record<string, unknown>): void {

@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import {
   DivergedError, GENESIS_PREV_HASH, ProtocolError, UnsupportedVersionError,
-  applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall,
+  applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall, keyId,
   memberHandles, memberOfDevice, openRecord, unwrapInviteKey, unwrapKey, wrapKey,
-  type BrainKey, type DeviceCert, type MemberSet, type OpenedOp, type TeamOp, type WrappedKey,
+  type BrainKey, type DeviceCert, type MemberSet, type OpenedOp, type RotationAhead, type TeamOp, type WrappedKey,
 } from '@engramprotocol/protocol'
 import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
 import type { TeamFile } from './team-file'
@@ -74,10 +74,12 @@ export class Replica {
    * `inviter` its accept named (PROTOCOL.md §8). Throws ProtocolError when the
    * key is not the log's, or not the inviter's.
    */
-  addKey(wrapped: unknown, inviter?: DeviceCert): void {
+  addKey(wrapped: unknown, inviter?: DeviceCert, ahead: RotationAhead[] = []): void {
     if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
-    const key = inviter ? unwrapInviteKey(this.set, wrapped, this.team.device, inviter) : unwrapKey(this.set, wrapped, this.team.device)
-    for (const k of epochKeys(this.set, key)) this.keys.set(k.epoch, k.key)
+    const keys = inviter
+      ? unwrapInviteKey(this.set, wrapped, this.team.device, inviter, ahead)
+      : epochKeys(this.set, unwrapKey(this.set, wrapped, this.team.device))
+    for (const k of keys) this.keys.set(k.epoch, k.key)
     this.handles = null
   }
 
@@ -169,6 +171,12 @@ export class Replica {
     try {
       if (isClearCall(op.call)) {
         next = applyMembership(set, opened)
+        // a key this device derived from a rotation it read ahead of here (a joiner's) must be the one the log names now
+        if (op.call === 'team.rotate_key') {
+          const { epoch, key_id } = op.args as { epoch: number, key_id: string }
+          const held = this.keys.get(epoch)
+          if (held && keyId(held) !== key_id) return this.stop(`entry ${seq}: the key this device holds for epoch ${epoch} is not the one the log names`)
+        }
       } else {
         checkAuthor(set, opened, this.handles ??= memberHandles(set, keyFor))
         // a checkpoint counts when it sits right after the state it names:

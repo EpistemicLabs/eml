@@ -362,7 +362,7 @@ describe('joining a team brain', () => {
         return join
       },
       add(join: ReturnType<typeof openJoin>) { relay!.inject(team.addJoiner(join)) },
-      key(deviceSign: string, wrapper = team.owner.device) { relay!.putKey(deviceSign, team.wrappedFor(0, deviceSign, wrapper)) },
+      key(deviceSign: string, wrapper = team.owner.device, epoch = 0) { relay!.putKey(deviceSign, team.wrappedFor(epoch, deviceSign, wrapper)) },
     }
   }
   const waiting = (s: Sync) => s.state.kind === 'joining' ? s.state.waiting : s.state.kind
@@ -399,6 +399,27 @@ describe('joining a team brain', () => {
     const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-joined' }) }, env(eml))
     expect(engram).toMatchObject({ title: 't-joined', ingested_by: 'lasse' })
     expect(relay.log).toHaveLength(3)
+  })
+
+  it('joins a brain that rotated before the invite, sealed entries in both epochs ahead of its add_member: the later key opens them all', async () => {
+    const { team, invite, link } = await invited()
+    relay.inject(team.write(team.owner, 't-epoch-0'))
+    relay.inject(team.rotate())
+    relay.inject(team.write(team.owner, 't-epoch-1'))
+    const { db, eml, file } = joiner(link)
+    const sync = started(db, file)
+    await sync.whenLive()
+    const play = inviter(team, invite)
+    const join = play.accept()
+    play.add(join)  // the handle sealed under epoch 1
+    await until(() => waiting(sync) === 'key')
+    play.key(file.device.sign.publicKey, team.owner.device, 1)
+    await until(() => sync.state.kind === 'live')
+    expect(titles(eml)).toEqual(['t-epoch-0', 't-epoch-1'])
+    expect(sync.ownHandle()).toBe('lasse')
+    const engram = await sync.write({ name: 'engram.create', input: validNote({ title: 't-after-rotation' }) }, env(eml))
+    expect(engram).toMatchObject({ title: 't-after-rotation', ingested_by: 'lasse' })
+    expect(relay.log).toHaveLength(6)
   })
 
   it('takes its first key from the inviter\'s device only', async () => {
