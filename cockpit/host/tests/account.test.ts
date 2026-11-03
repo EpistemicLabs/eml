@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,8 @@ import { join } from 'node:path'
 const home = mkdtempSync(join(tmpdir(), 'cockpit-account-test-'))
 process.env.EML_COCKPIT_HOME = home
 process.env.EML_ACCOUNT_URL = 'http://account.test/'
+
+import { expectOwnerOnly } from './helpers/owner-only.js'
 
 type Mod = typeof import('../src/account.js')
 
@@ -61,7 +63,7 @@ describe('account', () => {
     expect(calls[0].body).toEqual({ email: 'dominik@example.com' })
     expect(calls[1].body).toEqual({ email: 'dominik@example.com', code: '123456' })
     expect(calls[2].auth).toBe('Bearer emla_' + 'A'.repeat(43))
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expectOwnerOnly(file)
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ url: 'http://account.test', email: 'dominik@example.com', session: 'emla_' + 'A'.repeat(43) })
     expect(status).toEqual({ signedIn: true, url: 'http://account.test', email: 'dominik@example.com', service: 'ok', account: me.account, beta: true, brains: me.brains })
   })
