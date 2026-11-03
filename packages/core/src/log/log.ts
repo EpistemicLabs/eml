@@ -74,6 +74,11 @@ function insertEntry(db: Database.Database, head: Head, entry: RelayedEntry): vo
     .run(entry.seq, entry.at, entry.op_id, prevHash, payloadHash, chainHash(prevHash, entry.seq, entry.at, payloadHash), entry.signature, entry.rejected, entry.payload)
 }
 
+/** True once the log has its genesis (seq 1); false for a brain still waiting for one from its relay. */
+export function hasGenesis(db: Database.Database): boolean {
+  return !!db.prepare('SELECT 1 FROM op_log WHERE seq = 1').get()
+}
+
 /** The brain's own id, as its genesis carries it (args.brain), or null before a genesis. */
 export function brainIdOf(db: Database.Database): string | null {
   const genesis = db.prepare('SELECT payload FROM op_log WHERE seq = 1').get() as { payload: string } | undefined

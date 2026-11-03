@@ -1,22 +1,26 @@
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { AddressInfo } from 'net'
 import {
-  applyMembership, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyLogin,
+  CLOSE, applyMembership, checkWrappedKey, encodeFrame, genesisMembers, loginChallenge, openRecord, parseClientFrame, verifyLogin,
   type LoginChallenge, type MemberSet, type RelayFrame,
 } from '@engramprotocol/protocol'
 
 // A relay for the sync tests, in-process on a random port: the session, the
-// log and wrapped keys of PROTOCOL.md §13 for one brain — login, subscribe with
-// backlog and live push, append with seq/at and the idempotent resend, keys and
-// the key push. The real relay (eml-ops) checks much more; the tests steer this
-// one (refuse, hold or drop an append, close a session).
+// log and wrapped keys of PROTOCOL.md §13 for one brain — create with a grant,
+// login, subscribe with backlog and live push, append with seq/at and the
+// idempotent resend, key_put, keys and the key push. The real relay (eml-ops)
+// checks much more; the tests steer this one (refuse, hold or drop an append,
+// close a session).
 
 interface Entry { seq: number, at: string, opId: string, bytes: string, record: Record<string, unknown> }
 interface Session { ws: WebSocket, device: string | null, subscribed: boolean }
 
+/** The one grant this relay accepts for a creation. */
+export const GRANT = 'grant-for-the-test-relay'
+
 export class FakeRelay {
   readonly log: Entry[] = []
-  private set: MemberSet
+  private set: MemberSet | null = null
   private readonly wrapped: Array<{ recipient: string, record: unknown }> = []
   private readonly sessions = new Set<Session>()
   private clock = Date.parse('2026-10-28T09:00:00.000Z')
@@ -30,14 +34,18 @@ export class FakeRelay {
   dropNextAppend = false
   /** the op_id of every append frame received, resends included */
   readonly appends: string[] = []
+  /** every create frame received: its grant */
+  readonly creates: string[] = []
+  /** every key_put taken: the recipient */
+  readonly keyPuts: string[] = []
 
-  private constructor(private readonly wss: WebSocketServer, readonly brain: string, genesis: Record<string, unknown>) {
-    this.set = genesisMembers(openRecord(genesis, brain, () => undefined))
-    this.store(genesis)
+  private constructor(private readonly wss: WebSocketServer, readonly brain: string, genesis: Record<string, unknown> | undefined) {
+    if (genesis) this.found(genesis)
     wss.on('connection', (ws) => this.session(ws))
   }
 
-  static async start(brain: string, genesis: Record<string, unknown>): Promise<FakeRelay> {
+  /** A relay holding `brain` with `genesis` — or, without one, a relay that does not have the brain yet (create). */
+  static async start(brain: string, genesis?: Record<string, unknown>): Promise<FakeRelay> {
     const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
     await new Promise<void>(resolve => wss.once('listening', () => resolve()))
     return new FakeRelay(wss, brain, genesis)
@@ -49,6 +57,11 @@ export class FakeRelay {
 
   get origin(): string {
     return `ws://${this.host}`
+  }
+
+  /** The member set at the head, once the brain exists. */
+  get members(): MemberSet | null {
+    return this.set
   }
 
   /** A record some other device appended: stored and pushed to every subscribed session. */
@@ -72,6 +85,11 @@ export class FakeRelay {
     await new Promise<void>(resolve => this.wss.close(() => resolve()))
   }
 
+  private found(genesis: Record<string, unknown>): void {
+    this.set = genesisMembers(openRecord(genesis, this.brain, () => undefined))
+    this.store(genesis)
+  }
+
   private session(ws: WebSocket): void {
     const s: Session = { ws, device: null, subscribed: false }
     this.sessions.add(s)
@@ -82,17 +100,52 @@ export class FakeRelay {
     ws.on('message', (data) => {
       const frame = parseClientFrame(String(data), s.device !== null)
       switch (frame.t) {
+        case 'create': {
+          this.creates.push(frame.grant)
+          if (this.set) return this.send(s, { t: 'error', req: null, code: 'brain_exists', message: 'the brain exists' })
+          if (frame.grant !== GRANT) return this.send(s, { t: 'error', req: null, code: 'grant_invalid', message: 'the grant is not good for this brain' })
+          try {
+            this.found(frame.genesis)
+          } catch (err) {
+            return this.send(s, { t: 'error', req: null, code: 'refused', message: (err as Error).message })
+          }
+          this.send(s, { t: 'created', seq: 1, at: this.log[0].at })
+          return
+        }
         case 'login': {
-          const { member, device } = verifyLogin(this.set, challenge, frame.response, this.now())
+          if (!this.set) {
+            this.send(s, { t: 'error', req: null, code: 'unknown_brain', message: 'the relay has no such brain' })
+            return ws.close(CLOSE.login_failed)
+          }
+          let who: { member: string, device: string }
+          try {
+            who = verifyLogin(this.set, challenge, frame.response, this.now())
+          } catch {
+            this.send(s, { t: 'error', req: null, code: 'login_failed', message: 'the login failed' })
+            return ws.close(CLOSE.login_failed)
+          }
           challenge.used = true
-          s.device = device
+          s.device = who.device
           const head = this.log[this.log.length - 1]
-          this.send(s, { t: 'welcome', member, device, head: { seq: head.seq, at: head.at } })
+          this.send(s, { t: 'welcome', member: who.member, device: who.device, head: { seq: head.seq, at: head.at } })
           return
         }
         case 'keys':
           this.send(s, { t: 'keys', req: frame.req, wrapped: this.wrapped.filter(w => w.recipient === s.device).map(w => w.record as Record<string, unknown>) })
           return
+        case 'key_put': {
+          let wrapped
+          try {
+            wrapped = checkWrappedKey(this.set!, frame.wrapped)
+          } catch (err) {
+            return this.send(s, { t: 'error', req: frame.req, code: 'refused', message: (err as Error).message })
+          }
+          if (wrapped.wrapper !== s.device) return this.send(s, { t: 'error', req: frame.req, code: 'forbidden', message: 'a key is put by the device that wrapped it' })
+          this.keyPuts.push(wrapped.recipient)
+          this.send(s, { t: 'ok', req: frame.req })
+          this.putKey(wrapped.recipient, frame.wrapped)
+          return
+        }
         case 'subscribe':
           for (const e of this.log.slice(frame.from - 1)) this.send(s, { t: 'op', seq: e.seq, at: e.at, record: e.record })
           this.send(s, { t: 'caught_up', seq: this.log.length })
@@ -135,7 +188,7 @@ export class FakeRelay {
   }
 
   private store(record: Record<string, unknown>): Entry {
-    if (record.kind === 'clear' && this.log.length > 0) this.set = applyMembership(this.set, openRecord(record, this.brain, () => undefined))
+    if (record.kind === 'clear' && this.log.length > 0) this.set = applyMembership(this.set!, openRecord(record, this.brain, () => undefined))
     const entry = { seq: this.log.length + 1, at: this.now(), opId: String(record.op_id), bytes: JSON.stringify(record), record }
     this.log.push(entry)
     return entry

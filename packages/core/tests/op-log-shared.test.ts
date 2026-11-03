@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import Database from 'better-sqlite3'
 import { canonicalJson, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
-import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
+import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase } from '../src'
 import { applyOp, commandStores } from '../src/log/apply-op'
 import { RelayOrderError, appendRelayed, teamBrainOf } from '../src/log/log'
 import { uuidv5 } from '../src/log/op'
@@ -33,11 +33,9 @@ function envelope(n: number, call: string, args: unknown, team: string | null = 
   }
 }
 
-/** An empty brain file as a replica starts it: the schema, no rows, no log (a new brain file writes a private genesis). */
+/** An empty brain file as a replica starts it: the schema, no rows, no log. */
 function emptyBrain(): EML {
-  const eml = new EML({ dbPath: ':memory:', namespace: 'test' })
-  raw(eml).exec('DELETE FROM op_snapshots; DELETE FROM op_log')
-  return eml
+  return EML.fromConnection(initDatabase(':memory:', undefined, BRAIN, { log: false }), 'test')
 }
 
 /** A shared brain: an empty brain whose log starts with a relayed genesis for BRAIN. */

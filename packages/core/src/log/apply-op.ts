@@ -6,7 +6,7 @@ import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { CommandError, asCommandError, type CommandContext } from '../commands/types'
 import type { Actor, Env } from '../env'
 import { INGESTION_METHODS } from '../types'
-import { RelayOrderError, appendOp, appendRelayed, teamBrainOf, type RelayedEntry } from './log'
+import { RelayOrderError, appendOp, appendRelayed, hasGenesis, teamBrainOf, type RelayedEntry } from './log'
 import { stateDump, stateHash, encodeSnapshot } from './snapshot'
 import { opIds } from './op'
 
@@ -34,7 +34,9 @@ export function commandStores(eml: EML, db: Database.Database): Stores {
  * One write to a private brain: the command as an op from `env` (op_id,
  * actor), sequenced under the write lock (IMMEDIATE, also against another
  * process on the file), then applied. Throws what the command throws; nothing
- * is written then. A shared brain refuses it: its writes go through the relay.
+ * is written then. A shared brain refuses it: its writes go through the relay;
+ * so does a brain whose log has no genesis yet — it is waiting for one from
+ * its relay (create or join), and nothing is written before it.
  */
 export function writeOp<N extends CommandName>(stores: Stores, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
   try {
@@ -46,6 +48,7 @@ export function writeOp<N extends CommandName>(stores: Stores, command: { name: 
       provenance: env.actor,
     }
     return stores.db.transaction(() => {
+      if (!hasGenesis(stores.db)) throw new Error('Invalid command: this brain has no genesis yet; it takes no write before its log starts.')
       if (teamBrainOf(stores.db) !== null) throw new Error('Invalid command: a shared brain is written through its relay, not locally.')
       const entry = appendOp(stores.db, op, env.now())
       return applyOp(stores, JSON.parse(entry.payload) as OpEnvelope, entry.at, null) as CommandMap[N][1]
