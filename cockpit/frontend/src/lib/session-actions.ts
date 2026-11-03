@@ -1,7 +1,5 @@
 // What the sidebar and the review pane do to a session on the host. Each answers
 // with what went wrong, or null; the lists refetch on SESSIONS_CHANGED_EVENT.
-import { useSyncExternalStore } from 'react';
-
 import { closePane } from '@/lib/pane-close';
 import { paneHoldingSession } from '@/stores/usePaneStore';
 
@@ -32,7 +30,6 @@ export const markSessionRead = (sessionId: string) => post(sessionId, 'read');
 export const clearSession = (sessionId: string) => post(sessionId, 'clear');
 export const setSessionDeskMain = (sessionId: string, main: boolean) => post(sessionId, 'desk-main', { main });
 export const stopSession = (sessionId: string) => post(sessionId, 'stop');
-export const answerSession = (sessionId: string, text: string) => post(sessionId, 'answer', { text });
 
 /** Out of the lists, with its finished workers; a pane still showing it closes. */
 export async function archiveSession(sessionId: string): Promise<string | null> {
@@ -41,20 +38,4 @@ export async function archiveSession(sessionId: string): Promise<string | null> 
   const pane = paneHoldingSession(sessionId);
   if (pane) closePane(pane.id);
   return null;
-}
-
-// The one row whose reply box is open, whichever way it was asked for (hover chip, phone menu).
-let answering: string | null = null;
-const listeners = new Set<() => void>();
-
-export function setAnswering(sessionId: string | null): void {
-  answering = sessionId;
-  for (const listener of listeners) listener();
-}
-
-export function useAnswering(): string | null {
-  return useSyncExternalStore(
-    (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    () => answering,
-  );
 }

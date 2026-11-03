@@ -12,6 +12,11 @@ export interface RecoverWorkersDeps {
   log: (line: string) => void
 }
 
+/** Workers a host shutdown cut off mid-turn. An archived one is put away, whatever its flag says. */
+export function interruptedWorkers(sessions: Array<{ sessionId: string; turnInFlight: { retried: boolean } | null; archivedAt: string | null }>): Array<{ sessionId: string; retried: boolean }> {
+  return sessions.flatMap(({ sessionId, turnInFlight, archivedAt }) => (turnInFlight && !archivedAt ? [{ sessionId, retried: turnInFlight.retried }] : []))
+}
+
 /**
  * After a host start: a worker cut off mid-turn gets one message to carry on. Cut off
  * again before that turn ends, or if it can't take a message, it waits for someone

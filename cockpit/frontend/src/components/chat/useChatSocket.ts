@@ -32,7 +32,8 @@ async function mintNonce(): Promise<string | null> {
 // How often a view waiting for the terminal asks again.
 const BUSY_RETRY_MS = 3_000;
 
-export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false) {
+/** `spaceId` for a view outside the desks (the review screen); a pane's comes from its desk. */
+export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false, spaceId?: string | null) {
   const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   // The host has this socket on the session: until then frames wait here, so a
@@ -66,9 +67,9 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       joinedRef.current = false;
       const sendInit = (wait: boolean) => {
         if (socket.readyState !== WebSocket.OPEN) return;
-        const desk = paneStore.getDeskOfPane(paneId);
+        const space = spaceId !== undefined ? spaceId : paneStore.getDeskOfPane(paneId)?.spaceId ?? null;
         socket.send(JSON.stringify({
-          type: 'init', paneId, projectId, sessionId, spaceId: desk?.spaceId ?? null, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
+          type: 'init', paneId, projectId, sessionId, spaceId: space, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
         }));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
@@ -132,7 +133,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       // A CONNECTING socket closes itself in onopen (closing it now only logs an error).
       if (socket && socket.readyState === WebSocket.OPEN) socket.close();
     };
-  }, [paneId, projectId, sessionId, attempt, whenIdle]);
+  }, [paneId, projectId, sessionId, attempt, whenIdle, spaceId]);
 
   const sendFrame = useCallback((frame: Record<string, unknown>): boolean => {
     const socket = socketRef.current;
