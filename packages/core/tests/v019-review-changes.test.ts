@@ -69,7 +69,7 @@ describe('v0.19 review changes', () => {
 
   describe('C4 default-brain seed rules wait for the user\'s agreement', () => {
     it('only a seed rule may be written without agreed; the hygiene check finds it', () => {
-      const rule = validRule() as Record<string, any>
+      const rule = validRule({ scope: 'agent.juno' }) as Record<string, any>
       const { agreed: _drop, ...props } = rule.properties
       expect(() => writes(eml).store({ ...rule, properties: props } as any)).toThrow('a rule needs agreed.')
       const seed = writes(eml).store({ ...rule, title: 'seed-rule', properties: props, origin: 'eml-default-brain' } as any)

@@ -20,10 +20,20 @@ export interface BootResult {
   budget?: BootBudgetReport
 }
 
+/**
+ * Which part of the boot to render (v0.21, decision cockpit-identity-agent-brain):
+ * the cockpit host composes a session's boot from two brains — the agent's own
+ * (identity: profiles and rules) and the running server's system rules — so
+ * each part renders on its own. all (default) is the whole, as before.
+ */
+export type BootPart = 'all' | 'identity' | 'system'
+export const BOOT_PARTS: readonly BootPart[] = ['all', 'identity', 'system']
+
 export interface BootOptions {
   reviewDays?: number
   version?: string
   systemRules?: SystemRule[]
+  part?: BootPart
   /**
    * The user the session works for (user.<id> scope). Omitted: every user of
    * the brain — in a single-user brain, that user.
@@ -125,7 +135,9 @@ function scopeOrder(agentScope: string) {
 
 export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootResult {
   const reviewDays = opts.reviewDays ?? 14
-  const systemRules = opts.systemRules ?? []
+  const part = opts.part ?? 'all'
+  const systemRules = part === 'identity' ? [] : (opts.systemRules ?? [])
+  const withIdentity = part !== 'system'
 
   const agentScope = `agent.${agentId}`
   const userIds = opts.user !== undefined ? [opts.user] : eml.users.list().map(u => u.id)
@@ -133,9 +145,11 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   const bootScopes = new Set(['global', agentScope, ...userScopes])
   const order = scopeOrder(agentScope)
 
-  const active = eml.engrams
-    .query({ limit: 10000, status: 'active' })
-    .filter((c: EngramRow) => (c.type === 'rule' || c.type === 'profile') && bootScopes.has(c.scope))
+  const active = withIdentity
+    ? eml.engrams
+      .query({ limit: 10000, status: 'active' })
+      .filter((c: EngramRow) => (c.type === 'rule' || c.type === 'profile') && bootScopes.has(c.scope))
+    : []
   const legacy = (c: EngramRow) => isLegacyFormat(c.type, c.content, c.properties)
 
   // Core profiles: the one per self scope marked core (v0.19; the migration set
@@ -181,7 +195,8 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   const assemble = (titleOnly: Set<string>, leftOut: Set<string>): string => {
     const short = (c: EngramRow) => legacy(c) || capped.has(c.id) || titleOnly.has(c.id)
     const shown = (list: EngramRow[]) => list.filter(c => !leftOut.has(c.id))
-    const lines: string[] = [`# EML Boot — ${agentId}`, '']
+    // the system part stands alone, without the header (the identity part carries it)
+    const lines: string[] = withIdentity ? [`# EML Boot — ${agentId}`, ''] : []
     const identity = shown(profiles)
     if (identity.length > 0) {
       lines.push('## Identity', ...identity.map(c => short(c) ? titleOnlyLine(c) : fullLine(c)), '')

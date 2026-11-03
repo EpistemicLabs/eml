@@ -15,9 +15,9 @@ import { createV20Brain } from './fixtures'
 const NOW = '2026-10-26T12:00:00.000Z'
 const ID = '3b241101-e2bb-4255-8caf-4136c566a962'
 
-/** The state without ord and agent (schema 21 adds them; every other value stays as it was). */
+/** The state without ord, agent and the relation brain columns (schema 21 adds them; every other value stays as it was). */
 function withoutNew(dump: StateDump): StateDump {
-  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _o, agent: _a, ...row }) => row)]))
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _o, agent: _a, source_brain: _s, target_brain: _t, ...row }) => row)]))
 }
 
 /** ord is 1, 2, … in the rows' rowid order on engrams, relations and entries. */

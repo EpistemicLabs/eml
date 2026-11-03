@@ -115,11 +115,14 @@ CREATE TABLE relations_v021 (
   metadata            TEXT,
   created_at          TEXT NOT NULL,
   ord                 INTEGER NOT NULL,           -- insertion order (v0.21), as engrams.ord
-  UNIQUE(source_id, target_id, relation)
+  source_brain        TEXT,                       -- the brain holding source_id when it is not this one (v0.21, cross-brain reference)
+  target_brain        TEXT,                       -- as source_brain for target_id; at least one end is in this brain
+  UNIQUE(source_id, target_id, relation),
+  CHECK(source_brain IS NULL OR target_brain IS NULL)
 );
 
-INSERT INTO relations_v021 (id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ord)
-SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ROW_NUMBER() OVER (ORDER BY rowid)
+INSERT INTO relations_v021 (id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ord, source_brain, target_brain)
+SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata, created_at, ROW_NUMBER() OVER (ORDER BY rowid), NULL, NULL
 FROM relations
 ORDER BY rowid;
 

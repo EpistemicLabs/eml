@@ -192,7 +192,7 @@ export {
   type MigrationReport,
   type MigrationOutcomeKind,
 } from './forward-migrations'
-export { boot, type BootResult, type BootOptions } from './boot'
+export { boot, BOOT_PARTS, type BootResult, type BootOptions, type BootPart } from './boot'
 export {
   TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,

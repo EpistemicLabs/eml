@@ -170,8 +170,8 @@ export class Sync {
       schema: CURRENT_BRAIN_SCHEMA_VERSION,
       call: command.name,
       args: command.input as never,
-      // the member's handle, as the log binds it; the agent is not stamped yet
-      provenance: { ...env.actor, handle, agent: null },
+      // the member's handle, as the log binds it; the agent as the host stamped it (x-eml-agent)
+      provenance: { ...env.actor, handle },
       team: { brain: this.team.brain, device: this.team.device.sign.publicKey, base_seq: head.seq, head_hash: head.hash },
     }
     let record: Record<string, unknown>

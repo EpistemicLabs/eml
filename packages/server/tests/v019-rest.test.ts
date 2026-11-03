@@ -53,7 +53,7 @@ describe('v0.19 REST', () => {
   describe('POST /engram/:type', () => {
     it('creates every type except learning with its fields flat in the body', async () => {
       const inputs: EngramInput[] = [
-        validDecision(), validTask(), validNote(), validRule(), validEvent(), validLog(), validReference(),
+        validDecision(), validTask(), validNote(), validRule({ scope: 'agent.default' }), validEvent(), validLog(), validReference(),
         validProfile(), validStatus(),
       ]
       for (const input of inputs) {
@@ -378,6 +378,50 @@ describe('v0.19 REST', () => {
       const r = await request('POST', `${baseUrl}/engram/note`, auth(), '{"scope": "global",')
       expect(r.status).toBe(400)
       expect(r.body.error).toBe('Invalid JSON')
+    })
+  })
+
+  // v0.21 (decision cockpit-identity-agent-brain): the cockpit host names the
+  // agent that writes for the handle, and composes a session's boot in parts.
+  describe('x-eml-agent and POST /boot part', () => {
+    it('x-eml-agent is stamped as the agent next to the handle; a malformed one is a 400', async () => {
+      const r = await create(validNote({ title: 'via-agent' }), { ...MCP, 'X-EML-Agent': 'motti' })
+      expect(r.status).toBe(201)
+      expect(r.body).toMatchObject({ ingested_by: 'bootstrap', agent: 'motti' })
+      const own = await create(validNote({ title: 'own' }), MCP)
+      expect(own.body).toMatchObject({ ingested_by: 'bootstrap', agent: null })
+      const bad = await create(validNote({ title: 'bad' }), { ...MCP, 'X-EML-Agent': 'Motti Bot' })
+      expect(bad.status).toBe(400)
+      expect(bad.body.error).toBe('x-eml-agent is 1–63 characters of a-z, 0-9, _ and -')
+    })
+
+    it('part=identity carries the header without system rules, part=system only the system rules; an unknown part is a 400', async () => {
+      const all = await post('/boot', { agent: 'default' })
+      const identity = await post('/boot', { agent: 'default', part: 'identity' })
+      const system = await post('/boot', { agent: 'default', part: 'system' })
+      expect([all.status, identity.status, system.status]).toEqual([200, 200, 200])
+      expect(identity.body.markdown.startsWith('# EML Boot — default')).toBe(true)
+      expect(identity.body.markdown).not.toContain('## EML System Rules')
+      expect(system.body.markdown.startsWith('## EML System Rules (managed by engramprotocol v')).toBe(true)
+      expect(system.body.markdown).not.toContain('# EML Boot')
+      expect(all.body.markdown.endsWith(system.body.markdown)).toBe(true)
+      const bad = await post('/boot', { agent: 'default', part: 'rules' })
+      expect(bad.status).toBe(400)
+      expect(bad.body.error).toBe('part must be one of all, identity, system')
+    })
+
+    it('a relation with an end in another brain goes through POST /relate and comes back with eml_get', async () => {
+      const note = (await create(validNote({ title: 'local-end' }))).body
+      const remote = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+      const brain = '0f8fad5b-d9cb-469f-a165-70867728950e'
+      const r = await post('/relate', { source_id: note.id, target_id: remote, relation: 'refines', detection_method: 'manual', target_brain: brain })
+      expect(r.status).toBe(201)
+      expect(r.body).toEqual({ ok: true, created: true })
+      const g = await get(`/engram/${note.id}?with_relations=true`)
+      expect(g.body.relations).toHaveLength(1)
+      expect(g.body.relations[0]).toMatchObject({ target_id: remote, source_brain: null, target_brain: brain })
+      const both = await post('/relate', { source_id: note.id, target_id: remote, relation: 'supports', detection_method: 'manual', source_brain: brain, target_brain: brain })
+      expect(both.status).toBe(400)
     })
   })
 })

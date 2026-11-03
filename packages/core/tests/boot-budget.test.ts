@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { EML, boot, ALL_RULES } from '../src'
-import { writes } from './fixtures'
+import { writes, legacyGlobalRule } from './fixtures'
 
 // v0.15 Cluster T — boot stays lean. Claude Code moves hook output above 10,000
 // chars into a file that the agent then barely reads, so the boot must start
@@ -23,15 +23,16 @@ function brainWith(always: number, situational: number, users = 1): EML {
     writes(eml).users.create({ id, name: id })
     writes(eml).store({ type: 'profile', scope: `user.${id}`, title: id, content: 'B'.repeat(400), properties: { core: true } })
   }
+  // v0.21: the rules sit in global as a brain from before holds them (no rule is written there any more)
   for (let i = 0; i < always; i++) {
-    writes(eml).store({
-      type: 'rule', scope: 'global', title: `always-${String(i).padStart(2, '0')}`,
+    legacyGlobalRule(eml, {
+      title: `always-${String(i).padStart(2, '0')}`,
       content: 'C'.repeat(200), properties: { applies: 'always', why: 'w', agreed: 'yes' },
     })
   }
   for (let i = 0; i < situational; i++) {
-    writes(eml).store({
-      type: 'rule', scope: 'global', title: `situational-${String(i).padStart(2, '0')}`,
+    legacyGlobalRule(eml, {
+      title: `situational-${String(i).padStart(2, '0')}`,
       content: 'D'.repeat(200), properties: { applies: 'situational', trigger: 'E'.repeat(80), why: 'w', agreed: 'yes' },
     })
   }
@@ -41,7 +42,8 @@ function brainWith(always: number, situational: number, users = 1): EML {
 // Legacy entries cannot be stored through the store any more; plant them with
 // a raw UPDATE, the way they sit in an existing brain.
 function plantLegacy(eml: EML, scope: string, title: string, content: string): void {
-  const r = writes(eml).store({ type: 'rule', scope, title, content: 'x', properties: { applies: 'always', why: 'w', agreed: 'yes' } })
+  const input = { title, content: 'x', properties: { applies: 'always', why: 'w', agreed: 'yes' } }
+  const r = scope === 'global' ? legacyGlobalRule(eml, input) : writes(eml).store({ ...input, type: 'rule', scope })
   ;(eml as any).db.prepare('UPDATE engrams SET content = ? WHERE id = ?').run(content, r.id)
 }
 
@@ -181,7 +183,7 @@ describe('boot hard budget (opts.budget)', () => {
   it('then always-rules, longest first', () => {
     const eml = brainWith(0, 2)
     for (const [title, len] of [['r-short', 50], ['r-long', 200], ['r-mid', 120]] as const) {
-      writes(eml).store({ type: 'rule', scope: 'global', title, content: title + '.'.repeat(len - title.length), properties: { applies: 'always', why: 'w', agreed: 'yes' } })
+      legacyGlobalRule(eml, { title, content: title + '.'.repeat(len - title.length), properties: { applies: 'always', why: 'w', agreed: 'yes' } })
     }
     try {
       const b = largestBudget(eml, r => r.always_title_only >= 1)

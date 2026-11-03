@@ -176,6 +176,8 @@ export class ProjectStore {
       explanation: row.explanation ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
       created_at: row.created_at,
+      source_brain: row.source_brain ?? null,
+      target_brain: row.target_brain ?? null,
     }
   }
 }

@@ -213,8 +213,10 @@ function checkLinks(rows: MovedRows): void {
   for (const e of rows.entries) outside(`entry ${e.id} belongs to engram`, e.engram_id, engrams)
   const triples = new Set<string>()
   for (const r of rows.relations) {
-    outside(`relation ${r.id} starts at engram`, r.source_id, engrams)
-    outside(`relation ${r.id} ends at engram`, r.target_id, engrams)
+    // an end in another brain (v0.21 cross-brain reference) is that brain's to have
+    if (r.source_brain === null) outside(`relation ${r.id} starts at engram`, r.source_id, engrams)
+    if (r.target_brain === null) outside(`relation ${r.id} ends at engram`, r.target_id, engrams)
+    if (r.source_brain !== null && r.target_brain !== null) invalid(`relation ${r.id} has both ends in another brain`)
     const triple = `${r.source_id} ${r.relation} ${r.target_id}`
     if (triples.has(triple)) invalid(`relation ${r.id} repeats ${triple}`)
     triples.add(triple)

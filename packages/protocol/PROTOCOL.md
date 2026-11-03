@@ -99,7 +99,8 @@ Every write to a brain — private or shared — is an op in the brain's log
   `provenance = {handle, agent, ingestion_method, session_id, model, harness}`,
   each a string or null: `handle` is who is accountable for the write (in a
   shared brain the member, §6), `agent` the agent that wrote for them (null
-  when they wrote themself); the brain schema checks the values. In a shared brain
+  when they wrote themself); the brain schema checks the values. A cockpit sets
+  `agent` from the agent bound to the space; `handle` stays the person. In a shared brain
   `team = {brain, device, base_seq, head_hash}`: the brain, the author's
   device signing key, and the author's last applied entry with its chain link.
 - **Payload**: the envelope as JSON in the author's key order, no whitespace.
@@ -120,6 +121,11 @@ Every write to a brain — private or shared — is an op in the brain's log
   relay can neither replay a write nor hold back a refused one and slip it in
   later, when it would pass. A rejected op_id is used up; an author who wants
   the write again sends it with a new op_id.
+- **Cross-brain references**: a relation may have one end in another brain
+  (`relation.create` with `source_brain` or `target_brain`, that brain's id as
+  its genesis carries it). A shared brain refuses such an op: nothing of a
+  member's own brain reaches the team, so no team entry names an engram
+  outside it.
 - **Rejected entries**: a record the relay delivered is part of the log at
   its seq, whatever a replica finds in it. When it cannot be opened (§5), its
   author or kind is not allowed (§6), or the brain refuses the call (a guard,

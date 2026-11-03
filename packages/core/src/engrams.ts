@@ -719,6 +719,8 @@ export class EngramStore {
       explanation: row.explanation ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
       created_at: row.created_at,
+      source_brain: row.source_brain ?? null,
+      target_brain: row.target_brain ?? null,
     }
   }
 
@@ -771,6 +773,8 @@ export class EngramStore {
       explanation: row.explanation ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
       created_at: row.created_at,
+      source_brain: row.source_brain ?? null,
+      target_brain: row.target_brain ?? null,
       ...(row.src_engram_content ? { source_engram: { content: row.src_engram_content, type: row.src_engram_type } } : {}),
       ...(row.tgt_engram_content ? { target_engram: { content: row.tgt_engram_content, type: row.tgt_engram_type } } : {}),
     }

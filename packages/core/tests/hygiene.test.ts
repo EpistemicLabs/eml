@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, hygieneCheck, HYGIENE_CHECKS, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
-import { writes } from './fixtures'
+import { writes, legacyGlobalRule } from './fixtures'
 
 // The brain-hygiene check (hygiene.ts).
 describe('hygieneCheck()', () => {
@@ -20,8 +20,9 @@ describe('hygieneCheck()', () => {
     if (properties) db.prepare('UPDATE engrams SET properties = ? WHERE id = ?').run(JSON.stringify(properties), id)
   }
   const check = (id: string, now?: Date) => hygieneCheck(eml, { now }).checks.find(c => c.id === id)!
+  // v0.21: no rule is written in global any more; one from before sits there as a legacy entry.
   const rule = (scope: string, title: string, properties: Record<string, unknown> = { applies: 'always', why: 'w', agreed: 'yes' }) =>
-    writes(eml).store({ type: 'rule', scope, title, content: 'do Y', properties })
+    scope === 'global' ? legacyGlobalRule(eml, { title, content: 'do Y', properties }) : writes(eml).store({ type: 'rule', scope, title, content: 'do Y', properties })
 
   it('lists every check with what and how, also without findings; migration checks name their schema', () => {
     const r = hygieneCheck(eml)
