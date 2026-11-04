@@ -8,7 +8,7 @@ import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, agentLetter, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSections, type AllSession,
+  agentLabel, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSections, type AllSession,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
@@ -58,7 +58,7 @@ function AllSessionRow({ session, spaces, controller, sessions, plain }: {
           isPinned: pinned,
           onToggle: (target) => void controller.toggleSessionPin(target),
         }}
-        agent={{ letter: agentLetter(space), name: agentLabel(space), tone: spaceTone(space) }}
+        agent={{ name: agentLabel(space), tone: spaceTone(space) }}
         mark={mark}
         context={parent ? `from ${sessionDisplayName(parent)}` : undefined}
         actions={{
@@ -117,6 +117,24 @@ export function useWaitingCount(controller: SidebarController, onlyOpenSpace: bo
   return waiting.length;
 }
 
+/** A heading of the inbox; the last one carries the way into the review, which goes through all of it. */
+function InboxHeader({ title, onReview }: { title: string; onReview?: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-1 pr-2">
+      <SidebarGroupHeader>{title}</SidebarGroupHeader>
+      {onReview && (
+        <button
+          type="button"
+          onClick={onReview}
+          className="flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-foreground/10"
+        >
+          Review ▶
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** What needs the user and what is finished: on top of the overview. */
 function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
   const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
@@ -126,26 +144,18 @@ function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarContro
     <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
   );
   if (waiting.length === 0) return null;
+  const review = () => startReview(waiting);
   return (
     <div className="space-y-3">
-      <div className="px-2">
-        <button
-          type="button"
-          onClick={() => startReview(waiting)}
-          className="w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-        >
-          Review {waiting.length} ▶
-        </button>
-      </div>
       {needsYou.length > 0 && (
         <div className="space-y-0.5">
-          <SidebarGroupHeader>Needs you · {needsYou.length}</SidebarGroupHeader>
+          <InboxHeader title={`Needs you · ${needsYou.length}`} onReview={toReview.length === 0 ? review : undefined} />
           {needsYou.map(row)}
         </div>
       )}
       {toReview.length > 0 && (
         <div className="space-y-0.5">
-          <SidebarGroupHeader>To review · {toReview.length}</SidebarGroupHeader>
+          <InboxHeader title={`To review · ${toReview.length}`} onReview={review} />
           {toReview.map(row)}
         </div>
       )}

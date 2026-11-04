@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
-import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
+import { allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
 
 const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, label: 'Alpha' };
 const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, label: 'Beta' };
@@ -251,8 +251,3 @@ describe('filterByName', () => {
   });
 });
 
-describe('agentLetter', () => {
-  it('uses the label', () => {
-    expect(agentLetter(other)).toBe('B');
-  });
-});

@@ -75,8 +75,6 @@ export const MARK_SYMBOL: Record<SessionMark, string> = {
 /** What a space's sessions are labelled with: its agent, else the space's name (host spaceLabel). */
 export const agentLabel = (space: SpaceInfo): string => space.label ?? space.name;
 
-export const agentLetter = (space: SpaceInfo): string => agentLabel(space).charAt(0).toUpperCase();
-
 /**
  * The turn state to show. The host keeps a session's last state after its
  * process ended, so an ended session counts as idle here.

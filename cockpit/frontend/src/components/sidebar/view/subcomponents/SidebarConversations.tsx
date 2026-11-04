@@ -2,7 +2,7 @@ import { MessageSquare } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
 import { paneSpaceKey } from '@/stores/useSpaceStore';
-import { agentLabel, agentLetter } from '../../allSessions';
+import { agentLabel } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { SidebarGroupHeader, SidebarStateBlock } from './SidebarParts';
 import { SidebarSessionRow } from './SidebarSessionRow';
@@ -36,7 +36,7 @@ export function SidebarConversations({ controller }: { controller: SidebarContro
                 onCancelRename={controller.cancelSessionRename}
                 onSelect={(picked, projectId) =>
                   controller.selectSession(space ? { ...picked, __spaceKey: paneSpaceKey(space) } : picked, projectId)}
-                agent={space ? { letter: agentLetter(space), name: agentLabel(space), tone: spaceTone(space) } : undefined}
+                agent={space ? { name: agentLabel(space), tone: spaceTone(space) } : undefined}
                 onRequestDelete={controller.requestSessionDelete}
                 pin={{
                   isPinned: controller.isSessionPinned(session),
