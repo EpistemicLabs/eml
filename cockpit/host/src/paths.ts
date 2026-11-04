@@ -104,7 +104,7 @@ export const AGENTS_FILE = path.join(COCKPIT_HOME, 'agents.json')
 export const REMOTE_FILE = path.join(COCKPIT_HOME, 'remote.json')
 export const ACCOUNT_FILE = path.join(COCKPIT_HOME, 'account')     // { url, email, session } chmod 600 — the EML account's session (account.ts)
 /** The EML account service; the dev cockpit points EML_ACCOUNT_URL at a locally started one. */
-export const ACCOUNT_URL = (process.env.EML_ACCOUNT_URL || 'https://account.engramprotocol.io').replace(/\/+$/, '')
+export const ACCOUNT_URL = (process.env.EML_ACCOUNT_URL || 'https://account.eml-cockpit.com').replace(/\/+$/, '')
 // EML client config the session hooks read (brain URL + token of this boot).
 export const EML_HOOK_DIR = path.join(COCKPIT_HOME, 'eml')
 // Per brain space (brain-space.ts): the files a space's sessions start with —
