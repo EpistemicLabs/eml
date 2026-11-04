@@ -35,6 +35,9 @@ const NO_PROJECTS: Project[] = [];
 const spaceKey = (spaceId: string | null): string => spaceId ?? '';
 
 /** Projects of each space seen in this tab, by space id ('' = main). */
+/** Fired on window when a project changed hands outside the sidebar (a move into a shared space); the list reads again. */
+export const PROJECTS_CHANGED_EVENT = 'cockpit-projects-changed';
+
 export type ProjectsBySpace = Readonly<Record<string, Project[]>>;
 
 /** One space's projects; a stable empty list for a space not loaded yet. */
@@ -108,10 +111,12 @@ export function useProjectsState() {
     };
     window.addEventListener('focus', refreshIfVisible);
     window.addEventListener(SPACE_CHANGED_EVENT, onSpaceChanged);
+    window.addEventListener(PROJECTS_CHANGED_EVENT, onSpaceChanged);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener('focus', refreshIfVisible);
       window.removeEventListener(SPACE_CHANGED_EVENT, onSpaceChanged);
+      window.removeEventListener(PROJECTS_CHANGED_EVENT, onSpaceChanged);
     };
   }, [refreshProjectsSilently]);
 
