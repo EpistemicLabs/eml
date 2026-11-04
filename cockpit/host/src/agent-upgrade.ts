@@ -29,7 +29,8 @@ import { CORE_INDEX, CORE_LOG } from './paths.js'
  * entries, inner relations, tags and subjects, then taken out of the space,
  * the crossing relations dropped there); re-create each crossing relation in
  * the agent brain as a cross-brain reference naming the space (direction,
- * verb, explanation and strength kept); re-scope global → agent.<id> and
+ * verb, explanation and strength kept); re-scope global → agent.<id>, a rule
+ * or learning in any user scope → agent.<id> and the profiles of
  * user.<other> → user.<handle> as recorded ops; settle collisions with what
  * the agent brain holds already (a second core profile for a scope, and an
  * engram identical in type, title and content, are superseded by the first;
@@ -132,8 +133,8 @@ export interface SpaceReport {
   moved?: { engrams: number; entries: number; relations: number; by: Record<string, number> }
   crossing?: { planned: number; recreated: number; items: Array<{ id: string; relation: string; direction: 'out' | 'in'; other: string }> }
   refs?: { external: number; incoming: number }
-  /** global_to_agent: rules and learnings left in global; user_rules_to_agent: rules in any user scope (decision agent-brain-rules-at-agent-user-is-profile); user_to_handle: another handle's user scope for the rest. */
-  rescoped?: { global_to_agent: string[]; user_rules_to_agent: string[]; user_to_handle: string[] }
+  /** global_to_agent: rules and learnings left in global; user_to_agent: rules and learnings in any user scope (decision agent-brain-rules-at-agent-user-is-profile: both are the agent's, user.<handle> holds the profile); user_to_handle: another handle's user scope for the profiles. */
+  rescoped?: { global_to_agent: string[]; user_to_agent: string[]; user_to_handle: string[] }
   /** superseded: the same identity again (a core profile for a scope that has one, an engram identical in type, title and content) — the first space's wins; seeds_retired: a later space's default seeds (origin eml-default-brain), which add nothing to an agent brain filled by an earlier space; needs_review: same type, scope and title with other content, both kept. */
   collisions?: { superseded: Array<{ id: string; by: string; title: string | null }>; seeds_retired: string[]; needs_review: Array<{ id: string; existing: string; title: string | null; scope: string }> }
   restamped?: { space: { engrams: number; entries: number }; agent: { engrams: number; entries: number } }
@@ -385,15 +386,15 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
           e.status = 'invalidated'
         }
       }
-      // Re-scope: a rule or learning left in global is the agent's; another handle's user scope is the
-      // human's — over everything the agent brain holds, so a resumed run finishes what the first began.
-      sr.rescoped = { global_to_agent: [], user_rules_to_agent: [], user_to_handle: [] }
-      const pending = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE (scope = 'global' OR (scope LIKE 'user.%' AND (scope != ? OR type = 'rule'))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(`user.${handle.handle}`, JSON.stringify(ids)) as typeof movedRows
+      // Re-scope: a rule or learning in global or in a user scope is the agent's; another handle's user scope
+      // is the human's — over everything the agent brain holds, so a resumed run finishes what the first began.
+      sr.rescoped = { global_to_agent: [], user_to_agent: [], user_to_handle: [] }
+      const pending = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE (scope = 'global' OR (scope LIKE 'user.%' AND (scope != ? OR type IN ('rule', 'learning')))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(`user.${handle.handle}`, JSON.stringify(ids)) as typeof movedRows
       const activeCore = (scope: string, except: string) => (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ? AND json_extract(properties, '$.core') = 1`).get(scope, except) as { id: string } | undefined)?.id
       for (const e of [...movedRows, ...pending]) {
-        // global → the agent's; a rule in any user scope → the agent's (user.<handle> holds the profile); another handle's user scope → the human's
+        // global → the agent's; a rule or learning in any user scope → the agent's (user.<handle> holds the profile); another handle's user scope → the human's
         const target = e.scope === 'global' ? `agent.${agentId}`
-          : /^user\./.test(e.scope) && e.type === 'rule' ? `agent.${agentId}`
+          : /^user\./.test(e.scope) && (e.type === 'rule' || e.type === 'learning') ? `agent.${agentId}`
             : /^user\./.test(e.scope) && e.scope !== `user.${handle.handle}` ? `user.${handle.handle}` : e.scope
         if (e.type === 'profile' && e.core === 1 && e.status === 'active' && target !== e.scope) {
           // A core profile re-scoped into a scope the agent brain has one for already (an earlier
@@ -407,7 +408,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
         }
         if (target === e.scope) continue
         agentEml.apply({ name: 'engram.update', input: { id: e.id, patch: { scope: target } } }, agentEnv)
-        ;(e.scope === 'global' ? sr.rescoped.global_to_agent : e.type === 'rule' ? sr.rescoped.user_rules_to_agent : sr.rescoped.user_to_handle).push(e.id)
+        ;(e.scope === 'global' ? sr.rescoped.global_to_agent : e.type === 'profile' ? sr.rescoped.user_to_handle : sr.rescoped.user_to_agent).push(e.id)
         e.scope = target
       }
       // Collisions with what was there before this space: the same engram again is superseded, a variant is listed.
@@ -658,7 +659,7 @@ export function renderReport(r: UpgradeReport): string {
       for (const i of s.crossing.items) lines.push(`    ${i.direction === 'out' ? '→' : '←'} ${i.relation} ${i.other} (${i.id.slice(0, 8)})`)
     }
     if (s.refs) lines.push(`  entry references left as text: ${s.refs.external} outward, ${s.refs.incoming} inward`)
-    if (s.rescoped) lines.push(`  re-scoped: ${s.rescoped.global_to_agent.length} global → agent.${s.agent}, ${s.rescoped.user_rules_to_agent.length} user rules → agent.${s.agent}, ${s.rescoped.user_to_handle.length} user.<other> → user.${r.handle}`)
+    if (s.rescoped) lines.push(`  re-scoped: ${s.rescoped.global_to_agent.length} global → agent.${s.agent}, ${s.rescoped.user_to_agent.length} user rules/learnings → agent.${s.agent}, ${s.rescoped.user_to_handle.length} user.<other> → user.${r.handle}`)
     if (s.collisions) {
       for (const x of s.collisions.superseded) lines.push(`  superseded (same again): ${x.title ?? x.id} ${x.id.slice(0, 8)} by ${x.by.slice(0, 8)}`)
       if (s.collisions.seeds_retired.length) lines.push(`  default seeds retired (a later space's copy): ${s.collisions.seeds_retired.length}`)

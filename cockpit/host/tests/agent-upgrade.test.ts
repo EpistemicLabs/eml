@@ -57,7 +57,7 @@ function legacyHome(dataDir: string) {
   m.apply({ name: 'object.create', input: { object: 'tag', fields: { name: 'ops' } } }, motti)
   const task = w({ type: 'task', scope: 'project.demo', title: 'hub', content: 'the work', status: 'active' })
   m.apply({ name: 'task.track', input: { id: task.id, text: 'went on' } }, motti)
-  const learning = w({ type: 'learning', scope: 'user.dominik', title: 'ask-first', content: 'Ask before pushing.', tags: ['ops'], evidence: { source: 'user', happened: 'pushed unasked', quote: 'frag vorher' } })
+  const learning = w({ type: 'learning', scope: 'agent.motti', title: 'ask-first', content: 'Ask before pushing.', tags: ['ops'], evidence: { source: 'user', happened: 'pushed unasked', quote: 'frag vorher' } })
   const profile = one(join(dataDir, main.brainFile), "SELECT id FROM engrams WHERE scope = 'agent.motti' AND type = 'profile'")
   const log1 = w({ type: 'log', scope: 'project.demo', title: 'session-1', content: 'x', properties: { what: 'w', landed: 'l', next: 'n' } })
   // crossing out: the learning refines the task; crossing in: the log relates to the persona; inner: the learning relates to a rule
@@ -76,8 +76,10 @@ function legacyHome(dataDir: string) {
     raw.prepare("UPDATE engrams SET scope = 'global' WHERE id = ?").run(id)
     raw.prepare("UPDATE engrams_fts SET scope = 'global' WHERE id = ?").run(id)
   }
-  raw.prepare("UPDATE engrams SET scope = 'user.dominik' WHERE id = ?").run(userRule.id)
-  raw.prepare("UPDATE engrams_fts SET scope = 'user.dominik' WHERE id = ?").run(userRule.id)
+  for (const id of [userRule.id, learning.id]) {
+    raw.prepare("UPDATE engrams SET scope = 'user.dominik' WHERE id = ?").run(id)
+    raw.prepare("UPDATE engrams_fts SET scope = 'user.dominik' WHERE id = ?").run(id)
+  }
   // A brain whose history predates the log, as a migrated home's does: the log starts with a genesis of this state.
   raw.prepare('DELETE FROM op_snapshots').run()
   raw.prepare('DELETE FROM op_log').run()
@@ -189,7 +191,7 @@ describe('agent upgrade', () => {
     expect(main.moved?.by).toEqual({ 'learning global': 1, 'learning user.dominik': 1, 'profile agent.motti': 1, 'profile user.dominik': 1, 'rule agent.motti': 3, 'rule global': 1, 'rule user.dominik': 1 })
     expect(q(mainFile, 'SELECT id, scope, type FROM engrams ORDER BY ord').map((r) => r.id)).toEqual([ids.task, ids.log, ids.argusRule, ids.note])
     expect(main.other_agents).toEqual([{ id: 'argus', engrams: 1 }])
-    expect(main.rescoped).toEqual({ global_to_agent: [ids.globalRule, ids.globalLearning], user_rules_to_agent: [ids.userRule], user_to_handle: [] })
+    expect(main.rescoped).toEqual({ global_to_agent: [ids.globalRule, ids.globalLearning], user_to_agent: [ids.learning, ids.userRule], user_to_handle: [] })
     expect(main.crossing?.items.map((c) => [c.direction, c.relation, c.other])).toEqual([['out', 'refines', ids.task], ['in', 'related_to', ids.log]])
     // the five seeds were written without a handle (direct); the four engrams the agent's token wrote get the handle via motti
     expect(main.restamped).toEqual({ space: { engrams: 4, entries: expect.any(Number) }, agent: { engrams: 4, entries: expect.any(Number) } })
@@ -202,10 +204,10 @@ describe('agent upgrade', () => {
     const inAgent = q(agentFile, 'SELECT id, type, scope, status, ingested_by, agent FROM engrams ORDER BY ord')
     expect(inAgent.find((r) => r.id === ids.globalRule)).toMatchObject({ scope: 'agent.motti', ingested_by: 'dominik', agent: 'motti' })
     expect(inAgent.find((r) => r.id === ids.globalLearning)).toMatchObject({ scope: 'agent.motti', status: 'active' })
-    expect(inAgent.find((r) => r.id === ids.learning)).toMatchObject({ scope: 'user.dominik', ingested_by: 'dominik', agent: 'motti' })
-    // a rule in a user scope is the agent's now (decision agent-brain-rules-at-agent-user-is-profile), with its id and content
+    // a rule or learning in a user scope is the agent's now (decision agent-brain-rules-at-agent-user-is-profile), with its id and content
+    expect(inAgent.find((r) => r.id === ids.learning)).toMatchObject({ scope: 'agent.motti', ingested_by: 'dominik', agent: 'motti' })
     expect(inAgent.find((r) => r.id === ids.userRule)).toMatchObject({ scope: 'agent.motti', status: 'active' })
-    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE type = 'rule' AND scope LIKE 'user.%'")[0].n).toBe(0)
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE type IN ('rule', 'learning') AND scope LIKE 'user.%'")[0].n).toBe(0)
     expect(inAgent.filter((r) => r.ingested_by === 'motti')).toEqual([])
     // (the supersedes edges of Privat's settled duplicates come on top, checked below)
     expect(q(agentFile, "SELECT source_id, target_id, relation, source_brain, target_brain, explanation FROM relations WHERE relation != 'supersedes' ORDER BY ord")).toEqual([
@@ -222,7 +224,7 @@ describe('agent upgrade', () => {
     const privat = report.spaces[1]
     expect(privat.moved?.engrams).toBe(6)
     expect(privat.rescoped?.user_to_handle).toHaveLength(1)
-    expect(privat.rescoped?.user_rules_to_agent).toEqual([ids.privatRule])
+    expect(privat.rescoped?.user_to_agent).toEqual([ids.privatRule])
     // the agent's core profile could not arrive next to Main's and was retired before the move; the other seeds retire after it
     expect(privat.collisions?.superseded.map((c) => c.title)).toEqual(['motti-identity'])
     expect(privat.collisions?.seeds_retired).toHaveLength(4)

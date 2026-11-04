@@ -53,7 +53,7 @@ describe('v0.19 review changes', () => {
 
   describe('C3 learnings: out of eml_show, eml_list state filter', () => {
     it('finds ripe learnings by state; eml_show no longer lists them', () => {
-      const a = writes(eml).learn({ title: 'ask-before-push', content: 'Ask before pushing.', scope: 'user.ada', source: 'user', happened: 'pushed without asking', quote: 'ask first' }, ctx('s1'))
+      const a = writes(eml).learn({ title: 'ask-before-push', content: 'Ask before pushing.', scope: 'agent.juno', source: 'user', happened: 'pushed without asking', quote: 'ask first' }, ctx('s1'))
       expect(a.written).toBe(true)
       const id = (a as { engram: { id: string } }).engram.id
       expect(eml.engrams.query({ learning_state: 'collecting' }).map(e => e.id)).toEqual([id])

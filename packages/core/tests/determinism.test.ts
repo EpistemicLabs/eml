@@ -122,6 +122,7 @@ describe('deterministic writes', () => {
       return r
     }
     once(env => writes(eml).projects.create({ id: 'p', name: 'P' }, env))
+    once(env => writes(eml).agents.store({ id: 'juno', name: 'Juno' }, env))
     once(env => writes(eml).projects.update('p', { goal: 'ship' }, env))
     const scope = 'project.p'
     const d = once(env => writes(eml).store(validDecision({ scope, title: 'pick-sqlite', content: 'Use SQLite for the brain store.' }), env))
@@ -131,9 +132,9 @@ describe('deterministic writes', () => {
     const t = once(env => writes(eml).store(validTask({ scope, title: 'hub', status: 'active' }), env))
     once(env => writes(eml).trackTask(t.id, { text: 'progress' }, env))
     once(env => writes(eml).relate({ source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' }, env))
-    const l = once(env => writes(eml).learn({ scope: 'global', title: 'ask-first', content: 'Ask before acting.', source: 'self', happened: 'once' }, env))
+    const l = once(env => writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', source: 'self', happened: 'once' }, env))
     if (!l.written) throw new Error('not written')
-    once(env => writes(eml).learn({ scope: 'global', title: 'ask-first-again', content: 'Ask before acting.', source: 'self', happened: 'twice' }, env))
+    once(env => writes(eml).learn({ scope: 'agent.juno', title: 'ask-first-again', content: 'Ask before acting.', source: 'self', happened: 'twice' }, env))
     once(env => writes(eml).learn({ id: l.engram.id, source: 'observed', happened: 'again' }, env))
     eml.close()
   })

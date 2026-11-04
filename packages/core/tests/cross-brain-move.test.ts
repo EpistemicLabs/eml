@@ -52,6 +52,7 @@ function source() {
   createObject(eml, 'project', { id: 'root', name: 'Root' }, kai)
   createObject(eml, 'project', { id: 'p', name: 'P', parent_project: 'root', metadata: { repo: 'r' }, status_tracks: 'the launch of P, in prose', started_at: '2026-03-15' }, kai)
   createObject(eml, 'project', { id: 'elsewhere', name: 'Elsewhere' }, kai)
+  createObject(eml, 'agent', { id: 'juno', name: 'Juno' }, kai)
   createObject(eml, 'user', { id: 'ada', name: 'Ada' }, kai)
   createObject(eml, 'tag', { name: 'ops', description: 'source ops' }, kai)
   createObject(eml, 'subject', { name: 'launch' }, kai)
@@ -63,7 +64,7 @@ function source() {
   writes(eml).trackTask(sub.id, { status: 'resolved', outcome: 'done', text: 'finished' }, ada)
   writes(eml).trackTask(task.id, { text: 'progress', stage: 'implementation' }, kai)
   const rule = writes(eml).store(validRule({ scope: 'project.elsewhere', title: 'outside-rule' }), kai)
-  const learned = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask first.', source: 'user', happened: 'once', quote: 'ask', rule_id: rule.id }, kai)
+  const learned = writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask first.', source: 'user', happened: 'once', quote: 'ask', rule_id: rule.id }, kai)
   if (!learned.written) throw new Error('learning not written')
   const outside = writes(eml).store(validDecision({ scope: 'project.elsewhere', title: 'outside' }), kai)
   writes(eml).relate({ source_id: outside.id, target_id: task.id, relation: 'supports', detection_method: 'manual' }, kai)
@@ -88,11 +89,11 @@ describe('exportSet', () => {
     const { rows } = set
     expect(rows.engrams.map(e => e.id)).toEqual(ids(s.eml).filter(id => s.set.includes(id)))
     expect(rows.engrams.every(e => !('ord' in e))).toBe(true)
-    // the project with its parent first; the learning's user
+    // the project with its parent first; the learning's agent
     expect(rows.projects.map(p => p.id)).toEqual(['root', 'p'])
-    expect(rows.users.map(u => u.id)).toEqual(['ada'])
+    expect(rows.users).toEqual([])
     expect(rows.entities).toEqual([])
-    expect(rows.agents).toEqual([])
+    expect(rows.agents.map(a => a.id)).toEqual(['juno'])
     expect(rows.tags).toEqual([expect.objectContaining({ id: 'ops', description: 'source ops' })])
     expect(rows.subjects.map(x => x.id)).toEqual(['launch'])
     // relations inside the set: part_of, the task binding, supersedes
@@ -130,10 +131,10 @@ describe('exportSet', () => {
 
   it('a scope object or a parent missing in the source is NOT_FOUND', () => {
     const s = source()
-    raw(s.eml).prepare("DELETE FROM users WHERE id = 'ada'").run()
-    const user = reject(() => exportSet(raw(s.eml), s.set))
-    expect(user.code).toBe('NOT_FOUND')
-    expect(user.message).toMatch(/users ada not found/)
+    raw(s.eml).prepare("DELETE FROM agents WHERE id = 'juno'").run()
+    const agent = reject(() => exportSet(raw(s.eml), s.set))
+    expect(agent.code).toBe('NOT_FOUND')
+    expect(agent.message).toMatch(/agents juno not found/)
     raw(s.eml).pragma('foreign_keys = OFF')
     raw(s.eml).prepare("DELETE FROM projects WHERE id = 'root'").run()
     const parent = reject(() => exportSet(raw(s.eml), [s.task.id]))
@@ -177,7 +178,7 @@ describe('engram.import', () => {
 
     const result = target.apply({ name: 'engram.import', input: importOf(s.eml, set) }, env)
     expect(result.moved).toEqual({ engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length })
-    expect(result.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
+    expect(result.created).toEqual({ projects: ['root', 'p'], entities: [], users: [], agents: ['juno'], tags: ['ops'], subjects: ['launch'] })
     // free-text status_tracks and a date-only started_at go in as they are
     expect(target.projects.get('p')).toMatchObject({ status_tracks: 'the launch of P, in prose', started_at: '2026-03-15' })
 
@@ -286,7 +287,7 @@ describe('engram.import', () => {
       const s = source()
       const target = brain('target')
       expect(attempt(target, edited(s, rows => { rows.engrams = rows.engrams.filter(e => e.id !== s.sub.id) })).message).toMatch(/is not in the set/)
-      expect(attempt(target, edited(s, rows => { rows.users = [] })).message).toMatch(/scope object of user\.ada is not carried/)
+      expect(attempt(target, edited(s, rows => { rows.agents = [] })).message).toMatch(/scope object of agent\.juno is not carried/)
       expect(attempt(target, edited(s, rows => { delete rows.engrams[0].rev })).message).toMatch(/has the columns/)
       expect(attempt(target, edited(s, rows => { rows.projects.reverse() })).message).toMatch(/comes before its parent/)
       target.close(); s.eml.close()
@@ -391,7 +392,7 @@ describe('engram.move_out', () => {
     expect(s.eml.tags.get('ops')).toBeTruthy()
     expect(s.eml.subjects.get('launch')).toBeTruthy()
     expect(s.eml.projects.get('p')).toBeTruthy()
-    expect(s.eml.users.get('ada')).toBeTruthy()
+    expect(s.eml.agents.get('juno')).toBeTruthy()
     // the op names the import in the target
     const op = JSON.parse((raw(s.eml).prepare('SELECT payload FROM op_log ORDER BY seq DESC LIMIT 1').get() as { payload: string }).payload)
     expect(op).toMatchObject({ call: 'engram.move_out', args: { target: input.target, set_hash: set.set_hash } })
@@ -487,7 +488,7 @@ describe('moveEngrams', () => {
     expect(plan.external_refs).toEqual(set.external_refs)
     expect(plan.incoming_refs).toEqual([])
     expect(planMove({ source: raw(s.eml), target: raw(to), ids: [s.rule.id] }).incoming_refs).toEqual([expect.objectContaining({ engram_id: s.learned.id })])
-    expect(plan.created).toEqual({ projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] })
+    expect(plan.created).toEqual({ projects: ['root', 'p'], entities: [], users: [], agents: ['juno'], tags: ['ops'], subjects: ['launch'] })
     expect(plan.collisions).toEqual([])
     // a set the import would refuse for its rows is not shown as clean
     raw(s.eml).prepare("UPDATE projects SET metadata = 'not json' WHERE id = 'p'").run()
@@ -511,7 +512,7 @@ describe('moveEngrams', () => {
     expect(result).toEqual({
       backup_path: backup, ids: s.set, import: last(to), move_out: last(s.eml),
       moved: { engrams: 6, entries: set.rows.entries.length, relations: set.rows.relations.length },
-      created: { projects: ['root', 'p'], entities: [], users: ['ada'], agents: [], tags: ['ops'], subjects: ['launch'] },
+      created: { projects: ['root', 'p'], entities: [], users: [], agents: ['juno'], tags: ['ops'], subjects: ['launch'] },
       dropped_relations: set.crossing.map(r => r.id).sort(), external_refs: set.external_refs, incoming_refs: [], resumed: false,
     })
     expect(exportSet(raw(to), s.set).rows).toEqual(set.rows)

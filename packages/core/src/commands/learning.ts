@@ -8,6 +8,7 @@ import {
   extractSalientTerms, termCoverage, type LearnInput, type LearnResult,
 } from '../engrams'
 import { validateScope } from '../write/scope'
+import { LEARNING_SCOPE, LEARNING_SCOPE_MESSAGE } from '../validate'
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, insertEngramTags, insertEngramSubjects } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import type { CommandContext } from './types'
@@ -68,8 +69,9 @@ export function createLearning(ctx: CommandContext, input: Omit<LearnInput, 'id'
   const evidence = evidenceOf(ctx, input)
   if (evidence.stance !== 'supports') throw new Error('Invalid engram: a new learning starts from supporting evidence.')
   if (isBlank(input.content)) throw new Error('Invalid engram: a new learning needs content — the lesson as an instruction to yourself.')
-  if (isBlank(input.scope)) throw new Error('Invalid engram: a new learning needs scope (usually user.<id>).')
+  if (isBlank(input.scope)) throw new Error('Invalid engram: a new learning needs scope — agent.<id>, the agent it is a lesson for.')
   if (isBlank(input.title)) throw new Error('Invalid engram: a new learning needs a title — the topic.')
+  if (!LEARNING_SCOPE.test(input.scope!)) throw new Error(LEARNING_SCOPE_MESSAGE)
   validateScope(ctx, input.scope!)
   if (!input.new_topic) {
     const matches = findLearningTopic(ctx, input.title!, input.content!, input.scope!, actor.handle, stamp.at)

@@ -131,12 +131,22 @@ const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
 ]
 
 /**
- * v0.21 (decision rules-need-a-scope-no-global-rules): a rule has an owner —
- * the agent whose way of working it is, the person it is about, or the project
- * it governs. There are no global rules; global keeps facts.
+ * v0.21 (decisions rules-need-a-scope-no-global-rules and
+ * agent-brain-rules-at-agent-user-is-profile): a rule has an owner — the agent
+ * whose way of working it is (also a rule about working with a person) or the
+ * project it governs. user.<id> holds the person's profile; there are no global
+ * rules, global keeps facts.
  */
 export const RULE_SCOPE = /^(agent|project)\./
 export const RULE_SCOPE_MESSAGE = 'Invalid engram: a rule needs an owner — scope agent.<id> (how this agent works) or project.<id> (work in that project); user.<id> holds a person\'s profile, global holds no rules.'
+
+/**
+ * A learning is the agent's own: what it learned about how it works, also with
+ * a person. It lives in agent.<id> and nowhere else; the task or project it came
+ * from is linked by a relation (same decision, extended to learnings).
+ */
+export const LEARNING_SCOPE = /^agent\./
+export const LEARNING_SCOPE_MESSAGE = 'Invalid engram: a learning is the agent\'s — scope agent.<id>, also for a lesson about working with a person; user.<id> holds a person\'s profile, project.<id> and global hold work. Link the task or project it came from with a relation.'
 
 /**
  * v0.8 C3: pattern validation.

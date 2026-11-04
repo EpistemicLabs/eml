@@ -91,7 +91,7 @@ describe('RoutedClient writes', () => {
   it('refuses another agent\'s identity, and a learning outside the agent brain', async () => {
     await expect(client.post('/engram/rule', { scope: 'agent.scout' })).rejects.toMatchObject({ status: 403 })
     await expect(client.post('/learning', { scope: 'agent.scout' })).rejects.toThrow(/this session runs as juno/)
-    await expect(client.post('/learning', { scope: 'project.demo' })).rejects.toThrow(/A learning lives in your agent brain/)
+    await expect(client.post('/learning', { scope: 'project.demo' })).rejects.toThrow(/A learning is yours and lives in your agent brain/)
     await expect(client.post('/engram/learning', { scope: 'global' })).rejects.toMatchObject({ status: 403 })
     expect(agent.posted).toEqual([])
     expect(space.posted).toEqual([])

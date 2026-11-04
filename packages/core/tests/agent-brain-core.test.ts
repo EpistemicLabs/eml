@@ -6,7 +6,7 @@ import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
 import { brainRef, exportSet } from '../src/log/move'
 import { planMove } from '../src/log/move-engrams'
-import { validNote, validTask, validRule, writes, legacyGlobalRule, legacyRule } from './fixtures'
+import { validNote, validTask, validRule, writes, legacyGlobalRule, legacyLearning, legacyRule } from './fixtures'
 
 // v0.21, decision cockpit-identity-agent-brain: what core gives the agent brain —
 // a relation with one end in another brain, the provenance re-stamp, the boot
@@ -259,5 +259,40 @@ describe('a rule has an owner (v0.21, decision rules-need-a-scope-no-global-rule
     expect(check.findings).toEqual([{ id: legacy.id, type: 'rule', scope: 'user.ada', title: 'old-user', reason: 'a rule in a user scope belongs to the agent.' }])
     expect(writes(eml).update(legacy.id, { scope: 'agent.assistant' })).toMatchObject({ scope: 'agent.assistant', content: 'Do Y, then Z.' })
     expect(hygieneCheck(eml).checks.find(c => c.id === 'rule-in-user-scope')!.findings).toEqual([])
+  })
+})
+
+describe('a learning is the agent\'s own (the same decision, extended to learnings)', () => {
+  let eml: EML
+  beforeEach(() => {
+    eml = new EML({ dbPath: ':memory:', namespace: 'assistant' })
+    writes(eml).agents.store({ id: 'assistant', name: 'Assistant' })
+    writes(eml).users.create({ id: 'ada', name: 'Ada' })
+    writes(eml).projects.create({ id: 'demo', name: 'Demo' })
+  })
+  afterEach(() => eml.close())
+
+  it('is written in agent.<id> only; user, project and global are refused on create and on a move', () => {
+    const own = writes(eml).learn({ scope: 'agent.assistant', title: 'ask-first', content: 'Ask first.', source: 'self', happened: 'h' })
+    if (!own.written) throw new Error('not written')
+    for (const scope of ['user.ada', 'project.demo', 'global']) {
+      expect(() => writes(eml).learn({ scope, title: `t-${scope}`, content: 'Do X.', source: 'self', happened: 'h' })).toThrow(/a learning is the agent's — scope agent.<id>/)
+      expect(() => writes(eml).update(own.engram.id, { scope })).toThrow(/a learning is the agent's/)
+    }
+  })
+
+  it('a legacy learning elsewhere stays editable where it is and the hygiene check names it for the agent', () => {
+    const legacy = legacyLearning(eml, { title: 'old-user', content: 'Do Y.' }, 'user.ada')
+    const inGlobal = legacyLearning(eml, { title: 'old-global', content: 'Do Z.' }, 'global')
+    expect(writes(eml).update(legacy.id, { content: 'Do Y, then Z.' })).toMatchObject({ scope: 'user.ada' })
+    const check = hygieneCheck(eml).checks.find(c => c.id === 'learning-outside-agent-scope')!
+    expect(check).toMatchObject({ kind: 'migration', decides: 'agent', since_schema: 21 })
+    expect([...check.findings].sort((a, b) => a.title!.localeCompare(b.title!))).toEqual([
+      { id: inGlobal.id, type: 'learning', scope: 'global', title: 'old-global', reason: "a learning in global is the agent's." },
+      { id: legacy.id, type: 'learning', scope: 'user.ada', title: 'old-user', reason: "a learning in user.ada is the agent's." },
+    ])
+    expect(writes(eml).update(legacy.id, { scope: 'agent.assistant' })).toMatchObject({ scope: 'agent.assistant', content: 'Do Y, then Z.' })
+    expect(writes(eml).update(inGlobal.id, { scope: 'agent.assistant' })).toMatchObject({ scope: 'agent.assistant' })
+    expect(hygieneCheck(eml).checks.find(c => c.id === 'learning-outside-agent-scope')!.findings).toEqual([])
   })
 })

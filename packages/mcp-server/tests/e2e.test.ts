@@ -355,10 +355,10 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
     })
 
     it('eml_learning: create, topic match writes nothing, ripe after a second session', async () => {
-      const first = await call('eml_learning', { scope: 'user.mcp', title: 'confirm-before-push', content: 'Confirm before pushing.', source: 'user', happened: 'pushed unasked', quote: 'frag erst' })
+      const first = await call('eml_learning', { scope: 'agent.mcp', title: 'confirm-before-push', content: 'Confirm before pushing.', source: 'user', happened: 'pushed unasked', quote: 'frag erst' })
       expect(first.isError).toBeFalsy()
       const learning = jsonOf(first).engram
-      const dup = await call('eml_learning', { scope: 'user.mcp', title: 'confirm-before-pushing', content: 'Confirm before pushing code.', source: 'self', happened: 'again' })
+      const dup = await call('eml_learning', { scope: 'agent.mcp', title: 'confirm-before-pushing', content: 'Confirm before pushing code.', source: 'self', happened: 'again' })
       expect(textOf(dup)).toContain('nothing written')
       expect(textOf(dup)).toContain(learning.id)
       // the same session counts once: still collecting

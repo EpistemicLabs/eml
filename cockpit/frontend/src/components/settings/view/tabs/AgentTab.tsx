@@ -113,9 +113,6 @@ export default function AgentTab() {
               <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
                 <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
                 {ruleLabel(rule, agent?.id ?? '')}
-                {rule.scope.startsWith('user.') && (
-                  <span className="ml-2 rounded bg-foreground/8 px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">about you</span>
-                )}
               </summary>
               <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
               {rule.content.length > RULE_MAX_CHARS && (

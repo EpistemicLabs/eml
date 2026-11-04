@@ -321,6 +321,24 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
         .map(c => finding(c, 'a rule in a user scope belongs to the agent.'))
     },
   },
+  {
+    // the same decision, extended to learnings: a learning is the agent's own, wherever it came from
+    id: 'learning-outside-agent-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A learning is the agent\'s own (agent.<id>): what it learned about how it works, also with a person. ' +
+      'user.<id> holds the person\'s profile, a project and global hold work; a learning there was written before v0.21.',
+    how:
+      'Re-scope the learning with eml_update(scope) to agent.<id> — in a brain with one agent, that agent — and, ' +
+      'if it came from a task or project, link that with eml_relate. The learning keeps its id, content and evidence.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning' && !c.scope.startsWith('agent.'))
+        .map(c => finding(c, `a learning in ${c.scope} is the agent's.`))
+    },
+  },
 ]
 
 /** Every check, migration checks by schema, then the recurring review. */

@@ -56,6 +56,7 @@ describe('writes through the op log', () => {
     }
     write('object.create', { object: 'project', fields: { id: 'p', name: 'P' } })
     write('object.create', { object: 'tag', fields: { name: 'ops' } })
+    write('object.create', { object: 'agent', fields: { id: 'juno', name: 'Juno' } })
     write('object.update', { object: 'project', id: 'p', patch: { goal: 'ship' } })
     const t = write<{ id: string }>('engram.create', validTask({ scope: 'project.p', title: 'hub', status: 'active', tags: ['ops'] }))
     write('task.track', { id: t.id, text: 'progress' })
@@ -63,7 +64,7 @@ describe('writes through the op log', () => {
     write('engram.update', { id: d.id, patch: { content: 'picked again' } })
     write('engram.confirm_review', { id: d.id, text: 'still holds' })
     write('relation.create', { source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
-    const l = write<{ id: string }>('engram.create', { type: 'learning', scope: 'global', title: 'ask-first', content: 'Ask before acting.', evidence: { source: 'self', happened: 'once' } })
+    const l = write<{ id: string }>('engram.create', { type: 'learning', scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', evidence: { source: 'self', happened: 'once' } })
     write('learning.add_evidence', { id: l.id, source: 'observed', happened: 'again' })
     const other = otherBrain()
     const set = exportSet((other as any).db, ((other as any).db.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map(r => r.id))

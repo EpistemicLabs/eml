@@ -127,7 +127,7 @@ describe('v0.19 review fixes', () => {
     })
 
     it('learning evidence without a session id does not count as a session', () => {
-      const l = writes(eml).learn({ scope: 'user.ada', title: 't', content: 'Do X.', source: 'user', happened: 'h1', quote: 'q' }, eml.env({ handle: 'juno' }))
+      const l = writes(eml).learn({ scope: 'agent.juno', title: 't', content: 'Do X.', source: 'user', happened: 'h1', quote: 'q' }, eml.env({ handle: 'juno' }))
       if (!l.written) throw new Error('not written')
       const r = writes(eml).learn({ id: l.engram.id, source: 'user', happened: 'h2', quote: 'q2' }, eml.env({ handle: 'juno' }))
       if (!r.written) throw new Error('not written')
@@ -144,7 +144,7 @@ describe('v0.19 review fixes', () => {
     })
 
     it('learn(id, content) refuses a blank lesson', () => {
-      const l = writes(eml).learn({ scope: 'user.ada', title: 't', content: 'Do X.', source: 'user', happened: 'h', quote: 'q' }, ctx())
+      const l = writes(eml).learn({ scope: 'agent.juno', title: 't', content: 'Do X.', source: 'user', happened: 'h', quote: 'q' }, ctx())
       if (!l.written) throw new Error('not written')
       expect(() => writes(eml).learn({ id: l.engram.id, content: '  ', source: 'self', happened: 'h2' }, ctx())).toThrow(/content must not be empty/)
     })
@@ -185,10 +185,13 @@ describe('v0.19 review fixes', () => {
     })
 
     it('the learning topic check filters by scope inside the query', () => {
-      writes(eml).learn({ scope: 'project.p', title: 'ask-first', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, ctx())
-      const other = writes(eml).learn({ scope: 'project.q', title: 'ask-first', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, ctx())
+      // two agents' learnings; the caller is a third handle, so neither scope is the caller's own
+      for (const id of ['p', 'q']) eml.apply({ name: 'object.create', input: { object: 'agent', fields: { id, name: id.toUpperCase() } } }, ctx())
+      const kai = ctx('s1', 'kai')
+      writes(eml).learn({ scope: 'agent.p', title: 'ask-first', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, kai)
+      const other = writes(eml).learn({ scope: 'agent.q', title: 'ask-first', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, kai)
       expect(other.written).toBe(true)
-      const same = writes(eml).learn({ scope: 'project.p', title: 'ask-first-2', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, ctx())
+      const same = writes(eml).learn({ scope: 'agent.p', title: 'ask-first-2', content: 'Ask before pushing to the remote.', source: 'user', happened: 'h', quote: 'q' }, kai)
       expect(same.written).toBe(false)
     })
   })
@@ -223,12 +226,12 @@ describe('v0.19 review fixes', () => {
     })
 
     it('learning-unclear: the recurring learning check (no age check)', () => {
-      const unclear = writes(eml).learn({ scope: 'user.ada', title: 'u', content: 'Do U.', source: 'user', happened: 'h', quote: 'q' }, ctx('s1'))
+      const unclear = writes(eml).learn({ scope: 'agent.juno', title: 'u', content: 'Do U.', source: 'user', happened: 'h', quote: 'q' }, ctx('s1'))
       if (!unclear.written) throw new Error('not written')
       writes(eml).learn({ id: unclear.engram.id, source: 'observed', happened: 'did not hold', stance: 'contradicts' }, ctx('s2'))
-      const stale = writes(eml).learn({ scope: 'user.ada', title: 's', content: 'Do S.', source: 'observed', happened: 'once' }, ctx('s1'))
+      const stale = writes(eml).learn({ scope: 'agent.juno', title: 's', content: 'Do S.', source: 'observed', happened: 'once' }, ctx('s1'))
       if (!stale.written) throw new Error('not written')
-      const fresh = writes(eml).learn({ scope: 'user.ada', title: 'f', content: 'Do F.', source: 'observed', happened: 'once' }, ctx('s1'))
+      const fresh = writes(eml).learn({ scope: 'agent.juno', title: 'f', content: 'Do F.', source: 'observed', happened: 'once' }, ctx('s1'))
       if (!fresh.written) throw new Error('not written')
       const later = new Date(Date.now() + 365 * 86400_000)
       const r = hygieneCheck(eml, { now: later })
