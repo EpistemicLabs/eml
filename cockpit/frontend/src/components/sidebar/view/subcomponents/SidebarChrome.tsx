@@ -27,7 +27,7 @@ const MODES: Array<{ mode: SidebarViewMode; label: string }> = [
   { mode: 'conversations', label: 'Sessions' },
 ];
 
-/** The sidebar's three views, under the space switch; the overview is still in beta. */
+/** The sidebar's three views, right above their list; the overview is still in beta. */
 export function SidebarModes({
   viewMode,
   onViewModeChange,

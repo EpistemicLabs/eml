@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readViewMode, writeViewMode } from '../../utils';
 import { SidebarModes } from './SidebarChrome';
 
-// Under the space switch: the overview, marked beta, then Projects and Sessions.
+// Above their list: the overview, marked beta, then Projects and Sessions.
 // Projects is the default, and the browser remembers the last one.
 
 afterEach(() => {

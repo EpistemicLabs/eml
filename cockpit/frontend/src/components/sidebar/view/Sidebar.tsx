@@ -60,8 +60,8 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         isPinnedOpen={controller.isPinnedOpen}
         onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
       />
-      <SidebarModes viewMode={controller.viewMode} onViewModeChange={controller.setViewMode} waiting={waiting} />
       <SidebarNewSession controller={controller} />
+      <SidebarModes viewMode={controller.viewMode} onViewModeChange={controller.setViewMode} waiting={waiting} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <SidebarScrollRegion
         refreshing={controller.refreshing}
