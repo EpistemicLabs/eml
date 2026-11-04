@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import { BINDINGS, CHANGE_TYPES, RULE_TYPES, subjects, tags } from './_shared'
 
@@ -9,7 +9,7 @@ import { BINDINGS, CHANGE_TYPES, RULE_TYPES, subjects, tags } from './_shared'
  * patch is flat: the universal fields plus the typed fields of the engram's
  * type; core rejects a field the type does not have, with the list.
  */
-export function registerUpdateTool(server: McpServer, http: HttpClient): void {
+export function registerUpdateTool(server: McpServer, http: EmlApi): void {
   const nullable = (what: string) => z.string().nullable().optional().describe(what)
   server.registerTool('eml_update', {
     title: 'Update Engram',

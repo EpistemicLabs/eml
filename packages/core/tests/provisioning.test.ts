@@ -81,6 +81,20 @@ describe('provisionUser', () => {
       expect(brain.name).toBe('helper')
     })
 
+    it('v0.21: takes its own name and the token name, and seeds the objects only when asked (a cockpit space, whose identity is its agent brain\'s)', () => {
+      const result = provisionUser({ email: 'bob@example.com', agentId: 'helper', userId: 'bob', control, dataDir, name: 'Main', tokenName: 'bob', seedIdentity: false })
+      expect(control.prepare('SELECT name FROM brains WHERE id = ?').get(result.brainId)).toEqual({ name: 'Main' })
+      expect(verifyToken(control, result.tokenPlaintext)).toMatchObject({ brainId: result.brainId, caller: 'bob' })
+      const eml = new EML({ dbPath: join(dataDir, result.brainFile), namespace: 'helper' })
+      try {
+        expect(eml.engrams.query({})).toHaveLength(0)
+        expect(eml.agents.exists('helper')).toBe(true)
+        expect(eml.users.exists('bob')).toBe(true)
+      } finally {
+        eml.close()
+      }
+    })
+
     it('returned token verifies against the control plane', () => {
       const result = provisionUser({ email: 'a@b.de', agentId: 'a', userId: 'a', control, dataDir })
       const verified = verifyToken(control, result.tokenPlaintext)

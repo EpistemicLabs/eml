@@ -346,7 +346,27 @@ export class EngramStore {
     const engram = this.rowToEngram(row)
     this.hydrateFacets([engram])
 
-    // v0.9.1 Cluster 1: relations are loaded without a namespace filter (no multi-tenancy).
+    // v0.15: a task carries its journal, so a fresh session can take it over cold.
+    // v0.19: every engram its entries (evidence, reviews); a task its bound items,
+    // a learning its ripeness.
+    const entries = this.entries(id)
+    return {
+      ...engram,
+      relations: this.relationsOf(id),
+      ...(entries.length > 0 ? { entries } : {}),
+      ...(engram.type === 'task' ? { bound: this.boundItems(id) } : {}),
+      ...(engram.type === 'learning' ? { learning: learningState(entries) } : {}),
+    }
+  }
+
+  /**
+   * Every relation with `id` at either end, with the bodies of the ends this
+   * brain holds. v0.9.1 Cluster 1: no namespace filter. v0.21: the engram
+   * itself need not be in this brain — a cross-brain reference (source_brain /
+   * target_brain) names an engram of another brain, and that brain's host
+   * asks here for the links that point at it.
+   */
+  relationsOf(id: string): RelationWithTarget[] {
     const rels = this.db.prepare(`
       SELECT r.*,
         c1.content as src_engram_content, c1.type as src_engram_type,
@@ -357,18 +377,7 @@ export class EngramStore {
       WHERE (r.source_id = ? OR r.target_id = ?)
       ORDER BY r.ord
     `).all(id, id) as any[]
-
-    // v0.15: a task carries its journal, so a fresh session can take it over cold.
-    // v0.19: every engram its entries (evidence, reviews); a task its bound items,
-    // a learning its ripeness.
-    const entries = this.entries(id)
-    return {
-      ...engram,
-      relations: rels.map(r => this.rowToRelationWithTarget(r)),
-      ...(entries.length > 0 ? { entries } : {}),
-      ...(engram.type === 'task' ? { bound: this.boundItems(id) } : {}),
-      ...(engram.type === 'learning' ? { learning: learningState(entries) } : {}),
-    }
+    return rels.map(r => this.rowToRelationWithTarget(r))
   }
 
   /**

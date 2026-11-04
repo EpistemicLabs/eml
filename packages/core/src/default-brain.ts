@@ -123,12 +123,19 @@ function substitute(t: EngramInput, agentId: string, userId: string, names: Requ
   }
 }
 
+/**
+ * The agent and user objects, and with `identity` (the default) their seeded
+ * profiles and rules. A host that keeps an agent's identity in a brain of its
+ * own (the EML cockpit's agent brains) seeds it there and leaves it out of
+ * every space brain, which then holds the objects only.
+ */
 export function seedDefaultBrain(
   brainPath: string,
   agentId: string = DEFAULT_BRAIN_AGENT_ID,
   userId: string = DEFAULT_BRAIN_USER_ID,
   names: DefaultBrainNames = {},
   brainId?: string,
+  opts: { identity?: boolean } = {},
 ): void {
   const resolved = { agentName: names.agentName?.trim() || agentId, userName: names.userName?.trim() || userId }
   const eml = new EML({ dbPath: brainPath, namespace: agentId, brainId })
@@ -140,6 +147,7 @@ export function seedDefaultBrain(
     if (!eml.users.exists(userId)) {
       eml.apply({ name: 'object.create', input: { object: 'user', fields: { id: userId, name: resolved.userName } } }, env)
     }
+    if (opts.identity === false) return
     for (const template of DEFAULT_BRAIN_ENGRAM_TEMPLATES) {
       eml.apply({ name: 'engram.create', input: substitute(template, agentId, userId, resolved) }, env)
     }

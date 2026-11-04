@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 import { ENGRAM_TYPES } from './_shared'
 
-export function registerListTool(server: McpServer, http: HttpClient): void {
+export function registerListTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_list',
     {

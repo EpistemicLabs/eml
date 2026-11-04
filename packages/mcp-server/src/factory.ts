@@ -1,11 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from './http-client'
+import type { EmlApi } from './http-client'
 import type { Provenance } from './provenance'
 import { registerAllTools } from './tools'
 
 export interface EmlMcpServerOptions {
   /** The EML API client the tools call; its write headers carry `provenance`. */
-  client: HttpClient
+  client: EmlApi
   /** Who writes (provenance.ts); the harness is set from the initialize handshake. */
   provenance: Provenance
   clientName?: string

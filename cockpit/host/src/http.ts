@@ -39,7 +39,8 @@ import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
-import { MCP_PATH, sessionModel } from './brain-mcp.js'
+import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
+import type { AgentBrains } from './agents.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -90,9 +91,12 @@ export interface HostDeps {
   spawnToken: string
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
-  /** The brain MCP endpoint (brain-mcp.ts) and its URL, which a new space's mcp.json names. */
-  brainMcp: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
+  /** The home's agent brains (agents.ts); a new space binds the main space's. */
+  agents: AgentBrains
+  /** The brain MCP endpoint and the hook routes (brain-mcp.ts), and their URLs, which a new space's session files name. */
+  brainMcp: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void>; handleHooks(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
   mcpUrl: string
+  hooksUrl: string
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -284,27 +288,30 @@ function validSpaceName(deps: HostDeps, name: string, self?: BrainSpace): { name
   return { name: trimmed }
 }
 
-/** Settings › Brain › New space: a further local brain with the main brain's identity. */
+/**
+ * Settings › Brain › New space: a further local brain, bound to the main
+ * space's agent (the agent picker per space comes with Settings › Agents).
+ * The space gets no identity of its own — that is the agent brain's — only
+ * the agent and user objects, so engrams in their scopes can be written there.
+ */
 async function createSpace(deps: HostDeps, name: string): Promise<{ space: BrainSpace } | SpaceError> {
   const valid = validSpaceName(deps, name)
   if ('error' in valid) return valid
   const trimmed = valid.name
-  // The identity the main brain was set up with: its agent (= the brain's
-  // control-plane name) and the user behind this cockpit's token.
   const main = deps.spaces.main
-  const info = readBrainInfo(main.token)
-  const agentId = main.brainName
-  const userId = info.author ?? info.users[0]?.id
-  if (!userId) return { error: { code: 'NO_IDENTITY', message: 'The main brain has no user to copy.' } }
-  const { brainId, token } = await provisionSpace(trimmed, {
-    agentId,
-    agentName: info.agents.find((a) => a.id === agentId)?.name ?? agentId,
-    userId,
-    userName: info.users.find((u) => u.id === userId)?.name ?? userId,
-  })
+  const agent = deps.agents.get(main.agent)
+  const handle = (await readCockpitConfig())?.handle
+  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
+  // The names as the agent brain knows them: the agent's and the human's.
+  const info = readBrainInfo(agent.token)
+  const { brainId, token } = await provisionSpace(
+    trimmed,
+    { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
+    { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
+  )
   const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
-    mcpUrl: deps.mcpUrl,
+    id: brainId, name: trimmed, brainName: trimmed, agent: agent.id, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
+    mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
   })
   deps.spaces.add(space)
   return { space }
@@ -874,6 +881,8 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // The brain MCP endpoint (brain-mcp.ts): local agent sessions only, no
     // Origin; the space's MCP token and a known session are its guard.
     if (url === MCP_PATH || url.startsWith(`${MCP_PATH}?`)) { void deps.brainMcp.handle(req, res); return }
+    // The hook routes (brain-mcp.ts HOOKS_PATH): the session hooks' reads, the space's MCP token as the bearer.
+    if (url.startsWith(`${HOOKS_PATH}/`)) { void deps.brainMcp.handleHooks(req, res); return }
     // CSRF guard for the whole API surface, including the brain proxy (the host
     // injects the brain token, so a cross-origin write would otherwise reach the
     // real brain): every state-changing /api/* call must carry an allowlisted

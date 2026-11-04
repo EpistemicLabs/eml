@@ -21,7 +21,8 @@ import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
-import { MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
+import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
+import { loadAgentBrains } from './agents.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
@@ -109,42 +110,50 @@ async function main() {
   // The per-boot token keeps other local processes from spoofing session state.
   const hookToken = randomBytes(16).toString('hex')
   const hookUrl = `http://127.0.0.1:${hostPort}/api/hook`
-  // The brain MCP endpoint every Claude Code session reaches its space's brain through (brain-mcp.ts).
+  // The brain MCP endpoint every session reaches its brains through, and the
+  // hook routes the session hooks read from (brain-mcp.ts).
   const mcpUrl = `http://127.0.0.1:${hostPort}${MCP_PATH}`
+  const hooksUrl = `http://127.0.0.1:${hostPort}${HOOKS_PATH}`
 
   // Each agent CLI writes the files its sessions share across spaces (for
   // Claude Code: the turn-hook config, the skills, .claude.json; for Codex:
   // config.toml and hooks.json). A space's own files follow below.
   for (const provider of providers.all()) {
-    provider.prepare({ hookUrl, hookToken, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
+    provider.prepare({ hookUrl, hookToken, mcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
   }
   log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME)')
 
-  // The brain spaces (brain-space.ts): the local brain this home was
-  // provisioned with (main) plus the further local brains of the config. Each
-  // space writes its own session files.
+  // The agent brains (agents.ts) and the brain spaces (brain-space.ts): the
+  // local brain this home was provisioned with (main) plus the further local
+  // brains of the config, each bound to one agent. Each space writes its own
+  // session files. A space without a bound agent (a home from before agent
+  // brains, until the agent upgrade) gets no brain in its sessions.
   const config = await readCockpitConfig()
+  const agents = loadAgentBrains(config, server.baseUrl, log)
   const row = brainForLocalToken(brain.token)
   const main = openBrainSpace({
     id: row?.id ?? 'main',
     name: config?.mainName ?? 'Main',
     brainName: row?.name ?? 'main',
+    agent: config?.agent ?? null,
     main: true,
     url: server.baseUrl,
     token: brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
     mcpUrl,
+    hooksUrl,
   })
   const spaces = new BrainSpaces(main)
   for (const extra of config?.spaces ?? []) {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
-      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl,
+      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, agent: extra.agent ?? null, main: false,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl,
     }))
   }
-  log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
+  log(`agents: ${agents.list().map((a) => a.id).join(', ') || 'none'}${config?.handle ? ` (handle ${config.handle})` : ''}`)
+  log(`spaces: ${spaces.list().map((s) => `${s.name} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
 
   // Sessions can open worker sessions (skill spawn-session → cockpit-spawn →
   // POST /api/spawn); the per-boot token keeps other local processes out.
@@ -177,10 +186,10 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
-  const brainMcp = createBrainMcpHandler({ spaces, ledger, providers, serverVersion: ABOUT.version })
+  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene, brainMcp, mcpUrl },
+    { spaces, bridge, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, spawnToken, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
     origins,
   )
 

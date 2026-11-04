@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import { PRIORITIES, STAGES, subjects, tags } from './_shared'
 
@@ -9,7 +9,7 @@ import { PRIORITIES, STAGES, subjects, tags } from './_shared'
  * Replaces eml_task_entry and closing through eml_update. Core enforces the
  * rules (text where required, outcome on close, keep for bound items).
  */
-export function registerTrackTaskTool(server: McpServer, http: HttpClient): void {
+export function registerTrackTaskTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_track_task', {
     title: 'Track Task',
     description:

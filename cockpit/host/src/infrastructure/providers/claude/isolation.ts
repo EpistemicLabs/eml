@@ -43,8 +43,9 @@ import { platform } from '../../platform/index.js'
  *     otherwise shows on every TUI start; carries the session hooks — turn
  *     state to the host, and the EML hooks (boot, reminder, consolidate at stop) from the bundled
  *     @engramprotocol/mcp-server, reading the space's EML config.
- *   - <home>/eml/spaces/<id>/config (chmod 600): brain URL + token of the space
- *     for those EML hooks — the app's own EML client config, never the user's ~/.eml.
+ *   - <home>/eml/spaces/<id>/config (chmod 600): the host's hook routes and the
+ *     space's MCP token for those EML hooks — the app's own EML client config,
+ *     never the user's ~/.eml. No brain token in any of them.
  */
 
 /** The shared isolation files of this boot; a space's own files are SpaceFiles. */
@@ -136,21 +137,22 @@ export interface SpaceFiles {
   mcpConfig: string
   /** --settings: the session hooks, with the EML hooks reading `emlConfig`. */
   settings: string
-  /** EML client config of this space for those hooks (URL + token). */
+  /** EML client config of this space for those hooks (the host's hook routes + the space's MCP token). */
   emlConfig: string
+}
+
+/** What a space's session files point at: the host's brain MCP endpoint and hook routes, with the space's per-boot MCP token. */
+export interface SpaceHost {
+  mcpUrl: string
+  hooksUrl: string
+  mcpToken: string
 }
 
 /**
  * Write one space's mcp.json, settings.json and EML hook config. Called once
  * per space on every boot, after writeIsolationFiles (the shared files).
  */
-export function writeSpaceFiles(
-  spaceId: string,
-  loopbackUrl: string,
-  brainToken: string,
-  turnHookConfig: string,
-  mcp: { url: string; token: string },
-): SpaceFiles {
+export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: SpaceHost): SpaceFiles {
   const dir = spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   fs.chmodSync(dir, 0o700)
@@ -158,10 +160,10 @@ export function writeSpaceFiles(
   const settings = path.join(dir, 'settings.json')
   const emlConfig = path.join(spaceEmlDir(spaceId), 'config')
 
-  writeEmlHookConfig(emlConfig, loopbackUrl, brainToken)
+  writeEmlHookConfig(emlConfig, host.hooksUrl, host.mcpToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { eml_brain: brainMcpServer(mcp.url, mcp.token) } }),
+    JSON.stringify({ mcpServers: { eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)

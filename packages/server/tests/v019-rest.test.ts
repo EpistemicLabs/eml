@@ -422,6 +422,13 @@ describe('v0.19 REST', () => {
       expect(g.body.relations[0]).toMatchObject({ target_id: remote, source_brain: null, target_brain: brain })
       const both = await post('/relate', { source_id: note.id, target_id: remote, relation: 'supports', detection_method: 'manual', source_brain: brain, target_brain: brain })
       expect(both.status).toBe(400)
+      // The remote engram's own host asks this brain for the links that point at it.
+      const links = await get(`/relations?engram=${remote}`)
+      expect(links.status).toBe(200)
+      expect(links.body.count).toBe(1)
+      expect(links.body.relations[0]).toMatchObject({ source_id: note.id, target_id: remote, relation: 'refines', target_brain: brain })
+      expect((await get('/relations')).status).toBe(400)
+      expect((await get('/relations?engram=x&y=1')).status).toBe(400)
     })
   })
 })

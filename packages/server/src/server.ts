@@ -22,6 +22,7 @@
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
+ *   GET  /relations         ?engram=<id>                             → The relations with that id at either end (v0.21: also a cross-brain reference to an engram of another brain)
  *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent), or one (v0.19; kind: entities)
  *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
@@ -377,6 +378,8 @@ const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
 const ALLOWED_ENGRAM_GET_PARAMS = new Set([
   'with_relations',
 ])
+
+const ALLOWED_RELATIONS_PARAMS = new Set(['engram'])
 
 /**
  * v0.7: validate query params against a whitelist.
@@ -830,6 +833,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     }
 
     // === v0.4: engram API completion ===
+
+    // GET /relations?engram=<id> — the relations with that engram at either
+    // end. v0.21: the engram need not be in this brain — an agent brain holds
+    // cross-brain references to a space's engrams (relation.create
+    // source_brain / target_brain), and the cockpit host lists them from the
+    // space's side ("links from your agent brain").
+    if (url.startsWith('/relations') && method === 'GET') {
+      const q = parseQuery(req.url)
+      if (rejectUnknownParams(res, q, ALLOWED_RELATIONS_PARAMS)) return
+      if (!q.engram) return json(res, 400, { error: 'engram required' })
+      const relations = eml.engrams.relationsOf(q.engram)
+      return json(res, 200, { count: relations.length, relations })
+    }
 
     // GET /engram/:id — single-engram lookup.
     if (url.startsWith('/engram/') && method === 'GET') {

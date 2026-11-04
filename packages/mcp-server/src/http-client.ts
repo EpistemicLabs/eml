@@ -29,7 +29,17 @@ export class EmlApiError extends Error {
   }
 }
 
-export class HttpClient {
+/**
+ * What the tools call: the EML HTTP API — one brain (HttpClient), or a
+ * session's two brains behind one API (routed-client.ts).
+ */
+export interface EmlApi {
+  get(path: string, query?: Record<string, string | number | undefined>): Promise<unknown>
+  post(path: string, body?: unknown): Promise<unknown>
+  put(path: string, body?: unknown): Promise<unknown>
+}
+
+export class HttpClient implements EmlApi {
   private readonly baseUrl: string
   private readonly headers: Record<string, string>
   private readonly timeoutMs: number

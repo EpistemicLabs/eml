@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import {
   BINDINGS, CHANGE_TYPES, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
@@ -19,7 +19,7 @@ function body(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
 }
 
-export function registerDecideTool(server: McpServer, http: HttpClient): void {
+export function registerDecideTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_decide', {
     title: 'Record Decision',
     description:
@@ -50,7 +50,7 @@ export function registerDecideTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/decision', body(args)), { prefix: writeBanner }))
 }
 
-export function registerSetStatusTool(server: McpServer, http: HttpClient): void {
+export function registerSetStatusTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_set_status', {
     title: 'Set Status',
     description:
@@ -74,7 +74,7 @@ export function registerSetStatusTool(server: McpServer, http: HttpClient): void
   }, async (args) => callTool(() => http.post('/engram/status', body(args)), { prefix: writeBanner }))
 }
 
-export function registerCreateTaskTool(server: McpServer, http: HttpClient): void {
+export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_create_task', {
     title: 'Create Task',
     description:
@@ -106,7 +106,7 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
   }, async (args) => callTool(() => http.post('/engram/task', body(args)), { prefix: writeBanner }))
 }
 
-export function registerNoteTool(server: McpServer, http: HttpClient): void {
+export function registerNoteTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_note', {
     title: 'Write Note',
     description:
@@ -135,7 +135,7 @@ export function registerNoteTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/note', body(args)), { prefix: writeBanner }))
 }
 
-export function registerRuleTool(server: McpServer, http: HttpClient): void {
+export function registerRuleTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_rule', {
     title: 'Record Rule',
     description:
@@ -171,7 +171,7 @@ export function registerRuleTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/rule', body(args)), { prefix: writeBanner }))
 }
 
-export function registerEventTool(server: McpServer, http: HttpClient): void {
+export function registerEventTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_event', {
     title: 'Record Event',
     description:
@@ -196,7 +196,7 @@ export function registerEventTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/event', body(args)), { prefix: writeBanner }))
 }
 
-export function registerReferenceTool(server: McpServer, http: HttpClient): void {
+export function registerReferenceTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_reference', {
     title: 'Record Reference',
     description:
@@ -221,7 +221,7 @@ export function registerReferenceTool(server: McpServer, http: HttpClient): void
   }, async (args) => callTool(() => http.post('/engram/reference', body(args)), { prefix: writeBanner }))
 }
 
-export function registerLogTool(server: McpServer, http: HttpClient): void {
+export function registerLogTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_log', {
     title: 'Write Session Log',
     description:
@@ -247,7 +247,7 @@ export function registerLogTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/log', body({ ...args, content: args.content ?? '' })), { prefix: writeBanner }))
 }
 
-export function registerProfileTool(server: McpServer, http: HttpClient): void {
+export function registerProfileTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_profile', {
     title: 'Record Profile',
     description:

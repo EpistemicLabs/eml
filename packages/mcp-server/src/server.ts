@@ -4,7 +4,8 @@ import { HttpClient } from './http-client'
 import { Provenance } from './provenance'
 
 export { createEmlMcpServer, type EmlMcpServerOptions } from './factory'
-export { HttpClient } from './http-client'
+export { HttpClient, EmlApiError, type EmlApi } from './http-client'
+export { RoutedClient, type RoutedClientOptions } from './routed-client'
 export { Provenance } from './provenance'
 export { McpHttpEndpoint, type McpHttpCaller, type McpHttpEndpointOptions } from './http-endpoint'
 

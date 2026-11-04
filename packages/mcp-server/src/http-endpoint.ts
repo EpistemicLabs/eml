@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { createEmlMcpServer } from './factory'
-import type { HttpClient } from './http-client'
+import type { EmlApi } from './http-client'
 import type { Provenance } from './provenance'
 
 /**
@@ -28,7 +28,7 @@ export interface McpHttpCaller {
 
 export interface McpHttpEndpointOptions {
   /** The EML API client and provenance for a new MCP session of `caller`. */
-  open(caller: McpHttpCaller): { client: HttpClient; provenance: Provenance }
+  open(caller: McpHttpCaller): { client: EmlApi; provenance: Provenance }
   clientName?: string
   serverVersion?: string
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 /**
@@ -10,7 +10,7 @@ import { callTool } from './_helpers'
  * Returns a curated snapshot: current_status, open_tasks, recent_decisions,
  * recent_logs, rules.
  */
-export function registerShowTool(server: McpServer, http: HttpClient): void {
+export function registerShowTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_show',
     {

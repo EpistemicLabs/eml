@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 /**
@@ -47,7 +47,7 @@ const fieldShape = {
   metadata: z.record(z.string(), z.string()).nullable().optional(),
 }
 
-export function registerReadObjectTool(server: McpServer, http: HttpClient): void {
+export function registerReadObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_read_object', {
     title: 'Read Objects',
     description:
@@ -65,7 +65,7 @@ export function registerReadObjectTool(server: McpServer, http: HttpClient): voi
   }, async (args) => callTool(() => http.get(`/object/${args.object}`, { id: args.id, status: args.status, kind: args.kind })))
 }
 
-export function registerCreateObjectTool(server: McpServer, http: HttpClient): void {
+export function registerCreateObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_create_object', {
     title: 'Create Object',
     description:
@@ -78,7 +78,7 @@ export function registerCreateObjectTool(server: McpServer, http: HttpClient): v
   ))
 }
 
-export function registerUpdateObjectTool(server: McpServer, http: HttpClient): void {
+export function registerUpdateObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_update_object', {
     title: 'Update Object',
     description:

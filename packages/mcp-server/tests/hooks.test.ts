@@ -53,6 +53,10 @@ describe('hook session-start', () => {
     const down = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
     expect((await sessionStart(CFG, '/x/config', down)).output).toMatch(/unreachable/)
     expect((await sessionStart(CFG, '/x/config', fakeFetch(500, {}))).output).toMatch(/HTTP 500/)
+    // The server's reason comes along when it gave one (the cockpit host: a space without an agent).
+    const refused = await sessionStart(CFG, '/x/config', fakeFetch(503, { error: 'Space "Life" has no agent bound' }))
+    expect(refused.output).toBe('⚠️ EML boot failed — server error (HTTP 503). Space "Life" has no agent bound')
+    expect(refused.log).toBe('FAIL http 503 Space "Life" has no agent bound')
   })
 
   it('reports a missing or incomplete config instead of failing', async () => {

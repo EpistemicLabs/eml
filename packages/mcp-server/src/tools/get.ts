@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
-export function registerGetTool(server: McpServer, http: HttpClient): void {
+export function registerGetTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_get',
     {

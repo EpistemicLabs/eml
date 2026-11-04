@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 // v0.19: supersedes and part_of are not drawn by hand — they come from
@@ -16,7 +16,7 @@ const RELATION_VERBS = [
  * supersede + `[[wikilinks]]` (which materialize `related_to` on write) — with
  * explicit, typed threading the write path can't infer.
  */
-export function registerRelateTool(server: McpServer, http: HttpClient): void {
+export function registerRelateTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_relate',
     {

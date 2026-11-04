@@ -6,7 +6,7 @@ import type {
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
-  BRAIN_MCP_COMMAND, BRAIN_MCP_ENV_VARS, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, TURN_HOOK_OPTIONS, codexHook,
+  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TURN_HOOK_OPTIONS, codexHook,
   emlHookCommand, ensureHookNode, installManagedSkills, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
@@ -25,18 +25,20 @@ import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from
  * real projects (cwd = project path).
  *
  * One Codex home serves every brain space, so nothing written here names a
- * brain. A session gets its space's brain through its environment instead:
- * EML_API_URL + EML_API_TOKEN, which Codex forwards to the brain MCP server
- * (`env_vars` in config.toml — an MCP server otherwise sees a minimal env),
- * and EML_HOOK_CONFIG, the path of the space's EML hook config, which the
- * EML hooks read themselves (see shared.ts, EML_HOOK_CONFIG_ENV).
+ * brain. A session gets its space through its environment instead: the
+ * space's per-boot MCP token (COCKPIT_MCP_TOKEN) and its session id, which
+ * Codex sends as headers to the host's brain MCP endpoint (`env_http_headers`
+ * in config.toml; brain-mcp.ts), and EML_HOOK_CONFIG, the path of the space's
+ * EML hook config, which the EML hooks read themselves (see shared.ts,
+ * EML_HOOK_CONFIG_ENV). No brain token reaches a session.
  *
  * Files written here:
- *   - config.toml: Codex's own update check off; the brain MCP server (eml_brain)
- *     with its tool calls pre-approved (Codex asks per call otherwise, and
- *     fails the call where nobody can answer); one `projects."<path>"` table
- *     per trusted folder. Codex keeps its own state in the same file, so only
- *     these tables are replaced. No token in it.
+ *   - config.toml: Codex's own update check off; the brain MCP server (eml_brain,
+ *     the host's endpoint over streamable HTTP) with its tool calls pre-approved
+ *     (Codex asks per call otherwise, and fails the call where nobody can
+ *     answer); one `projects."<path>"` table per trusted folder. Codex keeps
+ *     its own state in the same file, so only these tables are replaced. No
+ *     token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
  *   - hooks.json: turn state to the host, and the EML hooks (boot, project block, reminder,
  *     consolidate at stop).
@@ -150,10 +152,9 @@ class CodexProvider implements AgentProvider {
       {
         header: 'mcp_servers.eml_brain',
         lines: [
-          `command = ${tomlString(BRAIN_MCP_COMMAND.command)}`,
-          `args = [${BRAIN_MCP_COMMAND.args.map(tomlString).join(', ')}]`,
-          // The session's brain: forwarded from the session's env (launch).
-          `env_vars = [${BRAIN_MCP_ENV_VARS.map(tomlString).join(', ')}]`,
+          `url = ${tomlString(ctx.mcpUrl)}`,
+          // The session's space and session id, as headers from the session's env (launch).
+          `env_http_headers = { ${tomlString(MCP_TOKEN_HEADER)} = ${tomlString(MCP_TOKEN_ENV)}, ${tomlString(MCP_SESSION_HEADER)} = "COCKPIT_SESSION_ID" }`,
           'default_tools_approval_mode = "approve"',
         ],
       },
@@ -240,10 +241,10 @@ class CodexProvider implements AgentProvider {
       args,
       env: {
         CODEX_HOME: CODEX_CONFIG_DIR,
-        // The session's brain, its space's: Codex forwards the first two to the
-        // brain MCP server (env_vars in config.toml); the hooks read the third.
-        EML_API_URL: req.space.url,
-        EML_API_TOKEN: req.space.token,
+        // The session's space: Codex sends its MCP token as a header to the
+        // host's brain MCP endpoint (env_http_headers in config.toml); the
+        // hooks read the space's config.
+        [MCP_TOKEN_ENV]: req.space.mcpToken,
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
         // First on the session's PATH. Codex runs shell commands in a login shell,
         // which builds its own PATH — a `codex` typed there can still be the user's.
