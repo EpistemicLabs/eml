@@ -104,6 +104,10 @@ With a worker address:
   message. The call then shows as refused and says "Delivered, not an error". The
   session has it; do not send it again. A woken session reads your address in the
   message and can answer you.
+- To reach a session whose address you don't have, search by what your user
+  calls it, such as "the catalogue session": `node "$COCKPIT_SESSIONS_JS" catalogue`.
+  It lists the sessions that fit, stopped ones too, each with its address. For
+  the most recent sessions, use ListAgents.
 - An idle notice only works on a running session: `notify_when_idle` without a
   message does not wake a stopped one.
 - Its summary tells you it is done: check the result where it says, then tell

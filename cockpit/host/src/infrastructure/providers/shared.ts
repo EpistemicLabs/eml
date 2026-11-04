@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TURN_JS, MCP_CLI_JS } from '../../paths.js'
+import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TURN_JS, MCP_CLI_JS } from '../../paths.js'
 import type { PlatformOs } from '../../domain/platform.js'
 import { platform } from '../platform/index.js'
 
@@ -79,6 +79,13 @@ export function sendMessageHookCommand(): HookCommand {
 
 /** Longer than the hook's own wait for the host: a stopped session has to start first. */
 export const SEND_MESSAGE_HOOK_OPTIONS = { timeout: 40 }
+
+export function listAgentsHookCommand(): HookCommand {
+  return { program: hookNode(), args: [HOOK_LIST_AGENTS_JS] }
+}
+
+/** Longer than the hook's own wait for the host. */
+export const LIST_AGENTS_HOOK_OPTIONS = { timeout: 10 }
 
 /** The turn hook read its token from this curl config up to 0.17.19; the file carries the token and goes on boot. */
 export const LEGACY_CURL_CONFIG = 'hook-curl.conf'

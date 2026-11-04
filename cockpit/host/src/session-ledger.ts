@@ -69,6 +69,8 @@ export interface LedgerEntry {
   wakeable: boolean
   /** How it stands for someone, why, and since when; null when nobody has anything to do. */
   attention: { kind: WorkerStatus; reason: string | null; at: string } | null
+  /** The last status it gave with a reason, kept after nobody has anything to do: what came of it (session-directory.ts). */
+  lastStatus: { kind: WorkerStatus; reason: string; at: string } | null
   /** It is the main pane of a desk. Saved here, beside the pin, so every device lists it as a main session. */
   deskMain: boolean
   /** The session that started this one; null for one started by hand or from before this was recorded. */
@@ -124,6 +126,9 @@ function load(): LedgerFile {
           wakeable: entry.wakeable === true,
           attention: entry.attention && typeof entry.attention.kind === 'string'
             ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null, at: typeof entry.attention.at === 'string' ? entry.attention.at : entry.lastAttached }
+            : null,
+          lastStatus: entry.lastStatus && typeof entry.lastStatus.kind === 'string' && typeof entry.lastStatus.reason === 'string'
+            ? { kind: entry.lastStatus.kind, reason: entry.lastStatus.reason, at: typeof entry.lastStatus.at === 'string' ? entry.lastStatus.at : entry.lastAttached }
             : null,
           deskMain: entry.deskMain === true,
           parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
@@ -198,6 +203,7 @@ export class SessionLedger {
       chatModel: prev?.chatModel ?? null,
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
+      lastStatus: prev?.lastStatus ?? null,
       deskMain: prev?.deskMain ?? false,
       parentSessionId: prev?.parentSessionId ?? this.expectedParents.get(sessionId) ?? null,
       readAt: prev?.readAt ?? null,
@@ -230,6 +236,7 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || (entry.attention === null && attention === null)) return
     entry.attention = attention && { ...attention, at: new Date().toISOString() }
+    if (attention?.reason) entry.lastStatus = { kind: attention.kind, reason: attention.reason, at: entry.attention!.at }
     this.persist()
   }
 
