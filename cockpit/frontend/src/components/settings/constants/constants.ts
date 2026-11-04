@@ -32,10 +32,10 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   },
   {
     id: 'agents',
-    label: 'Agent',
-    keywords: 'agent agents identity persona profile rules always on',
+    label: 'Agents',
+    keywords: 'agent agents identity persona profile rules always on people',
     icon: Bot,
-    blurb: 'Your agent: its name, profile and the rules it always follows.',
+    blurb: 'Your agent: who it is, the rules it always follows, and what it knows about you.',
   },
   {
     id: 'models',

@@ -10,6 +10,10 @@ export interface SpaceInfo {
   id: string;
   name: string;
   main: boolean;
+  /** The agent bound to this space (its sessions run as it), null while none is bound. */
+  agent: string | null;
+  /** Why none is bound: the agent upgrade's reason, its report folder, and what it waits for. */
+  upgrade: { reason: string; report: string | null; needs?: 'handle' } | null;
 }
 
 let spaces: SpaceInfo[] = [];

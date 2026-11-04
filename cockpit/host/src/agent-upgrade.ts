@@ -205,8 +205,8 @@ export function deriveHandle(mainDb: Db, config: CockpitConfig, given?: string):
   if (humans.length === 1) return { handle: humans[0] }
   return {
     reason: humans.length === 0
-      ? 'the main space names no human user, so the handle every token is issued under cannot be told — set it (upgrade-agents --handle <handle>)'
-      : `the main space names ${humans.length} human users (${humans.join(', ')}), so the handle cannot be told — set it (upgrade-agents --handle <handle>)`,
+      ? 'the main space names no human user, so your handle cannot be told'
+      : `the main space names ${humans.length} human users (${humans.join(', ')}), so your handle cannot be told`,
   }
 }
 
@@ -288,9 +288,9 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       if (space.bound && agentBrains.has(space.bound)) { sr.reason = `bound to ${space.bound} already`; continue }
       // A refused write or an I/O error inside a space ends the run with the report naming it; a dry run has touched copies only.
       try {
-      if (found.brain.status !== 'ok') { sr.reason = `brain status ${found.brain.status} — it needs intervention first`; continue }
+      if (found.brain.status !== 'ok') { sr.reason = `the brain needs intervention first (status ${found.brain.status})`; continue }
       const agentId = found.brain.name
-      if (!AGENT_ID.test(agentId)) { sr.reason = `the brain's name "${agentId}" is not an agent id — bind an agent by hand`; continue }
+      if (!AGENT_ID.test(agentId)) { sr.reason = `the brain's name "${agentId}" is not an agent id`; continue }
       sr.agent = agentId
 
       const spaceDb = i === 0 ? mainDb : openBrain(path.join(input.dataDir, found.brain.brain_file))
@@ -537,8 +537,8 @@ export function scanSpaces(input: Omit<UpgradeInput, 'backupDir' | 'journalDir' 
       if (!found) return { id: '?', name, main: e.main, action: 'skipped', reason: 'its token matches no brain', agent: e.bound }
       const sr: SpaceReport = { id: found.brain.id, name, main: e.main, action: 'skipped', agent: e.bound }
       if (e.bound && agentIds.has(e.bound)) sr.reason = `bound to ${e.bound} already`
-      else if (found.brain.status !== 'ok') sr.reason = `brain status ${found.brain.status} — it needs intervention first`
-      else if (!AGENT_ID.test(found.brain.name)) sr.reason = `the brain's name "${found.brain.name}" is not an agent id — bind an agent by hand`
+      else if (found.brain.status !== 'ok') sr.reason = `the brain needs intervention first (status ${found.brain.status})`
+      else if (!AGENT_ID.test(found.brain.name)) sr.reason = `the brain's name "${found.brain.name}" is not an agent id`
       else { sr.action = 'upgraded'; sr.agent = found.brain.name }
       return sr
     })
@@ -587,8 +587,8 @@ function copyData(dataDir: string, _config: CockpitConfig, dir: string, modules:
 /** What the host start takes from the upgrade: the config as the file has it now, and why a space stayed unbound. */
 export interface UpgradeAtStart {
   config: CockpitConfig | null
-  /** The run's reason for every unbound space (a failed or waiting run), null when it ran through. */
-  upgrade: { reason: string; report: string | null } | null
+  /** The run's reason for every unbound space (a failed or waiting run), null when it ran through; `needs` when it waits for the handle. */
+  upgrade: { reason: string; report: string | null; needs?: 'handle' } | null
   /** A skipped space's own reason, by brain id. */
   states: Map<string, { reason: string; report: string | null }>
 }
@@ -615,7 +615,7 @@ export async function upgradeAtStart(input: {
   if (config && needsUpgrade(config)) {
     try {
       const { report, dir } = await upgradeHome({ dataDir: input.dataDir, config, backupsDir: input.backupsDir, writeConfig: input.writeConfig, modules: input.modules, log: input.log })
-      if (report.status !== 'ok') upgrade = { reason: report.reason ?? report.status, report: dir }
+      if (report.status !== 'ok') upgrade = { reason: report.reason ?? report.status, report: dir, ...(report.status === 'waiting' ? { needs: 'handle' as const } : {}) }
       for (const s of report.spaces) if (s.action === 'skipped' && s.reason && !s.reason.startsWith('bound to')) states.set(s.id, { reason: s.reason, report: dir })
     } catch (err) {
       input.log(`agent upgrade: failed — ${(err as Error).message}`)
