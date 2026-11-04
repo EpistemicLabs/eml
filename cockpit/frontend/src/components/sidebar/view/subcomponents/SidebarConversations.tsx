@@ -1,5 +1,7 @@
 import { MessageSquare } from 'lucide-react';
 
+import { paneSpaceKey } from '@/stores/useSpaceStore';
+import { agentLabel, agentLetter } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { SidebarGroupHeader, SidebarStateBlock } from './SidebarParts';
 import { SidebarSessionRow } from './SidebarSessionRow';
@@ -16,7 +18,10 @@ export function SidebarConversations({ controller }: { controller: SidebarContro
       {conversationGroups.map((group) => (
         <div key={group.label} className="space-y-0.5">
           <SidebarGroupHeader>{group.label}</SidebarGroupHeader>
-          {group.entries.map(({ project, session }) => (
+          {group.entries.map(({ project, session }) => {
+            // Under All spaces a row says whose it is, and opening it opens its space.
+            const space = controller.allView ? controller.spaceOf(project) : null;
+            return (
             <div key={`${project.projectId}:${session.id}`} className="px-px">
               <SidebarSessionRow
                 session={session}
@@ -28,7 +33,9 @@ export function SidebarConversations({ controller }: { controller: SidebarContro
                 onStartRename={controller.startSessionRename}
                 onSaveRename={() => void controller.saveSessionRename()}
                 onCancelRename={controller.cancelSessionRename}
-                onSelect={controller.selectSession}
+                onSelect={(picked, projectId) =>
+                  controller.selectSession(space ? { ...picked, __spaceKey: paneSpaceKey(space) } : picked, projectId)}
+                agent={space ? { letter: agentLetter(space), name: agentLabel(space) } : undefined}
                 onRequestDelete={controller.requestSessionDelete}
                 pin={{
                   isPinned: controller.isSessionPinned(session),
@@ -36,7 +43,8 @@ export function SidebarConversations({ controller }: { controller: SidebarContro
                 }}
               />
             </div>
-          ))}
+            );
+          })}
         </div>
       ))}
     </div>

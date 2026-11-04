@@ -5,6 +5,7 @@ import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
 import { Button, Tooltip } from '@/shared/view/ui';
 import type { Project } from '@/types/app';
+import { projectKey } from '../../spaceProjects';
 import type { SidebarController } from '../../useSidebarController';
 import { useRowMenu } from '../rowMenuContext';
 import { SidebarSessionsArea } from './SidebarSessionsArea';
@@ -74,16 +75,20 @@ export function SidebarProjectRow({
   showKindIcon: boolean;
   controller: SidebarController;
 }) {
-  const isExpanded = controller.expanded.has(project.projectId);
-  const isSelected = controller.selectedProjectId === project.projectId;
-  const isDeleting = controller.deleting.has(project.projectId);
+  const key = projectKey(project);
+  const isExpanded = controller.isExpanded(project);
+  const isSelected = controller.selectedProjectKey === key;
+  const isDeleting = controller.deleting.has(key);
   const isDimmed = Boolean(project.hidden) || project.brainStatus === 'archived';
   const menu = useRowMenu();
   const rowRef = useRef<HTMLDivElement>(null);
-  const openMenu = () => menu?.open({ kind: 'project', project }, rowRef.current);
+  const openMenu = () => {
+    controller.enterSpace(project);
+    menu?.open({ kind: 'project', project }, rowRef.current);
+  };
   const longPress = useLongPress(openMenu);
   // In the compact layout the menu does the renaming.
-  const rename = !menu && controller.projectRename?.id === project.projectId ? controller.projectRename : null;
+  const rename = !menu && controller.projectRename?.id === key ? controller.projectRename : null;
   const selectedTone = isSelected && 'bg-accent text-accent-foreground';
 
   const archivedPill = project.brainStatus === 'archived' && (

@@ -1,6 +1,8 @@
-import { Eye, EyeOff, Folder } from 'lucide-react';
+import { Brain, Eye, EyeOff, Folder } from 'lucide-react';
 
 import type { Project } from '@/types/app';
+import { projectKey } from '../../spaceProjects';
+import type { ProjectGroups as Groups } from '../../types';
 import type { SidebarController } from '../../useSidebarController';
 import { SidebarGroupHeader, SidebarStateBlock } from './SidebarParts';
 import { SidebarProjectRow } from './SidebarProjectRow';
@@ -50,12 +52,28 @@ function ProjectGroup({
       {header && <SidebarGroupHeader>{header}</SidebarGroupHeader>}
       {projects.map((project) => (
         <SidebarProjectRow
-          key={project.projectId}
+          key={projectKey(project)}
           project={project}
           showKindIcon={kindIcons && project.kind !== 'brain'}
           controller={controller}
         />
       ))}
+    </div>
+  );
+}
+
+function ProjectGroups({ groups, controller }: { groups: Groups; controller: SidebarController }) {
+  const { pinned, brain, folder } = groups;
+  return (
+    <div className="space-y-3">
+      <ProjectGroup header="Pinned" projects={pinned} kindIcons controller={controller} />
+      <ProjectGroup
+        header={pinned.length > 0 ? 'Projects' : null}
+        projects={brain}
+        kindIcons={false}
+        controller={controller}
+      />
+      <ProjectGroup header="Folders" projects={folder} kindIcons={false} controller={controller} />
     </div>
   );
 }
@@ -73,17 +91,21 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
     );
   }
 
-  const { pinned, brain, folder } = controller.projectGroups;
   return (
     <div className="space-y-3">
-      <ProjectGroup header="Pinned" projects={pinned} kindIcons controller={controller} />
-      <ProjectGroup
-        header={pinned.length > 0 ? 'Projects' : null}
-        projects={brain}
-        kindIcons={false}
-        controller={controller}
-      />
-      <ProjectGroup header="Folders" projects={folder} kindIcons={false} controller={controller} />
+      {controller.projectSections ? (
+        controller.projectSections.map(({ space, groups }) => (
+          <div key={space.id} className="space-y-1.5">
+            <div className="flex items-center gap-1.5 px-2 pt-1 text-[11px] font-medium text-foreground" title={`Space: ${space.name}`}>
+              <Brain className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} />
+              <span className="truncate">{space.name}</span>
+            </div>
+            <ProjectGroups groups={groups} controller={controller} />
+          </div>
+        ))
+      ) : (
+        <ProjectGroups groups={controller.projectGroups} controller={controller} />
+      )}
       <HiddenToggle controller={controller} />
     </div>
   );

@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useDesks } from '@/stores/usePaneStore';
 import { api } from '@/utils/api';
-import { useAllView } from '@/stores/useSpaceStore';
+import { switchSpace, useActiveSpace, useAllView, useSpaces } from '@/stores/useSpaceStore';
 import type { Project, ProjectSession } from '@/types/app';
+import { bySpace, listProjects, projectKey } from './spaceProjects';
 import { useAllSessions } from './useAllSessions';
 import type {
   ConversationEntry,
@@ -56,7 +57,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function useSidebarController(props: SidebarProps) {
   const {
-    projects,
+    projects: openProjects,
+    projectsBySpace,
     selectedProject,
     selectedSession,
     onProjectSelect,
@@ -73,6 +75,12 @@ export function useSidebarController(props: SidebarProps) {
     propsRef.current = props;
   });
   const allView = useAllView();
+  const spaces = useSpaces();
+  const activeSpace = useActiveSpace();
+  const projects = useMemo(
+    () => listProjects(projectsBySpace, openProjects, spaces, activeSpace, allView),
+    [projectsBySpace, openProjects, spaces, activeSpace, allView],
+  );
   const { sessions: allSessions, queued: queuedWorkers, refresh: refreshAllSessions } = useAllSessions(true);
   const refreshList = useCallback(async () => {
     await Promise.all([propsRef.current.onRefresh(), refreshAllSessions()]);
@@ -132,7 +140,7 @@ export function useSidebarController(props: SidebarProps) {
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, ProjectSession[]>();
-    for (const project of projects) map.set(project.projectId, deriveProjectSessions(project));
+    for (const project of projects) map.set(projectKey(project), deriveProjectSessions(project));
     return map;
   }, [projects]);
 
@@ -145,7 +153,7 @@ export function useSidebarController(props: SidebarProps) {
   }, [sessionsByProject]);
 
   useEffect(() => {
-    const starredById = new Map(projects.map((project) => [project.projectId, Boolean(project.isStarred)]));
+    const starredById = new Map(projects.map((project) => [projectKey(project), Boolean(project.isStarred)]));
     setStarOverrides((current) =>
       withoutKeys(current, (id, value) => !starredById.has(id) || starredById.get(id) === value),
     );
@@ -155,7 +163,7 @@ export function useSidebarController(props: SidebarProps) {
   }, [projects, hostPinState]);
 
   const isProjectStarred = useCallback(
-    (project: Project) => starOverrides[project.projectId] ?? Boolean(project.isStarred),
+    (project: Project) => starOverrides[projectKey(project)] ?? Boolean(project.isStarred),
     [starOverrides],
   );
   const isSessionPinned = useCallback(
@@ -164,7 +172,7 @@ export function useSidebarController(props: SidebarProps) {
   );
 
   const sessionsOf = useCallback(
-    (project: Project) => sessionsByProject.get(project.projectId) ?? deriveProjectSessions(project),
+    (project: Project) => sessionsByProject.get(projectKey(project)) ?? deriveProjectSessions(project),
     [sessionsByProject],
   );
 
@@ -172,14 +180,20 @@ export function useSidebarController(props: SidebarProps) {
   const hiddenCount = useMemo(() => projects.filter((project) => !isProjectVisible(project)).length, [projects]);
 
   const visibleProjects = useMemo(() => {
-    const resolved = projects.map((project) =>
-      project.projectId in starOverrides ? { ...project, isStarred: starOverrides[project.projectId] } : project,
-    );
+    const resolved = projects.map((project) => {
+      const key = projectKey(project);
+      return key in starOverrides ? { ...project, isStarred: starOverrides[key] } : project;
+    });
     const filtered = showHidden ? resolved : resolved.filter(isProjectVisible);
     return sortProjects(filtered, sortOrder, (project) => projectLastActivity(sessionsOf(project)));
   }, [projects, starOverrides, showHidden, sortOrder, sessionsOf]);
 
   const projectGroups = useMemo(() => groupProjects(visibleProjects), [visibleProjects]);
+  // Under All spaces the same groups, once per space.
+  const projectSections = useMemo(
+    () => (allView ? bySpace(spaces, visibleProjects, groupProjects) : null),
+    [allView, spaces, visibleProjects],
+  );
 
   const conversationGroups = useMemo(() => {
     const entries: ConversationEntry[] = [];
@@ -205,28 +219,57 @@ export function useSidebarController(props: SidebarProps) {
 
   // ── Expansion and selection ────────────────────────────────────────
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const selectedProjectId = selectedProject?.projectId ?? null;
+  // The selection comes from the active pane, so it is always of the open space.
+  const selectedProjectKey = selectedProject
+    ? projectKey({ projectId: selectedProject.projectId, __spaceId: activeSpace?.id })
+    : null;
   const selectedSessionId = selectedSession?.id ?? null;
 
   useEffect(() => {
-    if (!selectedProjectId) return;
-    setExpanded((current) => (current.has(selectedProjectId) ? current : new Set(current).add(selectedProjectId)));
-  }, [selectedProjectId]);
+    if (!selectedProjectKey) return;
+    setExpanded((current) => (current.has(selectedProjectKey) ? current : new Set(current).add(selectedProjectKey)));
+  }, [selectedProjectKey]);
+
+  const spaceOf = useCallback(
+    (project: Project) => spaces.find((space) => space.id === project.__spaceId) ?? null,
+    [spaces],
+  );
+  const inOpenSpace = useCallback(
+    (project: Project) => project.__spaceId === activeSpace?.id,
+    [activeSpace],
+  );
+  // What opens up in a project (its notes, new sessions, later its write rights)
+  // works in the open space, so working with a project opens its space, as
+  // opening a session of the overview does. All spaces stays on.
+  const enterSpace = useCallback(
+    (project: Project) => {
+      const space = spaceOf(project);
+      if (space && !inOpenSpace(project)) switchSpace(space);
+    },
+    [spaceOf, inOpenSpace],
+  );
+  // Only the open space's projects show open: see enterSpace.
+  const isExpanded = useCallback(
+    (project: Project) => inOpenSpace(project) && expanded.has(projectKey(project)),
+    [inOpenSpace, expanded],
+  );
 
   const selectAndToggleProject = useCallback(
     (project: Project) => {
-      if (expanded.has(project.projectId)) {
+      const key = projectKey(project);
+      if (isExpanded(project)) {
         setExpanded((current) => {
           const next = new Set(current);
-          next.delete(project.projectId);
+          next.delete(key);
           return next;
         });
         return;
       }
-      if (project.projectId !== selectedProjectId) onProjectSelect(project);
-      setExpanded((current) => new Set(current).add(project.projectId));
+      enterSpace(project);
+      if (key !== selectedProjectKey) onProjectSelect(project);
+      setExpanded((current) => new Set(current).add(key));
     },
-    [expanded, selectedProjectId, onProjectSelect],
+    [isExpanded, enterSpace, selectedProjectKey, onProjectSelect],
   );
 
   const selectSession = useCallback(
@@ -264,7 +307,7 @@ export function useSidebarController(props: SidebarProps) {
   // ── Star / pin / hide ──────────────────────────────────────────────
   const toggleProjectStar = useCallback(
     async (project: Project) => {
-      const id = project.projectId;
+      const id = projectKey(project);
       const previous = isProjectStarred(project);
       const next = !previous;
       const sequence = (starSequence.current.get(id) ?? 0) + 1;
@@ -272,7 +315,7 @@ export function useSidebarController(props: SidebarProps) {
       const isLatest = () => starSequence.current.get(id) === sequence;
       setStarOverrides((current) => ({ ...current, [id]: next }));
       try {
-        const response = await api.setProjectStar(id, next, project.__spaceId);
+        const response = await api.setProjectStar(project.projectId, next, project.__spaceId);
         if (!response.ok) {
           const message = await hostErrorMessage(response);
           if (isLatest()) setStarOverrides((current) => ({ ...current, [id]: previous }));
@@ -349,7 +392,7 @@ export function useSidebarController(props: SidebarProps) {
   // ── Rename project ─────────────────────────────────────────────────
   const [projectRename, setProjectRename] = useState<(RenameState & { project: Project }) | null>(null);
   const startProjectRename = useCallback(
-    (project: Project) => setProjectRename({ id: project.projectId, draft: project.displayName, project }),
+    (project: Project) => setProjectRename({ id: projectKey(project), draft: project.displayName, project }),
     [],
   );
   const setProjectRenameDraft = useCallback(
@@ -455,8 +498,9 @@ export function useSidebarController(props: SidebarProps) {
     async (deleteData = false) => {
       if (!pendingProjectDelete) return;
       const { projectId, __spaceId: space } = pendingProjectDelete.project;
+      const key = projectKey(pendingProjectDelete.project);
       setPendingProjectDelete(null);
-      setDeleting((current) => new Set(current).add(projectId));
+      setDeleting((current) => new Set(current).add(key));
       try {
         const response = await api.deleteProject(projectId, deleteData, space);
         if (!response.ok) {
@@ -473,7 +517,7 @@ export function useSidebarController(props: SidebarProps) {
       } finally {
         setDeleting((current) => {
           const next = new Set(current);
-          next.delete(projectId);
+          next.delete(key);
           return next;
         });
       }
@@ -493,7 +537,7 @@ export function useSidebarController(props: SidebarProps) {
     // inputs passed through
     projects,
     isLoading,
-    selectedProjectId,
+    selectedProjectKey,
     selectedSessionId,
     onNewSession,
     onShowSettings,
@@ -503,6 +547,9 @@ export function useSidebarController(props: SidebarProps) {
     viewMode,
     setViewMode,
     allView,
+    activeSpace,
+    spaceOf,
+    enterSpace,
     allSessions,
     queuedWorkers,
     reportError,
@@ -517,12 +564,13 @@ export function useSidebarController(props: SidebarProps) {
     hiddenCount,
     visibleProjects,
     projectGroups,
+    projectSections,
     conversationGroups,
     sessionsOf,
     isSessionPinned,
     openSessionIds,
     openNoteIds,
-    expanded,
+    isExpanded,
     deleting,
     // selection
     selectAndToggleProject,

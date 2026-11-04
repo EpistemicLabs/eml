@@ -386,6 +386,7 @@ function AppContentInner() {
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
           projects={projects}
+          projectsBySpace={projectsBySpace}
           selectedProject={activePaneCtx.project}
           selectedSession={activePaneCtx.session}
           onProjectSelect={compact ? closingDrawer(handleProjectSelect) : handleProjectSelect}

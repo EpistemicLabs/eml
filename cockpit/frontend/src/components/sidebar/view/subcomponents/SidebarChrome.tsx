@@ -77,12 +77,15 @@ export function SidebarHeader({
   isPinnedOpen,
   onTogglePinned,
   onAddProject,
+  addProjectTo,
 }: {
   isPinnedOpen: boolean;
   /** Absent where pinning means nothing (the compact layout's drawer). */
   onTogglePinned?: () => void;
   /** Absent in the overview: it lists sessions, a new project belongs in Projects. */
   onAddProject?: () => void;
+  /** Under All spaces: the space a new project goes to, the open one. */
+  addProjectTo?: string;
 }) {
   return (
     <div className="flex flex-shrink-0 items-center justify-between gap-1 pt-2 pr-2 pb-1 pl-1">
@@ -95,7 +98,7 @@ export function SidebarHeader({
             variant="ghost"
             size="sm"
             className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-            title="Add project"
+            title={addProjectTo ? `Add project to ${addProjectTo}` : 'Add project'}
             onClick={onAddProject}
           >
             <Plus />
