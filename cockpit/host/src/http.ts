@@ -42,6 +42,7 @@ import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
 import type { AgentBrains } from './agents.js'
+import { handleAgentsApi } from './agents-api.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -365,6 +366,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
   if (await handleSpawnApi(req, res, { spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  // The home's agents and the agent upgrade's leftovers (agents-api.ts).
+  if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).

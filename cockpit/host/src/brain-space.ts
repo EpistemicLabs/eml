@@ -62,10 +62,12 @@ export interface BrainSpace {
   notes: NotesWatcher
 }
 
-/** The agent upgrade's word on a space it could not bind: the reason, and where its report is. */
+/** The agent upgrade's word on a space it could not bind: the reason, where its report is, and what it waits for. */
 export interface UpgradeState {
   reason: string
   report: string | null
+  /** The upgrade waits for the home's handle (the banner asks for it). */
+  needs?: 'handle'
 }
 
 /** What the UI gets to see of a space (GET /api/spaces). */

@@ -256,8 +256,8 @@ function FirstRun() {
           <input className={field} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="e.g. Juno" maxLength={60} disabled={submitting} />
         </label>
         <p className="text-caption text-muted-foreground">
-          Both names also become fixed handles in your brain (who wrote what). How they're shown can be
-          changed later.
+          Both names become fixed ids in your brains: yours marks what you wrote, your agent's names its own
+          brain. How they're shown can be changed later.
         </p>
         {error && <p className="text-ui text-primary">{error}</p>}
         <button

@@ -36,6 +36,7 @@ import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
+import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
@@ -340,8 +341,10 @@ function AppContentInner() {
         )}
       </div>
 
-      {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}
+      {/* Full width under the header, in this order: update (available → installing → outcome),
+          a space without an agent (the agent upgrade), team spaces, brain hygiene. */}
       <UpdateBanner />
+      <AgentUpgradeBanner />
       <BrainHygieneBanner />
 
       <div className="relative flex min-h-0 flex-1">

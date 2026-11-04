@@ -1,80 +1,101 @@
-// Settings › Agent: the agent this brain was set up with — its name, its
-// core profile (the one marked core — v0.19, was the title <agent> /
-// <agent>-identity) and its rules that load in every
-// session (applies: always). Read-only: the agent keeps these engrams itself
-// when you ask it to; editing them here, and choosing which agent with which
-// settings a space uses, come later. An entry written before the short format
+// Settings › Agents: the agent the active space is bound to, read from its
+// own brain (host GET /api/agents, GET /api/agents/:id/brain/…): where it
+// works, its persona (the core profile in agent.<id>), the rules that load in
+// every session (applies: always, in agent.<id> and in user.<handle> — the
+// ones about the person are marked), and what it knows about the people it
+// works with (the core profiles in user.*). Read-only: the agent keeps these
+// engrams itself when you ask it to. An entry written before the short format
 // (rule over 200, profile over 400 characters) loads by title only — the boot
 // counts it as legacy (core boot.ts); this tab says so.
 import { useEffect, useState } from 'react';
 
-import { brainGet } from '@/lib/api';
 import type { Engram, ListResponse } from '@/lib/types';
-import { mainAgent, useBrainInfo } from '../../hooks/useBrainInfo';
+import { useActiveSpace } from '@/stores/useSpaceStore';
+import { useAgents, type AgentInfo } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
-type AgentEngrams = { profile: Engram | null; rules: Engram[] };
+type AgentEngrams = { persona: Engram | null; rules: Engram[]; people: Engram[] };
 
 // The short format's limits (core validate.ts).
 const RULE_MAX_CHARS = 200;
 const PROFILE_MAX_CHARS = 400;
 
-function useAgentEngrams(agentId: string | null): { data: AgentEngrams | null; failed: boolean } {
+async function agentGet(agentId: string, params: Record<string, string>): Promise<ListResponse> {
+  const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/brain/list?${new URLSearchParams(params)}`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return (await res.json()) as ListResponse;
+}
+
+function useAgentEngrams(agentId: string | null, handle: string | null): { data: AgentEngrams | null; failed: boolean } {
   const [data, setData] = useState<AgentEngrams | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!agentId) return;
     let cancelled = false;
-    const scope = `agent.${agentId}`;
+    const own = `agent.${agentId}`;
     Promise.all([
-      brainGet<ListResponse>('/list', { type: 'profile', scope, status: 'active', limit: 50 }),
-      brainGet<ListResponse>('/list', { type: 'rule', scope, status: 'active', limit: 100 }),
+      agentGet(agentId, { type: 'profile', status: 'active', limit: '100' }),
+      agentGet(agentId, { type: 'rule', scope: own, status: 'active', limit: '100' }),
+      handle ? agentGet(agentId, { type: 'rule', scope: `user.${handle}`, status: 'active', limit: '100' }) : Promise.resolve({ count: 0, engrams: [] } as ListResponse),
     ]).then(
-      ([profiles, rules]) => {
+      ([profiles, ownRules, userRules]) => {
         if (cancelled) return;
+        const core = profiles.engrams.filter((e) => e.properties?.core === true);
         setData({
-          profile: profiles.engrams.find((e) => e.properties?.core === true) ?? null,
-          rules: rules.engrams
+          persona: core.find((e) => e.scope === own) ?? null,
+          rules: [...ownRules.engrams, ...userRules.engrams]
             .filter((e) => e.properties?.applies === 'always')
             .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? '')),
+          people: core.filter((e) => e.scope.startsWith('user.')).sort((a, b) => a.scope.localeCompare(b.scope)),
         });
       },
       () => { if (!cancelled) setFailed(true); },
     );
     return () => { cancelled = true; };
-  }, [agentId]);
+  }, [agentId, handle]);
 
   return { data, failed };
 }
 
 export default function AgentTab() {
-  const { info, failed: infoFailed } = useBrainInfo();
-  const agent = mainAgent(info);
-  const { data, failed } = useAgentEngrams(agent?.id ?? null);
-  const fallback = infoFailed || failed ? 'unavailable' : '…';
+  const space = useActiveSpace();
+  const { agents, handle, loaded, failed: agentsFailed } = useAgents();
+  // The active space's agent; a space without one shows the first agent of the home, if any.
+  const agent: AgentInfo | null = (space?.agent ? agents.find((a) => a.id === space.agent) : undefined) ?? agents[0] ?? null;
+  const { data, failed } = useAgentEngrams(agent?.id ?? null, handle);
+  const fallback = agentsFailed || failed ? 'unavailable' : '…';
+  const name = agent?.name ?? 'your agent';
+
+  if (loaded && !agent) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
-      <SettingsSection title="Agent">
+      <SettingsSection title="Agents">
         <SettingsCard divided>
-          <SettingsRow label="Name" description="How your agent introduces itself">
-            <span className="text-sm text-foreground">{info ? agent?.name ?? '—' : fallback}</span>
-          </SettingsRow>
-          <SettingsRow label="Handle" description="Its fixed id in the brain">
-            <span className="block font-mono text-xs text-foreground">{info ? agent?.id ?? '—' : fallback}</span>
-          </SettingsRow>
+          {agents.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+          {agents.map((a) => (
+            <SettingsRow key={a.id} label={a.name} description={a.spaces.length ? `Works in ${a.spaces.map((s) => s.name).join(', ')}` : 'Bound to no space'}>
+              <span className="block font-mono text-xs text-foreground">{a.id}</span>
+            </SettingsRow>
+          ))}
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Profile" description="Who your agent is. It loads this at the start of every session.">
+      <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
         <SettingsCard>
           <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-            {data ? data.profile?.content ?? 'No profile yet.' : <span className="text-muted-foreground">{fallback}</span>}
+            {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
           </div>
-          {data?.profile && data.profile.content.length > PROFILE_MAX_CHARS && (
+          {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
             <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
           )}
         </SettingsCard>
@@ -82,7 +103,7 @@ export default function AgentTab() {
 
       <SettingsSection
         title="Always-on rules"
-        description="How your agent works with you. It loads these in every session; other rules apply only in situations they name."
+        description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
       >
         <SettingsCard divided>
           {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
@@ -92,6 +113,9 @@ export default function AgentTab() {
               <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
                 <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
                 {ruleLabel(rule, agent?.id ?? '')}
+                {rule.scope.startsWith('user.') && (
+                  <span className="ml-2 rounded bg-foreground/8 px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">about you</span>
+                )}
               </summary>
               <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
               {rule.content.length > RULE_MAX_CHARS && (
@@ -102,9 +126,24 @@ export default function AgentTab() {
         </SettingsCard>
       </SettingsSection>
 
+      <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
+        <SettingsCard divided>
+          {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+          {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
+          {data?.people.map((profile) => (
+            <div key={profile.id} className="px-4 py-3">
+              <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
+              <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
+              {profile.content.length > PROFILE_MAX_CHARS && (
+                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+              )}
+            </div>
+          ))}
+        </SettingsCard>
+      </SettingsSection>
+
       <div className="text-sm text-muted-foreground">
-        To change any of this, ask your agent in a session — it updates its own profile and rules. Editing them here,
-        and choosing which agent with which settings a space uses, come later.
+        To change any of this, ask {name} in a session — it keeps its own persona, rules and what it knows about you.
       </div>
     </div>
   );
@@ -118,6 +157,6 @@ function legacyNote(kind: 'rule' | 'profile', max: number): string {
 function ruleLabel(rule: Engram, agentId: string): string {
   const title = rule.title ?? rule.content.split('\n')[0];
   const bare = agentId && title.startsWith(`${agentId}-`) ? title.slice(agentId.length + 1) : title;
-  const words = bare.replace(/-/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const words = bare.replace(/[-_]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : title;
 }
