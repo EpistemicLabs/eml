@@ -34,7 +34,7 @@ const one = (file: string, sql: string, ...params: unknown[]): Row => q(file, sq
 const sha = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex')
 
 /** A legacy home: the brains as a cockpit before agent brains made them (seeded, named after the agent, token named after the agent). */
-function legacyHome() {
+function legacyHome(dataDir: string) {
   mkdirSync(join(dataDir, 'brains'), { recursive: true })
   const control = core.initControlDatabase(join(dataDir, 'control.db'))
   const main = core.provisionUser({ email: 'dominik@local', agentId: 'motti', userId: 'dominik', agentName: 'Motti', userName: 'Dominik', control, dataDir, tokenName: 'motti' })
@@ -87,7 +87,7 @@ function legacyHome() {
 }
 
 describe('agent upgrade', () => {
-  const fixture = legacyHome()
+  const fixture = legacyHome(dataDir)
   const mainFile = join(dataDir, fixture.main.brainFile)
   const privatFile = join(dataDir, fixture.privat.brainFile)
 
@@ -149,9 +149,13 @@ describe('agent upgrade', () => {
     const agentFile = join(dataDir, 'brains', `${report.agents[0].brainId}.db`)
     const ids = fixture.ids
 
-    // The config: the handle, both spaces bound, new tokens under the handle, the agent brain's token.
-    expect(written).toHaveLength(1)
-    const config = written[0]
+    // The config, written as the run went: the agent brain first, then each space as it was bound, the whole at the end.
+    expect(written).toHaveLength(4)
+    expect(written[0]).toMatchObject({ handle: 'dominik', agents: [{ id: 'motti' }] })
+    expect(written[0].agent).toBeUndefined()
+    expect(written[1]).toMatchObject({ agent: 'motti', spaces: [{ name: 'Privat' }] })
+    expect(written[1].spaces[0].agent).toBeUndefined()
+    const config = written[3]
     expect(config).toMatchObject({ handle: 'dominik', agent: 'motti', spaces: [{ name: 'Privat', agent: 'motti' }] })
     expect(config.token).not.toBe(fixture.config.token)
     expect(config.spaces[0].token).not.toBe(fixture.config.spaces[0].token)
@@ -225,6 +229,83 @@ describe('agent upgrade', () => {
     const again = await upgradeHome({ dataDir, config, backupsDir: join(home, 'backups'), modules, writeConfig: async () => { throw new Error('no write expected') } })
     expect(again.report.spaces.map((s) => [s.action, s.reason])).toEqual([['skipped', 'bound to motti already'], ['skipped', 'bound to motti already']])
     expect(again.dir).toBeNull()
+  })
+
+  it('a run interrupted after the move and before the config was written is resumed with its own agent brain, never built twice', async () => {
+    const { upgradeHome } = await import('../src/agent-upgrade.js')
+    const data2 = join(home, 'home2', 'data')
+    const f = legacyHome(data2)
+    const main2 = join(data2, f.main.brainFile)
+    const backups = join(home, 'home2', 'backups')
+    // The first run dies at the config write that would bind Main — after the agent brain was made and
+    // Main's identity moved — and the host went down before the earlier write reached the disk, so the next
+    // start reads the config as it was: no agents, nothing bound.
+    let calls = 0
+    const first = await upgradeHome({ dataDir: data2, config: f.config, backupsDir: backups, modules, writeConfig: async () => { if (++calls === 2) throw new Error('disk full') } })
+    expect(first.report.status).toBe('failed')
+    expect(first.report.reason).toMatch(/Main: disk full/)
+    const control = join(data2, 'control.db')
+    const brains = q(control, "SELECT id, name FROM brains ORDER BY created_at, rowid")
+    expect(brains).toHaveLength(3)
+    const orphan = brains[2]
+    expect(orphan.name).toBe('motti')
+    expect(q(join(data2, 'brains', `${orphan.id}.db`), 'SELECT COUNT(*) AS n FROM engrams')[0].n).toBe(9)
+    expect(q(main2, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'user.dominik' AND type = 'rule'")[0].n).toBe(0)
+    // Its crossing relations are gone from the space and wait in the journal.
+    expect(q(main2, 'SELECT COUNT(*) AS n FROM relations')[0].n).toBe(0)
+    expect(existsSync(join(backups, 'agent-upgrade', 'pending', `${f.main.brainId}.json`))).toBe(true)
+    // The next start: the same config as before (nothing was written), the orphan found and taken up.
+    const written: Row[] = []
+    const second = await upgradeHome({ dataDir: data2, config: f.config, backupsDir: backups, modules, writeConfig: async (c) => { written.push(c) } })
+    expect(second.report.reason).toBeUndefined()
+    expect(second.report.status).toBe('ok')
+    expect(second.report.agents).toEqual([{ id: 'motti', brainId: orphan.id, created: false, resumed: true }])
+    expect(q(control, "SELECT COUNT(*) AS n FROM brains WHERE name = 'motti'")[0].n).toBe(3)
+    const main = second.report.spaces[0]
+    // nothing left to move: the resumed run binds, re-creates the references from the journal and finishes the re-scope
+    expect(main.action).toBe('bound')
+    expect(main.moved?.engrams).toBe(0)
+    expect(main.crossing).toMatchObject({ planned: 2, recreated: 2 })
+    // the first run got as far as the re-scope and the re-stamp before it died; nothing is left of either
+    expect(main.rescoped?.global_to_agent).toHaveLength(0)
+    expect(main.restamped).toEqual({ space: { engrams: 0, entries: 0 }, agent: { engrams: 0, entries: 0 } })
+    expect(main.verify).toEqual({ space: true, agent: true })
+    const agentFile = join(data2, 'brains', `${orphan.id}.db`)
+    expect(q(agentFile, "SELECT relation, source_brain, target_brain FROM relations WHERE source_brain IS NOT NULL OR target_brain IS NOT NULL ORDER BY ord"))
+      .toEqual([{ relation: 'refines', source_brain: null, target_brain: f.main.brainId }, { relation: 'related_to', source_brain: f.main.brainId, target_brain: null }])
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'global'")[0].n).toBe(0)
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE ingested_by = 'motti'")[0].n).toBe(0)
+    expect(written.at(-1)).toMatchObject({ handle: 'dominik', agent: 'motti', agents: [{ id: 'motti' }], spaces: [{ name: 'Privat', agent: 'motti' }] })
+    expect(core.verifyToken(new Database(control), written.at(-1).agents[0].token)).toMatchObject({ brainId: orphan.id, caller: 'dominik' })
+    expect(q(control, "SELECT COUNT(*) AS n FROM tokens WHERE brain_id = ? AND revoked_at IS NULL", orphan.id)[0].n).toBe(1)
+    expect(existsSync(join(backups, 'agent-upgrade', 'pending', `${f.main.brainId}.json`))).toBe(false)
+  })
+
+  it('a run that dies right after the move still gets its references: from the journal, on the next run', async () => {
+    const { upgradeHome } = await import('../src/agent-upgrade.js')
+    const data3 = join(home, 'home3', 'data')
+    const f = legacyHome(data3)
+    const backups = join(home, 'home3', 'backups')
+    // the dry run moves both spaces on the copies (two calls); the real run's first move is the third, and the power goes right after it
+    let moves = 0
+    const cut = { ...modules, log: { ...modules.log, moveEngrams: async (...args: unknown[]) => { const r = await (modules.log.moveEngrams as (...a: unknown[]) => Promise<unknown>)(...args); if (++moves === 3) throw new Error('power cut'); return r } } }
+    const first = await upgradeHome({ dataDir: data3, config: f.config, backupsDir: backups, modules: cut, writeConfig: async () => {} })
+    expect(first.report).toMatchObject({ status: 'failed', reason: 'Main: power cut' })
+    const main3 = join(data3, f.main.brainFile)
+    expect(q(main3, 'SELECT COUNT(*) AS n FROM relations')[0].n).toBe(0)
+    const journal = JSON.parse(readFileSync(join(backups, 'agent-upgrade', 'pending', `${f.main.brainId}.json`), 'utf8'))
+    expect(journal.map((r: Row) => [r.direction, r.relation])).toEqual([['out', 'refines'], ['in', 'related_to']])
+    const written: Row[] = []
+    const second = await upgradeHome({ dataDir: data3, config: written.at(-1) ?? f.config, backupsDir: backups, modules, writeConfig: async (c) => { written.push(c) } })
+    expect(second.report.reason).toBeUndefined()
+    const main = second.report.spaces[0]
+    expect(main.crossing).toMatchObject({ planned: 2, recreated: 2 })
+    expect(main.rescoped?.global_to_agent).toHaveLength(2)
+    expect(main.restamped?.agent.engrams).toBe(4)
+    const agentFile = join(data3, 'brains', `${second.report.agents[0].brainId}.db`)
+    expect(q(agentFile, 'SELECT COUNT(*) AS n FROM relations WHERE source_brain IS NOT NULL OR target_brain IS NOT NULL')[0].n).toBe(2)
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'global' OR ingested_by = 'motti'")[0].n).toBe(0)
+    expect(log.verify(new Database(agentFile)).ok).toBe(true)
   })
 
   it('renders the report as text', async () => {

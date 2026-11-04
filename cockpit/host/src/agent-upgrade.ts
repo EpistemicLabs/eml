@@ -104,6 +104,18 @@ export interface UpgradeInput {
   agents?: string[]
   /** The home's human when the config has none and it cannot be derived. */
   handle?: string
+  /**
+   * Where the run journals a space's crossing relations before its move
+   * (<journalDir>/<space id>.json), until the space is bound: a run
+   * interrupted after the move finds them there and still makes the references.
+   */
+  journalDir: string
+  /**
+   * Writes the config as the run goes — after an agent brain exists, after a
+   * space is bound — so an interrupted run leaves nothing the config does not
+   * name. A dry run passes none.
+   */
+  persist?: (config: CockpitConfig) => Promise<void>
   modules?: CoreModules
   now?: () => Date
 }
@@ -139,7 +151,8 @@ export interface UpgradeReport {
   status: 'ok' | 'waiting' | 'failed'
   reason?: string
   handle: string | null
-  agents: Array<{ id: string; brainId: string; created: boolean }>
+  /** resumed: an earlier run's agent brain, found in control.db under the agent's name and taken up again. */
+  agents: Array<{ id: string; brainId: string; created: boolean; resumed?: boolean }>
   spaces: SpaceReport[]
   /** The config as the run leaves it (the caller writes it on a real run). */
   config: CockpitConfig
@@ -231,21 +244,38 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
     report.config.handle = handle.handle
 
     // The agent brains this home has (config) and the ones this run creates.
-    const agentBrains = new Map<string, { brainId: string; file: string; token: string; created: boolean }>()
+    const agentBrains = new Map<string, { brainId: string; file: string; token: string; created: boolean; resumed?: boolean }>()
     for (const a of input.config.agents ?? []) {
       const found = brainOfToken(modules, control, a.token)
       if (found && found.brain.name === a.id) agentBrains.set(a.id, { brainId: found.brain.id, file: found.brain.brain_file, token: a.token, created: false })
     }
-    const agentFor = (id: string, names: { agent: string; human: string }) => {
+    const spaceIds = spaces.map((s) => s.found?.brain.id).filter((id): id is string => !!id)
+    const persist = async () => { if (input.persist) await input.persist(structuredClone(report.config)) }
+    const agentFor = async (id: string, names: { agent: string; human: string }) => {
       const have = agentBrains.get(id)
       if (have) return have
-      const res = modules.core.provisionUser({
-        email: `${handle.handle}@local`, agentId: id, userId: handle.handle, agentName: names.agent, userName: names.human,
-        control, dataDir: input.dataDir, tokenName: handle.handle, name: id, seedIdentity: false,
-      })
-      const made = { brainId: res.brainId, file: res.brainFile, token: res.tokenPlaintext, created: true }
+      // An earlier run that stopped before it wrote the config left its agent brain unlisted:
+      // a brain named after the agent that is no space of this home. It is taken up again,
+      // under a fresh token (the old one's plaintext went with that run), never built twice.
+      const earlier = control.prepare(`SELECT id, brain_file, owner_id FROM brains WHERE name = ? AND status = 'ok' AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY created_at`)
+        .all(id, JSON.stringify(spaceIds)) as Array<{ id: string; brain_file: string; owner_id: string }>
+      let made: { brainId: string; file: string; token: string; created: boolean; resumed?: boolean }
+      if (earlier.length > 1) {
+        throw new Error(`${earlier.length} brains named ${id} that are no space of this home (${earlier.map((b) => b.id.slice(0, 8)).join(', ')}) — an earlier run left more than one; keep the one that holds the identity and remove the other from control.db, then run again`)
+      } else if (earlier.length === 1) {
+        for (const t of control.prepare('SELECT id FROM tokens WHERE brain_id = ? AND revoked_at IS NULL').all(earlier[0].id) as Array<{ id: string }>) modules.core.revokeToken(control, t.id)
+        const issued = modules.core.issueToken(control, { userId: earlier[0].owner_id, brainId: earlier[0].id, name: handle.handle })
+        made = { brainId: earlier[0].id, file: earlier[0].brain_file, token: issued.plaintext, created: false, resumed: true }
+      } else {
+        const res = modules.core.provisionUser({
+          email: `${handle.handle}@local`, agentId: id, userId: handle.handle, agentName: names.agent, userName: names.human,
+          control, dataDir: input.dataDir, tokenName: handle.handle, name: id, seedIdentity: false,
+        })
+        made = { brainId: res.brainId, file: res.brainFile, token: res.tokenPlaintext, created: true }
+      }
       agentBrains.set(id, made)
-      report.config.agents = [...(report.config.agents ?? []), { id, token: res.tokenPlaintext }]
+      report.config.agents = [...(report.config.agents ?? []), { id, token: made.token }]
+      await persist()
       return made
     }
 
@@ -269,7 +299,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       const env = spaceEml.env({ handle: null, agent: null, ingestion_method: 'direct' })
       const agentName = (spaceDb.prepare('SELECT name FROM agents WHERE id = ?').get(agentId) as { name: string } | undefined)?.name ?? agentId
       const humanName = (spaceDb.prepare('SELECT name FROM users WHERE id = ?').get(handle.handle) as { name: string } | undefined)?.name ?? handle.handle
-      const agentBrain = agentFor(agentId, { agent: agentName, human: humanName })
+      const agentBrain = await agentFor(agentId, { agent: agentName, human: humanName })
       const agentDb = openBrain(path.join(input.dataDir, agentBrain.file)); open.push(agentDb)
       const agentEml = modules.core.EML.fromConnection(agentDb, agentId)
       const agentEnv = agentEml.env({ handle: null, agent: null, ingestion_method: 'direct' })
@@ -301,6 +331,17 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
           if (!r || !c.other?.id) return failed(report, `${name}: crossing relation ${c.id} cannot become a reference (its other end is unknown)`)
           crossingRows.push({ ...r, direction: c.direction })
         }
+      }
+      // The crossing relations go to the journal before the move drops them from the space; an
+      // earlier run's journal for this space (interrupted after its move) is taken up with them.
+      const journal = path.join(input.journalDir, `${found.brain.id}.json`)
+      if (fs.existsSync(journal)) {
+        const known = new Set(crossingRows.map((r) => r.id))
+        for (const r of JSON.parse(fs.readFileSync(journal, 'utf8')) as Array<Record<string, unknown>>) if (!known.has(r.id)) crossingRows.push(r)
+      }
+      fs.mkdirSync(input.journalDir, { recursive: true, mode: 0o700 })
+      fs.writeFileSync(journal, JSON.stringify(crossingRows) + '\n', { mode: 0o600 })
+      if (ids.length > 0 && plan) {
         const moved = await modules.log.moveEngrams({
           source: spaceDb, target: { db: agentDb }, ids, plan_hash: plan.plan_hash,
           backup_path: path.join(input.backupDir, `${found.brain.id.slice(0, 8)}-before-move.db`),
@@ -324,7 +365,8 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
           ...(typeof r.metadata === 'string' && r.metadata ? { metadata: JSON.parse(r.metadata) } : {}),
           ...brainEnd,
         } }, agentEnv) as { created: boolean }
-        if (res.created) recreated++
+        // created now, or there already (a resumed run made it before it was interrupted)
+        if (res.created || agentDb.prepare('SELECT 1 FROM relations WHERE source_id = ? AND target_id = ? AND relation = ?').get(r.source_id, r.target_id, r.relation)) recreated++
       }
       sr.crossing = {
         planned: crossingRows.length, recreated,
@@ -342,10 +384,12 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
           e.status = 'invalidated'
         }
       }
-      // Re-scope: a rule or learning left in global is the agent's; another handle's user scope is the human's.
+      // Re-scope: a rule or learning left in global is the agent's; another handle's user scope is the
+      // human's — over everything the agent brain holds, so a resumed run finishes what the first began.
       sr.rescoped = { global_to_agent: [], user_to_handle: [] }
+      const pending = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE (scope = 'global' OR (scope LIKE 'user.%' AND scope != ?)) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(`user.${handle.handle}`, JSON.stringify(ids)) as typeof movedRows
       const activeCore = (scope: string, except: string) => (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ? AND json_extract(properties, '$.core') = 1`).get(scope, except) as { id: string } | undefined)?.id
-      for (const e of movedRows) {
+      for (const e of [...movedRows, ...pending]) {
         const target = e.scope === 'global' ? `agent.${agentId}` : /^user\./.test(e.scope) && e.scope !== `user.${handle.handle}` ? `user.${handle.handle}` : e.scope
         if (e.type === 'profile' && e.core === 1 && e.status === 'active' && target !== e.scope) {
           // A core profile re-scoped into a scope the agent brain has one for already (an earlier
@@ -384,12 +428,14 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       const restamp = (eml: Eml, e: Env) => eml.apply({ name: 'provenance.restamp', input: { from_handle: agentId, to_handle: handle.handle, agent: agentId } }, e) as { engrams: number; entries: number }
       sr.restamped = { space: restamp(spaceEml, env), agent: restamp(agentEml, agentEnv) }
 
-      // The space's token under the handle; the config takes the new one and the binding.
+      // The space's token under the handle and the binding: the config takes both before the old
+      // token goes, so an interruption leaves a token the config names.
       let token = space.token
+      let revoke: string | null = null
       if (found.tokenName !== handle.handle) {
         const issued = modules.core.issueToken(control, { userId: found.userId, brainId: found.brain.id, name: handle.handle })
-        modules.core.revokeToken(control, found.tokenId)
         token = issued.plaintext
+        revoke = found.tokenId
         sr.token = 'reissued'
       } else {
         sr.token = 'kept'
@@ -402,6 +448,9 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
         list[i - 1] = { ...list[i - 1], token, agent: agentId }
         report.config.spaces = list
       }
+      await persist()
+      if (revoke) modules.core.revokeToken(control, revoke)
+      fs.rmSync(journal, { force: true })
 
       sr.counts = { space: counts(spaceDb), agent: counts(agentDb) }
       sr.dangling = { space: dangling(spaceDb), agent: dangling(agentDb) }
@@ -415,7 +464,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
         return failed(report, `${name}: ${(err as Error).message}`)
       }
     }
-    report.agents = [...agentBrains.entries()].map(([id, a]) => ({ id, brainId: a.brainId, created: a.created }))
+    report.agents = [...agentBrains.entries()].map(([id, a]) => ({ id, brainId: a.brainId, created: a.created, ...(a.resumed ? { resumed: true } : {}) }))
     return report
   } finally {
     for (const db of open) { try { db.close() } catch { /* closed */ } }
@@ -440,7 +489,7 @@ export function needsUpgrade(config: CockpitConfig): boolean {
  * check, after a backup of the same files; the config written last. Returns
  * the dry run's report when it did not pass, else the real run's.
  */
-export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { backupsDir: string; writeConfig: (config: CockpitConfig) => Promise<void>; log?: (line: string) => void }): Promise<{ report: UpgradeReport; dir: string | null }> {
+export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir' | 'journalDir' | 'persist'> & { backupsDir: string; writeConfig: (config: CockpitConfig) => Promise<void>; log?: (line: string) => void }): Promise<{ report: UpgradeReport; dir: string | null }> {
   const now = input.now ?? (() => new Date())
   const log = input.log ?? (() => {})
   // Nothing a run could bind (every unbound space needs intervention first, or is bound already): no copies, the reasons as the report.
@@ -458,7 +507,9 @@ export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { bac
   if (!changes(dry)) { log('agent upgrade: nothing to do'); return { report: dry, dir } }
   log(`agent upgrade: dry run ok (${summary(dry)}); running on the home`)
   copyData(input.dataDir, input.config, path.join(dir, 'before'), input.modules ?? bundledCoreModules())
-  const report = await upgradeAgents({ ...input, backupDir: path.join(dir, 'run') }, 'run')
+  const report = await upgradeAgents({
+    ...input, backupDir: path.join(dir, 'run'), journalDir: path.join(input.backupsDir, 'agent-upgrade', 'pending'), persist: input.writeConfig,
+  }, 'run')
   fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
   if (report.status === 'ok') await input.writeConfig(report.config)
   log(`agent upgrade: ${report.status}${report.reason ? ` — ${report.reason}` : ''} (${summary(report)})`)
@@ -471,7 +522,7 @@ export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { bac
  * brain name that is no agent id) and which a run would upgrade. No copy, no
  * brain opened.
  */
-export function scanSpaces(input: Omit<UpgradeInput, 'backupDir'>): UpgradeReport {
+export function scanSpaces(input: Omit<UpgradeInput, 'backupDir' | 'journalDir' | 'persist'>): UpgradeReport {
   const modules = input.modules ?? bundledCoreModules()
   const control = modules.core.initControlDatabase(path.join(input.dataDir, 'control.db'))
   try {
@@ -498,26 +549,33 @@ export function scanSpaces(input: Omit<UpgradeInput, 'backupDir'>): UpgradeRepor
 }
 
 /** The upgrade on copies of the home's data: the report says what the real run would do; nothing of the home changes. */
-export async function dryRun(input: Omit<UpgradeInput, 'backupDir'> & { dir: string }): Promise<UpgradeReport> {
+export async function dryRun(input: Omit<UpgradeInput, 'backupDir' | 'journalDir' | 'persist'> & { dir: string }): Promise<UpgradeReport> {
   const modules = input.modules ?? bundledCoreModules()
   const copy = path.join(input.dir, 'dry')
   copyData(input.dataDir, input.config, copy, modules)
-  return upgradeAgents({ ...input, modules, dataDir: path.join(copy, 'data'), backupDir: path.join(copy, 'move-backups') }, 'dry-run')
+  // The home's pending journals (an interrupted run) are read on the copy too, so the dry run shows the resume.
+  const pending = path.join(copy, 'pending')
+  const real = path.join(path.dirname(path.dirname(input.dir)), 'agent-upgrade', 'pending')
+  if (fs.existsSync(real)) fs.cpSync(real, pending, { recursive: true })
+  return upgradeAgents({ ...input, modules, dataDir: path.join(copy, 'data'), backupDir: path.join(copy, 'move-backups'), journalDir: pending }, 'dry-run')
 }
 
-/** control.db and the brain files the config's tokens name, consistently (VACUUM INTO), into <dir>/data/. */
-function copyData(dataDir: string, config: CockpitConfig, dir: string, modules: CoreModules): void {
+/**
+ * control.db and every brain file it lists, consistently (VACUUM INTO), into
+ * <dir>/data/ — every brain, not only the config's: an earlier run's agent
+ * brain is in no config entry, and the copy must let a run resume with it.
+ */
+function copyData(dataDir: string, _config: CockpitConfig, dir: string, modules: CoreModules): void {
   const data = path.join(dir, 'data')
   fs.mkdirSync(path.join(data, 'brains'), { recursive: true, mode: 0o700 })
   const control = modules.core.initControlDatabase(path.join(dataDir, 'control.db'))
   try {
     control.prepare('VACUUM INTO ?').run(path.join(data, 'control.db'))
-    const tokens = [config.token, ...(config.spaces ?? []).map((s) => s.token), ...(config.agents ?? []).map((a) => a.token)]
-    for (const token of tokens) {
-      const found = brainOfToken(modules, control, token)
-      if (!found) continue
-      const src = openBrain(path.join(dataDir, found.brain.brain_file))
-      try { src.prepare('VACUUM INTO ?').run(path.join(data, found.brain.brain_file)) } finally { src.close() }
+    for (const b of control.prepare('SELECT brain_file FROM brains').all() as Array<{ brain_file: string }>) {
+      const file = path.join(dataDir, b.brain_file)
+      if (!fs.existsSync(file)) continue
+      const src = openBrain(file)
+      try { src.prepare('VACUUM INTO ?').run(path.join(data, b.brain_file)) } finally { src.close() }
     }
   } finally {
     control.close()
