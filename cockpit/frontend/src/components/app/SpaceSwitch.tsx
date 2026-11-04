@@ -60,9 +60,11 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     const title = stateTitle(team);
     return title ? { title, tone: stateTone(team.state) } : null;
   };
-  // Another space's brain is offline or not live: the trigger carries the mark too.
+  // Another space's brain is offline or not live: the trigger carries the mark too, in the worse tone.
   const otherFailed = spaces.some((s) => s.id !== active?.id && failed(s));
-  const otherNotLive = spaces.some((s) => s.id !== active?.id && notLive(s));
+  const others = spaces.filter((s) => s.id !== active?.id).map(notLive);
+  const otherNotLive = others.some((state) => state !== null);
+  const otherBroken = otherFailed || others.some((state) => state?.tone === 'destructive');
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState<NewSpace | null>(null);
   const [draft, setDraft] = useState('');
@@ -149,7 +151,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <Brain className="h-4 w-4" strokeWidth={1.8} />
           <span className="truncate">{label}</span>
-          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherFailed ? 'bg-destructive' : 'bg-warning')} />}
+          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       ) : (
@@ -163,7 +165,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherFailed ? 'bg-destructive' : 'bg-warning')} />}
+          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       )}
