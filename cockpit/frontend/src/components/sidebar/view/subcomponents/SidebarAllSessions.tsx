@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Search } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
+import { cn } from '@/lib/utils';
 import { joinReview, startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSections, type AllSession,
+  agentLabel, allSessionState, filterByName, groupAllSessions, isUnseen, newestFirst, sessionMark, type AllSections, type AllSession,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
 import { SidebarGroupHeader, SidebarStateBlock } from './SidebarParts';
 import { SidebarSessionRow } from './SidebarSessionRow';
 
-const RECENT_PER_AGENT = 5;
+const RECENT_SHOWN = 10;
 const SHOW_MORE_STEP = 20;
 
 /** One session, on its own row: a worker's says where it comes from. */
@@ -70,14 +71,6 @@ function AllSessionRow({ session, spaces, controller, sessions, plain, listedRun
           onArchive: !session.archivedAt && !working ? () => void archiveSession(session.id).then(whenDone) : undefined,
         }}
       />
-    </div>
-  );
-}
-
-function AgentName({ space }: { space: SpaceInfo }) {
-  return (
-    <div className="truncate px-2 pt-1 text-[11px] font-medium text-muted-foreground" title={space.name}>
-      {agentLabel(space)}
     </div>
   );
 }
@@ -170,7 +163,8 @@ function SidebarNow({ controller, onlyOpenSpace }: { controller: SidebarControll
 export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
   const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
   const [query, setQuery] = useState('');
-  const [extra, setExtra] = useState<Record<string, number>>({});
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [extra, setExtra] = useState(0);
   if (controller.allSessions === null) return <SidebarStateBlock spinner text="Loading sessions…" />;
   if (sessions.length === 0) return <SidebarStateBlock icon={MessageSquare} text="No sessions yet" />;
 
@@ -178,58 +172,63 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
     <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} plain />
   );
   const searching = query.trim() !== '';
-  const recent = sections.recent
-    .map((group) => ({ ...group, matching: filterByName(group.sessions, query) }))
-    .filter((group) => group.matching.length > 0);
+  // One list by time; the icon on each row says whose it is.
+  const recent = filterByName(sections.recent.flatMap((group) => group.sessions), query).sort(newestFirst);
+  const limit = searching ? recent.length : RECENT_SHOWN + extra;
+  const hidden = recent.length - limit;
   const found = searching ? filterByName(sections.searchOnly, query) : [];
+  const closeSearch = () => { setSearchOpen(false); setQuery(''); };
 
   return (
     <div className="space-y-3">
       <SidebarNow controller={controller} onlyOpenSpace={onlyOpenSpace} />
       {sections.main.length > 0 && (
         <div className="space-y-0.5">
-          <SidebarGroupHeader>Main sessions</SidebarGroupHeader>
-          {sections.main.map((group) => (
-            <div key={group.space.id} className="space-y-0.5">
-              <AgentName space={group.space} />
-              {group.items.map((item) => (
-                <AllSessionRow key={item.session.id} session={item.session} spaces={spaces} controller={controller} sessions={sessions} plain />
-              ))}
-            </div>
-          ))}
+          <SidebarGroupHeader>Pinned sessions</SidebarGroupHeader>
+          {sections.main.flatMap((group) => group.items).map((item) => row(item.session))}
         </div>
       )}
       <div className="space-y-0.5">
-        <SidebarGroupHeader>Recent</SidebarGroupHeader>
-        <div className="px-2 pb-1">
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search sessions"
+        <div className="flex items-center justify-between gap-1 pr-1">
+          <SidebarGroupHeader>Recent sessions</SidebarGroupHeader>
+          <button
+            type="button"
             aria-label="Search sessions"
-            className="w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
-          />
+            aria-expanded={searchOpen}
+            title="Search sessions"
+            onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+            className={cn(
+              'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground',
+              searchOpen ? 'text-foreground' : 'text-muted-foreground',
+            )}
+          >
+            <Search className="h-3.5 w-3.5" />
+          </button>
         </div>
-        {recent.map((group) => {
-          const limit = searching ? group.matching.length : RECENT_PER_AGENT + (extra[group.space.id] ?? 0);
-          const hidden = group.matching.length - limit;
-          return (
-            <div key={group.space.id} className="space-y-0.5">
-              <AgentName space={group.space} />
-              {group.matching.slice(0, limit).map(row)}
-              {hidden > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setExtra((current) => ({ ...current, [group.space.id]: (current[group.space.id] ?? 0) + SHOW_MORE_STEP }))}
-                  className="w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                >
-                  Show {Math.min(hidden, SHOW_MORE_STEP)} more
-                </button>
-              )}
-            </div>
-          );
-        })}
+        {searchOpen && (
+          <div className="px-2 pb-1">
+            <input
+              autoFocus
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Escape') closeSearch(); }}
+              placeholder="Search sessions"
+              aria-label="Search sessions"
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
+            />
+          </div>
+        )}
+        {recent.slice(0, limit).map(row)}
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setExtra((current) => current + SHOW_MORE_STEP)}
+            className="w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          >
+            Show {Math.min(hidden, SHOW_MORE_STEP)} more
+          </button>
+        )}
         {found.map(row)}
         {searching && recent.length === 0 && found.length === 0 && (
           <p className="px-2 py-1 text-[11px] text-muted-foreground">No matching sessions</p>

@@ -112,7 +112,7 @@ export function isRead(session: ProjectSession): boolean {
 }
 
 const activityOf = (session: ProjectSession) => session.lastActivity ?? session.createdAt ?? '';
-const newestFirst = (a: ProjectSession, b: ProjectSession) => activityOf(b).localeCompare(activityOf(a));
+export const newestFirst = (a: ProjectSession, b: ProjectSession) => activityOf(b).localeCompare(activityOf(a));
 // Oldest first and not by activity: a row keeps its place while its session works.
 const stableOrder = (a: AllSession, b: AllSession) =>
   (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id);
