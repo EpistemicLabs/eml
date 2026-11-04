@@ -64,9 +64,9 @@ const header = (req: http.IncomingMessage, name: string): string | undefined => 
   return Array.isArray(v) ? v[0] : v
 }
 
-/** Why a space's sessions get no brain. */
-export const noAgentMessage = (space: Pick<BrainSpace, 'name'>) =>
-  `Space "${space.name}" has no agent bound — its sessions get no brain until an agent is bound to it.`
+/** Why a space's sessions get no brain: no agent bound, and the agent upgrade's reason when it left it so. */
+export const noAgentMessage = (space: Pick<BrainSpace, 'name' | 'upgrade'>) =>
+  `Space "${space.name}" has no agent bound — its sessions get no brain until an agent is bound to it.${space.upgrade ? ` Agent upgrade: ${space.upgrade.reason}` : ''}`
 
 /** A refusal and the HTTP status it answers with: 403 for who may not call, 503 for a space that has no brain to offer. */
 export interface Refusal {

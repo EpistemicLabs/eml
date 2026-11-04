@@ -52,6 +52,17 @@ describe('a relation with one end in another brain', () => {
     expect(reject(() => eml.apply({ name: 'relation.create', input: { source_id: l.id, target_id: remoteTask, relation: 'supports', detection_method: 'manual' } })).code).toBe('NOT_FOUND')
   })
 
+  it('carries supersedes and part_of as a reference (the write that drew them happened before the move); drawn by hand they stay refused', () => {
+    const l = learning()
+    expect(eml.apply({ name: 'relation.create', input: { source_id: l.id, target_id: remoteTask, relation: 'supersedes', detection_method: 'manual', target_brain: OTHER } })).toEqual({ created: true })
+    expect(eml.apply({ name: 'relation.create', input: { source_id: remoteTask, target_id: l.id, relation: 'part_of', detection_method: 'manual', source_brain: OTHER } })).toEqual({ created: true })
+    expect(eml.engrams.get(l.id)!.relations.map(r => r.relation)).toEqual(['supersedes', 'part_of'])
+    const other = writes(eml).store(validNote({ scope: 'agent.motti', title: 'local' }))
+    expect(() => eml.apply({ name: 'relation.create', input: { source_id: l.id, target_id: other.id, relation: 'supersedes', detection_method: 'manual' } })).toThrow(/supersedes is drawn by a write/)
+    expect(() => eml.apply({ name: 'relation.create', input: { source_id: l.id, target_id: other.id, relation: 'part_of', detection_method: 'manual' } })).toThrow(/part_of comes from a task/)
+    expect(verify(raw(eml)).ok).toBe(true)
+  })
+
   it('refuses two remote ends, a malformed brain id and this brain\'s own id', () => {
     const l = learning()
     const base = { source_id: l.id, target_id: remoteTask, relation: 'refines', detection_method: 'manual' }

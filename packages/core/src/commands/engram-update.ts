@@ -74,11 +74,13 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
     throw unknownFieldsError(type, unknown, universal.concat(Object.keys(TYPE_FIELDS[type])))
   }
   const fieldPatch: Record<string, unknown> = { ...(patch.properties ?? {}) }
+  // v0.21: scope too — a learning is re-scoped like any engram (the agent-brain
+  // upgrade moves global and user.<other> learnings to their owner).
   if (type === 'learning') {
-    const other = Object.keys(raw).filter(k => raw[k] !== undefined && !['content', 'title', 'status', 'tags', 'subjects', 'supersedes'].includes(k))
+    const other = Object.keys(raw).filter(k => raw[k] !== undefined && !['content', 'title', 'scope', 'status', 'tags', 'subjects', 'supersedes'].includes(k))
       .concat(Object.keys(fieldPatch))
     if (other.length > 0) {
-      throw new Error('Invalid engram: a learning takes content, title, status, tags, subjects and supersedes (a rule or learning) here — new evidence goes through eml_learning(id).')
+      throw new Error('Invalid engram: a learning takes content, title, scope, status, tags, subjects and supersedes (a rule or learning) here — new evidence goes through eml_learning(id).')
     }
   }
   // review_due_at: null on a reviewable engram means "restart from the default", not "no review"

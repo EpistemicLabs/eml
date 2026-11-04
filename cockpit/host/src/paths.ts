@@ -21,6 +21,7 @@ export const HOST_ROOT = path.resolve(__dirname, '..')
 
 export const SERVER_JS = path.join(HOST_ROOT, 'dist', 'server.cjs')     // brain server + core, bundled
 export const CORE_INDEX = path.join(HOST_ROOT, 'dist', 'core.cjs')      // core for provisioning, bundled
+export const CORE_LOG = path.join(HOST_ROOT, 'dist', 'core-log.cjs')    // core's op-log tools (move, verify) for the agent upgrade, bundled
 // Preload for the brain server: exits it when the host is gone (brain-watchdog.ts).
 export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).

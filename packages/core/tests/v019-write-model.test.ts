@@ -292,7 +292,9 @@ describe('v0.19 write model', () => {
     it('a learning takes content, title, status, tags and subjects; sharpening its content writes a change entry', () => {
       const l = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask first.', source: 'self', happened: 'did not ask' }, ctx())
       if (!l.written) throw new Error('not written')
-      expect(() => writes(eml).update(l.engram.id, { properties: { detail: 'x' } })).toThrow(/a learning takes content, title, status, tags, subjects and supersedes/)
+      expect(() => writes(eml).update(l.engram.id, { properties: { detail: 'x' } })).toThrow(/a learning takes content, title, scope, status, tags, subjects and supersedes/)
+      // v0.21: a learning is re-scoped like any engram
+      expect(writes(eml).update(l.engram.id, { scope: 'agent.juno' }, ctx())?.scope).toBe('agent.juno')
       expect(() => writes(eml).update(l.engram.id, { supersedes: [writes(eml).store(validNote()).id] })).toThrow(/a learning supersedes only a rule/)
       expect(() => writes(eml).update(l.engram.id, { content: 'x'.repeat(201) })).toThrow(/at most 200 characters/)
       const r = writes(eml).update(l.engram.id, { content: 'Ask before acting.' }, ctx())!
