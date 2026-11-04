@@ -112,7 +112,7 @@ export default function BrainTab() {
             <SettingsRow
               key={space.id}
               label={space.name}
-              description={(renaming?.id === space.id && renameError) || (space.main ? 'The brain this cockpit was set up with' : 'A further local brain with the same agent and profile')}
+              description={(renaming?.id === space.id && renameError) || undefined}
             >
               <div className="flex items-center gap-2">
                 <SpaceColorPicker space={space} onError={setSpaceError} />
