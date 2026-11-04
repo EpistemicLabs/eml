@@ -141,6 +141,27 @@ html {
 }
 /* scrollbar-width doesn't inherit, so it goes on every element. */
 * { scrollbar-width: thin; }
+/* The space colours (lib/space-color.ts): plain tokens, picked by name at runtime. */
+:root {
+  --space-coral: #c93a22;
+  --space-amber: #a16207;
+  --space-green: #047857;
+  --space-cyan: #0e7490;
+  --space-blue: #1d4ed8;
+  --space-violet: #6d4ee6;
+  --space-pink: #be185d;
+  --space-slate: #475569;
+}
+html.dark {
+  --space-coral: #ff7a66;
+  --space-amber: #fbbf24;
+  --space-green: #34d399;
+  --space-cyan: #22d3ee;
+  --space-blue: #60a5fa;
+  --space-violet: #a78bfa;
+  --space-pink: #f472b6;
+  --space-slate: #94a3b8;
+}
 body {
   margin: 0;
   background: var(--color-background);

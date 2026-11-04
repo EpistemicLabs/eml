@@ -9,6 +9,7 @@ import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { createSpace, loadSpaces, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { Button } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
+import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
@@ -114,6 +115,7 @@ export default function BrainTab() {
               description={(renaming?.id === space.id && renameError) || (space.main ? 'The brain this cockpit was set up with' : 'A further local brain with the same agent and profile')}
             >
               <div className="flex items-center gap-2">
+                <SpaceColorPicker space={space} onError={setSpaceError} />
                 {renaming?.id === space.id ? (
                   <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
                     <input

@@ -29,8 +29,8 @@ export interface SessionRowProps {
   onRequestDelete: (projectId: string, session: ProjectSession) => void;
   /** Given only where the row offers the pin chip (the conversations view). */
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
-  /** Given in the All view: the agent the session belongs to, marked with its letter. */
-  agent?: { letter: string; name: string };
+  /** Given in the All view: the agent the session belongs to, marked with its letter in its space's colour. */
+  agent?: { letter: string; name: string; tone?: string };
   /** How the session stands for the user: a second line, with the word and the reason. */
   mark?: SessionMark | null;
   /** A second line without a mark: a parent's worker counts. */
@@ -132,6 +132,7 @@ export function SidebarSessionRow({
           {agent && (
             <span
               title={agent.name}
+              style={{ color: agent.tone, borderColor: agent.tone }}
               className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border text-[9px] font-semibold text-muted-foreground"
             >
               {agent.letter}

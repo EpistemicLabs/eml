@@ -6,6 +6,7 @@ import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
 import { agentMcpConfigPath, writeAgentFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { openSpaceAgent, type SpaceAgent } from './agent-config.js'
 import type { SessionSpace } from './domain/agent-provider.js'
+import { nextSpaceColor, type SpaceColor } from './domain/space-color.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
@@ -30,6 +31,8 @@ export interface BrainSpace {
   brainName: string
   /** The space the home was provisioned with. */
   main: boolean
+  /** What tells it apart in this cockpit; set when it joins BrainSpaces. */
+  color: SpaceColor | null
   /** The space's own agent (agent-config.ts); null = the shared config. */
   agent: SpaceAgent | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
@@ -59,6 +62,7 @@ export interface SpaceView {
   main: boolean
   /** What the space's sessions are marked with (spaceLabel). */
   label: string
+  color: SpaceColor | null
 }
 
 /**
@@ -71,13 +75,15 @@ export function spaceLabel(space: BrainSpace): string {
   return agentId ? agentId.charAt(0).toUpperCase() + agentId.slice(1) : space.name
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, label: spaceLabel(space) })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, label: spaceLabel(space), color: space.color })
 
 export interface OpenSpaceOptions {
   id: string
   name: string
   brainName: string
   main: boolean
+  /** Its stored colour; without one BrainSpaces gives it the next free. */
+  color?: SpaceColor
   url: string
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
@@ -114,6 +120,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     name: opts.name,
     brainName: opts.brainName,
     main: opts.main,
+    color: opts.color ?? null,
     agent,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
@@ -130,10 +137,12 @@ export class BrainSpaces {
   private readonly addListeners = new Set<(space: BrainSpace) => void>()
 
   constructor(readonly main: BrainSpace) {
+    main.color ??= 'coral'
     this.byId.set(main.id, main)
   }
 
   add(space: BrainSpace): void {
+    space.color ??= nextSpaceColor(this.list().map((other) => other.color))
     this.byId.set(space.id, space)
     for (const listener of this.addListeners) listener(space)
   }
@@ -155,6 +164,17 @@ export class BrainSpaces {
   /** The space with `id`, or the main space when none (or an unknown one) is named. */
   resolve(id?: string | null): BrainSpace {
     return (id && this.byId.get(id)) || this.main
+  }
+
+  /** Give a space its colour and persist it in the cockpit config. */
+  async setColor(space: BrainSpace, color: SpaceColor): Promise<void> {
+    await updateCockpitConfig((config) => {
+      if (!config) throw new Error('no cockpit config')
+      return space.main
+        ? { ...config, mainColor: color }
+        : { ...config, spaces: (config.spaces ?? []).map((s) => (s.token === space.token ? { ...s, color } : s)) }
+    })
+    space.color = color
   }
 
   /** Rename a space (display name only; the brain keeps its name) and persist it in the cockpit config. */

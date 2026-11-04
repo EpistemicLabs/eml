@@ -14,6 +14,7 @@ import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './pat
 import type { PtyBridge } from './pty-bridge.js'
 import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
+import { isSpaceColor } from './domain/space-color.js'
 import { provisionSpace } from './provision.js'
 import {
   ProjectPathError,
@@ -467,6 +468,7 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
     id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
   })
   deps.spaces.add(space)
+  if (space.color) await deps.spaces.setColor(space, space.color)
   return { space }
 }
 
@@ -515,6 +517,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const target = deps.spaces.get(id)
     if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
     const body = await readJson(req)
+    if (body.color !== undefined) {
+      if (!isSpaceColor(body.color)) { json(res, 400, { error: { code: 'NO_SUCH_COLOR', message: 'No such space colour' } }); return true }
+      try {
+        await deps.spaces.setColor(target, body.color)
+        json(res, 200, { space: spaceView(target) })
+      } catch (err) {
+        json(res, 500, { error: { code: 'SPACE_COLOR_FAILED', message: (err as Error).message } })
+      }
+      return true
+    }
     const valid = validSpaceName(deps, typeof body.name === 'string' ? body.name : '', target)
     if ('error' in valid) { json(res, 400, valid); return true }
     try {

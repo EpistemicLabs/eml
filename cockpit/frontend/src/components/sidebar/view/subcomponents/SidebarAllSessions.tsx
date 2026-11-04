@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 
+import { spaceTone } from '@/lib/space-color';
 import { joinReview, startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
@@ -57,7 +58,7 @@ function AllSessionRow({ session, spaces, controller, sessions, plain }: {
           isPinned: pinned,
           onToggle: (target) => void controller.toggleSessionPin(target),
         }}
-        agent={{ letter: agentLetter(space), name: agentLabel(space) }}
+        agent={{ letter: agentLetter(space), name: agentLabel(space), tone: spaceTone(space) }}
         mark={mark}
         context={parent ? `from ${sessionDisplayName(parent)}` : undefined}
         actions={{

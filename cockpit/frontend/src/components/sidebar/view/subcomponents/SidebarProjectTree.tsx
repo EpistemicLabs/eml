@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Brain, Eye, EyeOff, Folder, Plus } from 'lucide-react';
 
+import { spaceTone } from '@/lib/space-color';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 import { projectKey } from '../../spaceProjects';
@@ -140,7 +141,7 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
           <div key={space.id} className="space-y-1.5">
             <AddProjectHeading space={space} controller={controller}>
               <div className="flex items-center gap-1.5 px-2 pt-1 text-[11px] font-medium text-foreground" title={`Space: ${space.name}`}>
-                <Brain className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                <Brain className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="truncate">{space.name}</span>
               </div>
             </AddProjectHeading>

@@ -1,7 +1,8 @@
 // The add-pane actions that used to sit at the right end moved into the
 // pane header's "+" (2026-09-22).
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Brain } from 'lucide-react';
+import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
@@ -227,6 +228,7 @@ export default function DeskTabBar() {
         const brainActive = topView === 'brain' && isActiveSpace;
         const count = isActiveSpace ? pendingReviews : 0;
         const brainLabel = section.space?.name ?? 'Brain';
+        const tone = spaceTone(section.space);
         return (
           // One section per brain: a faint band holds its Brain tab and desks,
           // so the bands — not separator lines — tell the brains apart. The band
@@ -237,12 +239,13 @@ export default function DeskTabBar() {
               'flex h-8 self-center items-stretch overflow-hidden rounded-md border',
               isActiveSpace ? 'border-foreground/15 bg-foreground/[0.05]' : 'border-foreground/[0.08] bg-foreground/[0.02]',
             )}
+            style={tone ? { borderColor: `color-mix(in srgb, ${tone} ${isActiveSpace ? 55 : 30}%, transparent)` } : undefined}
           >
             {/* The section's Brain tab: this brain's dashboard. Same underline
-                idiom as the desks; the coral brain mark stays the brand's. */}
+                idiom as the desks, in the space's colour. */}
             {section.space && editingId === spaceEditId(section.space) ? (
               <div className="flex items-center gap-1.5 px-2">
-                <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+                <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
                 <input {...renameInputProps(spaceEditId(section.space))} placeholder="Space name" aria-label="Space name" maxLength={40} />
               </div>
             ) : (
@@ -255,14 +258,15 @@ export default function DeskTabBar() {
               }}
               onDoubleClick={() => { if (section.space) startEditing(spaceEditId(section.space), section.space.name); }}
               aria-pressed={brainActive}
+              style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
               title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename' : ''}`}
               className={cn(
                 'relative flex h-full items-center gap-1.5 rounded-l-md px-2 text-body font-medium transition-colors',
                 brainActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                brainActive && 'after:absolute after:inset-x-2 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary',
+                brainActive && 'after:absolute after:inset-x-2 after:-bottom-px after:h-[2px] after:rounded-full after:bg-[var(--space-tone,var(--color-primary))]',
               )}
             >
-              <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} />
+              <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} style={{ color: tone }} />
               <span className="max-w-[10ch] truncate">{brainLabel}</span>
               {count > 0 && (
                 <span className="rounded-full bg-warning/15 px-1.5 py-px font-mono text-[10px] leading-4 tabular-nums text-warning">
