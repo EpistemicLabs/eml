@@ -1,7 +1,7 @@
 // The add-pane actions that used to sit at the right end moved into the
 // pane header's "+" (2026-09-22).
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Brain } from 'lucide-react';
+import { Brain, Trash2 } from 'lucide-react';
 import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
@@ -164,6 +164,7 @@ export default function DeskTabBar() {
     if (hasSession && !window.confirm(`Close the "${desk.name}" desk and its terminals?`)) {
       return;
     }
+    setEditingId(null);
     paneStore.removeDesk(desk.id);
   };
 
@@ -283,8 +284,6 @@ export default function DeskTabBar() {
                   key={desk.id}
                   {...dragProps(desk, section.key)}
                   className={cn(
-                    // The row holds the name and its unseen badge; the × sits in the
-                    // tab's top-right corner above them, on hover only.
                     'group relative flex items-center gap-1.5 rounded-md px-2.5 text-body transition-colors',
                     isActive ? 'space-tab-active text-foreground' : 'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground',
                     dragging?.id === desk.id && 'opacity-50',
@@ -299,7 +298,22 @@ export default function DeskTabBar() {
                     />
                   )}
                   {isEditing ? (
-                    <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
+                    <>
+                      <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
+                      {section.desks.length > 1 && (
+                        <button
+                          type="button"
+                          // Keeps the focus in the name field: its blur would end editing and take this button away.
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleDelete(desk, section.desks.length)}
+                          aria-label={`Close ${desk.name} desk`}
+                          title={`Close ${desk.name} desk`}
+                          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -308,7 +322,7 @@ export default function DeskTabBar() {
                         paneStore.activateDesk(desk.id);
                       }}
                       onDoubleClick={() => startEditing(desk.id, desk.name)}
-                      title={`${desk.name}${shortcut} · double-click to rename, drag to reorder, drop a pane title here to move the pane`}
+                      title={`${desk.name}${shortcut} · double-click to rename or close, drag to reorder, drop a pane title here to move the pane`}
                       className="max-w-[10ch] cursor-pointer truncate font-medium whitespace-nowrap"
                     >
                       {desk.name}
@@ -319,26 +333,6 @@ export default function DeskTabBar() {
                     <UnseenBadge count={countNeedsYou(turnSnapshot, desk.panes.map((pane) => pane.sessionId))} />
                   )}
 
-                  {!isEditing && section.desks.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleDelete(desk, section.desks.length);
-                      }}
-                      aria-label={`Close ${desk.name} desk`}
-                      title={`Close ${desk.name} desk`}
-                      className={[
-                        'absolute right-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-foreground/10 hover:text-foreground',
-                        // Hover only, active desk included — the band stays quiet.
-                        'opacity-0 group-hover:opacity-60 group-hover:hover:opacity-100 focus-visible:opacity-100',
-                      ].join(' ')}
-                    >
-                      <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
-                        <path d="M6 6l12 12M18 6L6 18" />
-                      </svg>
-                    </button>
-                  )}
                 </div>
               );
             })}
