@@ -3,9 +3,12 @@
 // /api/brain-backups). Who is in the brain shows in Account and Agent. Read-only except "Back up now"; switching the source
 // to a remote brain and restoring a backup are later steps.
 import { useCallback, useEffect, useState } from 'react';
-import { FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
+import { Brain, FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
 
 import { useAboutInfo } from '@/hooks/useAboutInfo';
+import { spaceTone } from '@/lib/space-color';
+import { SPACE_HEADER } from '@/lib/space-header';
+import { cn } from '@/lib/utils';
 import { createSpace, loadSpaces, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { Button } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
@@ -37,13 +40,17 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export default function BrainTab() {
-  const { info, failed: infoFailed } = useBrainInfo();
+  const spaces = useSpaces();
+  const activeSpace = useActiveSpace();
+  // The space shown below: picked here, without opening it in the cockpit.
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const shown = spaces.find((space) => space.id === pickedId) ?? activeSpace;
+  const shownId = shown?.id;
+  const { info, failed: infoFailed } = useBrainInfo(shownId);
   const [backups, setBackups] = useState<BrainBackup[]>([]);
   const [backingUp, setBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const { info: about } = useAboutInfo();
-  const spaces = useSpaces();
-  const activeSpace = useActiveSpace();
   const [spaceName, setSpaceName] = useState('');
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [spaceError, setSpaceError] = useState<string | null>(null);
@@ -72,22 +79,34 @@ export default function BrainTab() {
     switchSpace(result.space);
   };
 
+  const inShown = useCallback(
+    (init?: RequestInit): RequestInit => ({ ...init, headers: shownId ? { [SPACE_HEADER]: shownId } : {} }),
+    [shownId],
+  );
+
   const loadBackups = useCallback(async () => {
     try {
-      setBackups((await getJson<{ backups: BrainBackup[] }>('/api/brain-backups')).backups);
-    } catch { /* list stays as is */ }
-  }, []);
+      return (await getJson<{ backups: BrainBackup[] }>('/api/brain-backups', inShown())).backups;
+    } catch {
+      return null;
+    }
+  }, [inShown]);
 
   useEffect(() => {
-    void loadBackups();
+    let current = true;
+    setBackups([]);
+    setBackupError(null);
+    void loadBackups().then((list) => { if (current && list) setBackups(list); });
+    return () => { current = false; };
   }, [loadBackups]);
 
   const backUpNow = async () => {
     setBackingUp(true);
     setBackupError(null);
     try {
-      await getJson('/api/brain-backups', { method: 'POST' });
-      await loadBackups();
+      await getJson('/api/brain-backups', inShown({ method: 'POST' }));
+      const list = await loadBackups();
+      if (list) setBackups(list);
     } catch {
       setBackupError('Backup failed — see the host log.');
     } finally {
@@ -96,7 +115,7 @@ export default function BrainTab() {
   };
 
   const reveal = () => {
-    void fetch('/api/brain-info/reveal', { method: 'POST' });
+    void fetch('/api/brain-info/reveal', inShown({ method: 'POST' }));
   };
 
   const fallback = infoFailed ? 'unavailable' : '…';
@@ -105,13 +124,24 @@ export default function BrainTab() {
     <div className="space-y-8">
       <SettingsSection
         title="Spaces"
-        description="Each space is its own brain. Sessions, desks and projects of a space never see another space's brain. The details below are the active space's."
+        description="Each space is its own brain. Sessions, desks and projects of a space never see another space's brain. Pick one to see its details below; it does not open it."
       >
         <SettingsCard divided>
           {spaces.map((space) => (
             <SettingsRow
               key={space.id}
-              label={space.name}
+              label={
+                <button
+                  type="button"
+                  aria-pressed={space.id === shownId}
+                  onClick={() => setPickedId(space.id)}
+                  className="flex max-w-full items-center gap-2 text-left hover:underline"
+                >
+                  <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+                  <span className="truncate">{space.name}</span>
+                </button>
+              }
+              className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
               description={(renaming?.id === space.id && renameError) || undefined}
             >
               <div className="flex items-center gap-2">
@@ -133,13 +163,6 @@ export default function BrainTab() {
                   <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
                     <Pencil className="h-3.5 w-3.5" />
                     Rename
-                  </Button>
-                )}
-                {space.id === activeSpace?.id ? (
-                  <Mono>active</Mono>
-                ) : (
-                  <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => switchSpace(space)}>
-                    Switch
                   </Button>
                 )}
               </div>
@@ -164,7 +187,7 @@ export default function BrainTab() {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Source">
+      <SettingsSection title={shown?.name ?? 'Brain'}>
         <SettingsCard divided>
           <SettingsRow
             label="Brain source"
@@ -172,34 +195,12 @@ export default function BrainTab() {
           >
             <Mono>{info ? 'Local (bundled)' : fallback}</Mono>
           </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="Paths">
-        <SettingsCard divided>
-          <SettingsRow label="Cockpit home" description="All state of this cockpit instance lives here">
-            <Mono className="max-w-sm break-all text-right">{info?.home ?? fallback}</Mono>
-          </SettingsRow>
           <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
               <FolderSearch className="h-3.5 w-3.5" />
               Show in Finder
             </Button>
           </SettingsRow>
-          <SettingsRow
-            label="Claude config directory"
-            description="The app's own Claude environment — your local ~/.claude stays untouched"
-          >
-            <Mono className="max-w-sm break-all text-right">{about?.configDir ?? '—'}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Backups folder">
-            <Mono className="max-w-sm break-all text-right">{info ? `${info.home}/backups` : fallback}</Mono>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="Details">
-        <SettingsCard divided>
           <SettingsRow label="Brain ID">
             <Mono>{info?.brainId ?? fallback}</Mono>
           </SettingsRow>
@@ -219,8 +220,8 @@ export default function BrainTab() {
       </SettingsSection>
 
       <SettingsSection
-        title="Backups"
-        description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Paths). A copy is also taken automatically before every brain update; the newest 3 are kept."
+        title={`Backups of ${shown?.name ?? 'the brain'}`}
+        description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Cockpit). A copy is also taken automatically before every brain update; the newest 3 are kept."
       >
         <SettingsCard divided>
           <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
@@ -246,6 +247,23 @@ export default function BrainTab() {
               </div>
             ))
           )}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Cockpit">
+        <SettingsCard divided>
+          <SettingsRow label="Cockpit home" description="All state of this cockpit instance lives here">
+            <Mono className="max-w-sm break-all text-right">{info?.home ?? fallback}</Mono>
+          </SettingsRow>
+          <SettingsRow
+            label="Claude config directory"
+            description="The app's own Claude environment — your local ~/.claude stays untouched"
+          >
+            <Mono className="max-w-sm break-all text-right">{about?.configDir ?? '—'}</Mono>
+          </SettingsRow>
+          <SettingsRow label="Backups folder">
+            <Mono className="max-w-sm break-all text-right">{info ? `${info.home}/backups` : fallback}</Mono>
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
     </div>
