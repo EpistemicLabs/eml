@@ -32,6 +32,8 @@ export interface BrainSpace {
   brainName: string
   /** The agent this space binds (agents.ts), or null: its sessions then get no brain until one is bound. */
   agent: string | null
+  /** Why the agent upgrade left this space unbound (agent-upgrade.ts), with the report's folder; null when bound or never tried. */
+  upgrade: UpgradeState | null
   /** The space the home was provisioned with. */
   main: boolean
   /**
@@ -60,6 +62,14 @@ export interface BrainSpace {
   notes: NotesWatcher
 }
 
+/** The agent upgrade's word on a space it could not bind: the reason, where its report is, and what it waits for. */
+export interface UpgradeState {
+  reason: string
+  report: string | null
+  /** The upgrade waits for the home's handle (the banner asks for it). */
+  needs?: 'handle'
+}
+
 /** What the UI gets to see of a space (GET /api/spaces). */
 export interface SpaceView {
   id: string
@@ -67,17 +77,20 @@ export interface SpaceView {
   main: boolean
   /** The bound agent's id, null while none is bound. */
   agent: string | null
+  /** Why none is bound (the agent upgrade's reason), null when bound. */
+  upgrade: UpgradeState | null
   /** v0.21: a shared brain; null when the host could not ask the brain server. */
   shared: boolean | null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, shared: space.shared })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, upgrade: space.upgrade, shared: space.shared })
 
 export interface OpenSpaceOptions {
   id: string
   name: string
   brainName: string
   agent: string | null
+  upgrade?: UpgradeState | null
   main: boolean
   /** Known for a space just made (false local, true shared); absent at boot until the server was asked. */
   shared?: boolean | null
@@ -108,6 +121,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     name: opts.name,
     brainName: opts.brainName,
     agent: opts.agent,
+    upgrade: opts.upgrade ?? null,
     main: opts.main,
     shared: opts.shared ?? null,
     ledgerKey: opts.main ? null : opts.id,

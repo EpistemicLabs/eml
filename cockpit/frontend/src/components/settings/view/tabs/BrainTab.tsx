@@ -12,7 +12,8 @@ import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
-import { relayHost } from '@/lib/team';
+import { agentName, useAgents } from '../../hooks/useAgents';
+import { relayHost, type Team } from '@/lib/team';
 import { useTeams } from '@/stores/useTeamStore';
 import TeamSections from './TeamSections';
 
@@ -38,6 +39,15 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** What a space row says: where it comes from and which agent works in it; an unbound one points at the banner. */
+function spaceDescription(space: SpaceInfo, agents: ReturnType<typeof useAgents>['agents'], team: Team | undefined): string {
+  const agent = agentName(agents, space.agent);
+  const host = team?.shared ? relayHost(team.relay) : null;
+  const origin = space.main ? 'The space this cockpit was set up with' : space.shared ? (host ? `A shared brain on ${host}` : 'A shared brain') : 'A further local brain';
+  if (!space.agent) return `${origin} · no agent bound — see the banner above`;
+  return `${origin} · ${agent ?? space.agent}`;
+}
+
 export default function BrainTab() {
   const { info, failed: infoFailed } = useBrainInfo();
   const [backups, setBackups] = useState<BrainBackup[]>([]);
@@ -46,18 +56,11 @@ export default function BrainTab() {
   const { info: about } = useAboutInfo();
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
+  const { agents } = useAgents();
+  const mainAgentName = agentName(agents, spaces.find((s) => s.main)?.agent ?? null);
   // v0.21: a shared space's team (useTeamStore) — the row says where it lives, the sections below show it.
   const teams = useTeams();
   const activeTeam = activeSpace?.shared ? teams[activeSpace.id] : undefined;
-  const spaceDescription = (space: SpaceInfo): string => {
-    if (space.main) return 'The brain this cockpit was set up with';
-    if (space.shared) {
-      const team = teams[space.id];
-      const host = team?.shared ? relayHost(team.relay) : null;
-      return host ? `A shared brain on ${host}` : 'A shared brain';
-    }
-    return 'A further local brain with the same agent and profile';
-  };
   const [spaceName, setSpaceName] = useState('');
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [spaceError, setSpaceError] = useState<string | null>(null);
@@ -119,14 +122,14 @@ export default function BrainTab() {
     <div className="space-y-8">
       <SettingsSection
         title="Spaces"
-        description="Each space is its own brain. Sessions, desks and projects of a space never see another space's brain. The details below are the active space's."
+        description="Each space is its own brain for your work. Sessions, desks and projects of a space never see another space's brain. Your agent works in every space it is bound to; who it is lives in its own brain (Settings › Agents). The details below are the active space's."
       >
         <SettingsCard divided>
           {spaces.map((space) => (
             <SettingsRow
               key={space.id}
               label={space.name}
-              description={(renaming?.id === space.id && renameError) || spaceDescription(space)}
+              description={(renaming?.id === space.id && renameError) || spaceDescription(space, agents, teams[space.id])}
             >
               <div className="flex items-center gap-2">
                 {renaming?.id === space.id ? (
@@ -158,7 +161,7 @@ export default function BrainTab() {
               </div>
             </SettingsRow>
           ))}
-          <SettingsRow label="New space" description={spaceError ?? 'A new local brain, seeded with your agent and profile'}>
+          <SettingsRow label="New space" description={spaceError ?? (mainAgentName ? `A new local brain for your work; ${mainAgentName} works in it from the start.` : 'A new local brain for your work.')}>
             <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void addSpace(); }}>
               <input
                 value={spaceName}

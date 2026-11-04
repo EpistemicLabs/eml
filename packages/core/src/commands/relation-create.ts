@@ -85,8 +85,12 @@ export const relationCreate: CommandModule<RelationInput, { created: boolean }> 
 function relate(ctx: CommandContext, input: RelationInput): boolean {
   const { db } = ctx
   // v0.19: supersedes and part_of are not drawn by hand — they come from
-  // supersedes on a write and from a task's parent_id.
-  if (input.relation === 'supersedes' || input.relation === 'part_of') {
+  // supersedes on a write and from a task's parent_id. v0.21: a cross-brain
+  // reference carries the verb the write drew before its engrams moved apart
+  // (the agent upgrade re-creates a space's crossing relations as references),
+  // so it may name them; it draws nothing here.
+  const reference = input.source_brain !== undefined || input.target_brain !== undefined
+  if (!reference && (input.relation === 'supersedes' || input.relation === 'part_of')) {
     throw new Error(
       input.relation === 'supersedes'
         ? 'Invalid engram: supersedes is drawn by a write — supersedes on the new engram when you create it, or after the fact eml_update(new_id, supersedes=[old_id]); a task: eml_track_task(new_id, supersedes=[old_id]); a status replaces the previous one by itself.'

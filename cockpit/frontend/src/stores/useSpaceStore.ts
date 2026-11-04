@@ -12,8 +12,10 @@ export interface SpaceInfo {
   id: string;
   name: string;
   main: boolean;
-  /** The bound agent's id, null while none is bound. */
+  /** The agent bound to this space (its sessions run as it), null while none is bound. */
   agent: string | null;
+  /** Why none is bound: the agent upgrade's reason, its report folder, and what it waits for. */
+  upgrade: { reason: string; report: string | null; needs?: 'handle' } | null;
   /** v0.21: a shared brain; null when the host could not ask the brain server. */
   shared: boolean | null;
 }
@@ -42,7 +44,12 @@ export async function loadSpaces(): Promise<SpaceInfo[]> {
     const body = (await res.json()) as { spaces?: Array<Partial<SpaceInfo>> };
     spaces = (body.spaces ?? [])
       .filter((s): s is SpaceInfo & Partial<SpaceInfo> => typeof s.id === 'string' && typeof s.name === 'string')
-      .map((s) => ({ id: s.id, name: s.name, main: s.main === true, agent: typeof s.agent === 'string' ? s.agent : null, shared: typeof s.shared === 'boolean' ? s.shared : null }));
+      .map((s) => ({
+        id: s.id, name: s.name, main: s.main === true,
+        agent: typeof s.agent === 'string' ? s.agent : null,
+        upgrade: s.upgrade && typeof s.upgrade === 'object' ? s.upgrade : null,
+        shared: typeof s.shared === 'boolean' ? s.shared : null,
+      }));
     // A persisted active space the host no longer knows → back to main.
     const active = paneStore.getActiveSpaceId();
     if (active && !spaces.some((s) => s.id === active)) paneStore.activateSpace(null);
