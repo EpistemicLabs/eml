@@ -13,6 +13,7 @@ const HOOK_TOKEN = 'hooktoken0123456789'
 const HOOK_URL = 'http://127.0.0.1:4318/api/hook'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
 const MCP_URL = 'http://127.0.0.1:4318/mcp'
+const HOOKS_URL = 'http://127.0.0.1:4318/hooks'
 
 
 
@@ -90,12 +91,13 @@ describe('brain spaces', () => {
     }
   })
 
-  it('gives a space its own session files, owner-only, with the brain token only in the hook config', () => {
+  it('gives a space its own session files, owner-only, naming the host with the space\'s MCP token and never the brain token', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const space = mods.openBrainSpace({
-      id: SPACE_ID, name: 'Main', brainName: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL,
+      id: SPACE_ID, name: 'Main', brainName: 'Main', agent: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
+    expect(space.agent).toBe('atlas')
 
     expect(space.files.mcpConfig).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'mcp.json'))
     expect(space.files.settings).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'settings.json'))
@@ -130,14 +132,18 @@ describe('brain spaces', () => {
     expect(hooks.UserPromptSubmit).toHaveLength(2)
     expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
-    expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)
+    // The EML hooks talk to the host's hook routes with the space's MCP token (brain-mcp.ts HOOKS_PATH).
+    const emlConfig = readFileSync(space.files.emlConfig, 'utf8')
+    expect(emlConfig).toContain(`EML_URL=${HOOKS_URL}\n`)
+    expect(emlConfig).toContain(`EML_API_TOKEN=${space.mcpToken}\n`)
+    expect(emlConfig).not.toContain(TOKEN)
   })
 
   it('resolves a space by id and falls back to main', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string) => mods.openBrainSpace({
-      id, name, brainName: name, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL,
+      id, name, brainName: name, agent: null, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
     const main = open(SPACE_ID, 'Main')
     const spaces = new mods.BrainSpaces(main)

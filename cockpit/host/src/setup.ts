@@ -7,9 +7,10 @@ import { requestGate } from './remote-access.js'
 
 /**
  * First-run setup: a home without a brain gets a minimal server on the host's
- * port until the user has named themselves and their agent. Only then is the
- * brain provisioned — the two names become the ids (brain name, authorship
- * handle, the seeded profiles' scopes), which are fixed from then on.
+ * port until the user has named themselves and their agent. Only then are the
+ * brains provisioned (provision.ts: the agent's brain and the main space) —
+ * the two names become the ids (the agent's brain name and scope, the human's
+ * handle), which are fixed from then on.
  *
  *   GET  /api/setup  → { needed: true }    (the real host answers { needed: false })
  *   POST /api/setup  { userName, agentName } → provision, then hand the port over

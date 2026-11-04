@@ -9,23 +9,28 @@ import { updateCockpitConfig } from './config.js'
 
 /**
  * A brain space is one brain the cockpit works with (decision
- * cockpit-naming-desks-spaces): its token, the session files that carry it,
+ * cockpit-naming-desks-spaces): its token, the session files that reach it,
  * and the host-side state that belongs to that brain — its project list, the
  * cockpit's local project registry, its notes. The main space is the local
  * brain the home was provisioned with; further local brains (Settings ›
  * Brain › New space) and, later, shared team brains join the same registry.
  *
- * A session only ever gets the files of its own space — the privacy
- * boundary between spaces is the token, not a filter. Every desk, session
- * and project belongs to exactly one space.
+ * A space holds work; the identity its sessions run with is the bound
+ * agent's brain (agents.ts; decision cockpit-identity-agent-brain). A session
+ * only ever gets the files of its own space, and those carry the space's
+ * per-boot MCP token, never a brain token — the privacy boundary between
+ * spaces is the token, not a filter. Every desk, session and project belongs
+ * to exactly one space.
  */
 export interface BrainSpace {
   /** The brain's id in control.db. */
   id: string
   /** Display name (cockpit config; "Main" for the main space unless renamed). */
   name: string
-  /** The brain's name in control.db — the agent id the main brain was set up with; the identity a new space copies. */
+  /** The brain's name in control.db: the space's name since agent brains, the agent id on a home from before them. */
   brainName: string
+  /** The agent this space binds (agents.ts), or null: its sessions then get no brain until one is bound. */
+  agent: string | null
   /** The space the home was provisioned with. */
   main: boolean
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
@@ -39,7 +44,7 @@ export interface BrainSpace {
    * own brain. In memory and in the space's mcp.json only; new on every boot.
    */
   mcpToken: string
-  /** mcp.json + settings.json a session of this space starts with, and its EML hook config. */
+  /** mcp.json + settings.json a session of this space starts with, and the EML hook config naming the host's hook routes. */
   files: SpaceFiles
   /** The brain's project list (cached). */
   projects: BrainProjectsClient
@@ -54,14 +59,17 @@ export interface SpaceView {
   id: string
   name: string
   main: boolean
+  /** The bound agent's id, null while none is bound. */
+  agent: string | null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent })
 
 export interface OpenSpaceOptions {
   id: string
   name: string
   brainName: string
+  agent: string | null
   main: boolean
   url: string
   token: string
@@ -69,6 +77,8 @@ export interface OpenSpaceOptions {
   turnHookConfig: string
   /** The host's brain MCP endpoint (brain-mcp.ts) the space's mcp.json points at. */
   mcpUrl: string
+  /** The host's hook routes (brain-mcp.ts HOOKS_PATH) the space's EML hook config points at. */
+  hooksUrl: string
 }
 
 /** Where a non-main space keeps its local state. */
@@ -77,7 +87,7 @@ const spaceStateDir = (spaceId: string) => path.join(COCKPIT_HOME, 'spaces', spa
 /** Write the space's session files and open its clients. */
 export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
   const mcpToken = randomBytes(32).toString('hex')
-  const files = writeSpaceFiles(opts.id, opts.url, opts.token, opts.turnHookConfig, { url: opts.mcpUrl, token: mcpToken })
+  const files = writeSpaceFiles(opts.id, opts.turnHookConfig, { mcpUrl: opts.mcpUrl, hooksUrl: opts.hooksUrl, mcpToken })
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main
@@ -87,6 +97,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     id: opts.id,
     name: opts.name,
     brainName: opts.brainName,
+    agent: opts.agent,
     main: opts.main,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,

@@ -156,6 +156,18 @@ describe('seedDefaultBrain', () => {
         eml.close()
       }
     })
+
+    it('seeds the objects only when the identity lives in another brain (identity: false)', () => {
+      seedDefaultBrain(brainPath, 'assistant', 'alice', {}, undefined, { identity: false })
+      const eml = new EML({ dbPath: brainPath, namespace: 'assistant' })
+      try {
+        expect(eml.agents.exists('assistant')).toBe(true)
+        expect(eml.users.exists('alice')).toBe(true)
+        expect(eml.engrams.query({ limit: 100 })).toHaveLength(0)
+      } finally {
+        eml.close()
+      }
+    })
   })
 
   describe('with display names', () => {

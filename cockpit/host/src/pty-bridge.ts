@@ -408,7 +408,7 @@ export class PtyBridge {
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
       sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
-      space: { id: space.id, url: space.url, token: space.token, files: space.files },
+      space: { id: space.id, mcpToken: space.mcpToken, files: space.files },
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
     // note edits of this scope only (decision cockpit-notes-pane).

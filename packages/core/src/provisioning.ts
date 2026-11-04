@@ -41,6 +41,8 @@ export interface ProvisionOptions {
   control: Database.Database
   dataDir: string                  // <data-dir>; the brain is created at <data-dir>/brains/<uuid>.db
   tokenName?: string               // optional label for issueToken (default 'bootstrap')
+  name?: string                    // brains.name in the control plane (default: agentId, the agent /boot loads)
+  seedIdentity?: boolean           // false: the agent and user objects only, no seeded profiles and rules (default true)
 }
 
 export interface ProvisionResult {
@@ -70,13 +72,13 @@ export function provisionUser(opts: ProvisionOptions): ProvisionResult {
   // Step 1 — brain file + default brain seed.
   // If this fails there is no control-plane state yet → just rm the file.
   try {
-    seedDefaultBrain(brainPath, opts.agentId, opts.userId, { agentName: opts.agentName, userName: opts.userName }, brainId)
+    seedDefaultBrain(brainPath, opts.agentId, opts.userId, { agentName: opts.agentName, userName: opts.userName }, brainId, { identity: opts.seedIdentity })
   } catch (err) {
     rmSync(brainPath, { force: true })
     throw err
   }
 
-  return registerBrain({ control: opts.control, email: opts.email, brainId, name: opts.agentId, brainFile, brainPath, tokenName: opts.tokenName ?? 'bootstrap' })
+  return registerBrain({ control: opts.control, email: opts.email, brainId, name: opts.name ?? opts.agentId, brainFile, brainPath, tokenName: opts.tokenName ?? 'bootstrap' })
 }
 
 /**

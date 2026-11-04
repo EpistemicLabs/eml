@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import { subjects, tags } from './_shared'
 
@@ -9,7 +9,7 @@ import { subjects, tags } from './_shared'
  * per topic; each incident is evidence. The server checks the topic on every
  * call without id and computes ripeness; the response carries it.
  */
-export function registerLearningTool(server: McpServer, http: HttpClient): void {
+export function registerLearningTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_learning', {
     title: 'Record Learning',
     description:
