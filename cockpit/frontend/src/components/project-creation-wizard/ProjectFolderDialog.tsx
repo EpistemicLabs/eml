@@ -35,7 +35,7 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
     }
     setIsSaving(true);
     try {
-      const response = await api.setProjectPath(project.projectId, folderPath.trim());
+      const response = await api.setProjectPath(project.projectId, folderPath.trim(), project.__spaceId);
       const data = (await response.json()) as { project?: Project; error?: { message?: string } | string };
       if (!response.ok || !data.project) {
         const message = typeof data.error === 'string' ? data.error : data.error?.message;

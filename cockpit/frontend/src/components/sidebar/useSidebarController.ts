@@ -272,7 +272,7 @@ export function useSidebarController(props: SidebarProps) {
       const isLatest = () => starSequence.current.get(id) === sequence;
       setStarOverrides((current) => ({ ...current, [id]: next }));
       try {
-        const response = await api.setProjectStar(id, next);
+        const response = await api.setProjectStar(id, next, project.__spaceId);
         if (!response.ok) {
           const message = await hostErrorMessage(response);
           if (isLatest()) setStarOverrides((current) => ({ ...current, [id]: previous }));
@@ -327,11 +327,9 @@ export function useSidebarController(props: SidebarProps) {
   );
 
   const toggleProjectHidden = useCallback(
-    async (projectId: string) => {
-      const project = propsRef.current.projects.find((candidate) => candidate.projectId === projectId);
-      if (!project) return;
+    async (project: Project) => {
       try {
-        const response = await api.setProjectHidden(projectId, !project.hidden);
+        const response = await api.setProjectHidden(project.projectId, !project.hidden, project.__spaceId);
         if (!response.ok) {
           const message = await hostErrorMessage(response);
           console.error('[Sidebar] Failed to toggle project visibility:', response.status);
@@ -349,9 +347,9 @@ export function useSidebarController(props: SidebarProps) {
   );
 
   // ── Rename project ─────────────────────────────────────────────────
-  const [projectRename, setProjectRename] = useState<RenameState | null>(null);
+  const [projectRename, setProjectRename] = useState<(RenameState & { project: Project }) | null>(null);
   const startProjectRename = useCallback(
-    (project: Project) => setProjectRename({ id: project.projectId, draft: project.displayName }),
+    (project: Project) => setProjectRename({ id: project.projectId, draft: project.displayName, project }),
     [],
   );
   const setProjectRenameDraft = useCallback(
@@ -361,12 +359,12 @@ export function useSidebarController(props: SidebarProps) {
   const cancelProjectRename = useCallback(() => setProjectRename(null), []);
   const saveProjectRename = useCallback(async () => {
     if (!projectRename) return;
-    const { id } = projectRename;
+    const { project } = projectRename;
     const name = projectRename.draft.trim();
     setProjectRename(null);
     if (!name) return;
     try {
-      const response = await api.renameProject(id, name);
+      const response = await api.renameProject(project.projectId, name, project.__spaceId);
       if (!response.ok) {
         console.error('Failed to rename project');
         reportError(await hostErrorMessage(response));
@@ -456,11 +454,11 @@ export function useSidebarController(props: SidebarProps) {
   const confirmProjectDelete = useCallback(
     async (deleteData = false) => {
       if (!pendingProjectDelete) return;
-      const { projectId } = pendingProjectDelete.project;
+      const { projectId, __spaceId: space } = pendingProjectDelete.project;
       setPendingProjectDelete(null);
       setDeleting((current) => new Set(current).add(projectId));
       try {
-        const response = await api.deleteProject(projectId, deleteData);
+        const response = await api.deleteProject(projectId, deleteData, space);
         if (!response.ok) {
           console.error('[Sidebar] Failed to delete project:', response.status);
           reportError(await hostErrorMessage(response));

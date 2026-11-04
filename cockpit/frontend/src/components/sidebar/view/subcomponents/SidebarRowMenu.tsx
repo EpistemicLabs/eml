@@ -137,7 +137,7 @@ export function SidebarRowMenu({
     if (project.kind === 'brain') {
       actions.push(
         { label: project.fullPath ? 'Change folder' : 'Link a folder', Icon: FolderPlus, onClick: run(() => controller.onSetFolder(project)) },
-        { label: project.hidden ? 'Show' : 'Hide', Icon: project.hidden ? Eye : EyeOff, onClick: run(() => void controller.toggleProjectHidden(project.projectId)) },
+        { label: project.hidden ? 'Show' : 'Hide', Icon: project.hidden ? Eye : EyeOff, onClick: run(() => void controller.toggleProjectHidden(project)) },
       );
     } else {
       actions.push({ label: 'Remove from cockpit', Icon: Trash2, onClick: run(() => controller.requestProjectDelete(project)), destructive: true });
