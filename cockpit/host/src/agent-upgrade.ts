@@ -121,8 +121,8 @@ export interface SpaceReport {
   crossing?: { planned: number; recreated: number; items: Array<{ id: string; relation: string; direction: 'out' | 'in'; other: string }> }
   refs?: { external: number; incoming: number }
   rescoped?: { global_to_agent: string[]; user_to_handle: string[] }
-  /** superseded: the same identity again (a core profile for a scope that has one, an engram identical in type, title and content) — the first space's wins; needs_review: same type, scope and title with other content, both kept. */
-  collisions?: { superseded: Array<{ id: string; by: string; title: string | null }>; needs_review: Array<{ id: string; existing: string; title: string | null; scope: string }> }
+  /** superseded: the same identity again (a core profile for a scope that has one, an engram identical in type, title and content) — the first space's wins; seeds_retired: a later space's default seeds (origin eml-default-brain), which add nothing to an agent brain filled by an earlier space; needs_review: same type, scope and title with other content, both kept. */
+  collisions?: { superseded: Array<{ id: string; by: string; title: string | null }>; seeds_retired: string[]; needs_review: Array<{ id: string; existing: string; title: string | null; scope: string }> }
   restamped?: { space: { engrams: number; entries: number }; agent: { engrams: number; entries: number } }
   other_agents?: Array<{ id: string; engrams: number }>
   token?: 'reissued' | 'kept'
@@ -256,6 +256,8 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       const sr: SpaceReport = { id: found.brain.id, name, main: space.main, action: 'skipped', agent: space.bound }
       report.spaces.push(sr)
       if (space.bound && agentBrains.has(space.bound)) { sr.reason = `bound to ${space.bound} already`; continue }
+      // A refused write or an I/O error inside a space ends the run with the report naming it; a dry run has touched copies only.
+      try {
       if (found.brain.status !== 'ok') { sr.reason = `brain status ${found.brain.status} — it needs intervention first`; continue }
       const agentId = found.brain.name
       if (!AGENT_ID.test(agentId)) { sr.reason = `the brain's name "${agentId}" is not an agent id — bind an agent by hand`; continue }
@@ -280,7 +282,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       const existingIds = new Set((agentDb.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map((r) => r.id))
       let crossingRows: Array<Record<string, unknown>> = []
       let plan: MovePlan | null = null
-      sr.collisions = { superseded: [], needs_review: [] }
+      sr.collisions = { superseded: [], seeds_retired: [], needs_review: [] }
       if (ids.length > 0) {
         // A core profile arriving for a scope the agent brain already has one for (an earlier space's)
         // cannot be imported next to it: the first wins, the second is retired in the space before the move.
@@ -330,9 +332,18 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       }
       if (recreated !== crossingRows.length) return failed(report, `${name}: ${crossingRows.length} crossing relations, ${recreated} references re-created`)
 
+      const movedRows = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE id IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(JSON.stringify(ids)) as Array<{ id: string; type: string; scope: string; title: string | null; content: string; status: string; origin: string | null; core: number | null }>
+      // A later space's default seeds (every space was seeded alike): the agent brain has its identity from the first space; they add nothing and retire.
+      if (existingIds.size > 0) {
+        for (const e of movedRows) {
+          if (e.origin !== 'eml-default-brain' || e.status !== 'active') continue
+          agentEml.apply({ name: 'engram.update', input: { id: e.id, patch: { status: 'invalidated' } } }, agentEnv)
+          sr.collisions.seeds_retired.push(e.id)
+          e.status = 'invalidated'
+        }
+      }
       // Re-scope: a rule or learning left in global is the agent's; another handle's user scope is the human's.
       sr.rescoped = { global_to_agent: [], user_to_handle: [] }
-      const movedRows = agentDb.prepare(`SELECT id, type, scope, title, content, status, json_extract(properties, '$.core') AS core FROM engrams WHERE id IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(JSON.stringify(ids)) as Array<{ id: string; type: string; scope: string; title: string | null; content: string; status: string; core: number | null }>
       const activeCore = (scope: string, except: string) => (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ? AND json_extract(properties, '$.core') = 1`).get(scope, except) as { id: string } | undefined)?.id
       for (const e of movedRows) {
         const target = e.scope === 'global' ? `agent.${agentId}` : /^user\./.test(e.scope) && e.scope !== `user.${handle.handle}` ? `user.${handle.handle}` : e.scope
@@ -400,6 +411,9 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       if (sr.dangling.space + sr.dangling.agent > 0) return failed(report, `${name}: ${sr.dangling.space + sr.dangling.agent} dangling relation(s) after the move`)
       if (!v.space.ok) return failed(report, `${name}: the space's log does not verify — ${v.space.problem}`)
       if (!v.agent.ok) return failed(report, `${name}: the agent brain's log does not verify — ${v.agent.problem}`)
+      } catch (err) {
+        return failed(report, `${name}: ${(err as Error).message}`)
+      }
     }
     report.agents = [...agentBrains.entries()].map(([id, a]) => ({ id, brainId: a.brainId, created: a.created }))
     return report
@@ -504,6 +518,7 @@ export function renderReport(r: UpgradeReport): string {
     if (s.rescoped) lines.push(`  re-scoped: ${s.rescoped.global_to_agent.length} global → agent.${s.agent}, ${s.rescoped.user_to_handle.length} user.<other> → user.${r.handle}`)
     if (s.collisions) {
       for (const x of s.collisions.superseded) lines.push(`  superseded (same again): ${x.title ?? x.id} ${x.id.slice(0, 8)} by ${x.by.slice(0, 8)}`)
+      if (s.collisions.seeds_retired.length) lines.push(`  default seeds retired (a later space's copy): ${s.collisions.seeds_retired.length}`)
       for (const x of s.collisions.needs_review) lines.push(`  needs review (same title, other content): ${x.title ?? x.id} ${x.id.slice(0, 8)} vs ${x.existing.slice(0, 8)} in ${x.scope}`)
     }
     if (s.restamped) lines.push(`  re-stamped: space ${s.restamped.space.engrams} engrams / ${s.restamped.space.entries} entries, agent ${s.restamped.agent.engrams} / ${s.restamped.agent.entries}`)

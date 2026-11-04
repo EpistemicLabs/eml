@@ -201,10 +201,13 @@ describe('agent upgrade', () => {
     const privat = report.spaces[1]
     expect(privat.moved?.engrams).toBe(6)
     expect(privat.rescoped?.user_to_handle).toHaveLength(2)
-    expect(privat.collisions?.superseded.map((c) => c.title).sort()).toEqual(['motti-action-protocol', 'motti-engagement-style', 'motti-identity', 'motti-identity', 'motti-reasoning-discipline'])
+    // the agent's core profile could not arrive next to Main's and was retired before the move; the other seeds retire after it
+    expect(privat.collisions?.superseded.map((c) => c.title)).toEqual(['motti-identity'])
+    expect(privat.collisions?.seeds_retired).toHaveLength(4)
     expect(privat.collisions?.needs_review).toEqual([{ id: ids.privatRule, existing: ids.userRule, title: 'push-on-yes', scope: 'user.dominik' }])
     expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1")[0].n).toBe(2)
-    expect(q(agentFile, "SELECT COUNT(*) AS n FROM relations WHERE relation = 'supersedes'")[0].n).toBe(4)
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM relations WHERE relation = 'supersedes'")[0].n).toBe(0)
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE origin = 'eml-default-brain' AND status = 'invalidated'")[0].n).toBe(5)
     expect(q(agentFile, "SELECT status FROM engrams WHERE title = 'motti-identity' AND scope = 'agent.motti' ORDER BY ord").map((r) => r.status)).toEqual(['active', 'invalidated'])
     expect(q(agentFile, "SELECT scope, status FROM engrams WHERE id = ?", ids.privatRule)).toEqual([{ scope: 'user.dominik', status: 'active' }])
     expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE scope LIKE 'user.motti%'")[0].n).toBe(0)
