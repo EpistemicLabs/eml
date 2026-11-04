@@ -43,7 +43,7 @@ async function fakeBrain(move: { status: number; body: Record<string, unknown> }
 
 const invalidated: string[] = []
 function space(id: string, url: string, registry: ProjectRegistry): MoveSpace {
-  return { id, url, token: `tok-${id}`, registry, projects: { invalidate: () => { invalidated.push(id) } } }
+  return { id, name: `Space ${id}`, url, token: `tok-${id}`, registry, projects: { invalidate: () => { invalidated.push(id) } } }
 }
 
 beforeEach(() => {
@@ -91,7 +91,7 @@ describe('moveProject', () => {
 
     const answer = await moveProject(space('src', brain.url, srcRegistry), space('tgt', brain.url, tgtRegistry), 'top', 'a'.repeat(64))
     expect(answer).toMatchObject({ status: 200, body: { project: 'top', archived: ['top', 'child'], rehomed: ['top', 'child'] } })
-    expect(brain.seen).toEqual([expect.objectContaining({ url: '/move', auth: 'Bearer tok-src', body: { target: 'tgt', project: 'top', plan_hash: 'a'.repeat(64) } })])
+    expect(brain.seen).toEqual([expect.objectContaining({ url: '/move', auth: 'Bearer tok-src', body: { target: 'tgt', target_name: 'Space tgt', project: 'top', plan_hash: 'a'.repeat(64) } })])
     expect(invalidated).toEqual(['src', 'tgt'])
     // in the target as it was: name, pin, folder, hidden
     expect(tgtRegistry.get(projectIdForBrain('top'))).toMatchObject({ kind: 'brain', brainProjectId: 'top', displayName: 'My Top', customName: 'My Top', starred: true, path: storedFolder })

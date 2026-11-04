@@ -121,6 +121,7 @@ describe('moving a project into a team brain', () => {
     expect(await post(own.tokenPlaintext, '/move', { target: other.brainId, project: 'top', plan_hash: plan.plan_hash })).toMatchObject({ status: 409, body: { code: 'MOVE_REFUSED', error: 'move refused: the target is not a team brain of this cockpit; a project moves into a shared space. Nothing was moved.' } })
     expect(await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: 'f'.repeat(64) })).toMatchObject({ status: 409, body: { code: 'PLAN_CHANGED', plan_hash: plan.plan_hash } })
     expect(await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: 'stale' })).toMatchObject({ status: 400, body: { code: 'INVALID_PLAN' } })
+    expect(await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash, target_name: 5 })).toMatchObject({ status: 400, body: { code: 'INVALID_TARGET_NAME' } })
     expect(await post(tokens[BRAIN], '/move', { target: own.brainId, project: 'top', plan_hash: plan.plan_hash })).toMatchObject({ status: 409, body: { code: 'MOVE_REFUSED' } })
     expect(opLog(own.brainFile)).toBe(before)
     expect(relay.log.filter(e => e.seq > 1)).toEqual([])
@@ -158,7 +159,9 @@ describe('moving a project into a team brain', () => {
     for (let i = 0; i < 100 && !(await live()); i++) await new Promise(resolve => setTimeout(resolve, 100))
     expect(await live()).toBe(true)
 
-    const r = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })
+    // the cockpit's name for the space travels with the confirmed run: control and format characters (a bidi override) go, whitespace collapses, the length is capped
+    const name = ('Team brain ' + 'x'.repeat(100)).slice(0, 80)
+    const r = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash, target_name: '  Team\u0007 \n \u202Ebrain ' + 'x'.repeat(100) })
     expect(r.status).toBe(200)
     expect(r.body).toMatchObject({
       project: 'top', tree: plan.tree, archived: ['top', 'child'], moved: plan.moved, resumed: true,
@@ -185,8 +188,12 @@ describe('moving a project into a team brain', () => {
     // gone from the source; its projects archived and pointing at the team brain; the crossing link dropped
     expect((await get(own.tokenPlaintext, `/engram/${ids.task}`)).status).toBe(404)
     const top = (await get(own.tokenPlaintext, '/project/top')).body.project
-    expect(top).toMatchObject({ status: 'archived', metadata: { moved_to: BRAIN, moved_at: expect.stringMatching(/^\d{4}-/) } })
-    expect((await get(own.tokenPlaintext, '/project/child')).body.project.metadata).toMatchObject({ moved_to: BRAIN })
+    expect(top).toMatchObject({ status: 'archived', metadata: { moved_to: BRAIN, moved_at: expect.stringMatching(/^\d{4}-/), moved_to_name: name } })
+    expect((await get(own.tokenPlaintext, '/project/child')).body.project.metadata).toMatchObject({ moved_to: BRAIN, moved_to_name: name })
+    // what an agent sees of the moved project: the one line under the header
+    const shown = (await get(own.tokenPlaintext, '/brain-state?scope=project.top')).body.markdown as string
+    expect(shown).toContain(`# project.top — brain state\n_Moved to the shared space ${name} on ${top.metadata.moved_at.slice(0, 10)} — its engrams live there; nothing new is filed here._\n`)
+    expect(shown).not.toContain('moved_')
     expect((await get(own.tokenPlaintext, `/engram/${ids.outside}?with_relations=true`)).body.relations).toEqual([])
     // the note after the pending move, then move_out and two archive ops in the source's log; a backup of the source before the move
     expect(opLog(own.brainFile)).toBe(before + 4)

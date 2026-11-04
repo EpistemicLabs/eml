@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
 import { plainJson, type OpEnvelope } from '@engramprotocol/protocol/log'
-import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, type Env } from '../src'
+import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, renderBrainStateMarkdown, type Env } from '../src'
 import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
 import { legacyAuthorship, projectSet, remoteReferences } from '../src/log/move'
@@ -204,23 +204,40 @@ describe('moveProject', () => {
     const s = source()
     const to = target()
     const plan = planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })
-    const result = await moveProject({ source: raw(s.eml), target: { db: raw(to) }, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'source.db') }, s.kai)
+    const result = await moveProject({ source: raw(s.eml), target: { db: raw(to) }, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'source.db'), target_name: 'EML team' }, s.kai)
     expect(result).toMatchObject({ project: 'top', tree: plan.tree, archived: ['top', 'child'], moved: plan.moved, resumed: false, dropped_relations: plan.crossing.map(c => c.id) })
     expect(result.created.projects).toEqual(['top', 'child'])
     expect(inSet(to, s)).toBe(2)
     expect(inSet(s.eml, s)).toBe(0)
-    // the emptied projects point at the target; leaf had nothing and stays as it was
+    // the emptied projects point at the target, by id and by the name given; leaf had nothing and stays as it was
     const top = s.eml.projects.get('top')!
     expect(top.status).toBe('archived')
-    expect(top.metadata).toEqual({ repo: 'r', moved_to: plan.target, moved_at: expect.stringMatching(/^2026-11-03T/) })
-    expect(s.eml.projects.get('child')!.metadata).toEqual({ moved_to: plan.target, moved_at: expect.stringMatching(/^2026-11-03T/) })
+    expect(top.metadata).toEqual({ repo: 'r', moved_to: plan.target, moved_at: expect.stringMatching(/^2026-11-03T/), moved_to_name: 'EML team' })
+    expect(s.eml.projects.get('child')!.metadata).toEqual({ moved_to: plan.target, moved_at: expect.stringMatching(/^2026-11-03T/), moved_to_name: 'EML team' })
     expect(s.eml.projects.get('leaf')).toMatchObject({ status: 'active', metadata: null })
+    // eml_show on the moved project: the line under the header names the space and the day; the marker is not a metadata fact
+    const shown = renderBrainStateMarkdown(s.eml.engrams.buildBrainState('project.top'))
+    expect(shown).toMatch(/^# project\.top — brain state\n_Moved to the shared space EML team on 2026-11-03 — its engrams live there; nothing new is filed here\._\n\n## Status/)
+    expect(shown).toContain('## Metadata\n- repo: r\n')
+    expect(shown).not.toContain('moved_')
+    expect(renderBrainStateMarkdown(s.eml.engrams.buildBrainState('project.leaf'))).not.toContain('Moved to')
     // the target has the tree's projects as they were in the source, the crossing link is gone
     expect(to.projects.get('child')!.parent_project).toBe('top')
     expect(count(s.eml, 'relations WHERE source_id = ?', s.decision.id)).toBe(0)
     unlocked(s.eml)
     expect(verify(raw(s.eml))).toMatchObject({ ok: true })
     expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
+  it('without a target name, the archived project names the brain id', async () => {
+    const s = source()
+    const to = target()
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })
+    await moveProject({ source: raw(s.eml), target: { db: raw(to) }, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'source.db') }, s.kai)
+    expect(s.eml.projects.get('top')!.metadata).toEqual({ repo: 'r', moved_to: plan.target, moved_at: expect.stringMatching(/^2026-11-03T/) })
+    expect(renderBrainStateMarkdown(s.eml.engrams.buildBrainState('project.top'))).toContain(`_Moved to the shared space ${plan.target} on 2026-11-03 — its engrams live there; nothing new is filed here._`)
+    unlocked(s.eml)
     to.close(); s.eml.close()
   })
 

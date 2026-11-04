@@ -266,6 +266,15 @@ export function renderLogContent(p: Record<string, unknown>, narrative: string):
   return narrative && narrative.trim() !== '' ? `${block}\n\n${narrative}` : block
 }
 
+/**
+ * v0.21: where a project went when a move archived it (log/move-engrams.ts writes
+ * moved_to, moved_at and, when the caller named the target space, moved_to_name).
+ */
+export function movedFrom(metadata: Record<string, unknown> | null): ScopedBrainState['moved'] {
+  if (!metadata || typeof metadata.moved_to !== 'string' || typeof metadata.moved_at !== 'string') return null
+  return { to: metadata.moved_to, at: metadata.moved_at, name: typeof metadata.moved_to_name === 'string' ? metadata.moved_to_name : null }
+}
+
 export class EngramStore {
   constructor(
     protected db: Database.Database,
@@ -693,10 +702,12 @@ export class EngramStore {
     const object = m
       ? this.db.prepare(`SELECT status_tracks, metadata FROM ${m[1] === 'project' ? 'projects' : 'entities'} WHERE id = ?`).get(m[2]) as { status_tracks: string | null, metadata: string | null } | undefined
       : undefined
+    const metadata = object?.metadata ? JSON.parse(object.metadata) as Record<string, unknown> : null
     return {
       scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, rules, pending_reviews,
       status_tracks: object?.status_tracks ?? null,
-      metadata: object?.metadata ? JSON.parse(object.metadata) : null,
+      metadata,
+      moved: movedFrom(metadata),
     }
   }
 

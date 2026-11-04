@@ -46,7 +46,7 @@
  *   POST /team/invites/:id/accept { role? }                          → Confirm the join waiting on an invite: add the member, wrap the key, answer (v0.21; host-facing)
  *   POST /team/invites/:id/cancel                                    → Cancel an open invite; a waiting invitee is told (v0.21; host-facing)
  *   POST /move/plan         { target, project }                      → What moving a project into another brain of this server would do (v0.21; host-facing)
- *   POST /move              { target, project, plan_hash }           → Move the project as planned: one import op in the target, one move_out here (v0.21; host-facing)
+ *   POST /move              { target, project, plan_hash, target_name? } → Move the project as planned: one import op in the target, one move_out here (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,

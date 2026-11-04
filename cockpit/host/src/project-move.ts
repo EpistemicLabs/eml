@@ -16,6 +16,8 @@ import type { BrainProjectsClient } from './brain-projects.js'
 /** What the move needs of a space: its brain, and the cockpit's local state for it. */
 export interface MoveSpace {
   id: string
+  /** The space's display name; recorded on the archived project as where it went (eml_show names it). */
+  name: string
   url: string
   token: string
   registry: ProjectRegistry
@@ -44,7 +46,7 @@ export async function planProjectMove(source: MoveSpace, target: MoveSpace, proj
  * are read again. `rehomed` names the project ids whose entry moved.
  */
 export async function moveProject(source: MoveSpace, target: MoveSpace, project: string, planHash: string): Promise<MoveAnswer> {
-  const answer = await call(source, '/move', { target: target.id, project, plan_hash: planHash })
+  const answer = await call(source, '/move', { target: target.id, target_name: target.name, project, plan_hash: planHash })
   source.projects.invalidate()
   if (answer.status !== 200) return answer
   target.projects.invalidate()
