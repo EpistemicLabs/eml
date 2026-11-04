@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-// The review screen's bar holds the keyboard: D, A, E, R and Esc act on it alone,
+// The review screen's bar holds the keyboard: D, A, E, X, R and Esc act on it alone,
 // a key never lands in an input by itself, and Esc does not reach the session
-// below. Answers go in the session's own input; a reply gives the keyboard back.
+// below. The buttons are the same for every session. Answers go in the session's
+// own input; a reply gives the keyboard back.
 
 let sessions: AllSession[] = [];
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions, queued: [], refresh: () => {} }) }));
@@ -53,7 +54,38 @@ describe('the review screen', () => {
     fireEvent.keyDown(bar(), { key: 'a' });
     expect(flow.stepReview).toHaveBeenLastCalledWith(-1, expect.anything());
     fireEvent.keyDown(bar(), { key: 'e' });
-    expect(flow.finishCurrent).toHaveBeenCalledTimes(1);
+    expect(flow.finishCurrent).toHaveBeenLastCalledWith('clear', expect.anything());
+  });
+
+  it('shows the same buttons for a result, a check and a question', () => {
+    const names = (current: AllSession) => {
+      open(current);
+      const found = screen.getAllByRole('button').map((button) => button.textContent?.replace(/\s+/g, ' ').trim() ?? '');
+      cleanup();
+      return found;
+    };
+    const check = { ...result, id: 'c', attention: { kind: 'review', at: '2026-11-03T00:00:00Z' } } as unknown as AllSession;
+    expect(names(check)).toEqual(names(result));
+    expect(names(question)).toEqual(names(result));
+  });
+
+  it('archives on X, and says why it can\'t for a pinned session', async () => {
+    open(result);
+    fireEvent.keyDown(bar(), { key: 'x' });
+    expect(flow.finishCurrent).toHaveBeenLastCalledWith('archive', expect.anything());
+    cleanup();
+    flow.finishCurrent.mockClear();
+    open({ ...result, isPinned: true } as AllSession);
+    fireEvent.keyDown(bar(), { key: 'x' });
+    expect(flow.finishCurrent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toMatch(/Pinned/);
+  });
+
+  it('will not archive a session that still runs a background task', () => {
+    open({ ...result, backgroundTasks: 1 } as AllSession);
+    fireEvent.click(screen.getByText(/Archive & next/));
+    expect(flow.finishCurrent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toMatch(/background task/);
   });
 
   it('does nothing for a key typed in the session\'s input', () => {
@@ -81,15 +113,16 @@ describe('the review screen', () => {
     expect(flow.stepReview).not.toHaveBeenCalled();
   });
 
-  it('answers a question in the session\'s own input, and E does not archive it', () => {
+  it('answers a question in the session\'s own input, and drops it with Done only on a second press', () => {
     open(question);
-    expect(screen.getByText(/Answer/)).toBeTruthy();
     fireEvent.keyDown(bar(), { key: 'r' });
     expect(document.activeElement).toBe(input());
     act(() => bar().focus());
     fireEvent.keyDown(bar(), { key: 'e' });
-    expect(document.activeElement).toBe(input());
     expect(flow.finishCurrent).not.toHaveBeenCalled();
+    expect(screen.getByText(/Press again to drop it/)).toBeTruthy();
+    fireEvent.keyDown(bar(), { key: 'e' });
+    expect(flow.finishCurrent).toHaveBeenLastCalledWith('clear', expect.anything());
   });
 
   it('takes the keyboard back after a reply is sent from its input', () => {

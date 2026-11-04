@@ -3,7 +3,7 @@ import { planArchive, type ArchiveFacts } from '../src/application/archive-sessi
 import { needsAnswer } from '../src/domain/session-attention.js'
 
 const session = (sessionId: string, patch: Partial<ArchiveFacts> = {}): ArchiveFacts => ({
-  sessionId, parentSessionId: null, working: false, needsAnswer: false, ...patch,
+  sessionId, parentSessionId: null, working: false, background: false, needsAnswer: false, ...patch,
 })
 
 describe('planArchive', () => {
@@ -17,6 +17,11 @@ describe('planArchive', () => {
   it('waits while it or a worker works', () => {
     expect(planArchive('p', [session('p', { working: true })])).toEqual({ blockedBy: 'p', reason: 'working' })
     expect(planArchive('p', [session('p'), session('a', { parentSessionId: 'p', working: true })])).toEqual({ blockedBy: 'a', reason: 'working' })
+  })
+
+  it('waits while it or a worker runs a background task', () => {
+    expect(planArchive('p', [session('p', { background: true })])).toEqual({ blockedBy: 'p', reason: 'background' })
+    expect(planArchive('p', [session('p'), session('a', { parentSessionId: 'p', background: true })])).toEqual({ blockedBy: 'a', reason: 'background' })
   })
 
   it('will not drop a worker\'s open question, but may drop its own', () => {

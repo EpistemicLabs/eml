@@ -14,10 +14,12 @@ vi.stubGlobal('localStorage', {
 vi.stubGlobal('window', { localStorage: globalThis.localStorage, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true });
 
 const read: string[] = [];
+// What the host refuses, by session id.
+const refused = new Map<string, string>();
 vi.mock('@/lib/session-actions', () => ({
   markSessionRead: (id: string) => { read.push(id); return Promise.resolve(null); },
   clearSession: () => Promise.resolve(null),
-  archiveSession: () => Promise.resolve(null),
+  archiveSession: (id: string) => Promise.resolve(refused.get(id) ?? null),
 }));
 
 const session = (id: string, extra: Partial<AllSession> = {}): AllSession => ({ id, spaceId: 'main', __projectId: 'p', ...extra }) as AllSession;
@@ -33,6 +35,7 @@ describe('the review flow', () => {
     vi.resetModules();
     storage.clear();
     read.length = 0;
+    refused.clear();
     flow = await import('./review-flow');
     review = await import('@/stores/useReviewStore');
     top = await import('@/stores/useTopViewStore');
@@ -116,5 +119,20 @@ describe('the review flow', () => {
     flow.joinReview([asked('b', 't1'), asked('a', 't3')]);
     flow.joinReview([asked('b', 't1'), asked('a', 't3')]);
     expect(review.getReview()).toMatchObject({ queue: ['b', 'a'], index: 0 });
+  });
+
+  it('stays on a session the host refuses to archive, with the reason', async () => {
+    refused.set('a', 'Still working.');
+    flow.startReview([session('a'), session('b')]);
+    expect(await flow.finishCurrent('archive', [session('a'), session('b')])).toBe('Still working.');
+    expect(review.getReview()).toMatchObject({ queue: ['a', 'b'], index: 0 });
+  });
+
+  it('keeps the screen where the user stepped while the host was answering', async () => {
+    flow.startReview([session('a'), session('b'), session('c')]);
+    const done = flow.finishCurrent('clear', [session('a'), session('b'), session('c')]);
+    flow.stepReview(1, [session('a'), session('b'), session('c')]);
+    await done;
+    expect(review.getReview()).toMatchObject({ queue: ['b', 'c'], index: 0 });
   });
 });

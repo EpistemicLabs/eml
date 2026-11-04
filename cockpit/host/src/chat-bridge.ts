@@ -201,6 +201,11 @@ export class ChatBridge {
     return this.entries.get(sessionId)?.runtime != null
   }
 
+  /** Background tasks (shell or agent) of its own still running: ending the process would kill them. */
+  backgroundTasks(sessionId: string): number {
+    return this.entries.get(sessionId)?.backgroundTasks.size ?? 0
+  }
+
   sessionState(sessionId: string): SessionState {
     const entry = this.entries.get(sessionId)
     if (!entry?.runtime) return 'ended'

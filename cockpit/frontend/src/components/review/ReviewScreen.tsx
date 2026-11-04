@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Archive, Check, ChevronLeft, ChevronRight, ExternalLink, MessageSquareReply, X } from 'lucide-react';
 
 import { ChatPane } from '@/components/chat/ChatPane';
-import { MARK_WORD, agentLabel, sessionMark, type AllSession, type SessionMark } from '@/components/sidebar/allSessions';
+import { MARK_WORD, agentLabel, allSessionState, sessionMark, type AllSession, type SessionMark } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
@@ -17,6 +17,9 @@ const BUTTON =
   'flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40';
 
 const NEEDS_YOU: readonly SessionMark[] = ['question', 'failed', 'waiting'];
+// Still waiting for an answer: Done drops it only on a second press.
+const ASKS: readonly SessionMark[] = ['question', 'waiting'];
+const CONFIRM_MS = 3000;
 
 // Dimmed while the bar doesn't hold the keyboard: then the keys go elsewhere.
 function KeyHint({ children }: { children: string }) {
@@ -38,9 +41,12 @@ const isTyping = (target: EventTarget | null): boolean => {
  * they are underneath. One session at a time, full width, ending in its own
  * closing summary; on top where the queue stands and the few facts the cockpit
  * knows itself, so the session's word is not the only one. The bar holds the
- * keyboard: D goes on, A goes back, E takes the session out (on a question it goes
- * to the input, so a question is not archived unanswered), R goes to the input,
- * Esc goes back to the desks. A reply sent from the input gives the keyboard back.
+ * keyboard and is the same for every session: D goes on, A goes back, R goes to
+ * the input, E is Done (the mark goes, the session stays where it is listed), X is
+ * Archive (stopped and put away with its finished workers), Esc goes back to the
+ * desks. Done on a session still waiting for an answer takes a second press;
+ * Archive says why it can't when the session is pinned or still running something.
+ * A reply sent from the input gives the keyboard back.
  */
 export function ReviewScreen() {
   const review = useReview();
@@ -48,6 +54,9 @@ export function ReviewScreen() {
   const { turns } = useTurnStore();
   const { sessions } = useAllSessions(true);
   const [error, setError] = useState<string | null>(null);
+  // The session whose Done waits for its second press.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const busy = useRef(false);
   const barRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -56,18 +65,26 @@ export function ReviewScreen() {
   const current = known.find((session) => session.id === currentId);
   const space = spaces.find((candidate) => candidate.id === current?.spaceId);
   const mark = current ? sessionMark(current, turns[current.id]) : null;
-  const pinned = Boolean(current?.isPinned);
-  const isQuestion = current?.attention?.kind === 'question';
-  // A check is settled by Done; what else stays gets taken out, and a pinned session keeps its place.
-  const settles = mark === 'review' || pinned;
-  const action: 'archive' | 'clear' = settles ? 'clear' : 'archive';
+  const asks = mark !== null && ASKS.includes(mark);
+  // Why Archive can't, or null: a pin is kept on purpose, and running work would be cut off.
+  const archiveBlock = !current ? null
+    : current.isPinned ? 'Pinned: unpin it to archive it.'
+    : allSessionState(current, turns[current.id]) === 'working' ? 'Still working. Stop it or wait until it finishes.'
+    : (current.backgroundTasks ?? 0) > 0 ? 'A background task is still running. Stop it or wait until it finishes.'
+    : null;
 
   const focusBar = () => barRef.current?.focus({ preventScroll: true });
   // Each session starts with the keyboard on the bar: a key never lands in an input by itself.
   useEffect(() => {
     setError(null);
+    setConfirming(null);
     focusBar();
   }, [currentId]);
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = setTimeout(() => setConfirming(null), CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [confirming]);
   useEffect(() => {
     setReviewBarFocus(focusBar);
     return () => setReviewBarFocus(null);
@@ -80,10 +97,26 @@ export function ReviewScreen() {
   }, [currentId, terminal]);
 
   const move = (step: 1 | -1) => stepReview(step, known);
-  const finish = (how: 'archive' | 'clear' = action) => {
-    if (!current) return;
+  const finish = (how: 'archive' | 'clear') => {
+    if (!current || busy.current) return;
+    busy.current = true;
     setError(null);
-    void finishCurrent(how, known).then(setError);
+    setConfirming(null);
+    void finishCurrent(how, known).then((problem) => {
+      busy.current = false;
+      setError(problem);
+    });
+  };
+  const done = () => {
+    if (asks && confirming !== current?.id) {
+      setConfirming(current?.id ?? null);
+      return;
+    }
+    finish('clear');
+  };
+  const archive = () => {
+    if (archiveBlock) setError(archiveBlock);
+    else finish('archive');
   };
   const reply = () => bodyRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus();
   const openInPane = () => {
@@ -99,7 +132,8 @@ export function ReviewScreen() {
     const keys: Record<string, () => void> = {
       d: () => move(1),
       a: () => move(-1),
-      e: () => (isQuestion ? reply() : finish()),
+      e: done,
+      x: archive,
       r: reply,
       Escape: endReview,
     };
@@ -153,31 +187,22 @@ export function ReviewScreen() {
           <button type="button" className={BUTTON} disabled={live.index >= live.queue.length - 1} onClick={() => move(1)} aria-label="Next">
             <KeyHint>D</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
           </button>
-          {isQuestion ? (
-            <>
-              <button type="button" className={`${BUTTON} font-medium`} onClick={reply}>
-                <MessageSquareReply className="h-3.5 w-3.5" /> Answer <KeyHint>R</KeyHint>
-              </button>
-              <button type="button" className={BUTTON} onClick={() => finish()} aria-label={pinned ? 'Done without answering' : 'Archive without answering'} title={pinned ? 'Done without answering' : 'Archive without answering'}>
-                {pinned ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" className={BUTTON} onClick={reply}>
-                <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
-              </button>
-              {mark === 'review' && !pinned && (
-                <button type="button" className={BUTTON} onClick={() => finish('archive')} aria-label="Archive" title="Archive">
-                  <Archive className="h-3.5 w-3.5" />
-                </button>
-              )}
-              <button type="button" className={`${BUTTON} font-medium`} onClick={() => finish()}>
-                {settles ? <Check className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-                {settles ? 'Done' : 'Archive'} &amp; next <KeyHint>E</KeyHint>
-              </button>
-            </>
-          )}
+          <button type="button" className={BUTTON} onClick={reply}>
+            <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
+          </button>
+          <button type="button" className={`${BUTTON} font-medium`} onClick={done} title="Done: the mark goes, the session stays where it is listed">
+            <Check className="h-3.5 w-3.5" />
+            {confirming && confirming === current?.id ? 'Press again to drop it' : 'Done & next'} <KeyHint>E</KeyHint>
+          </button>
+          <button
+            type="button"
+            className={cn(BUTTON, archiveBlock && 'opacity-40')}
+            onClick={archive}
+            aria-disabled={Boolean(archiveBlock)}
+            title={archiveBlock ?? 'Archive: stopped and put away, with its finished workers'}
+          >
+            <Archive className="h-3.5 w-3.5" /> Archive &amp; next <KeyHint>X</KeyHint>
+          </button>
           <button type="button" className={BUTTON} onClick={openInPane} aria-label="Open in a pane" title="Open in a pane">
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
