@@ -60,7 +60,7 @@ describe('sessions across spaces', () => {
         sessionState: () => 'ended',
         killSession: () => {},
       },
-      chat: { isRunning: () => false, kill: async () => {} },
+      chat: { isRunning: () => false, backgroundTasks: () => 0, kill: async () => {} },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
       spawnToken: 'spawn-token',
       hookToken: 'hook-token',

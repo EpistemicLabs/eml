@@ -45,20 +45,33 @@ export function stepReview(step: 1 | -1, sessions: AllSession[]): void {
   if (queue[index + step] !== undefined) show(queue, index + step);
 }
 
-function moveOn(sessions: AllSession[]): void {
+/** The finished session out of the round: from its place the flow goes on; when nothing is left it ends. */
+function takeOut(id: string, sessions: AllSession[]): void {
   const review = getReview();
   if (!review) return;
   const live = liveQueue(review, sessions);
+  const position = live.queue.indexOf(id);
+  if (position < 0) return;
+  // Stepped on meanwhile: the screen stays where the user is.
+  if (position !== live.index) {
+    const queue = live.queue.filter((queued) => queued !== id);
+    setReview({ ...review, queue, index: queue.indexOf(live.queue[live.index]) });
+    return;
+  }
   const { queue, index } = queueAfter(live.queue, live.index);
   if (index >= 0) show(queue, index);
   else endReview();
 }
 
-/** Take the current one out (archive, or clear for a pinned one) and go on; when nothing is left the flow ends. */
+/**
+ * Done (clear) or Archive the current one, then go on. Only once the host has
+ * done it: what it refuses stays on screen with the reason.
+ */
 export async function finishCurrent(action: 'archive' | 'clear', sessions: AllSession[]): Promise<string | null> {
   const review = getReview();
   if (!review) return null;
   const id = review.queue[review.index];
-  moveOn(sessions);
-  return action === 'archive' ? archiveSession(id) : clearSession(id);
+  const error = await (action === 'archive' ? archiveSession(id) : clearSession(id));
+  if (!error) takeOut(id, sessions);
+  return error;
 }

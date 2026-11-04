@@ -148,7 +148,7 @@ describe('the session directory endpoint', () => {
       turns: new TurnTracker(),
       providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex] },
       bridge: { ledger, sessionRef: (sessionId: string, projectPath: string | null) => ({ sessionId, projectPath }), sessionState: () => 'ended' },
-      chat: { isRunning: () => false },
+      chat: { isRunning: () => false, backgroundTasks: () => 0 },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
       spawnToken: 'spawn-token',
       hookToken: 'hook-token',

@@ -223,10 +223,13 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     const plan = planArchive(id, ledger.list().map((session) => ({
       sessionId: session.sessionId, parentSessionId: session.parentSessionId,
       working: deps.turns.get(session.sessionId)?.state === 'working',
+      background: deps.chat.backgroundTasks(session.sessionId) > 0,
       needsAnswer: session.attention ? needsAnswer(session.attention.kind) : deps.turns.get(session.sessionId)?.state === 'waiting',
     })))
     if ('blockedBy' in plan) {
-      const message = plan.reason === 'working' ? 'Still working. Stop it or wait until it finishes.' : 'A worker of this session still needs an answer.'
+      const message = plan.reason === 'working' ? 'Still working. Stop it or wait until it finishes.'
+        : plan.reason === 'background' ? 'A background task is still running. Stop it or wait until it finishes.'
+        : 'A worker of this session still needs an answer.'
       json(res, 409, { error: { code: 'BUSY', message, sessionId: plan.blockedBy } })
       return true
     }
@@ -279,6 +282,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     readAt: entry.readAt,
     resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
+    backgroundTasks: deps.chat.backgroundTasks(entry.sessionId),
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
     __provider: deps.providers.forSession(entry.sessionId).id,

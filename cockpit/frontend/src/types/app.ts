@@ -39,6 +39,8 @@ export interface ProjectSession {
   /** A turn ended and nobody has seen the result. */
   resultAt?: string | null;
   archivedAt?: string | null;
+  /** Background tasks of its own still running (chat sessions); archiving would kill them. */
+  backgroundTasks?: number;
   __provider?: LLMProvider;
   /** The owning project's id. */
   __projectId?: string;
