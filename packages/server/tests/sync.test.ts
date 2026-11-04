@@ -392,7 +392,8 @@ describe('joining a team brain', () => {
     expect(relay.joins).toHaveLength(1)
     play.add(join)
     await until(() => waiting(sync) === 'key')
-    expect(eml.teamBrain()).toBe(BRAIN)
+    // 'key' is reported at the welcome; the genesis arrives with the first entries after it
+    await until(() => eml.teamBrain() === BRAIN)
     expect((await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-no-key' }) }, env(eml))) as Error).message).toBe(READ_ONLY)
     play.key(file.device.sign.publicKey)
     await until(() => sync.state.kind === 'live')
