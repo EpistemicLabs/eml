@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import SpaceSwitch from '@/components/app/SpaceSwitch';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { cn } from '@/lib/utils';
@@ -62,9 +61,6 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
         onAddProject={controller.viewMode === 'overview' ? undefined : controller.openWizard}
       />
-      <div className="flex-shrink-0 px-1 pb-1">
-        <SpaceSwitch variant="sidebar" />
-      </div>
       <SidebarModes viewMode={controller.viewMode} onViewModeChange={controller.setViewMode} waiting={waiting} />
       <SidebarNewSession controller={controller} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />

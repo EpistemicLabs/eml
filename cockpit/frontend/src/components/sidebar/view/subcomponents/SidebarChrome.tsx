@@ -1,5 +1,6 @@
 import { PanelLeftOpen, Pin, PinOff, Plus, Settings, X } from 'lucide-react';
 
+import SpaceSwitch from '@/components/app/SpaceSwitch';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import type { SidebarError, SidebarViewMode } from '../../types';
@@ -71,6 +72,7 @@ export function SidebarModes({
   );
 }
 
+/** The top row: the space switch, then add project and pin. */
 export function SidebarHeader({
   isPinnedOpen,
   onTogglePinned,
@@ -83,8 +85,10 @@ export function SidebarHeader({
   onAddProject?: () => void;
 }) {
   return (
-    <div className="flex flex-shrink-0 items-center justify-between px-3 pt-3 pb-2">
-      <div />
+    <div className="flex flex-shrink-0 items-center justify-between gap-1 pt-2 pr-2 pb-1 pl-1">
+      <div className="min-w-0 flex-1">
+        <SpaceSwitch variant="sidebar" />
+      </div>
       <div className="flex items-center gap-0.5">
         {onAddProject && (
           <Button
