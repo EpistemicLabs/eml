@@ -80,6 +80,10 @@ export interface SyncOptions {
   backoffMs?: [number, number]
   /** keeps the team file as a creation or join advances (the server writes it to disk); a Sync without one keeps nothing */
   persist?: (file: TeamFile) => void
+  /** how long the connection may be silent before a probe goes out (ms); default 30 s */
+  probeMs?: number
+  /** how long a probe may go unanswered before the connection counts as dead (ms); default 10 s */
+  probeTimeoutMs?: number
 }
 
 /** A submitted op's entry as the replica took it: the command's result and its seq. */
@@ -153,6 +157,8 @@ interface Writer {
 type Halt = Extract<SyncState, { kind: 'stopped' | 'update_needed' }>
 type Request =
   | { kind: 'keys' }
+  /** a keys request sent as a liveness probe: its answer says the connection is alive, nothing else */
+  | { kind: 'probe' }
   | { kind: 'append', opId: string }
   /** the put of this device's own key (publishKey) */
   | { kind: 'key_put' }
@@ -205,6 +211,18 @@ export class Sync {
   private closed = false
   private delay: number
   private retry: NodeJS.Timeout | null = null
+  // Liveness (task sync-detect-silent-relay-connection): a socket that dies
+  // without a TCP close — a laptop waking from sleep, a Wi-Fi change, a
+  // paused relay — looks connected forever. Every frame stamps lastFrameAt;
+  // after probeMs of silence a `keys` request goes out (the relay answers it
+  // from memory, no side effect, no protocol change), and one unanswered for
+  // probeTimeoutMs means the connection is gone: it is dropped and the usual
+  // reconnect runs. A connection carrying traffic is never probed.
+  private readonly probeMs: number
+  private readonly probeTimeoutMs: number
+  private lastFrameAt = 0
+  private probeTicker: NodeJS.Timeout | null = null
+  private probeDeadline: NodeJS.Timeout | null = null
 
   constructor(db: Database.Database, readonly team: TeamFile, opts: SyncOptions = {}) {
     this.mode = team.create ? 'create' : team.join || team.accept ? 'join' : 'member'
@@ -217,6 +235,8 @@ export class Sync {
     this.backoff = opts.backoffMs ?? [1_000, 60_000]
     this.persist = opts.persist ?? (() => undefined)
     this.delay = this.backoff[0]
+    this.probeMs = opts.probeMs ?? 30_000
+    this.probeTimeoutMs = opts.probeTimeoutMs ?? 10_000
   }
 
   get state(): SyncState {
@@ -239,6 +259,7 @@ export class Sync {
   close(): void {
     this.closed = true
     if (this.retry) clearTimeout(this.retry)
+    this.stopProbing()
     this.ws?.close()
     this.failWriters()
     this.settleWaiters()
@@ -446,6 +467,7 @@ export class Sync {
       this.ws?.close()
       return
     }
+    this.lastFrameAt = Date.now()
     try {
       this.handle(frame)
     } finally {
@@ -479,14 +501,17 @@ export class Sync {
         // the brain exists at the relay and this device is its member's: the creation is over
         if (this.team.create && !this.took('create')) return
         if (frame.head.seq < this.replica.head().seq) return this.stop('the relay\'s log is shorter than this brain\'s')
+        this.startProbing()
         const req = this.nextReq++
         this.requests.set(req, { kind: 'keys' })
         this.send({ t: 'keys', req })
         return
       }
       case 'keys': {
+        const asked = this.requests.get(frame.req)
         this.requests.delete(frame.req)
         for (const wrapped of frame.wrapped) this.addKey(wrapped)
+        if (asked?.kind === 'probe') return this.probeAnswered()
         this.publishKey()
         this.from = this.replica.head().seq + 1
         this.send({ t: 'subscribe', from: this.from })
@@ -942,6 +967,7 @@ export class Sync {
 
   private disconnected(code: number): void {
     this.ws = null
+    this.stopProbing()
     this.loggedIn = false
     this.caughtUp = false
     this.challenge = null
@@ -959,6 +985,50 @@ export class Sync {
     if (this.closed || this.halt) return this.settleWaiters()
     this.retry = setTimeout(() => { this.retry = null; this.connect() }, this.delay)
     this.delay = Math.min(this.delay * 2, this.backoff[1])
+  }
+
+  /** From the welcome on: every probeMs, a silent connection is probed. */
+  private startProbing(): void {
+    this.lastFrameAt = Date.now()
+    if (this.probeTicker) return
+    this.probeTicker = setInterval(() => this.probe(), this.probeMs)
+  }
+
+  private stopProbing(): void {
+    if (this.probeTicker) clearInterval(this.probeTicker)
+    this.probeTicker = null
+    if (this.probeDeadline) clearTimeout(this.probeDeadline)
+    this.probeDeadline = null
+  }
+
+  /**
+   * A tick of the probe timer: nothing while frames arrive or a probe is
+   * out; else a `keys` request with a deadline. The silence is measured by
+   * the wall clock, not counted in ticks, so after a sleep the first tick
+   * finds the connection stale at once.
+   */
+  private probe(): void {
+    const ws = this.ws
+    if (!ws || !this.loggedIn || this.probeDeadline) return
+    if (Date.now() - this.lastFrameAt < this.probeMs) return
+    const req = this.nextReq++
+    this.requests.set(req, { kind: 'probe' })
+    this.send({ t: 'keys', req })
+    this.probeDeadline = setTimeout(() => {
+      this.probeDeadline = null
+      if (this.ws !== ws) return
+      // The socket is given up before anything else: a late answer or close
+      // on it reaches nothing (the handlers check `this.ws === ws`).
+      this.ws = null
+      this.log('the relay did not answer the liveness probe; reconnecting')
+      try { ws.close() } catch { /* a dead socket may refuse to close */ }
+      this.disconnected(1006)
+    }, this.probeTimeoutMs)
+  }
+
+  private probeAnswered(): void {
+    if (this.probeDeadline) clearTimeout(this.probeDeadline)
+    this.probeDeadline = null
   }
 
   private stop(why: string): void {

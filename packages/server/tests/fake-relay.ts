@@ -17,7 +17,7 @@ import {
 // session).
 
 interface Entry { seq: number, at: string, opId: string, bytes: string, record: Record<string, unknown> }
-interface Session { ws: WebSocket, device: string | null, subscribed: boolean, waitingOn: string | null }
+interface Session { ws: WebSocket, device: string | null, subscribed: boolean, waitingOn: string | null, silent: boolean }
 interface OpenInvite { notice: InviteNotice, join: JoinRequest | null, accept: JoinAccept | null, closed: InviteClosedReason | null }
 
 /** The one grant this relay accepts for a creation. */
@@ -37,6 +37,13 @@ export class FakeRelay {
   dropNextAnswer = false
   /** the session closes on the next append, before it is taken */
   dropNextAppend = false
+  /** keys requests are taken but not answered until releaseKeys() (a relay that answers late) */
+  holdKeys = false
+  private readonly heldKeys: Array<() => void> = []
+  /** every keys request received */
+  keysRequests = 0
+  /** every subscribe received */
+  subscribes = 0
   /** the op_id of every append frame received, resends included */
   readonly appends: string[] = []
   /** runs when an append arrives, before it is taken, with its count (a test slips another device's record in) */
@@ -138,13 +145,14 @@ export class FakeRelay {
   }
 
   private session(ws: WebSocket): void {
-    const s: Session = { ws, device: null, subscribed: false, waitingOn: null }
+    const s: Session = { ws, device: null, subscribed: false, waitingOn: null, silent: false }
     this.sessions.add(s)
     ws.on('close', () => this.sessions.delete(s))
     const issued = loginChallenge(this.host, this.brain, this.now())
     const challenge: LoginChallenge & { used: boolean } = { ...issued, used: false }
     this.send(s, { t: 'challenge', challenge: issued as unknown as Record<string, unknown> })
     ws.on('message', (data) => {
+      if (s.silent) return
       const frame = parseClientFrame(String(data), s.device !== null)
       switch (frame.t) {
         case 'create': {
@@ -234,9 +242,13 @@ export class FakeRelay {
           }
           return this.send(s, { t: 'ok', req: frame.req })
         }
-        case 'keys':
-          this.send(s, { t: 'keys', req: frame.req, wrapped: this.wrapped.filter(w => w.recipient === s.device).map(w => w.record as Record<string, unknown>) })
+        case 'keys': {
+          this.keysRequests += 1
+          const answer = () => this.send(s, { t: 'keys', req: frame.req, wrapped: this.wrapped.filter(w => w.recipient === s.device).map(w => w.record as Record<string, unknown>) })
+          if (this.holdKeys) this.heldKeys.push(answer)
+          else answer()
           return
+        }
         case 'key_put': {
           let wrapped
           try {
@@ -251,6 +263,7 @@ export class FakeRelay {
           return
         }
         case 'subscribe':
+          this.subscribes += 1
           for (const e of this.log.slice(frame.from - 1)) this.send(s, { t: 'op', seq: e.seq, at: e.at, record: e.record })
           this.send(s, { t: 'caught_up', seq: this.log.length })
           s.subscribed = true
@@ -304,7 +317,18 @@ export class FakeRelay {
   }
 
   private send(s: Session, frame: RelayFrame): void {
+    if (s.silent || s.ws.readyState !== s.ws.OPEN) return
     s.ws.send(encodeFrame(frame, s.device !== null))
+  }
+
+  /** The sessions open now go dead without a close: nothing in, nothing out, the sockets stay (a laptop that slept, a network that went away). New connections work. */
+  silence(): void {
+    for (const s of this.sessions) s.silent = true
+  }
+
+  /** Answers the keys requests held back since holdKeys was set, in order. */
+  releaseKeys(): void {
+    for (const answer of this.heldKeys.splice(0)) answer()
   }
 
   private now(): string {
