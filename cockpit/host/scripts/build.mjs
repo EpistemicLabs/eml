@@ -6,6 +6,7 @@
 //   dist/index.js     host entry (bin)          — tsc, ESM
 //   dist/server.cjs   brain server + core       — esbuild, CJS, better-sqlite3 external
 //   dist/core.cjs     core (provisioning)       — esbuild, CJS, better-sqlite3 external
+//   dist/core-log.cjs core's op-log tools (move, verify) for the agent upgrade — esbuild, CJS
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
 //   THIRD_PARTY_LICENSES.md                     — notices for the code bundled into dist/ and ui/
@@ -36,6 +37,18 @@ const common = {
 const bundles = [
   await build({ ...common, entryPoints: [path.join(server, 'dist', 'server.js')], outfile: path.join(HOST, 'dist', 'server.cjs') }),
   await build({ ...common, entryPoints: [path.join(core, 'dist', 'index.js')], outfile: path.join(HOST, 'dist', 'core.cjs') }),
+  // core keeps the move and the log verify out of its index (they need the EML class at runtime); the agent upgrade (agent-upgrade.ts) loads them from here.
+  await build({
+    ...common,
+    stdin: {
+      contents: [
+        `export { moveEngrams, planMove } from ${JSON.stringify(path.join(core, 'dist', 'log', 'move-engrams.js'))}`,
+        `export { verify } from ${JSON.stringify(path.join(core, 'dist', 'log', 'rebuild.js'))}`,
+      ].join('\n'),
+      resolveDir: HOST, loader: 'js',
+    },
+    outfile: path.join(HOST, 'dist', 'core-log.cjs'),
+  }),
 ]
 // esbuild metafile inputs are relative to the working directory.
 const bundledFiles = bundles.flatMap((result) => Object.keys(result.metafile.inputs).map((input) => path.resolve(input)))

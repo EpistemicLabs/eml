@@ -7,7 +7,7 @@ import * as path from 'node:path'
 import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
-import { readCockpitConfig } from './config.js'
+import { readCockpitConfig, writeCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
 import { BrainHygiene } from './brain-hygiene.js'
@@ -23,6 +23,10 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
 import { loadAgentBrains } from './agents.js'
+import { needsUpgrade, upgradeHome } from './agent-upgrade.js'
+import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
+import { BACKUPS_DIR, DATA_DIR } from './paths.js'
+import type { UpgradeState } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
@@ -128,17 +132,33 @@ async function main() {
   // brains of the config, each bound to one agent. Each space writes its own
   // session files. A space without a bound agent (a home from before agent
   // brains, until the agent upgrade) gets no brain in its sessions.
-  const config = await readCockpitConfig()
+  // A home from before agent brains gets them now (agent-upgrade.ts): a dry
+  // run on copies, the real run only when every check passed, the config last.
+  // When it cannot (no handle to tell, a check failed), the spaces stay
+  // unbound and carry the reason for the banner and the boot refusal.
+  let config = await readCockpitConfig()
+  let upgrade: UpgradeState | null = null
+  if (config && needsUpgrade(config)) {
+    try {
+      const { report, dir } = await upgradeHome({ dataDir: DATA_DIR, config, backupsDir: BACKUPS_DIR, writeConfig: (next) => writeCockpitConfig(next), log })
+      if (report.status === 'ok') config = await readCockpitConfig()
+      else upgrade = { reason: report.reason ?? report.status, report: dir }
+    } catch (err) {
+      log(`agent upgrade: failed — ${(err as Error).message}`)
+      upgrade = { reason: (err as Error).message, report: null }
+    }
+  }
   const agents = loadAgentBrains(config, server.baseUrl, log)
-  const row = brainForLocalToken(brain.token)
+  const row = brainForLocalToken(config?.token ?? brain.token)
   const main = openBrainSpace({
     id: row?.id ?? 'main',
     name: config?.mainName ?? 'Main',
     brainName: row?.name ?? 'main',
     agent: config?.agent ?? null,
+    upgrade: config?.agent ? null : upgrade,
     main: true,
     url: server.baseUrl,
-    token: brain.token,
+    token: config?.token ?? brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
     mcpUrl,
     hooksUrl,
@@ -148,7 +168,7 @@ async function main() {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, agent: extra.agent ?? null, main: false,
+      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, agent: extra.agent ?? null, upgrade: extra.agent ? null : upgrade, main: false,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl,
     }))
   }
@@ -232,5 +252,6 @@ async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
 runServiceCommand(process.argv.slice(2))
   .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
+  .then(async (handled) => handled || runUpgradeAgentsCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

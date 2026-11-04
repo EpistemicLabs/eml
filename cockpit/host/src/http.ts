@@ -310,7 +310,7 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
     { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
   )
   const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: trimmed, agent: agent.id, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
+    id: brainId, name: trimmed, brainName: trimmed, agent: agent.id, upgrade: null, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
     mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
   })
   deps.spaces.add(space)
