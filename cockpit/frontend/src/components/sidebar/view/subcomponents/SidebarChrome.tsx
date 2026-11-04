@@ -39,7 +39,7 @@ export function SidebarModes({
   waiting: number;
 }) {
   return (
-    <div role="tablist" aria-label="Sidebar view" className="flex flex-shrink-0 gap-0.5 px-2 pb-1">
+    <div role="tablist" aria-label="Sidebar view" className="mx-2 mb-2 flex flex-shrink-0 gap-0.5 rounded-lg bg-foreground/[0.06] p-0.5">
       {MODES.map(({ mode, label }) => {
         const active = viewMode === mode;
         return (
@@ -51,12 +51,12 @@ export function SidebarModes({
             onClick={() => onViewModeChange(mode)}
             className={cn(
               'flex h-7 min-w-0 flex-auto items-center justify-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors',
-              active ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
+              active ? 'bg-card text-foreground shadow-sm ring-1 ring-foreground/10' : 'text-muted-foreground hover:text-foreground',
             )}
           >
             <span className="truncate">{label}</span>
             {mode === 'overview' && (
-              <span className="rounded border border-border px-1 text-[9px] leading-tight font-normal text-muted-foreground" title="Beta">
+              <span className="text-[9px] leading-none font-normal text-muted-foreground/70" title="Beta">
                 β
               </span>
             )}
