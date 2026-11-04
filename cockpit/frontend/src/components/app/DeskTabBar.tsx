@@ -239,7 +239,7 @@ export default function DeskTabBar() {
               'flex h-8 self-center items-stretch overflow-hidden rounded-md border',
               isActiveSpace ? 'border-foreground/15 bg-foreground/[0.05]' : 'border-foreground/[0.08] bg-foreground/[0.02]',
             )}
-            style={tone ? { borderColor: `color-mix(in srgb, ${tone} ${isActiveSpace ? 55 : 30}%, transparent)` } : undefined}
+            style={tone ? ({ '--space-tone': tone, borderColor: `color-mix(in srgb, ${tone} ${isActiveSpace ? 55 : 30}%, transparent)` } as CSSProperties) : undefined}
           >
             {/* The section's Brain tab: this brain's dashboard. Same underline
                 idiom as the desks, in the space's colour. */}
@@ -258,7 +258,6 @@ export default function DeskTabBar() {
               }}
               onDoubleClick={() => { if (section.space) startEditing(spaceEditId(section.space), section.space.name); }}
               aria-pressed={brainActive}
-              style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
               title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename' : ''}`}
               className={cn(
                 'relative flex h-full items-center gap-1.5 rounded-l-md px-2 text-body font-medium transition-colors',
@@ -293,9 +292,9 @@ export default function DeskTabBar() {
                     // A hairline between neighbouring desks.
                     deskIdx > 0 && 'border-l border-foreground/10',
                     isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                    // Active marker (Variante B): a 2px coral line on the header's
-                    // bottom edge, flush with the pane headers underneath.
-                    isActive && 'after:absolute after:inset-x-1.5 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary',
+                    // Active marker (Variante B): a 2px line in the space's colour on
+                    // the header's bottom edge, flush with the pane headers underneath.
+                    isActive && 'after:absolute after:inset-x-1.5 after:-bottom-px after:h-[2px] after:rounded-full after:bg-[var(--space-tone,var(--color-primary))]',
                     dragging?.id === desk.id && 'opacity-50',
                     paneDropId === desk.id && 'bg-primary/15 text-foreground',
                   )}
