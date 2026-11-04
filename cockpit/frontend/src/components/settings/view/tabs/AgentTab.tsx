@@ -143,7 +143,7 @@ export default function AgentTab() {
       </SettingsSection>
 
       <div className="text-sm text-muted-foreground">
-        To change any of this, ask {name} in a session — it keeps its own persona, rules and what it knows about you.
+        To change any of this, ask {name} in a session.
       </div>
     </div>
   );
