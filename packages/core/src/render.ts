@@ -39,6 +39,14 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
   return lines.join('\n')
 }
 
+/** The metadata keys the archive op of a move writes (log/move-engrams.ts). */
+const MOVE_KEYS = new Set(['moved_to', 'moved_at', 'moved_to_name'])
+
+/** Under the header of a moved project: where it went (the space's name as recorded at the move, else the brain id) and when. */
+function movedLine(moved: NonNullable<ScopedBrainState['moved']>): string {
+  return `_Moved to the shared space ${moved.name ?? moved.to} on ${moved.at.slice(0, 10)} — its engrams live there; nothing new is filed here._`
+}
+
 /**
  * v0.10.5 DISPLAY: compact orientation dashboard for one scope. Identify-don't-
  * dump — status/tasks/logs show meta + a capped preview + id; rules are titles
@@ -48,14 +56,6 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
  * v0.10.8: rules render by applicability — `always` rules full, `situational`
  * rules name-only (eml_get for the body).
  */
-/** The metadata keys the archive op of a move writes (log/move-engrams.ts). */
-const MOVE_KEYS = new Set(['moved_to', 'moved_at', 'moved_to_name'])
-
-/** Under the header of a moved project: where it went (the space's name as recorded at the move, else the brain id) and when. */
-function movedLine(moved: NonNullable<ScopedBrainState['moved']>): string {
-  return `_Moved to the shared space ${moved.name ?? moved.to} on ${moved.at.slice(0, 10)} — its engrams live there; nothing new is filed here._`
-}
-
 export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   const lines: string[] = [`# ${state.scope} — brain state`]
   // v0.21: a project moved into a shared space — the one line that says so comes

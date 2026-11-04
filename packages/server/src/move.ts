@@ -155,13 +155,13 @@ export const TARGET_NAME_MAX_CHARS = 80
 /**
  * `target_name` of POST /move: the name the caller's cockpit gives the target
  * space, recorded on the archived projects for eml_show. Absent or blank → not
- * recorded (eml_show names the brain id). Control characters go, whitespace
- * collapses, the rest is cut at TARGET_NAME_MAX_CHARS.
+ * recorded (eml_show names the brain id). Control and format characters (bidi
+ * overrides among them) go, whitespace collapses, the rest is cut at TARGET_NAME_MAX_CHARS.
  */
 export function targetNameOf(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') throw new MoveRouteError(400, 'INVALID_TARGET_NAME', 'target_name is the name of the target space, as text.')
-  const clean = value.replace(/\p{Cc}/gu, '').replace(/\s+/g, ' ').trim().slice(0, TARGET_NAME_MAX_CHARS).trim()
+  const clean = value.replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, TARGET_NAME_MAX_CHARS).trim()
   return clean === '' ? undefined : clean
 }
 

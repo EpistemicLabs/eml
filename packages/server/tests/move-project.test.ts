@@ -159,9 +159,9 @@ describe('moving a project into a team brain', () => {
     for (let i = 0; i < 100 && !(await live()); i++) await new Promise(resolve => setTimeout(resolve, 100))
     expect(await live()).toBe(true)
 
-    // the cockpit's name for the space travels with the confirmed run: control characters go, whitespace collapses, the length is capped
+    // the cockpit's name for the space travels with the confirmed run: control and format characters (a bidi override) go, whitespace collapses, the length is capped
     const name = ('Team brain ' + 'x'.repeat(100)).slice(0, 80)
-    const r = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash, target_name: '  Team\u0007 \n brain ' + 'x'.repeat(100) })
+    const r = await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash, target_name: '  Team\u0007 \n \u202Ebrain ' + 'x'.repeat(100) })
     expect(r.status).toBe(200)
     expect(r.body).toMatchObject({
       project: 'top', tree: plan.tree, archived: ['top', 'child'], moved: plan.moved, resumed: true,
