@@ -38,9 +38,9 @@ let server: Server
 let url: string
 const seen: Seen[] = []
 /** What the stand-in brain server answers next, by "METHOD /path". */
-let brainAnswers: Record<string, Answer | ((call: Seen) => Answer)> = {}
+const brainAnswers = new Map<string, Answer | ((call: Seen) => Answer)>()
 /** What the stubbed account service answers next, by path. */
-let accountAnswers: Record<string, Answer> = {}
+const accountAnswers = new Map<string, Answer>()
 const accountSeen: Array<{ path: string; auth?: string }> = []
 
 const SESSION = 'emla_' + 'S'.repeat(43)
@@ -63,7 +63,7 @@ beforeAll(async () => {
       const call: Seen = { method: req.method ?? '', url: req.url ?? '', auth: req.headers.authorization, body: raw ? JSON.parse(raw) as Record<string, unknown> : {} }
       seen.push(call)
       const key = `${call.method} ${call.url}`
-      const answer = brainAnswers[key]
+      const answer = brainAnswers.get(key)
       const { status, body } = typeof answer === 'function' ? answer(call) : answer ?? { status: 404, body: { error: `no answer for ${key}` } }
       res.statusCode = status
       if (body === undefined) { res.end(); return }
@@ -77,11 +77,10 @@ beforeAll(async () => {
   // The account service is stubbed; everything else (the stand-in brain server) is fetched for real.
   const realFetch = globalThis.fetch
   vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-    const target = String(input instanceof Request ? input.url : input)
-    if (!target.startsWith('http://account.test')) return realFetch(input, init)
-    const path = new URL(target).pathname
-    accountSeen.push({ path, auth: (init?.headers as Record<string, string> | undefined)?.authorization })
-    const answer = accountAnswers[path] ?? { status: 404, body: { error: 'not_found' } }
+    const target = new URL(String(input instanceof Request ? input.url : input))
+    if (target.origin !== 'http://account.test') return realFetch(input, init)
+    accountSeen.push({ path: target.pathname, auth: (init?.headers as Record<string, string> | undefined)?.authorization })
+    const answer = accountAnswers.get(target.pathname) ?? { status: 404, body: { error: 'not_found' } }
     return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status })
   })
 
@@ -101,8 +100,8 @@ afterAll(async () => {
 beforeEach(() => {
   seen.length = 0
   accountSeen.length = 0
-  brainAnswers = {}
-  accountAnswers = {}
+  brainAnswers.clear()
+  accountAnswers.clear()
   rmSync(join(home, 'account'), { force: true })
 })
 
@@ -134,8 +133,8 @@ describe('brainOfInviteLink', () => {
 describe('createTeamSpace', () => {
   it('asks the account for a grant, provisions the empty brain under its id, founds it on the server and writes the space into the config', async () => {
     signedIn()
-    accountAnswers['/v1/grants'] = { status: 200, body: { brain: BRAIN_A, ...GRANT } }
-    brainAnswers['POST /team/create'] = { status: 201, body: { brain: BRAIN_A, member: 'fp', handle: 'alex' } }
+    accountAnswers.set('/v1/grants', { status: 200, body: { brain: BRAIN_A, ...GRANT } })
+    brainAnswers.set('POST /team/create', { status: 201, body: { brain: BRAIN_A, member: 'fp', handle: 'alex' } })
 
     const result = await mods.team.createTeamSpace(ctx(), 'Team')
     expect('refused' in result).toBe(false)
@@ -159,8 +158,8 @@ describe('createTeamSpace', () => {
 
   it('keeps a brain the relay took but that is not live yet (504 TEAM_CREATE_PENDING)', async () => {
     signedIn()
-    accountAnswers['/v1/grants'] = { status: 200, body: { brain: BRAIN_B, ...GRANT } }
-    brainAnswers['POST /team/create'] = { status: 504, body: { error: 'The relay took the new brain but it is not live yet; it will finish on its own.', code: 'TEAM_CREATE_PENDING' } }
+    accountAnswers.set('/v1/grants', { status: 200, body: { brain: BRAIN_B, ...GRANT } })
+    brainAnswers.set('POST /team/create', { status: 504, body: { error: 'The relay took the new brain but it is not live yet; it will finish on its own.', code: 'TEAM_CREATE_PENDING' } })
     const result = await mods.team.createTeamSpace(ctx(), 'Pending') as import('../src/team-space.js').TeamSpaceMade
     expect(result.brainId).toBe(BRAIN_B)
     expect(result.answer.status).toBe(504)
@@ -170,9 +169,9 @@ describe('createTeamSpace', () => {
 
   it('discards the brain again when the server refused the creation, and passes the refusal through', async () => {
     signedIn()
-    accountAnswers['/v1/grants'] = { status: 200, body: { brain: BRAIN_C, ...GRANT } }
-    brainAnswers['POST /team/create'] = { status: 403, body: { error: 'The relay did not accept the creation grant: expired. Try again.', code: 'GRANT_INVALID' } }
-    brainAnswers['DELETE /team'] = { status: 204 }
+    accountAnswers.set('/v1/grants', { status: 200, body: { brain: BRAIN_C, ...GRANT } })
+    brainAnswers.set('POST /team/create', { status: 403, body: { error: 'The relay did not accept the creation grant: expired. Try again.', code: 'GRANT_INVALID' } })
+    brainAnswers.set('DELETE /team', { status: 204 })
     const result = await mods.team.createTeamSpace(ctx(), 'Refused')
     expect(result).toEqual({ refused: { status: 403, body: { error: 'The relay did not accept the creation grant: expired. Try again.', code: 'GRANT_INVALID' } } })
     expect(seen.map((c) => [c.method, c.url])).toEqual([['POST', '/team/create'], ['DELETE', '/team']])
@@ -183,7 +182,7 @@ describe('createTeamSpace', () => {
   it('stops at the account: not signed in, or not in the beta — nothing provisioned, the server not asked', async () => {
     expect(await mods.team.createTeamSpace(ctx(), 'None')).toEqual({ refused: { status: 401, body: { error: { code: 'NOT_SIGNED_IN', message: 'Sign in to your EML account first.' } } } })
     signedIn()
-    accountAnswers['/v1/grants'] = { status: 403 }
+    accountAnswers.set('/v1/grants', { status: 403 })
     expect(await mods.team.createTeamSpace(ctx(), 'None')).toEqual({ refused: { status: 403, body: { error: { code: 'NO_BETA', message: 'Your account is not in the team-brain beta.' } } } })
     expect(seen).toEqual([])
     expect((await spaces()).map((s) => s.name)).toEqual(['Team', 'Pending'])
@@ -192,7 +191,7 @@ describe('createTeamSpace', () => {
 
 describe('joinTeamSpace', () => {
   it('provisions the empty brain under the link\'s brain id and keeps the space once the relay has the join (202)', async () => {
-    brainAnswers['POST /team/join'] = { status: 202, body: { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: BRAIN_D, member: 'fp', handle: 'alex' } }
+    brainAnswers.set('POST /team/join', { status: 202, body: { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: BRAIN_D, member: 'fp', handle: 'alex' } })
     const result = await mods.team.joinTeamSpace(ctx(), 'Joined', link(BRAIN_D)) as import('../src/team-space.js').TeamSpaceMade
     expect(result.brainId).toBe(BRAIN_D)
     expect(result.answer.status).toBe(202)
@@ -203,8 +202,8 @@ describe('joinTeamSpace', () => {
   })
 
   it('discards the brain again when the invite is closed (410), and refuses a link that is none before provisioning', async () => {
-    brainAnswers['POST /team/join'] = { status: 410, body: { error: 'This invite is closed (cancelled); ask the owner for a new link.', code: 'INVITE_CLOSED' } }
-    brainAnswers['DELETE /team'] = { status: 204 }
+    brainAnswers.set('POST /team/join', { status: 410, body: { error: 'This invite is closed (cancelled); ask the owner for a new link.', code: 'INVITE_CLOSED' } })
+    brainAnswers.set('DELETE /team', { status: 204 })
     expect(await mods.team.joinTeamSpace(ctx(), 'Closed', link(BRAIN_E))).toEqual({ refused: { status: 410, body: { error: 'This invite is closed (cancelled); ask the owner for a new link.', code: 'INVITE_CLOSED' } } })
     expect(seen.map((c) => [c.method, c.url])).toEqual([['POST', '/team/join'], ['DELETE', '/team']])
     expect(seen[1].auth).toBe(seen[0].auth)
@@ -218,13 +217,13 @@ describe('joinTeamSpace', () => {
 
   it('a new link for a brain the cockpit has goes to that space: no provisioning, no config write, the server replaces the stopped join', async () => {
     const existing = { id: BRAIN_D, name: 'Joined', url, token: 'tok-existing', shared: null } as unknown as import('../src/brain-space.js').BrainSpace
-    brainAnswers['POST /team/join'] = { status: 502, body: { error: 'The relay did not take the join: no route.', code: 'TEAM_JOIN_FAILED' } }
+    brainAnswers.set('POST /team/join', { status: 502, body: { error: 'The relay did not take the join: no route.', code: 'TEAM_JOIN_FAILED' } })
     expect(await mods.team.joinTeamSpace(ctx(), 'Ignored', link(BRAIN_D), existing)).toEqual({ refused: { status: 502, body: { error: 'The relay did not take the join: no route.', code: 'TEAM_JOIN_FAILED' } } })
     expect(seen.map((c) => [c.method, c.url, c.auth])).toEqual([['POST', '/team/join', 'Bearer tok-existing']])
     expect(existing.shared).toBeNull()
 
     seen.length = 0
-    brainAnswers['POST /team/join'] = { status: 202, body: { code: 'TEAM_JOIN_PENDING' } }
+    brainAnswers.set('POST /team/join', { status: 202, body: { code: 'TEAM_JOIN_PENDING' } })
     const result = await mods.team.joinTeamSpace(ctx(), 'Ignored', link(BRAIN_D), existing) as import('../src/team-space.js').TeamSpaceMade
     expect([result.brainId, result.token, result.answer.status]).toEqual([BRAIN_D, 'tok-existing', 202])
     expect(seen.map((c) => [c.method, c.url, c.auth])).toEqual([['POST', '/team/join', 'Bearer tok-existing']])
@@ -237,10 +236,10 @@ describe('joinTeamSpace', () => {
 describe('the team routes', () => {
   it('pass the server\'s answers through on the space\'s token', async () => {
     const space = { url, token: 'tok-space' }
-    brainAnswers['GET /team'] = { status: 200, body: { shared: true, state: { kind: 'live' }, read_only: null, invites: [] } }
-    brainAnswers['POST /team/invites'] = { status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } }
-    brainAnswers['POST /team/invites/inv/accept'] = { status: 200, body: { member: { id: 'm', role: 'owner' } } }
-    brainAnswers['POST /team/invites/inv/cancel'] = { status: 404, body: { error: 'No such invite.', code: 'NO_SUCH_INVITE' } }
+    brainAnswers.set('GET /team', { status: 200, body: { shared: true, state: { kind: 'live' }, read_only: null, invites: [] } })
+    brainAnswers.set('POST /team/invites', { status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } })
+    brainAnswers.set('POST /team/invites/inv/accept', { status: 200, body: { member: { id: 'm', role: 'owner' } } })
+    brainAnswers.set('POST /team/invites/inv/cancel', { status: 404, body: { error: 'No such invite.', code: 'NO_SUCH_INVITE' } })
     expect(await mods.team.teamSnapshot(space)).toEqual({ status: 200, body: { shared: true, state: { kind: 'live' }, read_only: null, invites: [] } })
     expect(await mods.team.createInvite(space)).toEqual({ status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } })
     expect(await mods.team.confirmInvite(space, 'inv', 'owner')).toEqual({ status: 200, body: { member: { id: 'm', role: 'owner' } } })
@@ -265,10 +264,10 @@ describe('removeTeamSpace', () => {
     const space = { id: BRAIN_D, url, token: 'tok-space' } as unknown as import('../src/brain-space.js').BrainSpace
     const removed: string[] = []
     const remove = async (s: import('../src/brain-space.js').BrainSpace) => { removed.push(s.id) }
-    brainAnswers['DELETE /team'] = { status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } }
+    brainAnswers.set('DELETE /team', { status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } })
     expect(await mods.team.removeTeamSpace(space, remove)).toEqual({ status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } })
     expect(removed).toEqual([])
-    brainAnswers['DELETE /team'] = { status: 204 }
+    brainAnswers.set('DELETE /team', { status: 204 })
     expect(await mods.team.removeTeamSpace(space, remove)).toEqual({ status: 204, body: {} })
     expect(removed).toEqual([BRAIN_D])
     expect(seen.map((c) => [c.method, c.url, c.auth])).toEqual([['DELETE', '/team', 'Bearer tok-space'], ['DELETE', '/team', 'Bearer tok-space']])
@@ -277,7 +276,7 @@ describe('removeTeamSpace', () => {
 
 describe('loadSharedFlags', () => {
   it('asks the server per space; a space whose call did not answer stays unknown', async () => {
-    brainAnswers['GET /team'] = (call) => call.auth === 'Bearer tok-shared' ? { status: 200, body: { shared: true } } : { status: 200, body: { shared: false } }
+    brainAnswers.set('GET /team', (call) => call.auth === 'Bearer tok-shared' ? { status: 200, body: { shared: true } } : { status: 200, body: { shared: false } })
     const shared = { url, token: 'tok-shared', shared: null } as unknown as import('../src/brain-space.js').BrainSpace
     const local = { url, token: 'tok-local', shared: null } as unknown as import('../src/brain-space.js').BrainSpace
     const unreachable = { url: 'http://127.0.0.1:1', token: 'tok-gone', shared: null } as unknown as import('../src/brain-space.js').BrainSpace
@@ -300,7 +299,7 @@ describe('sweepOrphanBrains', () => {
     const lines: string[] = []
     // The server: the first brain asked about is empty, the second has a log.
     let calls = 0
-    brainAnswers['DELETE /team'] = () => (++calls === 1 ? { status: 204 } : { status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } })
+    brainAnswers.set('DELETE /team', () => (++calls === 1 ? { status: 204 } : { status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } }))
 
     await mods.team.sweepOrphanBrains({ tokens: held, url, log: (l) => lines.push(l), core })
 

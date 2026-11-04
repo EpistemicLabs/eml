@@ -1,9 +1,10 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BrainProjectsClient } from './brain-projects.js'
 import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
-import { writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
+import { removeSpaceFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
@@ -165,7 +166,10 @@ export class BrainSpaces {
 
   /**
    * v0.21: a shared space the brain server discarded (team-space.ts) leaves
-   * the registry and the cockpit config. The main space is never removed.
+   * the registry and the cockpit config, with its session files (they carry
+   * the per-boot MCP token) and its local state under spaces/<id>. The
+   * folders of its projects (workspaces/) are the user's and stay. The main
+   * space is never removed.
    */
   async remove(space: BrainSpace): Promise<void> {
     if (space.main) throw new Error('the main space is not removed')
@@ -174,6 +178,8 @@ export class BrainSpaces {
       return { ...config, spaces: (config.spaces ?? []).filter((s) => s.token !== space.token) }
     })
     this.byId.delete(space.id)
+    removeSpaceFiles(space.id)
+    fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
   }
 
   /** Rename a space (display name only; the brain keeps its name) and persist it in the cockpit config. */

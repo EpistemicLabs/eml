@@ -159,7 +159,9 @@ async function main() {
   log(`spaces: ${spaces.list().map((s) => `${s.name}${s.shared ? ' (shared)' : s.shared === null ? ' (shared?)' : ''} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
   // A brain no token of the config belongs to is one a shared-space creation
   // or join left behind (a crash before the config was written): discarded
-  // when it has no log, logged otherwise (team-space.ts).
+  // when it has no log, logged otherwise (team-space.ts). Runs after the agent
+  // upgrade at host start (it writes its agent brains into the config last),
+  // so a fresh agent brain never looks like an orphan — keep that order.
   await sweepOrphanBrains({
     tokens: [brain.token, ...(config?.spaces ?? []).map((s) => s.token), ...(config?.agents ?? []).map((a) => a.token)],
     url: server.baseUrl,

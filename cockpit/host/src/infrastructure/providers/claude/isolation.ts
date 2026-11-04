@@ -195,6 +195,12 @@ export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: S
   return { mcpConfig, settings, emlConfig }
 }
 
+/** A space that leaves the cockpit (a shared space removed, brain-space.ts) takes its session files with it. */
+export function removeSpaceFiles(spaceId: string): void {
+  fs.rmSync(spaceConfigDir(spaceId), { recursive: true, force: true })
+  fs.rmSync(spaceEmlDir(spaceId), { recursive: true, force: true })
+}
+
 /**
  * Write the files every space shares: the turn-hook config with the token,
  * the skills, the seeded .claude.json. The per-space files (mcp.json,
