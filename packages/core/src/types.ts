@@ -486,6 +486,10 @@ export interface ScopedBrainState {
   // facts (project / entity). Ripe learnings: eml_list type=learning state=ripe.
   status_tracks?: string | null
   metadata?: Record<string, unknown> | null
+  // v0.21: a project moved into another brain (log/move-engrams.ts archives it with
+  // moved_to / moved_at / moved_to_name in its metadata): where it went, under which
+  // name the space was known at the move (null when none was recorded), and when.
+  moved?: { to: string, name: string | null, at: string } | null
 }
 
 /**

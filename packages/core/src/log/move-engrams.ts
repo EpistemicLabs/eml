@@ -296,24 +296,27 @@ export interface ProjectMoveArgs {
   project: string
   plan_hash: string
   backup_path: string
+  /** The name the target space is known by to the caller, recorded as moved_to_name on the archived projects (what eml_show shows; the brain id otherwise). */
+  target_name?: string
 }
 
 export interface ProjectMoveResult extends MoveResult {
   project: string
   tree: ProjectTreeEntry[]
-  /** The source projects archived by this move, with moved_to / moved_at in their metadata. */
+  /** The source projects archived by this move, with moved_to / moved_at (and moved_to_name when given) in their metadata. */
   archived: string[]
 }
 
 /**
  * Moves project `project` with its sub-projects (planProjectMove) and, in the
  * same source transaction, archives every project the set emptied with
- * metadata moved_to (the target's brain id) and moved_at — one object.update op each, so the
- * source says where the project went. Refuses like moveEngrams, and while the
+ * metadata moved_to (the target's brain id), moved_at and moved_to_name (the target's name
+ * as the caller knows it, when given) — one object.update op each, so the source says where
+ * the project went. Refuses like moveEngrams, and while the
  * set has legacy authorship.
  */
 export async function moveProject(args: ProjectMoveArgs, env: Env): Promise<ProjectMoveResult> {
-  const { source, target, project, plan_hash, backup_path } = args
+  const { source, target, project, plan_hash, backup_path, target_name } = args
   const { from, to } = ends(source, target.db)
   // refused before the backup when the plan says so now; made and checked again under the lock
   const first = projectPlanned(source, target.db, project)
@@ -329,8 +332,8 @@ export async function moveProject(args: ProjectMoveArgs, env: Env): Promise<Proj
     for (const entry of plan.tree) {
       if (entry.engrams === 0) continue
       const row = source.prepare('SELECT metadata FROM projects WHERE id = ?').get(entry.id) as { metadata: string | null }
-      // metadata is a flat map of text: where it went and when; the move_out op in the log names the import
-      const metadata = { ...(row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {}), moved_to: to, moved_at: env.now() }
+      // metadata is a flat map of text: where it went, under which name, and when; the move_out op in the log names the import
+      const metadata = { ...(row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {}), moved_to: to, moved_at: env.now(), ...(target_name === undefined ? {} : { moved_to_name: target_name }) }
       writeOp(stores, { name: 'object.update', input: { object: 'project', id: entry.id, patch: { status: 'archived', metadata } } }, env)
       archived.push(entry.id)
     }
