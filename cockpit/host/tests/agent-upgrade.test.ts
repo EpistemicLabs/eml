@@ -224,6 +224,7 @@ describe('agent upgrade', () => {
     // Once bound, a second run has nothing to do.
     const again = await upgradeHome({ dataDir, config, backupsDir: join(home, 'backups'), modules, writeConfig: async () => { throw new Error('no write expected') } })
     expect(again.report.spaces.map((s) => [s.action, s.reason])).toEqual([['skipped', 'bound to motti already'], ['skipped', 'bound to motti already']])
+    expect(again.dir).toBeNull()
   })
 
   it('renders the report as text', async () => {

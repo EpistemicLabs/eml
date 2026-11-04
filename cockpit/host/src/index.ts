@@ -137,17 +137,21 @@ async function main() {
   // When it cannot (no handle to tell, a check failed), the spaces stay
   // unbound and carry the reason for the banner and the boot refusal.
   let config = await readCockpitConfig()
+  // Why a space stayed unbound: the run's reason for every space, or a skipped space's own.
+  const upgradeStates = new Map<string, UpgradeState>()
   let upgrade: UpgradeState | null = null
   if (config && needsUpgrade(config)) {
     try {
       const { report, dir } = await upgradeHome({ dataDir: DATA_DIR, config, backupsDir: BACKUPS_DIR, writeConfig: (next) => writeCockpitConfig(next), log })
       if (report.status === 'ok') config = await readCockpitConfig()
       else upgrade = { reason: report.reason ?? report.status, report: dir }
+      for (const s of report.spaces) if (s.action === 'skipped' && s.reason && !s.reason.startsWith('bound to')) upgradeStates.set(s.id, { reason: s.reason, report: dir })
     } catch (err) {
       log(`agent upgrade: failed — ${(err as Error).message}`)
       upgrade = { reason: (err as Error).message, report: null }
     }
   }
+  const upgradeStateOf = (brainId: string, bound: string | null | undefined): UpgradeState | null => (bound ? null : upgrade ?? upgradeStates.get(brainId) ?? null)
   const agents = loadAgentBrains(config, server.baseUrl, log)
   const row = brainForLocalToken(config?.token ?? brain.token)
   const main = openBrainSpace({
@@ -155,7 +159,7 @@ async function main() {
     name: config?.mainName ?? 'Main',
     brainName: row?.name ?? 'main',
     agent: config?.agent ?? null,
-    upgrade: config?.agent ? null : upgrade,
+    upgrade: upgradeStateOf(row?.id ?? 'main', config?.agent),
     main: true,
     url: server.baseUrl,
     token: config?.token ?? brain.token,
@@ -168,7 +172,7 @@ async function main() {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, agent: extra.agent ?? null, upgrade: extra.agent ? null : upgrade, main: false,
+      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl,
     }))
   }

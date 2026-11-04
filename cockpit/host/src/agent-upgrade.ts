@@ -440,12 +440,18 @@ export function needsUpgrade(config: CockpitConfig): boolean {
  * check, after a backup of the same files; the config written last. Returns
  * the dry run's report when it did not pass, else the real run's.
  */
-export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { backupsDir: string; writeConfig: (config: CockpitConfig) => Promise<void>; log?: (line: string) => void }): Promise<{ report: UpgradeReport; dir: string }> {
+export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { backupsDir: string; writeConfig: (config: CockpitConfig) => Promise<void>; log?: (line: string) => void }): Promise<{ report: UpgradeReport; dir: string | null }> {
   const now = input.now ?? (() => new Date())
+  const log = input.log ?? (() => {})
+  // Nothing a run could bind (every unbound space needs intervention first, or is bound already): no copies, the reasons as the report.
+  const scan = scanSpaces(input)
+  if (!scan.spaces.some((s) => s.action !== 'skipped')) {
+    log('agent upgrade: nothing to do')
+    return { report: scan, dir: null }
+  }
   const base = path.join(input.backupsDir, 'agent-upgrade', stamp(now()))
   let dir = base
   for (let n = 2; fs.existsSync(dir); n++) dir = `${base}-${n}`
-  const log = input.log ?? (() => {})
   const dry = await dryRun({ ...input, dir })
   fs.writeFileSync(path.join(dir, 'dry-run.json'), JSON.stringify(dry, null, 2) + '\n', { mode: 0o600 })
   if (dry.status !== 'ok') { log(`agent upgrade: dry run ${dry.status} — ${dry.reason}`); return { report: dry, dir } }
@@ -457,6 +463,38 @@ export async function upgradeHome(input: Omit<UpgradeInput, 'backupDir'> & { bac
   if (report.status === 'ok') await input.writeConfig(report.config)
   log(`agent upgrade: ${report.status}${report.reason ? ` — ${report.reason}` : ''} (${summary(report)})`)
   return { report, dir }
+}
+
+/**
+ * What a run would look at, read from control.db alone: which spaces are
+ * bound already, which cannot be upgraded (brain status, an unknown token, a
+ * brain name that is no agent id) and which a run would upgrade. No copy, no
+ * brain opened.
+ */
+export function scanSpaces(input: Omit<UpgradeInput, 'backupDir'>): UpgradeReport {
+  const modules = input.modules ?? bundledCoreModules()
+  const control = modules.core.initControlDatabase(path.join(input.dataDir, 'control.db'))
+  try {
+    const agentIds = new Set((input.config.agents ?? []).map((a) => a.id))
+    const entries = [
+      { token: input.config.token, name: input.config.mainName ?? 'Main', main: true, bound: input.config.agent ?? null },
+      ...(input.config.spaces ?? []).map((s) => ({ token: s.token, name: s.name ?? '', main: false, bound: s.agent ?? null })),
+    ]
+    const spaces: SpaceReport[] = entries.map((e) => {
+      const found = brainOfToken(modules, control, e.token)
+      const name = e.name || found?.brain.name || '?'
+      if (!found) return { id: '?', name, main: e.main, action: 'skipped', reason: 'its token matches no brain', agent: e.bound }
+      const sr: SpaceReport = { id: found.brain.id, name, main: e.main, action: 'skipped', agent: e.bound }
+      if (e.bound && agentIds.has(e.bound)) sr.reason = `bound to ${e.bound} already`
+      else if (found.brain.status !== 'ok') sr.reason = `brain status ${found.brain.status} — it needs intervention first`
+      else if (!AGENT_ID.test(found.brain.name)) sr.reason = `the brain's name "${found.brain.name}" is not an agent id — bind an agent by hand`
+      else { sr.action = 'upgraded'; sr.agent = found.brain.name }
+      return sr
+    })
+    return { mode: 'dry-run', at: (input.now ?? (() => new Date()))().toISOString(), status: 'ok', handle: input.config.handle ?? null, agents: [], spaces, config: input.config }
+  } finally {
+    control.close()
+  }
 }
 
 /** The upgrade on copies of the home's data: the report says what the real run would do; nothing of the home changes. */
