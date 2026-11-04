@@ -41,7 +41,7 @@ describe('the review screen', () => {
 
   const open = (current: AllSession) => {
     sessions = [current, { ...result, id: 'b' }];
-    act(() => setReview({ queue: [current.id, 'b'], index: 0 }));
+    act(() => setReview({ queue: [current.id, 'b'], index: 0, seen: {} }));
     render(<ReviewScreen />);
   };
 

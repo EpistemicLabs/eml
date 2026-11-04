@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 
-import { startReview } from '@/lib/review-flow';
+import { joinReview, startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, agentLetter, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSession,
+  agentLabel, agentLetter, allSessionState, filterByName, groupAllSessions, isUnseen, sessionMark, type AllSections, type AllSession,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
@@ -100,30 +100,40 @@ function useSections(controller: SidebarController, onlyOpenSpace: boolean) {
   return { sections, spaces, sessions };
 }
 
-/** How many wait for the user: what the overview's tab says while another view is open. */
+/** What waits for the user, what needs an answer first: the review's queue, in its order. */
+function useWaiting(sections: AllSections): AllSession[] {
+  return useMemo(() => [...sections.needsYou, ...sections.toReview], [sections]);
+}
+
+/**
+ * How many wait for the user: what the overview's tab says while another view is
+ * open. The sidebar is always there, so what newly waits joins an open review from here.
+ */
 export function useWaitingCount(controller: SidebarController, onlyOpenSpace: boolean): number {
   const { sections } = useSections(controller, onlyOpenSpace);
-  return sections.needsYou.length + sections.toReview.length;
+  const waiting = useWaiting(sections);
+  useEffect(() => joinReview(waiting), [waiting]);
+  return waiting.length;
 }
 
 /** What needs the user and what is finished: on top of the overview. */
 function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
   const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
   const { needsYou, toReview } = sections;
+  const waiting = useWaiting(sections);
   const row = (session: AllSession) => (
     <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
   );
-  const waiting = needsYou.length + toReview.length;
-  if (waiting === 0) return null;
+  if (waiting.length === 0) return null;
   return (
     <div className="space-y-3">
       <div className="px-2">
         <button
           type="button"
-          onClick={() => startReview([...needsYou, ...toReview])}
+          onClick={() => startReview(waiting)}
           className="w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
         >
-          Review {waiting} ▶
+          Review {waiting.length} ▶
         </button>
       </div>
       {needsYou.length > 0 && (

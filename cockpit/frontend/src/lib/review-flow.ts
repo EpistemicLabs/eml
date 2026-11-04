@@ -1,10 +1,10 @@
 import { archiveSession, clearSession, markSessionRead } from '@/lib/session-actions';
-import { getReview, pruneQueue, queueAfter, setReview, type ReviewState } from '@/stores/useReviewStore';
+import { attentionKey, getReview, joinQueue, pruneQueue, queueAfter, setReview, type ReviewState } from '@/stores/useReviewStore';
 import { setTopView } from '@/stores/useTopViewStore';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-function show(queue: string[], index: number): void {
-  setReview({ queue, index });
+function show(queue: string[], index: number, seen: Record<string, string> = getReview()?.seen ?? {}): void {
+  setReview({ queue, index, seen });
   const id = queue[index];
   if (id) void markSessionRead(id);
 }
@@ -12,8 +12,17 @@ function show(queue: string[], index: number): void {
 /** The review screen over the desks, in the order the caller gives: what needs an answer first. */
 export function startReview(sessions: AllSession[]): void {
   if (sessions.length === 0) return;
-  show(sessions.map((session) => session.id), 0);
+  const seen = Object.fromEntries(sessions.map((session) => [session.id, attentionKey(session)]));
+  show(sessions.map((session) => session.id), 0, seen);
   setTopView('review');
+}
+
+/** What newly waits, in the same order and from the same list the round started with, joins at the end. */
+export function joinReview(sessions: AllSession[]): void {
+  const review = getReview();
+  if (!review) return;
+  const next = joinQueue(review, sessions.map((session) => ({ id: session.id, key: attentionKey(session) })));
+  if (next !== review) setReview(next);
 }
 
 /** Back to the desks, as they were. */
@@ -45,7 +54,7 @@ function moveOn(sessions: AllSession[]): void {
   else endReview();
 }
 
-/** Take the current one out (archive, or clear for a pinned one) and go on; after the last the flow ends. */
+/** Take the current one out (archive, or clear for a pinned one) and go on; when nothing is left the flow ends. */
 export async function finishCurrent(action: 'archive' | 'clear', sessions: AllSession[]): Promise<string | null> {
   const review = getReview();
   if (!review) return null;
