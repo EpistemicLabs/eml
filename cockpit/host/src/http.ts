@@ -7,7 +7,8 @@ import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces } from './brain-space.js'
-import { provisionSpace } from './provision.js'
+import { provisionSpace, type AgentNames, type Human } from './provision.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -289,32 +290,72 @@ function validSpaceName(deps: HostDeps, name: string, self?: BrainSpace): { name
 }
 
 /**
+ * The binding every new space gets: the main space's agent and the home's
+ * handle (the agent picker per space comes with Settings › Agents), with
+ * the display names as the agent brain knows them.
+ */
+async function newSpaceBinding(deps: HostDeps): Promise<{ agent: AgentNames; human: Human } | SpaceError> {
+  const agent = deps.agents.get(deps.spaces.main.agent)
+  const handle = (await readCockpitConfig())?.handle
+  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
+  const info = readBrainInfo(agent.token)
+  return {
+    agent: { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
+    human: { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
+  }
+}
+
+/** A space made just now joins the registry with its session files. */
+function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: string; token: string; shared: boolean }): BrainSpace {
+  const space = openBrainSpace({
+    id: opts.id, name: opts.name, brainName: opts.name, agent: opts.agent, main: false, shared: opts.shared, url: deps.spaces.main.url, token: opts.token,
+    turnHookConfig: deps.turnHookConfig, mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
+  })
+  deps.spaces.add(space)
+  return space
+}
+
+/**
  * Settings › Brain › New space: a further local brain, bound to the main
- * space's agent (the agent picker per space comes with Settings › Agents).
- * The space gets no identity of its own — that is the agent brain's — only
- * the agent and user objects, so engrams in their scopes can be written there.
+ * space's agent. The space gets no identity of its own — that is the agent
+ * brain's — only the agent and user objects, so engrams in their scopes can
+ * be written there.
  */
 async function createSpace(deps: HostDeps, name: string): Promise<{ space: BrainSpace } | SpaceError> {
   const valid = validSpaceName(deps, name)
   if ('error' in valid) return valid
-  const trimmed = valid.name
-  const main = deps.spaces.main
-  const agent = deps.agents.get(main.agent)
-  const handle = (await readCockpitConfig())?.handle
-  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
-  // The names as the agent brain knows them: the agent's and the human's.
-  const info = readBrainInfo(agent.token)
-  const { brainId, token } = await provisionSpace(
-    trimmed,
-    { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
-    { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
-  )
-  const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: trimmed, agent: agent.id, upgrade: null, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
-    mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
-  })
-  deps.spaces.add(space)
-  return { space }
+  const binding = await newSpaceBinding(deps)
+  if ('error' in binding) return binding
+  const { brainId, token } = await provisionSpace(valid.name, binding.agent, binding.human)
+  return { space: openNewSpace(deps, { id: brainId, name: valid.name, agent: binding.agent.id, token, shared: false }) }
+}
+
+/** What POST /api/spaces answers for a shared space: the space it made (201), the space it re-joined (200), or what refused it, passed through. */
+type SharedSpaceResult = { status: number; body: Record<string, unknown> }
+
+/**
+ * v0.21: POST /api/spaces {name, shared: {handle?}} — a new shared brain —
+ * and {name, join: {link, handle?}} — joining one with an invite link
+ * (team-space.ts). Bound like a local space: the main space's agent, the
+ * member handle defaulting to the home's handle. A join whose link names a
+ * brain this cockpit has already (a new link after a stopped join) goes to
+ * that space; the space's name stays.
+ */
+async function createSharedSpace(deps: HostDeps, body: Record<string, unknown>): Promise<SharedSpaceResult> {
+  const variant = body.shared ?? body.join
+  const given = variant && typeof variant === 'object' ? (variant as Record<string, unknown>) : {}
+  const link = typeof given.link === 'string' ? given.link : ''
+  const existing = body.join ? deps.spaces.list().find((s) => s.id === brainOfInviteLink(link)) : undefined
+  const valid = existing ? { name: existing.name } : validSpaceName(deps, typeof body.name === 'string' ? body.name : '')
+  if ('error' in valid) return { status: 400, body: valid }
+  const binding = await newSpaceBinding(deps)
+  if ('error' in binding) return { status: 400, body: binding }
+  const handle = typeof given.handle === 'string' && given.handle.trim() ? given.handle.trim() : binding.human.handle
+  const ctx = { url: deps.spaces.main.url, agent: binding.agent, handle }
+  const result = body.join ? await joinTeamSpace(ctx, valid.name, link, existing) : await createTeamSpace(ctx, valid.name)
+  if ('refused' in result) return result.refused
+  const space = existing ?? openNewSpace(deps, { id: result.brainId, name: valid.name, agent: binding.agent.id, token: result.token, shared: true })
+  return { status: existing ? 200 : 201, body: { space: spaceView(space), team: result.answer.body } }
 }
 
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps): Promise<boolean> {
@@ -352,12 +393,46 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (resource === 'spaces' && !id && method === 'POST') {
     const body = await readJson(req)
     try {
+      if (body.shared || body.join) {
+        const answer = await createSharedSpace(deps, body)
+        json(res, answer.status, answer.body)
+        return true
+      }
       const result = await createSpace(deps, typeof body.name === 'string' ? body.name : '')
       if ('error' in result) json(res, 400, { error: result.error })
       else json(res, 201, { space: spaceView(result.space) })
     } catch (err) {
       json(res, 500, { error: { code: 'SPACE_CREATE_FAILED', message: (err as Error).message } })
     }
+    return true
+  }
+
+  // v0.21: a shared space's team — the brain server's view (team-space.ts),
+  // the invites an owner makes and confirms, and the removal of a shared
+  // space that never came to life. The server's answers pass through.
+  if (resource === 'spaces' && id && (method === 'DELETE' || parts[3] === 'team' || parts[3] === 'invites')) {
+    const target = deps.spaces.get(id)
+    if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+    const [, , , sub, inviteId, action] = parts
+    let answer: { status: number; body: unknown } | null = null
+    try {
+      if (method === 'DELETE' && parts.length === 3) {
+        if (!target.shared) { json(res, 409, { error: { code: 'NOT_SHARED', message: 'Only a shared space is removed here.' } }); return true }
+        answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+      } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
+        answer = await teamSnapshot(target)
+      } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {
+        answer = await createInvite(target)
+      } else if (sub === 'invites' && parts.length === 6 && inviteId && method === 'POST' && (action === 'accept' || action === 'cancel')) {
+        answer = action === 'accept' ? await confirmInvite(target, inviteId, (await readJson(req)).role) : await cancelInvite(target, inviteId)
+      }
+    } catch (err) {
+      json(res, 500, { error: { code: 'TEAM_FAILED', message: (err as Error).message } })
+      return true
+    }
+    if (!answer) return false
+    if (answer.status === 204) { res.writeHead(204); res.end(); return true }
+    json(res, answer.status, answer.body)
     return true
   }
 

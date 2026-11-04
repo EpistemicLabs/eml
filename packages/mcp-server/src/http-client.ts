@@ -67,6 +67,16 @@ export class HttpClient implements EmlApi {
     return this.request('PUT', path, body)
   }
 
+  /**
+   * v0.21: a host-facing call whose status carries meaning (the cockpit's
+   * team routes: 201 live, 202 or 504 pending, 204 discarded): the answer as
+   * the server gave it, 2xx or not, never thrown. A request that fails or
+   * times out still throws EmlApiError with status 0.
+   */
+  async call(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<{ status: number, body: unknown }> {
+    return this.send(method, path, body)
+  }
+
   private buildPath(path: string, query?: Record<string, string | number | undefined>): string {
     if (!query) return path
     const params: string[] = []
@@ -78,6 +88,15 @@ export class HttpClient implements EmlApi {
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    const res = await this.send(method, path, body)
+    if (res.status < 200 || res.status >= 300) {
+      const msg = extractErrorMessage(res.body) ?? `HTTP ${res.status}`
+      throw new EmlApiError(res.status, res.body, `${method} ${path} → ${res.status}: ${msg}`)
+    }
+    return res.body
+  }
+
+  private async send(method: string, path: string, body?: unknown): Promise<{ status: number, body: unknown }> {
     // The provenance headers belong to writes only; a read POST (/boot,
     // /recall) goes without them. Built before the timer starts: the
     // headers' own lookup must not eat into the request's time budget.
@@ -96,13 +115,8 @@ export class HttpClient implements EmlApi {
       if (text) {
         try { parsed = JSON.parse(text) } catch { parsed = text }
       }
-      if (!res.ok) {
-        const msg = extractErrorMessage(parsed) ?? `HTTP ${res.status}`
-        throw new EmlApiError(res.status, parsed, `${method} ${path} → ${res.status}: ${msg}`)
-      }
-      return parsed
+      return { status: res.status, body: parsed }
     } catch (err: unknown) {
-      if (err instanceof EmlApiError) throw err
       const e = err as Error & { name?: string }
       if (e.name === 'AbortError') {
         throw new EmlApiError(0, null, `${method} ${path} timed out after ${this.timeoutMs}ms`)
