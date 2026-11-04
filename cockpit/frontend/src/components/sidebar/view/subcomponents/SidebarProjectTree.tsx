@@ -138,7 +138,12 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
     <div className="space-y-3">
       {controller.projectSections ? (
         controller.projectSections.map(({ space, groups }) => (
-          <div key={space.id} className="space-y-1.5">
+          <div key={space.id} className="space-y-1.5 pb-2">
+            <div
+              aria-hidden
+              className="mx-2 h-px"
+              style={{ backgroundColor: `color-mix(in srgb, ${spaceTone(space) ?? 'var(--color-border)'} 60%, transparent)` }}
+            />
             <AddProjectHeading space={space} controller={controller}>
               <div className="flex items-center gap-1.5 px-2 pt-1 text-[11px] font-medium text-foreground" title={`Space: ${space.name}`}>
                 <Brain className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
