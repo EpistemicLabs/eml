@@ -24,7 +24,7 @@ export function SidebarRail({ onOpen }: { onOpen: () => void }) {
 const MODES: Array<{ mode: SidebarViewMode; label: string }> = [
   { mode: 'overview', label: 'Overview' },
   { mode: 'projects', label: 'Projects' },
-  { mode: 'conversations', label: 'Conversations' },
+  { mode: 'conversations', label: 'Sessions' },
 ];
 
 /** The sidebar's three views, under the space switch; the overview is still in beta. */

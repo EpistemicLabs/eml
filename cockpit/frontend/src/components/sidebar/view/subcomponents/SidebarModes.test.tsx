@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readViewMode, writeViewMode } from '../../utils';
 import { SidebarModes } from './SidebarChrome';
 
-// Under the space switch: the overview, marked beta, then Projects and Conversations.
+// Under the space switch: the overview, marked beta, then Projects and Sessions.
 // Projects is the default, and the browser remembers the last one.
 
 afterEach(() => {
@@ -16,7 +16,7 @@ afterEach(() => {
 describe('the sidebar views', () => {
   it('offers the three, the overview marked beta', () => {
     render(<SidebarModes viewMode="projects" onViewModeChange={() => {}} waiting={0} />);
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Overviewβ', 'Projects', 'Conversations']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Overviewβ', 'Projects', 'Sessions']);
     expect(screen.getByRole('tab', { name: /Projects/ }).getAttribute('aria-selected')).toBe('true');
   });
 
