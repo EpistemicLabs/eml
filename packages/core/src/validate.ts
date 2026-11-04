@@ -135,8 +135,8 @@ const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
  * the agent whose way of working it is, the person it is about, or the project
  * it governs. There are no global rules; global keeps facts.
  */
-export const RULE_SCOPE = /^(agent|user|project)\./
-export const RULE_SCOPE_MESSAGE = 'Invalid engram: a rule needs an owner — scope agent.<id> (how this agent works), user.<id> (how this person wants to be worked with) or project.<id> (work in that project); global holds no rules.'
+export const RULE_SCOPE = /^(agent|project)\./
+export const RULE_SCOPE_MESSAGE = 'Invalid engram: a rule needs an owner — scope agent.<id> (how this agent works) or project.<id> (work in that project); user.<id> holds a person\'s profile, global holds no rules.'
 
 /**
  * v0.8 C3: pattern validation.

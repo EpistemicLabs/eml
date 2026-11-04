@@ -498,7 +498,7 @@ describe('v0.19 write model', () => {
     it('a rule with from_learning supersedes the learnings; from_learning is only for rules and needs active learnings', () => {
       const a = lesson()
       if (!a.written) throw new Error('not written')
-      const rule = writes(eml).store(validRule({ scope: 'user.ada', title: 'ask-before-push', from_learning: [a.engram.id] }))
+      const rule = writes(eml).store(validRule({ scope: 'agent.juno', title: 'ask-before-push', from_learning: [a.engram.id] }))
       expect(rule.superseded).toEqual([a.engram.id])
       expect(statusOf(a.engram.id)).toBe('superseded')
       expect(edge(rule.id, a.engram.id, 'supersedes')).toBeTruthy()

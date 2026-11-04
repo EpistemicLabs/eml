@@ -47,10 +47,19 @@ export function validRule(overrides: Overrides = {}): Typed<'rule'> {
  * written there any more): stored in `owner`, then re-scoped raw.
  */
 export function legacyGlobalRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, owner = 'agent.assistant'): StoredEngram {
+  return legacyRule(eml, input, 'global', owner)
+}
+
+/**
+ * A rule in a scope no rule is written in any more (global, or a user scope —
+ * decision agent-brain-rules-at-agent-user-is-profile), as a brain written
+ * before v0.21 holds it: stored in `owner`, then re-scoped raw.
+ */
+export function legacyRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, scope: string, owner = 'agent.assistant'): StoredEngram {
   const r = writes(eml).store({ ...input, type: 'rule', scope: owner } as EngramInput)
-  ;(eml as any).db.prepare(`UPDATE engrams SET scope = 'global' WHERE id = ?`).run(r.id)
-  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = 'global' WHERE id = ?`).run(r.id)
-  return { ...r, scope: 'global' }
+  ;(eml as any).db.prepare(`UPDATE engrams SET scope = ? WHERE id = ?`).run(scope, r.id)
+  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = ? WHERE id = ?`).run(scope, r.id)
+  return { ...r, scope }
 }
 
 export function validNote(overrides: Overrides = {}): Typed<'note'> {

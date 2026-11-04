@@ -6,7 +6,7 @@ import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
 import { brainRef, exportSet } from '../src/log/move'
 import { planMove } from '../src/log/move-engrams'
-import { validNote, validTask, validRule, writes, legacyGlobalRule } from './fixtures'
+import { validNote, validTask, validRule, writes, legacyGlobalRule, legacyRule } from './fixtures'
 
 // v0.21, decision cockpit-identity-agent-brain: what core gives the agent brain —
 // a relation with one end in another brain, the provenance re-stamp, the boot
@@ -184,7 +184,8 @@ describe('boot in parts', () => {
     writes(eml).agents.store({ id: 'motti', name: 'Motti' })
     writes(eml).users.create({ id: 'dominik', name: 'Dominik' })
     writes(eml).store({ type: 'profile', scope: 'agent.motti', title: 'motti', content: 'A digital moth.', properties: { core: true } })
-    writes(eml).store(validRule({ scope: 'user.dominik', title: 'ask-first', content: 'Propose first.' }))
+    // a rule still in a user scope, as a brain from before the agent upgrade holds it: the boot loads it until then
+    legacyRule(eml, { title: 'ask-first', content: 'Propose first.', properties: { applies: 'always', why: 'test why', agreed: 'yes' } }, 'user.dominik', 'agent.motti')
     writes(eml).store(validRule({ scope: 'agent.motti', title: 'reread', content: 'Re-read the task.', properties: { applies: 'situational', trigger: 'starting a build' } }))
   })
   afterEach(() => eml.close())
@@ -225,10 +226,10 @@ describe('a rule has an owner (v0.21, decision rules-need-a-scope-no-global-rule
   })
   afterEach(() => eml.close())
 
-  it('is written in agent, user or project scope, never in global or entity', () => {
-    for (const scope of ['agent.assistant', 'user.ada', 'project.p']) expect(writes(eml).store(validRule({ scope, title: `r-${scope}` })).scope).toBe(scope)
-    for (const scope of ['global', 'entity.acme']) {
-      expect(() => writes(eml).store(validRule({ scope, title: `r-${scope}` }))).toThrow(/^Invalid engram: a rule needs an owner — scope agent\.<id> .*; global holds no rules\.$/)
+  it('is written in agent or project scope, never in user, global or entity (decision agent-brain-rules-at-agent-user-is-profile)', () => {
+    for (const scope of ['agent.assistant', 'project.p']) expect(writes(eml).store(validRule({ scope, title: `r-${scope}` })).scope).toBe(scope)
+    for (const scope of ['user.ada', 'global', 'entity.acme']) {
+      expect(() => writes(eml).store(validRule({ scope, title: `r-${scope}` }))).toThrow(/^Invalid engram: a rule needs an owner — scope agent\.<id> .*; user\.<id> holds a person's profile, global holds no rules\.$/)
     }
     // a profile of an entity stays where it is: the owner rule is for rules
     expect(writes(eml).store({ type: 'profile', scope: 'entity.acme', title: 'acme', content: 'A customer.' }).scope).toBe('entity.acme')
@@ -244,5 +245,19 @@ describe('a rule has an owner (v0.21, decision rules-need-a-scope-no-global-rule
     expect(check.findings).toEqual([{ id: legacy.id, type: 'rule', scope: 'global', title: 'old-global', reason: 'a rule in global has no owner.' }])
     expect(writes(eml).update(legacy.id, { scope: 'agent.assistant' })).toMatchObject({ scope: 'agent.assistant' })
     expect(hygieneCheck(eml).checks.find(c => c.id === 'rule-in-global-scope')!.findings).toEqual([])
+  })
+
+  it('cannot be moved to a user scope; a legacy rule there stays editable and the hygiene check names it for the agent', () => {
+    const r = writes(eml).store(validRule({ title: 'mine' }))
+    expect(() => writes(eml).update(r.id, { scope: 'user.ada' })).toThrow(/a rule needs an owner/)
+    const legacy = legacyGlobalRule(eml, { title: 'old-user', content: 'Do Y.', properties: { applies: 'always', why: 'w', agreed: 'yes' } })
+    raw(eml).prepare(`UPDATE engrams SET scope = 'user.ada' WHERE id = ?`).run(legacy.id)
+    raw(eml).prepare(`UPDATE engrams_fts SET scope = 'user.ada' WHERE id = ?`).run(legacy.id)
+    expect(writes(eml).update(legacy.id, { content: 'Do Y, then Z.' })).toMatchObject({ scope: 'user.ada' })
+    const check = hygieneCheck(eml).checks.find(c => c.id === 'rule-in-user-scope')!
+    expect(check).toMatchObject({ kind: 'migration', decides: 'agent', since_schema: 21 })
+    expect(check.findings).toEqual([{ id: legacy.id, type: 'rule', scope: 'user.ada', title: 'old-user', reason: 'a rule in a user scope belongs to the agent.' }])
+    expect(writes(eml).update(legacy.id, { scope: 'agent.assistant' })).toMatchObject({ scope: 'agent.assistant', content: 'Do Y, then Z.' })
+    expect(hygieneCheck(eml).checks.find(c => c.id === 'rule-in-user-scope')!.findings).toEqual([])
   })
 })

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, boot, ALL_RULES, type SystemRule } from '../src'
 import {
-  validDecision, validTask, validNote, validStatus, validLog, closedTask, writes, legacyGlobalRule,
+  validDecision, validTask, validNote, validStatus, validLog, closedTask, writes, legacyGlobalRule, legacyRule,
 } from './fixtures'
 
 // Legacy entries (written before the short format) cannot be stored through
@@ -19,7 +19,8 @@ describe('boot()', () => {
   // v0.21: no rule is written in global any more; one from before sits there as a legacy entry and still boots.
   const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`, trigger?: string) => {
     const input = { title, content, properties: { applies, why: 'test why', agreed: 'yes', ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) } }
-    return scope === 'global' ? legacyGlobalRule(eml, input) : writes(eml).store({ ...input, type: 'rule', scope })
+    // global and user rules: as a brain from before v0.21 holds them (the boot still loads them until the upgrade)
+    return scope === 'global' || scope.startsWith('user.') ? legacyRule(eml, input, scope) : writes(eml).store({ ...input, type: 'rule', scope })
   }
   // v0.19: the identity is the profile marked core (one per scope), not a title.
   const profile = (scope: string, title: string, content = `${title} facts`, core = true) =>

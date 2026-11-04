@@ -293,16 +293,32 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
     decides: 'agent',
     since_schema: 21,
     what:
-      'A rule has an owner: agent.<id> for how an agent works, user.<id> for how a person wants to be worked with, ' +
-      'project.<id> for work in a project. Global holds no rules.',
+      'A rule has an owner: agent.<id> for how an agent works, project.<id> for work in a project. Global holds no rules.',
     how:
       'Re-scope the rule with eml_update(scope): agent.<id> when it says how the agent works (the usual case for a ' +
-      'rule written before v0.21), user.<id> when it is about the person, project.<id> when it governs that project. ' +
-      'In a brain with one agent, that agent is the owner. Unsure between agent and user → ask the user.',
+      'rule written before v0.21), project.<id> when it governs that project. In a brain with one agent, that agent is the owner.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && c.scope === 'global')
         .map(c => finding(c, 'a rule in global has no owner.'))
+    },
+  },
+  {
+    // decision agent-brain-rules-at-agent-user-is-profile: every rule is an agent's; user.<id> holds the person's profile
+    id: 'rule-in-user-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A rule belongs to an agent (agent.<id>) or to a project (project.<id>). user.<id> holds the person\'s profile; ' +
+      'a rule there was written before v0.21, when a person could own rules.',
+    how:
+      'Re-scope the rule with eml_update(scope) to agent.<id> — in a brain with one agent, that agent. The rule keeps ' +
+      'its id, content and agreement.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && c.scope.startsWith('user.'))
+        .map(c => finding(c, 'a rule in a user scope belongs to the agent.'))
     },
   },
 ]
