@@ -31,6 +31,11 @@ const q = (file: string, sql: string, ...params: unknown[]): Row[] => {
   try { return db.prepare(sql).all(...params) } finally { db.close() }
 }
 const one = (file: string, sql: string, ...params: unknown[]): Row => q(file, sql, ...params)[0]
+// every handle closed before the home is removed: Windows refuses to unlink an open database file
+const withDb = <T>(file: string, fn: (db: any) => T): T => {
+  const db = new Database(file, { readonly: true })
+  try { return fn(db) } finally { db.close() }
+}
 const sha = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex')
 
 /** A legacy home: the brains as a cockpit before agent brains made them (seeded, named after the agent, token named after the agent). */
@@ -167,7 +172,7 @@ describe('agent upgrade', () => {
         { name: 'motti', token: 'motti', revoked: 1 }, { name: 'motti', token: 'cockpit-local', revoked: 1 },
         { name: 'motti', token: 'dominik', revoked: 0 }, { name: 'motti', token: 'dominik', revoked: 0 }, { name: 'motti', token: 'dominik', revoked: 0 },
       ])
-    expect(core.verifyToken(new Database(control), config.token)).toMatchObject({ brainId: fixture.main.brainId, caller: 'dominik' })
+    expect(withDb(control, (db) => core.verifyToken(db, config.token))).toMatchObject({ brainId: fixture.main.brainId, caller: 'dominik' })
 
     // Main: the identity set is gone, the work stays with its scope; the argus rule and the user note stay.
     const main = report.spaces[0]
@@ -221,8 +226,8 @@ describe('agent upgrade', () => {
     expect(q(privatFile, 'SELECT id FROM users')).toEqual([{ id: 'motti' }])
 
     // Both logs verify, nothing dangles, the move backups are there.
-    expect(log.verify(new Database(agentFile)).ok).toBe(true)
-    expect(log.verify(new Database(mainFile)).ok).toBe(true)
+    expect(withDb(agentFile, (db) => log.verify(db).ok)).toBe(true)
+    expect(withDb(mainFile, (db) => log.verify(db).ok)).toBe(true)
     expect(readdirSync(join(dir, 'run')).sort()).toEqual([`${fixture.main.brainId.slice(0, 8)}-before-move.db`, `${fixture.privat.brainId.slice(0, 8)}-before-move.db`].sort())
 
     // Once bound, a second run has nothing to do.
@@ -276,7 +281,7 @@ describe('agent upgrade', () => {
     expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'global'")[0].n).toBe(0)
     expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE ingested_by = 'motti'")[0].n).toBe(0)
     expect(written.at(-1)).toMatchObject({ handle: 'dominik', agent: 'motti', agents: [{ id: 'motti' }], spaces: [{ name: 'Privat', agent: 'motti' }] })
-    expect(core.verifyToken(new Database(control), written.at(-1).agents[0].token)).toMatchObject({ brainId: orphan.id, caller: 'dominik' })
+    expect(withDb(control, (db) => core.verifyToken(db, written.at(-1).agents[0].token))).toMatchObject({ brainId: orphan.id, caller: 'dominik' })
     expect(q(control, "SELECT COUNT(*) AS n FROM tokens WHERE brain_id = ? AND revoked_at IS NULL", orphan.id)[0].n).toBe(1)
     expect(existsSync(join(backups, 'agent-upgrade', 'pending', `${f.main.brainId}.json`))).toBe(false)
   })
@@ -305,7 +310,7 @@ describe('agent upgrade', () => {
     const agentFile = join(data3, 'brains', `${second.report.agents[0].brainId}.db`)
     expect(q(agentFile, 'SELECT COUNT(*) AS n FROM relations WHERE source_brain IS NOT NULL OR target_brain IS NOT NULL')[0].n).toBe(2)
     expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'global' OR ingested_by = 'motti'")[0].n).toBe(0)
-    expect(log.verify(new Database(agentFile)).ok).toBe(true)
+    expect(withDb(agentFile, (db) => log.verify(db).ok)).toBe(true)
   })
 
   it('renders the report as text', async () => {
