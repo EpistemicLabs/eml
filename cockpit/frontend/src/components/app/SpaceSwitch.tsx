@@ -165,7 +165,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               >
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
                 <span className="flex-1 truncate">{space.name}</span>
-                {space.main && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">main</span>}
               </button>
             );
           })}
