@@ -6,8 +6,8 @@ import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
 import { readAgentMcpDefinitions, allowedMcpServers, type SpaceAgent } from '../../../agent-config.js'
 import {
-  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
-  installManagedSkills, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
+  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
+  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 
@@ -187,6 +187,8 @@ export function writeSpaceFiles(
         Notification: [turn],
         // SendMessage only reaches a running session; the host wakes a stopped one (send-message-hook.ts).
         PreToolUse: [{ matcher: 'SendMessage', ...entry(sendMessageHookCommand(), SEND_MESSAGE_HOOK_OPTIONS) }],
+        // ListAgents shows running sessions only; the host adds the stopped ones and what each is about (list-agents-hook.ts).
+        PostToolUse: [{ matcher: 'ListAgents', ...entry(listAgentsHookCommand(), LIST_AGENTS_HOOK_OPTIONS) }],
       },
     }, null, 2),
     { mode: 0o600 },

@@ -7,6 +7,8 @@ import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.j
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
+import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
+import { sessionAddress } from './session-address.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
@@ -284,6 +286,57 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
   }
 }
 
+/**
+ * The sessions a session can message (domain/session-directory.ts): the ones
+ * SendMessage reaches, so those of its own agent, without itself.
+ */
+function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
+  const ledger = deps.bridge.ledger
+  const agentOf = (spaceId: string | null) => deps.spaces.resolve(spaceId).agent?.id ?? null
+  const caller = ledger.get(callerId)
+  if (!caller) return []
+  const addressOf = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    return entry ? sessionAddress(sessionId, entry.projectId) : null
+  }
+  return ledger.list()
+    .filter((entry) => entry.sessionId !== callerId && agentOf(entry.spaceId) === agentOf(caller.spaceId))
+    // A Codex session has no address to send to.
+    .filter((entry) => deps.providers.forSession(entry.sessionId).messaging)
+    .map((entry) => {
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+      const view = sessionView(deps, project, entry)
+      const asked = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null)).summary
+      return {
+        address: sessionAddress(entry.sessionId, entry.projectId),
+        name: view.summary,
+        outcome: entry.lastStatus?.reason ?? null,
+        asked,
+        project: project ? project.customName ?? project.displayName : null,
+        state: entry.archivedAt ? 'archived' : view.state === 'ended' ? 'stopped' : 'running',
+        lastActive: view.lastActivity,
+        parent: entry.parentSessionId ? addressOf(entry.parentSessionId) : null,
+        main: entry.pinned || entry.deskMain,
+      }
+    })
+}
+
+/** GET /api/session-directory: search (`q`, `state`, `project`, `archived`, `limit`), or `list=recent` for what ListAgents adds. */
+function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
+  const entries = directoryEntries(deps, callerId)
+  if (url.searchParams.get('list') === 'recent') return listAgentsContext(entries)
+  const state = url.searchParams.get('state')
+  const limit = Number(url.searchParams.get('limit'))
+  const query: DirectoryQuery = {
+    words: (url.searchParams.get('q') ?? '').split(/\s+/).filter(Boolean),
+    ...(state === 'running' || state === 'stopped' ? { state } : {}),
+    ...(url.searchParams.get('project') ? { project: url.searchParams.get('project')! } : {}),
+    archived: url.searchParams.get('archived') === '1',
+    limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : SEARCH_LIMIT,
+  }
+  return searchResult(searchSessions(entries, query), query)
+}
+
 /** Where a project's folder comes from: linked by the user, made by the cockpit, or none yet. */
 function folderKind(project: ProjectEntry): 'user' | 'cockpit' | 'none' {
   if (!project.path) return 'none'
@@ -480,6 +533,17 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     // Workers waiting for free memory have no entry yet: their parents count them.
     const queued = deps.spawns.list().flatMap((request) => (request.fromSessionId && !request.open ? [{ id: request.id, parentSessionId: request.fromSessionId }] : []))
     json(res, 200, { sessions, queued })
+    return true
+  }
+
+  // What a session reads to find another one by what its user calls it: its CLI and ListAgents hook.
+  if (resource === 'session-directory' && !id && method === 'GET') {
+    const caller = req.headers['x-cockpit-session']
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken || typeof caller !== 'string') {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can list the sessions' } })
+      return true
+    }
+    json(res, 200, { text: directoryAnswer(deps, caller, url) })
     return true
   }
 

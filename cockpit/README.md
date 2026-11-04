@@ -214,7 +214,10 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
   (`application/deliver-message.ts`); a session in a terminal answers busy. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
   stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
-  one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. An outside
+  one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. To find a target by what the user calls it,
+  `$COCKPIT_SESSIONS_JS <words>` searches the sessions SendMessage reaches, stopped ones too, by name, first prompt,
+  last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
+  pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
