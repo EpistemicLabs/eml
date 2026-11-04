@@ -68,11 +68,17 @@ const header = (req: http.IncomingMessage, name: string): string | undefined => 
 export const noAgentMessage = (space: Pick<BrainSpace, 'name'>) =>
   `Space "${space.name}" has no agent bound — its sessions get no brain until an agent is bound to it.`
 
-/** The agent brain a space's sessions run as; an error naming the reason when there is none. */
-export function boundAgent(deps: Pick<BrainMcpDeps, 'agents'>, space: BrainSpace): AgentBrain | { refused: string } {
-  if (!space.agent) return { refused: noAgentMessage(space) }
+/** A refusal and the HTTP status it answers with: 403 for who may not call, 503 for a space that has no brain to offer. */
+export interface Refusal {
+  refused: string
+  status: 403 | 503
+}
+
+/** The agent brain a space's sessions run as; a refusal naming the reason when there is none. */
+export function boundAgent(deps: Pick<BrainMcpDeps, 'agents'>, space: BrainSpace): AgentBrain | Refusal {
+  if (!space.agent) return { refused: noAgentMessage(space), status: 503 }
   const agent = deps.agents.get(space.agent)
-  if (!agent) return { refused: `Space "${space.name}" binds agent "${space.agent}", whose brain this cockpit does not have — its sessions get no brain until that is fixed.` }
+  if (!agent) return { refused: `Space "${space.name}" binds agent "${space.agent}", whose brain this cockpit does not have — its sessions get no brain until that is fixed.`, status: 503 }
   return agent
 }
 
@@ -92,7 +98,7 @@ export function sessionClient(space: BrainSpace, agent: AgentBrain, provenance?:
   })
 }
 
-type Caller = { space: BrainSpace; agent: AgentBrain; sessionId: string | null } | { refused: string }
+type Caller = { space: BrainSpace; agent: AgentBrain; sessionId: string | null } | Refusal
 
 /**
  * Who calls on behalf of a session: from this machine, with a space's MCP
@@ -101,13 +107,13 @@ type Caller = { space: BrainSpace; agent: AgentBrain; sessionId: string | null }
  * they read only, and the per-boot token is the space's own.
  */
 function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: http.IncomingMessage, mcpToken: string | undefined, sessionId: string | undefined | null): Caller {
-  if (!isLocalRequest(req)) return { refused: 'The brain MCP endpoint is local only' }
+  if (!isLocalRequest(req)) return { refused: 'The brain MCP endpoint is local only', status: 403 }
   const space = deps.spaces.byMcpToken(mcpToken)
-  if (!space) return { refused: 'Bad MCP token' }
+  if (!space) return { refused: 'Bad MCP token', status: 403 }
   if (sessionId !== null) {
     const entry = sessionId ? deps.ledger.get(sessionId) : undefined
-    if (!sessionId || !entry) return { refused: 'Unknown session' }
-    if ((entry.spaceId ?? null) !== space.ledgerKey) return { refused: 'The session belongs to another space' }
+    if (!sessionId || !entry) return { refused: 'Unknown session', status: 403 }
+    if ((entry.spaceId ?? null) !== space.ledgerKey) return { refused: 'The session belongs to another space', status: 403 }
   }
   const agent = boundAgent(deps, space)
   if ('refused' in agent) return agent
@@ -160,7 +166,7 @@ export function createBrainMcpHandler(deps: BrainMcpDeps) {
 
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const who = caller(deps, req, header(req, MCP_TOKEN_HEADER), header(req, MCP_SESSION_HEADER))
-    if ('refused' in who) return refuse(res, 403, who.refused)
+    if ('refused' in who) return refuse(res, who.status, who.refused)
     try {
       await endpoint.handle(req, res, { owner: who.space.id, sessionId: who.sessionId as string })
     } catch (err) {
@@ -180,10 +186,8 @@ export function createBrainMcpHandler(deps: BrainMcpDeps) {
     if (!HOOK_ROUTES.some(([m, p]) => m === method && p === path)) return json(res, 404, { error: 'No such hook route' })
     const bearer = header(req, 'authorization')?.replace(/^Bearer /, '')
     const who = caller(deps, req, bearer, null)
-    if ('refused' in who) {
-      // A space without an agent is not a bad token: the hook names the reason, not a revoked token.
-      return json(res, who.refused === 'Bad MCP token' || who.refused.endsWith('local only') ? 403 : 503, { error: who.refused })
-    }
+    // A space without an agent is not a bad token (403): the hook then names the reason, not a revoked token.
+    if ('refused' in who) return json(res, who.status, { error: who.refused })
     const client = sessionClient(who.space, who.agent)
     try {
       if (method === 'GET') {

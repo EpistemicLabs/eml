@@ -121,9 +121,9 @@ describe('brain MCP endpoint access', () => {
     expect((await post({ ...ok, 'tailscale-user-login': 'someone@example.com' })).status).toBe(403)
   })
 
-  it('refuses a space without a bound agent, and says so', async () => {
+  it('refuses a space without a bound agent (503: no brain to offer), and says so', async () => {
     const res = await post({ 'x-cockpit-mcp-token': TOKEN_C, 'x-eml-session': 'session-unbound' })
-    expect(res.status).toBe(403)
+    expect(res.status).toBe(503)
     expect((await res.json()).error.message).toBe('Space "Legacy" has no agent bound — its sessions get no brain until an agent is bound to it.')
   })
 
