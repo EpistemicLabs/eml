@@ -23,6 +23,7 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
 import { loadAgentBrains } from './agents.js'
+import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { runServiceCommand } from './service.js'
 import { runRemoteCommand } from './remote.js'
@@ -152,8 +153,18 @@ async function main() {
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl,
     }))
   }
+  // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
+  await loadSharedFlags(spaces.list())
   log(`agents: ${agents.list().map((a) => a.id).join(', ') || 'none'}${config?.handle ? ` (handle ${config.handle})` : ''}`)
-  log(`spaces: ${spaces.list().map((s) => `${s.name} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
+  log(`spaces: ${spaces.list().map((s) => `${s.name}${s.shared ? ' (shared)' : s.shared === null ? ' (shared?)' : ''} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
+  // A brain no token of the config belongs to is one a shared-space creation
+  // or join left behind (a crash before the config was written): discarded
+  // when it has no log, logged otherwise (team-space.ts).
+  await sweepOrphanBrains({
+    tokens: [brain.token, ...(config?.spaces ?? []).map((s) => s.token), ...(config?.agents ?? []).map((a) => a.token)],
+    url: server.baseUrl,
+    log,
+  }).catch((err: Error) => log(`sweep: ${err.message}`))
 
   // Sessions can open worker sessions (skill spawn-session → cockpit-spawn →
   // POST /api/spawn); the per-boot token keeps other local processes out.

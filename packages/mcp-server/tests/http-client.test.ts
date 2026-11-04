@@ -89,6 +89,29 @@ describe('HttpClient', () => {
     })
   })
 
+  describe('call', () => {
+    it('v0.21: the answer as the server gave it, status and body, 2xx or not', async () => {
+      let captured: RequestInit = {}
+      mockFetch((url, init) => {
+        captured = init
+        if (url.endsWith('/team')) return new Response(null, { status: 204 })
+        return new Response(JSON.stringify({ error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' }), { status: 409 })
+      })
+      const c = new HttpClient({ url: 'http://localhost:3117', token: 'eml_abc' })
+      expect(await c.call('DELETE', '/team')).toEqual({ status: 204, body: null })
+      expect(captured.method).toBe('DELETE')
+      expect((captured.headers as Record<string, string>).Authorization).toBe('Bearer eml_abc')
+      expect(captured.body).toBeUndefined()
+      expect(await c.call('DELETE', '/team-with-log')).toEqual({ status: 409, body: { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' } })
+    })
+
+    it('a request that fails still throws', async () => {
+      mockFetch(() => { throw new TypeError('fetch failed') })
+      const c = new HttpClient({ url: 'http://localhost:3117', token: 't' })
+      await expect(c.call('GET', '/team')).rejects.toMatchObject({ status: 0 })
+    })
+  })
+
   describe('errors', () => {
     it('non-2xx → EmlApiError with status + body + extracted message', async () => {
       mockFetch(() => new Response(JSON.stringify({ error: 'invalid token' }), { status: 401 }))

@@ -68,6 +68,33 @@ export function brainForLocalToken(token: string): { id: string; name: string } 
   }
 }
 
+/** A brain in control.db no token of this cockpit belongs to (the boot sweep, team-space.ts). */
+export interface OrphanBrain {
+  id: string
+  name: string
+  /** The control-plane user the brain belongs to (its tokens are issued under it). */
+  ownerId: string
+  status: 'ok' | 'needs_intervention'
+}
+
+/**
+ * The brains of control.db that none of `tokens` belongs to: what the host has
+ * no space, agent or main for. Empty when there is no control.db.
+ */
+export function orphanBrains(tokens: string[]): OrphanBrain[] {
+  if (!fs.existsSync(CONTROL_DB)) return []
+  const control = new Database(CONTROL_DB, { readonly: true, fileMustExist: true })
+  try {
+    const held = new Set(tokens.map((token) => brainForToken(control, token)?.id).filter((id): id is string => !!id))
+    const rows = control.prepare('SELECT id, name, owner_id, status FROM brains ORDER BY created_at, rowid').all() as Array<{ id: string; name: string; owner_id: string; status: string }>
+    return rows
+      .filter((row) => !held.has(row.id))
+      .map((row) => ({ id: row.id, name: row.name, ownerId: row.owner_id, status: row.status === 'needs_intervention' ? 'needs_intervention' : 'ok' }))
+  } finally {
+    control.close()
+  }
+}
+
 function listRows(db: Db, table: 'agents' | 'users'): Array<{ id: string; name: string }> {
   try {
     return db.prepare(`SELECT id, name FROM ${table} ORDER BY name`).all() as Array<{ id: string; name: string }>
