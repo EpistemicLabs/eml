@@ -36,7 +36,7 @@ export async function runUpgradeAgentsCommand(argv: string[]): Promise<boolean> 
   const agents = option(argv, '--agents')?.split(',').map((s) => s.trim()).filter(Boolean)
   const config = await readCockpitConfig()
   if (!config) throw new Error('no cockpit config — this home is not set up')
-  if (await portResponds(PORT)) throw new Error(`the cockpit host answers on port ${PORT} — stop it first (the upgrade rewrites brain files)`)
+  if (run && await portResponds(PORT)) throw new Error(`the cockpit host answers on port ${PORT} — stop it first (the upgrade rewrites brain files)`)
   if (!needsUpgrade(config)) { process.stdout.write('every space is bound to an agent — nothing to do\n'); return true }
   if (!run) {
     const dir = path.join(BACKUPS_DIR, 'agent-upgrade', `${new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')}-dry`)
