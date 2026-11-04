@@ -103,6 +103,12 @@ describe('groupAllSessions', () => {
     expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['old', 'open', 'today']);
   });
 
+  it('lists a main session that works under Working too', () => {
+    const sections = group([session('pin', { isPinned: true, state: 'running' })], { pin: turn('working') });
+    expect(mainIds(sections)).toEqual(['pin']);
+    expect(sections.working.map((item) => item.session.id)).toEqual(['pin']);
+  });
+
   it('opening does not take finished work out of To review, it only reads it', () => {
     const read = session('r', { attention: attention('review'), readAt: '2026-02-01T11:30:00.000Z' });
     expect(isRead(read)).toBe(true);

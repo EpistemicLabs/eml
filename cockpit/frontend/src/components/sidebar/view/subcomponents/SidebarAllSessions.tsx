@@ -19,7 +19,7 @@ const RECENT_PER_AGENT = 5;
 const SHOW_MORE_STEP = 20;
 
 /** One session, on its own row: a worker's says where it comes from. */
-function AllSessionRow({ session, spaces, controller, sessions, plain }: {
+function AllSessionRow({ session, spaces, controller, sessions, plain, listedRunning }: {
   session: AllSession;
   spaces: SpaceInfo[];
   controller: SidebarController;
@@ -27,6 +27,8 @@ function AllSessionRow({ session, spaces, controller, sessions, plain }: {
   sessions: AllSession[];
   /** No mark: a row outside what needs the user. */
   plain?: boolean;
+  /** Listed because it runs now. */
+  listedRunning?: boolean;
 }) {
   const { sessionRename } = controller;
   const { turns } = useTurnStore();
@@ -60,6 +62,7 @@ function AllSessionRow({ session, spaces, controller, sessions, plain }: {
         }}
         agent={{ name: agentLabel(space), tone: spaceTone(space) }}
         mark={mark}
+        running={listedRunning}
         context={parent ? `from ${sessionDisplayName(parent)}` : undefined}
         actions={{
           onStop: running && working ? () => void stopSession(session.id).then(whenDone) : undefined,
@@ -117,46 +120,46 @@ export function useWaitingCount(controller: SidebarController, onlyOpenSpace: bo
   return waiting.length;
 }
 
-/** A heading of the inbox; the first one carries the way into the review, which goes through all of it from there. */
-function InboxHeader({ title, onReview }: { title: string; onReview?: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-1 pr-2">
-      <SidebarGroupHeader>{title}</SidebarGroupHeader>
-      {onReview && (
-        <button
-          type="button"
-          onClick={onReview}
-          className="flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-foreground/10"
-        >
-          Review ▶
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** What needs the user and what is finished: on top of the overview. */
-function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
+/** What is going on right now, as one card on top of the overview: what needs the user, what is finished, what runs. */
+function SidebarNow({ controller, onlyOpenSpace }: { controller: SidebarController; onlyOpenSpace: boolean }) {
   const { sections, spaces, sessions } = useSections(controller, onlyOpenSpace);
-  const { needsYou, toReview } = sections;
+  const { needsYou, toReview, working } = sections;
   const waiting = useWaiting(sections);
-  const row = (session: AllSession) => (
-    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} />
+  const row = (session: AllSession, listedRunning = false) => (
+    <AllSessionRow key={session.id} session={session} spaces={spaces} controller={controller} sessions={sessions} plain={listedRunning} listedRunning={listedRunning} />
   );
-  if (waiting.length === 0) return null;
-  const review = () => startReview(waiting);
+  if (waiting.length === 0 && working.length === 0) return null;
   return (
-    <div className="space-y-3">
+    // The scroll region's padding is uneven; the margins line the card up with the tabs above.
+    <div className="-mr-1 ml-0.5 space-y-2 rounded-lg bg-foreground/[0.04] py-1.5 ring-1 ring-foreground/[0.07]">
+      <div className="flex items-center justify-between gap-1 pr-2 pl-2">
+        <span className="text-xs font-semibold text-foreground">Now</span>
+        {waiting.length > 0 && (
+          <button
+            type="button"
+            onClick={() => startReview(waiting)}
+            className="flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-foreground/10"
+          >
+            Review {waiting.length} ▶
+          </button>
+        )}
+      </div>
       {needsYou.length > 0 && (
         <div className="space-y-0.5">
-          <InboxHeader title={`Needs you · ${needsYou.length}`} onReview={review} />
-          {needsYou.map(row)}
+          <SidebarGroupHeader>Needs you</SidebarGroupHeader>
+          {needsYou.map((session) => row(session))}
         </div>
       )}
       {toReview.length > 0 && (
         <div className="space-y-0.5">
-          <InboxHeader title={`To review · ${toReview.length}`} onReview={needsYou.length === 0 ? review : undefined} />
-          {toReview.map(row)}
+          <SidebarGroupHeader>To review</SidebarGroupHeader>
+          {toReview.map((session) => row(session))}
+        </div>
+      )}
+      {working.length > 0 && (
+        <div className="space-y-0.5">
+          <SidebarGroupHeader>Working</SidebarGroupHeader>
+          {working.map((item) => row(item.session, true))}
         </div>
       )}
     </div>
@@ -182,7 +185,7 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
 
   return (
     <div className="space-y-3">
-      <SidebarInbox controller={controller} onlyOpenSpace={onlyOpenSpace} />
+      <SidebarNow controller={controller} onlyOpenSpace={onlyOpenSpace} />
       {sections.main.length > 0 && (
         <div className="space-y-0.5">
           <SidebarGroupHeader>Main sessions</SidebarGroupHeader>
@@ -193,14 +196,6 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
                 <AllSessionRow key={item.session.id} session={item.session} spaces={spaces} controller={controller} sessions={sessions} plain />
               ))}
             </div>
-          ))}
-        </div>
-      )}
-      {sections.working.length > 0 && (
-        <div className="space-y-0.5">
-          <SidebarGroupHeader>Working · {sections.working.length}</SidebarGroupHeader>
-          {sections.working.map((item) => (
-            <AllSessionRow key={item.session.id} session={item.session} spaces={spaces} controller={controller} sessions={sessions} plain />
           ))}
         </div>
       )}
