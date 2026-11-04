@@ -90,6 +90,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
 
   const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
   const title = showingAll ? 'All spaces' : `Space: ${label}`;
+  const SpaceIcon = showingAll ? Layers : Brain;
 
   return (
     <div ref={rootRef} className="relative flex h-full items-stretch">
@@ -118,7 +119,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           title={title}
           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body font-medium text-foreground hover:bg-muted"
         >
-          <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+          <SpaceIcon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
@@ -145,8 +146,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               )}
             >
               <Check className={cn('h-3.5 w-3.5', showingAll ? 'opacity-100' : 'opacity-0')} />
+              <Layers className="h-3.5 w-3.5 opacity-60" strokeWidth={1.8} />
               <span className="flex-1 truncate">All spaces</span>
-              <Layers className="h-3.5 w-3.5 opacity-60" />
             </button>
           )}
           {spaces.map((space) => {
@@ -164,6 +165,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 )}
               >
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
+                <Brain className="h-3.5 w-3.5 opacity-60" strokeWidth={1.8} />
                 <span className="flex-1 truncate">{space.name}</span>
               </button>
             );
