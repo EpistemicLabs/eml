@@ -1,9 +1,10 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BrainProjectsClient } from './brain-projects.js'
 import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
-import { writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
+import { removeSpaceFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
@@ -33,6 +34,11 @@ export interface BrainSpace {
   agent: string | null
   /** The space the home was provisioned with. */
   main: boolean
+  /**
+   * v0.21: a shared brain (team-space.ts) — true when the brain server says
+   * so (GET /team), false for a local brain, null while the host could not ask.
+   */
+  shared: boolean | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
   ledgerKey: string | null
   /** Base URL of the brain server this space's brain lives on. */
@@ -61,9 +67,11 @@ export interface SpaceView {
   main: boolean
   /** The bound agent's id, null while none is bound. */
   agent: string | null
+  /** v0.21: a shared brain; null when the host could not ask the brain server. */
+  shared: boolean | null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, shared: space.shared })
 
 export interface OpenSpaceOptions {
   id: string
@@ -71,6 +79,8 @@ export interface OpenSpaceOptions {
   brainName: string
   agent: string | null
   main: boolean
+  /** Known for a space just made (false local, true shared); absent at boot until the server was asked. */
+  shared?: boolean | null
   url: string
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
@@ -99,6 +109,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     brainName: opts.brainName,
     agent: opts.agent,
     main: opts.main,
+    shared: opts.shared ?? null,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
     token: opts.token,
@@ -151,6 +162,24 @@ export class BrainSpaces {
   /** The space with `id`, or the main space when none (or an unknown one) is named. */
   resolve(id?: string | null): BrainSpace {
     return (id && this.byId.get(id)) || this.main
+  }
+
+  /**
+   * v0.21: a shared space the brain server discarded (team-space.ts) leaves
+   * the registry and the cockpit config, with its session files (they carry
+   * the per-boot MCP token) and its local state under spaces/<id>. The
+   * folders of its projects (workspaces/) are the user's and stay. The main
+   * space is never removed.
+   */
+  async remove(space: BrainSpace): Promise<void> {
+    if (space.main) throw new Error('the main space is not removed')
+    await updateCockpitConfig((config) => {
+      if (!config) throw new Error('no cockpit config')
+      return { ...config, spaces: (config.spaces ?? []).filter((s) => s.token !== space.token) }
+    })
+    this.byId.delete(space.id)
+    removeSpaceFiles(space.id)
+    fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
   }
 
   /** Rename a space (display name only; the brain keeps its name) and persist it in the cockpit config. */
