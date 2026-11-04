@@ -29,11 +29,11 @@ afterEach(async () => {
 })
 
 /** juno's team, its relay holding the genesis (and juno's epoch-0 key unless `withKey` is false), and juno's device synced to it. */
-async function connected(opts: { withKey?: boolean, deadlineMs?: number, checkpointEvery?: number } = {}): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML }> {
+async function connected(opts: { withKey?: boolean, deadlineMs?: number, checkpointEvery?: number, probeMs?: number, probeTimeoutMs?: number } = {}): Promise<{ team: Team, relay: FakeRelay, sync: Sync, eml: EML }> {
   const team = new Team()
   relay = await FakeRelay.start(BRAIN, team.genesis())
   if (opts.withKey !== false) relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
-  sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: opts.deadlineMs ?? 3000, backoffMs: [20, 100], checkpointEvery: opts.checkpointEvery })
+  sync = new Sync(team.db, { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device }, { deadlineMs: opts.deadlineMs ?? 3000, backoffMs: [20, 100], checkpointEvery: opts.checkpointEvery, probeMs: opts.probeMs, probeTimeoutMs: opts.probeTimeoutMs })
   sync.start()
   await until(() => sync!.state.kind === 'live')
   return { team, relay, sync, eml: EML.fromConnection(team.db, 'test') }
@@ -142,6 +142,44 @@ describe('a shared brain\'s sync', () => {
     relay = await FakeRelay.start(BRAIN, team.genesis(), port)
     relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
     await until(() => sync.state.kind === 'live')
+  })
+
+  it('finds a connection that died without a close: a probe after the silence, unanswered → offline and a reconnect, live again on a new connection', async () => {
+    const { sync, eml, relay } = await connected({ probeMs: 100, probeTimeoutMs: 100 })
+    expect(relay.keysRequests).toBe(1)  // the welcome's
+    relay.silence()  // the socket stays open, nothing comes through any more — as after a laptop's sleep
+    await until(() => sync.state.kind === 'offline', 1000)
+    await until(() => sync.state.kind === 'live', 1000)
+    expect(relay.keysRequests).toBe(2)  // the new connection's welcome; the probe died with the old socket
+    expect(relay.subscribes).toBe(2)
+    const written = await sync.write({ name: 'engram.create', input: validNote({ title: 't-after-probe' }) }, env(eml))
+    expect(written).toMatchObject({ title: 't-after-probe' })
+  })
+
+  it('does not probe a connection that carries frames, and a probe\'s answer does not subscribe again', async () => {
+    const { sync, team, relay } = await connected({ probeMs: 60, probeTimeoutMs: 100 })
+    for (let i = 0; i < 8; i++) {
+      await new Promise(resolve => setTimeout(resolve, 30))
+      relay.inject(team.write(team.owner, `t-busy-${i}`))
+    }
+    expect(relay.keysRequests).toBe(1)  // frames kept arriving: no probe
+    await new Promise(resolve => setTimeout(resolve, 250))  // silence: probes go out and are answered
+    expect(relay.keysRequests).toBeGreaterThanOrEqual(3)
+    expect(relay.subscribes).toBe(1)
+    expect(sync.state).toEqual({ kind: 'live' } satisfies SyncState)
+  })
+
+  it('a late answer on a connection already given up changes nothing', async () => {
+    const { sync, relay } = await connected({ probeMs: 60, probeTimeoutMs: 60 })
+    relay.holdKeys = true  // the probe is taken but answered only on release
+    await until(() => sync.state.kind === 'offline', 1000)
+    relay.holdKeys = false
+    await until(() => sync.state.kind === 'live', 1000)
+    const subscribes = relay.subscribes
+    relay.releaseKeys()  // the old socket's answer, now
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(sync.state).toEqual({ kind: 'live' } satisfies SyncState)
+    expect(relay.subscribes).toBe(subscribes)
   })
 
   it('without a key for the current epoch, is read-only; a sealed entry waits until the key is pushed', async () => {
