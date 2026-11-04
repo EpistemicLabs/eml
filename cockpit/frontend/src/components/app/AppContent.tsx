@@ -38,6 +38,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
 import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
+import TeamBanner from './TeamBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
@@ -342,9 +343,10 @@ function AppContentInner() {
       </div>
 
       {/* Full width under the header, in this order: update (available → installing → outcome),
-          a space without an agent (the agent upgrade), team spaces, brain hygiene. */}
+          a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
       <UpdateBanner />
       <AgentUpgradeBanner />
+      <TeamBanner />
       <BrainHygieneBanner />
 
       <div className="relative flex min-h-0 flex-1">

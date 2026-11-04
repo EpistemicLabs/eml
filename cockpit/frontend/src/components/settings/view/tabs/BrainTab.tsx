@@ -13,6 +13,9 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
+import { relayHost, type Team } from '@/lib/team';
+import { useTeams } from '@/stores/useTeamStore';
+import TeamSections from './TeamSections';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
 
@@ -37,9 +40,10 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** What a space row says: where it comes from and which agent works in it; an unbound one points at the banner. */
-function spaceDescription(space: SpaceInfo, agents: ReturnType<typeof useAgents>['agents']): string {
+function spaceDescription(space: SpaceInfo, agents: ReturnType<typeof useAgents>['agents'], team: Team | undefined): string {
   const agent = agentName(agents, space.agent);
-  const origin = space.main ? 'The space this cockpit was set up with' : 'A further local brain';
+  const host = team?.shared ? relayHost(team.relay) : null;
+  const origin = space.main ? 'The space this cockpit was set up with' : space.shared ? (host ? `A shared brain on ${host}` : 'A shared brain') : 'A further local brain';
   if (!space.agent) return `${origin} · no agent bound — see the banner above`;
   return `${origin} · ${agent ?? space.agent}`;
 }
@@ -54,6 +58,9 @@ export default function BrainTab() {
   const activeSpace = useActiveSpace();
   const { agents } = useAgents();
   const mainAgentName = agentName(agents, spaces.find((s) => s.main)?.agent ?? null);
+  // v0.21: a shared space's team (useTeamStore) — the row says where it lives, the sections below show it.
+  const teams = useTeams();
+  const activeTeam = activeSpace?.shared ? teams[activeSpace.id] : undefined;
   const [spaceName, setSpaceName] = useState('');
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [spaceError, setSpaceError] = useState<string | null>(null);
@@ -122,7 +129,7 @@ export default function BrainTab() {
             <SettingsRow
               key={space.id}
               label={space.name}
-              description={(renaming?.id === space.id && renameError) || spaceDescription(space, agents)}
+              description={(renaming?.id === space.id && renameError) || spaceDescription(space, agents, teams[space.id])}
             >
               <div className="flex items-center gap-2">
                 {renaming?.id === space.id ? (
@@ -172,6 +179,8 @@ export default function BrainTab() {
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
+
+      {activeSpace && activeTeam?.shared && <TeamSections spaceId={activeSpace.id} team={activeTeam} />}
 
       <SettingsSection title="Source">
         <SettingsCard divided>

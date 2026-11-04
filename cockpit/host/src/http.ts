@@ -425,9 +425,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
         answer = await teamSnapshot(target)
       } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {
-        answer = await createInvite(target)
+        answer = await createInvite(target, (await readJson(req)).role)
       } else if (sub === 'invites' && parts.length === 6 && inviteId && method === 'POST' && (action === 'accept' || action === 'cancel')) {
-        answer = action === 'accept' ? await confirmInvite(target, inviteId, (await readJson(req)).role) : await cancelInvite(target, inviteId)
+        answer = action === 'accept' ? await confirmInvite(target, inviteId) : await cancelInvite(target, inviteId)
       }
     } catch (err) {
       json(res, 500, { error: { code: 'TEAM_FAILED', message: (err as Error).message } })

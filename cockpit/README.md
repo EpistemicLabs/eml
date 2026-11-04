@@ -186,8 +186,8 @@ relay) and with `join: {link, handle?}` joins one by its invite link; the member
 the home's handle. The host provisions the empty brain, holds its token, binds the main space's
 agent and writes the space into the config once the server took the brain; a brain the server
 refused is discarded again. `GET /api/spaces/:id/team` is the server's view (state, read-only
-text, members, invites), `POST …/invites`, `…/invites/:id/accept`, `…/cancel` the owner's invite
-flow, `DELETE /api/spaces/:id` removes a shared space that never came to life. At boot the host
+text, members, invites), `POST …/invites {role?}` (member or owner, chosen at the invite),
+`…/invites/:id/accept`, `…/cancel` the owner's invite flow, `DELETE /api/spaces/:id` removes a shared space that never came to life. At boot the host
 asks the server which spaces are shared and discards an empty brain no config token holds
 (`team-space.ts`).
 

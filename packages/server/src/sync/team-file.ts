@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import {
   encryptionKeyFromSeed, signingKeyFromSeed,
-  type BrainKey, type DeviceCert, type DeviceKeys, type JoinRequest, type KeyPair, type LogAnchor,
+  type BrainKey, type DeviceCert, type DeviceKeys, type JoinRequest, type KeyPair, type LogAnchor, type Role,
 } from '@engramprotocol/protocol'
 
 // --- The team file (v0.21, spec team-brain-sync-client-spec §4) -------------------
@@ -45,11 +45,16 @@ export interface TeamFile {
   invites?: StoredInvite[]
 }
 
-/** An invite as the team file keeps it: the id the relay knows, the secret only this device knows, and when it expires. */
+/**
+ * An invite as the team file keeps it: the id the relay knows, the secret only
+ * this device knows, when it expires, and the role the invitee joins with
+ * (decision invite-role-set-at-invite: chosen when the invite is made).
+ */
 export interface StoredInvite {
   invite_id: string
   secret: Uint8Array
   expires_at: string
+  role: Role
 }
 
 /** Why a team file cannot be used — a fixed reason, never the file's text or a field's value. */
@@ -131,10 +136,10 @@ export function readTeamFile(dataDir: string, brain: string): TeamFile | null {
     if (!Array.isArray(raw.invites)) throw new TeamFileError('its invites are malformed')
     file.invites = raw.invites.map((value): StoredInvite => {
       const invite = field(value)
-      if (typeof invite.invite_id !== 'string' || !INVITE_ID_TEXT.test(invite.invite_id) || typeof invite.expires_at !== 'string' || !ISO_MS.test(invite.expires_at)) {
+      if (typeof invite.invite_id !== 'string' || !INVITE_ID_TEXT.test(invite.invite_id) || typeof invite.expires_at !== 'string' || !ISO_MS.test(invite.expires_at) || (invite.role !== 'owner' && invite.role !== 'member')) {
         throw new TeamFileError('an invite is malformed')
       }
-      return { invite_id: invite.invite_id, secret: seed(invite.secret), expires_at: invite.expires_at }
+      return { invite_id: invite.invite_id, secret: seed(invite.secret), expires_at: invite.expires_at, role: invite.role }
     })
   }
   return file
@@ -163,7 +168,7 @@ export function writeTeamFile(dataDir: string, file: TeamFile): void {
     ...(file.key ? { key: { epoch: file.key.epoch, key: text(file.key.key) } } : {}),
     ...(file.join ? { join: file.join } : {}),
     ...(file.accept ? { accept: file.accept } : {}),
-    ...(file.invites && file.invites.length > 0 ? { invites: file.invites.map(i => ({ invite_id: i.invite_id, secret: text(i.secret), expires_at: i.expires_at })) } : {}),
+    ...(file.invites && file.invites.length > 0 ? { invites: file.invites.map(i => ({ invite_id: i.invite_id, secret: text(i.secret), expires_at: i.expires_at, role: i.role })) } : {}),
   }
   const tmp = `${target}.tmp`
   fs.rmSync(tmp, { force: true })  // a leftover (a crash, or made with wider bits) would keep its mode

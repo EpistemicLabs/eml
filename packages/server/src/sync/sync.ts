@@ -121,6 +121,8 @@ export interface TeamSnapshot {
 export interface InviteView {
   invite_id: string
   expires_at: string
+  /** the role the invitee joins with, chosen when the invite was made */
+  role: Role
   /** the join waiting for the owner's confirmation, opened under the invite secret */
   pending: { member: string, fingerprint: string, handle: string, received_at: string } | null
 }
@@ -303,7 +305,7 @@ export class Sync {
     this.sweepInvites(new Date().toISOString())
     return (this.team.invites ?? []).map(i => {
       const join = this.pending.get(i.invite_id)
-      return { invite_id: i.invite_id, expires_at: i.expires_at, pending: join ? { member: join.member, fingerprint: fingerprint(join.member), handle: join.handle, received_at: join.received_at } : null }
+      return { invite_id: i.invite_id, expires_at: i.expires_at, role: i.role, pending: join ? { member: join.member, fingerprint: fingerprint(join.member), handle: join.handle, received_at: join.received_at } : null }
     })
   }
 
@@ -589,18 +591,19 @@ export class Sync {
   }
 
   /**
-   * A new invite into this brain, made by this owner device at `now`: the
-   * signed notice goes to the relay, the secret into the team file. Returns
-   * the link once; it is not kept.
+   * A new invite into this brain, made by this owner device at `now`, for a
+   * member or an owner (decision invite-role-set-at-invite): the signed
+   * notice goes to the relay, the secret and the role into the team file.
+   * Returns the link once; it is not kept.
    */
-  async createInvite(now: string): Promise<{ invite_id: string, link: string, expires_at: string }> {
+  async createInvite(now: string, role: Role = 'member'): Promise<{ invite_id: string, link: string, expires_at: string, role: Role }> {
     this.owner()
     const invite = newInvite(this.host, this.team.brain, now)
     await this.request({ t: 'invite_put', req: 0, notice: inviteNotice(invite, this.team.device.sign) as unknown as Record<string, unknown> })
     const before = this.team.invites
-    this.team.invites = [...(before ?? []), { invite_id: invite.invite_id, secret: invite.secret, expires_at: invite.expires_at }]
+    this.team.invites = [...(before ?? []), { invite_id: invite.invite_id, secret: invite.secret, expires_at: invite.expires_at, role }]
     if (!this.kept(() => { this.team.invites = before })) throw readOnly('its team file could not be written', true)
-    return { invite_id: invite.invite_id, link: inviteLink(invite), expires_at: invite.expires_at }
+    return { invite_id: invite.invite_id, link: inviteLink(invite), expires_at: invite.expires_at, role }
   }
 
   /** Cancels an open invite of this device at the relay (a waiting invitee hears so) and forgets it. False when this device holds no such invite. */
@@ -614,13 +617,13 @@ export class Sync {
 
   /**
    * The owner confirmed the join waiting on `inviteId` (name and fingerprint
-   * compared): the member is added with `role` (a clear record), the current
+   * compared): the member is added with the invite's role (a clear record), the current
    * brain key is wrapped for the new device, and the join is answered with
    * the accept naming this device and the log's anchor. Each step is skipped
    * when the log shows it done, so a confirm cut short is finished by the
    * next call. Null when no join waits on the invite.
    */
-  async confirmJoin(inviteId: string, role: Role, now: string): Promise<MemberView | null> {
+  async confirmJoin(inviteId: string, now: string): Promise<MemberView | null> {
     this.sweepInvites(now)
     const stored = this.team.invites?.find(i => i.invite_id === inviteId)
     const join = this.pending.get(inviteId)
@@ -634,7 +637,7 @@ export class Sync {
       const op_id = crypto.randomUUID()
       const key = this.replica.currentKey() as BrainKey
       await this.appendClear('team.add_member', {
-        member: join.member, role, device_cert: join.device_cert,
+        member: join.member, role: stored.role, device_cert: join.device_cert,
         handle: sealHandle(join.handle, { brain: this.team.brain, op_id, member: join.member }, key),
       }, op_id)
       set = this.replica.members() as NonNullable<ReturnType<Replica['members']>>
