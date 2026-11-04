@@ -23,7 +23,7 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
 import { loadAgentBrains } from './agents.js'
-import { needsUpgrade, upgradeHome } from './agent-upgrade.js'
+import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
 import { BACKUPS_DIR, DATA_DIR } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
@@ -137,21 +137,10 @@ async function main() {
   // run on copies, the real run only when every check passed, the config last.
   // When it cannot (no handle to tell, a check failed), the spaces stay
   // unbound and carry the reason for the banner and the boot refusal.
-  let config = await readCockpitConfig()
-  // Why a space stayed unbound: the run's reason for every space, or a skipped space's own.
-  const upgradeStates = new Map<string, UpgradeState>()
-  let upgrade: UpgradeState | null = null
-  if (config && needsUpgrade(config)) {
-    try {
-      const { report, dir } = await upgradeHome({ dataDir: DATA_DIR, config, backupsDir: BACKUPS_DIR, writeConfig: (next) => writeCockpitConfig(next), log })
-      if (report.status === 'ok') config = await readCockpitConfig()
-      else upgrade = { reason: report.reason ?? report.status, report: dir }
-      for (const s of report.spaces) if (s.action === 'skipped' && s.reason && !s.reason.startsWith('bound to')) upgradeStates.set(s.id, { reason: s.reason, report: dir })
-    } catch (err) {
-      log(`agent upgrade: failed — ${(err as Error).message}`)
-      upgrade = { reason: (err as Error).message, report: null }
-    }
-  }
+  // The config as the file has it after the upgrade, whatever its outcome, and why a space stayed unbound.
+  const { config, upgrade, states: upgradeStates } = await upgradeAtStart({
+    dataDir: DATA_DIR, backupsDir: BACKUPS_DIR, readConfig: readCockpitConfig, writeConfig: (next) => writeCockpitConfig(next), log,
+  })
   const upgradeStateOf = (brainId: string, bound: string | null | undefined): UpgradeState | null => (bound ? null : upgrade ?? upgradeStates.get(brainId) ?? null)
   const agents = loadAgentBrains(config, server.baseUrl, log)
   const row = brainForLocalToken(config?.token ?? brain.token)

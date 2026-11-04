@@ -584,6 +584,49 @@ function copyData(dataDir: string, _config: CockpitConfig, dir: string, modules:
   fs.chmodSync(path.join(data, 'control.db'), 0o600)
 }
 
+/** What the host start takes from the upgrade: the config as the file has it now, and why a space stayed unbound. */
+export interface UpgradeAtStart {
+  config: CockpitConfig | null
+  /** The run's reason for every unbound space (a failed or waiting run), null when it ran through. */
+  upgrade: { reason: string; report: string | null } | null
+  /** A skipped space's own reason, by brain id. */
+  states: Map<string, { reason: string; report: string | null }>
+}
+
+/**
+ * The upgrade as the host runs it at start, before any space opens: when a
+ * space is unbound, upgradeHome; whatever the outcome, the config is read
+ * again from the file — a run writes it as it goes, so after a failure
+ * partway the file is ahead of what the start read (spaces bound with new
+ * tokens, the old ones revoked), and the spaces open with the tokens the file
+ * names. What stayed unbound carries the reason for the banner.
+ */
+export async function upgradeAtStart(input: {
+  dataDir: string
+  backupsDir: string
+  readConfig: () => Promise<CockpitConfig | null>
+  writeConfig: (config: CockpitConfig) => Promise<void>
+  modules?: CoreModules
+  log: (line: string) => void
+}): Promise<UpgradeAtStart> {
+  let config = await input.readConfig()
+  const states = new Map<string, { reason: string; report: string | null }>()
+  let upgrade: UpgradeAtStart['upgrade'] = null
+  if (config && needsUpgrade(config)) {
+    try {
+      const { report, dir } = await upgradeHome({ dataDir: input.dataDir, config, backupsDir: input.backupsDir, writeConfig: input.writeConfig, modules: input.modules, log: input.log })
+      if (report.status !== 'ok') upgrade = { reason: report.reason ?? report.status, report: dir }
+      for (const s of report.spaces) if (s.action === 'skipped' && s.reason && !s.reason.startsWith('bound to')) states.set(s.id, { reason: s.reason, report: dir })
+    } catch (err) {
+      input.log(`agent upgrade: failed — ${(err as Error).message}`)
+      upgrade = { reason: (err as Error).message, report: null }
+    } finally {
+      config = await input.readConfig()
+    }
+  }
+  return { config, upgrade, states }
+}
+
 /** Whether a report binds or upgrades anything (else the config stays as it is). */
 const changes = (r: UpgradeReport) => r.spaces.some((s) => s.action !== 'skipped') || r.agents.some((a) => a.created)
 

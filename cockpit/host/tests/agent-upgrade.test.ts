@@ -313,6 +313,45 @@ describe('agent upgrade', () => {
     expect(withDb(agentFile, (db) => log.verify(db).ok)).toBe(true)
   })
 
+  it('the host start after a run that failed once the first space was bound: the file\'s config wins, that space works, the rest carries the reason', async () => {
+    const { upgradeAtStart, needsUpgrade } = await import('../src/agent-upgrade.js')
+    const data4 = join(home, 'home4', 'data')
+    const f = legacyHome(data4)
+    const backups = join(home, 'home4', 'backups')
+    // The config file as the host keeps it: every write lands, until the one that would bind Privat.
+    let file: Row = f.config
+    let writes = 0
+    const fail = { on: 3 }
+    const io = {
+      readConfig: async () => structuredClone(file),
+      writeConfig: async (c: Row) => { if (++writes === fail.on) throw new Error('disk full'); file = structuredClone(c) },
+    }
+    const lines: string[] = []
+    const start = await upgradeAtStart({ dataDir: data4, backupsDir: backups, modules, log: (l) => lines.push(l), ...io })
+    expect(start.upgrade).toMatchObject({ reason: 'Privat: disk full' })
+    // What the start opens the spaces with: the file's config — Main bound with its new token, Privat as before.
+    const control = join(data4, 'control.db')
+    expect(start.config).toMatchObject({ handle: 'dominik', agent: 'motti', agents: [{ id: 'motti' }], spaces: [{ name: 'Privat', token: f.config.spaces[0].token }] })
+    expect(start.config?.spaces?.[0].agent).toBeUndefined()
+    expect(start.config?.token).not.toBe(f.config.token)
+    expect(withDb(control, (db) => core.verifyToken(db, start.config!.token))).toMatchObject({ brainId: f.main.brainId, caller: 'dominik' })
+    expect(withDb(control, (db) => core.verifyToken(db, start.config!.spaces![0].token))).toMatchObject({ brainId: f.privat.brainId })
+    expect(withDb(control, (db) => core.verifyToken(db, f.config.token))).toBeNull()
+    expect(needsUpgrade(start.config!)).toBe(true)
+    // The next start finishes Privat with the same agent brain; nothing is built twice.
+    fail.on = 0
+    const again = await upgradeAtStart({ dataDir: data4, backupsDir: backups, modules, log: (l) => lines.push(l), ...io })
+    expect(again.upgrade).toBeNull()
+    expect(again.config).toMatchObject({ agent: 'motti', spaces: [{ name: 'Privat', agent: 'motti' }] })
+    expect(again.config?.agents).toHaveLength(1)
+    expect(q(control, "SELECT COUNT(*) AS n FROM brains WHERE name = 'motti'")[0].n).toBe(3)
+    expect(needsUpgrade(again.config!)).toBe(false)
+    // and a third start does nothing
+    const third = await upgradeAtStart({ dataDir: data4, backupsDir: backups, modules, log: (l) => lines.push(l), ...io })
+    expect(third.upgrade).toBeNull()
+    expect(lines.filter((l) => l.includes('nothing to do'))).toHaveLength(0)
+  })
+
   it('renders the report as text', async () => {
     const { renderReport, summary } = await import('../src/agent-upgrade.js')
     const run = JSON.parse(readFileSync(join(home, 'backups', 'agent-upgrade', readdirSync(join(home, 'backups', 'agent-upgrade'))[0], 'run.json'), 'utf8'))
