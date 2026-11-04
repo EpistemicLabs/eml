@@ -88,18 +88,20 @@ export function planMoveRoute(ctx: MoveContext, source: { brainId: string, db: D
 }
 
 /**
- * POST /move: runs the move the caller confirmed (plan_hash). The source is
+ * POST /move: runs the move the caller confirmed (plan_hash); target_name, when
+ * given, is recorded on the archived projects (targetNameOf). The source is
  * opened for the move alone and closed after; the backup goes to
  * <backupDir>/move/<brain id>-<time>.db. Throws MoveRouteError for a refusal
  * (409 MOVE_REFUSED; 409 PLAN_CHANGED with the current plan_hash), and lets
  * the target write's own error through (503 read-only, 504 pending).
  */
-export async function moveRoute(ctx: MoveContext, source: { brainId: string, brainFile: string }, body: { target?: unknown, project?: unknown, plan_hash?: unknown }, env: Env): Promise<MoveRouteResult> {
+export async function moveRoute(ctx: MoveContext, source: { brainId: string, brainFile: string }, body: { target?: unknown, project?: unknown, plan_hash?: unknown, target_name?: unknown }, env: Env): Promise<MoveRouteResult> {
   if (moving.has(source.brainId)) throw new MoveRouteError(409, 'MOVE_REFUSED', 'move refused: a move out of this brain is under way. Nothing was moved.')
   const target = targetOf(ctx, body.target, source.brainId)
   if (target.refusal) throw new MoveRouteError(409, 'MOVE_REFUSED', `move refused: ${target.refusal}. Nothing was moved.`)
   const project = projectOf(body.project)
   if (typeof body.plan_hash !== 'string' || !/^[0-9a-f]{64}$/.test(body.plan_hash)) throw new MoveRouteError(400, 'INVALID_PLAN', 'plan_hash is the hash of the plan being confirmed (POST /move/plan).')
+  const target_name = targetNameOf(body.target_name)
   const sync = target.sync as Sync
   const moveTarget: MoveTarget = { db: target.db, write: (command) => sync.write(command, env, { deadlineMs: ctx.deadlineMs }) }
   const backup_path = path.join(ctx.backupDir, 'move', `${source.brainId}-${env.now().replace(/[:.]/g, '-')}.db`)
@@ -107,7 +109,7 @@ export async function moveRoute(ctx: MoveContext, source: { brainId: string, bra
   moving.add(source.brainId)
   let result: ProjectMoveResult
   try {
-    result = await moveProject({ source: db, target: moveTarget, project, plan_hash: body.plan_hash, backup_path }, env)
+    result = await moveProject({ source: db, target: moveTarget, project, plan_hash: body.plan_hash, backup_path, target_name }, env)
   } catch (err) {
     if (err instanceof CommandError && err.code === 'CONFLICT') {
       if (typeof err.data?.plan_hash === 'string') throw new MoveRouteError(409, 'PLAN_CHANGED', err.message, { plan_hash: err.data.plan_hash })
@@ -145,6 +147,22 @@ function pointReferences(ctx: MoveContext, from: string, to: string, ids: string
     }
   }
   return out
+}
+
+/** The longest target name recorded on an archived project (it ends up in agent-facing text). */
+export const TARGET_NAME_MAX_CHARS = 80
+
+/**
+ * `target_name` of POST /move: the name the caller's cockpit gives the target
+ * space, recorded on the archived projects for eml_show. Absent or blank → not
+ * recorded (eml_show names the brain id). Control characters go, whitespace
+ * collapses, the rest is cut at TARGET_NAME_MAX_CHARS.
+ */
+export function targetNameOf(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string') throw new MoveRouteError(400, 'INVALID_TARGET_NAME', 'target_name is the name of the target space, as text.')
+  const clean = value.replace(/\p{Cc}/gu, '').replace(/\s+/g, ' ').trim().slice(0, TARGET_NAME_MAX_CHARS).trim()
+  return clean === '' ? undefined : clean
 }
 
 function projectOf(value: unknown): string {

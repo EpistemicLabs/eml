@@ -48,8 +48,20 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
  * v0.10.8: rules render by applicability — `always` rules full, `situational`
  * rules name-only (eml_get for the body).
  */
+/** The metadata keys the archive op of a move writes (log/move-engrams.ts). */
+const MOVE_KEYS = new Set(['moved_to', 'moved_at', 'moved_to_name'])
+
+/** Under the header of a moved project: where it went (the space's name as recorded at the move, else the brain id) and when. */
+function movedLine(moved: NonNullable<ScopedBrainState['moved']>): string {
+  return `_Moved to the shared space ${moved.name ?? moved.to} on ${moved.at.slice(0, 10)} — its engrams live there; nothing new is filed here._`
+}
+
 export function renderBrainStateMarkdown(state: ScopedBrainState): string {
-  const lines: string[] = [`# ${state.scope} — brain state`, '']
+  const lines: string[] = [`# ${state.scope} — brain state`]
+  // v0.21: a project moved into a shared space — the one line that says so comes
+  // first; the scope keeps nothing new (engrams.movedFrom).
+  if (state.moved) lines.push(movedLine(state.moved))
+  lines.push('')
 
   lines.push('## Status')
   // v0.19: what this scope's status is about (the object's status_tracks).
@@ -122,8 +134,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     lines.push('')
   }
 
-  // v0.19: the project's or entity's stable facts.
-  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata) : []
+  // v0.19: the project's or entity's stable facts. The move marker is the line under the header, not a fact.
+  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata).filter(([k]) => !MOVE_KEYS.has(k)) : []
   if (meta.length > 0) {
     lines.push('## Metadata')
     for (const [k, v] of meta) lines.push(`- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
