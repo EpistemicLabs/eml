@@ -33,7 +33,7 @@ export interface SessionRowProps {
   agent?: { name: string; tone?: string };
   /** How the session stands for the user: a second line, with the word and the reason. */
   mark?: SessionMark | null;
-  /** It runs now: a pulsing dot in the marks' column, for a row that lists what runs. */
+  /** Given in the overview, whose Now card lists what runs: true puts a pulsing dot in the marks' column, false shows none. */
   running?: boolean;
   /** A second line without a mark: a parent's worker counts. */
   detail?: string;
@@ -106,7 +106,7 @@ export function SidebarSessionRow({
 
   return (
     <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
-      {!mark && !running && <StatusDot session={session} inAllView={Boolean(agent)} />}
+      {!mark && running === undefined && <StatusDot session={session} inAllView={Boolean(agent)} />}
       <Button
         variant="ghost"
         className={cn(

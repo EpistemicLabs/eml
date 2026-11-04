@@ -63,7 +63,7 @@ function AllSessionRow({ session, spaces, controller, sessions, plain, listedRun
         }}
         agent={{ name: agentLabel(space), tone: spaceTone(space) }}
         mark={mark}
-        running={listedRunning}
+        running={Boolean(listedRunning)}
         context={parent ? `from ${sessionDisplayName(parent)}` : undefined}
         actions={{
           onStop: running && working ? () => void stopSession(session.id).then(whenDone) : undefined,
