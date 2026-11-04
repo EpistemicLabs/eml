@@ -45,7 +45,8 @@ export const runMove = (projectId: string, targetId: string, planHash: string): 
 /** One op into a shared brain carries at most this much (protocol MAX_PAYLOAD); the plan's size line names it. */
 export const MOVE_LIMIT_BYTES = 16 * 1024 * 1024;
 
-const mb = (bytes: number): string => (bytes / 1024 / 1024).toFixed(1);
+/** Bytes as the size line says them: whole KB under a megabyte, else MB with one decimal; the limit as a whole number. */
+const size = (bytes: number): string => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 /** A target the chooser offers: a shared space of this cockpit, chosen only while it takes writes. */
@@ -99,7 +100,7 @@ export function planText(plan: MovePlanView, projectName: string, nameOf: (id: s
     projects: withChildren ? plan.tree.map((t) => ({ id: t.id, name: nameOf(t.id), engrams: t.engrams })) : null,
     dropped: c === 0 ? 'Nothing links out of this project.' : `${count(c, 'link')} to things that stay behind ${c === 1 ? 'is' : 'are'} dropped. ${c === 1 ? 'It is' : 'They are'} kept in the backup.`,
     links: plan.crossing.map((r) => `${r.other.title ?? r.other.id} (${r.other.type})`),
-    size: `Size: ${mb(plan.payload_bytes)} MB of ${mb(MOVE_LIMIT_BYTES)} MB.`,
+    size: `Size: ${size(plan.payload_bytes)} of ${MOVE_LIMIT_BYTES / 1024 / 1024} MB.`,
   };
 }
 

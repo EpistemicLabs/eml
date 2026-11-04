@@ -48,7 +48,7 @@ describe('the plan as the dialog says it', () => {
       projects: null,
       dropped: 'Nothing links out of this project.',
       links: [],
-      size: 'Size: 4.2 MB of 16.0 MB.',
+      size: 'Size: 4.2 MB of 16 MB.',
     });
   });
 
@@ -67,6 +67,9 @@ describe('the plan as the dialog says it', () => {
     expect(text.dropped).toBe('2 links to things that stay behind are dropped. They are kept in the backup.');
     expect(text.links).toEqual(['Keep the relay stateless (decision)', 'n1 (note)']);
     expect(planText(plan({ crossing: [p.crossing[0]] }), 'EML', (id) => id).dropped).toBe('1 link to things that stay behind is dropped. It is kept in the backup.');
+    // a small set reads in whole KB, never "0.0 MB"
+    expect(planText(plan({ payload_bytes: 3_900 }), 'EML', (id) => id).size).toBe('Size: 4 KB of 16 MB.');
+    expect(planText(plan({ payload_bytes: 10 }), 'EML', (id) => id).size).toBe('Size: 1 KB of 16 MB.');
   });
 });
 
