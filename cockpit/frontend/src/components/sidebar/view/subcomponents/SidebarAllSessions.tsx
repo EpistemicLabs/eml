@@ -117,7 +117,7 @@ export function useWaitingCount(controller: SidebarController, onlyOpenSpace: bo
   return waiting.length;
 }
 
-/** A heading of the inbox; the last one carries the way into the review, which goes through all of it. */
+/** A heading of the inbox; the first one carries the way into the review, which goes through all of it from there. */
 function InboxHeader({ title, onReview }: { title: string; onReview?: () => void }) {
   return (
     <div className="flex items-center justify-between gap-1 pr-2">
@@ -149,13 +149,13 @@ function SidebarInbox({ controller, onlyOpenSpace }: { controller: SidebarContro
     <div className="space-y-3">
       {needsYou.length > 0 && (
         <div className="space-y-0.5">
-          <InboxHeader title={`Needs you · ${needsYou.length}`} onReview={toReview.length === 0 ? review : undefined} />
+          <InboxHeader title={`Needs you · ${needsYou.length}`} onReview={review} />
           {needsYou.map(row)}
         </div>
       )}
       {toReview.length > 0 && (
         <div className="space-y-0.5">
-          <InboxHeader title={`To review · ${toReview.length}`} onReview={review} />
+          <InboxHeader title={`To review · ${toReview.length}`} onReview={needsYou.length === 0 ? review : undefined} />
           {toReview.map(row)}
         </div>
       )}
