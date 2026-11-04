@@ -230,16 +230,14 @@ export default function DeskTabBar() {
         const brainLabel = section.space?.name ?? 'Brain';
         const tone = spaceTone(section.space);
         return (
-          // One section per brain: a faint band holds its Brain tab and desks,
-          // so the bands — not separator lines — tell the brains apart. The band
-          // keeps a fixed height and sits centred in the taller header row.
+          // One section per brain: a soft surface in the space's colour holds its
+          // Brain tab and desks, so the colour — not lines — tells the brains apart.
+          // It keeps a fixed height and sits centred in the taller header row.
           <div
             key={section.space?.id ?? 'all'}
-            className={cn(
-              'flex h-8 self-center items-stretch overflow-hidden rounded-md border',
-              isActiveSpace ? 'border-foreground/15 bg-foreground/[0.05]' : 'border-foreground/[0.08] bg-foreground/[0.02]',
-            )}
-            style={tone ? ({ '--space-tone': tone, borderColor: `color-mix(in srgb, ${tone} ${isActiveSpace ? 55 : 30}%, transparent)` } as CSSProperties) : undefined}
+            data-active={isActiveSpace || undefined}
+            className="space-band flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5"
+            style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
           >
             {/* The section's Brain tab: this brain's dashboard. Same underline
                 idiom as the desks, in the space's colour. */}
@@ -260,13 +258,13 @@ export default function DeskTabBar() {
               aria-pressed={brainActive}
               title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename' : ''}`}
               className={cn(
-                'relative flex h-full items-center gap-1.5 rounded-l-md px-2 text-body font-medium transition-colors',
-                brainActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                brainActive && 'after:absolute after:inset-x-2 after:-bottom-px after:h-[2px] after:rounded-full after:bg-[var(--space-tone,var(--color-primary))]',
+                'flex h-full items-center gap-1.5 rounded-md px-2 text-body font-semibold transition-colors',
+                isActiveSpace ? 'text-foreground' : 'text-foreground/70 hover:text-foreground',
+                brainActive && 'space-tab-active',
               )}
             >
               <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} style={{ color: tone }} />
-              <span className="max-w-[10ch] truncate">{brainLabel}</span>
+              <span className="max-w-[16ch] truncate">{brainLabel}</span>
               {count > 0 && (
                 <span className="rounded-full bg-warning/15 px-1.5 py-px font-mono text-[10px] leading-4 tabular-nums text-warning">
                   {count}
@@ -274,8 +272,7 @@ export default function DeskTabBar() {
               )}
             </button>
             )}
-            <div className="w-px bg-foreground/15" aria-hidden />
-            {section.desks.map((desk, deskIdx) => {
+            {section.desks.map((desk) => {
               const idx = position++;
               const isActive = topView === 'desks' && desk.id === activeDeskId;
               const isEditing = editingId === desk.id;
@@ -288,13 +285,8 @@ export default function DeskTabBar() {
                   className={cn(
                     // The row holds the name and its unseen badge; the × sits in the
                     // tab's top-right corner above them, on hover only.
-                    'group relative flex items-center gap-1.5 px-2.5 text-body transition-colors',
-                    // A hairline between neighbouring desks.
-                    deskIdx > 0 && 'border-l border-foreground/10',
-                    isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                    // Active marker (Variante B): a 2px line in the space's colour on
-                    // the header's bottom edge, flush with the pane headers underneath.
-                    isActive && 'after:absolute after:inset-x-1.5 after:-bottom-px after:h-[2px] after:rounded-full after:bg-[var(--space-tone,var(--color-primary))]',
+                    'group relative flex items-center gap-1.5 rounded-md px-2.5 text-body transition-colors',
+                    isActive ? 'space-tab-active text-foreground' : 'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground',
                     dragging?.id === desk.id && 'opacity-50',
                     paneDropId === desk.id && 'bg-primary/15 text-foreground',
                   )}
