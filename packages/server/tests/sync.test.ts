@@ -131,6 +131,19 @@ describe('a shared brain\'s sync', () => {
     await until(() => sync.state.kind === 'live')
   })
 
+  it('reconnects once a relay that refused connections is back: the retry is scheduled from the error too, with the backoff', async () => {
+    const { team, sync, relay: gone } = await connected()
+    const port = Number(gone.host.split(':')[1])
+    await gone.stop()  // the port refuses connections from here
+    await until(() => sync.state.kind === 'offline')
+    // several refused attempts at [20, 100] ms; a refused connection fires error without a close
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(sync.state).toEqual({ kind: 'offline' } satisfies SyncState)
+    relay = await FakeRelay.start(BRAIN, team.genesis(), port)
+    relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
+    await until(() => sync.state.kind === 'live')
+  })
+
   it('without a key for the current epoch, is read-only; a sealed entry waits until the key is pushed', async () => {
     const { team, relay, sync, eml } = await connected({ withKey: false })
     const err = await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-nokey' }) }, env(eml)))
