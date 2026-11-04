@@ -23,10 +23,7 @@ export function listProjects(
     tagged(space.id === openSpace?.id ? openProjects : projectsOfSpace(projectsBySpace, paneSpaceKey(space)), space));
 }
 
-/** Each space with what is shown of it, in the spaces' order; a space with nothing is left out. */
+/** Each space with what is shown of it, in the spaces' order; one with nothing stays, a project can be added to it. */
 export function bySpace<T>(spaces: SpaceInfo[], projects: Project[], group: (projects: Project[]) => T): Array<{ space: SpaceInfo; groups: T }> {
-  return spaces.flatMap((space) => {
-    const own = projects.filter((project) => project.__spaceId === space.id);
-    return own.length > 0 ? [{ space, groups: group(own) }] : [];
-  });
+  return spaces.map((space) => ({ space, groups: group(projects.filter((project) => project.__spaceId === space.id)) }));
 }

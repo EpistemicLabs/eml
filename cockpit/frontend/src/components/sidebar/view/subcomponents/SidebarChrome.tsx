@@ -1,4 +1,4 @@
-import { PanelLeftOpen, Pin, PinOff, Plus, Settings, X } from 'lucide-react';
+import { PanelLeftOpen, Pin, PinOff, Settings, X } from 'lucide-react';
 
 import SpaceSwitch from '@/components/app/SpaceSwitch';
 import { cn } from '@/lib/utils';
@@ -22,9 +22,9 @@ export function SidebarRail({ onOpen }: { onOpen: () => void }) {
 }
 
 const MODES: Array<{ mode: SidebarViewMode; label: string }> = [
+  { mode: 'overview', label: 'Overview' },
   { mode: 'projects', label: 'Projects' },
   { mode: 'conversations', label: 'Conversations' },
-  { mode: 'overview', label: 'Overview' },
 ];
 
 /** The sidebar's three views, under the space switch; the overview is still in beta. */
@@ -72,20 +72,14 @@ export function SidebarModes({
   );
 }
 
-/** The top row: the space switch, then add project and pin. */
+/** The top row: the space switch, then pin. */
 export function SidebarHeader({
   isPinnedOpen,
   onTogglePinned,
-  onAddProject,
-  addProjectTo,
 }: {
   isPinnedOpen: boolean;
   /** Absent where pinning means nothing (the compact layout's drawer). */
   onTogglePinned?: () => void;
-  /** Absent in the overview: it lists sessions, a new project belongs in Projects. */
-  onAddProject?: () => void;
-  /** Under All spaces: the space a new project goes to, the open one. */
-  addProjectTo?: string;
 }) {
   return (
     <div className="flex flex-shrink-0 items-center justify-between gap-1 pt-2 pr-2 pb-1 pl-1">
@@ -93,17 +87,6 @@ export function SidebarHeader({
         <SpaceSwitch variant="sidebar" />
       </div>
       <div className="flex items-center gap-0.5">
-        {onAddProject && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-            title={addProjectTo ? `Add project to ${addProjectTo}` : 'Add project'}
-            onClick={onAddProject}
-          >
-            <Plus />
-          </Button>
-        )}
         {onTogglePinned && (
           <Button
             variant="ghost"

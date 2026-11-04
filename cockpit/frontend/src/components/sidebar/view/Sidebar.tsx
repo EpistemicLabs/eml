@@ -59,8 +59,6 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
       <SidebarHeader
         isPinnedOpen={controller.isPinnedOpen}
         onTogglePinned={drawer ? undefined : controller.togglePinnedOpen}
-        onAddProject={controller.viewMode === 'overview' ? undefined : controller.openWizard}
-        addProjectTo={controller.allView ? controller.activeSpace?.name : undefined}
       />
       <SidebarModes viewMode={controller.viewMode} onViewModeChange={controller.setViewMode} waiting={waiting} />
       <SidebarNewSession controller={controller} />

@@ -25,8 +25,8 @@ describe('the projects the sidebar lists', () => {
     expect(new Set(listed.map(projectKey)).size).toBe(2);
   });
 
-  it('leaves out a space with nothing to show', () => {
+  it('keeps a space with nothing to show: a project can be added to it', () => {
     const listed = listProjects({ '': [project('a')] }, [project('a')], [main, other], main, true);
-    expect(bySpace([main, other], listed, (own) => own.length)).toEqual([{ space: main, groups: 1 }]);
+    expect(bySpace([main, other], listed, (own) => own.length)).toEqual([{ space: main, groups: 1 }, { space: other, groups: 0 }]);
   });
 });

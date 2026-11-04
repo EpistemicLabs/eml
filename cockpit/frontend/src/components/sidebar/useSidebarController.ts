@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useDesks } from '@/stores/usePaneStore';
 import { api } from '@/utils/api';
-import { switchSpace, useActiveSpace, useAllView, useSpaces } from '@/stores/useSpaceStore';
+import { switchSpace, useActiveSpace, useAllView, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project, ProjectSession } from '@/types/app';
 import { bySpace, listProjects, projectKey } from './spaceProjects';
 import { useAllSessions } from './useAllSessions';
@@ -527,8 +527,15 @@ export function useSidebarController(props: SidebarProps) {
 
   // ── Add-project wizard ─────────────────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);
-  const openWizard = useCallback(() => setWizardOpen(true), []);
   const closeWizard = useCallback(() => setWizardOpen(false), []);
+  // The wizard creates in the open space, so adding to a space opens it first.
+  const addProjectTo = useCallback(
+    (space: SpaceInfo | null) => {
+      if (space && space.id !== activeSpace?.id) switchSpace(space);
+      setWizardOpen(true);
+    },
+    [activeSpace],
+  );
   const handleProjectCreated = useCallback(() => {
     void runManualRefresh();
   }, [runManualRefresh]);
@@ -605,7 +612,7 @@ export function useSidebarController(props: SidebarProps) {
     cancelSessionDelete,
     // wizard
     wizardOpen,
-    openWizard,
+    addProjectTo,
     closeWizard,
     handleProjectCreated,
   };
