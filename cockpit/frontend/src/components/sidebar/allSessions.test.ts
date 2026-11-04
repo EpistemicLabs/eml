@@ -103,10 +103,13 @@ describe('groupAllSessions', () => {
     expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['old', 'open', 'today']);
   });
 
-  it('lists a main session that works under Working too', () => {
+  it('moves a main session to Working while it works, and back', () => {
     const sections = group([session('pin', { isPinned: true, state: 'running' })], { pin: turn('working') });
-    expect(mainIds(sections)).toEqual(['pin']);
+    expect(mainIds(sections)).toEqual([]);
     expect(sections.working.map((item) => item.session.id)).toEqual(['pin']);
+    const done = group([session('pin', { isPinned: true })]);
+    expect(mainIds(done)).toEqual(['pin']);
+    expect(done.working).toEqual([]);
   });
 
   it('opening does not take finished work out of To review, it only reads it', () => {
