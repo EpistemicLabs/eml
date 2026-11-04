@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Brain, ChevronDown, Folder, Plus, X } from 'lucide-react';
 
 import { SPACE_HEADER } from '@/lib/space-fetch';
 import { SESSIONS_CHANGED_EVENT } from '@/lib/session-actions';
+import { spaceTone } from '@/lib/space-color';
+import { cn } from '@/lib/utils';
 import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
@@ -11,8 +13,20 @@ import type { SidebarController } from '../../useSidebarController';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
 
-const FIELD = 'w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs';
-const ACTION = 'flex-1 rounded-md border border-border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40';
+const FIELD = 'w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-[var(--space-tone,var(--color-primary))] md:text-xs';
+const ACTION = 'rounded-md px-2 py-1.5 text-xs font-medium text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+
+/** A select with what it picks shown as an icon, in the panel's own style. */
+function PickField({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute inset-y-0 left-2 flex items-center">{icon}</span>
+      {children}
+      <ChevronDown className="pointer-events-none absolute top-1/2 right-2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+    </div>
+  );
+}
+
 
 function readLastProject(spaceId: string): string | null {
   try { return localStorage.getItem(`${LAST_PROJECT_KEY}:${spaceId}`); } catch { return null; }
@@ -92,13 +106,19 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
     }
   };
 
+  // In the colour of the space it starts in, so it stands apart from the rows around it.
+  const tone = spaceTone(space);
+  const toneStyle = tone ? ({ '--space-tone': tone } as CSSProperties) : undefined;
+
   if (!open) {
     return (
-      <div className="flex-shrink-0 px-2 pb-1">
+      <div className="flex-shrink-0 px-2 pb-2">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex w-full items-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+          style={toneStyle}
+          data-active
+          className="space-band flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold text-foreground transition-[filter] hover:brightness-125"
         >
           <Plus className="h-3.5 w-3.5" /> New session
         </button>
@@ -107,33 +127,56 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
   }
 
   return (
-    <div ref={panelRef} className="flex-shrink-0 space-y-1.5 px-2 pb-2" onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
-      {spaces.length > 1 && (
-        <select aria-label="Agent" className={FIELD} value={space?.id ?? ''} onChange={(event) => setSpaceId(event.target.value)}>
-          {spaces.map((candidate) => <option key={candidate.id} value={candidate.id}>{agentLabel(candidate)}</option>)}
-        </select>
-      )}
-      <select aria-label="Project" className={FIELD} value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-        {projects.map((project) => <option key={project.projectId} value={project.projectId}>{project.displayName}</option>)}
-      </select>
-      <textarea
-        autoFocus
-        rows={2}
-        value={prompt}
-        aria-label="What should it do?"
-        placeholder="What should it do? (optional)"
-        onChange={(event) => setPrompt(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.shiftKey) return;
-          event.preventDefault();
-          void run(event.altKey);
-        }}
-        className={`${FIELD} resize-none`}
-      />
-      <div className="flex gap-1.5">
-        <button type="button" className={ACTION} disabled={!projectId || starting} onClick={() => void run(false)}>Open</button>
-        <button type="button" className={ACTION} disabled={!projectId || starting || !prompt.trim()} onClick={() => void run(true)} title="Alt+Enter">Run in background</button>
-        <button type="button" className={ACTION} onClick={close}>Cancel</button>
+    <div className="flex-shrink-0 px-2 pb-2">
+      <div
+        ref={panelRef}
+        style={toneStyle}
+        data-active
+        className="space-band space-y-1.5 rounded-lg p-2"
+        onKeyDown={(event) => { if (event.key === 'Escape') close(); }}
+      >
+        <div className="flex items-center justify-between pl-0.5">
+          <span className="text-xs font-semibold text-foreground">New session</span>
+          <button
+            type="button"
+            aria-label="Cancel"
+            title="Cancel"
+            onClick={close}
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {spaces.length > 1 && (
+          <PickField icon={<Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: tone }} />}>
+            <select aria-label="Agent" className={cn(FIELD, 'appearance-none pr-6 pl-7')} value={space?.id ?? ''} onChange={(event) => setSpaceId(event.target.value)}>
+              {spaces.map((candidate) => <option key={candidate.id} value={candidate.id}>{agentLabel(candidate)}</option>)}
+            </select>
+          </PickField>
+        )}
+        <PickField icon={<Folder className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.8} />}>
+          <select aria-label="Project" className={cn(FIELD, 'appearance-none pr-6 pl-7')} value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+            {projects.map((project) => <option key={project.projectId} value={project.projectId}>{project.displayName}</option>)}
+          </select>
+        </PickField>
+        <textarea
+          autoFocus
+          rows={2}
+          value={prompt}
+          aria-label="What should it do?"
+          placeholder="What should it do? (optional)"
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.shiftKey) return;
+            event.preventDefault();
+            void run(event.altKey);
+          }}
+          className={`${FIELD} resize-none`}
+        />
+        <div className="flex gap-1.5">
+          <button type="button" className={cn(ACTION, 'space-tab-active flex-1 font-semibold hover:brightness-125')} disabled={!projectId || starting} onClick={() => void run(false)}>Open</button>
+          <button type="button" className={cn(ACTION, 'hover:bg-foreground/10')} disabled={!projectId || starting || !prompt.trim()} onClick={() => void run(true)} title="Run in the background (Alt+Enter)">Background</button>
+        </div>
       </div>
     </div>
   );
