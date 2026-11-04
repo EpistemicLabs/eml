@@ -261,7 +261,7 @@ describe('a shared brain through the server', () => {
     const invited = await post(BRAIN, '/team/invites', {})
     expect(invited.status).toBe(201)
     expect(invited.body.link).toMatch(new RegExp(`^https://${relay.host}/i/1/${BRAIN}/${invited.body.invite_id}#[A-Za-z0-9_-]{43}$`))
-    expect((await get(BRAIN, '/team')).body.invites).toEqual([{ invite_id: invited.body.invite_id, expires_at: invited.body.expires_at, pending: null }])
+    expect((await get(BRAIN, '/team')).body.invites).toEqual([{ invite_id: invited.body.invite_id, expires_at: invited.body.expires_at, role: 'member', pending: null }])
     expect(JSON.stringify((await get(BRAIN, '/team')).body)).not.toContain(invited.body.link.split('#')[1])
     // lasse joins from another cockpit: an empty brain with the team brain's id, its Sync in join mode (here in-process), through the same relay
     const lasseDb = initDatabase(':memory:', undefined, BRAIN, { log: false })
@@ -277,7 +277,7 @@ describe('a shared brain through the server', () => {
         team = await get(BRAIN, '/team')
       }
       expect(team.body.invites[0].pending).toMatchObject({ handle: 'lasse', fingerprint: lasseFingerprint })
-      expect(await post(BRAIN, `/team/invites/${invited.body.invite_id}/accept`, { role: 'admin' })).toMatchObject({ status: 400, body: { code: 'INVALID_ROLE' } })
+      expect(await post(BRAIN, '/team/invites', { role: 'admin' })).toMatchObject({ status: 400, body: { code: 'INVALID_ROLE' } })
       expect(await post(BRAIN, '/team/invites/AAAAAAAAAAAAAAAAAAAAAA/accept', {})).toMatchObject({ status: 404, body: { code: 'NO_PENDING_JOIN', error: 'This invite has no join to confirm.' } })
       const confirmed = await post(BRAIN, `/team/invites/${invited.body.invite_id}/accept`, {})
       expect(confirmed).toMatchObject({ status: 200, body: { member: { handle: 'lasse', role: 'member', devices: 1, self: false, fingerprint: lasseFingerprint } } })

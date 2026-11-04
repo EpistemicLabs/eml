@@ -43,8 +43,8 @@
  *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
  *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
  *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
- *   POST /team/invites                                               → An invite link into this team brain, by an owner (v0.21; host-facing)
- *   POST /team/invites/:id/accept { role? }                          → Confirm the join waiting on an invite: add the member, wrap the key, answer (v0.21; host-facing)
+ *   POST /team/invites      { role? }                                → An invite link into this team brain, by an owner, for a member or an owner (v0.21; host-facing)
+ *   POST /team/invites/:id/accept                                    → Confirm the join waiting on an invite: add the member with the invite's role, wrap the key, answer (v0.21; host-facing)
  *   POST /team/invites/:id/cancel                                    → Cancel an open invite; a waiting invitee is told (v0.21; host-facing)
  *   POST /move/plan         { target, project }                      → What moving a project into another brain of this server would do (v0.21; host-facing)
  *   POST /move              { target, project, plan_hash, target_name? } → Move the project as planned: one import op in the target, one move_out here (v0.21; host-facing)
@@ -717,19 +717,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return
     }
 
-    // POST /team/invites — an owner invites into this team brain (v0.21, spec
-    // team-brain-membership-flows-spec §3): the notice goes to the relay, the
-    // secret into the team file, the link comes back once.
+    // POST /team/invites {role?} — an owner invites into this team brain (v0.21,
+    // spec team-brain-membership-flows-spec §3) as a member (default) or an
+    // owner (decision invite-role-set-at-invite): the notice goes to the relay,
+    // the secret and the role into the team file, the link comes back once.
     if (url === '/team/invites' && method === 'POST') {
       if (!(sync instanceof Sync)) return json(res, 409, { error: 'This brain is not a shared brain.', code: 'NOT_SHARED' })
-      return json(res, 201, await sync.createInvite(eml.now()))
+      const body = await readBody(req)
+      const role = body.role === undefined ? 'member' : body.role
+      if (role !== 'owner' && role !== 'member') return json(res, 400, { error: 'role is owner or member', code: 'INVALID_ROLE' })
+      return json(res, 201, await sync.createInvite(eml.now(), role))
     }
 
-    // POST /team/invites/:id/accept {role?} — the owner confirmed the join
-    // waiting on the invite (name and fingerprint compared): the member is added
-    // with the role (default member), the brain key wrapped for the new device,
-    // the join answered. POST /team/invites/:id/cancel — the invite is closed;
-    // also how an owner declines a join.
+    // POST /team/invites/:id/accept — the owner confirmed the join waiting on
+    // the invite (name and fingerprint compared): the member is added with the
+    // invite's role, the brain key wrapped for the new device, the join
+    // answered. POST /team/invites/:id/cancel — the invite is closed; also how
+    // an owner declines a join.
     const inviteMatch = /^\/team\/invites\/([A-Za-z0-9_-]{22})\/(accept|cancel)$/.exec(url)
     if (inviteMatch && method === 'POST') {
       if (!(sync instanceof Sync)) return json(res, 409, { error: 'This brain is not a shared brain.', code: 'NOT_SHARED' })
@@ -738,10 +742,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         if (!await sync.cancelInvite(inviteId)) return json(res, 404, { error: 'No such invite.', code: 'NO_SUCH_INVITE' })
         return json(res, 200, { invite_id: inviteId, cancelled: true })
       }
-      const body = await readBody(req)
-      const role = body.role === undefined ? 'member' : body.role
-      if (role !== 'owner' && role !== 'member') return json(res, 400, { error: 'role is owner or member', code: 'INVALID_ROLE' })
-      const member = await sync.confirmJoin(inviteId, role, eml.now())
+      const member = await sync.confirmJoin(inviteId, eml.now())
       if (!member) return json(res, 404, { error: 'This invite has no join to confirm.', code: 'NO_PENDING_JOIN' })
       return json(res, 200, { member })
     }

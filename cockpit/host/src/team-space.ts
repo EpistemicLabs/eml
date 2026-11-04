@@ -56,12 +56,13 @@ const asObject = (body: unknown): Record<string, unknown> =>
 /** GET /team: the shared brain's state, read-only text, member and member set (a private brain: shared false). */
 export const teamSnapshot = (brain: TeamBrain): Promise<TeamAnswer> => ask(brain, 'GET', '/team')
 
-/** POST /team/invites: an invite link, returned once. */
-export const createInvite = (brain: TeamBrain): Promise<TeamAnswer> => ask(brain, 'POST', '/team/invites')
+/** POST /team/invites {role?}: an invite link for a member or an owner (decision invite-role-set-at-invite), returned once. */
+export const createInvite = (brain: TeamBrain, role: unknown): Promise<TeamAnswer> =>
+  ask(brain, 'POST', '/team/invites', role === undefined ? {} : { role })
 
-/** POST /team/invites/:id/accept {role}: the owner confirmed the join waiting on the invite. */
-export const confirmInvite = (brain: TeamBrain, inviteId: string, role: unknown): Promise<TeamAnswer> =>
-  ask(brain, 'POST', `/team/invites/${encodeURIComponent(inviteId)}/accept`, role === undefined ? {} : { role })
+/** POST /team/invites/:id/accept: the owner confirmed the join waiting on the invite; the role is the invite's. */
+export const confirmInvite = (brain: TeamBrain, inviteId: string): Promise<TeamAnswer> =>
+  ask(brain, 'POST', `/team/invites/${encodeURIComponent(inviteId)}/accept`)
 
 /** POST /team/invites/:id/cancel: the invite is closed; also how an owner declines a join. */
 export const cancelInvite = (brain: TeamBrain, inviteId: string): Promise<TeamAnswer> =>

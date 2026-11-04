@@ -37,6 +37,7 @@ import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
+import TeamBanner from './TeamBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
@@ -340,8 +341,10 @@ function AppContentInner() {
         )}
       </div>
 
-      {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}
+      {/* The banners, full width under the header, in this order: the update (available → installing →
+          outcome), the agent upgrade, a shared brain that is not live, brain hygiene. */}
       <UpdateBanner />
+      <TeamBanner />
       <BrainHygieneBanner />
 
       <div className="relative flex min-h-0 flex-1">

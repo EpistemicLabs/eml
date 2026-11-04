@@ -8,6 +8,7 @@
 // them apart — the terminal view shows (and renames) the session, the note
 // view shows (and renames) the note itself, never the other way round.
 import { useEffect, useRef, useState } from 'react';
+import { useWritable } from '@/stores/useTeamStore';
 
 import { usePaletteOps } from '@/contexts/PaletteOpsContext';
 import { useNote, useRenameNote } from '@/lib/notes';
@@ -57,7 +58,9 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   const renameNote = useRenameNote();
   // The pane's own title belongs to its session (terminal) or to a pure brain
   // pane; a session pane in brain view stays "Brain" and is not renamed.
-  const canRename = isNoteView ? Boolean(note) : !(pane?.paneView === 'brain' && pane.sessionId);
+  // A note's title lives in the brain; a shared brain that is not live takes no write (useTeamStore).
+  const brain = useWritable();
+  const canRename = isNoteView ? Boolean(note) && brain.writable : !(pane?.paneView === 'brain' && pane.sessionId);
   const sessionId = selectedSession?.id ?? pane?.sessionId ?? null;
   // Promote a pending local override to the host at most once per
   // (sessionId, name) pair, so the effect can't loop on refreshProjects.

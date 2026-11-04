@@ -241,14 +241,14 @@ describe('the team routes', () => {
     brainAnswers.set('POST /team/invites/inv/accept', { status: 200, body: { member: { id: 'm', role: 'owner' } } })
     brainAnswers.set('POST /team/invites/inv/cancel', { status: 404, body: { error: 'No such invite.', code: 'NO_SUCH_INVITE' } })
     expect(await mods.team.teamSnapshot(space)).toEqual({ status: 200, body: { shared: true, state: { kind: 'live' }, read_only: null, invites: [] } })
-    expect(await mods.team.createInvite(space)).toEqual({ status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } })
-    expect(await mods.team.confirmInvite(space, 'inv', 'owner')).toEqual({ status: 200, body: { member: { id: 'm', role: 'owner' } } })
-    expect(await mods.team.confirmInvite(space, 'inv', undefined)).toEqual({ status: 200, body: { member: { id: 'm', role: 'owner' } } })
+    expect(await mods.team.createInvite(space, 'owner')).toEqual({ status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } })
+    expect(await mods.team.createInvite(space, undefined)).toEqual({ status: 201, body: { invite_id: 'inv', link: 'https://relay.test/i/1/x/inv#secret', expires_at: 'later' } })
+    expect(await mods.team.confirmInvite(space, 'inv')).toEqual({ status: 200, body: { member: { id: 'm', role: 'owner' } } })
     expect(await mods.team.cancelInvite(space, 'inv')).toEqual({ status: 404, body: { error: 'No such invite.', code: 'NO_SUCH_INVITE' } })
     expect(seen.map((c) => [c.method, c.url, c.auth, c.body])).toEqual([
       ['GET', '/team', 'Bearer tok-space', {}],
+      ['POST', '/team/invites', 'Bearer tok-space', { role: 'owner' }],
       ['POST', '/team/invites', 'Bearer tok-space', {}],
-      ['POST', '/team/invites/inv/accept', 'Bearer tok-space', { role: 'owner' }],
       ['POST', '/team/invites/inv/accept', 'Bearer tok-space', {}],
       ['POST', '/team/invites/inv/cancel', 'Bearer tok-space', {}],
     ])

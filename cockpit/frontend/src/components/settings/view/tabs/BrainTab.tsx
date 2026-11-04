@@ -12,6 +12,9 @@ import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
+import { relayHost } from '@/lib/team';
+import { useTeams } from '@/stores/useTeamStore';
+import TeamSections from './TeamSections';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
 
@@ -43,6 +46,18 @@ export default function BrainTab() {
   const { info: about } = useAboutInfo();
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
+  // v0.21: a shared space's team (useTeamStore) — the row says where it lives, the sections below show it.
+  const teams = useTeams();
+  const activeTeam = activeSpace?.shared ? teams[activeSpace.id] : undefined;
+  const spaceDescription = (space: SpaceInfo): string => {
+    if (space.main) return 'The brain this cockpit was set up with';
+    if (space.shared) {
+      const team = teams[space.id];
+      const host = team?.shared ? relayHost(team.relay) : null;
+      return host ? `A shared brain on ${host}` : 'A shared brain';
+    }
+    return 'A further local brain with the same agent and profile';
+  };
   const [spaceName, setSpaceName] = useState('');
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [spaceError, setSpaceError] = useState<string | null>(null);
@@ -111,7 +126,7 @@ export default function BrainTab() {
             <SettingsRow
               key={space.id}
               label={space.name}
-              description={(renaming?.id === space.id && renameError) || (space.main ? 'The brain this cockpit was set up with' : 'A further local brain with the same agent and profile')}
+              description={(renaming?.id === space.id && renameError) || spaceDescription(space)}
             >
               <div className="flex items-center gap-2">
                 {renaming?.id === space.id ? (
@@ -161,6 +176,8 @@ export default function BrainTab() {
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
+
+      {activeSpace && activeTeam?.shared && <TeamSections spaceId={activeSpace.id} team={activeTeam} />}
 
       <SettingsSection title="Source">
         <SettingsCard divided>
