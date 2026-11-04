@@ -421,8 +421,17 @@ export class Sync {
     const ws = new WebSocket(this.url)
     this.ws = ws
     ws.onmessage = (ev) => { if (this.ws === ws) this.receive(ev.data) }
-    ws.onclose = (ev) => { if (this.ws === ws) this.disconnected(ev.code) }
-    ws.onerror = () => { /* a close follows */ }
+    // The socket is gone on whichever of close and error comes first, once:
+    // a refused connection fires error without a close (Node's WebSocket),
+    // a dropped one a close — either way the retry is scheduled from here.
+    let gone = false
+    const lost = (code: number) => {
+      if (gone) return
+      gone = true
+      if (this.ws === ws) this.disconnected(code)
+    }
+    ws.onclose = (ev) => lost(ev.code)
+    ws.onerror = () => lost(1006)
   }
 
   private receive(data: unknown): void {

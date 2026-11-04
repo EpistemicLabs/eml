@@ -58,9 +58,9 @@ export class FakeRelay {
     wss.on('connection', (ws) => this.session(ws))
   }
 
-  /** A relay holding `brain` with `genesis` — or, without one, a relay that does not have the brain yet (create). */
-  static async start(brain: string, genesis?: Record<string, unknown>): Promise<FakeRelay> {
-    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+  /** A relay holding `brain` with `genesis` — or, without one, a relay that does not have the brain yet (create). `port`: a fixed one, for a relay that comes back where it was. */
+  static async start(brain: string, genesis?: Record<string, unknown>, port = 0): Promise<FakeRelay> {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port })
     await new Promise<void>(resolve => wss.once('listening', () => resolve()))
     return new FakeRelay(wss, brain, genesis)
   }
