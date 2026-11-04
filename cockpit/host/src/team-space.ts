@@ -146,7 +146,7 @@ export function brainOfInviteLink(link: string): string | null {
  */
 export async function joinTeamSpace(ctx: TeamSpaceContext, name: string, link: string, existing?: BrainSpace): Promise<TeamSpaceMade | TeamSpaceRefused> {
   const brainId = brainOfInviteLink(link)
-  if (!brainId) return { refused: { status: 400, body: { error: 'This is not an invite link.', code: 'INVALID_INVITE' } } }
+  if (!brainId) return { refused: { status: 400, body: { error: 'Invalid link.', code: 'INVALID_INVITE' } } }
   if (existing) {
     const answer = await ask(existing, 'POST', '/team/join', { link, handle: ctx.handle }, LIVE_TIMEOUT_MS)
     if (!joinTaken(answer)) return { refused: answer }

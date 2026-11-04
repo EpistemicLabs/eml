@@ -209,7 +209,7 @@ describe('joinTeamSpace', () => {
     expect(seen[1].auth).toBe(seen[0].auth)
 
     seen.length = 0
-    expect(await mods.team.joinTeamSpace(ctx(), 'Bad', 'https://relay.test/i/1/nope')).toEqual({ refused: { status: 400, body: { error: 'This is not an invite link.', code: 'INVALID_INVITE' } } })
+    expect(await mods.team.joinTeamSpace(ctx(), 'Bad', 'https://relay.test/i/1/nope')).toEqual({ refused: { status: 400, body: { error: 'Invalid link.', code: 'INVALID_INVITE' } } })
     expect(seen).toEqual([])
     expect(controlRows(BRAIN_F).brain).toBeUndefined()
     expect((await spaces()).map((s) => s.name)).toEqual(['Team', 'Pending', 'Joined'])
