@@ -230,15 +230,25 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 className="w-full rounded-md border border-border bg-background px-2 py-1 text-body normal-case tracking-normal text-foreground outline-none focus:border-primary"
               />
               {creating === 'join' && (
-                <input
-                  value={link}
-                  onChange={(e) => setLink(e.target.value)}
-                  placeholder="https://…/i/1/…"
-                  aria-label="Invite link"
-                  spellCheck={false}
-                  disabled={busy}
-                  className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-caption normal-case tracking-normal text-foreground outline-none focus:border-primary"
-                />
+                <>
+                  <input
+                    value={link}
+                    onChange={(e) => setLink(e.target.value)}
+                    placeholder="https://…/i/1/…"
+                    aria-label="Invite link"
+                    spellCheck={false}
+                    disabled={busy}
+                    className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-caption normal-case tracking-normal text-foreground outline-none focus:border-primary"
+                  />
+                  {/* Two fields: a form submits on Enter only with a submit button (HTML implicit submission), so the join has one. */}
+                  <button
+                    type="submit"
+                    disabled={busy || !draft.trim() || !link.trim()}
+                    className="mt-1 w-full rounded-md bg-primary px-2 py-1 text-caption font-medium normal-case tracking-normal text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    Join
+                  </button>
+                </>
               )}
               {error && <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-destructive">{error}</p>}
               <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-muted-foreground">

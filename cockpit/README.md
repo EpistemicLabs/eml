@@ -191,6 +191,20 @@ text, members, invites), `POST …/invites {role?}` (member or owner, chosen at 
 asks the server which spaces are shared and discards an empty brain no config token holds
 (`team-space.ts`).
 
+**Moving a project into a shared space.** On a project's page in the Brain tab of a local space,
+"Move to shared space…" opens the one dialog of the move: the shared space to move into, and the
+plan the brain server makes for it — the project with its sub-projects, how many engrams, journal
+entries and links move, which links to things that stay behind are dropped (they stay in the
+backup), the size against the 16 MiB one op carries. A plan the server refuses says why in the
+server's words (entries still written under an agent's name, a space not connected, a set too
+large); otherwise one confirm runs it. The host backs up the space's brain first, the server writes
+one import op into the shared brain and removes the set here in the same transaction, and the
+project's local state (name, pin, folder, hidden flag) follows it into the other space's sidebar.
+The copy left behind is archived and points at the shared space, in the Brain tab and in `eml_show`.
+A move the relay did not confirm in time removes nothing; once the space is live again, Move picks
+up where it stopped. Host side: `project-move.ts` (`GET /api/projects/:id/move-plan?target=`,
+`POST /api/projects/:id/move {target, plan_hash}`).
+
 ## Projects and sessions
 
 The sidebar's project list is the brain's project list: every brain project appears

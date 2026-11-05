@@ -119,7 +119,8 @@ export function errorText(body: unknown, fallback: string): string {
   return fallback;
 }
 
-async function call<T = Record<string, unknown>>(path: string, init?: RequestInit): Promise<HostAnswer<T>> {
+/** One host call as the UI reads its answer: the status and the parsed body (lib/move.ts shares it). */
+export async function hostCall<T = Record<string, unknown>>(path: string, init?: RequestInit): Promise<HostAnswer<T>> {
   const res = await fetch(path, {
     ...init,
     headers: { Accept: 'application/json', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers ?? {}) },
@@ -132,15 +133,15 @@ async function call<T = Record<string, unknown>>(path: string, init?: RequestIni
 
 const spacePath = (spaceId: string, rest = '') => `/api/spaces/${encodeURIComponent(spaceId)}${rest}`;
 
-export const fetchTeam = (spaceId: string): Promise<HostAnswer<Team>> => call<Team>(spacePath(spaceId, '/team'), { cache: 'no-store' });
+export const fetchTeam = (spaceId: string): Promise<HostAnswer<Team>> => hostCall<Team>(spacePath(spaceId, '/team'), { cache: 'no-store' });
 
 export const createInvite = (spaceId: string, role: Role) =>
-  call<{ invite_id?: string; link?: string; expires_at?: string }>(spacePath(spaceId, '/invites'), { method: 'POST', body: JSON.stringify({ role }) });
+  hostCall<{ invite_id?: string; link?: string; expires_at?: string }>(spacePath(spaceId, '/invites'), { method: 'POST', body: JSON.stringify({ role }) });
 
 export const confirmJoin = (spaceId: string, inviteId: string) =>
-  call(spacePath(spaceId, `/invites/${encodeURIComponent(inviteId)}/accept`), { method: 'POST', body: '{}' });
+  hostCall(spacePath(spaceId, `/invites/${encodeURIComponent(inviteId)}/accept`), { method: 'POST', body: '{}' });
 
 export const cancelInvite = (spaceId: string, inviteId: string) =>
-  call(spacePath(spaceId, `/invites/${encodeURIComponent(inviteId)}/cancel`), { method: 'POST', body: '{}' });
+  hostCall(spacePath(spaceId, `/invites/${encodeURIComponent(inviteId)}/cancel`), { method: 'POST', body: '{}' });
 
-export const removeSpace = (spaceId: string) => call(spacePath(spaceId), { method: 'DELETE' });
+export const removeSpace = (spaceId: string) => hostCall(spacePath(spaceId), { method: 'DELETE' });
