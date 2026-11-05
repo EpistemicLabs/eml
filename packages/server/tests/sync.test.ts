@@ -683,6 +683,7 @@ describe('checkpoints', () => {
 
 describe('inviting into a team brain', () => {
   const NOW = '2026-10-28T09:00:00.000Z'  // the fake relay's clock starts here; a notice may expire at most 7 days after the relay's now
+  const clock = () => NOW  // every Sync here checks invites against the same fixed now, not the calendar
   const persisted: Array<string[]> = []
   const persist = (file: TeamFile) => { persisted.push((file.invites ?? []).map(i => i.invite_id)) }
   beforeEach(() => { persisted.length = 0 })
@@ -695,7 +696,7 @@ describe('inviting into a team brain', () => {
     relay = await FakeRelay.start(BRAIN, team.genesis())
     relay.putKey(team.owner.device.sign.publicKey, team.wrapped(0))
     const file: TeamFile = { v: 1, brain: BRAIN, relay: relay.origin, device: team.owner.device, identity: team.owner.identity }
-    sync = new Sync(team.db, file, { deadlineMs: 3000, backoffMs: [20, 100], persist })
+    sync = new Sync(team.db, file, { deadlineMs: 3000, backoffMs: [20, 100], persist, clock })
     sync.start()
     await until(() => sync!.state.kind === 'live')
     return { team, relay, sync, eml: EML.fromConnection(team.db, 'test'), file }
@@ -704,7 +705,7 @@ describe('inviting into a team brain', () => {
   function joiner(link: string, handle = 'lasse') {
     const db = initDatabase(':memory:', undefined, BRAIN, { log: false })
     const file = joinTeamBrain({ brain: BRAIN, link, handle, now: NOW })
-    const s = new Sync(db, file, { deadlineMs: 3000, backoffMs: [20, 100] })
+    const s = new Sync(db, file, { deadlineMs: 3000, backoffMs: [20, 100], clock })
     others.push(s)
     s.start()
     return { db, eml: EML.fromConnection(db, 'test'), file, sync: s }
@@ -847,7 +848,7 @@ describe('inviting into a team brain', () => {
     sync!.close()
     const written = readTeamFileRoundTrip(file)
     expect(written.invites).toEqual([{ invite_id: invite.invite_id, secret: file.invites![0].secret, expires_at: invite.expires_at, role: 'member' }])
-    sync = new Sync(team.db, written, { deadlineMs: 3000, backoffMs: [20, 100], persist })
+    sync = new Sync(team.db, written, { deadlineMs: 3000, backoffMs: [20, 100], persist, clock })
     sync.start()
     await until(() => pendingOf(sync!, invite.invite_id) !== null)
     expect(pendingOf(sync!, invite.invite_id)).toMatchObject({ handle: 'lasse' })
