@@ -29,7 +29,9 @@ export function registerRelateTool(server: McpServer, http: EmlApi): void {
         'materializes a related_to edge). A replacement is supersedes on the new engram (on create, ' +
         'or eml_update(new_id, supersedes=[old_id]) when both exist — eml_track_task for a task); a sub-task is parent_id on ' +
         'eml_create_task / eml_track_task. Verbs: supports / contradicts / derived_from / refines / ' +
-        'related_to / blocks.',
+        'related_to / blocks. One end may be in your agent brain and the other in this space (a learning refining ' +
+        'the task it came from): the relation is kept in your agent brain as a reference to the space. Both ends in ' +
+        'two different spaces is not possible.',
       inputSchema: z.object({
         source_id: z.string().describe('The engram the edge points FROM (full id).'),
         target_id: z.string().describe('The engram the edge points TO (full id). Must differ from source_id.'),

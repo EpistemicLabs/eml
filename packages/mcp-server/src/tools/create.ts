@@ -148,13 +148,13 @@ export function registerRuleTool(server: McpServer, http: EmlApi): void {
       'eml_decide.\n\n' +
       'Keep it short: content says only what to do (≤ 200 chars); the reason goes in why, a playbook or examples ' +
       'in detail.\n\n' +
-      'applies = always → binding within its scope; global, agent and user rules are delivered at session start ' +
-      '(boot), project rules with eml_show of the project. situational → binding when its trigger occurs; listed ' +
-      'as title + trigger, body via eml_get.\n\n' +
+      'applies = always → binding within its scope; your rules (agent.<id>) come from your agent brain at session ' +
+      'start (boot), project rules with eml_show of the project. situational → binding when its trigger occurs; ' +
+      'listed as title + trigger, body via eml_get.\n\n' +
       'Refining a rule → eml_update; replacing it → eml_rule(supersedes).',
     inputSchema: z.object({
       content: content('Only what to do, at most 200 characters.'),
-      scope: scope('agent.<id> · user.<id> · project.<id> · global.'),
+      scope: scope('agent.<id> (how you work — your agent brain, also for rules the user gives you about working with them) · project.<id> (work in this space). A rule always has an owner; user.<handle> holds a profile only, global is refused.'),
       title: title('Short name of the trigger or topic.'),
       applies: z.enum(['always', 'situational']).describe('always · situational.'),
       trigger: z.string().max(80).optional().describe('Required when situational: the situation, at most 80 characters; not repeated in content.'),
@@ -253,13 +253,13 @@ export function registerProfileTool(server: McpServer, http: EmlApi): void {
     description:
       'Records a facet of who someone is: an agent, a user, or an entity (person, organization). Identity, ' +
       'preferences, background, how they work — short.\n\n' +
-      'Every agent and every user has one core profile, in its own scope: the identity the boot loads every ' +
-      'session (the agent\'s and each user\'s). Other profiles are facets, loaded on demand.\n\n' +
+      'Every agent and every person has one core profile, in its own scope in the agent brain: the identity the ' +
+      'boot loads every session (the agent\'s and the person\'s). Other profiles are facets, loaded on demand.\n\n' +
       'NOT a profile: how-to, setup or access info → eml_note / eml_reference · a way of working to follow → ' +
       'eml_rule.',
     inputSchema: z.object({
       content: content('At most 400 characters.'),
-      scope: scope('agent.<id> · user.<id> · entity.<id> only — a profile is always about someone.'),
+      scope: scope('agent.<id> · user.<handle> (your agent brain) · entity.<id> (this space) only — a profile is always about someone.'),
       title: title(),
       core: z.boolean().optional().describe('true = this scope\'s core profile (agent.<id> or user.<id>). If the scope already has one, it is replaced (superseded); other scopes are untouched.'),
       detail: z.string().optional().describe('Additions beyond 400 characters.'),

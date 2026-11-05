@@ -420,7 +420,7 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
     })
 
     it('eml_boot returns markdown', async () => {
-      const text = textOf(await call('eml_boot', { agent: 'mcp' }))
+      const text = textOf(await call('eml_boot', {}))
       expect(text).toContain('"agent"')
       expect(text).toContain('"markdown"')
     })

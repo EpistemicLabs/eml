@@ -13,7 +13,7 @@ export function registerLearningTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_learning', {
     title: 'Record Learning',
     description:
-      'Records a lesson about how you should work, with this user or in general, backed by what happened. One ' +
+      'Records a lesson about how you work — in general or with this person — backed by what happened. One ' +
       'lesson per topic; each new incident is added as evidence to the existing learning. Not loaded at boot and ' +
       'never binding: it becomes a rule only when it is ripe and the user agrees.\n\n' +
       'When: the user corrects you or confirms a non-obvious approach · the user turns down a proposal or ' +
