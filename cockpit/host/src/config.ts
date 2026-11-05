@@ -21,13 +21,13 @@ export interface CockpitConfig {
   onboarding?: 'pending' | 'done'
   /** Display name of the main space (Settings › Brain); absent = "Main". */
   mainName?: string
-  /** Colour of the main space (Settings › Brain); absent = coral. */
+  /** Colour of the main space (Settings › Brain); absent = grey. */
   mainColor?: SpaceColor
   /**
    * Further local brain spaces (brain-space.ts): token + display name each;
    * which brain a token belongs to comes from control.db at boot. `agent` binds
-   * the space to its own agent (agent-config.ts), `color` is the one it shows in
-   * this cockpit (a space from before colours gets one at boot). Absent = main only.
+   * the space to its own agent (agent-config.ts), `color` is the one the user chose
+   * for this cockpit, absent = grey. Absent = main only.
    */
   spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */

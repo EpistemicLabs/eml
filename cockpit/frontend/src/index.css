@@ -164,14 +164,14 @@ html.dark {
 }
 /* A space in the header: a soft surface in its colour, stronger while it is the open one. */
 .space-band {
-  background: color-mix(in srgb, var(--space-tone, var(--color-primary)) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--color-primary)) 12%, transparent);
+  background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 12%, transparent);
 }
 .space-band[data-active] {
-  background: color-mix(in srgb, var(--space-tone, var(--color-primary)) 13%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--color-primary)) 38%, transparent);
+  background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 38%, transparent);
 }
-.space-tab-active { background: color-mix(in srgb, var(--space-tone, var(--color-primary)) 26%, transparent); }
+.space-tab-active { background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 26%, transparent); }
 body {
   margin: 0;
   background: var(--color-background);

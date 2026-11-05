@@ -35,27 +35,20 @@ describe('space colours', () => {
     turnHookConfig: mods.isolation.turnHookConfig,
   })
 
-  it('takes the first free colour, and the least used once all are taken', () => {
-    const { SPACE_COLORS, nextSpaceColor } = mods.color
-    expect(nextSpaceColor(['coral'])).toBe('amber')
-    expect(nextSpaceColor(['coral', 'amber', null])).toBe('green')
-    expect(nextSpaceColor([...SPACE_COLORS, 'coral'])).toBe('amber')
-  })
-
   it('accepts only the palette\'s names', () => {
     expect(mods.color.isSpaceColor('violet')).toBe(true)
     expect(mods.color.isSpaceColor('#ff0000')).toBe(false)
     expect(mods.color.isSpaceColor(undefined)).toBe(false)
   })
 
-  it('gives main coral and a space without a colour the next free, and keeps a stored one', () => {
+  it('starts every space grey and keeps a stored colour', () => {
     const spaces = new mods.space.BrainSpaces(open('a0000000-0000-4000-8000-000000000001', true, 'eml_a_secret'))
     const stored = open('a0000000-0000-4000-8000-000000000002', false, 'eml_b_secret', 'violet')
     const fresh = open('a0000000-0000-4000-8000-000000000003', false, 'eml_c_secret')
     spaces.add(stored)
     spaces.add(fresh)
-    expect(spaces.list().map((space) => space.color)).toEqual(['coral', 'violet', 'amber'])
-    expect(mods.space.spaceView(fresh).color).toBe('amber')
+    expect(spaces.list().map((space) => space.color)).toEqual(['slate', 'violet', 'slate'])
+    expect(mods.space.spaceView(fresh).color).toBe('slate')
   })
 
   it('stores a colour per space and drops one that is not in the palette', async () => {

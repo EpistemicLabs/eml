@@ -13,7 +13,7 @@ import type { SidebarController } from '../../useSidebarController';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
 
-const FIELD = 'w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-[var(--space-tone,var(--color-primary))] md:text-xs';
+const FIELD = 'w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-[var(--space-tone,var(--space-slate))] md:text-xs';
 const ACTION = 'rounded-md px-2 py-1.5 text-xs font-medium text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40';
 
 /** A select with what it picks shown as an icon, in the panel's own style. */

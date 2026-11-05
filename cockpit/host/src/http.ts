@@ -468,7 +468,6 @@ async function createSpace(deps: HostDeps, name: string): Promise<{ space: Brain
     id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
   })
   deps.spaces.add(space)
-  if (space.color) await deps.spaces.setColor(space, space.color)
   return { space }
 }
 

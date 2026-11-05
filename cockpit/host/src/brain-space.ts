@@ -6,7 +6,7 @@ import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
 import { agentMcpConfigPath, writeAgentFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { openSpaceAgent, type SpaceAgent } from './agent-config.js'
 import type { SessionSpace } from './domain/agent-provider.js'
-import { nextSpaceColor, type SpaceColor } from './domain/space-color.js'
+import { DEFAULT_SPACE_COLOR, type SpaceColor } from './domain/space-color.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
@@ -31,8 +31,8 @@ export interface BrainSpace {
   brainName: string
   /** The space the home was provisioned with. */
   main: boolean
-  /** What tells it apart in this cockpit; set when it joins BrainSpaces. */
-  color: SpaceColor | null
+  /** What tells it apart in this cockpit. */
+  color: SpaceColor
   /** The space's own agent (agent-config.ts); null = the shared config. */
   agent: SpaceAgent | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
@@ -62,7 +62,7 @@ export interface SpaceView {
   main: boolean
   /** What the space's sessions are marked with (spaceLabel). */
   label: string
-  color: SpaceColor | null
+  color: SpaceColor
 }
 
 /**
@@ -82,7 +82,7 @@ export interface OpenSpaceOptions {
   name: string
   brainName: string
   main: boolean
-  /** Its stored colour; without one BrainSpaces gives it the next free. */
+  /** Its stored colour, if the user chose one. */
   color?: SpaceColor
   url: string
   token: string
@@ -120,7 +120,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     name: opts.name,
     brainName: opts.brainName,
     main: opts.main,
-    color: opts.color ?? null,
+    color: opts.color ?? DEFAULT_SPACE_COLOR,
     agent,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
@@ -137,12 +137,10 @@ export class BrainSpaces {
   private readonly addListeners = new Set<(space: BrainSpace) => void>()
 
   constructor(readonly main: BrainSpace) {
-    main.color ??= 'coral'
     this.byId.set(main.id, main)
   }
 
   add(space: BrainSpace): void {
-    space.color ??= nextSpaceColor(this.list().map((other) => other.color))
     this.byId.set(space.id, space)
     for (const listener of this.addListeners) listener(space)
   }
