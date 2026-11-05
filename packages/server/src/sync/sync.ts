@@ -84,6 +84,8 @@ export interface SyncOptions {
   probeMs?: number
   /** how long a probe may go unanswered before the connection counts as dead (ms); default 10 s */
   probeTimeoutMs?: number
+  /** the clock the protocol's times are checked against (an invite's expiry), ISO; default the wall clock. A test with a fixed now passes it here, so its invites do not expire with the calendar. */
+  clock?: () => string
 }
 
 /** A submitted op's entry as the replica took it: the command's result and its seq. */
@@ -175,6 +177,7 @@ export class Sync {
   private readonly checkpointEvery: number
   private readonly backoff: [number, number]
   private readonly persist: (file: TeamFile) => void
+  private readonly clock: () => string
   private ws: WebSocket | null = null
   private loggedIn = false
   private caughtUp = false
@@ -234,6 +237,7 @@ export class Sync {
     this.sinceCheckpoint = Math.max(0, this.replica.head().seq - this.replica.lastCheckpointSeq())
     this.backoff = opts.backoffMs ?? [1_000, 60_000]
     this.persist = opts.persist ?? (() => undefined)
+    this.clock = opts.clock ?? (() => new Date().toISOString())
     this.delay = this.backoff[0]
     this.probeMs = opts.probeMs ?? 30_000
     this.probeTimeoutMs = opts.probeTimeoutMs ?? 10_000
@@ -323,7 +327,7 @@ export class Sync {
 
   /** The open invites this device made, expired ones dropped, each with the join waiting on it. */
   private invites(): InviteView[] {
-    this.sweepInvites(new Date().toISOString())
+    this.sweepInvites(this.clock())
     return (this.team.invites ?? []).map(i => {
       const join = this.pending.get(i.invite_id)
       return { invite_id: i.invite_id, expires_at: i.expires_at, role: i.role, pending: join ? { member: join.member, fingerprint: fingerprint(join.member), handle: join.handle, received_at: join.received_at } : null }
@@ -567,7 +571,7 @@ export class Sync {
     const inviteId = (value as { invite_id?: unknown } | null)?.invite_id
     const stored = typeof inviteId === 'string' ? this.team.invites?.find(i => i.invite_id === inviteId) : undefined
     if (!stored) return this.log('a join for an invite this device does not hold')
-    const now = new Date().toISOString()
+    const now = this.clock()
     let opened
     try {
       opened = openJoin(this.invite(stored), value, now)
