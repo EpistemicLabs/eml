@@ -29,8 +29,8 @@ export interface SessionRowProps {
   onRequestDelete: (projectId: string, session: ProjectSession) => void;
   /** Given only where the row offers the pin chip (the conversations view). */
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
-  /** Given in the All view: whose session it is, marked with the brain icon in its space's colour. */
-  agent?: { name: string; tone?: string };
+  /** Given in the All view: whose session it is, marked with the agent's letter or else the brain icon in its space's colour. */
+  agent?: { name: string; letter?: string; tone?: string };
   /** How the session stands for the user: a second line, with the word and the reason. */
   mark?: SessionMark | null;
   /** Given in the overview, whose Now card lists what runs: true puts a pulsing dot in the marks' column, false shows none. */
@@ -138,9 +138,18 @@ export function SidebarSessionRow({
             </span>
           )}
           {agent && (
-            <span title={agent.name} className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-muted-foreground">
-              <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: agent.tone }} />
-            </span>
+            agent.letter ? (
+              <span
+                title={agent.name}
+                className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border text-[9px] font-semibold text-muted-foreground"
+              >
+                {agent.letter}
+              </span>
+            ) : (
+              <span title={agent.name} className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-muted-foreground">
+                <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: agent.tone }} />
+              </span>
+            )
           )}
           {!mark && <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />}
           <div className="min-w-0 flex-1">

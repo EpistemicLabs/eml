@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MessageSquare, Search } from 'lucide-react';
 
-import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { joinReview, startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
@@ -9,7 +8,7 @@ import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import {
-  agentLabel, allSessionState, filterByName, groupAllSessions, isUnseen, newestFirst, sessionMark, type AllSections, type AllSession,
+  agentLabel, agentLetter, allSessionState, filterByName, groupAllSessions, isUnseen, newestFirst, sessionMark, type AllSections, type AllSession,
 } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 import { sessionDisplayName } from '../../utils';
@@ -61,7 +60,7 @@ function AllSessionRow({ session, spaces, controller, sessions, plain, listedRun
           isPinned: pinned,
           onToggle: (target) => void controller.toggleSessionPin(target),
         }}
-        agent={{ name: agentLabel(space), tone: spaceTone(space) }}
+        agent={{ name: agentLabel(space), letter: agentLetter(space) }}
         mark={mark}
         running={Boolean(listedRunning)}
         context={parent ? `from ${sessionDisplayName(parent)}` : undefined}

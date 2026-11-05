@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
-import { allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
+import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
 
 const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, label: 'Alpha' };
 const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, label: 'Beta' };
@@ -79,6 +79,16 @@ describe('the one model for every session', () => {
     expect(isUnseen(session('a', { attention: attention('review') }))).toBe(true);
     expect(isUnseen(session('a', { attention: attention('review'), readAt: seen }))).toBe(false);
     expect(isUnseen(session('a'))).toBe(false);
+  });
+});
+
+describe('agentLetter', () => {
+  it('is the first letter of the agent, upper case', () => {
+    expect(agentLetter({ id: 'a', name: 'Main', main: true, label: 'motti' })).toBe('M');
+  });
+
+  it('falls back to the space name', () => {
+    expect(agentLetter({ id: 'b', name: 'Life', main: false })).toBe('L');
   });
 });
 
