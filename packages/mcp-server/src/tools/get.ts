@@ -15,7 +15,9 @@ export function registerGetTool(server: McpServer, http: EmlApi): void {
         'brain the member), `agent` the agent that wrote it for them (null when they wrote it themself). `session_id` and `model` say which ' +
         'session and model wrote it. Its entries come with it, oldest ' +
         'first: a task\'s journal (note = written by an agent, change = written by the server) and the decisions ' +
-        'and notes bound to it, a learning\'s evidence and ripeness, review confirmations.',
+        'and notes bound to it, a learning\'s evidence and ripeness, review confirmations. A relation whose other end ' +
+        'lives in another brain names that brain (source_brain / target_brain); with with_relations, a space engram ' +
+        'also lists under agent_links what your agent brain links to it — your learnings and rules about this work.',
       inputSchema: z.object({
         id: z.string().describe('Engram UUID, from a recall / list / show result.'),
         with_relations: z.boolean().optional().describe(

@@ -78,7 +78,7 @@ describe('task lifecycle', () => {
 
   it('eml_learning takes no task_id', () => {
     const task = writes(eml).store(validTask())
-    expect(() => writes(eml).learn({ scope: 'user.ada', title: 't', content: 'Do T.', source: 'observed', happened: 'h', task_id: task.id } as any))
+    expect(() => writes(eml).learn({ scope: 'agent.juno', title: 't', content: 'Do T.', source: 'observed', happened: 'h', task_id: task.id } as any))
       .toThrow(/task_id/)
   })
 })

@@ -53,7 +53,9 @@ with any MCP client.
    engram's content completely, so keep its first line. A profile's content
    holds at most 400 characters: keep it to the core facts; more goes into
    its `detail`. If they said what they want you for, add one line about that
-   role to your own core profile (scope `agent.<agent>`) the same way.
+   role to your own core profile (scope `agent.<agent>`) the same way. Their
+   profile and your own live in your agent brain, so they come with you into
+   every space.
 
 3. **The first project.** Ask what they'd like to start with — the thing they
    named in step 2 is the obvious candidate. Then:
@@ -87,7 +89,9 @@ with any MCP client.
        (something that happened), *reference* (a link to something outside),
        *log* (a session summary).
    - **Scopes** say what an engram is about: this project, a person or
-     organisation (entity), the user, the agent, or global.
+     organisation (entity), the user (their profile), the agent (how you
+     work: your rules and learnings) — those two live in your agent brain —
+     or global (facts of this space that fit no project; never a rule).
 
    *Cockpit:* let them see it for themselves. Ask them to open the **Brain
    tab** — the first tab in the desk bar, with a brain icon and the space's
@@ -124,6 +128,11 @@ with any MCP client.
    - detailed answers by default — explain the reasoning and context; if they
      want it shorter, they just say so;
    - propose before non-trivial changes, and act after their go.
+
+   Every rule is yours (scope `agent.<agent>`), also one the user gives you
+   about working with them; their own scope holds only their profile. They can
+   see all of this any time under Settings › Agents: your persona, your rules
+   and what you know about them.
 
    Ask whether that fits — these rules count only with their yes. Yes → set
    `agreed` on each with their words (`eml_update`). A change → update the

@@ -13,7 +13,7 @@ export function registerLearningTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_learning', {
     title: 'Record Learning',
     description:
-      'Records a lesson about how you should work, with this user or in general, backed by what happened. One ' +
+      'Records a lesson about how you work — in general or with this person — backed by what happened. One ' +
       'lesson per topic; each new incident is added as evidence to the existing learning. Not loaded at boot and ' +
       'never binding: it becomes a rule only when it is ripe and the user agrees.\n\n' +
       'When: the user corrects you or confirms a non-obvious approach · the user turns down a proposal or ' +
@@ -30,7 +30,7 @@ export function registerLearningTool(server: McpServer, http: EmlApi): void {
     inputSchema: z.object({
       id: z.string().optional().describe('An existing learning: adds this incident as evidence instead of creating a new learning.'),
       content: z.string().optional().describe('Required on create: the lesson as an instruction to yourself, at most 200 characters. Can be sharpened on a later call.'),
-      scope: z.string().optional().describe('Required on create: user.<id> (usual) · agent.<id> · project.<id> · global.'),
+      scope: z.string().optional().describe('Required on create: agent.<id> — a learning is yours and lives in your agent brain, also one about working with this person. Link the task or project it came from with eml_relate.'),
       title: z.string().optional().describe('Required on create: the topic.'),
       source: z.enum(['user', 'observed', 'self']).describe('Where this evidence comes from: user (the user said it) · observed (read from the user\'s reaction) · self (you noticed it yourself).'),
       happened: z.string().describe('What concretely happened in this incident.'),

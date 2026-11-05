@@ -47,10 +47,29 @@ export function validRule(overrides: Overrides = {}): Typed<'rule'> {
  * written there any more): stored in `owner`, then re-scoped raw.
  */
 export function legacyGlobalRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, owner = 'agent.assistant'): StoredEngram {
-  const r = writes(eml).store({ ...input, type: 'rule', scope: owner } as EngramInput)
-  ;(eml as any).db.prepare(`UPDATE engrams SET scope = 'global' WHERE id = ?`).run(r.id)
-  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = 'global' WHERE id = ?`).run(r.id)
-  return { ...r, scope: 'global' }
+  return legacyRule(eml, input, 'global', owner)
+}
+
+/**
+ * A rule in a scope no rule is written in any more (global, or a user scope —
+ * decision agent-brain-rules-at-agent-user-is-profile), as a brain written
+ * before v0.21 holds it: stored in `owner`, then re-scoped raw.
+ */
+export function legacyRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, scope: string, owner = 'agent.assistant'): StoredEngram {
+  return rescopeRaw(eml, writes(eml).store({ ...input, type: 'rule', scope: owner } as EngramInput), scope)
+}
+
+/** A learning outside an agent scope (user, project or global), as a brain written before v0.21 holds it. */
+export function legacyLearning(eml: EML, input: { title: string; content: string }, scope: string, owner = 'agent.assistant'): StoredEngram {
+  const r = writes(eml).learn({ ...input, scope: owner, source: 'self', happened: 'once', new_topic: true })
+  if (!r.written) throw new Error('learning not written')
+  return rescopeRaw(eml, r.engram, scope)
+}
+
+function rescopeRaw(eml: EML, r: StoredEngram, scope: string): StoredEngram {
+  ;(eml as any).db.prepare(`UPDATE engrams SET scope = ? WHERE id = ?`).run(scope, r.id)
+  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = ? WHERE id = ?`).run(scope, r.id)
+  return { ...r, scope }
 }
 
 export function validNote(overrides: Overrides = {}): Typed<'note'> {
@@ -198,7 +217,7 @@ export function writeEverything(eml: EML): void {
   writes(eml).update(replacement.id, { supersedes: [decision.id] }, juno)
   writes(eml).update(bound.id, { status: 'invalidated' }, juno)
 
-  const learned = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask before acting.', source: 'user', happened: 'once', quote: 'ask me' }, juno)
+  const learned = writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', source: 'user', happened: 'once', quote: 'ask me' }, juno)
   if (!learned.written) throw new Error('learning not written')
   writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)

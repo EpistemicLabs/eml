@@ -141,7 +141,7 @@ describe('v0.19 REST', () => {
   describe('POST /learning', () => {
     it('create → 201 with ripeness; the same topic → 200 written:false with the match; evidence by id', async () => {
       const first = await post('/learning', {
-        scope: 'user.default', title: 'ask-before-push', content: 'Ask before pushing.',
+        scope: 'agent.default', title: 'ask-before-push', content: 'Ask before pushing.',
         source: 'user', happened: 'pushed without asking', quote: 'frag erst',
       }, MCP)
       expect(first.status).toBe(201)
@@ -149,7 +149,7 @@ describe('v0.19 REST', () => {
       expect(first.body.learning.state).toBe('collecting')
 
       const again = await post('/learning', {
-        scope: 'user.default', title: 'ask-before-pushing', content: 'Ask before pushing code.', source: 'self', happened: 'again',
+        scope: 'agent.default', title: 'ask-before-pushing', content: 'Ask before pushing code.', source: 'self', happened: 'again',
       })
       expect(again.status).toBe(200)
       expect(again.body.written).toBe(false)

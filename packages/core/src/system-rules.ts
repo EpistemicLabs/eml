@@ -127,11 +127,26 @@ export const SYSTEM_RULES: SystemRule[] = [
     category: 'scope-routing',
     text:
       'Engram scope (pick the one the engram is about):\n' +
-      '  - project.<id>: code/work in that project\n' +
-      '  - entity.<id>: external person/org/asset\n' +
-      '  - agent.<id>: an agent\'s own identity or behavior rules\n' +
-      '  - user.<id>: a user\'s preferences or identity\n' +
-      '  - global: cross-project facts or default when no other scope fits',
+      '  - project.<id>: code/work in that project, including its rules\n' +
+      '  - entity.<id>: external person/org/asset, including its profile\n' +
+      '  - agent.<id>: how this agent works — its persona, its rules and its learnings\n' +
+      '  - user.<handle>: who this person is — their profile; never a rule or a learning\n' +
+      '  - global: facts of this space that fit no project; never a rule or a learning',
+    why:
+      'v0.21 (decisions rules-need-a-scope-no-global-rules and agent-brain-rules-at-agent-user-is-profile, 2026-11-04): ' +
+      'a rule always has an owner, an agent or a project, and a learning is always the agent\'s — the server refuses the rest; ' +
+      'project rules and entity profiles stay with the work, so the agent needs the map before it picks a scope.',
+  },
+  {
+    category: 'scope-routing',
+    text:
+      'Identity and work: your persona, rules and learnings (agent.<id>) and the profiles of the people you work with ' +
+      '(user.<handle>) are written to your agent brain and follow you into every space; everything else is work and ' +
+      'stays in this space. A learning about work here links to the task or project it came from (eml_relate).',
+    why:
+      'v0.21 (PR #139, decision cockpit-identity-agent-brain): the cockpit routes each write by scope to the agent brain ' +
+      'or the space; without the line the agent files a learning as a project note or a project rule as an agent rule, ' +
+      'and the 403 refusals it then meets have no map to point at.',
   },
   {
     category: 'scope-routing',

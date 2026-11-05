@@ -7,17 +7,19 @@ import { EmlApiError, type EmlApi } from './http-client'
  * tools keep calling one EML API; this client routes each call by the
  * engram's scope, so an agent needs no idea of the split.
  *
- * Identity is a profile, rule or learning in agent.<bound> or user.<handle>
- * — any handle: the agent's view of the people it works with. It lives in
- * the agent brain. Everything else is work and stays in the space: a
+ * Identity is the agent's persona, rules and learnings in agent.<bound> and
+ * the profiles of the people it works with in user.<handle> — any handle. It
+ * lives in the agent brain. Everything else is work and stays in the space: a
  * project's rules, an entity's profile, and tasks, decisions, notes and logs
- * whatever their scope.
+ * whatever their scope. A rule or learning in a user scope is routed to the
+ * agent brain and refused there by the server (user.<handle> holds a
+ * profile only).
  *
  *   create a profile/rule/learning  agent.<bound> or user.* → agent brain;
  *                                   agent.<other> → refused (another agent's
  *                                   identity); a learning elsewhere → refused
- *                                   (a learning is always the agent's); else
- *                                   the space
+ *                                   here (a learning is the agent's own);
+ *                                   else the space
  *   change by id (update, learning  the brain that holds the id; a scope change
  *   evidence)                       that would cross brains is refused
  *   track a task                    the space (a task never leaves it)
@@ -121,7 +123,7 @@ export class RoutedClient implements EmlApi {
       throw new EmlApiError(403, null, `${scope} is another agent's identity; this session runs as ${this.agentId}. Write it in a session of that agent.`)
     }
     if (type === 'learning') {
-      throw new EmlApiError(403, null, `A learning lives in your agent brain: scope agent.${this.agentId} (how you work) or user.<handle> (working with that person). Link the task or project it came from with eml_relate.`)
+      throw new EmlApiError(403, null, `A learning is yours and lives in your agent brain: scope agent.${this.agentId}, also for a lesson about working with a person (user.<handle> holds their profile). Link the task or project it came from with eml_relate.`)
     }
     return this.space
   }

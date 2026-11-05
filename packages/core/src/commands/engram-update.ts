@@ -7,7 +7,7 @@ import { addDays } from '../env'
 import { REVIEWABLE_TYPES } from '../review-due'
 import { renderLogContent, hasStartHere, UPDATE_PATCH_KEYS, LEARNING_CONTENT_MAX_CHARS, type EngramPatch } from '../engrams'
 import { validateScope } from '../write/scope'
-import { RULE_SCOPE, RULE_SCOPE_MESSAGE } from '../validate'
+import { LEARNING_SCOPE, LEARNING_SCOPE_MESSAGE, RULE_SCOPE, RULE_SCOPE_MESSAGE } from '../validate'
 import { planSupersedes, applySupersedes, successorOf, assertNoLiveSuccessor, activeCoreProfileIn, autoSupersedeCoreProfile } from '../write/supersede'
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects, sameSet } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
@@ -162,8 +162,9 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
   if (type === 'profile' && patch.scope !== undefined && patch.scope !== existing.scope && !/^(agent|user|entity)\./.test(newScope)) {
     throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
   }
-  // A rule written before v0.21 in global stays editable where it is; it cannot move to global.
+  // A rule or learning written before v0.21 outside its owner's scope stays editable where it is; it moves only to the owner.
   if (type === 'rule' && patch.scope !== undefined && patch.scope !== existing.scope && !RULE_SCOPE.test(newScope)) throw new Error(RULE_SCOPE_MESSAGE)
+  if (type === 'learning' && patch.scope !== undefined && patch.scope !== existing.scope && !LEARNING_SCOPE.test(newScope)) throw new Error(LEARNING_SCOPE_MESSAGE)
   if ((type === 'decision' || type === 'note') && fieldPatch.binding === 'task') {
     const linked = boundTaskOf(ctx, id)
     if (!linked) throw new Error(`Invalid engram: binding task needs a task — this ${type} is not linked to one.`)
