@@ -87,27 +87,40 @@ export default function AgentTab() {
         <SettingsCard divided>
           {agents.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
           {agents.map((a) => (
-            <SettingsRow
+            <button
               key={a.id}
-              className={a.id === agent?.id ? 'bg-foreground/5' : undefined}
-              label={
-                <button type="button" aria-pressed={a.id === agent?.id} onClick={() => setPickedId(a.id)} className="max-w-full truncate text-left hover:underline">
-                  {a.name}
-                </button>
-              }
-              description={worksIn(a)}
+              type="button"
+              aria-pressed={a.id === agent?.id}
+              onClick={() => setPickedId(a.id)}
+              className={`block w-full truncate px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-foreground/5 ${a.id === agent?.id ? 'bg-foreground/5' : ''}`}
             >
-              <span className="text-xs text-muted-foreground">{a.runtime ? 'Own runtime' : 'Cockpit default'}</span>
-            </SettingsRow>
+              {a.name}
+            </button>
           ))}
         </SettingsCard>
       </SettingsSection>
 
       {agent && (
-        <div className="border-t border-border pt-6">
-          <h3 className="text-lg font-semibold text-foreground">{name}</h3>
-          <div className="mt-0.5 text-sm text-muted-foreground">{worksIn(agent)}</div>
-        </div>
+        <SettingsSection title="Details">
+          <SettingsCard divided>
+            <SettingsRow label="Name">
+              <span className="text-sm text-foreground">{name}</span>
+            </SettingsRow>
+            <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
+              <span className="block font-mono text-xs text-foreground">{agent.id}</span>
+            </SettingsRow>
+            <SettingsRow label="Runs with" description="The Claude login and tools its sessions use">
+              <span className="text-sm text-foreground">{agent.runtime ? 'Its own' : "The cockpit's"}</span>
+            </SettingsRow>
+            <div className="px-4 py-4">
+              <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
+              {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
+              <ul className="mt-1 space-y-0.5">
+                {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
+              </ul>
+            </div>
+          </SettingsCard>
+        </SettingsSection>
       )}
 
       <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
@@ -164,10 +177,6 @@ export default function AgentTab() {
       </div>
     </div>
   );
-}
-
-function worksIn(agent: AgentInfo): string {
-  return agent.spaces.length ? `Works in ${agent.spaces.map((s) => s.name).join(', ')}` : 'Bound to no space';
 }
 
 function legacyNote(kind: 'rule' | 'profile', max: number): string {

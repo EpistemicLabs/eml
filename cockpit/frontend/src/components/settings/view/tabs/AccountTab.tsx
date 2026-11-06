@@ -152,9 +152,9 @@ function AccountCard({ account }: { account: ReturnType<typeof useAccount> }) {
   );
 }
 
-function signedInDescription(status: Extract<AccountStatus, { signedIn: true }>): string {
+function signedInDescription(status: Extract<AccountStatus, { signedIn: true }>): string | undefined {
   if (status.service === 'unavailable') return 'The account service cannot be reached right now. You stay signed in.';
-  return status.beta ? 'In the team-brain beta.' : 'Not in the team-brain beta yet.';
+  return status.beta ? undefined : 'Not in the team-brain beta yet.';
 }
 
 function Problem({ children }: { children: React.ReactNode }) {
