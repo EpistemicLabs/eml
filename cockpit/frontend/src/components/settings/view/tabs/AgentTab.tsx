@@ -101,7 +101,7 @@ export default function AgentTab() {
       </SettingsSection>
 
       {agent && (
-        <SettingsSection title="Details" description={`To change any of this, ask ${name} in a session.`}>
+        <SettingsSection title="Details">
           <SettingsCard divided>
             <SettingsRow label="Name">
               <span className="text-sm text-foreground">{name}</span>
@@ -120,7 +120,7 @@ export default function AgentTab() {
         </SettingsSection>
       )}
 
-      <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
+      <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in. To change any of this, ask ${name} in a session.`}>
         <SettingsCard>
           <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
             {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
