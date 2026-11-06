@@ -30,6 +30,7 @@ import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from './domain/agent-provider.
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { applySessionHook } from './application/apply-session-hook.js'
 import { isProviderId, writeDefaultProvider } from './provider-settings.js'
+import { readLimits, writeLimits } from './session-limits.js'
 // Settings › Models › Claude sign-in and About still speak Claude Code's own
 // shapes (login modes, its version); everything else about an agent CLI goes
 // through /api/providers.
@@ -83,6 +84,8 @@ export interface HostDeps {
   spaces: BrainSpaces
   bridge: PtyBridge
   turns: TurnTracker
+  /** Why sessions run without a memory ceiling here; null when they get one (session-memory.ts). */
+  memoryUnavailable?: string | null
   /** The agent CLIs sessions run with. */
   providers: ProviderRegistry
   /** Per-boot secret the session hooks send (HOOK_TOKEN_HEADER) — POST /api/hook requires it. */
@@ -638,6 +641,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       if (!image) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Image not found' } }); return true }
       res.writeHead(200, { 'Content-Type': image.mediaType, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=86400' })
       fs.createReadStream(image.file).pipe(res)
+      return true
+    }
+
+    // Settings › Preferences › Sessions: memory ceiling, idle stop, running cap (session-limits.ts).
+    if (resource === 'limits' && !id && method === 'GET') {
+      json(res, 200, { limits: readLimits(), ceilingUnavailable: deps.memoryUnavailable ?? null })
+      return true
+    }
+    if (resource === 'limits' && !id && method === 'PATCH') {
+      const body = (await readJson(req)) as unknown
+      const result = body && typeof body === 'object' && !Array.isArray(body) ? writeLimits(body as Record<string, unknown>) : 'expected an object'
+      if (typeof result === 'string') json(res, 400, { error: { code: 'INVALID_INPUT', message: result } })
+      else json(res, 200, { limits: result, ceilingUnavailable: deps.memoryUnavailable ?? null })
       return true
     }
 

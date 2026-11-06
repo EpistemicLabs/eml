@@ -6,8 +6,8 @@ export interface WorkerRunner {
   startWorker(request: SpawnRequest): string | null
 }
 
-// A worker takes about 200 MB. Below this, new workers wait rather than push the machine out of memory.
-export const MIN_FREE_MEMORY = 512 * 1024 * 1024
+// A session takes about 420 MB (the agent CLI and its MCP servers). Below this, new workers wait rather than push the machine out of memory.
+export const MIN_FREE_MEMORY = 1024 * 1024 * 1024
 
 export interface StartWorkerDeps {
   chat: WorkerRunner
@@ -16,6 +16,10 @@ export interface StartWorkerDeps {
   runsInChat: (request: SpawnRequest) => boolean
   /** Free memory in bytes; null where the system's number means nothing. */
   freeMemory: () => number | null
+  /** As many sessions run as the cap allows (session-limits.ts). */
+  atCap?: () => boolean
+  /** Stop the quietest session at rest; false when every one is busy (sessionToStopForRoom). */
+  makeRoom?: () => boolean
   log: (line: string) => void
 }
 
@@ -32,10 +36,11 @@ export class StartWorker {
     return request.fromSessionId !== null && this.deps.runsInChat(request)
   }
 
-  /** Whether the machine has room for another worker. */
+  /** Whether the machine has room for another worker: enough free memory, and below the cap or a quiet session made room. */
   hasRoom(): boolean {
     const free = this.deps.freeMemory()
-    return free === null || free >= MIN_FREE_MEMORY
+    if (free !== null && free < MIN_FREE_MEMORY) return false
+    return !this.deps.atCap?.() || this.deps.makeRoom?.() === true
   }
 
   /**

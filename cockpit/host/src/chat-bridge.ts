@@ -14,7 +14,8 @@ import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
-import { chatSessionShouldStop } from './domain/session-lifecycle.js'
+import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
+import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
 
@@ -51,6 +52,8 @@ import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, ty
 const INTERRUPT_WAIT_MS = 3_000
 // The one reason a closed turn counts as cut off: the next host start carries it on.
 export const HOST_SHUTDOWN = 'host shutdown'
+// Stopped to free memory, quiet for long or to make room: a client shows it asleep, and sending wakes it.
+export const IDLE_STOP = 'stopped while idle'
 // Socket buffer above which a client is too far behind to keep streaming to; it
 // reconnects and asks for what it missed.
 const WS_MAX_BUFFERED = 16 * 1024 * 1024
@@ -99,6 +102,10 @@ interface ChatEntry {
   status: WorkerStatus | null
   textAfterStatus: string
   askedSummary: boolean
+  /** The memory ceiling its process started with, and the kills at it already reported; null: none. */
+  ceiling: { limits: SessionLimits; kills: number } | null
+  /** A ceiling notice the agent has not seen yet: it goes with its next prompt. */
+  ceilingNote: string | null
 }
 
 export interface ChatContext {
@@ -116,6 +123,12 @@ export interface ChatContext {
   terminalRuns?: (sessionId: string) => boolean
   /** What the session's terminal process is in the middle of, if anything: a takeover would cut it off. */
   terminalBusy?: (sessionId: string) => 'working' | 'waiting' | null
+  /** Memory ceilings per session (session-memory.ts); absent: none. */
+  memory?: SessionMemory
+  /** The ceiling a session starts with, and how long a quiet one keeps its process (session-limits.ts). */
+  limits?: () => { session: SessionLimits; idleMs: number }
+  /** More sessions run than the cap allows (session-limits.ts). */
+  overCap?: () => boolean
 }
 
 type ClientMessage = {
@@ -229,6 +242,7 @@ export class ChatBridge {
       await runtime.close()
       entry.runtime = null
     }
+    this.ctx.memory?.release(sessionId)
     // Stopped, archived, timed out, deleted or taken over: its turn is over, not cut off.
     if (reason !== HOST_SHUTDOWN) this.ctx.ledger.setTurnInFlight(sessionId, false)
     for (const ws of entry.clients) {
@@ -256,21 +270,56 @@ export class ChatBridge {
   /** End the sessions the lifecycle rule says should stop. They stay resumable; returns how many ended. */
   sweepIdle(now = Date.now()): number {
     let ended = 0
+    const idleMs = this.ctx.limits?.().idleMs ?? IDLE_MS
     for (const entry of [...this.entries.values()]) {
-      const stop = chatSessionShouldStop({
-        clients: entry.clients.size,
-        running: entry.runtime !== null,
-        turnActive: entry.active,
-        backgroundTasks: entry.backgroundTasks.size,
-        openRequests: entry.openRequests.size,
-        worker: this.ctx.ledger.get(entry.sessionId)?.worker === true,
-        quietMs: now - entry.lastActivity,
-      })
-      if (!stop) continue
-      void this.end(entry.sessionId, 'timed out')
+      this.reportCeilingKills(entry)
+      if (!chatSessionShouldStop({ ...this.facts(entry, now), idleMs })) continue
+      void this.end(entry.sessionId, IDLE_STOP)
       ended += 1
     }
     return ended
+  }
+
+  private facts(entry: ChatEntry, now: number) {
+    return {
+      sessionId: entry.sessionId,
+      clients: entry.clients.size,
+      running: entry.runtime !== null,
+      turnActive: entry.active,
+      backgroundTasks: entry.backgroundTasks.size,
+      openRequests: entry.openRequests.size,
+      quietMs: now - entry.lastActivity,
+    }
+  }
+
+  /** Sessions whose process runs now. */
+  runningCount(): number {
+    let running = 0
+    for (const entry of this.entries.values()) if (entry.runtime && !entry.closing) running += 1
+    return running
+  }
+
+  /** Over the running cap: stop the quietest session at rest (sessionToStopForRoom). False: all are busy. */
+  stopOneForRoom(except: string | null = null, now = Date.now()): boolean {
+    const sessions = [...this.entries.values()].filter((e) => !e.closing && e.sessionId !== except).map((e) => this.facts(e, now))
+    const sessionId = sessionToStopForRoom(sessions)
+    if (!sessionId) return false
+    this.log(`stopping ${sessionId} to make room for another session`)
+    void this.end(sessionId, IDLE_STOP)
+    return true
+  }
+
+  /** The kernel stopped processes of the session at its ceiling since the last look: say so in the session. */
+  private reportCeilingKills(entry: ChatEntry, ended = false): void {
+    const { ceiling } = entry
+    if (!ceiling || !this.ctx.memory) return
+    const kills = this.ctx.memory.oomKills(entry.sessionId)
+    if (kills <= ceiling.kills) return
+    const text = ceilingNotice(kills - ceiling.kills, ceiling.limits) + (ended ? ' The session stopped; sending a message resumes it.' : '')
+    ceiling.kills = kills
+    entry.ceilingNote = text
+    this.log(`session ${entry.sessionId}: ${text}`)
+    this.emit(entry, { kind: 'notice', text })
   }
 
   /** The session is being deleted. */
@@ -418,7 +467,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -486,7 +535,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -538,7 +587,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -589,14 +638,28 @@ export class ChatBridge {
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
+      onSpawn: (pid) => this.placeInCeiling(entry, pid),
     })
+    // Over the cap: a session someone opens starts anyway, and the quietest one at rest makes room.
+    if (this.ctx.overCap?.()) this.stopOneForRoom(sessionId)
+  }
+
+  private placeInCeiling(entry: ChatEntry, pid: number): void {
+    const { memory, limits } = this.ctx
+    if (!memory || !limits) return
+    const session = limits().session
+    entry.ceiling = memory.place(entry.sessionId, pid, session) ? { limits: session, kills: memory.oomKills(entry.sessionId) } : null
   }
 
   private reporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
     return {
       onPrompt: () => {
         const stored = this.ctx.ledger.get(entry.sessionId)
-        return stored && !stored.worker && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+        const name = stored && !stored.worker && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+        // The agent saw a tool die (exit 137) without a reason: this is the reason.
+        const ceiling = entry.ceilingNote ? `The cockpit: ${entry.ceilingNote}` : null
+        entry.ceilingNote = null
+        return [ceiling, name].filter(Boolean).join('\n\n') || null
       },
       report: (status, reason) => {
         entry.declared = true
@@ -665,6 +728,9 @@ export class ChatBridge {
         break
       }
       case 'runtime_exit':
+        // Before the exit shows: the session may have been the process the kernel stopped.
+        this.reportCeilingKills(entry, !event.expected)
+        if (!event.expected) this.ctx.memory?.release(entry.sessionId)
         entry.runtime = null
         entry.active = false
         entry.openRequests.clear()

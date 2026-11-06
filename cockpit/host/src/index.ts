@@ -36,7 +36,9 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { WorkerStarter } from './worker-start.js'
-import { runServiceCommand } from './service.js'
+import { refreshServiceUnit, runServiceCommand } from './service.js'
+import { SERVICE_ENV } from './domain/autostart.js'
+import { idleMs, readLimits, sessionLimits } from './session-limits.js'
 import { runRemoteCommand } from './remote.js'
 import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
@@ -76,6 +78,11 @@ async function main() {
   fs.mkdirSync(COCKPIT_HOME, { recursive: true, mode: 0o700 })
   fs.chmodSync(COCKPIT_HOME, 0o700)
   log(`home: ${COCKPIT_HOME}`)
+  // Run by the service: its unit first, then a memory ceiling per session (session-memory.ts).
+  const service = process.env[SERVICE_ENV] === '1'
+  if (service) refreshServiceUnit(log)
+  const memory = platform.sessionMemory({ service, log })
+  log(memory.unavailable ? `memory: sessions run without a ceiling (${memory.unavailable})` : 'memory: every session gets its own memory ceiling')
 
   // The cockpit's own agent CLIs (for Claude Code: providers/claude/runtime.ts).
   // Downloads only when this home has none yet. Not awaited: the first download
@@ -204,7 +211,13 @@ async function main() {
   watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
-  const bridge = new PtyBridge({ ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId) })
+  const bridge = new PtyBridge({
+    ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
+    memory, sessionLimits: () => sessionLimits(readLimits()),
+  })
+  // The cap on running sessions (Settings › Preferences › Sessions); 0: none.
+  const running = (): number => chat.runningCount() + bridge.runningCount()
+  const cap = () => readLimits().maxRunning
   const swept = bridge.sweepEmptySessions()
   if (swept > 0) process.stderr.write(`[pty] forgot ${swept} session(s) that never ran a turn\n`)
   const turns = new TurnTracker()
@@ -214,6 +227,12 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     onExit: (sessionId) => turns.forget(sessionId),
+    memory,
+    limits: () => {
+      const settings = readLimits()
+      return { session: sessionLimits(settings), idleMs: idleMs(settings) }
+    },
+    overCap: (): boolean => cap() > 0 && running() > cap(),
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -233,6 +252,8 @@ async function main() {
     runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
       .workerRunsInChat(sessionSpaceOf(spaces.resolve(request.spaceId ?? null))),
     freeMemory: () => platform.freeMemory(),
+    atCap: () => cap() > 0 && running() >= cap(),
+    makeRoom: () => chat.stopOneForRoom(),
   })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
@@ -241,7 +262,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
     origins,
   )
 
@@ -264,6 +285,7 @@ async function main() {
       turns.apply({ sessionId, state: 'waiting' })
     },
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    waitForRoom: () => waitForRoom(() => startWorker.hasRoom()),
     log,
   }).then((recovered) => { if (recovered > 0) log(`[worker] ${recovered} worker(s) continue after the restart`) })
   // A worker no tab takes starts without a pane (worker-start.ts).
@@ -272,8 +294,9 @@ async function main() {
     bridge: {
       startWorker: (request) => startWorker.withoutPane(request),
       hasRoom: () => startWorker.hasRoom(),
-      sweepIdleWorkers: (idleMs, turnOf) => bridge.sweepIdleWorkers(idleMs, turnOf) + chat.sweepIdle(),
+      sweepIdleWorkers: (quietMs, turnOf) => bridge.sweepIdleWorkers(quietMs, turnOf) + chat.sweepIdle(),
     },
+    idleMs: () => idleMs(readLimits()),
     turnOf: (sessionId) => {
       const turn = turns.get(sessionId)
       return { state: turn?.state ?? 'idle', since: turn ? Date.parse(turn.since) : null }
@@ -303,6 +326,19 @@ async function main() {
   })
   process.on('SIGINT', () => void shutdown())
   process.on('SIGTERM', () => void shutdown())
+}
+
+// Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
+const RECOVERY_GAP_MS = 10_000
+// Waiting longer than this for room, the worker goes anyway: a full machine must not hold it forever.
+const RECOVERY_WAIT_MS = 10 * 60_000
+let recoveries = 0
+
+async function waitForRoom(hasRoom: () => boolean): Promise<void> {
+  const pause = () => new Promise<void>((resolve) => { setTimeout(resolve, RECOVERY_GAP_MS).unref() })
+  if (recoveries++ > 0) await pause()
+  const until = Date.now() + RECOVERY_WAIT_MS
+  while (!hasRoom() && Date.now() < until) await pause()
 }
 
 async function runDiagnoseCommand(argv: string[]): Promise<boolean> {

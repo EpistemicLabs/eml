@@ -69,4 +69,30 @@ describe('StartWorker', () => {
     expect(setup({ free: MIN_FREE_MEMORY - 1 }).worker.hasRoom()).toBe(false)
     expect(setup({ free: null }).worker.hasRoom()).toBe(true)
   })
+
+  it('at the running cap, has room only once a quiet session made way', () => {
+    let quiet = false
+    let stopped = 0
+    const worker = new StartWorker({
+      chat: { startWorker: () => null }, terminal: { startWorker: () => null }, runsInChat: () => true,
+      freeMemory: () => null, log: () => {},
+      atCap: () => true,
+      makeRoom: () => { if (quiet) stopped += 1; return quiet },
+    })
+    expect(worker.hasRoom()).toBe(false)
+    quiet = true
+    expect(worker.hasRoom()).toBe(true)
+    expect(stopped).toBe(1)
+  })
+
+  it('makes no room while free memory is low: stopping a session would not be enough reason to start one', () => {
+    let asked = 0
+    const worker = new StartWorker({
+      chat: { startWorker: () => null }, terminal: { startWorker: () => null }, runsInChat: () => true,
+      freeMemory: () => MIN_FREE_MEMORY - 1, log: () => {},
+      atCap: () => true, makeRoom: () => { asked += 1; return true },
+    })
+    expect(worker.hasRoom()).toBe(false)
+    expect(asked).toBe(0)
+  })
 })

@@ -104,9 +104,18 @@ describe('worker start without a tab', () => {
     expect(bridge.started).toHaveLength(1)
   })
 
-  it('sweeps idle workers with the 24-hour limit on every check', () => {
+  it('sweeps idle workers with the one-hour default on every check', () => {
     starter.tick()
-    expect(bridge.idleSweeps).toEqual([24 * 60 * 60 * 1000])
+    expect(bridge.idleSweeps).toEqual([60 * 60 * 1000])
+  })
+
+  it('sweeps with the idle time from Settings, read at every check', () => {
+    let hours = 2
+    const set = new WorkerStarter({ spawns, bridge, turnOf: () => ({ state: 'idle', since: null }), log: () => {}, idleMs: () => hours * 60 * 60 * 1000 })
+    set.tick()
+    hours = 3
+    set.tick()
+    expect(bridge.idleSweeps).toEqual([2 * 60 * 60 * 1000, 3 * 60 * 60 * 1000])
   })
 
   it('counts tabs that follow and leave', () => {

@@ -37,6 +37,12 @@ export interface Autostart {
   /** Stop and remove the registration. */
   uninstall(): void
   status(): AutostartStatus
+  /**
+   * Bring an installed registration up to what this version writes, without a
+   * restart; only where the service manager needs it (systemd). `absent`: none
+   * installed, or one not written by install.
+   */
+  refresh?(): 'updated' | 'current' | 'absent'
 }
 
 /** The environment variable a service-run host carries: a plain exit is then a restart (app-update.ts). */
