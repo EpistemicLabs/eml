@@ -1,6 +1,6 @@
 {
   "name": "@engramprotocol/protocol",
-  "version": "0.20.4",
+  "version": "0.21.0-rc.1",
   "private": false,
   "description": "EML team-brain protocol — the log format, keys, signatures and sealing, shared by the cockpit and the relay",
   "license": "MIT",
