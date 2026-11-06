@@ -13,7 +13,7 @@ import AboutTab from './tabs/AboutTab';
 import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
-import BrainTab from './tabs/BrainTab';
+import SpacesTab from './tabs/SpacesTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
 import type { SettingsProps } from '../types/types';
@@ -98,7 +98,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'models' && <ModelsTab onCloseSettings={onClose} />}
 
-              {activeTab === 'brain' && <BrainTab />}
+              {activeTab === 'spaces' && <SpacesTab />}
 
               {activeTab === 'preferences' && (
                 <PreferencesTab

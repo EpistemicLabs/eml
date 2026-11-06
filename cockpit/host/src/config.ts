@@ -25,9 +25,9 @@ export interface CockpitConfig {
    * opened (onboarding.ts). Absent on homes made before it existed = done.
    */
   onboarding?: 'pending' | 'done'
-  /** Display name of the main space (Settings › Brain); absent = "Main". */
+  /** Display name of the main space (Settings › Spaces); absent = "Main". */
   mainName?: string
-  /** Colour of the main space (Settings › Brain); absent = grey. */
+  /** Colour of the main space (Settings › Spaces); absent = grey. */
   mainColor?: SpaceColor
   /**
    * The home's human: the handle every brain token is issued under, so

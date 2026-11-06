@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPACE_HEADER } from '@/lib/space-header';
 import { getActiveSpaceId } from '@/stores/usePaneStore';
 import { loadSpaces } from '@/stores/useSpaceStore';
-import BrainTab from './BrainTab';
+import SpacesTab from './SpacesTab';
 
 // The list picks whose details show; the cockpit stays in the space it is in.
 
@@ -41,9 +41,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('Settings › Brain', () => {
+describe('Settings › Spaces', () => {
   it('has no way to switch the space from the list', async () => {
-    render(<BrainTab />);
+    render(<SpacesTab />);
     await screen.findByText('brain-of-main-id');
     expect(screen.queryByRole('button', { name: 'Switch' })).toBeNull();
     expect(screen.queryByText('active')).toBeNull();
@@ -51,7 +51,7 @@ describe('Settings › Brain', () => {
 
   it('shows the details of a picked space and leaves the open one alone', async () => {
     const open = getActiveSpaceId();
-    render(<BrainTab />);
+    render(<SpacesTab />);
     await screen.findByText('brain-of-main-id');
     fireEvent.click(screen.getByRole('button', { name: 'Other' }));
     await screen.findByText('brain-of-other-id');
@@ -60,7 +60,7 @@ describe('Settings › Brain', () => {
   });
 
   it('backs up the picked space', async () => {
-    render(<BrainTab />);
+    render(<SpacesTab />);
     await screen.findByText('brain-of-main-id');
     fireEvent.click(screen.getByRole('button', { name: 'Other' }));
     await screen.findByText('brain-of-other-id');

@@ -1,6 +1,6 @@
 // The home's agents as the host lists them (GET /api/agents): id, display
 // name, the brain's id and the spaces each works in. Settings › Agents and
-// Settings › Brain read it when they open.
+// Settings › Spaces read it when they open.
 import { useEffect, useState } from 'react';
 
 export type AgentInfo = {

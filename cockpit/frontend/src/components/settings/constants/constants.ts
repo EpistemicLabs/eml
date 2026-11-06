@@ -45,11 +45,11 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
     blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code and Codex (beta).',
   },
   {
-    id: 'brain',
-    label: 'Brain',
+    id: 'spaces',
+    label: 'Spaces',
     keywords: 'brain spaces local token backup stats paths home folder config directory',
     icon: Brain,
-    blurb: 'The brain instance: spaces, source, where the cockpit keeps its files, backups.',
+    blurb: 'Your spaces: source, where the cockpit keeps its files, backups.',
   },
   {
     id: 'preferences',

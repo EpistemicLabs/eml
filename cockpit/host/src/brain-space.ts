@@ -93,6 +93,8 @@ export interface SpaceView {
   shared: boolean | null
   /** The name its sessions go by (sessionAgentName); null while no agent is bound. */
   agentName: string | null
+  /** Its sessions use the bound agent's own runtime, not the cockpit's. */
+  ownRuntime: boolean
   color: SpaceColor
 }
 
@@ -104,7 +106,7 @@ export function sessionAgentName(space: BrainSpace): string | null {
   return space.agent ? space.agent.charAt(0).toUpperCase() + space.agent.slice(1) : null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), upgrade: space.upgrade, shared: space.shared, color: space.color })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), ownRuntime: space.runtime !== null, upgrade: space.upgrade, shared: space.shared, color: space.color })
 
 export interface OpenSpaceOptions {
   id: string

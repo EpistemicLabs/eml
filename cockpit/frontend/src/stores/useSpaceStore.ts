@@ -20,6 +20,8 @@ export interface SpaceInfo {
   shared: boolean | null;
   /** The name its sessions go by: its agent's, null while none is bound. Never the space's own name. */
   agentName?: string | null;
+  /** Its sessions use the bound agent's own login and tools, not the cockpit's. */
+  ownRuntime?: boolean;
   /** What tells it apart: a name from the palette (lib/space-color.ts). */
   color?: string;
 }

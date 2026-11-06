@@ -168,7 +168,7 @@ export async function provisionAgent(agent: AgentNames, human: Human, core: Core
 }
 
 /**
- * A further local brain for a new space (Settings › Brain › New space): a
+ * A further local brain for a new space (Settings › Spaces › New space): a
  * fresh brain owned by the same control-plane user, with its own token, no
  * identity of its own (that lives in the bound agent's brain) — the agent and
  * user objects only, so engrams in their scopes can be written here. Its

@@ -488,7 +488,7 @@ function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: s
 }
 
 /**
- * Settings › Brain › New space: a further local brain, bound to the main
+ * Settings › Spaces › New space: a further local brain, bound to the main
  * space's agent. The space gets no identity of its own — that is the agent
  * brain's — only the agent and user objects, so engrams in their scopes can
  * be written there.
@@ -559,7 +559,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   // and its team brains, sign-out. The session stays in the host (account.ts).
   if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
 
-  // Spaces: the list, and a new local one (Settings › Brain).
+  // Spaces: the list, and a new local one (Settings › Spaces).
   if (resource === 'spaces' && !id && method === 'GET') {
     json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
     return true
@@ -696,7 +696,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Settings › Brain: the local brain (file, id, schema, identity) and its
+    // Settings › Spaces: the local brain (file, id, schema, identity) and its
     // backups. Paths are display-only; the token never leaves the host.
     if (resource === 'brain-info' && !id && method === 'GET') {
       json(res, 200, readBrainInfo(space.token))

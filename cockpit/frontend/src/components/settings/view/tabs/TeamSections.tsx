@@ -1,4 +1,4 @@
-// Settings › Brain for a shared space (spec team-brain-membership-flows-spec
+// Settings › Spaces for a shared space (spec team-brain-membership-flows-spec
 // §5): the team as the brain server reports it — brain, relay, your member,
 // the state — the members, and, for an owner, the invites: a link made for a
 // member or an owner (decision invite-role-set-at-invite), shown once; the

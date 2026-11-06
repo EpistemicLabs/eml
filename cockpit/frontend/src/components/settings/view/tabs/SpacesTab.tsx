@@ -1,4 +1,4 @@
-// Cockpit addition: Settings › Brain. Spaces, where this cockpit keeps its
+// Cockpit addition: Settings › Spaces. Spaces, where this cockpit keeps its
 // files, and WAL-safe backups — all from the host (GET /api/brain-info,
 // /api/brain-backups). Who is in the brain shows in Account and Agent. Read-only except "Back up now"; switching the source
 // to a remote brain and restoring a backup are later steps.
@@ -52,7 +52,7 @@ function spaceDescription(space: SpaceInfo, agents: ReturnType<typeof useAgents>
   return `${origin} · ${agent ?? space.agent}`;
 }
 
-export default function BrainTab() {
+export default function SpacesTab() {
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
   // The space shown below: picked here, without opening it in the cockpit.
@@ -209,6 +209,14 @@ export default function BrainTab() {
 
       <SettingsSection title={shown?.name ?? 'Brain'}>
         <SettingsCard divided>
+          {shown?.ownRuntime && (
+            <SettingsRow
+              label="Login and tools"
+              description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
+            >
+              <span className="text-sm text-foreground">Own</span>
+            </SettingsRow>
+          )}
           <SettingsRow
             label="Brain source"
             description="The brain that ships with this cockpit, on this machine. A remote brain (URL + token) comes later."
