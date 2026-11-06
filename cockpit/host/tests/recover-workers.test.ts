@@ -37,6 +37,17 @@ describe('recoverWorkers', () => {
     expect(gaveUp).toEqual(['w'])
   })
 
+  it('each worker waits for room before it is sent on, one after the other', async () => {
+    const { deps, sent } = setup([{ sessionId: 'a', retried: false }, { sessionId: 'b', retried: false }])
+    const order: string[] = []
+    const inner = deps.deliver
+    deps.deliver = async (id, text) => { order.push(`deliver ${id}`); return inner(id, text) }
+    deps.waitForRoom = async () => { order.push('wait') }
+    expect(await recoverWorkers(deps)).toBe(2)
+    expect(order).toEqual(['wait', 'deliver a', 'wait', 'deliver b'])
+    expect(sent).toHaveLength(2)
+  })
+
   it('a failing delivery does not stop the others', async () => {
     const { deps, gaveUp } = setup([{ sessionId: 'a', retried: false }, { sessionId: 'b', retried: false }])
     let first = true

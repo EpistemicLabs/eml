@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocket, type RawData } from 'ws'
+import type { SessionLimits, SessionMemory } from './domain/session-memory.js'
 import type { IPty } from 'node-pty'
 import type { ITerminalAddon as IHeadlessAddon, Terminal as HeadlessTerminalType } from '@xterm/headless'
 import type { SerializeAddon as SerializeAddonType } from '@xterm/addon-serialize'
@@ -298,6 +299,9 @@ export interface SpawnContext {
   handoff?: () => SessionHandoff
   /** Whether the chat view runs this session right now. */
   chatHolds?: (sessionId: string) => boolean
+  /** Memory ceilings per session (session-memory.ts), and the one a session starts with; absent: none. */
+  memory?: SessionMemory
+  sessionLimits?: () => SessionLimits
 }
 
 interface PendingNonce {
@@ -350,6 +354,11 @@ export class PtyBridge {
       state = 'detached'
     }
     return state
+  }
+
+  /** Sessions with a live PTY. */
+  runningCount(): number {
+    return new Set([...this.sessions.values()].map((session) => session.sessionId)).size
   }
 
   /** Whether a PTY of this session is alive, client attached or not. */
@@ -497,6 +506,8 @@ export class PtyBridge {
         ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
       },
     })
+    const { memory, sessionLimits } = this.ctx
+    if (memory && sessionLimits) memory.place(sessionId, proc.pid, sessionLimits())
     return { pty: proc, keepRunning: launch.keepRunning }
   }
 
@@ -602,6 +613,9 @@ export class PtyBridge {
     proc.onExit(({ exitCode, signal }) => {
       const session = this.sessions.get(key)
       if (!session || session.pty !== proc) return
+      const kills = this.ctx.memory?.oomKills(session.sessionId) ?? 0
+      if (kills > 0) this.log(`session ${session.sessionId}: the kernel stopped ${kills} of its process(es) at the memory ceiling`)
+      this.ctx.memory?.release(session.sessionId)
       // A sign-in happens inside a session: the provider's cached answer may be stale now.
       this.ctx.providers.forSession(session.sessionId).auth.invalidate()
 

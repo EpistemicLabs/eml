@@ -9,6 +9,8 @@ export interface RecoverWorkersDeps {
   markRetried(sessionId: string): void
   giveUp(sessionId: string, attention: Attention, reason: string): void
   deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
+  /** Resolves once the machine has room for one more running session; a restart must not start them all at once. */
+  waitForRoom?: () => Promise<void>
   log: (line: string) => void
 }
 
@@ -20,7 +22,8 @@ export function interruptedWorkers(sessions: Array<{ sessionId: string; turnInFl
 /**
  * After a host start: a worker cut off mid-turn gets one message to carry on. Cut off
  * again before that turn ends, or if it can't take a message, it waits for someone
- * instead, so a restart can't loop. Returns how many were sent on their way.
+ * instead, so a restart can't loop. They go one by one, each once there is room
+ * for it. Returns how many were sent on their way.
  */
 export async function recoverWorkers(deps: RecoverWorkersDeps): Promise<number> {
   let recovered = 0
@@ -29,6 +32,7 @@ export async function recoverWorkers(deps: RecoverWorkersDeps): Promise<number> 
       deps.giveUp(sessionId, 'failed', 'Cut off by host restarts twice in one turn.')
       continue
     }
+    await deps.waitForRoom?.()
     deps.markRetried(sessionId)
     const outcome = await deps.deliver(sessionId, RECOVERY_MESSAGE).catch(() => 'refused' as const)
     if (outcome === 'delivered' || outcome === 'resumed') {

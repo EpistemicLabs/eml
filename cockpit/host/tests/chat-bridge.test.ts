@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
-import { ChatBridge, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
+import { ChatBridge, IDLE_STOP, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
@@ -167,10 +167,73 @@ describe('ChatBridge', () => {
     ws.emit('close')
     expect(bridge.sweepIdle(Date.now() + 3 * 24 * 60 * 60 * 1000)).toBe(0)
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
-    expect(bridge.sweepIdle(Date.now() + 60_000)).toBe(0)
-    expect(bridge.sweepIdle(Date.now() + 31 * 60 * 1000)).toBe(1)
+    expect(bridge.sweepIdle(Date.now() + 59 * 60 * 1000)).toBe(0)
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(1)
     await flush()
     expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('a window open on a quiet session stops it after two hours, and tells the window it sleeps', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(0)
+    expect(bridge.sweepIdle(Date.now() + 121 * 60 * 1000)).toBe(1)
+    await flush()
+    expect(runtimes[0].closed).toBe(true)
+    expect(ws.closes).toEqual([IDLE_STOP])
+  })
+
+  it('puts the process under the ceiling and says in the session when the kernel stopped one of its processes', async () => {
+    const { bridge, runtimes } = setup()
+    let kills = 1
+    const placed: Array<[string, number]> = []
+    const released: string[] = []
+    const ctx = (bridge as unknown as { ctx: ChatContext }).ctx
+    ctx.memory = { unavailable: null, place: (id, pid) => { placed.push([id, pid]); return true }, oomKills: () => kills, release: (id) => released.push(id) }
+    ctx.limits = () => ({ session: { memoryBytes: 2 * 1024 ** 3, swapBytes: 0 }, idleMs: 60 * 60 * 1000 })
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].start.onSpawn?.(4242)
+    expect(placed).toEqual([['s1', 4242]])
+    // Kills from before this process are not news.
+    bridge.sweepIdle()
+    expect(ws.events().filter((e) => e.kind === 'notice')).toEqual([])
+    kills = 2
+    bridge.sweepIdle()
+    const notices = ws.events().filter((e) => e.kind === 'notice')
+    expect(notices).toHaveLength(1)
+    expect((notices[0] as { text: string }).text).toContain('2 GB')
+    bridge.sweepIdle()
+    expect(ws.events().filter((e) => e.kind === 'notice')).toHaveLength(1)
+    // The agent itself was the one stopped: the session says it stopped.
+    kills = 3
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    expect((ws.events().filter((e) => e.kind === 'notice')[1] as { text: string }).text).toContain('The session stopped')
+    expect(released).toEqual(['s1'])
+  })
+
+  it('over the cap, a session that starts makes the quietest one at rest stop', async () => {
+    const { bridge, runtimes } = setup()
+    const ctx = (bridge as unknown as { ctx: ChatContext }).ctx
+    let cap = 0
+    ctx.overCap = () => cap > 0 && bridge.runningCount() > cap
+    bridge.startWorker({ id: 'old', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    ;(bridge as unknown as { entries: Map<string, { lastActivity: number }> }).entries.get('old')!.lastActivity -= 10 * 60 * 1000
+    cap = 1
+    bridge.startWorker({ id: 'new', projectId: 'p1', prompt: 'y', title: null, fromSessionId: 'r', createdAt: '' })
+    await flush()
+    expect(runtimes[0].closed).toBe(true)
+    expect(runtimes[1].closed).toBe(false)
+    expect(bridge.runningCount()).toBe(1)
+  })
+
+  it('makes no room from a session at work', () => {
+    const { bridge } = setup()
+    bridge.startWorker({ id: 'busy', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    ;(bridge as unknown as { entries: Map<string, { lastActivity: number }> }).entries.get('busy')!.lastActivity -= 10 * 60 * 1000
+    expect(bridge.stopOneForRoom()).toBe(false)
   })
 
   it('a crashed session frees its entry and reports it', async () => {

@@ -186,6 +186,8 @@ export interface SessionRuntimeStart {
   /** Built-in tools this session may not use (its tool profile). */
   deniedTools?: string[]
   onEvent: (event: RuntimeEvent) => void
+  /** The agent CLI's process started: the host puts it under the session's memory ceiling (session-memory.ts). */
+  onSpawn?: (pid: number) => void
   /** The session reports how it stands. Only a worker is sent back when it stays silent. */
   worker?: {
     /** Added to the next prompt, unseen in the chat; null: nothing. */

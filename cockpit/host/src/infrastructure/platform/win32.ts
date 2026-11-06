@@ -2,10 +2,12 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type { Platform } from '../../domain/platform.js'
+import { noSessionMemory } from '../../domain/session-memory.js'
 import { archKey, detached, runFile } from './common.js'
 
 export const win32: Platform = {
   freeMemory: () => os.freemem(),
+  sessionMemory: () => noSessionMemory('not on Windows'),
   os: 'win32',
   exe: (name) => (name.toLowerCase().endsWith('.exe') ? name : `${name}.exe`),
   runtimeKey: () => `win32-${archKey()}`,

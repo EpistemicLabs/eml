@@ -1,5 +1,6 @@
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
 import type { WorkerTurnOf } from './pty-bridge.js'
+import { IDLE_MS } from './domain/session-lifecycle.js'
 
 /**
  * Workers start without a cockpit tab. A worker a session asked for starts right
@@ -8,15 +9,16 @@ import type { WorkerTurnOf } from './pty-bridge.js'
  * (spawn-queue.ts); when no tab follows the requests, or none claims it within
  * GRACE_MS, the host starts that one without a pane too.
  *
- * A worker that is not working and has been quiet for IDLE_MS is ended, and a
- * session with no window whose time is up (chatSessionShouldStop) too; a working
- * one never. New workers wait in the queue while the machine has little free memory.
+ * A terminal worker that is not working and has been quiet for the idle time
+ * (Settings › Preferences › Sessions) is ended, and a chat session whose time is up
+ * (chatSessionShouldStop) too; a working one never. New workers wait in the
+ * queue while the machine has little free memory, or as many sessions run as
+ * the cap allows and none is quiet enough to make room.
  * An ended worker stays in the sidebar, resumable with a click.
  * The host's own requests (no requesting session) always wait for a tab.
  */
 
 export const GRACE_MS = 15_000
-export const IDLE_MS = 24 * 60 * 60 * 1000
 const SWEEP_MS = 60_000
 
 export interface WorkerBridge {
@@ -33,7 +35,8 @@ export interface WorkerStartDeps {
   turnOf: WorkerTurnOf
   log: (line: string) => void
   graceMs?: number
-  idleMs?: number
+  /** How long a quiet worker keeps its process; read at every sweep. */
+  idleMs?: () => number
   sweepMs?: number
   now?: () => number
 }
@@ -41,12 +44,10 @@ export interface WorkerStartDeps {
 export class WorkerStarter {
   private timer: NodeJS.Timeout | null = null
   private readonly graceMs: number
-  private readonly idleMs: number
   private readonly now: () => number
 
   constructor(private deps: WorkerStartDeps) {
     this.graceMs = deps.graceMs ?? GRACE_MS
-    this.idleMs = deps.idleMs ?? IDLE_MS
     this.now = deps.now ?? Date.now
   }
 
@@ -68,8 +69,8 @@ export class WorkerStarter {
 
   /** End idle workers, then start the requests that are due, oldest first, while there is room. */
   tick(): void {
-    const ended = this.deps.bridge.sweepIdleWorkers(this.idleMs, this.deps.turnOf)
-    if (ended > 0) this.deps.log(`[worker] ended ${ended} idle worker(s) without a client`)
+    const ended = this.deps.bridge.sweepIdleWorkers(this.deps.idleMs?.() ?? IDLE_MS, this.deps.turnOf)
+    if (ended > 0) this.deps.log(`[worker] stopped ${ended} idle session(s)`)
     const noTabs = this.deps.spawns.watchers() === 0
     const due = this.deps.spawns.list()
       .filter((request) => request.fromSessionId)
@@ -77,7 +78,7 @@ export class WorkerStarter {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     for (const request of due) {
       if (!this.deps.bridge.hasRoom()) {
-        this.deps.log(`[worker] little free memory; ${request.id} waits`)
+        this.deps.log(`[worker] no room (little free memory, or the running cap with every session busy); ${request.id} waits`)
         return
       }
       if (!this.deps.spawns.claim(request.id)) continue

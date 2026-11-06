@@ -10,6 +10,7 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 import NotificationsSection from './NotificationsSection';
+import SessionLimitsRows from './SessionLimitsRows';
 
 type PreferencesTabProps = {
   projectSortOrder: ProjectSortOrder;
@@ -92,6 +93,7 @@ export default function PreferencesTab({
               <option value="terminal">Terminal</option>
             </select>
           </SettingsRow>
+          <SessionLimitsRows />
         </SettingsCard>
       </SettingsSection>
 

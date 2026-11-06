@@ -94,6 +94,20 @@ export async function serviceStatus(): Promise<{ installed: boolean; running: bo
   return { installed, running, port: PORT, responds: await portResponds() }
 }
 
+/**
+ * A host run by the service brings its unit up to date at start (Autostart.refresh),
+ * so an update reaches a unit an older version installed. Best-effort: the old unit still runs the host.
+ */
+export function refreshServiceUnit(log: (line: string) => void): void {
+  const service = autostart()
+  if (!service.refresh) return
+  try {
+    if (service.refresh() === 'updated') log(`service: updated ${service.label} (out-of-memory policy, cgroup delegation)`)
+  } catch (error) {
+    log(`service: could not update ${service.label}: ${(error as Error).message}`)
+  }
+}
+
 /** Handle a `service …` invocation; returns true if it consumed the args. */
 export async function runServiceCommand(argv: string[]): Promise<boolean> {
   if (argv[0] !== 'service') return false

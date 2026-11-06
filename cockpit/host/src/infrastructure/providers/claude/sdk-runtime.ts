@@ -517,6 +517,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
             cwd: options.cwd, env: options.env, signal: options.signal, stdio: ['pipe', 'pipe', 'pipe'],
           })
           this.child = child
+          // At once, before the CLI starts its MCP servers: they and every tool inherit the group.
+          if (child.pid !== undefined) request.onSpawn?.(child.pid)
           child.stderr?.on('data', (chunk: Buffer) => { this.stderrTail = (this.stderrTail + chunk.toString()).slice(-STDERR_TAIL) })
           child.on('error', () => { /* reported through the query */ })
           child.once('exit', () => this.markExited())

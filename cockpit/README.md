@@ -203,15 +203,21 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
 - **Browser:** an agent's sessions get no Claude in Chrome unless its `agent.json` says `"chrome": true`. Chrome reaches every site the browser is signed in to, so give an agent its own browser profile.
 - **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
   setup-token mode does not apply to these sessions.
-- **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A chat session with a window keeps running;
-  with none it stops 30 minutes after its last activity, a worker or an open card after 24 hours, never mid-turn or
-  with background work. Opening a chat only shows it: the process starts when the input is used or a message arrives.
+- **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A session nobody looks at stops one hour
+  after its last activity (Settings › Preferences › Sessions), a worker too; one with a window open after 2 hours, one
+  with an open card after 4; never mid-turn or with background work. Opening a chat only shows it: the process starts
+  when the input is used or a message arrives. At most 8 sessions run at once (also in Settings): at the cap the one quiet
+  longest stops to make room, and when all are busy new workers wait.
+- **Memory:** under the Linux autostart service every session runs in a cgroup of its own with a ceiling (2 GB RAM +
+  512 MB swap by default; `infrastructure/platform/linux-cgroups.ts`). At the ceiling the kernel stops the session's
+  largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
+  and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
   joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models › Chat view off
   stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
-  chat or terminal for itself in Preferences. There is no worker cap; new workers wait while free memory is low. In chat a worker reports
+  chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
-  `review`. After a host restart a worker cut off mid-turn gets one message to continue, then is marked `failed`.
+  `review`. After a host restart a worker cut off mid-turn gets one message to continue, one at a time as there is room, then is marked `failed`.
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
   (`application/deliver-message.ts`); a session in a terminal answers busy. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
   stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
