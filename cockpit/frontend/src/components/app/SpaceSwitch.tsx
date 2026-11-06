@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Brain, Check, ChevronDown, Layers, Loader2, Plus } from 'lucide-react';
 
+import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { setTopView } from '@/stores/useTopViewStore';
 import {
@@ -90,6 +91,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
 
   const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
   const title = showingAll ? 'All spaces' : `Space: ${label}`;
+  const SpaceIcon = showingAll ? Layers : Brain;
+  const tone = showingAll ? undefined : spaceTone(active);
 
   return (
     <div ref={rootRef} className="relative flex h-full items-stretch">
@@ -105,7 +108,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
             open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Brain className="h-4 w-4" strokeWidth={1.8} />
+          <Brain className="h-4 w-4" strokeWidth={1.8} style={{ color: tone }} />
           <span className="truncate">{label}</span>
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
@@ -118,7 +121,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           title={title}
           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body font-medium text-foreground hover:bg-muted"
         >
-          <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+          <SpaceIcon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
@@ -145,8 +148,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               )}
             >
               <Check className={cn('h-3.5 w-3.5', showingAll ? 'opacity-100' : 'opacity-0')} />
+              <Layers className="h-3.5 w-3.5 opacity-60" strokeWidth={1.8} />
               <span className="flex-1 truncate">All spaces</span>
-              <Layers className="h-3.5 w-3.5 opacity-60" />
             </button>
           )}
           {spaces.map((space) => {
@@ -164,8 +167,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 )}
               >
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
+                <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="flex-1 truncate">{space.name}</span>
-                {space.main && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">main</span>}
               </button>
             );
           })}

@@ -134,7 +134,7 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
               onToggleStar={(target) => void controller.toggleProjectStar(target)}
               onStartRename={controller.startProjectRename}
               onSetFolder={controller.onSetFolder}
-              onToggleHidden={(projectId) => void controller.toggleProjectHidden(projectId)}
+              onToggleHidden={(target) => void controller.toggleProjectHidden(target)}
               onRequestRemove={controller.requestProjectDelete}
             />
           )}

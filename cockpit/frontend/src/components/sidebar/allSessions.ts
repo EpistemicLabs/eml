@@ -38,9 +38,9 @@ export interface MainItem {
 export interface AllSections {
   needsYou: AllSession[];
   toReview: AllSession[];
-  /** Pinned, or the main pane of a desk. */
+  /** Pinned, or the main pane of a desk, while nothing puts it in a section above. */
   main: Array<{ space: SpaceInfo; items: MainItem[] }>;
-  /** Working now, itself or through its workers, and not main. */
+  /** Working now, itself or through its workers; a main session comes here while it works. */
   working: MainItem[];
   /** Any session's item: its workers and counts, wherever its row is. */
   items: Map<string, MainItem>;
@@ -114,7 +114,7 @@ export function isRead(session: ProjectSession): boolean {
 }
 
 const activityOf = (session: ProjectSession) => session.lastActivity ?? session.createdAt ?? '';
-const newestFirst = (a: ProjectSession, b: ProjectSession) => activityOf(b).localeCompare(activityOf(a));
+export const newestFirst = (a: ProjectSession, b: ProjectSession) => activityOf(b).localeCompare(activityOf(a));
 // Oldest first and not by activity: a row keeps its place while its session works.
 const stableOrder = (a: AllSession, b: AllSession) =>
   (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.id.localeCompare(b.id);
@@ -220,8 +220,9 @@ export function groupAllSessions(
     // Every session has its own row where its own state puts it; a worker's says where it comes from.
     if (mark && NEEDS_YOU.includes(mark)) needsYou.push(session);
     else if (mark) toReview.push(session);
+    else if (allSessionState(session, turn) === 'working') working.push(session);
     else if (item && chosen(session)) main.push(session);
-    else if (allSessionState(session, turn) === 'working' || (item?.counts.queued ?? 0) > 0) working.push(session);
+    else if ((item?.counts.queued ?? 0) > 0) working.push(session);
     else recent.push(session);
   }
 

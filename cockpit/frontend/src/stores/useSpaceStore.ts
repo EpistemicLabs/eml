@@ -12,6 +12,8 @@ export interface SpaceInfo {
   main: boolean;
   /** What the space's sessions are marked with: its agent, else its name. */
   label?: string;
+  /** What tells it apart: a name from the palette (lib/space-color.ts). */
+  color?: string;
 }
 
 let spaces: SpaceInfo[] = [];

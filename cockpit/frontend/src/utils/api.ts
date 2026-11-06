@@ -1,9 +1,14 @@
 // The cockpit host's control-plane API (no auth token — the host is loopback + same-origin).
+import { SPACE_HEADER } from '@/lib/space-header';
 import type { Project } from '@/types/app';
 
-const jsonInit = (method: string, body?: unknown): RequestInit => ({
+/** `space` names the space a request means; without it the open one's. */
+const jsonInit = (method: string, body?: unknown, space?: string): RequestInit => ({
   method,
-  headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+  headers: {
+    ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    ...(space ? { [SPACE_HEADER]: space } : {}),
+  },
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
@@ -11,16 +16,17 @@ export const api = {
   projects: () => fetch('/api/projects'),
   createProject: (payload: { path: string; customName?: string }) =>
     fetch('/api/projects', jsonInit('POST', payload)),
-  renameProject: (projectId: string, displayName: string) =>
-    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { displayName })),
-  setProjectStar: (projectId: string, isStarred: boolean) =>
-    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { isStarred })),
-  setProjectHidden: (projectId: string, hidden: boolean) =>
-    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { hidden })),
-  setProjectPath: (projectId: string, path: string | null) =>
-    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { path })),
-  deleteProject: (projectId: string, deleteData = false) =>
-    fetch(`/api/projects/${encodeURIComponent(projectId)}${deleteData ? '?deleteData=1' : ''}`, jsonInit('DELETE')),
+  // A project id says nothing about its space: one folder has the same id in two.
+  renameProject: (projectId: string, displayName: string, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { displayName }, space)),
+  setProjectStar: (projectId: string, isStarred: boolean, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { isStarred }, space)),
+  setProjectHidden: (projectId: string, hidden: boolean, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { hidden }, space)),
+  setProjectPath: (projectId: string, path: string | null, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { path }, space)),
+  deleteProject: (projectId: string, deleteData = false, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}${deleteData ? '?deleteData=1' : ''}`, jsonInit('DELETE', undefined, space)),
 
   sessions: () => fetch('/api/sessions'),
   renameSession: (sessionId: string, title: string) =>

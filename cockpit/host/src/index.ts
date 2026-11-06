@@ -143,6 +143,7 @@ async function main() {
     name: config?.mainName ?? 'Main',
     brainName: row?.name ?? 'main',
     main: true,
+    color: config?.mainColor,
     url: server.baseUrl,
     token: brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
@@ -152,7 +153,7 @@ async function main() {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false,
+      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false, color: extra.color,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, agentId: extra.agent,
     }))
     const agent = spaces.get(extraRow.id)?.agent

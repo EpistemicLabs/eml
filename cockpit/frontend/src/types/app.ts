@@ -61,6 +61,8 @@ export type BrainProjectStatus = 'active' | 'paused' | 'archived';
 
 export interface Project {
   projectId: string;
+  /** The space the sidebar listed it from; the host does not send it. */
+  __spaceId?: string;
   kind?: ProjectKind;
   brainProjectId?: string | null;
   brainStatus?: BrainProjectStatus | null;

@@ -30,9 +30,11 @@ export interface SessionRowProps {
   /** Given only where the row offers the pin chip (the conversations view). */
   pin?: { isPinned: boolean; onToggle: (session: ProjectSession) => void };
   /** Given in the All view: the agent the session belongs to, marked with its letter. */
-  agent?: { letter: string; name: string };
+  agent?: { name: string; letter: string };
   /** How the session stands for the user: a second line, with the word and the reason. */
   mark?: SessionMark | null;
+  /** Given in the overview, whose Now card lists what runs: true puts a pulsing dot in the marks' column, false shows none. */
+  running?: boolean;
   /** A second line without a mark: a parent's worker counts. */
   detail?: string;
   /** What ends the second line: the session a worker belongs to. */
@@ -79,6 +81,7 @@ export function SidebarSessionRow({
   pin,
   agent,
   mark,
+  running,
   detail,
   context,
   nested,
@@ -103,7 +106,7 @@ export function SidebarSessionRow({
 
   return (
     <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
-      {!mark && <StatusDot session={session} inAllView={Boolean(agent)} />}
+      {!mark && running === undefined && <StatusDot session={session} inAllView={Boolean(agent)} />}
       <Button
         variant="ghost"
         className={cn(
@@ -127,6 +130,11 @@ export function SidebarSessionRow({
               )}
             >
               {!unread && mark === 'review' ? '○' : MARK_SYMBOL[mark]}
+            </span>
+          )}
+          {running && (
+            <span title="Working" className="flex w-3 flex-shrink-0 justify-center">
+              <span className="block h-1.5 w-1.5 animate-pulse rounded-full bg-foreground" />
             </span>
           )}
           {agent && (

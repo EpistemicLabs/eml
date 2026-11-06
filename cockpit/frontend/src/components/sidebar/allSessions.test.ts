@@ -82,6 +82,16 @@ describe('the one model for every session', () => {
   });
 });
 
+describe('agentLetter', () => {
+  it('is the first letter of the agent, upper case', () => {
+    expect(agentLetter({ id: 'a', name: 'Main', main: true, label: 'motti' })).toBe('M');
+  });
+
+  it('falls back to the space name', () => {
+    expect(agentLetter({ id: 'b', name: 'Life', main: false })).toBe('L');
+  });
+});
+
 describe('groupAllSessions', () => {
   it('sorts by what the user has to do, each session once', () => {
     const sections = group([
@@ -101,6 +111,15 @@ describe('groupAllSessions', () => {
     expect(mainIds(sections).sort()).toEqual(['desk', 'pin']);
     expect(sections.working.map((item) => item.session.id)).toEqual(['busy']);
     expect(sections.recent.flatMap((g) => ids(g.sessions)).sort()).toEqual(['old', 'open', 'today']);
+  });
+
+  it('moves a main session to Working while it works, and back', () => {
+    const sections = group([session('pin', { isPinned: true, state: 'running' })], { pin: turn('working') });
+    expect(mainIds(sections)).toEqual([]);
+    expect(sections.working.map((item) => item.session.id)).toEqual(['pin']);
+    const done = group([session('pin', { isPinned: true })]);
+    expect(mainIds(done)).toEqual(['pin']);
+    expect(done.working).toEqual([]);
   });
 
   it('opening does not take finished work out of To review, it only reads it', () => {
@@ -251,8 +270,3 @@ describe('filterByName', () => {
   });
 });
 
-describe('agentLetter', () => {
-  it('uses the label', () => {
-    expect(agentLetter(other)).toBe('B');
-  });
-});

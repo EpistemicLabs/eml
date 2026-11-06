@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME, CONFIG_FILE } from './paths.js'
+import { isSpaceColor, type SpaceColor } from './domain/space-color.js'
 
 /**
  * Cockpit-local config: the loopback brain tokens (on-disk, chmod 600, never
@@ -20,12 +21,15 @@ export interface CockpitConfig {
   onboarding?: 'pending' | 'done'
   /** Display name of the main space (Settings › Brain); absent = "Main". */
   mainName?: string
+  /** Colour of the main space (Settings › Brain); absent = grey. */
+  mainColor?: SpaceColor
   /**
    * Further local brain spaces (brain-space.ts): token + display name each;
    * which brain a token belongs to comes from control.db at boot. `agent` binds
-   * the space to its own agent (agent-config.ts). Absent = main only.
+   * the space to its own agent (agent-config.ts), `color` is the one the user chose
+   * for this cockpit, absent = grey. Absent = main only.
    */
-  spaces?: Array<{ token: string; name?: string; agent?: string }>
+  spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
   hygiene?: Record<string, HygieneState>
 }
@@ -45,17 +49,19 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
     if (!parsed.token) return null
     const spaces = Array.isArray(parsed.spaces)
       ? parsed.spaces
-          .filter((s): s is { token: string; name?: string; agent?: string } => !!s && typeof s.token === 'string' && !!s.token)
+          .filter((s): s is { token: string; name?: string; agent?: string; color?: SpaceColor } => !!s && typeof s.token === 'string' && !!s.token)
           .map((s) => ({
             token: s.token,
             ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}),
             ...(typeof s.agent === 'string' && s.agent ? { agent: s.agent } : {}),
+            ...(isSpaceColor(s.color) ? { color: s.color } : {}),
           }))
       : []
     return {
       token: parsed.token,
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
+      ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
       ...(spaces.length ? { spaces } : {}),
       ...(readHygiene(parsed.hygiene) ?? {}),
     }
