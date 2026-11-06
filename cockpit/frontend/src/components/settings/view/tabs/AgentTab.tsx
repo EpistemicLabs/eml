@@ -109,9 +109,11 @@ export default function AgentTab() {
             <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
               <span className="block font-mono text-xs text-foreground">{agent.id}</span>
             </SettingsRow>
-            <SettingsRow label="Login and tools">
-              <span className="text-sm text-foreground">{agent.runtime ? 'Its own' : 'Shared with the cockpit'}</span>
-            </SettingsRow>
+            {agent.runtime && (
+              <SettingsRow label="Login and tools" description="This agent does not use the ones in Settings › Models.">
+                <span className="text-sm text-foreground">Its own</span>
+              </SettingsRow>
+            )}
             <div className="px-4 py-4">
               <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
               {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
