@@ -24,7 +24,7 @@ export function SidebarProjectActions({
   onToggleStar: (project: Project) => void;
   onStartRename: (project: Project) => void;
   onSetFolder: (project: Project) => void;
-  onToggleHidden: (projectId: string) => void;
+  onToggleHidden: (project: Project) => void;
   onRequestRemove: (project: Project) => void;
 }) {
   const isBrain = project.kind === 'brain';
@@ -51,7 +51,7 @@ export function SidebarProjectActions({
       {isBrain ? (
         <SidebarIconAction
           title={project.hidden ? 'Show project' : 'Hide project'}
-          onActivate={() => onToggleHidden(project.projectId)}
+          onActivate={() => onToggleHidden(project)}
         >
           {project.hidden ? (
             <Eye className="h-3 w-3 text-muted-foreground" />

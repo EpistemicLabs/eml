@@ -26,6 +26,8 @@
  */
 import type { LLMProvider } from '@/types/app';
 import { useCallback, useSyncExternalStore } from 'react';
+import { startsInChat } from '@/components/chat/chat-default';
+import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { setTopView } from './useTopViewStore';
 
 /**
@@ -36,9 +38,9 @@ import { setTopView } from './useTopViewStore';
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
  */
-export type PaneView = 'terminal' | 'brain' | 'note';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'brain', 'note'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -119,6 +121,14 @@ export interface DeskState {
   defaultProjectId: string | null;
   panes: PaneState[];
   activePaneId: string;
+  /**
+   * The desk's main pane: full height in a column at the left, the other panes
+   * in the even grid beside it. Always the first of `panes` (setSnapshot keeps
+   * it there), so lists of a desk's panes show it first. Unset → the even grid.
+   */
+  mainPaneId?: string;
+  /** The main column's share of the desk's width; kept while main is off. Unset → the default. */
+  mainWidth?: number;
 }
 
 interface PaneStoreSnapshot {
@@ -192,10 +202,25 @@ const normalizeTerminalLabels = (panes: PaneState[]): PaneState[] => {
   return changed ? next : panes;
 };
 
+/**
+ * Hold up the main pane's rules: it exists on the desk, and it comes first.
+ * Returns the same desk when nothing changed.
+ */
+const normalizeMainPane = (desk: DeskState): DeskState => {
+  if (!desk.mainPaneId) return desk;
+  const main = desk.panes.find(p => p.id === desk.mainPaneId);
+  if (!main) {
+    const { mainPaneId: _mainPaneId, ...rest } = desk;
+    return rest;
+  }
+  if (desk.panes[0] === main) return desk;
+  return { ...desk, panes: [main, ...desk.panes.filter(p => p !== main)] };
+};
+
 const createPane = (paneView: PaneView = 'terminal', projectId: string | null = null): PaneState => ({
   id: generateId(),
   projectId,
-  sessionId: paneView === 'terminal' ? newCliSessionId() : null,
+  sessionId: paneView === 'terminal' || paneView === 'chat' ? newCliSessionId() : null,
   paneView,
 });
 
@@ -263,6 +288,10 @@ const resolveActivePaneId = (panes: PaneState[], wanted: unknown): string => {
   return panes.some(p => p.id === w) ? w : panes[0].id;
 };
 
+// A stored share outside this range is not one a drag can produce: ignore it.
+const parseMainWidth = (raw: unknown): number | undefined =>
+  typeof raw === 'number' && raw > 0.05 && raw < 0.95 ? raw : undefined;
+
 const parseDesk = (
   entry: unknown,
   sessionViews: Record<string, PaneView>,
@@ -283,7 +312,7 @@ const parseDesk = (
   const name = slug === 'dev' && rawName === 'Dev'
     ? 'Desk 1'
     : rawName.replace(/^Space (\d+)$/, 'Desk $1');
-  return {
+  return normalizeMainPane({
     id: e.id,
     spaceId: typeof e.spaceId === 'string' && e.spaceId ? e.spaceId : null,
     slug,
@@ -291,7 +320,9 @@ const parseDesk = (
     defaultProjectId: typeof e.defaultProjectId === 'string' ? e.defaultProjectId : null,
     panes,
     activePaneId: resolveActivePaneId(panes, e.activePaneId),
-  };
+    mainPaneId: typeof e.mainPaneId === 'string' && e.mainPaneId ? e.mainPaneId : undefined,
+    mainWidth: parseMainWidth(e.mainWidth),
+  });
 };
 
 const parseSessionViews = (raw: unknown): Record<string, PaneView> => {
@@ -370,9 +401,10 @@ const setSnapshot = (next: PaneStoreSnapshot): void => {
   let desksChanged = false;
   const desks = next.desks.map(desk => {
     const panes = normalizeTerminalLabels(desk.panes);
-    if (panes === desk.panes) return desk;
+    const normalized = normalizeMainPane(panes === desk.panes ? desk : { ...desk, panes });
+    if (normalized === desk) return desk;
     desksChanged = true;
-    return { ...desk, panes };
+    return normalized;
   });
   snapshot = desksChanged ? { ...next, desks } : next;
   const active = snapshot.desks.find(s => s.id === snapshot.activeDeskId);
@@ -672,9 +704,9 @@ export function removePane(id: string): void {
   const loc = findPaneLocation(id);
   if (!loc) return;
   const { desk } = loc;
-  // Pinned panes are never removed. The last pane of a desk is not removed
-  // either — it goes back to the empty "Choose Your Project" state.
-  if (loc.pane.pinned) return;
+  // Pinned and main panes are never removed. The last pane of a desk is not
+  // removed either — it goes back to the empty "Choose Your Project" state.
+  if (loc.pane.pinned || desk.mainPaneId === id) return;
   if (desk.panes.length <= 1) {
     clearPane(id);
     return;
@@ -693,18 +725,66 @@ export function removePane(id: string): void {
   setSnapshot({ ...snapshot, desks });
 }
 
+/** Pinned and main panes: can't be closed, and stay on their desk. */
+export function isPaneProtected(paneId: string): boolean {
+  const loc = findPaneLocation(paneId);
+  return Boolean(loc && (loc.pane.pinned || loc.desk.mainPaneId === paneId));
+}
+
+/** Make a pane its desk's main pane, or, if it is, return the desk to the even grid. */
+export function toggleMainPane(paneId: string): void {
+  const loc = findPaneLocation(paneId);
+  if (!loc) return;
+  const mainPaneId = loc.desk.mainPaneId === paneId ? undefined : paneId;
+  const desks = snapshot.desks.map(s => (s.id === loc.desk.id ? { ...s, mainPaneId } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
+/** Remember how wide a desk's main column is, as a share of the desk's width. */
+export function setMainWidth(deskId: string, mainWidth: number): void {
+  const desk = snapshot.desks.find(s => s.id === deskId);
+  if (!desk || desk.mainWidth === mainWidth) return;
+  const desks = snapshot.desks.map(s => (s.id === deskId ? { ...s, mainWidth } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
+/** Whether `swapPanes(a, b)` would do anything: two panes of one desk, neither pinned. */
+export function canSwapPanes(a: string, b: string): boolean {
+  if (a === b) return false;
+  const first = findPaneLocation(a);
+  const second = findPaneLocation(b);
+  return Boolean(first && second && first.desk.id === second.desk.id && !first.pane.pinned && !second.pane.pinned);
+}
+
+/**
+ * Two panes of a desk trade places. Main is a place, not a property of the
+ * pane: whatever lands in the main column is the main pane from then on.
+ */
+export function swapPanes(a: string, b: string): void {
+  if (!canSwapPanes(a, b)) return;
+  const { desk } = findPaneLocation(a)!;
+  const panes = desk.panes.map((pane) => {
+    if (pane.id === a) return findPaneLocation(b)!.pane;
+    if (pane.id === b) return findPaneLocation(a)!.pane;
+    return pane;
+  });
+  const mainPaneId = desk.mainPaneId === a ? b : desk.mainPaneId === b ? a : desk.mainPaneId;
+  const desks = snapshot.desks.map(s => (s.id === desk.id ? { ...s, panes, mainPaneId } : s));
+  setSnapshot({ ...snapshot, desks });
+}
+
 /** Whether `movePaneToDesk(paneId, deskId)` would move anything. */
 export function canMovePaneToDesk(paneId: string, deskId: string): boolean {
   const loc = findPaneLocation(paneId);
   const target = snapshot.desks.find(s => s.id === deskId);
-  return Boolean(loc && target && !loc.pane.pinned && loc.desk.id !== target.id && loc.desk.spaceId === target.spaceId);
+  return Boolean(loc && target && !isPaneProtected(paneId) && loc.desk.id !== target.id && loc.desk.spaceId === target.spaceId);
 }
 
 /**
  * Move a pane to the end of another desk of the same space and show it there.
  * Only the view moves: its session keeps running on the host, and the
- * terminal reattaches to it on the target desk. Pinned panes stay on their
- * desk. On a desk that only shows the empty "Choose Your Project" pane, the
+ * terminal reattaches to it on the target desk. Pinned and main panes stay on
+ * their desk. On a desk that only shows the empty "Choose Your Project" pane, the
  * moved pane takes its place; a desk the move leaves empty gets a fresh empty
  * pane, the state closing its last pane leads to.
  */
@@ -750,11 +830,11 @@ export function activatePane(id: string): void {
   const loc = findPaneLocation(id);
   if (!loc) return;
   const { desk, pane } = loc;
-  if (snapshot.activeDeskId === desk.id && desk.activePaneId === pane.id) return;
+  if (snapshot.activeDeskId === desk.id && desk.activePaneId === pane.id && snapshot.activeSpaceId === desk.spaceId) return;
   const desks = desk.activePaneId === pane.id
     ? snapshot.desks
     : snapshot.desks.map(s => (s.id === desk.id ? { ...s, activePaneId: pane.id } : s));
-  setSnapshot({ ...snapshot, desks, activeDeskId: desk.id });
+  setSnapshot({ ...snapshot, desks, activeDeskId: desk.id, activeSpaceId: desk.spaceId });
 }
 
 export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): void {
@@ -811,11 +891,17 @@ export function setPaneView(paneId: string, view: PaneView): void {
   if (loc.pane.sessionId && view !== 'note') {
     sessionViews = { ...sessionViews, [loc.pane.sessionId]: view };
   }
-  // A pane opened as a note or brain view has no session yet; the terminal
-  // only starts with one, so switching to it mints the id a new pane would get.
-  const sessionId = view === 'terminal' && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
+  // A pane opened as a note or brain view has no session yet; the terminal and
+  // the chat only start with one, so switching to them mints the id a new pane would get.
+  const needsSession = view === 'terminal' || view === 'chat';
+  const sessionId = needsSession && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
   const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, paneView: view, sessionId }));
   setSnapshot({ ...snapshot, desks, sessionViews });
+}
+
+/** The view this browser remembers for a session, if the user ever picked one. */
+export function getSessionView(sessionId: string): PaneView | undefined {
+  return snapshot.sessionViews[sessionId];
 }
 
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
@@ -827,7 +913,7 @@ export function setPaneView(paneId: string, view: PaneView): void {
 
 export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
-  | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider }
+  | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
   | { surface: 'brain'; projectId: string | null };
 
@@ -846,6 +932,18 @@ export function isEmptyPane(pane: PaneState): boolean {
   return isEmptyPaneTest(pane);
 }
 
+// The provider a session without its own runs with (host: /api/providers); null until known.
+let defaultProvider: string | null = null;
+
+export function setDefaultProvider(provider: string | null): void {
+  defaultProvider = provider;
+}
+
+/** The view a new session opens in, so it never starts a terminal just to leave it. */
+export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
+  return startsInChat({ chatDefault: readSettings().chatDefault, provider: provider ?? defaultProvider }) ? 'chat' : 'terminal';
+}
+
 /** The pane that already holds the target's item, on any desk. */
 function findPaneHolding(target: OpenTarget): PaneState | undefined {
   const panes = snapshot.desks.flatMap(s => s.panes);
@@ -860,6 +958,29 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
   }
 }
 
+/** The panes on screen now: the active desk's, or its active pane where only one shows. */
+export function getDeskPanesOnScreen(compact: boolean): PaneState[] {
+  const desk = getActiveDesk();
+  if (!compact) return desk.panes;
+  const active = desk.panes.find(p => p.id === desk.activePaneId);
+  return active ? [active] : [];
+}
+
+/** The sessions shown in a desk's main pane, on this device. */
+export function deskMainSessions(desks: DeskState[]): Set<string> {
+  const ids = new Set<string>();
+  for (const desk of desks) {
+    const sessionId = desk.panes.find(p => p.id === desk.mainPaneId)?.sessionId;
+    if (sessionId) ids.add(sessionId);
+  }
+  return ids;
+}
+
+/** The pane showing a session, on any desk. */
+export function paneHoldingSession(sessionId: string): PaneState | undefined {
+  return snapshot.desks.flatMap(s => s.panes).find(p => p.sessionId === sessionId);
+}
+
 /**
  * Open `target` where the user will see it, and return the pane id:
  * 1. a pane already holds it → leave the Brain tab, switch to its desk, focus
@@ -871,10 +992,16 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
 export function openInPane(target: OpenTarget): string {
   setTopView('desks');
   const existing = findPaneHolding(target);
+  // A session the user moved to the chat view opens there; a new one as the settings say.
+  const shownView: PaneView = target.surface !== 'terminal'
+    ? target.surface
+    : !target.sessionId
+      ? newSessionView(target.provider)
+      : target.chat || snapshot.sessionViews[target.sessionId] === 'chat' ? 'chat' : 'terminal';
   if (existing) {
     activatePane(existing.id);
-    if (existing.paneView !== target.surface) {
-      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: target.surface }));
+    if (existing.paneView !== shownView) {
+      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: shownView }));
       setSnapshot({ ...snapshot, desks });
     }
     return existing.id;
@@ -886,7 +1013,7 @@ export function openInPane(target: OpenTarget): string {
       : target.surface === 'note'
         ? { noteId: target.noteId }
         : {};
-  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: target.surface, ...items };
+  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: shownView, ...items };
 
   const active = getActivePane();
   if (active && isEmptyPane(active)) {
@@ -900,6 +1027,15 @@ export function openInPane(target: OpenTarget): string {
     ...fields,
     ...(target.surface === 'terminal' ? {} : { sessionId: null }),
   });
+}
+
+/**
+ * Open a session of any space (the sidebar's All view). The space switches
+ * first: a pane's desk decides the token and the agent its session starts with.
+ */
+export function openSessionInSpace(spaceId: string | null, target: OpenTarget): string {
+  activateSpace(spaceId);
+  return openInPane(target);
 }
 
 /** Show a note (openInPane). */
@@ -1034,6 +1170,8 @@ export function addWorkerPane(opts: {
   replacePaneId?: string | null;
   /** The worker's session id, when the host fixed it in advance (the spawn request id — host spawn-api.ts). */
   sessionId?: string;
+  /** The host already runs it in chat: the pane only joins, with nothing to send. */
+  inChat?: boolean;
 }): string {
   const from = opts.fromSessionId
     ? snapshot.desks
@@ -1041,7 +1179,7 @@ export function addWorkerPane(opts: {
         .find(({ pane }) => pane.sessionId === opts.fromSessionId)
     : undefined;
   const newPane: PaneState = {
-    ...createPane('terminal', opts.projectId),
+    ...createPane(opts.inChat ? 'chat' : 'terminal', opts.projectId),
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.title ? { title: opts.title } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
@@ -1070,7 +1208,7 @@ export function addWorkerPane(opts: {
   if (replaced && !hasPendingShellCommand(opts.replacePaneId!)) {
     // Queue the prompt first: the pane is on screen, so it mounts (and reads
     // its first message) as soon as the snapshot changes.
-    enqueuePendingShellCommand(newPane.id, opts.prompt);
+    if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
     setSnapshot({
       ...snapshot,
       activeDeskId: replaced.id,
@@ -1084,7 +1222,7 @@ export function addWorkerPane(opts: {
   const idx = from && from.desk.id === target.id ? target.panes.findIndex(p => p.id === from.pane.id) : target.panes.length - 1;
   const panes = [...target.panes.slice(0, idx + 1), newPane, ...target.panes.slice(idx + 1)];
   setSnapshot({ ...snapshot, desks: desks.map(s => (s.id === target.id ? { ...s, panes } : s)) });
-  enqueuePendingShellCommand(newPane.id, opts.prompt);
+  if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
   return newPane.id;
 }
 

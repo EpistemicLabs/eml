@@ -11,21 +11,25 @@
 // the part above the on-screen keyboard.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
+import { ReviewScreen } from '../review/ReviewScreen';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
 import { FirstRunSignIn } from '@/components/first-run/FirstRun';
-import { findProjectOwningSession, projectsOfSpace, useProjectsState } from '@/hooks/useProjectsState';
+import { findProjectOwningSession, projectsOfSpace, spaceLoaded, useProjectsState } from '@/hooks/useProjectsState';
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
-import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { setSessionDeskMain } from '@/lib/session-actions';
+import { useSeenResults } from './useSeenResults';
 import { api } from '@/utils/api';
-import { readSettings } from '@/components/settings/utils/settingsStorage';
+import { readSettings, setHostChatView } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
 import type { Project, ProjectSession } from '@/types/app';
@@ -41,8 +45,11 @@ import BrainHygieneBanner from './BrainHygieneBanner';
 import TeamBanner from './TeamBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { cn } from '@/lib/utils';
+import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
+import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
-import { Brain, Menu } from 'lucide-react';
+import { Brain } from 'lucide-react';
 
 export default function AppContent() {
   return (
@@ -60,6 +67,9 @@ function AppContentInner() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => { if (!compact) setDrawerOpen(false); }, [compact]);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  useDrawerSwipe(compact, drawerOpen, openDrawer, closeDrawer);
+  const keyboardOpen = useSoftKeyboardOpen();
   const {
     projects,
     projectsBySpace,
@@ -81,6 +91,10 @@ function AppContentInner() {
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
+  // The phone has no way back from the Brain tab, so it stays on the desks.
+  useEffect(() => {
+    if (compact && topView === 'brain') setTopView('desks');
+  }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
   // Streams from the host (Claude Code hooks → /api/events). A finished
@@ -94,18 +108,28 @@ function AppContentInner() {
   projectsBySpaceRef.current = projectsBySpace;
   const refreshProjectsRef = React.useRef(refreshProjectsSilently);
   refreshProjectsRef.current = refreshProjectsSilently;
+  const { data: providers } = useProviders();
+  paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
+  const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;
+  React.useEffect(() => {
+    if (typeof hostChatView === 'boolean') setHostChatView(hostChatView);
+  }, [hostChatView]);
   // One test for "empty pane" everywhere: a terminal pane whose projectId and
   // pre-minted session both resolve to no project (Choose Your Project), or a
   // note pane with neither a note nor a project (Pick a project…). Against the
   // projects of the pane's own space.
   paneStore.setEmptyPaneTest((pane) => {
     const desk = paneStore.getDeskOfPane(pane.id);
+    // Projects not loaded yet (a space first opened from the All view): nothing
+    // can be told about the pane, so only one without a project counts as empty,
+    // or a click would replace a running session.
+    if (desk && !spaceLoaded(projectsBySpaceRef.current, desk.spaceId)) return !pane.projectId;
     const spaceProjects = desk
       ? projectsOfSpace(projectsBySpaceRef.current, desk.spaceId)
       : projectsRef.current;
     const known = spaceProjects.some((project) => project.projectId === pane.projectId);
     if (pane.paneView === 'note') return !pane.noteId && !known;
-    return pane.paneView === 'terminal' && !known &&
+    return (pane.paneView === 'terminal' || pane.paneView === 'chat') && !known &&
       !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
@@ -114,7 +138,7 @@ function AppContentInner() {
 
   useEffect(() => {
     const onTurn = (event: TurnEvent) => {
-      if (event.state !== 'done' || !readSettings().notifyOnDone) return;
+      if ((event.state !== 'done' && event.state !== 'waiting') || event.silent || event.repeated || !readSettings().notifyOnDone) return;
       if (document.visibilityState === 'visible' && document.hasFocus()) return;
       if (!('Notification' in window) || Notification.permission !== 'granted') return;
       const session = projectsRef.current
@@ -126,8 +150,10 @@ function AppContentInner() {
         // banner back — so only a session's first turn alerted. Closing the
         // session's previous notification keeps one entry per session.
         sessionNotifications.current.get(event.sessionId)?.close();
-        const notification = new Notification('Session finished', {
-          body: session?.summary || 'Claude finished a turn',
+        const name = event.title || session?.summary;
+        const heading = event.state === 'waiting' ? 'Needs you' : event.batch && event.batch > 1 ? `All ${event.batch} workers finished` : 'Session finished';
+        const notification = new Notification(heading, {
+          body: name || (event.state === 'waiting' ? 'A session is waiting for you' : 'Claude finished a turn'),
           tag: `${event.sessionId}:${Date.now()}`,
         });
         sessionNotifications.current.set(event.sessionId, notification);
@@ -145,7 +171,7 @@ function AppContentInner() {
     // worker of another space would wait out the whole loop (minutes in a
     // background tab, where the browser throttles the timers).
     const knownProject = (projectId: string) => projectsRef.current.some((project) => project.projectId === projectId);
-    const openWorker = async (request: SpawnRequest) => {
+    const openWorker = async (request: SpawnRequest, inChat: boolean) => {
       // Decided before loading the project — that can auto-select it into the empty pane.
       const replacePaneId = request.placement === 'replace-empty-desk' ? paneStore.findEmptyDeskPane() : null;
       const inOpenSpace = (request.spaceId ?? null) === paneStore.getActiveSpaceId();
@@ -155,12 +181,16 @@ function AppContentInner() {
       }
       // The request names a further space by brain id; absent = main, which the pane store calls null.
       // Its id is the worker's session id — the requester already got the worker's address from it.
-      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId });
+      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId, inChat });
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
-        void api.claimSpawn(request.id).then((response) => {
-          if (response.ok) return openWorker(request);
+        // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
+        if (request.fromSessionId && !request.open) continue;
+        void api.claimSpawn(request.id).then(async (response) => {
+          if (!response.ok) return;
+          const { runtime } = await response.json() as { runtime?: string };
+          return openWorker(request, runtime === 'sdk');
         }).catch(() => { /* host gone — the request is dropped with it */ });
       }
     };
@@ -183,6 +213,18 @@ function AppContentInner() {
   // ── Pane state (desks) ─────────────────────────────────────────────
   const desks = paneStore.useDesks();
   const activeDeskIdForSeen = paneStore.useActiveDeskId();
+
+  // Which sessions are main goes to the host, like a pin, so every device lists them.
+  // Only what changes here: a device whose desks have no main pane clears nobody's.
+  const sentMainSessions = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = paneStore.deskMainSessions(desks);
+    for (const id of current) if (!sentMainSessions.current.has(id)) void setSessionDeskMain(id, true);
+    for (const id of sentMainSessions.current) if (!current.has(id)) void setSessionDeskMain(id, false);
+    sentMainSessions.current = current;
+  }, [desks]);
+
+  useSeenResults(compact);
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window
@@ -211,7 +253,7 @@ function AppContentInner() {
   }, [desks, activeDeskIdForSeen, turnSnapshot]);
 
   const unseenTotal = useMemo(
-    () => countNeedsYou(turnSnapshot, desks.flatMap((desk) => desk.panes.map((pane) => pane.sessionId))),
+    () => countNeedsYou(turnSnapshot, [...new Set([...desks.flatMap((desk) => desk.panes.map((pane) => pane.sessionId)), ...waitingSessions(turnSnapshot)])]),
     [desks, turnSnapshot],
   );
   const activeDeskId = paneStore.useActiveDeskId();
@@ -259,7 +301,7 @@ function AppContentInner() {
   // stores projectId null for a session that plainly has a project
   // (root of the "+ → Choose Your Project" bug).
   const projectIdForSession = useCallback((session: ProjectSession): string | null => {
-    return session.__projectId ?? findProjectOwningSession(projectsRef.current, session.id)?.projectId ?? null;
+    return session.__projectId || (findProjectOwningSession(projectsRef.current, session.id)?.projectId ?? null);
   }, []);
 
   // Every open goes through paneStore.openInPane (decision
@@ -267,7 +309,9 @@ function AppContentInner() {
   // on its desk, in its view, leaving the Brain tab — never duplicated; else
   // an empty active pane takes it; else it opens next to the active pane.
   const handleSessionSelect = useCallback((session: ProjectSession) => {
-    paneStore.openInPane({ surface: 'terminal', projectId: projectIdForSession(session), sessionId: session.id });
+    const target = { surface: 'terminal' as const, projectId: projectIdForSession(session), sessionId: session.id, chat: session.runtime === 'sdk' };
+    if (session.__spaceKey !== undefined) paneStore.openSessionInSpace(session.__spaceKey, target);
+    else paneStore.openInPane(target);
   }, [projectIdForSession]);
 
   // "Set folder…" from the sidebar. (A project without a folder no longer
@@ -289,24 +333,15 @@ function AppContentInner() {
 
   return (
     <div
+      data-app-root
       className="fixed inset-x-0 top-0 flex flex-col bg-background"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
     >
       {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
           The sidebar rail and the pane grid start below it, top-aligned. */}
+      {!compact && (
       <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-sm box-content">
-        {compact && (
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Projects and sessions"
-            className="flex w-12 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
-        )}
         {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
-        {!compact && (
         <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[18px] font-semibold tracking-wide text-primary">
           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
             <Brain className="h-4 w-4 text-primary-foreground" />
@@ -331,23 +366,21 @@ function AppContentInner() {
             </span>
           )}
         </div>
-        )}
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        {compact ? (
-          <CompactNavBar projects={projects} />
-        ) : (
-          <div className="min-w-0 flex-1">
-            <DeskTabBar />
-          </div>
-        )}
+        <div className="min-w-0 flex-1">
+          <DeskTabBar />
+        </div>
       </div>
+      )}
 
       {/* Full width under the header, in this order: update (available → installing → outcome),
           a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
-      <UpdateBanner />
-      <AgentUpgradeBanner />
-      <TeamBanner />
-      <BrainHygieneBanner />
+      <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
+        <UpdateBanner />
+        <AgentUpgradeBanner />
+        <TeamBanner />
+        <BrainHygieneBanner />
+      </div>
 
       <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
@@ -358,6 +391,7 @@ function AppContentInner() {
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
           projects={projects}
+          projectsBySpace={projectsBySpace}
           selectedProject={activePaneCtx.project}
           selectedSession={activePaneCtx.session}
           onProjectSelect={compact ? closingDrawer(handleProjectSelect) : handleProjectSelect}
@@ -372,7 +406,13 @@ function AppContentInner() {
         />
       </div>
 
-      <div className="relative flex min-w-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
+      {/* The home indicator's inset is only needed at the screen's bottom edge. With the keyboard
+          up the app already ends above it, but iOS keeps reporting the inset. */}
+      <div
+        className={cn('relative flex min-w-0 flex-1 flex-col', !compact && !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}
+        style={compact ? ({ '--bottom-inset': keyboardOpen ? '0px' : 'env(safe-area-inset-bottom)' } as React.CSSProperties) : undefined}
+      >
+        {compact && <CompactNavBar onOpenMenu={openDrawer} />}
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is
               active; the desks below stay mounted (hidden) so terminals
@@ -382,6 +422,8 @@ function AppContentInner() {
               <BrainDashboard />
             </div>
           )}
+          {/* The review screen lies over the desks the same way: they stay as they are. */}
+          {topView === 'review' && <ReviewScreen />}
           {/* All visited desks stay mounted, stacked in the same box; only
               the active one is shown. Hiding (not unmounting) keeps each
               desk's terminals/WebSockets alive across switches. */}
@@ -403,6 +445,9 @@ function AppContentInner() {
                   <PaneGridLayout
                     paneIds={desk.panes.map(p => p.id)}
                     activePaneId={desk.activePaneId}
+                    deskId={desk.id}
+                    mainPaneId={desk.mainPaneId}
+                    mainWidth={desk.mainWidth}
                     deskActive={isDeskActive}
                     compact={compact}
                     projects={projectsOfSpace(projectsBySpace, desk.spaceId)}

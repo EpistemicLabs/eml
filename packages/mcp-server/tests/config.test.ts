@@ -26,4 +26,8 @@ describe('client config', () => {
       EML_URL: '$(rm -rf /)',
     })
   })
+
+  it('parseConfig keeps only URL and token', () => {
+    expect(parseConfig('EML_URL=u\nEML_API_TOKEN=t\nEML_AGENT=helper\n')).toEqual({ EML_URL: 'u', EML_API_TOKEN: 't' })
+  })
 })

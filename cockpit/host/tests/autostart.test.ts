@@ -70,6 +70,11 @@ describe('Linux autostart unit', () => {
     expect(unit).toMatch(/^Restart=always$/m)
     expect(unit).toMatch(/^WantedBy=default\.target$/m)
   })
+
+  it('outlives a process the kernel kills for memory, and hands its cgroup to the host', () => {
+    expect(unit).toMatch(/^OOMPolicy=continue$/m)
+    expect(unit).toMatch(/^Delegate=yes$/m)
+  })
 })
 
 describe('Linux autostart node path', () => {

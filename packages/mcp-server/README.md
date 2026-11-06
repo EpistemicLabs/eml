@@ -61,6 +61,8 @@ eml-mcp-server hook stop               [--config <path>]
   in the same turn — before the session goes idle, where it can be compacted with nobody there to
   give the agent a turn. A turn continued this way (`stop_hook_active`) is let through. With an
   unreadable transcript the hook stays silent.
+- **After a resume** `session-start` (`source: "resume"`) prints one line instead of the boot, which is
+  already in the session's history.
 - **After a compaction** `session-start` (`source: "compact"`) puts a hint with the transcript's
   path before the boot and takes its length off the boot's budget.
 - **`--json`** prints the context in the hook JSON envelope
@@ -72,7 +74,7 @@ eml-mcp-server hook stop               [--config <path>]
 data, never evaluated). Logs, the reminder's turn counters and the save points live
 next to the config file, so one config directory is one isolated EML client.
 
-## Tools (v0.20.4)
+## Tools (v0.20.9)
 
 All tools have an `eml_` prefix. Total: **22 tools**. Every tool schema is strict: an unknown parameter is an error, not silently dropped, and the server checks the same fields again (core enforces them for MCP, REST and CLI alike). An older client that still sends removed tools or fields (`significance`, `properties`, `kind`, …) gets an error asking to upgrade `@engramprotocol/mcp-server` to ≥ 0.19.
 

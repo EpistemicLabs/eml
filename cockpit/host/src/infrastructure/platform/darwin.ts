@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import type { Platform } from '../../domain/platform.js'
+import { noSessionMemory } from '../../domain/session-memory.js'
 import { archKey, detached, posixBase, runFile } from './common.js'
 
 const output = (cmd: string, args: string[]) => new Promise<{ code: number; stderr: string }>((resolve) => {
@@ -9,6 +10,8 @@ const output = (cmd: string, args: string[]) => new Promise<{ code: number; stde
 export const darwin: Platform = {
   ...posixBase,
   os: 'darwin',
+  freeMemory: () => null,
+  sessionMemory: () => noSessionMemory('not on macOS'),
   runtimeKey: () => `darwin-${archKey()}`,
   // macOS pbcopy, which Claude Code copies through, reads non-UTF-8 input as Mac Roman.
   fallbackLang: 'en_US.UTF-8',

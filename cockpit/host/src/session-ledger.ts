@@ -1,7 +1,10 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
-import { PROVIDER_IDS, type ProviderId, type SessionRef } from './domain/agent-provider.js'
+import { PROVIDER_IDS, type ProviderId, type SessionAgentRuntime, type SessionRef } from './domain/agent-provider.js'
+import type { SessionRuntimeKind } from './domain/session-runtime.js'
+import type { WorkerStatus } from './domain/session-attention.js'
+import type { ToolProfile } from './domain/tool-profile.js'
 
 /**
  * Host-owned session ledger (decision cockpit-session-resume-strategy).
@@ -57,6 +60,31 @@ export interface LedgerEntry {
    * a restart, until the user closes it (pty-bridge.ts).
    */
   keepRunning: boolean
+  /** How the session last ran: in a terminal, or through the chat view. The conversation is the same either way. */
+  runtime: SessionRuntimeKind
+  /** The permission mode and model chosen in the chat view; a resume starts with them. */
+  chatMode: string | null
+  chatModel: string | null
+  /** An outside service may send it messages (cockpit message endpoint). */
+  wakeable: boolean
+  /** How it stands for someone, why, and since when; null when nobody has anything to do. */
+  attention: { kind: WorkerStatus; reason: string | null; at: string } | null
+  /** The last status it gave with a reason, kept after nobody has anything to do: what came of it (session-directory.ts). */
+  lastStatus: { kind: WorkerStatus; reason: string; at: string } | null
+  /** It is the main pane of a desk. Saved here, beside the pin, so every device lists it as a main session. */
+  deskMain: boolean
+  /** The session that started this one; null for one started by hand or from before this was recorded. */
+  parentSessionId: string | null
+  /** When someone last saw it, on any device. */
+  readAt: string | null
+  /** A turn ended and nobody has seen the result; null once someone has. */
+  resultAt: string | null
+  /** Out of the lists since then; the conversation stays and a new message brings it back. */
+  archivedAt: string | null
+  /** What the session may use, for its whole life; null: no limits. */
+  toolProfile: ToolProfile | null
+  /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
+  turnInFlight: { retried: boolean } | null
 }
 
 interface LedgerFile {
@@ -92,6 +120,23 @@ function load(): LedgerFile {
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
+          runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
+          chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
+          chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
+          wakeable: entry.wakeable === true,
+          attention: entry.attention && typeof entry.attention.kind === 'string'
+            ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null, at: typeof entry.attention.at === 'string' ? entry.attention.at : entry.lastAttached }
+            : null,
+          lastStatus: entry.lastStatus && typeof entry.lastStatus.kind === 'string' && typeof entry.lastStatus.reason === 'string'
+            ? { kind: entry.lastStatus.kind, reason: entry.lastStatus.reason, at: typeof entry.lastStatus.at === 'string' ? entry.lastStatus.at : entry.lastAttached }
+            : null,
+          deskMain: entry.deskMain === true,
+          parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
+          readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
+          resultAt: typeof entry.resultAt === 'string' ? entry.resultAt : null,
+          archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
+          toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
+          turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
         }
       }
     }
@@ -103,6 +148,8 @@ function load(): LedgerFile {
 
 export class SessionLedger {
   private data: LedgerFile = load()
+  /** Who asked for a worker that has no entry yet: its first spawn takes it. */
+  private expectedParents = new Map<string, string>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -113,9 +160,9 @@ export class SessionLedger {
   }
 
   /** What a provider needs to find this session's conversation. */
-  ref(sessionId: string, projectPath: string | null): SessionRef {
+  ref(sessionId: string, projectPath: string | null, runtime?: SessionAgentRuntime | null): SessionRef {
     const entry = this.data.sessions[sessionId]
-    return { sessionId, providerSessionId: entry?.providerSessionId ?? null, projectPath, greeted: entry?.greeted ?? null }
+    return { sessionId, providerSessionId: entry?.providerSessionId ?? null, projectPath, greeted: entry?.greeted ?? null, ...(runtime ? { runtime } : {}) }
   }
 
   /**
@@ -151,6 +198,19 @@ export class SessionLedger {
       taskId: taskId ?? prev?.taskId ?? null,
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
+      runtime: prev?.runtime ?? 'terminal',
+      chatMode: prev?.chatMode ?? null,
+      chatModel: prev?.chatModel ?? null,
+      wakeable: prev?.wakeable ?? false,
+      attention: prev?.attention ?? null,
+      lastStatus: prev?.lastStatus ?? null,
+      deskMain: prev?.deskMain ?? false,
+      parentSessionId: prev?.parentSessionId ?? this.expectedParents.get(sessionId) ?? null,
+      readAt: prev?.readAt ?? null,
+      resultAt: prev?.resultAt ?? null,
+      archivedAt: prev?.archivedAt ?? null,
+      toolProfile: prev?.toolProfile ?? null,
+      turnInFlight: prev?.turnInFlight ?? null,
     }
     this.persist()
   }
@@ -160,6 +220,113 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.keepRunning === keepRunning) return
     entry.keepRunning = keepRunning
+    this.persist()
+  }
+
+  /** Record how the session runs now (chat-bridge.ts, pty-bridge.ts). */
+  setRuntime(sessionId: string, runtime: SessionRuntimeKind): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.runtime === runtime) return
+    entry.runtime = runtime
+    this.persist()
+  }
+
+  /** Record how the session stands for someone, or that nobody has anything to do. */
+  setAttention(sessionId: string, attention: { kind: WorkerStatus; reason: string | null } | null): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || (entry.attention === null && attention === null)) return
+    entry.attention = attention && { ...attention, at: new Date().toISOString() }
+    if (attention?.reason) entry.lastStatus = { kind: attention.kind, reason: attention.reason, at: entry.attention!.at }
+    this.persist()
+  }
+
+  /** A worker was asked for by this session; recorded when it starts, however it starts. */
+  expectParent(sessionId: string, parentSessionId: string): void {
+    this.expectedParents.set(sessionId, parentSessionId)
+  }
+
+  markRead(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.readAt = new Date().toISOString()
+    entry.resultAt = null
+    this.persist()
+  }
+
+  /** A turn ended, or a new one started and whatever it left no longer waits. */
+  setResult(sessionId: string, waiting: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || (entry.resultAt === null && !waiting)) return
+    entry.resultAt = waiting ? new Date().toISOString() : null
+    this.persist()
+  }
+
+  /** Out of the lists: nothing is left to do for it and it no longer holds a pin. */
+  archive(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.archivedAt = new Date().toISOString()
+    entry.attention = null
+    entry.resultAt = null
+    entry.pinned = false
+    entry.deskMain = false
+    this.persist()
+  }
+
+  setDeskMain(sessionId: string, deskMain: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.deskMain === deskMain) return
+    entry.deskMain = deskMain
+    this.persist()
+  }
+
+  unarchive(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.archivedAt === null) return
+    entry.archivedAt = null
+    this.persist()
+  }
+
+  /** Set when the session starts; it holds on every resume, in either view. */
+  setToolProfile(sessionId: string, toolProfile: ToolProfile): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.toolProfile = toolProfile
+    this.persist()
+  }
+
+  /** A worker's turn started (keeps a retry already used) or ended. */
+  setTurnInFlight(sessionId: string, inFlight: boolean): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.worker || (!!entry.turnInFlight === inFlight)) return
+    entry.turnInFlight = inFlight ? { retried: false } : null
+    this.persist()
+  }
+
+  markTurnRetried(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.turnInFlight) return
+    entry.turnInFlight.retried = true
+    this.persist()
+  }
+
+  /** Let an outside service send this session messages. */
+  setWakeable(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.wakeable) return
+    entry.wakeable = true
+    this.persist()
+  }
+
+  /** Remember what the chat view runs with. */
+  setChatSettings(sessionId: string, patch: { mode?: string; model?: string }): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    const chatMode = patch.mode ?? entry.chatMode
+    const chatModel = patch.model ?? entry.chatModel
+    if (entry.chatMode === chatMode && entry.chatModel === chatModel) return
+    entry.chatMode = chatMode
+    entry.chatModel = chatModel
     this.persist()
   }
 

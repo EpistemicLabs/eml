@@ -8,6 +8,8 @@
  * a method joins it when some code needs that difference, not before.
  */
 
+import type { SessionMemory } from './session-memory.js'
+
 export type PlatformOs = 'darwin' | 'linux' | 'win32'
 
 export interface Platform {
@@ -21,6 +23,12 @@ export interface Platform {
    * `linux-x64`, `win32-x64`. `musl`: say `linux-x64-musl` on a musl Linux.
    */
   runtimeKey(opts?: { musl?: boolean }): string
+
+  /** Free memory in bytes; null where the system's number says little (macOS counts file cache as used). */
+  freeMemory(): number | null
+
+  /** The memory ceilings of sessions (session-memory.ts); `service`: the host runs as the autostart service. */
+  sessionMemory(opts: { service: boolean; log: (line: string) => void }): SessionMemory
 
   /** Variables a session inherits from the host on top of the common ones (pty-bridge.ts). */
   readonly sessionEnvKeys: readonly string[]

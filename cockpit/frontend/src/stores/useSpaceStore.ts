@@ -18,6 +18,10 @@ export interface SpaceInfo {
   upgrade: { reason: string; report: string | null; needs?: 'handle' } | null;
   /** v0.21: a shared brain; null when the host could not ask the brain server. */
   shared: boolean | null;
+  /** The name its sessions go by: its agent's, null while none is bound. Never the space's own name. */
+  agentName?: string | null;
+  /** What tells it apart: a name from the palette (lib/space-color.ts). */
+  color?: string;
 }
 
 let spaces: SpaceInfo[] = [];
@@ -116,6 +120,30 @@ export async function renameSpace(space: SpaceInfo, name: string): Promise<{ spa
   if (!res.ok || !body.space) return { error: errorText(body, `Could not rename the space (${res.status}).`) };
   await loadSpaces();
   return { space: body.space };
+}
+
+// The sidebar's All view: every space's sessions in one list. Only the sidebar
+// changes; the cockpit stays in its active space. Per browser, on by default.
+const ALL_VIEW_KEY = 'cockpit-sidebar-all';
+
+function readAllView(): boolean {
+  try { return window.localStorage.getItem(ALL_VIEW_KEY) !== '0'; } catch { return true; }
+}
+
+let allView: boolean | null = null;
+const getAllView = (): boolean => (allView ??= readAllView());
+
+export function setAllView(on: boolean): void {
+  allView = on;
+  try { window.localStorage.setItem(ALL_VIEW_KEY, on ? '1' : '0'); } catch { /* the in-memory state still applies */ }
+  notify();
+}
+
+/** Whether the sidebar shows the All view; with a single space there is nothing to combine. */
+export function useAllView(): boolean {
+  const on = useSyncExternalStore(subscribe, getAllView);
+  const list = useSpaces();
+  return on && list.length > 1;
 }
 
 export function useSpaces(): SpaceInfo[] {

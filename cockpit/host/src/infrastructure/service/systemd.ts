@@ -22,6 +22,14 @@ import { SERVICE_ENV, type Autostart, type AutostartSpec, type AutostartStatus }
  * process.execPath (the resolved, version-pinned folder), so a node update
  * behind the link carries over. Moving or removing that node means re-running
  * install.
+ *
+ * OOMPolicy=continue: when the kernel kills a process of the unit for lack of
+ * memory, only that process dies. The default (stop) ends the whole unit, every
+ * session with it. Delegate=yes hands the unit's cgroup to the host, which gives
+ * each session a group with a memory ceiling (linux-cgroups.ts).
+ *
+ * The unit is written by install and refreshed by the host at start (refresh),
+ * so an update brings its changes to a unit installed by an older version.
  */
 
 /** systemd expands %-specifiers in every value. */
@@ -37,7 +45,7 @@ const envLine = (key: string, value: string) =>
 export function unitFile(spec: AutostartSpec, node: string): string {
   const pathEntries = [...new Set([path.dirname(node), '/usr/local/bin', '/usr/bin', '/bin'])]
   return [
-    '# EML Cockpit autostart, written by `eml-cockpit service install`.',
+    HEADER,
     '[Unit]',
     `Description=EML Cockpit (port ${spec.port})`,
     '',
@@ -55,6 +63,10 @@ export function unitFile(spec: AutostartSpec, node: string): string {
     // A clean exit is the updater switching versions: start the new one.
     'Restart=always',
     'RestartSec=5',
+    // Out of memory: the kernel's kill is the end of it, not of every session.
+    'OOMPolicy=continue',
+    // The host divides its cgroup into one group per session.
+    'Delegate=yes',
     '',
     '[Install]',
     'WantedBy=default.target',
@@ -70,6 +82,8 @@ function run(cmd: string, args: string[]): { ok: boolean; out: string } {
     return { ok: false, out: `${e.stdout?.toString() ?? ''}${e.stderr?.toString() ?? ''}`.trim() || (e.message ?? '') }
   }
 }
+
+const HEADER = '# EML Cockpit autostart, written by `eml-cockpit service install`.'
 
 const systemctl = (args: string[]) => run('systemctl', ['--user', ...args])
 
@@ -122,6 +136,18 @@ export function systemdAutostart(spec: AutostartSpec): Autostart {
       systemctl(['disable', '--now', unitName])
       fs.rmSync(unit, { force: true })
       systemctl(['daemon-reload'])
+    },
+    refresh(): 'updated' | 'current' | 'absent' {
+      let existing: string
+      try { existing = fs.readFileSync(unit, 'utf8') } catch { return 'absent' }
+      // A unit someone wrote by hand stays theirs.
+      if (!existing.startsWith(HEADER)) return 'absent'
+      const wanted = unitFile(spec, stableNodePath())
+      if (existing === wanted) return 'current'
+      fs.writeFileSync(unit, wanted)
+      // Applies to the running unit at once, OOMPolicy and Delegate both (systemd 259).
+      mustRun(['daemon-reload'])
+      return 'updated'
     },
     status(): AutostartStatus {
       const installed = fs.existsSync(unit)

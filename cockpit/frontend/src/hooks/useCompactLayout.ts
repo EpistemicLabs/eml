@@ -21,6 +21,11 @@ function isCompact(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia(COMPACT_LAYOUT_QUERY).matches;
 }
 
+/** A touch screen, not a narrow window: what the view of a session may follow, since resizing must not take a session over. */
+export function isTouchScreen(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+}
+
 export function useCompactLayout(): boolean {
   return useSyncExternalStore(subscribe, isCompact, () => false);
 }

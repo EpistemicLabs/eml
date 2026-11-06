@@ -99,7 +99,7 @@ describe('brain spaces', () => {
   it('gives a space its own session files, owner-only, naming the host with the space\'s MCP token and never the brain token', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const space = mods.openBrainSpace({
-      id: SPACE_ID, name: 'Main', brainName: 'Main', agent: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      id: SPACE_ID, name: 'Main', agent: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
       turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
     expect(space.agent).toBe('atlas')
@@ -135,6 +135,11 @@ describe('brain spaces', () => {
     expect(hooks.SessionStart[1].matcher).toBeUndefined()
     expect(line(hooks.SessionStart[1].hooks[0])).toContain(`hook project-block --config ${quoted(space.files.emlConfig)}`)
     expect(hooks.UserPromptSubmit).toHaveLength(2)
+    // SendMessage asks the host first, and waits for the answer (send-message-hook.ts).
+    expect(hooks.PreToolUse).toHaveLength(1)
+    expect(hooks.PreToolUse[0].matcher).toBe('SendMessage')
+    expect(line(hooks.PreToolUse[0].hooks[0])).toContain('send-message-hook.js')
+    expect(hooks.PreToolUse[0].hooks[0].async).toBeUndefined()
     expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
     // The EML hooks talk to the host's hook routes with the space's MCP token (brain-mcp.ts HOOKS_PATH).
@@ -147,7 +152,7 @@ describe('brain spaces', () => {
   it('resolves a space by id and falls back to main', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string) => mods.openBrainSpace({
-      id, name, brainName: name, agent: null, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      id, name, agent: null, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
       turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
     const main = open(SPACE_ID, 'Main')
@@ -163,7 +168,7 @@ describe('brain spaces', () => {
   it('v0.21: a removed space leaves the registry, the config, and takes its session files and local state with it', async () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string, main: boolean, token: string) => mods.openBrainSpace({
-      id, name, brainName: name, agent: 'atlas', main, shared: !main, url: 'http://127.0.0.1:60000', token,
+      id, name, agent: 'atlas', main, shared: !main, url: 'http://127.0.0.1:60000', token,
       turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
     const main = open(SPACE_ID, 'Main', true, TOKEN)

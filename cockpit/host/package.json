@@ -1,6 +1,6 @@
 {
   "name": "eml-cockpit",
-  "version": "0.20.4",
+  "version": "0.20.9",
   "license": "AGPL-3.0-only",
   "private": false,
   "description": "EML Cockpit — a local web app that runs isolated Claude Code sessions next to your local brain. One process: brain server + session runtime + UI, all on loopback.",
@@ -32,12 +32,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.314",
     "@engramprotocol/mcp-server": "workspace:*",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "node-pty": "^1.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@engramprotocol/cockpit-frontend": "workspace:*",

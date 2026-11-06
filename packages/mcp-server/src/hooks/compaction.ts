@@ -147,3 +147,14 @@ export function compactionNote(input: CompactionInput): string {
     'If the compacted part held real work that was not consolidated, run the consolidate skill at the next natural stop, ' +
     'not in the middle of a running task: work from the summary and read the transcript where the summary is too thin.'
 }
+
+/**
+ * What a resumed session gets instead of the boot: the boot is already in its
+ * history (a compaction brings its own), and every resume would otherwise add it
+ * to the context again. The project block still comes, as it does on every source.
+ */
+export const RESUME_NOTE = '[EML] Session resumed: the boot from earlier in this session still applies. eml_boot loads it fresh if you need that.'
+
+export function resumed(input: CompactionInput): boolean {
+  return input.source === 'resume'
+}

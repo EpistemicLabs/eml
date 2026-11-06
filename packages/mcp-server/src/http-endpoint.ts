@@ -9,7 +9,7 @@ import type { Provenance } from './provenance'
 
 /**
  * One Streamable HTTP endpoint serving the EML tools to many agent sessions,
- * instead of one stdio process per session (docs/proposals/brain-mcp-over-http.md).
+ * instead of one stdio process per session.
  *
  * The embedding server authenticates every request and says who is calling
  * (McpHttpCaller): which brain the caller may reach (`owner`) and which agent

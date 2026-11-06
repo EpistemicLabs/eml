@@ -205,6 +205,80 @@ A move the relay did not confirm in time removes nothing; once the space is live
 up where it stopped. Host side: `project-move.ts` (`GET /api/projects/:id/move-plan?target=`,
 `POST /api/projects/:id/move {target, plan_hash}`).
 
+With more than one space, the sidebar's switch also offers **All spaces** (the default): one list of every
+space's sessions with the sections Waiting, Pinned, Working and Recent, each row marked with its agent's
+letter. It is a view of the sidebar only: the cockpit stays in one space, and a click switches to the
+session's space and opens it there. The list comes from `GET /api/sessions/all` (ids and metadata, no tokens).
+
+### A space's own agent
+
+A further space can have its own agent: its own agent id, Claude config folder, login, MCP allowlist and
+skill list. A space without one behaves as described above; the main space keeps the shared config.
+
+```
+<home>/agents/<id>/agent.json         agent id, brain id, allowed MCP servers and skills, temp folder, config folder per agent CLI
+<home>/agents/<id>/mcp-servers.json   definitions of the allowed servers (chmod 600)
+<home>/agents/<id>/claude-config/     generated files, transcripts, and the login Claude Code keeps there
+```
+
+Stop the cockpit, then set one up. Start it again and run `/login` once in a session of the space:
+
+```bash
+eml-cockpit agent create <id> --space <name|brain id> \
+  [--mcp a,b --mcp-from <json with mcpServers>] [--skills x,y] [--skills-from <folder>]
+eml-cockpit agent status [<id>]        # reads the files only; never starts `claude`
+eml-cockpit agent sync-skills <id>     # copy the listed skills in again
+```
+
+- **Sessions** run with `CLAUDE_CONFIG_DIR` set to the agent's folder and its own `CLAUDE_CODE_TMPDIR`. Resume, trust,
+  the sidebar's summaries and the managed skills all use that folder. The folder's path is stored in `agent.json` and
+  never derived, so moving it is a one-line change.
+- **MCP:** `--strict-mcp-config` with an owner-only file of the brain plus the allowed servers. Nothing else loads,
+  whatever is added to the shared config, and claude.ai connectors are off. MCP servers get only the environment
+  their definition names, plus a few basics (`CLAUDE_CODE_MCP_ALLOWLIST_ENV`).
+- **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
+- **Browser:** an agent's sessions get no Claude in Chrome unless its `agent.json` says `"chrome": true`. Chrome reaches every site the browser is signed in to, so give an agent its own browser profile.
+- **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
+  setup-token mode does not apply to these sessions.
+- **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A session nobody looks at stops one hour
+  after its last activity (Settings › Preferences › Sessions), a worker too; one with a window open after 2 hours, one
+  with an open card after 4; never mid-turn or with background work. Opening a chat only shows it: the process starts
+  when the input is used or a message arrives. At most 8 sessions run at once (also in Settings): at the cap the one quiet
+  longest stops to make room, and when all are busy new workers wait.
+- **Memory:** under the Linux autostart service every session runs in a cgroup of its own with a ceiling (2 GB RAM +
+  512 MB swap by default; `infrastructure/platform/linux-cgroups.ts`). At the ceiling the kernel stops the session's
+  largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
+  and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
+- **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
+  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models › Chat view off
+  stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
+  chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
+  `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
+  `review`. After a host restart a worker cut off mid-turn gets one message to continue, one at a time as there is room, then is marked `failed`.
+- **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
+  (`application/deliver-message.ts`); a session in a terminal answers busy. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
+  stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
+  one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. To find a target by what the user calls it,
+  `$COCKPIT_SESSIONS_JS <words>` searches the sessions SendMessage reaches, stopped ones too, by name, first prompt,
+  last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
+  pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
+  service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
+- **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
+- **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
+  folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
+- **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
+  missing, or the record does not fit, the session does not start and the pane says why. It never falls back to the
+  shared folder, and nothing recreates the folder.
+- **Identity** stays in the brain: `agent create` writes nothing there and keeps the space's token. Sessions boot
+  as the agent the brain is named after, and new engrams carry the person behind the token in `ingested_by`.
+  Workers run in their requester's space with the same files.
+- **`eml-cockpit rotate-brain-token <main|name|brain id>`** replaces a brain token with the cockpit stopped: new token
+  under the same name, stored in the cockpit config, old one revoked.
+
+**This separates context, not access.** All agents run as one OS user, so an agent's shell can still read another
+agent's folder and login, every brain file and token, and can reach the cockpit's local API. Use it to keep context,
+tools and provenance apart, not to contain an agent you do not trust; that takes separate OS users.
+
 ## Projects and sessions
 
 The sidebar's project list is the brain's project list: every brain project appears
@@ -240,6 +314,12 @@ kept for 30 minutes. Across host restarts the host consults its own session ledg
 with `--session-id`; a `--resume` that finds no conversation falls back to a fresh session
 under the same id. Desks (the top tabs; `spaces` in the store) keep their panes mounted while hidden, so switching desks never
 touches a terminal.
+
+A desk can have one **main pane** (the toolbar's panel icon): a full-height column at the left, a third wide until its
+divider is dragged, with the other panes in the even grid beside it. The width is remembered per desk. Like a pinned pane, a
+main pane can't be closed or moved to another desk until main is turned off. Dragging a pane's title onto another pane swaps
+the two, and whichever lands in the main column is the main pane. Panes keep a fixed DOM order and only their grid placement
+changes (`components/app/paneLayout.ts`), so none of this remounts a terminal or chat or loses its scroll position.
 
 ## Brain views
 

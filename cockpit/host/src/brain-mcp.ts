@@ -9,9 +9,8 @@ import { isLocalRequest } from './remote-access.js'
 
 /**
  * The brain MCP endpoint: one Streamable HTTP endpoint (/mcp) in the host
- * instead of one stdio adapter process per session
- * (docs/proposals/brain-mcp-over-http.md). Every agent session — Claude Code
- * and Codex — reaches its brains through it.
+ * instead of one stdio adapter process per session. Every agent session —
+ * Claude Code and Codex — reaches its brains through it.
  *
  * Who may call, checked on every request:
  *   - only this machine: a proxied or non-loopback request is refused, whatever
@@ -55,8 +54,9 @@ export interface BrainMcpDeps {
 export function sessionModel(deps: Pick<BrainMcpDeps, 'spaces' | 'ledger' | 'providers'>, sessionId: string): string | null {
   const entry = deps.ledger.get(sessionId)
   if (!entry) return null
-  const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
-  return deps.providers.forSession(sessionId).summary(deps.ledger.ref(sessionId, project?.path ?? null)).model ?? null
+  const space = deps.spaces.resolve(entry.spaceId)
+  const project = entry.projectId ? space.registry.get(entry.projectId) : undefined
+  return deps.providers.forSession(sessionId).summary(deps.ledger.ref(sessionId, project?.path ?? null, space.runtime)).model ?? null
 }
 
 const header = (req: http.IncomingMessage, name: string): string | undefined => {

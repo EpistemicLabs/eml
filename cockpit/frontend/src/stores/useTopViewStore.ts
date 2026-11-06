@@ -5,7 +5,8 @@
 // reload lands where you were.
 import { useSyncExternalStore } from 'react';
 
-export type TopView = 'desks' | 'brain';
+/** The review screen is never restored: a reload lands on the desks, the queue is gone. */
+export type TopView = 'desks' | 'brain' | 'review';
 
 const STORAGE_KEY = 'cockpit-top-view';
 
@@ -40,7 +41,9 @@ export function getTopView(): TopView {
 export function setTopView(next: TopView): void {
   if (view === next) return;
   view = next;
-  try { localStorage.setItem(STORAGE_KEY, next); } catch { /* non-fatal */ }
+  if (next !== 'review') {
+    try { localStorage.setItem(STORAGE_KEY, next); } catch { /* non-fatal */ }
+  }
   for (const listener of listeners) listener();
 }
 

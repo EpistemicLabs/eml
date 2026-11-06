@@ -93,6 +93,17 @@ describe('Claude Code provider', () => {
     expect(keep(false)).toBe(false)
   })
 
+  it('runs workers in chat and tells the browser so, until the chat view is switched off', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
+    expect(provider.workerRunsInChat(space)).toBe(true)
+    expect(provider.settings?.read()).toEqual({ chatView: true })
+    expect(provider.settings?.write({ chatView: false })).toBeNull()
+    expect(provider.workerRunsInChat(space)).toBe(false)
+    expect(provider.settings?.read()).toEqual({ chatView: false })
+    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/on or off/)
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
+  })
+
   it('can resume only once Claude Code wrote a transcript', () => {
     const session = { sessionId: 'abc-4', providerSessionId: null, projectPath: null, greeted: null }
     expect(provider.canResume(session)).toBe(false)

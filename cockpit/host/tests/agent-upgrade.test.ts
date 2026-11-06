@@ -191,7 +191,7 @@ describe('agent upgrade', () => {
     expect(main.moved?.by).toEqual({ 'learning global': 1, 'learning user.dominik': 1, 'profile agent.motti': 1, 'profile user.dominik': 1, 'rule agent.motti': 3, 'rule global': 1, 'rule user.dominik': 1 })
     expect(q(mainFile, 'SELECT id, scope, type FROM engrams ORDER BY ord').map((r) => r.id)).toEqual([ids.task, ids.log, ids.argusRule, ids.note])
     expect(main.other_agents).toEqual([{ id: 'argus', engrams: 1 }])
-    expect(main.rescoped).toEqual({ global_to_agent: [ids.globalRule, ids.globalLearning], user_to_agent: [ids.learning, ids.userRule], user_to_handle: [] })
+    expect(main.rescoped).toEqual({ global_to_agent: [ids.globalRule, ids.globalLearning], user_to_agent: [ids.learning, ids.userRule], user_to_handle: [], source_to_agent: [] })
     expect(main.crossing?.items.map((c) => [c.direction, c.relation, c.other])).toEqual([['out', 'refines', ids.task], ['in', 'related_to', ids.log]])
     // the five seeds were written without a handle (direct); the four engrams the agent's token wrote get the handle via motti
     expect(main.restamped).toEqual({ space: { engrams: 4, entries: expect.any(Number) }, agent: { engrams: 4, entries: expect.any(Number) } })
@@ -365,6 +365,42 @@ describe('agent upgrade', () => {
     const third = await upgradeAtStart({ dataDir: data4, backupsDir: backups, modules, log: (l) => lines.push(l), ...io })
     expect(third.upgrade).toBeNull()
     expect(lines.filter((l) => l.includes('nothing to do'))).toHaveLength(0)
+  })
+
+  it('a runtime from before agent brains keeps its id: the bound id gets the brain, the identity under the brain\'s name goes with it', async () => {
+    const { upgradeHome, needsUpgrade } = await import('../src/agent-upgrade.js')
+    const data = join(home, 'home-runtime', 'data')
+    const f = legacyHome(data)
+    const config = { ...f.config, spaces: [{ ...f.config.spaces[0], agent: 'worker' }] }
+    expect(needsUpgrade({ ...config, agent: 'worker', agents: [] })).toBe(true)
+    let last: Row = {}
+    const { report } = await upgradeHome({ dataDir: data, config, backupsDir: join(home, 'home-runtime', 'backups'), modules, writeConfig: async (c) => { last = c } })
+    expect(report.reason).toBeUndefined()
+    expect(report.status).toBe('ok')
+    expect(report.spaces.map((s) => [s.name, s.action, s.agent])).toEqual([['Main', 'upgraded', 'motti'], ['Privat', 'upgraded', 'worker']])
+    expect(last.agents.map((a: Row) => [a.id, a.runtime])).toEqual([['motti', undefined], ['worker', true]])
+    expect(last).toMatchObject({ agent: 'motti', spaces: [{ name: 'Privat', agent: 'worker' }] })
+    expect(needsUpgrade(last as never)).toBe(false)
+    const worker = report.agents.find((a) => a.id === 'worker')!
+    const file = join(data, 'brains', `${worker.brainId}.db`)
+    expect(q(file, "SELECT COUNT(*) AS n FROM engrams WHERE scope = 'agent.motti'")[0].n).toBe(0)
+    expect(q(file, "SELECT COUNT(*) AS n FROM engrams WHERE id = ? AND scope = 'agent.worker'", f.ids.privatRule)[0].n).toBe(1)
+    expect(report.spaces[1].rescoped?.source_to_agent.length).toBeGreaterThan(0)
+    expect(report.spaces[1].verify).toEqual({ space: true, agent: true })
+    expect(report.spaces[1].dangling).toEqual({ space: 0, agent: 0 })
+  })
+
+  it('a runtime whose id is the brain\'s name, bound in one space: the agent keeps it in every space that binds it', async () => {
+    const { upgradeHome } = await import('../src/agent-upgrade.js')
+    const data = join(home, 'home-same', 'data')
+    const f = legacyHome(data)
+    const config = { ...f.config, spaces: [{ ...f.config.spaces[0], agent: 'motti' }] }
+    let last: Row = {}
+    const { report } = await upgradeHome({ dataDir: data, config, backupsDir: join(home, 'home-same', 'backups'), modules, writeConfig: async (c) => { last = c } })
+    expect(report.status).toBe('ok')
+    expect(report.spaces.map((s) => [s.name, s.action])).toEqual([['Main', 'upgraded'], ['Privat', 'upgraded']])
+    expect(last.agents).toEqual([expect.objectContaining({ id: 'motti', runtime: true })])
+    expect(last).toMatchObject({ agent: 'motti', spaces: [{ agent: 'motti' }] })
   })
 
   it('renders the report as text', async () => {

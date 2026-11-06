@@ -6,7 +6,7 @@
 // useSyncExternalStore pattern as the other stores.
 import { useSyncExternalStore } from 'react';
 import * as paneStore from './usePaneStore';
-import { getSpaces, useActiveSpace } from './useSpaceStore';
+import { getSpaces, useActiveSpace, useSpaces } from './useSpaceStore';
 import { fetchTeam, writable as writableFor, type Team } from '@/lib/team';
 
 const ACTIVE_MS = 3_000;
@@ -77,12 +77,15 @@ export function useTeams(): Record<string, Team> {
 }
 
 /**
- * Whether the UI may write to the active space's brain, and the server's
- * reason when not — the one helper every write control reads
- * (decision: writes do not fail where they happen; one state decides).
+ * Whether the UI may write to a space's brain, and the server's reason when
+ * not — the one helper every write control reads (decision: writes do not fail
+ * where they happen; one state decides). The active space's, unless a control
+ * shows something of another one (All spaces).
  */
-export function useWritable(): { writable: boolean; reason: string | null } {
-  const space = useActiveSpace();
+export function useWritable(spaceId?: string): { writable: boolean; reason: string | null } {
+  const active = useActiveSpace();
+  const spaces = useSpaces();
+  const space = spaces.find((s) => s.id === spaceId) ?? active;
   const team = useTeam(space?.id);
   return writableFor(space?.shared ?? false, team);
 }

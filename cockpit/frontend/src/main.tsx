@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import "@xterm/xterm/css/xterm.css";
+import "@fontsource-variable/inter";
 import "./index.css";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PanelSourceContext } from "@/lib/engram-panel";
