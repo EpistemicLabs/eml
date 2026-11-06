@@ -84,24 +84,24 @@ export default function AgentTab() {
   return (
     <div className="space-y-8">
       <SettingsSection title="Agents">
-        <SettingsCard divided>
-          {agents.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+        {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
+        <div className="flex flex-wrap gap-2">
           {agents.map((a) => (
             <button
               key={a.id}
               type="button"
               aria-pressed={a.id === agent?.id}
               onClick={() => setPickedId(a.id)}
-              className={`block w-full truncate px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-foreground/5 ${a.id === agent?.id ? 'bg-foreground/5' : ''}`}
+              className={`rounded-md border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-foreground/5 ${a.id === agent?.id ? 'border-foreground/40 bg-foreground/5' : 'border-border'}`}
             >
               {a.name}
             </button>
           ))}
-        </SettingsCard>
+        </div>
       </SettingsSection>
 
       {agent && (
-        <SettingsSection title="Details">
+        <SettingsSection title="Details" description={`To change any of this, ask ${name} in a session.`}>
           <SettingsCard divided>
             <SettingsRow label="Name">
               <span className="text-sm text-foreground">{name}</span>
@@ -109,8 +109,8 @@ export default function AgentTab() {
             <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
               <span className="block font-mono text-xs text-foreground">{agent.id}</span>
             </SettingsRow>
-            <SettingsRow label="Runs with" description="The Claude login and tools its sessions use">
-              <span className="text-sm text-foreground">{agent.runtime ? 'Its own' : "The cockpit's"}</span>
+            <SettingsRow label="Login and tools">
+              <span className="text-sm text-foreground">{agent.runtime ? 'Its own' : 'Shared with the cockpit'}</span>
             </SettingsRow>
             <div className="px-4 py-4">
               <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
@@ -172,9 +172,6 @@ export default function AgentTab() {
         </SettingsCard>
       </SettingsSection>
 
-      <div className="text-sm text-muted-foreground">
-        To change any of this, ask {name} in a session.
-      </div>
     </div>
   );
 }
