@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 type SettingsSectionProps = {
-  title: string;
+  title?: string;
   description?: string;
   children: ReactNode;
   className?: string;
@@ -13,11 +13,13 @@ export default function SettingsSection({ title, description, children, classNam
   return (
     <div className={cn('space-y-3', className)}>
       <div>
-        <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-          {title}
-        </h3>
+        {title && (
+          <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+            {title}
+          </h3>
+        )}
         {description && (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className={cn('text-sm text-muted-foreground', title && 'mt-1')}>{description}</p>
         )}
       </div>
       {children}

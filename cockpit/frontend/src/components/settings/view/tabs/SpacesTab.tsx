@@ -44,12 +44,10 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** What a space row says: where it comes from and which agent works in it; an unbound one points at the banner. */
-function spaceDescription(space: SpaceInfo, agents: ReturnType<typeof useAgents>['agents'], team: Team | undefined): string {
-  const agent = agentName(agents, space.agent);
+function spaceDescription(space: SpaceInfo, team: Team | undefined): string {
   const host = team?.shared ? relayHost(team.relay) : null;
   const origin = space.main ? 'The space this cockpit was set up with' : space.shared ? (host ? `A shared brain on ${host}` : 'A shared brain') : 'A further local brain';
-  if (!space.agent) return `${origin} · no agent bound — see the banner above`;
-  return `${origin} · ${agent ?? space.agent}`;
+  return space.agent ? origin : `${origin} · no agent bound — see the banner above`;
 }
 
 export default function SpacesTab() {
@@ -140,10 +138,7 @@ export default function SpacesTab() {
 
   return (
     <div className="space-y-8">
-      <SettingsSection
-        title="Spaces"
-        description="Each space is its own brain for your work. Sessions, desks and projects of a space never see another space's brain. Your agent works in every space it is bound to; who it is lives in its own brain (Settings › Agents). Pick one to see its details below; it does not open it."
-      >
+      <SettingsSection description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
           {spaces.map((space) => (
             <SettingsRow
@@ -160,7 +155,7 @@ export default function SpacesTab() {
                 </button>
               }
               className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
-              description={(renaming?.id === space.id && renameError) || spaceDescription(space, agents, teams[space.id])}
+              description={(renaming?.id === space.id && renameError) || spaceDescription(space, teams[space.id])}
             >
               <div className="flex items-center gap-2">
                 <SpaceColorPicker space={space} onError={setSpaceError} />
