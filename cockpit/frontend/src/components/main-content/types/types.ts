@@ -24,8 +24,12 @@ export type MainContentProps = {
   // toolbar.
   onSetPaneView: (view: PaneView) => void;
   // Close the whole pane. Undefined when this is the last/only pane (we
-  // never allow leaving the user with zero panes) or the pane is pinned.
+  // never allow leaving the user with zero panes) or the pane is pinned or main.
   onClosePane?: () => void;
+  /** This pane is its desk's main pane. */
+  isMainPane?: boolean;
+  /** Make it the main pane, or return the desk to the even grid. */
+  onToggleMainPane?: () => void;
   /**
    * Auto-assigned pane label ("Terminal 2") shown in the title when the pane
    * has no user-chosen title — keeps parallel panes distinguishable.

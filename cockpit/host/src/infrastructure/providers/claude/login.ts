@@ -47,6 +47,8 @@ export interface ClaudeLoginStatus {
   permissionMode: PermissionMode
   renderer: Renderer
   remoteControl: boolean
+  /** Claude sessions open in the chat view and workers run there; on unless turned off. */
+  chatView: boolean
   token: { set: boolean; prefix: string | null }
   account: ClaudeAccount | null
 }
@@ -129,6 +131,15 @@ export function readRenderer(): Renderer {
 }
 
 /**
+ * The cockpit's chat view switch (Settings › Models): Claude sessions open in
+ * the chat view, on every browser that has not chosen otherwise in
+ * Preferences, and workers run in chat. On unless switched off.
+ */
+export function readChatView(): boolean {
+  return readAgentSettings().chatView !== false
+}
+
+/**
  * Whether new cockpit sessions start with Claude Code's Remote Control, so
  * they show up in the Claude app (phone, claude.ai/code) and can be driven
  * from there. Off unless switched on in Settings › Models: the session is then
@@ -167,11 +178,18 @@ export function writeRemoteControl(raw: unknown): string | null {
   return null
 }
 
-export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
+/** Returns an error message for the UI, or null on success. */
+export function writeChatView(raw: unknown): string | null {
+  if (typeof raw !== 'boolean') return 'The chat view is on or off.'
+  writeAgentSettings({ chatView: raw })
+  return null
+}
 
-/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl? }. */
+export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown; chatView?: unknown }
+
+/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl?, chatView? }. */
 export function writeAgentPatch(body: AgentPatch | null): string | null {
-  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined) {
+  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined && body?.chatView === undefined) {
     return 'Nothing to change.'
   }
   if (body.mode !== undefined) {
@@ -186,7 +204,11 @@ export function writeAgentPatch(body: AgentPatch | null): string | null {
     const error = writeRenderer(body.renderer)
     if (error) return error
   }
-  return body.remoteControl !== undefined ? writeRemoteControl(body.remoteControl) : null
+  if (body.remoteControl !== undefined) {
+    const error = writeRemoteControl(body.remoteControl)
+    if (error) return error
+  }
+  return body.chatView !== undefined ? writeChatView(body.chatView) : null
 }
 
 /** The token a session gets injected — only in token mode. */
@@ -239,6 +261,7 @@ export async function claudeLoginStatus(): Promise<ClaudeLoginStatus> {
     permissionMode: readPermissionMode(),
     renderer: readRenderer(),
     remoteControl: readRemoteControl(),
+    chatView: readChatView(),
     token: { set: token !== null, prefix: token ? `${token.slice(0, 16)}…` : null },
     account: await readAccount(mode),
   }

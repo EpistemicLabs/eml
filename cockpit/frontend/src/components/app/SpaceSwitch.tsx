@@ -3,15 +3,17 @@
 // marked, and the ways to a new one: "New space…" (a further local brain),
 // "New shared space…" (a shared brain on the relay, needs the EML account in
 // the team-brain beta) and "Join shared space…" (by an invite link); all
-// host POST /api/spaces. The header shows every space's desks as sections
+// host POST /api/spaces. In the sidebar it also offers All spaces, a view of
+// the sidebar only. The header shows every space's desks as sections
 // (DeskTabBar), so a desk of another space is one click away there.
 // Switching a space switches its desks. A space whose brain failed to migrate
 // or whose shared brain is not live is marked here (a dot), so the state is
 // seen from every space; its banner says what happened.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Check, ChevronDown, Link2, Loader2, Plus, Users } from 'lucide-react';
+import { Brain, Check, ChevronDown, Layers, Link2, Loader2, Plus, Users } from 'lucide-react';
 
+import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { stateTitle, stateTone } from '@/lib/team';
 import { failedUnresolved, useUpdateStatus } from '@/stores/useUpdateStatusStore';
@@ -22,8 +24,10 @@ import {
   createSpace,
   joinSharedSpace,
   loadSpaces,
+  setAllView,
   switchSpace,
   useActiveSpace,
+  useAllView,
   useSpaces,
   type SpaceInfo,
 } from '@/stores/useSpaceStore';
@@ -65,6 +69,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const others = spaces.filter((s) => s.id !== active?.id).map(notLive);
   const otherNotLive = others.some((state) => state !== null);
   const otherBroken = otherFailed || others.some((state) => state?.tone === 'destructive');
+  const allView = useAllView();
+  const showingAll = variant === 'sidebar' && allView;
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState<NewSpace | null>(null);
   const [draft, setDraft] = useState('');
@@ -109,6 +115,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const close = () => { setOpen(false); setCreating(null); setDraft(''); setLink(''); setError(null); };
 
   const select = (space: SpaceInfo) => {
+    setAllView(false);
     switchSpace(space);
     setTopView('desks');
     close();
@@ -129,11 +136,15 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     select(result.space);
   };
 
-  const label = active?.name ?? 'Main';
-  const title = otherFailed
-    ? `Space: ${label} — the brain update failed in another space`
-    : otherNotLive ? `Space: ${label} — a shared brain is not live in another space` : `Space: ${label}`;
+  const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
+  const title = showingAll
+    ? 'All spaces'
+    : otherFailed
+      ? `Space: ${label} — the brain update failed in another space`
+      : otherNotLive ? `Space: ${label} — a shared brain is not live in another space` : `Space: ${label}`;
   const mark = otherFailed || otherNotLive;
+  const SpaceIcon = showingAll ? Layers : Brain;
+  const tone = showingAll ? undefined : spaceTone(active);
 
   return (
     <div ref={rootRef} className="relative flex h-full items-stretch">
@@ -149,7 +160,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
             open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Brain className="h-4 w-4" strokeWidth={1.8} />
+          <Brain className="h-4 w-4" strokeWidth={1.8} style={{ color: tone }} />
           <span className="truncate">{label}</span>
           {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
@@ -163,7 +174,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           title={title}
           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body font-medium text-foreground hover:bg-muted"
         >
-          <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+          <SpaceIcon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
@@ -179,8 +190,24 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           onMouseDown={(e) => e.stopPropagation()}
           className="fixed z-[1000] min-w-[12rem] rounded-lg border border-border bg-popover p-1 text-body shadow-lg"
         >
+          {variant === 'sidebar' && spaces.length > 1 && (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={showingAll}
+              onClick={() => { setAllView(true); close(); }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal',
+                showingAll ? 'text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <Check className={cn('h-3.5 w-3.5', showingAll ? 'opacity-100' : 'opacity-0')} />
+              <Layers className="h-3.5 w-3.5 opacity-60" strokeWidth={1.8} />
+              <span className="flex-1 truncate">All spaces</span>
+            </button>
+          )}
           {spaces.map((space) => {
-            const isActive = space.id === active?.id;
+            const isActive = !showingAll && space.id === active?.id;
             const state = notLive(space);
             const unknown = space.shared === null;
             return (
@@ -197,6 +224,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 )}
               >
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
+                <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="flex-1 truncate">{space.name}</span>
                 {failed(space) && (
                   <span className="flex items-center gap-1 text-[10px] text-destructive" title="The brain update failed — open the space for details">
@@ -208,7 +236,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                   <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', state.tone === 'destructive' ? 'bg-destructive' : 'bg-warning')} />
                 )}
                 {space.shared && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">shared</span>}
-                {space.main && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">main</span>}
               </button>
             );
           })}

@@ -11,8 +11,9 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import * as path from 'node:path'
 
+// OFL-1.1 is for fonts: its conditions bind the font files, not the software they ship with.
 const ALLOWED = new Set([
-  '0BSD', 'Apache-2.0', 'BlueOak-1.0.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0', 'ISC', 'MIT', 'Unlicense',
+  '0BSD', 'Apache-2.0', 'BlueOak-1.0.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0', 'ISC', 'MIT', 'OFL-1.1', 'Unlicense',
 ])
 const NOTICE_FILE = /^(licen[cs]e|copying|notice)([.-].*)?$/i
 

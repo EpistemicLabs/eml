@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { compactionNote, contextTokens, stopHook, GROWTH_STEP_TOKENS } from '../src/hooks/compaction'
+import { compactionNote, contextTokens, resumed, stopHook, GROWTH_STEP_TOKENS, type CompactionInput } from '../src/hooks/compaction'
 import { sessionStart, BOOT_BUDGET_CHARS } from '../src/hooks/index'
 
 const assistant = (cacheRead: number, extra: Record<string, unknown> = {}) => JSON.stringify({
@@ -139,5 +139,12 @@ describe('hint after a compaction', () => {
     expect(sent).toBe(BOOT_BUDGET_CHARS)
     await sessionStart({ EML_URL: 'http://a', EML_API_TOKEN: 't' }, '/x', f, BOOT_BUDGET_CHARS - 400)
     expect(sent).toBe(BOOT_BUDGET_CHARS - 400)
+  })
+})
+
+describe('resumed', () => {
+  it('tells a resume from the other sources', () => {
+    expect(resumed({ source: 'resume' } as CompactionInput)).toBe(true)
+    for (const source of ['startup', 'compact', 'clear', undefined]) expect(resumed({ source } as CompactionInput)).toBe(false)
   })
 })

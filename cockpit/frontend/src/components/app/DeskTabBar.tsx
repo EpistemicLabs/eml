@@ -1,7 +1,8 @@
 // The add-pane actions that used to sit at the right end moved into the
 // pane header's "+" (2026-09-22).
-import React, { useEffect, useRef, useState } from 'react';
-import { Brain } from 'lucide-react';
+import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Brain, Trash2 } from 'lucide-react';
+import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
@@ -29,7 +30,7 @@ import { endPaneDrag, getDraggedPane } from './paneDrag';
  *                         if the desk still holds a live session)
  *  • + (per section)    → create a new desk in that space, straight into rename
  *  • drag a tab         → reorder it among the desks of its space
- *  • drop a pane title  → move that pane to the desk (same space only)
+ *  • drop a pane title  → move that pane to the desk (same space only; pinned and main panes stay)
  *  • ⌘/Ctrl 1–9         → the Nth desk in bar order
  */
 export default function DeskTabBar() {
@@ -163,6 +164,7 @@ export default function DeskTabBar() {
     if (hasSession && !window.confirm(`Close the "${desk.name}" desk and its terminals?`)) {
       return;
     }
+    setEditingId(null);
     paneStore.removeDesk(desk.id);
   };
 
@@ -227,22 +229,22 @@ export default function DeskTabBar() {
         const brainActive = topView === 'brain' && isActiveSpace;
         const count = isActiveSpace ? pendingReviews : 0;
         const brainLabel = section.space?.name ?? 'Brain';
+        const tone = spaceTone(section.space);
         return (
-          // One section per brain: a faint band holds its Brain tab and desks,
-          // so the bands — not separator lines — tell the brains apart. The band
-          // keeps a fixed height and sits centred in the taller header row.
+          // One section per brain: a soft surface in the space's colour holds its
+          // Brain tab and desks, so the colour — not lines — tells the brains apart.
+          // It keeps a fixed height and sits centred in the taller header row.
           <div
             key={section.space?.id ?? 'all'}
-            className={cn(
-              'flex h-8 self-center items-stretch overflow-hidden rounded-md border',
-              isActiveSpace ? 'border-foreground/15 bg-foreground/[0.05]' : 'border-foreground/[0.08] bg-foreground/[0.02]',
-            )}
+            data-active={isActiveSpace || undefined}
+            className="space-band flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5"
+            style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
           >
             {/* The section's Brain tab: this brain's dashboard. Same underline
-                idiom as the desks; the coral brain mark stays the brand's. */}
+                idiom as the desks, in the space's colour. */}
             {section.space && editingId === spaceEditId(section.space) ? (
               <div className="flex items-center gap-1.5 px-2">
-                <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+                <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
                 <input {...renameInputProps(spaceEditId(section.space))} placeholder="Space name" aria-label="Space name" maxLength={40} />
               </div>
             ) : (
@@ -257,13 +259,13 @@ export default function DeskTabBar() {
               aria-pressed={brainActive}
               title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename' : ''}`}
               className={cn(
-                'relative flex h-full items-center gap-1.5 rounded-l-md px-2 text-body font-medium transition-colors',
-                brainActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                brainActive && 'after:absolute after:inset-x-2 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary',
+                'flex h-full items-center gap-1.5 rounded-md px-2 text-body font-semibold transition-colors',
+                isActiveSpace ? 'text-foreground' : 'text-foreground/70 hover:text-foreground',
+                brainActive && 'space-tab-active',
               )}
             >
-              <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} />
-              <span className="max-w-[10ch] truncate">{brainLabel}</span>
+              <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} style={{ color: tone }} />
+              <span className="max-w-[16ch] truncate">{brainLabel}</span>
               {count > 0 && (
                 <span className="rounded-full bg-warning/15 px-1.5 py-px font-mono text-[10px] leading-4 tabular-nums text-warning">
                   {count}
@@ -271,8 +273,7 @@ export default function DeskTabBar() {
               )}
             </button>
             )}
-            <div className="w-px bg-foreground/15" aria-hidden />
-            {section.desks.map((desk, deskIdx) => {
+            {section.desks.map((desk) => {
               const idx = position++;
               const isActive = topView === 'desks' && desk.id === activeDeskId;
               const isEditing = editingId === desk.id;
@@ -283,15 +284,8 @@ export default function DeskTabBar() {
                   key={desk.id}
                   {...dragProps(desk, section.key)}
                   className={cn(
-                    // The row holds the name and its unseen badge; the × sits in the
-                    // tab's top-right corner above them, on hover only.
-                    'group relative flex items-center gap-1.5 px-2.5 text-body transition-colors',
-                    // A hairline between neighbouring desks.
-                    deskIdx > 0 && 'border-l border-foreground/10',
-                    isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                    // Active marker (Variante B): a 2px coral line on the header's
-                    // bottom edge, flush with the pane headers underneath.
-                    isActive && 'after:absolute after:inset-x-1.5 after:-bottom-px after:h-[2px] after:rounded-full after:bg-primary',
+                    'group relative flex items-center gap-1.5 rounded-md px-2.5 text-body transition-colors',
+                    isActive ? 'space-tab-active text-foreground' : 'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground',
                     dragging?.id === desk.id && 'opacity-50',
                     paneDropId === desk.id && 'bg-primary/15 text-foreground',
                   )}
@@ -304,7 +298,22 @@ export default function DeskTabBar() {
                     />
                   )}
                   {isEditing ? (
-                    <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
+                    <>
+                      <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
+                      {section.desks.length > 1 && (
+                        <button
+                          type="button"
+                          // Keeps the focus in the name field: its blur would end editing and take this button away.
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => handleDelete(desk, section.desks.length)}
+                          aria-label={`Close ${desk.name} desk`}
+                          title={`Close ${desk.name} desk`}
+                          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -313,7 +322,7 @@ export default function DeskTabBar() {
                         paneStore.activateDesk(desk.id);
                       }}
                       onDoubleClick={() => startEditing(desk.id, desk.name)}
-                      title={`${desk.name}${shortcut} · double-click to rename, drag to reorder, drop a pane title here to move the pane`}
+                      title={`${desk.name}${shortcut} · double-click to rename or close, drag to reorder, drop a pane title here to move the pane`}
                       className="max-w-[10ch] cursor-pointer truncate font-medium whitespace-nowrap"
                     >
                       {desk.name}
@@ -324,26 +333,6 @@ export default function DeskTabBar() {
                     <UnseenBadge count={countNeedsYou(turnSnapshot, desk.panes.map((pane) => pane.sessionId))} />
                   )}
 
-                  {!isEditing && section.desks.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleDelete(desk, section.desks.length);
-                      }}
-                      aria-label={`Close ${desk.name} desk`}
-                      title={`Close ${desk.name} desk`}
-                      className={[
-                        'absolute right-0.5 top-0.5 flex h-3 w-3 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-foreground/10 hover:text-foreground',
-                        // Hover only, active desk included — the band stays quiet.
-                        'opacity-0 group-hover:opacity-60 group-hover:hover:opacity-100 focus-visible:opacity-100',
-                      ].join(' ')}
-                    >
-                      <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round">
-                        <path d="M6 6l12 12M18 6L6 18" />
-                      </svg>
-                    </button>
-                  )}
                 </div>
               );
             })}

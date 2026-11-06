@@ -1,6 +1,6 @@
-import { Folder, MessageSquare, PanelLeftOpen, Pin, PinOff, Plus, Settings, X } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { PanelLeftOpen, Pin, PinOff, Settings, X } from 'lucide-react';
 
+import SpaceSwitch from '@/components/app/SpaceSwitch';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import type { SidebarError, SidebarViewMode } from '../../types';
@@ -21,80 +21,72 @@ export function SidebarRail({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function ModeButton({
-  label,
-  icon: Icon,
-  active,
-  onSelect,
+const MODES: Array<{ mode: SidebarViewMode; label: string }> = [
+  { mode: 'overview', label: 'Overview' },
+  { mode: 'projects', label: 'Projects' },
+  { mode: 'conversations', label: 'Sessions' },
+];
+
+/** The sidebar's three views, right above their list; the overview is still in beta. */
+export function SidebarModes({
+  viewMode,
+  onViewModeChange,
+  waiting,
 }: {
-  label: string;
-  icon: LucideIcon;
-  active: boolean;
-  onSelect: () => void;
+  viewMode: SidebarViewMode;
+  onViewModeChange: (mode: SidebarViewMode) => void;
+  /** What waits for the user: shown on the overview's tab while another view is open. */
+  waiting: number;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      aria-pressed={active}
-      onClick={onSelect}
-      className={cn(
-        'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-        active ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" strokeWidth={active ? 2.25 : 2} />
-    </button>
+    <div role="tablist" aria-label="Sidebar view" className="mx-2 mb-2 flex flex-shrink-0 gap-0.5 rounded-lg bg-foreground/[0.06] p-0.5">
+      {MODES.map(({ mode, label }) => {
+        const active = viewMode === mode;
+        return (
+          <button
+            key={mode}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onViewModeChange(mode)}
+            className={cn(
+              'flex h-7 min-w-0 flex-auto items-center justify-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors',
+              active ? 'bg-card text-foreground shadow-sm ring-1 ring-foreground/10' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <span className="truncate">{label}</span>
+            {mode === 'overview' && (
+              <span className="text-[9px] leading-none font-normal text-muted-foreground/70" title="Beta">
+                β
+              </span>
+            )}
+            {mode === 'overview' && !active && waiting > 0 && (
+              <span className="rounded-full bg-foreground px-1.5 text-[10px] leading-4 text-background tabular-nums" aria-label={`${waiting} waiting`}>
+                {waiting}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
+/** The top row: the space switch, then pin. */
 export function SidebarHeader({
-  showModes,
-  viewMode,
-  onViewModeChange,
   isPinnedOpen,
   onTogglePinned,
-  onAddProject,
 }: {
-  showModes: boolean;
-  viewMode: SidebarViewMode;
-  onViewModeChange: (mode: SidebarViewMode) => void;
   isPinnedOpen: boolean;
   /** Absent where pinning means nothing (the compact layout's drawer). */
   onTogglePinned?: () => void;
-  onAddProject: () => void;
 }) {
   return (
-    <div className="flex flex-shrink-0 items-center justify-between px-3 pt-3 pb-2">
-      {showModes ? (
-        <div className="flex items-center gap-0.5">
-          <ModeButton
-            label="Projects"
-            icon={Folder}
-            active={viewMode === 'projects'}
-            onSelect={() => onViewModeChange('projects')}
-          />
-          <ModeButton
-            label="Conversations"
-            icon={MessageSquare}
-            active={viewMode === 'conversations'}
-            onSelect={() => onViewModeChange('conversations')}
-          />
-        </div>
-      ) : (
-        <div />
-      )}
+    <div className="flex flex-shrink-0 items-center justify-between gap-1 pt-2 pr-2 pb-1 pl-1">
+      <div className="min-w-0 flex-1">
+        <SpaceSwitch variant="sidebar" />
+      </div>
       <div className="flex items-center gap-0.5">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-          title="Add project"
-          onClick={onAddProject}
-        >
-          <Plus />
-        </Button>
         {onTogglePinned && (
           <Button
             variant="ghost"

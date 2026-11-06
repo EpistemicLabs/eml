@@ -4,9 +4,10 @@ import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_SKILLS_DIR, CONFIG_DIR, LEGACY_EML_HOO
 import { currentVersion } from './runtime.js'
 import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
+import { readAgentMcpDefinitions, allowedMcpServers, type SpaceRuntime } from '../../../agent-runtime.js'
 import {
-  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
-  installManagedSkills, quote, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
+  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
+  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 
@@ -55,7 +56,7 @@ export interface IsolationFiles {
   turnHookConfig: string
 }
 
-const CLAUDE_JSON = path.join(CONFIG_DIR, '.claude.json')
+const claudeJson = (configDir: string) => path.join(configDir, '.claude.json')
 
 /** The cockpit's own Claude Code version (runtime.ts) — never the user's install. */
 export function claudeVersion(): string {
@@ -72,13 +73,13 @@ function readJsonObject(file: string): Record<string, unknown> | null {
   }
 }
 
-function readClaudeJson(): Record<string, unknown> {
-  return readJsonObject(CLAUDE_JSON) ?? {}
+function readClaudeJson(configDir: string): Record<string, unknown> {
+  return readJsonObject(claudeJson(configDir)) ?? {}
 }
 
-function writeClaudeJson(data: Record<string, unknown>): void {
-  fs.writeFileSync(CLAUDE_JSON, JSON.stringify(data, null, 2), { mode: 0o600 })
-  fs.chmodSync(CLAUDE_JSON, 0o600)
+function writeClaudeJson(configDir: string, data: Record<string, unknown>): void {
+  fs.writeFileSync(claudeJson(configDir), JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.chmodSync(claudeJson(configDir), 0o600)
 }
 
 /**
@@ -97,11 +98,11 @@ export function seededClaudeTheme(existing: unknown, migrated: boolean): string 
   return existing
 }
 
-function seedClaudeJson(): void {
-  const existing = readClaudeJson()
+function seedClaudeJson(configDir: string): void {
+  const existing = readClaudeJson(configDir)
   const theme = seededClaudeTheme(existing.theme, claudeThemeMigrated())
   markClaudeThemeMigrated()
-  writeClaudeJson({
+  writeClaudeJson(configDir, {
     ...existing,
     hasCompletedOnboarding: true,
     lastOnboardingVersion: claudeVersion(),
@@ -120,13 +121,13 @@ function seedClaudeJson(): void {
  * doesn't open with the "Do you trust the files in this folder?" dialog.
  * Idempotent; called when a project is registered and before every spawn.
  */
-export function ensureProjectTrusted(projectPath: string): void {
-  const existing = readClaudeJson()
+export function ensureProjectTrusted(projectPath: string, configDir: string = CONFIG_DIR): void {
+  const existing = readClaudeJson(configDir)
   const projects = { ...((existing.projects as Record<string, unknown>) ?? {}) }
   const current = (projects[projectPath] as Record<string, unknown>) ?? {}
   if (current.hasTrustDialogAccepted === true) return
   projects[projectPath] = { ...current, hasTrustDialogAccepted: true }
-  writeClaudeJson({ ...existing, projects })
+  writeClaudeJson(configDir, { ...existing, projects })
 }
 
 export { HOOK_TOKEN_HEADER, brainMcpServer }
@@ -152,8 +153,13 @@ export interface SpaceHost {
  * Write one space's mcp.json, settings.json and EML hook config. Called once
  * per space on every boot, after writeIsolationFiles (the shared files).
  */
-export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: SpaceHost): SpaceFiles {
-  const dir = spaceConfigDir(spaceId)
+export function writeSpaceFiles(
+  spaceId: string,
+  turnHookConfig: string,
+  host: SpaceHost,
+  runtime?: { id: string; configDir: string; mcpServers: Record<string, unknown> },
+): SpaceFiles {
+  const dir = runtime ? runtimeSpaceDir(runtime.configDir, spaceId) : spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   fs.chmodSync(dir, 0o700)
   const mcpConfig = path.join(dir, 'mcp.json')
@@ -163,7 +169,7 @@ export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: S
   writeEmlHookConfig(emlConfig, host.hooksUrl, host.mcpToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
+    JSON.stringify({ mcpServers: { ...runtime?.mcpServers, eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)
@@ -187,6 +193,10 @@ export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: S
         // Every notification type reaches the host; turn-state.ts decides which
         // mean "waiting" and logs the others, so a new type shows up in host.log.
         Notification: [turn],
+        // SendMessage only reaches a running session; the host wakes a stopped one (send-message-hook.ts).
+        PreToolUse: [{ matcher: 'SendMessage', ...entry(sendMessageHookCommand(), SEND_MESSAGE_HOOK_OPTIONS) }],
+        // ListAgents shows running sessions only; the host adds the stopped ones and what each is about (list-agents-hook.ts).
+        PostToolUse: [{ matcher: 'ListAgents', ...entry(listAgentsHookCommand(), LIST_AGENTS_HOOK_OPTIONS) }],
       },
     }, null, 2),
     { mode: 0o600 },
@@ -195,10 +205,105 @@ export function writeSpaceFiles(spaceId: string, turnHookConfig: string, host: S
   return { mcpConfig, settings, emlConfig }
 }
 
-/** A space that leaves the cockpit (a shared space removed, brain-space.ts) takes its session files with it. */
-export function removeSpaceFiles(spaceId: string): void {
+/** A space that leaves the cockpit (a shared space removed, brain-space.ts) takes its session files with it, also those in its agent's runtime folder. */
+export function removeSpaceFiles(spaceId: string, runtimeConfigDir?: string): void {
   fs.rmSync(spaceConfigDir(spaceId), { recursive: true, force: true })
   fs.rmSync(spaceEmlDir(spaceId), { recursive: true, force: true })
+  if (runtimeConfigDir) fs.rmSync(runtimeSpaceDir(runtimeConfigDir, spaceId), { recursive: true, force: true })
+}
+
+/** A session's servers under a tool profile: the listed ones and always the brain. */
+export function limitMcpServers(config: { mcpServers: Record<string, unknown> }, allowed: string[]): { mcpServers: Record<string, unknown> } {
+  const mcpServers = Object.fromEntries(Object.entries(config.mcpServers).filter(([name]) => name === 'eml_brain' || allowed.includes(name)))
+  return { mcpServers }
+}
+
+/** The mcp.json of a session limited to `allowed`, beside its space's. Owner-only: it holds the same secrets. */
+export function writeLimitedMcpConfig(spaceMcpConfig: string, sessionId: string, allowed: string[]): string {
+  const config = JSON.parse(fs.readFileSync(spaceMcpConfig, 'utf8')) as { mcpServers: Record<string, unknown> }
+  const file = path.join(path.dirname(spaceMcpConfig), `mcp-${sessionId}.json`)
+  fs.writeFileSync(file, JSON.stringify(limitMcpServers(config, allowed), null, 2), { mode: 0o600 })
+  fs.chmodSync(file, 0o600)
+  return file
+}
+
+/** Where a space with an agent keeps its session files: in the agent's own folder. */
+const runtimeSpaceDir = (configDir: string, spaceId: string) => path.join(configDir, 'spaces', spaceId)
+
+/** The paths writeSpaceFiles uses under an agent's folder, known before anything is written. */
+export function runtimeMcpConfigPath(configDir: string, spaceId: string): string {
+  return path.join(runtimeSpaceDir(configDir, spaceId), 'mcp.json')
+}
+
+/** Copy skills into an agent's folder: real files, so no agent can change another's through a link. */
+export function copyAgentSkills(skills: string[], fromDir: string, configDir: string): void {
+  for (const skill of skills) {
+    const target = path.join(configDir, 'skills', skill)
+    fs.rmSync(target, { recursive: true, force: true })
+    fs.cpSync(path.join(fromDir, skill), target, { recursive: true, dereference: true })
+  }
+}
+
+/**
+ * Hold an agent's skills to its list plus the cockpit's managed ones: whatever
+ * else is there goes, a link included, the managed ones are refreshed. Returns
+ * the listed skills that are not there.
+ */
+export function syncAgentSkills(allowed: string[], configDir: string): string[] {
+  const skillsDir = path.join(configDir, 'skills')
+  fs.mkdirSync(skillsDir, { recursive: true })
+  const managed = [MCP_SKILLS_DIR, COCKPIT_SKILLS_DIR].flatMap((dir) => {
+    try {
+      return fs.readdirSync(dir).filter((name) => fs.existsSync(path.join(dir, name, 'SKILL.md')))
+    } catch {
+      return []
+    }
+  })
+  const keep = new Set([...allowed, ...managed])
+  for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink() || !keep.has(entry.name)) fs.rmSync(path.join(skillsDir, entry.name), { recursive: true, force: true })
+  }
+  installManagedSkills([MCP_SKILLS_DIR, COCKPIT_SKILLS_DIR], configDir)
+  return allowed.filter((skill) => !fs.existsSync(path.join(skillsDir, skill, 'SKILL.md')))
+}
+
+/**
+ * What an agent's sessions start with, written once per boot: the first-run
+ * state, the skills, its copy of the turn-hook config, and the space's session
+ * files with exactly the allowed MCP servers plus the brain. Nothing here
+ * creates the folder: a missing one is the agent's problem to report. On a
+ * problem nothing is written and the problem goes to the agent.
+ */
+export function writeRuntimeFiles(runtime: SpaceRuntime, spaceId: string, turnHookConfig: string, host: SpaceHost): void {
+  const configDir = runtime.configDirs.claude
+  if (!configDir || runtime.record === null || !fs.existsSync(configDir)) return
+  try {
+    const mcpServers = allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
+    const missing = syncAgentSkills(runtime.record.skills, configDir)
+    if (missing.length > 0) throw new Error(`the listed skills ${missing.join(', ')} are not in its folder (run eml-cockpit agent sync-skills)`)
+    seedClaudeJson(configDir)
+    const hookConfig = path.join(configDir, 'turn-hook.json')
+    fs.copyFileSync(turnHookConfig, hookConfig)
+    fs.chmodSync(hookConfig, 0o600)
+    writeSpaceFiles(spaceId, hookConfig, host, { id: runtime.id, configDir, mcpServers })
+    fs.mkdirSync(runtime.tempDir, { recursive: true, mode: 0o700 })
+  } catch (err) {
+    runtime.setProblem((err as Error).message)
+  }
+}
+
+/** Whether Claude Code holds a login in this folder: read from its file, without starting `claude`, no value leaves here. */
+export function agentLoginStatus(configDir: string): { state: string; expiresAt: string | null; changedAt: string | null } {
+  if (platform.os === 'darwin') return { state: 'unknown here (macOS keeps it in the keychain)', expiresAt: null, changedAt: null }
+  const file = path.join(configDir, '.credentials.json')
+  const stored = readJsonObject(file)
+  const oauth = stored?.claudeAiOauth as { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown } | undefined
+  if (!oauth?.accessToken || !oauth.refreshToken) return { state: 'none, run /login in a session of this space', expiresAt: null, changedAt: null }
+  return {
+    state: 'stored',
+    expiresAt: typeof oauth.expiresAt === 'number' ? new Date(oauth.expiresAt).toISOString() : null,
+    changedAt: fs.statSync(file).mtime.toISOString(),
+  }
 }
 
 /**
@@ -212,7 +317,7 @@ export function writeIsolationFiles(hookUrl: string, hookToken: string): Isolati
   installManagedSkills([MCP_SKILLS_DIR, COCKPIT_SKILLS_DIR], CONFIG_DIR)
 
   writeTurnHookConfig(CLAUDE_TURN_HOOK_CONFIG, hookUrl, hookToken)
-  seedClaudeJson()
+  seedClaudeJson(CONFIG_DIR)
 
   // Before spaces, mcp.json and eml/config sat here carrying the brain token
   // — stale copies of a secret, so they go.

@@ -1,7 +1,9 @@
-// The active space's brain as the host describes it (GET /api/brain-info):
-// file, id, schema, and who is in it. Settings › Account, Agent and Brain
-// each read it when they open.
+// A space's brain as the host describes it (GET /api/brain-info): file, id,
+// schema, and who is in it. Settings › Account, Agent and Brain each read it
+// when they open: the active space's, or in Brain the one picked there.
 import { useEffect, useState } from 'react';
+
+import { SPACE_HEADER } from '@/lib/space-header';
 
 export type BrainInfo = {
   source: 'local';
@@ -20,13 +22,15 @@ export type BrainInfo = {
   users: Array<{ id: string; name: string }>;
 };
 
-export function useBrainInfo(): { info: BrainInfo | null; failed: boolean } {
+export function useBrainInfo(spaceId?: string): { info: BrainInfo | null; failed: boolean } {
   const [info, setInfo] = useState<BrainInfo | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/brain-info')
+    setInfo(null);
+    setFailed(false);
+    fetch('/api/brain-info', spaceId ? { headers: { [SPACE_HEADER]: spaceId } } : undefined)
       .then(async (res) => {
         if (!res.ok) throw new Error(`${res.status}`);
         return (await res.json()) as BrainInfo;
@@ -36,7 +40,7 @@ export function useBrainInfo(): { info: BrainInfo | null; failed: boolean } {
         () => { if (!cancelled) setFailed(true); },
       );
     return () => { cancelled = true; };
-  }, []);
+  }, [spaceId]);
 
   return { info, failed };
 }

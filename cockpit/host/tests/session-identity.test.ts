@@ -132,6 +132,24 @@ describe('session identity', () => {
     expect(seen).toEqual(['working', 'working', 'waiting'])
   })
 
+  it('takes a terminal session back from its mark and the archive when a prompt is typed, not a chat session', () => {
+    const { ledger, hook } = setup(false)
+    for (const id of ['s-term', 's-chat']) {
+      ledger.recordSpawn(id, null, 'p1', 'claude')
+      ledger.setAttention(id, { kind: 'review', reason: 'Look at this' })
+      ledger.archive(id)
+    }
+    ledger.setRuntime('s-chat', 'sdk')
+    ledger.setAttention('s-term', { kind: 'question', reason: 'Which one?' })
+    ledger.setAttention('s-chat', { kind: 'question', reason: 'Which one?' })
+    hook('s-term', { id: 'term-id', state: 'working' })
+    hook('s-chat', { id: 'chat-id', state: 'working' })
+    expect(ledger.get('s-term')).toMatchObject({ attention: null, archivedAt: null })
+    // A chat session is settled by its own messages (chat-bridge.ts).
+    expect(ledger.get('s-chat')?.attention?.kind).toBe('question')
+    expect(ledger.get('s-chat')?.archivedAt).not.toBeNull()
+  })
+
   it('passes hooks without a turn state on as notes', () => {
     const { turns, hook } = setup(true)
     const notes: string[] = []

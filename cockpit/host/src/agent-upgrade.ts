@@ -13,8 +13,11 @@ import { CORE_INDEX, CORE_LOG } from './paths.js'
  * relations to the work it came from as cross-brain references, the human's
  * handle on every row — and binds the space to the agent.
  *
- * Selection, per space, deterministic: the agent is the brain's name in
- * control.db (how a space was provisioned before: named after its agent).
+ * Selection, per space, deterministic: the agent is the id the space is
+ * bound to already (a runtime made by `agent create` before agent brains,
+ * agent-runtime.ts), else the brain's name in control.db (how a space was
+ * provisioned before: named after its agent). Either way the identity is found
+ * under the brain's name; a bound id takes it over as agent.<that id>.
  * The identity set is every engram, any status, of type profile, rule or
  * learning in agent.<that agent> or user.<any>, plus every rule and learning
  * in global (a rule has an owner; one written before v0.21 in global is the
@@ -133,8 +136,8 @@ export interface SpaceReport {
   moved?: { engrams: number; entries: number; relations: number; by: Record<string, number> }
   crossing?: { planned: number; recreated: number; items: Array<{ id: string; relation: string; direction: 'out' | 'in'; other: string }> }
   refs?: { external: number; incoming: number }
-  /** global_to_agent: rules and learnings left in global; user_to_agent: rules and learnings in any user scope (decision agent-brain-rules-at-agent-user-is-profile: both are the agent's, user.<handle> holds the profile); user_to_handle: another handle's user scope for the profiles. */
-  rescoped?: { global_to_agent: string[]; user_to_agent: string[]; user_to_handle: string[] }
+  /** global_to_agent: rules and learnings left in global; user_to_agent: rules and learnings in any user scope (decision agent-brain-rules-at-agent-user-is-profile: both are the agent's, user.<handle> holds the profile); user_to_handle: another handle's user scope for the profiles; source_to_agent: the identity under the brain's name, taken over by a bound id. */
+  rescoped?: { global_to_agent: string[]; user_to_agent: string[]; user_to_handle: string[]; source_to_agent: string[] }
   /** superseded: the same identity again (a core profile for a scope that has one, an engram identical in type, title and content) — the first space's wins; seeds_retired: a later space's default seeds (origin eml-default-brain), which add nothing to an agent brain filled by an earlier space; needs_review: same type, scope and title with other content, both kept. */
   collisions?: { superseded: Array<{ id: string; by: string; title: string | null }>; seeds_retired: string[]; needs_review: Array<{ id: string; existing: string; title: string | null; scope: string }> }
   restamped?: { space: { engrams: number; entries: number }; agent: { engrams: number; entries: number } }
@@ -253,6 +256,9 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
     }
     const spaceIds = spaces.map((s) => s.found?.brain.id).filter((id): id is string => !!id)
     const persist = async () => { if (input.persist) await input.persist(structuredClone(report.config)) }
+    // A bound id the config's agents do not name is a runtime from before agent brains: its brain is made here and keeps the runtime.
+    const known = new Set(agentBrains.keys())
+    const runtimes = new Set(spaces.map((s) => s.bound).filter((id): id is string => !!id && !known.has(id)))
     const agentFor = async (id: string, names: { agent: string; human: string }) => {
       const have = agentBrains.get(id)
       if (have) return have
@@ -276,7 +282,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
         made = { brainId: res.brainId, file: res.brainFile, token: res.tokenPlaintext, created: true }
       }
       agentBrains.set(id, made)
-      report.config.agents = [...(report.config.agents ?? []), { id, token: made.token }]
+      report.config.agents = [...(report.config.agents ?? []).filter((a) => a.id !== id), { id, token: made.token, ...(runtimes.has(id) ? { runtime: true as const } : {}) }]
       await persist()
       return made
     }
@@ -287,30 +293,37 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       if (!found) { report.spaces.push({ id: '?', name, main: space.main, action: 'skipped', reason: 'its token matches no brain', agent: space.bound }); continue }
       const sr: SpaceReport = { id: found.brain.id, name, main: space.main, action: 'skipped', agent: space.bound }
       report.spaces.push(sr)
-      if (space.bound && agentBrains.has(space.bound)) { sr.reason = `bound to ${space.bound} already`; continue }
+      // A journal: an earlier run of a runtime's space stopped after its agent brain went into the config.
+      const journal = path.join(input.journalDir, `${found.brain.id}.json`)
+      if (space.bound && known.has(space.bound) && !fs.existsSync(journal)) { sr.reason = `bound to ${space.bound} already`; continue }
       // A refused write or an I/O error inside a space ends the run with the report naming it; a dry run has touched copies only.
       try {
       if (found.brain.status !== 'ok') { sr.reason = `the brain needs intervention first (status ${found.brain.status})`; continue }
-      const agentId = found.brain.name
+      const source = found.brain.name
+      const agentId = space.bound ?? source
       if (!AGENT_ID.test(agentId)) { sr.reason = `the brain's name "${agentId}" is not an agent id`; continue }
       sr.agent = agentId
 
       const spaceDb = i === 0 ? mainDb : openBrain(path.join(input.dataDir, found.brain.brain_file))
       if (i !== 0) open.push(spaceDb)
-      const spaceEml = modules.core.EML.fromConnection(spaceDb, agentId)
+      const spaceEml = modules.core.EML.fromConnection(spaceDb, source)
       const env = spaceEml.env({ handle: null, agent: null, ingestion_method: 'direct' })
       const agentName = (spaceDb.prepare('SELECT name FROM agents WHERE id = ?').get(agentId) as { name: string } | undefined)?.name ?? agentId
       const humanName = (spaceDb.prepare('SELECT name FROM users WHERE id = ?').get(handle.handle) as { name: string } | undefined)?.name ?? handle.handle
+      if (space.bound && !fs.existsSync(journal)) {
+        fs.mkdirSync(input.journalDir, { recursive: true, mode: 0o700 })
+        fs.writeFileSync(journal, '[]\n', { mode: 0o600 })
+      }
       const agentBrain = await agentFor(agentId, { agent: agentName, human: humanName })
       const agentDb = openBrain(path.join(input.dataDir, agentBrain.file)); open.push(agentDb)
       const agentEml = modules.core.EML.fromConnection(agentDb, agentId)
       const agentEnv = agentEml.env({ handle: null, agent: null, ingestion_method: 'direct' })
 
-      sr.other_agents = (spaceDb.prepare(`SELECT a.id, (SELECT COUNT(*) FROM engrams e WHERE e.scope = 'agent.' || a.id) AS engrams FROM agents a WHERE a.id != ? ORDER BY a.id`).all(agentId) as Array<{ id: string; engrams: number }>)
+      sr.other_agents = (spaceDb.prepare(`SELECT a.id, (SELECT COUNT(*) FROM engrams e WHERE e.scope = 'agent.' || a.id) AS engrams FROM agents a WHERE a.id != ? ORDER BY a.id`).all(source) as Array<{ id: string; engrams: number }>)
       sr.before = { space: counts(spaceDb), agent: counts(agentDb) }
 
       // The identity set and the plan; every crossing relation must be buildable as a reference before anything moves.
-      const ids = (spaceDb.prepare(IDENTITY_SET_SQL).all(`agent.${agentId}`) as Array<{ id: string }>).map((r) => r.id)
+      const ids = (spaceDb.prepare(IDENTITY_SET_SQL).all(`agent.${source}`) as Array<{ id: string }>).map((r) => r.id)
       const existingIds = new Set((agentDb.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map((r) => r.id))
       let crossingRows: Array<Record<string, unknown>> = []
       let plan: MovePlan | null = null
@@ -336,7 +349,6 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       }
       // The crossing relations go to the journal before the move drops them from the space; an
       // earlier run's journal for this space (interrupted after its move) is taken up with them.
-      const journal = path.join(input.journalDir, `${found.brain.id}.json`)
       if (fs.existsSync(journal)) {
         const known = new Set(crossingRows.map((r) => r.id))
         for (const r of JSON.parse(fs.readFileSync(journal, 'utf8')) as Array<Record<string, unknown>>) if (!known.has(r.id)) crossingRows.push(r)
@@ -388,12 +400,13 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       }
       // Re-scope: a rule or learning in global or in a user scope is the agent's; another handle's user scope
       // is the human's — over everything the agent brain holds, so a resumed run finishes what the first began.
-      sr.rescoped = { global_to_agent: [], user_to_agent: [], user_to_handle: [] }
-      const pending = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE (scope = 'global' OR (scope LIKE 'user.%' AND (scope != ? OR type IN ('rule', 'learning')))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(`user.${handle.handle}`, JSON.stringify(ids)) as typeof movedRows
+      sr.rescoped = { global_to_agent: [], user_to_agent: [], user_to_handle: [], source_to_agent: [] }
+      const sourceScope = source === agentId ? null : `agent.${source}`
+      const pending = agentDb.prepare(`SELECT id, type, scope, title, content, status, origin, json_extract(properties, '$.core') AS core FROM engrams WHERE (scope = 'global' OR scope = ? OR (scope LIKE 'user.%' AND (scope != ? OR type IN ('rule', 'learning')))) AND id NOT IN (SELECT value FROM json_each(?)) ORDER BY ord`).all(sourceScope, `user.${handle.handle}`, JSON.stringify(ids)) as typeof movedRows
       const activeCore = (scope: string, except: string) => (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND id != ? AND json_extract(properties, '$.core') = 1`).get(scope, except) as { id: string } | undefined)?.id
       for (const e of [...movedRows, ...pending]) {
         // global → the agent's; a rule or learning in any user scope → the agent's (user.<handle> holds the profile); another handle's user scope → the human's
-        const target = e.scope === 'global' ? `agent.${agentId}`
+        const target = e.scope === 'global' || e.scope === sourceScope ? `agent.${agentId}`
           : /^user\./.test(e.scope) && (e.type === 'rule' || e.type === 'learning') ? `agent.${agentId}`
             : /^user\./.test(e.scope) && e.scope !== `user.${handle.handle}` ? `user.${handle.handle}` : e.scope
         if (e.type === 'profile' && e.core === 1 && e.status === 'active' && target !== e.scope) {
@@ -408,7 +421,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
         }
         if (target === e.scope) continue
         agentEml.apply({ name: 'engram.update', input: { id: e.id, patch: { scope: target } } }, agentEnv)
-        ;(e.scope === 'global' ? sr.rescoped.global_to_agent : e.type === 'profile' ? sr.rescoped.user_to_handle : sr.rescoped.user_to_agent).push(e.id)
+        ;(e.scope === sourceScope ? sr.rescoped.source_to_agent : e.scope === 'global' ? sr.rescoped.global_to_agent : e.type === 'profile' ? sr.rescoped.user_to_handle : sr.rescoped.user_to_agent).push(e.id)
         e.scope = target
       }
       // Collisions with what was there before this space: the same engram again is superseded, a variant is listed.
@@ -430,7 +443,7 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
       }
 
       // The legacy authorship: rows the agent's name stamped as the handle, in both brains.
-      const restamp = (eml: Eml, e: Env) => eml.apply({ name: 'provenance.restamp', input: { from_handle: agentId, to_handle: handle.handle, agent: agentId } }, e) as { engrams: number; entries: number }
+      const restamp = (eml: Eml, e: Env) => eml.apply({ name: 'provenance.restamp', input: { from_handle: source, to_handle: handle.handle, agent: agentId } }, e) as { engrams: number; entries: number }
       sr.restamped = { space: restamp(spaceEml, env), agent: restamp(agentEml, agentEnv) }
 
       // The space's token under the handle and the binding: the config takes both before the old
@@ -483,9 +496,10 @@ function failed(report: UpgradeReport, reason: string): UpgradeReport {
   return report
 }
 
-/** Whether the config leaves any space without a bound agent: the upgrade has something to do. */
+/** Whether the config leaves any space without an agent that has a brain: the upgrade has something to do. */
 export function needsUpgrade(config: CockpitConfig): boolean {
-  return !config.agent || (config.spaces ?? []).some((s) => !s.agent)
+  const known = new Set((config.agents ?? []).map((a) => a.id))
+  return [config.agent, ...(config.spaces ?? []).map((s) => s.agent)].some((agent) => !agent || !known.has(agent))
 }
 
 /**
@@ -544,7 +558,7 @@ export function scanSpaces(input: Omit<UpgradeInput, 'backupDir' | 'journalDir' 
       if (e.bound && agentIds.has(e.bound)) sr.reason = `bound to ${e.bound} already`
       else if (found.brain.status !== 'ok') sr.reason = `the brain needs intervention first (status ${found.brain.status})`
       else if (!AGENT_ID.test(found.brain.name)) sr.reason = `the brain's name "${found.brain.name}" is not an agent id`
-      else { sr.action = 'upgraded'; sr.agent = found.brain.name }
+      else { sr.action = 'upgraded'; sr.agent = e.bound ?? found.brain.name }
       return sr
     })
     return { mode: 'dry-run', at: (input.now ?? (() => new Date()))().toISOString(), status: 'ok', handle: input.config.handle ?? null, agents: [], spaces, config: input.config }

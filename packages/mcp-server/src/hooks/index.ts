@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { EML_CONFIG, HOME_DIR, readConfig, type EmlConfig } from '../config'
 import { notesUpdate } from './notes'
-import { compactionNote, stopHook, type CompactionInput } from './compaction'
+import { compactionNote, RESUME_NOTE, resumed, stopHook, type CompactionInput } from './compaction'
 import { projectBlockHook } from './project-block'
 
 /**
@@ -257,7 +257,9 @@ export async function runHook(argv: string[]): Promise<void> {
 
   try {
     let result: BootResult
-    if (name === 'session-start') {
+    if (name === 'session-start' && resumed(input)) {
+      result = { output: RESUME_NOTE, log: 'session-start: resumed, short note' }
+    } else if (name === 'session-start') {
       // After a compaction the hint comes first: it survives if the output is cut.
       const note = compactionNote(input)
       result = await sessionStart(readConfig(configPath), configPath, fetch, BOOT_BUDGET_CHARS - (note ? note.length + 2 : 0))

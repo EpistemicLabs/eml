@@ -1,12 +1,16 @@
 // Settings › Preferences: the user's personal setup, one section per area
 // (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
+import { useSyncExternalStore } from 'react';
+
 import { ThemeModeSelector } from '@/shared/view/ui';
+import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 import NotificationsSection from './NotificationsSection';
+import SessionLimitsRows from './SessionLimitsRows';
 
 type PreferencesTabProps = {
   projectSortOrder: ProjectSortOrder;
@@ -30,6 +34,7 @@ export default function PreferencesTab({
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
+  const chatOverride = useSyncExternalStore(subscribeSettings, () => readSettings().chatOverride);
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -73,6 +78,22 @@ export default function PreferencesTab({
               ariaLabel="Greeting at session start"
             />
           </SettingsRow>
+          <SettingsRow
+            label="Open sessions in"
+            description='Where Claude sessions open in this browser, unless you picked the view for that session. "As the cockpit" follows Settings › Models › Chat view. A turn running in the terminal is not interrupted.'
+          >
+            <select
+              value={chatOverride === undefined ? 'cockpit' : chatOverride ? 'chat' : 'terminal'}
+              onChange={(event) => writeSettings({ chatOverride: event.target.value === 'cockpit' ? null : event.target.value === 'chat' })}
+              className={`${inlineSelectClass} w-36`}
+              aria-label="Open sessions in"
+            >
+              <option value="cockpit">As the cockpit</option>
+              <option value="chat">Chat</option>
+              <option value="terminal">Terminal</option>
+            </select>
+          </SettingsRow>
+          <SessionLimitsRows />
         </SettingsCard>
       </SettingsSection>
 

@@ -4,8 +4,11 @@ import * as path from 'node:path'
 import { BrainProjectsClient } from './brain-projects.js'
 import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
-import { removeSpaceFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
-import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME } from './paths.js'
+import { removeSpaceFiles, runtimeMcpConfigPath, writeRuntimeFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
+import { openSpaceRuntime, type SpaceRuntime } from './agent-runtime.js'
+import type { SessionSpace } from './domain/agent-provider.js'
+import { DEFAULT_SPACE_COLOR, type SpaceColor } from './domain/space-color.js'
+import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
 import { updateCockpitConfig } from './config.js'
 
 /**
@@ -28,8 +31,6 @@ export interface BrainSpace {
   id: string
   /** Display name (cockpit config; "Main" for the main space unless renamed). */
   name: string
-  /** The brain's name in control.db: the space's name since agent brains, the agent id on a home from before them. */
-  brainName: string
   /** The agent this space binds (agents.ts), or null: its sessions then get no brain until one is bound. */
   agent: string | null
   /** Why the agent upgrade left this space unbound (agent-upgrade.ts), with the report's folder; null when bound or never tried. */
@@ -41,6 +42,10 @@ export interface BrainSpace {
    * so (GET /team), false for a local brain, null while the host could not ask.
    */
   shared: boolean | null
+  /** What tells it apart in this cockpit. */
+  color: SpaceColor
+  /** The runtime of the bound agent (agent-runtime.ts); null = the home's. */
+  runtime: SpaceRuntime | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
   ledgerKey: string | null
   /** Base URL of the brain server this space's brain lives on. */
@@ -70,6 +75,11 @@ export interface UpgradeState {
   needs?: 'handle'
 }
 
+/** The space as a session gets it. Both ways of running a session start from this, so a runtime cannot be left behind on one. */
+export function sessionSpaceOf(space: BrainSpace): SessionSpace {
+  return { id: space.id, mcpToken: space.mcpToken, files: space.files, ...(space.runtime ? { runtime: space.runtime } : {}) }
+}
+
 /** What the UI gets to see of a space (GET /api/spaces). */
 export interface SpaceView {
   id: string
@@ -81,19 +91,31 @@ export interface SpaceView {
   upgrade: UpgradeState | null
   /** v0.21: a shared brain; null when the host could not ask the brain server. */
   shared: boolean | null
+  /** The name its sessions go by (sessionAgentName); null while no agent is bound. */
+  agentName: string | null
+  color: SpaceColor
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, upgrade: space.upgrade, shared: space.shared })
+/**
+ * The name a session of this space goes by: its agent's, null while none is
+ * bound. It says who works here, never what the space is called.
+ */
+export function sessionAgentName(space: BrainSpace): string | null {
+  return space.agent ? space.agent.charAt(0).toUpperCase() + space.agent.slice(1) : null
+}
+
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), upgrade: space.upgrade, shared: space.shared, color: space.color })
 
 export interface OpenSpaceOptions {
   id: string
   name: string
-  brainName: string
   agent: string | null
   upgrade?: UpgradeState | null
   main: boolean
   /** Known for a space just made (false local, true shared); absent at boot until the server was asked. */
   shared?: boolean | null
+  /** Its stored colour, if the user chose one. */
+  color?: SpaceColor
   url: string
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
@@ -102,6 +124,8 @@ export interface OpenSpaceOptions {
   mcpUrl: string
   /** The host's hook routes (brain-mcp.ts HOOKS_PATH) the space's EML hook config points at. */
   hooksUrl: string
+  /** The bound agent runs in a runtime of its own (agents.ts expectsRuntime); absent = the home's. */
+  ownRuntime?: boolean
 }
 
 /** Where a non-main space keeps its local state. */
@@ -110,7 +134,20 @@ const spaceStateDir = (spaceId: string) => path.join(COCKPIT_HOME, 'spaces', spa
 /** Write the space's session files and open its clients. */
 export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
   const mcpToken = randomBytes(32).toString('hex')
-  const files = writeSpaceFiles(opts.id, opts.turnHookConfig, { mcpUrl: opts.mcpUrl, hooksUrl: opts.hooksUrl, mcpToken })
+  const host = { mcpUrl: opts.mcpUrl, hooksUrl: opts.hooksUrl, mcpToken }
+  const runtime = opts.agent && opts.ownRuntime
+    ? openSpaceRuntime(opts.agent, (configDir) => runtimeMcpConfigPath(configDir, opts.id))
+    : null
+  let files: SpaceFiles
+  if (runtime) {
+    // A copy of the session files left from before the runtime has no reader anymore.
+    fs.rmSync(spaceConfigDir(opts.id), { recursive: true, force: true })
+    writeRuntimeFiles(runtime, opts.id, opts.turnHookConfig, host)
+    const dir = path.dirname(runtimeMcpConfigPath(runtime.configDirs.claude ?? '', opts.id))
+    files = { mcpConfig: path.join(dir, 'mcp.json'), settings: path.join(dir, 'settings.json'), emlConfig: path.join(spaceEmlDir(opts.id), 'config') }
+  } else {
+    files = writeSpaceFiles(opts.id, opts.turnHookConfig, host)
+  }
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main
@@ -119,11 +156,12 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
   return {
     id: opts.id,
     name: opts.name,
-    brainName: opts.brainName,
     agent: opts.agent,
     upgrade: opts.upgrade ?? null,
     main: opts.main,
     shared: opts.shared ?? null,
+    color: opts.color ?? DEFAULT_SPACE_COLOR,
+    runtime,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,
     token: opts.token,
@@ -192,8 +230,19 @@ export class BrainSpaces {
       return { ...config, spaces: (config.spaces ?? []).filter((s) => s.token !== space.token) }
     })
     this.byId.delete(space.id)
-    removeSpaceFiles(space.id)
+    removeSpaceFiles(space.id, space.runtime?.configDirs.claude)
     fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
+  }
+
+  /** Give a space its colour and persist it in the cockpit config. */
+  async setColor(space: BrainSpace, color: SpaceColor): Promise<void> {
+    await updateCockpitConfig((config) => {
+      if (!config) throw new Error('no cockpit config')
+      return space.main
+        ? { ...config, mainColor: color }
+        : { ...config, spaces: (config.spaces ?? []).map((s) => (s.token === space.token ? { ...s, color } : s)) }
+    })
+    space.color = color
   }
 
   /** Rename a space (display name only; the brain keeps its name) and persist it in the cockpit config. */

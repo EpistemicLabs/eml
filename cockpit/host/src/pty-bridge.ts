@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocket, type RawData } from 'ws'
+import type { SessionLimits, SessionMemory } from './domain/session-memory.js'
 import type { IPty } from 'node-pty'
 import type { ITerminalAddon as IHeadlessAddon, Terminal as HeadlessTerminalType } from '@xterm/headless'
 import type { SerializeAddon as SerializeAddonType } from '@xterm/addon-serialize'
@@ -10,12 +11,15 @@ import { ensurePtyHelperExecutable } from './pty-helper.js'
 import { platform } from './infrastructure/platform/index.js'
 import type { Platform } from './domain/platform.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
-import type { AgentProvider } from './domain/agent-provider.js'
+import type { AgentProvider, SessionRef, TurnState } from './domain/agent-provider.js'
 import type { SessionLedger } from './session-ledger.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
-import type { BrainSpace, BrainSpaces } from './brain-space.js'
+import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space.js'
 import { greetingFor } from './session-greeting.js'
+import type { ProjectEntry } from './project-registry.js'
+import type { SpawnRequest } from './spawn-queue.js'
+import type { SessionHandoff } from './application/session-handoff.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
@@ -89,6 +93,12 @@ type PtySessionEntry = {
   spaceId: string
   /** Reachable outside the cockpit (LaunchSpec.keepRunning): no detached timeout. */
   keepRunning: boolean
+  /** A worker the host started without a pane (worker-start.ts): ends after a long idle time without a client. */
+  hostStarted: boolean
+  /** When the process was started with a prompt (ms); null without one. */
+  promptAt: number | null
+  /** When a client last attached or left (ms); the idle time of a host-started worker counts from here too. */
+  lastClientAt: number
   // Server-side xterm that parses every PTY byte and holds the rendered
   // terminal state (grid, cursor, scrollback, alt-buffer). On reconnect we
   // serialize this and replay it as a single frame instead of dispatching
@@ -131,6 +141,12 @@ type PtySessionEntry = {
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
+const CHAT_CLOSING_NOTICE = 'Closing the chat session: a running turn stops; its background tasks and "allow for this session" grants do not carry over.'
+// How long a PTY handing its session to the chat view gets to exit before SIGKILL.
+const PTY_EXIT_TIMEOUT_MS = 5_000
+
+/** A session's turn state for the worker limits (turn-state.ts): the state and since when it holds (ms). */
+export type WorkerTurnOf = (sessionId: string) => { state: TurnState; since: number | null }
 // Terminal size of a kept session started without a client (host start);
 // the first pane that attaches resizes it to its own.
 const RESUME_COLS = 120
@@ -279,6 +295,13 @@ export interface SpawnContext {
   spaces: BrainSpaces
   /** Cockpit env for every session (COCKPIT_URL, spawn token, spawn CLI) — see index.ts. */
   sessionEnv: Record<string, string>
+  /** One writer per conversation: a session enters the terminal through this, once the chat side has let go. */
+  handoff?: () => SessionHandoff
+  /** Whether the chat view runs this session right now. */
+  chatHolds?: (sessionId: string) => boolean
+  /** Memory ceilings per session (session-memory.ts), and the one a session starts with; absent: none. */
+  memory?: SessionMemory
+  sessionLimits?: () => SessionLimits
 }
 
 interface PendingNonce {
@@ -333,6 +356,47 @@ export class PtyBridge {
     return state
   }
 
+  /** Sessions with a live PTY. */
+  runningCount(): number {
+    return new Set([...this.sessions.values()].map((session) => session.sessionId)).size
+  }
+
+  /** Whether a PTY of this session is alive, client attached or not. */
+  isRunning(sessionId: string): boolean {
+    for (const session of this.sessions.values()) if (session.sessionId === sessionId) return true
+    return false
+  }
+
+  /** When the session's process was started with a prompt (ms); null when it wasn't, or none runs. */
+  promptAt(sessionId: string): number | null {
+    for (const session of this.sessions.values()) if (session.sessionId === sessionId) return session.promptAt
+    return null
+  }
+
+  /**
+   * End a session's PTY for the chat view, and resolve once the process has
+   * exited. Its pane gets `superseded` and does not reconnect. It stays
+   * resumable: the ledger entry is left alone.
+   */
+  async end(sessionId: string): Promise<void> {
+    const exits: Array<Promise<void>> = []
+    for (const [key, session] of [...this.sessions]) {
+      if (session.sessionId !== sessionId) continue
+      const proc = session.pty
+      exits.push(new Promise((resolve) => {
+        const hardKill = setTimeout(() => { try { proc.kill('SIGKILL') } catch { /* already gone */ } }, PTY_EXIT_TIMEOUT_MS)
+        proc.onExit(() => { clearTimeout(hardKill); resolve() })
+      }))
+      try { session.ws?.close(1000, 'superseded') } catch { /* closing */ }
+      this.teardown(key, session)
+      this.sessions.delete(key)
+      try { proc.kill() } catch { /* already gone */ }
+    }
+    await Promise.all(exits)
+    this.ledger.setKeepRunning(sessionId, false)
+    this.ctx.providers.forSession(sessionId).auth.invalidate()
+  }
+
   /** Kill every PTY of a session (sidebar delete). The ledger entry is the caller's business. */
   killSession(sessionId: string): number {
     let killed = 0
@@ -358,9 +422,14 @@ export class PtyBridge {
   }
 
   // ── Spawn ────────────────────────────────────────────────────────────
+  /** What a provider needs to find this session's conversation: the ledger's ids and its space's runtime. */
+  sessionRef(sessionId: string, projectPath: string | null): SessionRef {
+    return this.ledger.ref(sessionId, projectPath, this.ctx.spaces.resolve(this.ledger.get(sessionId)?.spaceId).runtime)
+  }
+
   /** Whether the session's provider has a stored conversation for it — only after the first turn. */
   private hasTranscript(sessionId: string): boolean {
-    return this.ctx.providers.forSession(sessionId).canResume(this.ledger.ref(sessionId, null))
+    return this.ctx.providers.forSession(sessionId).canResume(this.sessionRef(sessionId, null))
   }
 
   /**
@@ -373,6 +442,8 @@ export class PtyBridge {
   private forgetIfEmpty(sessionId: string): boolean {
     const entry = this.ledger.get(sessionId)
     if (!entry || entry.title || entry.pinned) return false
+    // A folder that is away says nothing about the transcript in it.
+    if (this.ctx.spaces.resolve(entry.spaceId).runtime?.problem(entry.provider)) return false
     if (this.sessionState(sessionId) !== 'ended' || this.hasTranscript(sessionId)) return false
     this.ledger.remove(sessionId)
     this.log(`session ${sessionId} ended without a turn → forgotten`)
@@ -396,9 +467,11 @@ export class PtyBridge {
     isDarkMode: boolean,
     projectId: string,
     space: BrainSpace,
+    reachable = false,
   ): { pty: IPty; keepRunning: boolean } {
     const pty = require('node-pty') as typeof import('node-pty')
-    provider.trustProject(cwd)
+    const sessionSpace = sessionSpaceOf(space)
+    provider.trustProject(cwd, sessionSpace)
     // Workers — opened by another session, nobody watching — run unattended.
     // An externally queued command maps to the agent's initial prompt (the
     // cockpit spawns agents, not shells). The greeting is a first prompt too,
@@ -407,8 +480,9 @@ export class PtyBridge {
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
-      space: { id: space.id, mcpToken: space.mcpToken, files: space.files },
+      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
+      space: sessionSpace,
+      toolProfile: this.ledger.get(sessionId)?.toolProfile ?? null,
     })
     // The brain scope the session works in — the UserPromptSubmit hook shows
     // note edits of this scope only (decision cockpit-notes-pane).
@@ -432,6 +506,8 @@ export class PtyBridge {
         ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
       },
     })
+    const { memory, sessionLimits } = this.ctx
+    if (memory && sessionLimits) memory.place(sessionId, proc.pid, sessionLimits())
     return { pty: proc, keepRunning: launch.keepRunning }
   }
 
@@ -537,6 +613,9 @@ export class PtyBridge {
     proc.onExit(({ exitCode, signal }) => {
       const session = this.sessions.get(key)
       if (!session || session.pty !== proc) return
+      const kills = this.ctx.memory?.oomKills(session.sessionId) ?? 0
+      if (kills > 0) this.log(`session ${session.sessionId}: the kernel stopped ${kills} of its process(es) at the memory ceiling`)
+      this.ctx.memory?.release(session.sessionId)
       // A sign-in happens inside a session: the provider's cached answer may be stale now.
       this.ctx.providers.forSession(session.sessionId).auth.invalidate()
 
@@ -558,7 +637,7 @@ export class PtyBridge {
         const { pty: fresh } = this.spawnAgent(
           provider,
           session.sessionId, false, null, null, session.projectPath,
-          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
+          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space, session.hostStarted,
         )
         session.pty = fresh
         session.spawnedWithResume = false
@@ -617,10 +696,12 @@ export class PtyBridge {
     rows: number
     isDarkMode: boolean
     taskId: string | null
+    hostStarted?: boolean
   }, ws: WebSocket | null): void {
     const { key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting, cols, rows } = opts
     const { pty: proc, keepRunning } = this.spawnAgent(
       provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
+      opts.hostStarted === true,
     )
 
     const headless = new HeadlessTerminal({
@@ -640,6 +721,9 @@ export class PtyBridge {
       projectPath,
       spaceId: space.id,
       keepRunning,
+      hostStarted: opts.hostStarted === true,
+      promptAt: initialPrompt !== null ? Date.now() : null,
+      lastClientAt: Date.now(),
       headless,
       serializeAddon,
       ptyPaused: false,
@@ -659,6 +743,7 @@ export class PtyBridge {
     })
     this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
     this.ledger.setKeepRunning(sessionId, keepRunning)
+    this.ledger.setRuntime(sessionId, 'terminal')
     this.wireProcess(key, proc)
     this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
   }
@@ -669,6 +754,8 @@ export class PtyBridge {
    */
   private scheduleDetachTimeout(key: string, session: PtySessionEntry): void {
     if (session.timeoutId) clearTimeout(session.timeoutId)
+    // A worker follows the worker rules (sweepIdleWorkers): never cut off mid-turn.
+    if (this.isWorker(session)) return
     session.timeoutId = setTimeout(() => {
       const current = this.sessions.get(key)
       if (!current || current.ws) return
@@ -710,6 +797,12 @@ export class PtyBridge {
       const space = entry.spaceId ? this.ctx.spaces.get(entry.spaceId) : this.ctx.spaces.main
       const project = entry.projectId ? space?.registry.get(entry.projectId) : undefined
       const provider = this.ctx.providers.forSession(entry.sessionId)
+      // Its agent's folder is away: stays kept, and comes back on a start with the folder in place.
+      const agentProblem = space?.runtime?.problem(provider.id)
+      if (agentProblem) {
+        this.log(`kept session ${entry.sessionId} not resumed: ${agentProblem}`)
+        continue
+      }
       if (!space || !project?.path || !entry.projectId || !this.hasTranscript(entry.sessionId) || provider.runtime.problem()) {
         this.log(`kept session ${entry.sessionId} can't be resumed (space, folder, transcript or agent CLI missing) → no longer kept`)
         this.ledger.setKeepRunning(entry.sessionId, false)
@@ -725,6 +818,92 @@ export class PtyBridge {
       resumed += 1
     }
     return resumed
+  }
+
+  /**
+   * Start a worker a session asked for that no cockpit tab took (worker-start.ts):
+   * without a pane, under the request id as its session id (the address the
+   * requester already has), with the prompt as its first message. A pane opened
+   * later from the sidebar takes it over (runningEntry). Returns why it could
+   * not start, or null.
+   */
+  startWorker(request: SpawnRequest): string | null {
+    const space = this.ctx.spaces.resolve(request.spaceId ?? null)
+    const project = this.projectFor(space, request.projectId)
+    if (!project?.path) return `project ${request.projectId} has no folder`
+    const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
+    const problem = provider.runtime.problem() ?? space.runtime?.problem(provider.id)
+    if (problem) return problem
+    if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
+    this.startSession({
+      key: `${space.id}_${project.projectId}_${request.id}`,
+      sessionId: request.id, paneId: null, projectId: project.projectId, projectPath: project.path,
+      space, provider, resume: false, initialPrompt: request.prompt, greeting: null,
+      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null, hostStarted: true,
+    }, null)
+    if (request.title) this.ledger.setAgentTitle(request.id, request.title)
+    return null
+  }
+
+  /**
+   * End the workers that no client is attached to, that are not
+   * working, and that have been quiet (no turn, no client) for `idleMs`. They
+   * stay in the sidebar, resumable. Returns how many ended.
+   */
+  sweepIdleWorkers(idleMs: number, turnOf: WorkerTurnOf, now = Date.now()): number {
+    let ended = 0
+    for (const [key, session, quietMs] of this.quietWorkers(turnOf, now)) {
+      if (quietMs < idleMs) continue
+      this.endWorker(key, session, 'idle without a client')
+      ended += 1
+    }
+    return ended
+  }
+
+  private isWorker(session: PtySessionEntry): boolean {
+    return session.hostStarted || this.ledger.get(session.sessionId)?.worker === true
+  }
+
+  /** Workers without a client that are not working: key, entry, quiet time (ms), turn state. */
+  private quietWorkers(turnOf: WorkerTurnOf, now: number): Array<[string, PtySessionEntry, number, TurnState]> {
+    const quiet: Array<[string, PtySessionEntry, number, TurnState]> = []
+    for (const [key, session] of this.sessions) {
+      if (!this.isWorker(session) || session.ws) continue
+      const turn = turnOf(session.sessionId)
+      if (turn.state === 'working') continue
+      const lastActive = Math.max(session.spawnedAt, session.lastClientAt, turn.since ?? 0)
+      quiet.push([key, session, now - lastActive, turn.state])
+    }
+    return quiet
+  }
+
+  private endWorker(key: string, session: PtySessionEntry, why: string): void {
+    this.log(`worker ${session.sessionId} ${why} → ending it (resumable)`)
+    this.teardown(key, session)
+    try { session.pty.kill() } catch { /* already gone */ }
+    this.sessions.delete(key)
+    this.ledger.setKeepRunning(session.sessionId, false)
+  }
+
+  /**
+   * The registry entry of a project as a session runs in it. A brain project
+   * the registry hasn't touched yet gets its local entry here (name from the
+   * cached brain list, else the id — fixed up on the next touch). A project
+   * without a folder gets a cockpit folder, so a session starts without a dialog.
+   */
+  private projectFor(space: BrainSpace, projectId: string): ProjectEntry | null {
+    let project = space.registry.get(projectId)
+    if (!project) {
+      const brainId = brainIdFromProjectId(projectId)
+      if (brainId) {
+        const brain = space.projects.cached()?.find((p) => p.id === brainId)
+        project = space.registry.ensureBrain(brainId, brain?.name ?? brainId)
+      }
+    }
+    if (!project) return null
+    // Trusted at spawn (spawnAgent), by the session's provider.
+    if (!project.path) project = space.registry.ensureCockpitFolder(project.projectId)
+    return project
   }
 
   // ── Connection handling ──────────────────────────────────────────────
@@ -750,7 +929,6 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'This desk belongs to a brain space this cockpit no longer has' })
             return
           }
-          const registry = space.registry
           if (!SAFE_SESSION_ID.test(sessionId)) {
             sendJson(ws, { type: 'error', message: 'Invalid session ID' })
             return
@@ -763,85 +941,31 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'Invalid project ID' })
             return
           }
-          // A brain project the registry hasn't touched yet gets its local
-          // entry here (name from the cached brain list, else the id — fixed
-          // up on the next touch). A project without a folder gets a
-          // cockpit folder — a session starts without any dialog.
-          let project = registry.get(projectId)
-          if (!project) {
-            const brainId = brainIdFromProjectId(projectId)
-            if (brainId) {
-              const brain = space.projects.cached()?.find((p) => p.id === brainId)
-              project = registry.ensureBrain(brainId, brain?.name ?? brainId)
-            }
-          }
+          const project = this.projectFor(space, projectId)
           if (!project) {
             sendJson(ws, { type: 'error', message: 'Unknown project — add it in the sidebar first' })
             return
-          }
-          if (!project.path) {
-            // Trusted at spawn (spawnAgent), by the session's provider.
-            project = registry.ensureCockpitFolder(project.projectId)
           }
           const projectPath = project.path
           if (!projectPath) {
             sendJson(ws, { type: 'error', message: 'This project has no folder and none could be created' })
             return
           }
-          // The key names the pane that started the PTY. It's stable across
-          // reloads (persisted in the pane store), so the same pane reattaches.
-          // The space is part of the key: two spaces may both know project
-          // `bp-eml`, and a session id is minted per pane anyway.
-          key = `${space.id}_${projectId}_${sessionId}${paneId ? `_pane_${paneId}` : ''}`
-          const cols = readNumber(data.cols, 80)
-          const rows = readNumber(data.rows, 24)
-
-          // A conversation already running under another pane (closed with ×,
-          // reopened into a new one) is taken over, not started a second time:
-          // two processes on one transcript would both write to it. The pane
-          // that had it gets `superseded` and does not reconnect.
-          const running = this.sessions.has(key) ? null : runningEntry(this.sessions, space.id, sessionId)
-          if (running) {
-            key = running[0]
-            running[1].paneId = paneId
+          // A session the chat view holds comes here once its process has exited
+          // (session-handoff.ts); until then the socket has no session.
+          const open = () => {
+            if (ws.readyState !== WebSocket.OPEN) return
+            key = this.openFromInit(ws, data, space, sessionId, paneId, projectId, projectPath)
           }
-          const existing = this.sessions.get(key)
-          if (existing) {
-            this.reattach(key, existing, ws, cols, rows)
-            this.ledger.touch(sessionId, paneId)
-            return
+          if (!this.ctx.handoff) { open(); return }
+          const handoff = this.ctx.handoff()
+          if (handoff.switching(sessionId) || this.ctx.chatHolds?.(sessionId)) {
+            sendJson(ws, { type: 'output', data: `${CHAT_CLOSING_NOTICE}\r\n` })
           }
-
-          // The ledger alone isn't enough: a session that never ran a turn has
-          // no transcript, and `--resume` on it exits 1 ("No conversation found").
-          const resume = this.ledger.has(sessionId) && this.hasTranscript(sessionId)
-          // A session keeps the provider it started with; a new one takes the
-          // pane's choice, or the default.
-          const provider = this.ledger.has(sessionId)
-            ? this.ctx.providers.forSession(sessionId)
-            : this.ctx.providers.get(readString(data.provider)) ?? this.ctx.providers.default()
-          // Preflight: without a working agent CLI the spawn would exit at once
-          // with a cryptic message — say what's wrong instead.
-          const problem = provider.runtime.problem()
-          if (problem) {
-            sendJson(ws, {
-              type: 'output',
-              data: `\r\n\x1b[31m${problem}\x1b[0m\r\n${provider.runtime.problemHint}\r\n`,
-            })
-            this.log(`not starting session ${sessionId}: ${problem}`)
-            return
-          }
-          // The first message belongs to a fresh session only. The pane keeps it
-          // and resends it on every reconnect; on a resume (after a host restart)
-          // it would land as a new user message in the running conversation.
-          const initialPrompt = resume ? null : readString(data.initialCommand) || null
-          const greeting = greetingFor({
-            resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
+          handoff.enter('terminal', sessionId, open).catch((error: Error) => {
+            this.log(`error: ${error.message}`)
+            sendJson(ws, { type: 'output', data: `\r\n\x1b[31mError: ${error.message}\x1b[0m\r\n` })
           })
-          this.startSession({
-            key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting,
-            cols, rows, isDarkMode: readBoolean(data.isDarkMode, true), taskId: readString(data.taskId) || null,
-          }, ws)
           return
         }
 
@@ -895,6 +1019,7 @@ export class PtyBridge {
       if (session.ws !== ws) return
 
       session.ws = null
+      session.lastClientAt = Date.now()
       if (session.pendingResize) {
         clearTimeout(session.pendingResize.timeoutId)
         session.pendingResize = null
@@ -924,6 +1049,74 @@ export class PtyBridge {
     })
   }
 
+  /** The part of `init` that runs as the session's only writer; returns the entry's key, or null when nothing started. */
+  private openFromInit(
+    ws: WebSocket, data: ShellIncomingMessage, space: BrainSpace, sessionId: string, paneId: string | null, projectId: string, projectPath: string,
+  ): string | null {
+    // The key names the pane that started the PTY. It's stable across
+    // reloads (persisted in the pane store), so the same pane reattaches.
+    // The space is part of the key: two spaces may both know project
+    // `bp-eml`, and a session id is minted per pane anyway.
+    let key = `${space.id}_${projectId}_${sessionId}${paneId ? `_pane_${paneId}` : ''}`
+    const cols = readNumber(data.cols, 80)
+    const rows = readNumber(data.rows, 24)
+
+    // A conversation already running under another pane (closed with ×,
+    // reopened into a new one) is taken over, not started a second time:
+    // two processes on one transcript would both write to it. The pane
+    // that had it gets `superseded` and does not reconnect.
+    const running = this.sessions.has(key) ? null : runningEntry(this.sessions, space.id, sessionId)
+    if (running) {
+      key = running[0]
+      running[1].paneId = paneId
+    }
+    const existing = this.sessions.get(key)
+    if (existing) {
+      this.reattach(key, existing, ws, cols, rows)
+      this.ledger.touch(sessionId, paneId)
+      return key
+    }
+
+    // The ledger alone isn't enough: a session that never ran a turn has
+    // no transcript, and `--resume` on it exits 1 ("No conversation found").
+    const resume = this.ledger.has(sessionId) && this.hasTranscript(sessionId)
+    // A session keeps the provider it started with; a new one takes the
+    // pane's choice, or the default.
+    const provider = this.ledger.has(sessionId)
+      ? this.ctx.providers.forSession(sessionId)
+      : this.ctx.providers.get(readString(data.provider)) ?? this.ctx.providers.default()
+    // Preflight: without a working agent CLI the spawn would exit at once
+    // with a cryptic message — say what's wrong instead.
+    const problem = provider.runtime.problem()
+    if (problem) {
+      sendJson(ws, {
+        type: 'output',
+        data: `\r\n\x1b[31m${problem}\x1b[0m\r\n${provider.runtime.problemHint}\r\n`,
+      })
+      this.log(`not starting session ${sessionId}: ${problem}`)
+      return null
+    }
+    // A space with its own agent never falls back to the shared config.
+    const agentProblem = space.runtime?.problem(provider.id)
+    if (agentProblem) {
+      sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${agentProblem}\x1b[0m\r\n` })
+      this.log(`not starting session ${sessionId}: ${agentProblem}`)
+      return null
+    }
+    // The first message belongs to a fresh session only. The pane keeps it
+    // and resends it on every reconnect; on a resume (after a host restart)
+    // it would land as a new user message in the running conversation.
+    const initialPrompt = resume ? null : readString(data.initialCommand) || null
+    const greeting = greetingFor({
+      resume, initialPrompt, greet: data.greet === true, worker: this.ledger.get(sessionId)?.worker === true,
+    })
+    this.startSession({
+      key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting,
+      cols, rows, isDarkMode: readBoolean(data.isDarkMode, true), taskId: readString(data.taskId) || null,
+    }, ws)
+    return key
+  }
+
   /** A client reconnects to a running PTY: take ownership, replay the snapshot. */
   private reattach(key: string, session: PtySessionEntry, ws: WebSocket, cols: number, rows: number): void {
     if (session.timeoutId) {
@@ -940,6 +1133,7 @@ export class PtyBridge {
       try { oldWs.close(1000, 'superseded') } catch { /* already closing */ }
     }
     session.ws = ws
+    session.lastClientAt = Date.now()
 
     // Clear backpressure state left by the previous owner — the fresh ws has
     // zero bufferedAmount and the drain poll would check the wrong target.

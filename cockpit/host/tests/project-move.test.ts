@@ -146,6 +146,8 @@ describe('who can call the move routes', () => {
     expect(isTokenEndpoint('/api/projects/bp-top/move-plan?target=x')).toBe(false)
     expect(isTokenEndpoint('/api/spawn')).toBe(true)
     expect(isTokenEndpoint('/api/hook')).toBe(true)
+    expect(isTokenEndpoint('/api/sessions/eml-abc1/message')).toBe(true)
+    expect(isTokenEndpoint('/api/sessions/eml-abc1/archive')).toBe(false)
     expect(isTokenEndpoint('/api/session-title/0f8fad5b-d9cb-469f-a165-70867728950e')).toBe(true)
   })
 })

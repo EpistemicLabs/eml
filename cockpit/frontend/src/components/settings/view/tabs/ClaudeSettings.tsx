@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { Button, Input } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import { getActivePane, isEmptyPane } from '@/stores/usePaneStore';
+import { setHostChatView } from '../../utils/settingsStorage';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -27,6 +28,7 @@ type LoginStatus = {
   permissionMode: PermissionMode;
   renderer: Renderer;
   remoteControl: boolean;
+  chatView: boolean;
   token: { set: boolean; prefix: string | null };
   account: Account | null;
 };
@@ -102,6 +104,8 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const pinnedInput = status?.renderer === 'fullscreen';
   const setRemoteControl = (on: boolean) => run(() => api.setRemoteControl(on));
   const remoteControl = status?.remoteControl === true;
+  const setChatView = (on: boolean) => run(() => api.setChatView(on), () => setHostChatView(on));
+  const chatView = status?.chatView !== false;
 
   const tokenMode = status?.mode === 'token';
   const showTokenForm = editing || status?.token.set === false;
@@ -197,6 +201,21 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
               checked={pinnedInput}
               onChange={(checked: boolean) => void setRenderer(checked ? 'fullscreen' : 'default')}
               ariaLabel="Keep the input at the bottom"
+              disabled={busy || status === null}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label="Chat view"
+            description={
+              chatView
+                ? 'On: Claude sessions open in the chat view, and workers other sessions start run there; they cannot be followed in the Claude app. A browser can choose otherwise in Preferences.'
+                : 'Off: sessions and workers start in a terminal. A browser can choose otherwise in Preferences.'
+            }
+          >
+            <SettingsToggle
+              checked={chatView}
+              onChange={(checked: boolean) => void setChatView(checked)}
+              ariaLabel="Chat view"
               disabled={busy || status === null}
             />
           </SettingsRow>

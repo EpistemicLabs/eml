@@ -253,6 +253,10 @@ class CodexProvider implements AgentProvider {
     }
   }
 
+  workerRunsInChat(): boolean {
+    return false
+  }
+
   canResume(session: SessionRef): boolean {
     return session.providerSessionId !== null && findRollout(session.providerSessionId) !== null
   }

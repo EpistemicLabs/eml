@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME, CONFIG_FILE } from './paths.js'
+import { isSpaceColor, type SpaceColor } from './domain/space-color.js'
 
 /**
  * Cockpit-local config: the loopback brain tokens (on-disk, chmod 600, never
@@ -26,6 +27,8 @@ export interface CockpitConfig {
   onboarding?: 'pending' | 'done'
   /** Display name of the main space (Settings › Brain); absent = "Main". */
   mainName?: string
+  /** Colour of the main space (Settings › Brain); absent = grey. */
+  mainColor?: SpaceColor
   /**
    * The home's human: the handle every brain token is issued under, so
    * ingested_by names them in every brain. Set by the first-run setup or the
@@ -35,16 +38,19 @@ export interface CockpitConfig {
   /** The agent the main space binds (an id of `agents`); absent = none bound. */
   agent?: string
   /**
-   * Further local brain spaces (brain-space.ts): token, display name and the
-   * bound agent each; which brain a token belongs to comes from control.db at
-   * boot. Absent = main only.
+   * Further local brain spaces (brain-space.ts): token, display name, the
+   * bound agent and the colour the user chose for this cockpit (absent = grey)
+   * each; which brain a token belongs to comes from control.db at boot.
+   * Absent = main only.
    */
-  spaces?: Array<{ token: string; name?: string; agent?: string }>
+  spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
   /**
    * The home's agent brains (agents.ts): one brain per agent, named after the
-   * agent id in control.db, with a token the host alone holds.
+   * agent id in control.db, with a token the host alone holds. `runtime`: the
+   * agent runs in a runtime of its own (agent-runtime.ts), set by `agent
+   * create`; a record gone missing then stops its sessions. Absent = the home's.
    */
-  agents?: Array<{ id: string; token: string }>
+  agents?: Array<{ id: string; token: string; runtime?: true }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
   hygiene?: Record<string, HygieneState>
 }
@@ -76,13 +82,18 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
     if (!parsed.token) return null
     const spaces = Array.isArray(parsed.spaces)
       ? parsed.spaces
-          .filter((s): s is { token: string; name?: string; agent?: string } => !!s && typeof s.token === 'string' && !!s.token)
-          .map((s) => ({ token: s.token, ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}), ...agentOf(s.agent) }))
+          .filter((s): s is { token: string; name?: string; agent?: string; color?: SpaceColor } => !!s && typeof s.token === 'string' && !!s.token)
+          .map((s) => ({
+            token: s.token,
+            ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}),
+            ...agentOf(s.agent),
+            ...(isSpaceColor(s.color) ? { color: s.color } : {}),
+          }))
       : []
     const agents = Array.isArray(parsed.agents)
       ? parsed.agents
-          .filter((a): a is { id: string; token: string } => !!a && typeof a.id === 'string' && AGENT_ID.test(a.id) && typeof a.token === 'string' && !!a.token)
-          .map((a) => ({ id: a.id, token: a.token }))
+          .filter((a): a is { id: string; token: string; runtime?: true } => !!a && typeof a.id === 'string' && AGENT_ID.test(a.id) && typeof a.token === 'string' && !!a.token)
+          .map((a) => ({ id: a.id, token: a.token, ...(a.runtime === true ? { runtime: true as const } : {}) }))
       : []
     return {
       token: parsed.token,
@@ -90,6 +101,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(typeof parsed.handle === 'string' && HANDLE.test(parsed.handle) ? { handle: parsed.handle } : {}),
       ...agentOf(parsed.agent),
+      ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
       ...(spaces.length ? { spaces } : {}),
       ...(agents.length ? { agents } : {}),
       ...(readHygiene(parsed.hygiene) ?? {}),

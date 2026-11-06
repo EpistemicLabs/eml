@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { SPACE_HEADER } from '@/lib/space-header';
 import * as paneStore from '@/stores/usePaneStore';
-import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
+import { SPACE_CHANGED_EVENT, paneSpaceKey, useAllView, useSpaces } from '@/stores/useSpaceStore';
 import { api, type ProjectsResponse } from '@/utils/api';
 import type { Project } from '@/types/app';
 
@@ -40,6 +41,9 @@ export const PROJECTS_CHANGED_EVENT = 'cockpit-projects-changed';
 
 export type ProjectsBySpace = Readonly<Record<string, Project[]>>;
 
+/** Whether this tab has seen the space's project list yet. */
+export const spaceLoaded = (bySpace: ProjectsBySpace, spaceId: string | null): boolean => spaceKey(spaceId) in bySpace;
+
 /** One space's projects; a stable empty list for a space not loaded yet. */
 export function projectsOfSpace(bySpace: ProjectsBySpace, spaceId: string | null): Project[] {
   return bySpace[spaceKey(spaceId)] ?? NO_PROJECTS;
@@ -61,6 +65,13 @@ export function useProjectsState() {
       return next === previous ? bySpace : { ...bySpace, [key]: next };
     });
   }, []);
+  const keepProjects = useCallback((key: string, fetched: Project[]) => {
+    setProjectsBySpace((bySpace) => {
+      const previous = bySpace[key];
+      if (previous && previous.length > 0 && sameValue(previous, fetched)) return bySpace;
+      return { ...bySpace, [key]: fetched };
+    });
+  }, []);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('account');
@@ -80,18 +91,13 @@ export function useProjectsState() {
       const response = await api.projects();
       if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
       const body = (await response.json()) as ProjectsResponse;
-      const fetched = Array.isArray(body?.projects) ? body.projects : [];
-      setProjectsBySpace((bySpace) => {
-        const previous = bySpace[key];
-        if (previous && previous.length > 0 && sameValue(previous, fetched)) return bySpace;
-        return { ...bySpace, [key]: fetched };
-      });
+      keepProjects(key, Array.isArray(body?.projects) ? body.projects : []);
     } catch (error) {
       console.error('Error fetching projects:', error);
     } finally {
       if (showLoadingState) setIsLoadingProjects(false);
     }
-  }, []);
+  }, [keepProjects]);
 
   const refreshProjectsSilently = useCallback(() => fetchProjects({ showLoadingState: false }), [fetchProjects]);
 
@@ -120,6 +126,32 @@ export function useProjectsState() {
     };
   }, [refreshProjectsSilently]);
 
+  // The sidebar's All view lists the other spaces' projects too. One that does
+  // not answer keeps what was last seen of it.
+  const allView = useAllView();
+  const spaces = useSpaces();
+  useEffect(() => {
+    if (!allView) return;
+    const fetchOtherSpaces = () => {
+      for (const space of spaces) {
+        const spaceId = paneSpaceKey(space);
+        if (spaceId === paneStore.getActiveSpaceId()) continue;
+        void fetch('/api/projects', { headers: { [SPACE_HEADER]: space.id } })
+          .then((response) => (response.ok ? (response.json() as Promise<ProjectsResponse>) : null))
+          .then((body) => { if (Array.isArray(body?.projects)) keepProjects(spaceKey(spaceId), body.projects); })
+          .catch(() => { /* host unreachable: the next round asks again */ });
+      }
+    };
+    const refreshIfVisible = () => { if (isDocumentVisible()) fetchOtherSpaces(); };
+    fetchOtherSpaces();
+    const interval = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS);
+    window.addEventListener('focus', refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshIfVisible);
+    };
+  }, [allView, spaces, keepProjects]);
+
   useEffect(() => {
     if (isLoadingProjects || projects.length !== 1) return;
     const pane = paneStore.getActivePane();
@@ -131,7 +163,7 @@ export function useProjectsState() {
   const handleSessionDelete = useCallback((sessionId: string) => {
     for (const pane of paneStore.getPanes()) {
       if (pane.sessionId !== sessionId) continue;
-      if (pane.pinned) paneStore.clearPane(pane.id);
+      if (paneStore.isPaneProtected(pane.id)) paneStore.clearPane(pane.id);
       else paneStore.removePane(pane.id);
     }
     setProjects((previous) =>
