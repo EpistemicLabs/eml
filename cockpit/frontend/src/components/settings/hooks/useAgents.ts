@@ -7,8 +7,6 @@ export type AgentInfo = {
   id: string;
   name: string;
   brainId: string;
-  /** It runs in a runtime of its own, not the cockpit's default. */
-  runtime: boolean;
   spaces: Array<{ id: string; name: string }>;
 };
 

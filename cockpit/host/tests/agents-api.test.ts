@@ -66,7 +66,7 @@ describe('agents API', () => {
   it('lists the agents with their names and the spaces they work in', async () => {
     const res = await fetch(`${base}/api/agents`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ handle: null, agents: [{ id: 'juno', name: 'Juno', brainId: 'brain-juno', runtime: false, spaces: [{ id: 'brain-main', name: 'Main' }] }] })
+    expect(await res.json()).toEqual({ handle: null, agents: [{ id: 'juno', name: 'Juno', brainId: 'brain-juno', spaces: [{ id: 'brain-main', name: 'Main' }] }] })
   })
 
   it('reads an agent brain on the host\'s token, GET only, and knows no other agent', async () => {
