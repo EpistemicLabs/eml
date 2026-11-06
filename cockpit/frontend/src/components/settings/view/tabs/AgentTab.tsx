@@ -1,6 +1,6 @@
-// Settings › Agents: the agent the active space is bound to, read from its
-// own brain (host GET /api/agents, GET /api/agents/:id/brain/…): where it
-// works, its persona (the core profile in agent.<id>), the rules that load in
+// Settings › Agents: the home's agents, and the picked one read from its own
+// brain (host GET /api/agents, GET /api/agents/:id/brain/…), the active space's
+// until another is picked: where it works, its persona (the core profile in agent.<id>), the rules that load in
 // every session (applies: always, in agent.<id> and in user.<handle> — the
 // ones about the person are marked), and what it knows about the people it
 // works with (the core profiles in user.*). Read-only: the agent keeps these
@@ -33,6 +33,8 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setData(null);
+    setFailed(false);
     if (!agentId) return;
     let cancelled = false;
     const own = `agent.${agentId}`;
@@ -63,8 +65,10 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
 export default function AgentTab() {
   const space = useActiveSpace();
   const { agents, handle, loaded, failed: agentsFailed } = useAgents();
-  // The active space's agent; a space without one shows the first agent of the home, if any.
-  const agent: AgentInfo | null = (space?.agent ? agents.find((a) => a.id === space.agent) : undefined) ?? agents[0] ?? null;
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  // The picked agent, else the active space's; a space without one shows the first agent of the home, if any.
+  const shownId = pickedId ?? space?.agent;
+  const agent: AgentInfo | null = (shownId ? agents.find((a) => a.id === shownId) : undefined) ?? agents[0] ?? null;
   const { data, failed } = useAgentEngrams(agent?.id ?? null, handle);
   const fallback = agentsFailed || failed ? 'unavailable' : '…';
   const name = agent?.name ?? 'your agent';
@@ -83,12 +87,28 @@ export default function AgentTab() {
         <SettingsCard divided>
           {agents.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
           {agents.map((a) => (
-            <SettingsRow key={a.id} label={a.name} description={a.spaces.length ? `Works in ${a.spaces.map((s) => s.name).join(', ')}` : 'Bound to no space'}>
-              <span className="block font-mono text-xs text-foreground">{a.id}</span>
+            <SettingsRow
+              key={a.id}
+              className={a.id === agent?.id ? 'bg-foreground/5' : undefined}
+              label={
+                <button type="button" aria-pressed={a.id === agent?.id} onClick={() => setPickedId(a.id)} className="max-w-full truncate text-left hover:underline">
+                  {a.name}
+                </button>
+              }
+              description={worksIn(a)}
+            >
+              <span className="text-xs text-muted-foreground">{a.runtime ? 'Own runtime' : 'Cockpit default'}</span>
             </SettingsRow>
           ))}
         </SettingsCard>
       </SettingsSection>
+
+      {agent && (
+        <div className="border-t border-border pt-6">
+          <h3 className="text-lg font-semibold text-foreground">{name}</h3>
+          <div className="mt-0.5 text-sm text-muted-foreground">{worksIn(agent)}</div>
+        </div>
+      )}
 
       <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
         <SettingsCard>
@@ -144,6 +164,10 @@ export default function AgentTab() {
       </div>
     </div>
   );
+}
+
+function worksIn(agent: AgentInfo): string {
+  return agent.spaces.length ? `Works in ${agent.spaces.map((s) => s.name).join(', ')}` : 'Bound to no space';
 }
 
 function legacyNote(kind: 'rule' | 'profile', max: number): string {

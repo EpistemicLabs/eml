@@ -7,7 +7,7 @@ import { HANDLE, readCockpitConfig, updateCockpitConfig } from './config.js'
 /**
  * The agents of this home for the UI (Settings › Agents, Settings › Brain):
  *
- *   GET  /api/agents                     → { handle, agents: [{ id, name, brainId, spaces: [{ id, name }] }] }
+ *   GET  /api/agents                     → { handle, agents: [{ id, name, brainId, runtime, spaces: [{ id, name }] }] }
  *   GET  /api/agents/:id/brain/<path>    → a read of that agent's brain, as /api/brain reads a space's
  *                                          (GET only: an agent writes its own identity in a session;
  *                                          the brain token stays in the host)
@@ -46,6 +46,7 @@ export async function handleAgentsApi(
       id: agent.id,
       name: info(agent.token).agents.find((a) => a.id === agent.id)?.name ?? agent.id,
       brainId: agent.brainId,
+      runtime: deps.agents.expectsRuntime(agent.id),
       spaces: deps.spaces.list().filter((s) => s.agent === agent.id).map((s) => ({ id: s.id, name: s.name })),
     }))
     json(res, 200, { handle: config?.handle ?? null, agents })

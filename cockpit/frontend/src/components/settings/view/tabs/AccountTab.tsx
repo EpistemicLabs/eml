@@ -1,6 +1,6 @@
-// Settings › Account: who you are in this brain (from GET /api/brain-info),
-// your EML account (sign-in by email and a mailed code, the team-brain beta,
-// the team brains the account created) and your plan. Everyone runs the free
+// Settings › Account: your EML account (sign-in by email and a mailed code, the
+// team-brain beta), who you are in this brain (from GET /api/brain-info) and
+// your plan. Everyone runs the free
 // open-source build from GitHub; Team is in a closed beta, Pro is announced.
 // Changing the name comes later — the name is also in the identity engrams of
 // every space's brain.
@@ -24,6 +24,13 @@ export default function AccountTab() {
 
   return (
     <div className="space-y-8">
+      <SettingsSection
+        title="EML account"
+        description="Shared spaces need an EML account. Accounts are invite-only during the beta. Sign in with your email; the code arrives by mail."
+      >
+        <AccountCard account={account} />
+      </SettingsSection>
+
       <SettingsSection title="You">
         <SettingsCard divided>
           <SettingsRow label="Name" description="How your agent knows you">
@@ -34,19 +41,6 @@ export default function AccountTab() {
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
-
-      <SettingsSection
-        title="EML account"
-        description="Shared team brains need an EML account. Sign in with your email; the code arrives by mail."
-      >
-        <AccountCard account={account} />
-      </SettingsSection>
-
-      {account.status?.signedIn && account.status.brains && (
-        <SettingsSection title="Team brains" description="The shared brains this account created, with their current members.">
-          <BrainsCard brains={account.status.brains} />
-        </SettingsSection>
-      )}
 
       <SettingsSection title="Plan">
         <SettingsCard divided>
@@ -161,30 +155,6 @@ function AccountCard({ account }: { account: ReturnType<typeof useAccount> }) {
 function signedInDescription(status: Extract<AccountStatus, { signedIn: true }>): string {
   if (status.service === 'unavailable') return 'The account service cannot be reached right now. You stay signed in.';
   return status.beta ? 'In the team-brain beta.' : 'Not in the team-brain beta yet.';
-}
-
-function BrainsCard({ brains }: { brains: Array<{ brain: string; created_at: string; members: number }> }) {
-  if (brains.length === 0) {
-    return (
-      <SettingsCard>
-        <div className="px-4 py-4 text-sm text-muted-foreground">No shared brain yet.</div>
-      </SettingsCard>
-    );
-  }
-  return (
-    <SettingsCard divided>
-      {brains.map((b) => (
-        <SettingsRow key={b.brain} label={b.brain} description={`Created ${formatDate(b.created_at)}`}>
-          <span className="text-sm text-foreground">{b.members} {b.members === 1 ? 'member' : 'members'}</span>
-        </SettingsRow>
-      ))}
-    </SettingsCard>
-  );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
 function Problem({ children }: { children: React.ReactNode }) {
