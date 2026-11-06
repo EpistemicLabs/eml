@@ -41,7 +41,6 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
         <SettingsCard divided>
           <SettingsRow
             label="New sessions start with"
-            description="A session keeps the one it was started with. Only a CLI that is set up can be the default."
           >
             <SettingsSegmented
               value={defaultProvider.id}
