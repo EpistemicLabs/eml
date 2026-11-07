@@ -209,8 +209,8 @@ export default function SpacesTab() {
               <JoinSharedSpace />
             </>
           )}
-          {listed.map(spaceRow)}
         </SettingsCard>
+        {listed.length > 0 && <SettingsCard divided>{listed.map(spaceRow)}</SettingsCard>}
       </SettingsSection>
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
