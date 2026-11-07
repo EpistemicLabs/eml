@@ -85,28 +85,30 @@ export default function AgentTab() {
   return (
     <div className="space-y-8">
       {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
-      <div>
-        <SettingsPicker
-          items={agents.map((a) => ({ id: a.id, label: a.name }))}
-          value={agent?.id}
-          onChange={setPickedId}
-          ariaLabel="Agents"
-        />
-        {agent && (
-          <SettingsCard divided className="rounded-tl-none">
-            <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
-              <span className="block font-mono text-xs text-foreground">{agent.id}</span>
-            </SettingsRow>
-            <div className="px-4 py-4">
-              <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
-              {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
-              <ul className="mt-1 space-y-0.5">
-                {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
-              </ul>
-            </div>
-          </SettingsCard>
-        )}
-      </div>
+      <SettingsSection title="Agents" description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session.">
+        <div>
+          <SettingsPicker
+            items={agents.map((a) => ({ id: a.id, label: a.name }))}
+            value={agent?.id}
+            onChange={setPickedId}
+            ariaLabel="Agents"
+          />
+          {agent && (
+            <SettingsCard divided className="rounded-tl-none">
+              <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
+                <span className="block font-mono text-xs text-foreground">{agent.id}</span>
+              </SettingsRow>
+              <div className="px-4 py-4">
+                <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
+                {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
+                <ul className="mt-1 space-y-0.5">
+                  {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
+                </ul>
+              </div>
+            </SettingsCard>
+          )}
+        </div>
+      </SettingsSection>
 
       <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
         <SettingsCard>
@@ -156,10 +158,6 @@ export default function AgentTab() {
           ))}
         </SettingsCard>
       </SettingsSection>
-
-      <div className="text-sm text-muted-foreground">
-        Persona, rules and people live in {name}'s own brain. To change them, ask {name} in a session.
-      </div>
     </div>
   );
 }
