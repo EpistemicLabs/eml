@@ -958,14 +958,6 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
   }
 }
 
-/** The panes on screen now: the active desk's, or its active pane where only one shows. */
-export function getDeskPanesOnScreen(compact: boolean): PaneState[] {
-  const desk = getActiveDesk();
-  if (!compact) return desk.panes;
-  const active = desk.panes.find(p => p.id === desk.activePaneId);
-  return active ? [active] : [];
-}
-
 /** The sessions shown in a desk's main pane, on this device. */
 export function deskMainSessions(desks: DeskState[]): Set<string> {
   const ids = new Set<string>();
