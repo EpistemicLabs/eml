@@ -182,12 +182,8 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
         </button>
       }
       className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
-      description={renaming?.id === space.id && renameError ? renameError : undefined}
     >
-      <div className="flex items-center gap-2">
-        <SpaceColorPicker space={space} onError={setSpaceError} />
-        {renameControl(space)}
-      </div>
+      <SpaceColorPicker space={space} onError={setSpaceError} />
     </SettingsRow>
   );
 
@@ -241,7 +237,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
           />
           {shown && (
             <SettingsCard divided className="rounded-tl-none">
-                <SettingsRow label={shown.name} description={shown.agent ? undefined : 'No agent bound — see the banner above'}>{renameControl(shown)}</SettingsRow>
+                <SettingsRow label={shown.name} description={renameError ?? (shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
                 {shown.ownRuntime && (
                   <SettingsRow
                     label="Login and tools"
