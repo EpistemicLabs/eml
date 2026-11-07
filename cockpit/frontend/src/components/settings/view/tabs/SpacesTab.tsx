@@ -8,16 +8,17 @@ import { Brain, FolderSearch, HardDriveDownload, Loader2, Pencil, Plus, Trash2 }
 import { spaceTone } from '@/lib/space-color';
 import { SPACE_HEADER } from '@/lib/space-header';
 import { cn } from '@/lib/utils';
-import { createSpace, loadSpaces, removeSpace, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
+import { createSharedSpace, createSpace, joinSharedSpace, loadSpaces, removeSpace, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { Button } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
 import { relayHost, type Team } from '@/lib/team';
-import { useTeams } from '@/stores/useTeamStore';
+import { refreshTeams, useTeams } from '@/stores/useTeamStore';
 import TeamSections from './TeamSections';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
@@ -134,51 +135,53 @@ export default function SpacesTab() {
 
   const fallback = infoFailed ? 'unavailable' : '…';
 
+  const spaceRow = (space: SpaceInfo) => (
+    <SettingsRow
+      key={space.id}
+      label={
+        <button
+          type="button"
+          aria-pressed={space.id === shownId}
+          onClick={() => setPickedId(space.id)}
+          className="flex max-w-full items-center gap-2 text-left hover:underline"
+        >
+          <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+          <span className="truncate">{space.name}</span>
+        </button>
+      }
+      className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
+      description={(renaming?.id === space.id && renameError) || spaceDescription(space, teams[space.id])}
+    >
+      <div className="flex items-center gap-2">
+        <SpaceColorPicker space={space} onError={setSpaceError} />
+        {renaming?.id === space.id ? (
+          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
+            <input
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
+              maxLength={40}
+              autoFocus
+              aria-label="Space name"
+              className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+            />
+            <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
+          </form>
+        ) : (
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
+            <Pencil className="h-3.5 w-3.5" />
+            Rename
+          </Button>
+        )}
+      </div>
+    </SettingsRow>
+  );
+
   return (
     <div className="space-y-8">
-      <SettingsSection description="Each space has its own brain and never sees another space's brain.">
+      <SettingsSection title="Local spaces" description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
-          {spaces.map((space) => (
-            <SettingsRow
-              key={space.id}
-              label={
-                <button
-                  type="button"
-                  aria-pressed={space.id === shownId}
-                  onClick={() => setPickedId(space.id)}
-                  className="flex max-w-full items-center gap-2 text-left hover:underline"
-                >
-                  <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
-                  <span className="truncate">{space.name}</span>
-                </button>
-              }
-              className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
-              description={(renaming?.id === space.id && renameError) || spaceDescription(space, teams[space.id])}
-            >
-              <div className="flex items-center gap-2">
-                <SpaceColorPicker space={space} onError={setSpaceError} />
-                {renaming?.id === space.id ? (
-                  <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
-                    <input
-                      value={renameDraft}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
-                      maxLength={40}
-                      autoFocus
-                      aria-label="Space name"
-                      className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-                    />
-                    <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
-                  </form>
-                ) : (
-                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
-                    <Pencil className="h-3.5 w-3.5" />
-                    Rename
-                  </Button>
-                )}
-              </div>
-            </SettingsRow>
-          ))}
+          {spaces.filter((space) => !space.shared).map(spaceRow)}
           <SettingsRow label="New space" description={spaceError ?? (mainAgentName ? `A new local brain for your work; ${mainAgentName} works in it from the start.` : 'A new local brain for your work.')}>
             <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void addSpace(); }}>
               <input
@@ -195,6 +198,14 @@ export default function SpacesTab() {
               </Button>
             </form>
           </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Shared spaces">
+        <SettingsCard divided>
+          {spaces.filter((space) => space.shared).map(spaceRow)}
+          <NewSharedSpace />
+          <JoinSharedSpace />
         </SettingsCard>
       </SettingsSection>
 
@@ -266,6 +277,73 @@ export default function SpacesTab() {
         <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
       )}
     </div>
+  );
+}
+
+const spaceInput = 'h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary';
+
+/** A new shared brain on the relay; it needs the EML account in the team-brain beta. */
+function NewSharedSpace() {
+  const account = useAccount();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!(account.status?.signedIn === true && account.status.beta)) {
+    return <SettingsRow label="New shared space" description="Needs an EML account in the beta (Settings › Account)."><span /></SettingsRow>;
+  }
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await createSharedSpace(name.trim());
+    setBusy(false);
+    if ('error' in result) { setError(result.error); return; }
+    setName('');
+    void refreshTeams();
+    switchSpace(result.space);
+  };
+
+  return (
+    <SettingsRow label="New shared space" description={error ?? (busy ? 'Talking to the relay…' : 'A brain you share with others.')}>
+      <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Shared space name" maxLength={40} disabled={busy} className={`w-40 ${spaceInput}`} />
+        <Button size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={busy || !name.trim()}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          Create
+        </Button>
+      </form>
+    </SettingsRow>
+  );
+}
+
+/** Joining a shared space by the invite link its owner sent. */
+function JoinSharedSpace() {
+  const [name, setName] = useState('');
+  const [link, setLink] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const join = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await joinSharedSpace(name.trim(), link.trim());
+    setBusy(false);
+    if ('error' in result) { setError(result.error); return; }
+    setName('');
+    setLink('');
+    void refreshTeams();
+    switchSpace(result.space);
+  };
+
+  return (
+    <SettingsRow label="Join a shared space" description={error ?? (busy ? 'Talking to the relay…' : 'With the invite link you were sent.')}>
+      <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void join(); }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Space name to join under" maxLength={40} disabled={busy} className={`w-28 ${spaceInput}`} />
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Invite link" aria-label="Invite link" spellCheck={false} disabled={busy} className={`w-44 font-mono ${spaceInput}`} />
+        <Button size="sm" className="h-8 text-xs" type="submit" disabled={busy || !name.trim() || !link.trim()}>Join</Button>
+      </form>
+    </SettingsRow>
   );
 }
 
