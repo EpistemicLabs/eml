@@ -132,47 +132,21 @@ export default function SpacesTab() {
 
   const fallback = infoFailed ? 'unavailable' : '…';
 
-  const spaceRow = (space: SpaceInfo) => (
-    <SettingsRow
+  const spaceButton = (space: SpaceInfo) => (
+    <button
       key={space.id}
-      label={
-        <button
-          type="button"
-          aria-pressed={space.id === shownId}
-          onClick={() => setPickedId(space.id)}
-          className="flex max-w-full items-center gap-2 text-left hover:underline"
-        >
-          <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
-          <span className="truncate">{space.name}</span>
-          {space.main && <span className="font-normal text-muted-foreground">(main)</span>}
-        </button>
-      }
-      className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
-      description={(renaming?.id === space.id && renameError) || (space.agent ? undefined : 'No agent bound — see the banner above')}
+      type="button"
+      aria-pressed={space.id === shownId}
+      onClick={() => { setPickedId(space.id); setRenaming(null); setRenameError(null); }}
+      className={cn(
+        'flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-foreground/5',
+        space.id === shownId ? 'border-foreground/40 bg-foreground/5' : 'border-border',
+      )}
     >
-      <div className="flex items-center gap-2">
-        <SpaceColorPicker space={space} onError={setSpaceError} />
-        {renaming?.id === space.id ? (
-          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
-            <input
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
-              maxLength={40}
-              autoFocus
-              aria-label="Space name"
-              className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-            />
-            <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
-          </form>
-        ) : (
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
-            <Pencil className="h-3.5 w-3.5" />
-            Rename
-          </Button>
-        )}
-      </div>
-    </SettingsRow>
+      <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+      <span className="truncate">{space.name}</span>
+      {space.main && <span className="font-normal text-muted-foreground">(main)</span>}
+    </button>
   );
 
   return (
@@ -210,7 +184,7 @@ export default function SpacesTab() {
             </>
           )}
         </SettingsCard>
-        {listed.length > 0 && <SettingsCard divided>{listed.map(spaceRow)}</SettingsCard>}
+        {listed.length > 0 && <div className="flex flex-wrap gap-2">{listed.map(spaceButton)}</div>}
       </SettingsSection>
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
@@ -219,6 +193,30 @@ export default function SpacesTab() {
         <>
         <SettingsSection title={shown.name}>
           <SettingsCard divided>
+            <SettingsRow label="Name" description={renameError ?? (shown.agent ? undefined : 'No agent bound — see the banner above')}>
+              {renaming?.id === shown.id ? (
+                <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
+                  <input
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
+                    maxLength={40}
+                    autoFocus
+                    aria-label="Space name"
+                    className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                  />
+                  <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
+                </form>
+              ) : (
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(shown); setRenameDraft(shown.name); setRenameError(null); }}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Rename
+                </Button>
+              )}
+            </SettingsRow>
+            <SettingsRow label="Colour">
+              <SpaceColorPicker space={shown} onError={setSpaceError} />
+            </SettingsRow>
             {shown.ownRuntime && (
               <SettingsRow
                 label="Login and tools"
