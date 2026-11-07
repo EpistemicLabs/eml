@@ -143,6 +143,26 @@ export default function SpacesTab() {
     </>
   );
 
+  const renameControl = (space: SpaceInfo) => (renaming?.id === space.id ? (
+    <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
+      <input
+        value={renameDraft}
+        onChange={(e) => setRenameDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
+        maxLength={40}
+        autoFocus
+        aria-label="Space name"
+        className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+      />
+      <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
+    </form>
+  ) : (
+    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
+      <Pencil className="h-3.5 w-3.5" />
+      Rename
+    </Button>
+  ));
+
   const spaceRow = (space: SpaceInfo) => (
     <SettingsRow
       key={space.id}
@@ -156,25 +176,7 @@ export default function SpacesTab() {
     >
       <div className="flex items-center gap-2">
         <SpaceColorPicker space={space} onError={setSpaceError} />
-        {renaming?.id === space.id ? (
-          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
-            <input
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
-              maxLength={40}
-              autoFocus
-              aria-label="Space name"
-              className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-            />
-            <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
-          </form>
-        ) : (
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
-            <Pencil className="h-3.5 w-3.5" />
-            Rename
-          </Button>
-        )}
+        {renameControl(space)}
       </div>
     </SettingsRow>
   );
@@ -227,7 +229,7 @@ export default function SpacesTab() {
           />
           {shown && (
             <SettingsCard divided className="rounded-tl-none">
-                <SettingsRow label={shown.name} description={shown.agent ? undefined : 'No agent bound — see the banner above'}>{null}</SettingsRow>
+                <SettingsRow label={shown.name} description={shown.agent ? undefined : 'No agent bound — see the banner above'}>{renameControl(shown)}</SettingsRow>
                 {shown.ownRuntime && (
                   <SettingsRow
                     label="Login and tools"
