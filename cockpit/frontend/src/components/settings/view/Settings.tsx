@@ -14,6 +14,7 @@ import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
 import DataTab from './tabs/DataTab';
+import SettingsHeading from './SettingsHeading';
 import SpacesTab from './tabs/SpacesTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
@@ -93,10 +94,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
           <main className="flex-1 overflow-y-auto">
             <div key={activeTab} className="settings-content-enter space-y-8 p-6">
-              <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
-                <activeMeta.icon className="h-5 w-5 text-muted-foreground" />
-                {activeMeta.label}
-              </h2>
+              {activeTab !== 'spaces' && <SettingsHeading tab={activeMeta} />}
 
               {activeTab === 'account' && <AccountTab />}
 
@@ -104,7 +102,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'models' && <ModelsTab onCloseSettings={onClose} />}
 
-              {activeTab === 'spaces' && <SpacesTab />}
+              {activeTab === 'spaces' && <SpacesTab tab={activeMeta} />}
 
               {activeTab === 'preferences' && (
                 <PreferencesTab

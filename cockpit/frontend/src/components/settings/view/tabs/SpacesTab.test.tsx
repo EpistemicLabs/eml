@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SPACE_HEADER } from '@/lib/space-header';
+import { SETTINGS_MAIN_TABS } from '../../constants/constants';
 import { getActiveSpaceId } from '@/stores/usePaneStore';
 import { getSpaces, loadSpaces } from '@/stores/useSpaceStore';
 import SpacesTab from './SpacesTab';
@@ -44,7 +45,7 @@ afterEach(() => {
 
 describe('Settings › Spaces', () => {
   it('has no way to switch the space from the list', async () => {
-    render(<SpacesTab />);
+    render(<SpacesTab tab={SETTINGS_MAIN_TABS[0]} />);
     await screen.findByText('/main-id.db');
     expect(screen.queryByRole('button', { name: 'Switch' })).toBeNull();
     expect(screen.queryByText('active')).toBeNull();
@@ -52,7 +53,7 @@ describe('Settings › Spaces', () => {
 
   it('shows the details of a picked space and leaves the open one alone', async () => {
     const open = getActiveSpaceId();
-    render(<SpacesTab />);
+    render(<SpacesTab tab={SETTINGS_MAIN_TABS[0]} />);
     await screen.findByText('/main-id.db');
     fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
     await screen.findByText('/other-id.db');
@@ -61,7 +62,7 @@ describe('Settings › Spaces', () => {
   });
 
   it('picks a space from the list and from the tabs alike', async () => {
-    render(<SpacesTab />);
+    render(<SpacesTab tab={SETTINGS_MAIN_TABS[0]} />);
     await screen.findByText('/main-id.db');
     const [row, tab] = screen.getAllByRole('button', { name: 'Other' });
     fireEvent.click(tab);
@@ -71,7 +72,7 @@ describe('Settings › Spaces', () => {
   });
 
   it('deletes a further local space only with its name typed, and an agent\'s main space never', async () => {
-    render(<SpacesTab />);
+    render(<SpacesTab tab={SETTINGS_MAIN_TABS[0]} />);
     await screen.findByText('/main-id.db');
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     await screen.findByText("This is Juno's main space. It cannot be deleted.");
@@ -90,7 +91,7 @@ describe('Settings › Spaces', () => {
   });
 
   it('backs up the picked space', async () => {
-    render(<SpacesTab />);
+    render(<SpacesTab tab={SETTINGS_MAIN_TABS[0]} />);
     await screen.findByText('/main-id.db');
     fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
     await screen.findByText('/other-id.db');

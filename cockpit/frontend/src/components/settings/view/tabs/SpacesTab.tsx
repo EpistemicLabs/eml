@@ -15,7 +15,9 @@ import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsPicker from '../SettingsPicker';
+import SettingsHeading from '../SettingsHeading';
 import SettingsSegmented from '../SettingsSegmented';
+import type { SettingsMainTabMeta } from '../../constants/constants';
 import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
@@ -54,7 +56,7 @@ function mainSpaceNote(space: SpaceInfo): string {
   return space.agentName ? `This is ${space.agentName}'s main space. It cannot be deleted.` : 'This is the main space. It cannot be deleted.';
 }
 
-export default function SpacesTab() {
+export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
   // The space shown below: picked here, without opening it in the cockpit.
@@ -191,12 +193,14 @@ export default function SpacesTab() {
 
   return (
     <div className="space-y-8">
-      <SettingsSegmented
-        value={tab}
-        options={[{ value: 'local', label: 'Local' }, { value: 'shared', label: 'Shared' }]}
-        onChange={(value) => { setKind(value); setPickedId(null); }}
-        ariaLabel="Local or shared spaces"
-      />
+      <SettingsHeading tab={meta}>
+        <SettingsSegmented
+          value={tab}
+          options={[{ value: 'local', label: 'Local' }, { value: 'shared', label: 'Shared' }]}
+          onChange={(value) => { setKind(value); setPickedId(null); }}
+          ariaLabel="Local or shared spaces"
+        />
+      </SettingsHeading>
 
       <SettingsSection description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
