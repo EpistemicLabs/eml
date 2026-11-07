@@ -14,6 +14,7 @@ import SettingsCard from '../SettingsCard';
 import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import SettingsSegmented from '../SettingsSegmented';
 import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
@@ -55,7 +56,10 @@ export default function SpacesTab() {
   const activeSpace = useActiveSpace();
   // The space shown below: picked here, without opening it in the cockpit.
   const [pickedId, setPickedId] = useState<string | null>(null);
-  const shown = spaces.find((space) => space.id === pickedId) ?? activeSpace;
+  const [kind, setKind] = useState<'local' | 'shared' | null>(null);
+  const tab = kind ?? (activeSpace?.shared ? 'shared' : 'local');
+  const listed = spaces.filter((space) => (tab === 'shared' ? space.shared : !space.shared));
+  const shown = listed.find((space) => space.id === pickedId) ?? listed.find((space) => space.id === activeSpace?.id) ?? listed[0];
   const shownId = shown?.id;
   const { info, failed: infoFailed } = useBrainInfo(shownId);
   const [backups, setBackups] = useState<BrainBackup[]>([]);
@@ -179,99 +183,109 @@ export default function SpacesTab() {
 
   return (
     <div className="space-y-8">
-      <SettingsSection title="Local spaces" description="Each space has its own brain and never sees another space's brain.">
-        <SettingsCard divided>
-          {spaces.filter((space) => !space.shared).map(spaceRow)}
-          <SettingsRow label="New space" description={spaceError ?? (mainAgentName ? `A new local brain for your work; ${mainAgentName} works in it from the start.` : 'A new local brain for your work.')}>
-            <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void addSpace(); }}>
-              <input
-                value={spaceName}
-                onChange={(e) => setSpaceName(e.target.value)}
-                placeholder="Name"
-                maxLength={40}
-                disabled={spaceBusy}
-                className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-              />
-              <Button size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={spaceBusy || !spaceName.trim()}>
-                {spaceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                Create
-              </Button>
-            </form>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
+      <SettingsSegmented
+        value={tab}
+        options={[{ value: 'local', label: 'Local' }, { value: 'shared', label: 'Shared' }]}
+        onChange={(value) => { setKind(value); setPickedId(null); }}
+        ariaLabel="Local or shared spaces"
+      />
 
-      <SettingsSection title="Shared spaces">
+      <SettingsSection description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
-          {spaces.filter((space) => space.shared).map(spaceRow)}
-          <NewSharedSpace />
-          <JoinSharedSpace />
+          {listed.map(spaceRow)}
+          {tab === 'local' ? (
+            <SettingsRow label="New space" description={spaceError ?? (mainAgentName ? `A new local brain for your work; ${mainAgentName} works in it from the start.` : 'A new local brain for your work.')}>
+              <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void addSpace(); }}>
+                <input
+                  value={spaceName}
+                  onChange={(e) => setSpaceName(e.target.value)}
+                  placeholder="Name"
+                  maxLength={40}
+                  disabled={spaceBusy}
+                  className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                />
+                <Button size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={spaceBusy || !spaceName.trim()}>
+                  {spaceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  Create
+                </Button>
+              </form>
+            </SettingsRow>
+          ) : (
+            <>
+              <NewSharedSpace />
+              <JoinSharedSpace />
+            </>
+          )}
         </SettingsCard>
       </SettingsSection>
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
 
-      <SettingsSection title={shown?.name ?? 'Brain'}>
-        <SettingsCard divided>
-          {shown?.ownRuntime && (
-            <SettingsRow
-              label="Login and tools"
-              description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
-            >
-              <span className="text-sm text-foreground">Own</span>
+      {shown && (
+        <>
+        <SettingsSection title={shown.name}>
+          <SettingsCard divided>
+            {shown.ownRuntime && (
+              <SettingsRow
+                label="Login and tools"
+                description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
+              >
+                <span className="text-sm text-foreground">Own</span>
+              </SettingsRow>
+            )}
+            <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
+                <FolderSearch className="h-3.5 w-3.5" />
+                Show in Finder
+              </Button>
             </SettingsRow>
-          )}
-          <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
-              <FolderSearch className="h-3.5 w-3.5" />
-              Show in Finder
-            </Button>
-          </SettingsRow>
-          <SettingsRow label="Schema version">
-            <Mono>{info?.schemaVersion ?? fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Size">
-            <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Last write">
-            <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Created">
-            <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
+            <SettingsRow label="Schema version">
+              <Mono>{info?.schemaVersion ?? fallback}</Mono>
+            </SettingsRow>
+            <SettingsRow label="Size">
+              <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
+            </SettingsRow>
+            <SettingsRow label="Last write">
+              <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
+            </SettingsRow>
+            <SettingsRow label="Created">
+              <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
+            </SettingsRow>
+          </SettingsCard>
+        </SettingsSection>
 
-      <SettingsSection
-        title={`Backups of ${shown?.name ?? 'the brain'}`}
-        description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
-      >
-        <SettingsCard divided>
-          <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
-            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
-              {backingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
-              {backingUp ? 'Backing up…' : 'Back up now'}
-            </Button>
-          </SettingsRow>
-          {backups.length === 0 ? (
-            <div className="px-4 py-4 text-sm text-muted-foreground">No backups yet.</div>
-          ) : (
-            backups.map((b) => (
-              <div key={b.name} className="flex items-center justify-between gap-4 px-4 py-3">
-                <span className="flex min-w-0 items-center gap-2">
-                  <Mono className="min-w-0 truncate">{b.name}</Mono>
-                  {b.kind === 'pre-migration' && (
-                    <span className="flex-shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">before update</span>
-                  )}
-                </span>
-                <span className="flex-shrink-0 text-xs text-muted-foreground">
-                  {formatDate(b.createdAt)} · {formatBytes(b.sizeBytes)}
-                </span>
-              </div>
-            ))
-          )}
-        </SettingsCard>
-      </SettingsSection>
+        <SettingsSection
+          title={`Backups of ${shown.name}`}
+          description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
+        >
+          <SettingsCard divided>
+            <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
+              <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
+                {backingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
+                {backingUp ? 'Backing up…' : 'Back up now'}
+              </Button>
+            </SettingsRow>
+            {backups.length === 0 ? (
+              <div className="px-4 py-4 text-sm text-muted-foreground">No backups yet.</div>
+            ) : (
+              backups.map((b) => (
+                <div key={b.name} className="flex items-center justify-between gap-4 px-4 py-3">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Mono className="min-w-0 truncate">{b.name}</Mono>
+                    {b.kind === 'pre-migration' && (
+                      <span className="flex-shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">before update</span>
+                    )}
+                  </span>
+                  <span className="flex-shrink-0 text-xs text-muted-foreground">
+                    {formatDate(b.createdAt)} · {formatBytes(b.sizeBytes)}
+                  </span>
+                </div>
+              ))
+            )}
+          </SettingsCard>
+        </SettingsSection>
+        </>
+      )}
 
       {shown && !shown.main && shown.shared === false && (
         <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
