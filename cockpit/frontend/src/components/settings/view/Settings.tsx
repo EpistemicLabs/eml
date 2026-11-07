@@ -13,6 +13,7 @@ import AboutTab from './tabs/AboutTab';
 import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
+import DataTab from './tabs/DataTab';
 import SpacesTab from './tabs/SpacesTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
@@ -113,7 +114,9 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'about' && <AboutTab />}
 
-              {(activeTab === 'plugins' || activeTab === 'data') && <SettingsPlaceholder tab={activeMeta} />}
+              {activeTab === 'data' && <DataTab tab={activeMeta} />}
+
+              {activeTab === 'plugins' && <SettingsPlaceholder tab={activeMeta} />}
             </div>
           </main>
         </div>

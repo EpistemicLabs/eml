@@ -68,7 +68,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'data',
     label: 'Data',
-    keywords: 'data import export migrate settings sessions',
+    keywords: 'data import export migrate settings sessions home folder config directory backups paths',
     icon: Database,
     blurb: 'Import & export: bring settings and sessions over from an existing setup, export them again.',
   },

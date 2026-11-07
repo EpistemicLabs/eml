@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
 
-import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { spaceTone } from '@/lib/space-color';
 import { SPACE_HEADER } from '@/lib/space-header';
 import { cn } from '@/lib/utils';
@@ -61,7 +60,6 @@ export default function SpacesTab() {
   const [backups, setBackups] = useState<BrainBackup[]>([]);
   const [backingUp, setBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
-  const { info: about } = useAboutInfo();
   const { agents } = useAgents();
   const mainAgentName = agentName(agents, spaces.find((s) => s.main)?.agent ?? null);
   // v0.21: a shared space's team (useTeamStore) — the row says where it lives, the sections below show it.
@@ -212,20 +210,11 @@ export default function SpacesTab() {
               <span className="text-sm text-foreground">Own</span>
             </SettingsRow>
           )}
-          <SettingsRow
-            label="Brain source"
-            description="The brain that ships with this cockpit, on this machine. A remote brain (URL + token) comes later."
-          >
-            <Mono>{info ? 'Local (bundled)' : fallback}</Mono>
-          </SettingsRow>
           <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
               <FolderSearch className="h-3.5 w-3.5" />
               Show in Finder
             </Button>
-          </SettingsRow>
-          <SettingsRow label="Brain ID">
-            <Mono>{info?.brainId ?? fallback}</Mono>
           </SettingsRow>
           <SettingsRow label="Schema version">
             <Mono>{info?.schemaVersion ?? fallback}</Mono>
@@ -244,7 +233,7 @@ export default function SpacesTab() {
 
       <SettingsSection
         title={`Backups of ${shown?.name ?? 'the brain'}`}
-        description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Cockpit). A copy is also taken automatically before every brain update; the newest 3 are kept."
+        description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
       >
         <SettingsCard divided>
           <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
@@ -270,23 +259,6 @@ export default function SpacesTab() {
               </div>
             ))
           )}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="Cockpit">
-        <SettingsCard divided>
-          <SettingsRow label="Cockpit home" description="All state of this cockpit instance lives here">
-            <Mono className="max-w-sm break-all text-right">{info?.home ?? fallback}</Mono>
-          </SettingsRow>
-          <SettingsRow
-            label="Claude config directory"
-            description="The app's own Claude environment — your local ~/.claude stays untouched"
-          >
-            <Mono className="max-w-sm break-all text-right">{about?.configDir ?? '—'}</Mono>
-          </SettingsRow>
-          <SettingsRow label="Backups folder">
-            <Mono className="max-w-sm break-all text-right">{info ? `${info.home}/backups` : fallback}</Mono>
-          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
     </div>
