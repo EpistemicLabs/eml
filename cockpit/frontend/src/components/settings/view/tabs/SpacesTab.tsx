@@ -22,7 +22,7 @@ import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
 import { refreshTeams, useTeams } from '@/stores/useTeamStore';
-import TeamSections from './TeamSections';
+import TeamSections, { TeamDetailRows, teamStatus } from './TeamSections';
 
 type BrainBackup = { name: string; kind: 'manual' | 'pre-migration'; sizeBytes: number; createdAt: string };
 
@@ -144,6 +144,29 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
   const fallback = infoFailed ? 'unavailable' : '…';
 
+  const brainRows = (
+    <>
+      <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
+        <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
+          <FolderSearch className="h-3.5 w-3.5" />
+          Show in Finder
+        </Button>
+      </SettingsRow>
+      <SettingsRow label="Schema version">
+        <Mono>{info?.schemaVersion ?? fallback}</Mono>
+      </SettingsRow>
+      <SettingsRow label="Size">
+        <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
+      </SettingsRow>
+      <SettingsRow label="Last write">
+        <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
+      </SettingsRow>
+      <SettingsRow label="Created">
+        <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
+      </SettingsRow>
+    </>
+  );
+
   const pick = (id: string) => { setPickedId(id); setRenaming(null); setRenameError(null); };
 
   const spaceLabel = (space: SpaceInfo) => (
@@ -237,7 +260,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
           />
           {shown && (
             <SettingsCard divided className="rounded-tl-none">
-                <SettingsRow label={shown.name} description={renameError ?? (shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
+                <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
                 {shown.ownRuntime && (
                   <SettingsRow
                     label="Login and tools"
@@ -246,24 +269,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
                     <span className="text-sm text-foreground">Own</span>
                   </SettingsRow>
                 )}
-                <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
-                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
-                    <FolderSearch className="h-3.5 w-3.5" />
-                    Show in Finder
-                  </Button>
-                </SettingsRow>
-                <SettingsRow label="Schema version">
-                  <Mono>{info?.schemaVersion ?? fallback}</Mono>
-                </SettingsRow>
-                <SettingsRow label="Size">
-                  <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
-                </SettingsRow>
-                <SettingsRow label="Last write">
-                  <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
-                </SettingsRow>
-                <SettingsRow label="Created">
-                  <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
-                </SettingsRow>
+                {!shown.shared && brainRows}
             </SettingsCard>
           )}
         </div>
@@ -304,6 +310,19 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
           </SettingsCard>
         </SettingsSection>
         </>
+      )}
+
+      {shown?.shared && (
+        <details className="group">
+          <summary className="cursor-pointer list-none text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+            <span className="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
+            Technical details
+          </summary>
+          <SettingsCard divided className="mt-3">
+            {shownTeam?.shared && <TeamDetailRows team={shownTeam} />}
+            {brainRows}
+          </SettingsCard>
+        </details>
       )}
 
       {shown && shown.shared === false && (
