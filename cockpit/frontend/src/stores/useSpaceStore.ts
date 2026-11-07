@@ -102,9 +102,9 @@ export function joinSharedSpace(name: string, link: string): Promise<{ space: Sp
   return postSpace({ name, join: { link } }, (status) => `Could not join the shared space (${status}).`);
 }
 
-/** v0.21: remove a shared space that never came to life (host DELETE /api/spaces/:id). */
-export async function removeSpace(space: SpaceInfo): Promise<{ removed: true } | { error: string }> {
-  const answer = await removeOnHost(space.id);
+/** Remove a shared space that never came to life, or a local one with its name typed (host DELETE /api/spaces/:id). */
+export async function removeSpace(space: SpaceInfo, confirm?: string): Promise<{ removed: true } | { error: string }> {
+  const answer = await removeOnHost(space.id, confirm);
   if (answer.status !== 204) return { error: errorText(answer.body, `Could not remove the space (${answer.status}).`) };
   if (paneStore.getActiveSpaceId() === space.id) paneStore.activateSpace(null);
   await loadSpaces();

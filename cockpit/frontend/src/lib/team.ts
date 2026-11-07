@@ -144,4 +144,6 @@ export const confirmJoin = (spaceId: string, inviteId: string) =>
 export const cancelInvite = (spaceId: string, inviteId: string) =>
   hostCall(spacePath(spaceId, `/invites/${encodeURIComponent(inviteId)}/cancel`), { method: 'POST', body: '{}' });
 
-export const removeSpace = (spaceId: string) => hostCall(spacePath(spaceId), { method: 'DELETE' });
+/** `confirm`: a local space is deleted with its name typed; a shared one that never came to life needs none. */
+export const removeSpace = (spaceId: string, confirm?: string) =>
+  hostCall(spacePath(spaceId), { method: 'DELETE', ...(confirm === undefined ? {} : { body: JSON.stringify({ confirm }) }) });

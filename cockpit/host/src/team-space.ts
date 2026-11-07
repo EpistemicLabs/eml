@@ -187,6 +187,23 @@ export async function removeTeamSpace(space: BrainSpace, remove: (space: BrainSp
   return { status: 204, body: {} }
 }
 
+/**
+ * DELETE /api/spaces/:id for a local space: a backup first, so the delete can
+ * be undone by hand; without it nothing is deleted. Then the server discards
+ * the brain, and the space leaves the registry and the config.
+ */
+export async function removeLocalSpace(
+  space: BrainSpace,
+  backup: (token: string) => Promise<unknown>,
+  remove: (space: BrainSpace) => Promise<void>,
+): Promise<TeamAnswer> {
+  const copy = await backup(space.token)
+  const answer = await ask(space, 'DELETE', '/brain')
+  if (answer.status !== 204) return answer
+  await remove(space)
+  return { status: 200, body: { backup: copy } }
+}
+
 // --- the boot sweep ---
 
 /**

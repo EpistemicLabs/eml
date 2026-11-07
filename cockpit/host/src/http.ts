@@ -16,7 +16,7 @@ import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
 import { provisionSpace, type AgentNames, type Human } from './provision.js'
-import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, removeTeamSpace, teamSnapshot } from './team-space.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -582,8 +582,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   }
 
   // v0.21: a shared space's team — the brain server's view (team-space.ts),
-  // the invites an owner makes and confirms, and the removal of a shared
-  // space that never came to life. The server's answers pass through.
+  // the invites an owner makes and confirms, and the removal of a space: a
+  // shared one that never came to life, a local one with its name typed. The
+  // server's answers pass through.
   if (resource === 'spaces' && id && (method === 'DELETE' || parts[3] === 'team' || parts[3] === 'invites')) {
     const target = deps.spaces.get(id)
     if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
@@ -591,8 +592,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     let answer: { status: number; body: unknown } | null = null
     try {
       if (method === 'DELETE' && parts.length === 3) {
-        if (!target.shared) { json(res, 409, { error: { code: 'NOT_SHARED', message: 'Only a shared space is removed here.' } }); return true }
-        answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+        if (target.main) { json(res, 409, { error: { code: 'MAIN_SPACE', message: 'The main space cannot be deleted.' } }); return true }
+        if (target.shared === null) { json(res, 409, { error: { code: 'SPACE_UNKNOWN', message: 'The brain server did not say what this space is. Try again.' } }); return true }
+        if (target.shared) answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+        else {
+          if ((await readJson(req)).confirm !== target.name) { json(res, 400, { error: { code: 'CONFIRM_NAME', message: 'Type the name of the space to delete it.' } }); return true }
+          const sessions = deps.bridge.ledger.list(undefined, target.ledgerKey)
+          if (sessions.some((s) => deps.bridge.isRunning(s.sessionId) || deps.chat.isRunning(s.sessionId))) {
+            json(res, 409, { error: { code: 'SESSIONS_RUNNING', message: 'Sessions are running in this space. Stop them first.' } })
+            return true
+          }
+          answer = await removeLocalSpace(target, createBackup, (space) => deps.spaces.remove(space))
+          if (answer.status === 200) for (const s of sessions) deps.bridge.ledger.remove(s.sessionId)
+        }
       } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
         answer = await teamSnapshot(target)
       } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {

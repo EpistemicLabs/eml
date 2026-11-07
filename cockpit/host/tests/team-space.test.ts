@@ -274,6 +274,23 @@ describe('removeTeamSpace', () => {
   })
 })
 
+describe('removeLocalSpace', () => {
+  it('backs up first, then discards the brain and removes the space; no backup, nothing is deleted', async () => {
+    const space = { id: BRAIN_D, url, token: 'tok-space' } as unknown as import('../src/brain-space.js').BrainSpace
+    const removed: string[] = []
+    const remove = async (s: import('../src/brain-space.js').BrainSpace) => { removed.push(s.id) }
+    seen.length = 0
+    await expect(mods.team.removeLocalSpace(space, async () => { throw new Error('disk full') }, remove)).rejects.toThrow('disk full')
+    expect(seen).toEqual([])
+    brainAnswers.set('DELETE /brain', { status: 409, body: { error: 'A shared brain is not discarded here.', code: 'NOT_LOCAL' } })
+    expect((await mods.team.removeLocalSpace(space, async () => ({ file: 'copy' }), remove)).status).toBe(409)
+    expect(removed).toEqual([])
+    brainAnswers.set('DELETE /brain', { status: 204 })
+    expect(await mods.team.removeLocalSpace(space, async () => ({ file: 'copy' }), remove)).toEqual({ status: 200, body: { backup: { file: 'copy' } } })
+    expect(removed).toEqual([BRAIN_D])
+  })
+})
+
 describe('loadSharedFlags', () => {
   it('asks the server per space; a space whose call did not answer stays unknown', async () => {
     brainAnswers.set('GET /team', (call) => call.auth === 'Bearer tok-shared' ? { status: 200, body: { shared: true } } : { status: 200, body: { shared: false } })

@@ -3,12 +3,12 @@
 // /api/brain-backups). Who is in the brain shows in Account and Agent. Read-only except "Back up now"; switching the source
 // to a remote brain and restoring a backup are later steps.
 import { useCallback, useEffect, useState } from 'react';
-import { Brain, FolderSearch, HardDriveDownload, Loader2, Pencil, Plus } from 'lucide-react';
+import { Brain, FolderSearch, HardDriveDownload, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
 import { SPACE_HEADER } from '@/lib/space-header';
 import { cn } from '@/lib/utils';
-import { createSpace, loadSpaces, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
+import { createSpace, loadSpaces, removeSpace, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { Button } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import { SpaceColorPicker } from '../SpaceColorPicker';
@@ -261,7 +261,53 @@ export default function SpacesTab() {
           )}
         </SettingsCard>
       </SettingsSection>
+
+      {shown && !shown.main && shown.shared === false && (
+        <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
+      )}
     </div>
+  );
+}
+
+/** Deleting a local space: the host backs it up first, and its name has to be typed. */
+function DeleteSpace({ space, onDeleted }: { space: SpaceInfo; onDeleted: () => void }) {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await removeSpace(space, typed);
+    setBusy(false);
+    if ('error' in result) setError(result.error);
+    else onDeleted();
+  };
+
+  return (
+    <SettingsSection title={`Delete ${space.name}`}>
+      <SettingsCard>
+        <SettingsRow
+          label="Delete this space"
+          description={error ?? 'Its brain leaves this cockpit. A backup is made first; project folders stay. Type the name to confirm.'}
+        >
+          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void remove(); }}>
+            <input
+              aria-label="Name of the space to delete"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={space.name}
+              disabled={busy}
+              className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+            />
+            <Button variant="destructive" size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={busy || typed !== space.name}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete
+            </Button>
+          </form>
+        </SettingsRow>
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 

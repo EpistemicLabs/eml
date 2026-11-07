@@ -43,6 +43,7 @@
  *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
  *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
  *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
+ *   DELETE /brain                                                    → Discard a private brain and its file: the host's removal of a local space, after its backup
  *   POST /team/invites      { role? }                                → An invite link into this team brain, by an owner, for a member or an owner (v0.21; host-facing)
  *   POST /team/invites/:id/accept                                    → Confirm the join waiting on an invite: add the member with the invite's role, wrap the key, answer (v0.21; host-facing)
  *   POST /team/invites/:id/cancel                                    → Cancel an open invite; a waiting invitee is told (v0.21; host-facing)
@@ -265,9 +266,9 @@ function discardTeam(brainId: string, sync: Sync): void {
 }
 
 /**
- * v0.21: discards a brain that has no log yet — a shared brain that never came
- * to life, or an empty brain the host provisioned for one (DELETE /team): the
- * Sync and its team file, the pool's connection, the brain file, and the
+ * v0.21: discards a brain — a shared brain that never came to life or an empty
+ * brain the host provisioned for one (DELETE /team), a private brain the host
+ * backed up (DELETE /brain): the Sync and its team file, the pool's connection, the brain file, and the
  * control rows (brains; members, migrations and tokens go with it).
  */
 function discardBrain(brainId: string, brainFile: string): void {
@@ -711,6 +712,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // with a log is not discarded here.
     if (url === '/team' && method === 'DELETE') {
       if (eml.hasGenesis()) return json(res, 409, { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' })
+      discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    // DELETE /brain — discards a private brain with all it holds: the host's
+    // removal of a local space, after its backup. A shared brain is not
+    // discarded here.
+    if (url === '/brain' && method === 'DELETE') {
+      if (sync !== undefined) return json(res, 409, { error: 'A shared brain is not discarded here.', code: 'NOT_LOCAL' })
       discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
       res.writeHead(204)
       res.end()
