@@ -236,6 +236,11 @@ export class BrainSpaces {
     fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
   }
 
+  /** The first space its agent is bound to: where the agent lives, so it is not deleted while the agent exists. */
+  isAgentMain(space: BrainSpace): boolean {
+    return space.agent !== null && this.list().find((s) => s.agent === space.agent) === space
+  }
+
   /** Give a space its colour and persist it in the cockpit config. */
   async setColor(space: BrainSpace, color: SpaceColor): Promise<void> {
     await updateCockpitConfig((config) => {

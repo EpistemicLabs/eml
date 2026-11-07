@@ -45,6 +45,15 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** What a space row says: where it comes from and which agent works in it; an unbound one points at the banner. */
+/** The cockpit's main space, or the first space an agent is bound to (host isAgentMain): neither is deleted. */
+function isMainSpace(space: SpaceInfo, spaces: SpaceInfo[]): boolean {
+  return space.main || (space.agent !== null && spaces.find((s) => s.agent === space.agent)?.id === space.id);
+}
+
+function mainSpaceNote(space: SpaceInfo): string {
+  return space.agentName ? `This is ${space.agentName}'s main space. It cannot be deleted.` : 'This is the main space. It cannot be deleted.';
+}
+
 export default function SpacesTab() {
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
@@ -139,7 +148,6 @@ export default function SpacesTab() {
     <>
       <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
       <span className="truncate">{space.name}</span>
-      {space.main && <span className="font-normal text-muted-foreground">(main)</span>}
     </>
   );
 
@@ -298,8 +306,10 @@ export default function SpacesTab() {
         </>
       )}
 
-      {shown && !shown.main && shown.shared === false && (
-        <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
+      {shown && shown.shared === false && (
+        isMainSpace(shown, spaces)
+          ? <SettingsSection title={`Delete ${shown.name}`}><SettingsCard><div className="px-4 py-4 text-sm text-muted-foreground">{mainSpaceNote(shown)}</div></SettingsCard></SettingsSection>
+          : <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
       )}
     </div>
   );

@@ -596,6 +596,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         if (target.shared === null) { json(res, 409, { error: { code: 'SPACE_UNKNOWN', message: 'The brain server did not say what this space is. Try again.' } }); return true }
         if (target.shared) answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
         else {
+          if (deps.spaces.isAgentMain(target)) { json(res, 409, { error: { code: 'AGENT_MAIN', message: "This is its agent's main space and cannot be deleted." } }); return true }
           if ((await readJson(req)).confirm !== target.name) { json(res, 400, { error: { code: 'CONFIRM_NAME', message: 'Type the name of the space to delete it.' } }); return true }
           const sessions = deps.bridge.ledger.list(undefined, target.ledgerKey)
           if (sessions.some((s) => deps.bridge.isRunning(s.sessionId) || deps.chat.isRunning(s.sessionId))) {

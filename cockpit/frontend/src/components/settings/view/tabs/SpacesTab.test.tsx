@@ -4,14 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SPACE_HEADER } from '@/lib/space-header';
 import { getActiveSpaceId } from '@/stores/usePaneStore';
-import { loadSpaces } from '@/stores/useSpaceStore';
+import { getSpaces, loadSpaces } from '@/stores/useSpaceStore';
 import SpacesTab from './SpacesTab';
 
 // The list picks whose details show; the cockpit stays in the space it is in.
 
 const SPACES = [
-  { id: 'main-id', name: 'Main', main: true, shared: false, color: 'coral' },
-  { id: 'other-id', name: 'Other', main: false, shared: false, color: 'violet' },
+  { id: 'main-id', name: 'Main', main: true, shared: false, agent: 'juno', agentName: 'Juno', color: 'coral' },
+  { id: 'other-id', name: 'Other', main: false, shared: false, agent: 'juno', agentName: 'Juno', color: 'violet' },
+  { id: 'nova-id', name: 'Nova home', main: false, shared: false, agent: 'nova', agentName: 'Nova', color: 'slate' },
 ];
 
 const brainInfo = (id: string) => ({ source: 'local', home: '/home', brainId: `brain-of-${id}`, brainFile: `/${id}.db`, agents: [], users: [] });
@@ -69,16 +70,23 @@ describe('Settings › Spaces', () => {
     expect(tab.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('deletes a further local space only with its name typed, and the main space never', async () => {
+  it('deletes a further local space only with its name typed, and an agent\'s main space never', async () => {
     render(<SpacesTab />);
     await screen.findByText('/main-id.db');
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    await screen.findByText("This is Juno's main space. It cannot be deleted.");
+    fireEvent.click(screen.getAllByRole('button', { name: 'Nova home' })[0]);
+    await screen.findByText("This is Nova's main space. It cannot be deleted.");
     fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
     await screen.findByText('/other-id.db');
     const remove = screen.getByRole('button', { name: 'Delete' }) as HTMLButtonElement;
     expect(remove.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Name of the space to delete'), { target: { value: 'Other' } });
     expect(remove.disabled).toBe(false);
+  });
+
+  it('keeps what the host says about a space: its colour, its agent\'s name, its own runtime', async () => {
+    expect(getSpaces()[0]).toMatchObject({ color: 'coral', agentName: 'Juno', ownRuntime: false });
   });
 
   it('backs up the picked space', async () => {
