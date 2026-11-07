@@ -200,6 +200,7 @@ export default function SpacesTab() {
 
       <SettingsSection description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
+          {listed.map(spaceRow)}
           {tab === 'local' ? (
             <SettingsRow label="New space" description={spaceError ?? (mainAgentName ? `A new local brain for your work; ${mainAgentName} works in it from the start.` : 'A new local brain for your work.')}>
               <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void addSpace(); }}>
@@ -224,7 +225,6 @@ export default function SpacesTab() {
             </>
           )}
         </SettingsCard>
-        {listed.length > 0 && <SettingsCard divided>{listed.map(spaceRow)}</SettingsCard>}
       </SettingsSection>
 
       {listed.length > 0 && (
