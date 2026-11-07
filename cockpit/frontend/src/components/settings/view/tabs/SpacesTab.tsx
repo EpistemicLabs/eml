@@ -14,6 +14,7 @@ import SettingsCard from '../SettingsCard';
 import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import SettingsPicker from '../SettingsPicker';
 import SettingsSegmented from '../SettingsSegmented';
 import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
@@ -132,21 +133,12 @@ export default function SpacesTab() {
 
   const fallback = infoFailed ? 'unavailable' : '…';
 
-  const spaceButton = (space: SpaceInfo) => (
-    <button
-      key={space.id}
-      type="button"
-      aria-pressed={space.id === shownId}
-      onClick={() => { setPickedId(space.id); setRenaming(null); setRenameError(null); }}
-      className={cn(
-        'flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-foreground/5',
-        space.id === shownId ? 'border-foreground/40 bg-foreground/5' : 'border-border',
-      )}
-    >
+  const spaceLabel = (space: SpaceInfo) => (
+    <>
       <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
       <span className="truncate">{space.name}</span>
       {space.main && <span className="font-normal text-muted-foreground">(main)</span>}
-    </button>
+    </>
   );
 
   return (
@@ -184,8 +176,16 @@ export default function SpacesTab() {
             </>
           )}
         </SettingsCard>
-        {listed.length > 0 && <div className="flex flex-wrap gap-2">{listed.map(spaceButton)}</div>}
       </SettingsSection>
+
+      {listed.length > 0 && (
+        <SettingsPicker
+          items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
+          value={shownId}
+          onChange={(id) => { setPickedId(id); setRenaming(null); setRenameError(null); }}
+          ariaLabel="Spaces"
+        />
+      )}
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
 

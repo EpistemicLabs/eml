@@ -13,6 +13,7 @@ import type { Engram, ListResponse } from '@/lib/types';
 import { useActiveSpace } from '@/stores/useSpaceStore';
 import { useAgents, type AgentInfo } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
+import SettingsPicker from '../SettingsPicker';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
@@ -83,22 +84,13 @@ export default function AgentTab() {
 
   return (
     <div className="space-y-8">
-      <SettingsSection title="Agents">
-        {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
-        <div className="flex flex-wrap gap-2">
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              aria-pressed={a.id === agent?.id}
-              onClick={() => setPickedId(a.id)}
-              className={`rounded-md border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-foreground/5 ${a.id === agent?.id ? 'border-foreground/40 bg-foreground/5' : 'border-border'}`}
-            >
-              {a.name}
-            </button>
-          ))}
-        </div>
-      </SettingsSection>
+      {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
+      <SettingsPicker
+        items={agents.map((a) => ({ id: a.id, label: a.name }))}
+        value={agent?.id}
+        onChange={setPickedId}
+        ariaLabel="Agents"
+      />
 
       {agent && (
         <SettingsSection title="Details">
