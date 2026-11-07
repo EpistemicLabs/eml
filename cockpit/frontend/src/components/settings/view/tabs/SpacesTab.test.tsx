@@ -10,8 +10,8 @@ import SpacesTab from './SpacesTab';
 // The list picks whose details show; the cockpit stays in the space it is in.
 
 const SPACES = [
-  { id: 'main-id', name: 'Main', main: true, color: 'coral' },
-  { id: 'other-id', name: 'Other', main: false, color: 'violet' },
+  { id: 'main-id', name: 'Main', main: true, shared: false, color: 'coral' },
+  { id: 'other-id', name: 'Other', main: false, shared: false, color: 'violet' },
 ];
 
 const brainInfo = (id: string) => ({ source: 'local', home: '/home', brainId: `brain-of-${id}`, brainFile: `/${id}.db`, agents: [], users: [] });
@@ -44,7 +44,7 @@ afterEach(() => {
 describe('Settings › Spaces', () => {
   it('has no way to switch the space from the list', async () => {
     render(<SpacesTab />);
-    await screen.findByText('brain-of-main-id');
+    await screen.findByText('/main-id.db');
     expect(screen.queryByRole('button', { name: 'Switch' })).toBeNull();
     expect(screen.queryByText('active')).toBeNull();
   });
@@ -52,18 +52,40 @@ describe('Settings › Spaces', () => {
   it('shows the details of a picked space and leaves the open one alone', async () => {
     const open = getActiveSpaceId();
     render(<SpacesTab />);
-    await screen.findByText('brain-of-main-id');
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
-    await screen.findByText('brain-of-other-id');
+    await screen.findByText('/main-id.db');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
+    await screen.findByText('/other-id.db');
     expect(screen.getByText('Backups of Other')).toBeTruthy();
     expect(getActiveSpaceId()).toBe(open);
   });
 
+  it('picks a space from the list and from the tabs alike', async () => {
+    render(<SpacesTab />);
+    await screen.findByText('/main-id.db');
+    const [row, tab] = screen.getAllByRole('button', { name: 'Other' });
+    fireEvent.click(tab);
+    await screen.findByText('/other-id.db');
+    expect(row.getAttribute('aria-pressed')).toBe('true');
+    expect(tab.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('deletes a further local space only with its name typed, and the main space never', async () => {
+    render(<SpacesTab />);
+    await screen.findByText('/main-id.db');
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
+    await screen.findByText('/other-id.db');
+    const remove = screen.getByRole('button', { name: 'Delete' }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Name of the space to delete'), { target: { value: 'Other' } });
+    expect(remove.disabled).toBe(false);
+  });
+
   it('backs up the picked space', async () => {
     render(<SpacesTab />);
-    await screen.findByText('brain-of-main-id');
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
-    await screen.findByText('brain-of-other-id');
+    await screen.findByText('/main-id.db');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Other' })[0]);
+    await screen.findByText('/other-id.db');
     fireEvent.click(screen.getByRole('button', { name: 'Back up now' }));
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(([url, init]) => String(url) === '/api/brain-backups' && init?.method === 'POST');
