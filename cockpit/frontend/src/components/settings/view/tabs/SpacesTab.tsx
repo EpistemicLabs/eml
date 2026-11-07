@@ -18,7 +18,6 @@ import SettingsSegmented from '../SettingsSegmented';
 import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
-import { relayHost, type Team } from '@/lib/team';
 import { refreshTeams, useTeams } from '@/stores/useTeamStore';
 import TeamSections from './TeamSections';
 
@@ -45,12 +44,6 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** What a space row says: where it comes from and which agent works in it; an unbound one points at the banner. */
-function spaceDescription(space: SpaceInfo, team: Team | undefined): string {
-  const host = team?.shared ? relayHost(team.relay) : null;
-  const origin = space.main ? 'The space this cockpit was set up with' : space.shared ? (host ? `A shared brain on ${host}` : 'A shared brain') : 'A further local brain';
-  return space.agent ? origin : `${origin} · no agent bound — see the banner above`;
-}
-
 export default function SpacesTab() {
   const spaces = useSpaces();
   const activeSpace = useActiveSpace();
@@ -154,7 +147,7 @@ export default function SpacesTab() {
         </button>
       }
       className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
-      description={(renaming?.id === space.id && renameError) || spaceDescription(space, teams[space.id])}
+      description={(renaming?.id === space.id && renameError) || (space.agent ? undefined : 'No agent bound — see the banner above')}
     >
       <div className="flex items-center gap-2">
         <SpaceColorPicker space={space} onError={setSpaceError} />
