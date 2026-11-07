@@ -94,7 +94,6 @@ export default function AgentTab() {
         />
         {agent && (
           <SettingsCard divided className="rounded-tl-none">
-            <SettingsRow label={name}>{null}</SettingsRow>
             <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
               <span className="block font-mono text-xs text-foreground">{agent.id}</span>
             </SettingsRow>
