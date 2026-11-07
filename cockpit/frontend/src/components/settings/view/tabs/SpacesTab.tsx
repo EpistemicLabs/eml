@@ -289,7 +289,7 @@ function DeleteSpace({ space, onDeleted }: { space: SpaceInfo; onDeleted: () => 
       <SettingsCard>
         <SettingsRow
           label="Delete this space"
-          description={error ?? 'Its brain leaves this cockpit. A backup is made first; project folders stay. Type the name to confirm.'}
+          description={error ?? 'Its brain leaves this cockpit. A backup is made first. Type the name to confirm.'}
         >
           <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void remove(); }}>
             <input
