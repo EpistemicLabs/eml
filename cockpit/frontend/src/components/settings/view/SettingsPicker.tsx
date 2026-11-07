@@ -9,10 +9,10 @@ type SettingsPickerProps = {
   ariaLabel: string;
 };
 
-/** A row of names over the details of the picked one: Settings › Agents and Spaces. */
+/** Tabs on the card with the picked one's details, which sits right under them: Settings › Agents and Spaces. */
 export default function SettingsPicker({ items, value, onChange, ariaLabel }: SettingsPickerProps) {
   return (
-    <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-x-5 border-b border-border">
+    <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-1">
       {items.map((item) => (
         <button
           key={item.id}
@@ -20,8 +20,10 @@ export default function SettingsPicker({ items, value, onChange, ariaLabel }: Se
           aria-pressed={item.id === value}
           onClick={() => onChange(item.id)}
           className={cn(
-            '-mb-px flex items-center gap-2 border-b-2 pb-2 text-sm font-medium',
-            item.id === value ? 'border-foreground text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+            'flex items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm font-medium',
+            item.id === value
+              ? 'border-foreground/8 bg-foreground/4 text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground',
           )}
         >
           {item.label}

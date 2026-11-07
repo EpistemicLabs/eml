@@ -85,19 +85,16 @@ export default function AgentTab() {
   return (
     <div className="space-y-8">
       {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
-      <SettingsPicker
-        items={agents.map((a) => ({ id: a.id, label: a.name }))}
-        value={agent?.id}
-        onChange={setPickedId}
-        ariaLabel="Agents"
-      />
-
-      {agent && (
-        <SettingsSection title="Details">
-          <SettingsCard divided>
-            <SettingsRow label="Name">
-              <span className="text-sm text-foreground">{name}</span>
-            </SettingsRow>
+      <div>
+        <SettingsPicker
+          items={agents.map((a) => ({ id: a.id, label: a.name }))}
+          value={agent?.id}
+          onChange={setPickedId}
+          ariaLabel="Agents"
+        />
+        {agent && (
+          <SettingsCard divided className="rounded-tl-none">
+            <SettingsRow label={name}>{null}</SettingsRow>
             <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
               <span className="block font-mono text-xs text-foreground">{agent.id}</span>
             </SettingsRow>
@@ -109,8 +106,8 @@ export default function AgentTab() {
               </ul>
             </div>
           </SettingsCard>
-        </SettingsSection>
-      )}
+        )}
+      </div>
 
       <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
         <SettingsCard>

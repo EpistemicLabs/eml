@@ -179,73 +179,74 @@ export default function SpacesTab() {
       </SettingsSection>
 
       {listed.length > 0 && (
-        <SettingsPicker
-          items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
-          value={shownId}
-          onChange={(id) => { setPickedId(id); setRenaming(null); setRenameError(null); }}
-          ariaLabel="Spaces"
-        />
+        <div>
+          <SettingsPicker
+            items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
+            value={shownId}
+            onChange={(id) => { setPickedId(id); setRenaming(null); setRenameError(null); }}
+            ariaLabel="Spaces"
+          />
+          {shown && (
+            <SettingsCard divided className="rounded-tl-none">
+                <SettingsRow label={shown.name} description={renameError ?? (shown.agent ? undefined : 'No agent bound — see the banner above')}>
+                  {renaming?.id === shown.id ? (
+                    <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
+                      <input
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
+                        maxLength={40}
+                        autoFocus
+                        aria-label="Space name"
+                        className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                      />
+                      <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
+                    </form>
+                  ) : (
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(shown); setRenameDraft(shown.name); setRenameError(null); }}>
+                      <Pencil className="h-3.5 w-3.5" />
+                      Rename
+                    </Button>
+                  )}
+                </SettingsRow>
+                <SettingsRow label="Colour">
+                  <SpaceColorPicker space={shown} onError={setSpaceError} />
+                </SettingsRow>
+                {shown.ownRuntime && (
+                  <SettingsRow
+                    label="Login and tools"
+                    description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
+                  >
+                    <span className="text-sm text-foreground">Own</span>
+                  </SettingsRow>
+                )}
+                <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
+                  <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
+                    <FolderSearch className="h-3.5 w-3.5" />
+                    Show in Finder
+                  </Button>
+                </SettingsRow>
+                <SettingsRow label="Schema version">
+                  <Mono>{info?.schemaVersion ?? fallback}</Mono>
+                </SettingsRow>
+                <SettingsRow label="Size">
+                  <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
+                </SettingsRow>
+                <SettingsRow label="Last write">
+                  <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
+                </SettingsRow>
+                <SettingsRow label="Created">
+                  <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
+                </SettingsRow>
+            </SettingsCard>
+          )}
+        </div>
       )}
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
 
       {shown && (
         <>
-        <SettingsSection title={shown.name}>
-          <SettingsCard divided>
-            <SettingsRow label="Name" description={renameError ?? (shown.agent ? undefined : 'No agent bound — see the banner above')}>
-              {renaming?.id === shown.id ? (
-                <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void commitRename(); }}>
-                  <input
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameError(null); } }}
-                    maxLength={40}
-                    autoFocus
-                    aria-label="Space name"
-                    className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-                  />
-                  <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
-                </form>
-              ) : (
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(shown); setRenameDraft(shown.name); setRenameError(null); }}>
-                  <Pencil className="h-3.5 w-3.5" />
-                  Rename
-                </Button>
-              )}
-            </SettingsRow>
-            <SettingsRow label="Colour">
-              <SpaceColorPicker space={shown} onError={setSpaceError} />
-            </SettingsRow>
-            {shown.ownRuntime && (
-              <SettingsRow
-                label="Login and tools"
-                description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
-              >
-                <span className="text-sm text-foreground">Own</span>
-              </SettingsRow>
-            )}
-            <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
-                <FolderSearch className="h-3.5 w-3.5" />
-                Show in Finder
-              </Button>
-            </SettingsRow>
-            <SettingsRow label="Schema version">
-              <Mono>{info?.schemaVersion ?? fallback}</Mono>
-            </SettingsRow>
-            <SettingsRow label="Size">
-              <Mono>{info ? formatBytes(info.sizeBytes) : fallback}</Mono>
-            </SettingsRow>
-            <SettingsRow label="Last write">
-              <Mono>{info ? formatDate(info.modifiedAt) : fallback}</Mono>
-            </SettingsRow>
-            <SettingsRow label="Created">
-              <Mono>{info ? formatDate(info.createdAt) : fallback}</Mono>
-            </SettingsRow>
-          </SettingsCard>
-        </SettingsSection>
-
         <SettingsSection
           title={`Backups of ${shown.name}`}
           description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
