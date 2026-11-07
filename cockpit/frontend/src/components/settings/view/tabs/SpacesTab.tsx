@@ -144,6 +144,7 @@ export default function SpacesTab() {
         >
           <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
           <span className="truncate">{space.name}</span>
+          {space.main && <span className="font-normal text-muted-foreground">(main)</span>}
         </button>
       }
       className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
