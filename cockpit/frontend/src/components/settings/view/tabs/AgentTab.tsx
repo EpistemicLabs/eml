@@ -85,7 +85,7 @@ export default function AgentTab() {
   return (
     <div className="space-y-8">
       {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
-      <SettingsSection title="Agents" description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session.">
+      <SettingsSection description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session.">
         <div>
           <SettingsPicker
             items={agents.map((a) => ({ id: a.id, label: a.name }))}

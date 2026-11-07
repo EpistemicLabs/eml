@@ -25,7 +25,7 @@ export type SettingsMainTabMeta = {
 export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'account',
-    label: 'Account',
+    label: 'EML Account',
     keywords: 'account plan free pro team subscription name profile user',
     icon: UserRound,
     blurb: 'You in this brain, and your plan.',

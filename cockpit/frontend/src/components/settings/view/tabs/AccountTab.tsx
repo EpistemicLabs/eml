@@ -25,7 +25,6 @@ export default function AccountTab() {
   return (
     <div className="space-y-8">
       <SettingsSection
-        title="EML account"
         description="Shared spaces need an EML account. Accounts are invite-only during the beta. Sign in with your email; the code arrives by mail."
       >
         <AccountCard account={account} />
