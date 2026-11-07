@@ -222,7 +222,7 @@ function AppContentInner() {
     sentMainSessions.current = current;
   }, [desks]);
 
-  useSeenResults(compact);
+  useSeenResults();
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window

@@ -11,38 +11,39 @@ const ACTIVE_MS = 60_000;
 const CHECK_MS = 5_000;
 
 /**
- * What the user sees right now is seen: its pane on screen, the tab in front and the
- * user active. When in doubt it stays unseen. Told to the host, so it counts on every device.
+ * What the user is looking at right now is seen: its pane the active one, the tab in front
+ * and the user active. A pane beside it is not looked at yet. When in doubt it stays unseen.
+ * Told to the host, so it counts on every device.
  */
 export function sessionsToMarkSeen(
   sessions: AllSession[],
-  onScreen: ReadonlySet<string>,
+  inFront: ReadonlySet<string>,
   facts: { foreground: boolean; lastInputAt: number; now: number },
 ): string[] {
   if (!facts.foreground || facts.now - facts.lastInputAt >= ACTIVE_MS) return [];
-  return sessions.filter((session) => onScreen.has(session.id) && isUnseen(session)).map((session) => session.id);
+  return sessions.filter((session) => inFront.has(session.id) && isUnseen(session)).map((session) => session.id);
 }
 
-function sessionsOnScreen(compact: boolean): Set<string> {
+export function sessionsInFront(): Set<string> {
   if (getTopView() !== 'desks') return new Set();
-  const panes = paneStore.getDeskPanesOnScreen(compact);
-  return new Set(panes.flatMap((pane) => ((pane.paneView === 'chat' || pane.paneView === 'terminal') && pane.sessionId ? [pane.sessionId] : [])));
+  const pane = paneStore.getActivePane();
+  return new Set(pane && (pane.paneView === 'chat' || pane.paneView === 'terminal') && pane.sessionId ? [pane.sessionId] : []);
 }
 
-export function useSeenResults(compact: boolean): void {
+export function useSeenResults(): void {
   const { sessions } = useAllSessions(true);
   const known = useRef<AllSession[]>([]);
   known.current = sessions ?? [];
   const lastInputAt = useRef(0);
 
   const check = useCallback(() => {
-    const ids = sessionsToMarkSeen(known.current, sessionsOnScreen(compact), {
+    const ids = sessionsToMarkSeen(known.current, sessionsInFront(), {
       foreground: document.visibilityState === 'visible' && document.hasFocus(),
       lastInputAt: lastInputAt.current,
       now: Date.now(),
     });
     for (const id of ids) void markSessionRead(id);
-  }, [compact]);
+  }, []);
 
   // A result that lands while the user is looking leaves again at once.
   useEffect(check, [check, sessions]);
