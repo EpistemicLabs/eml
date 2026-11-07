@@ -56,9 +56,9 @@ const asObject = (body: unknown): Record<string, unknown> =>
 /** GET /team: the shared brain's state, read-only text, member and member set (a private brain: shared false). */
 export const teamSnapshot = (brain: TeamBrain): Promise<TeamAnswer> => ask(brain, 'GET', '/team')
 
-/** POST /team/invites {role?}: an invite link for a member or an owner (decision invite-role-set-at-invite), returned once. */
-export const createInvite = (brain: TeamBrain, role: unknown): Promise<TeamAnswer> =>
-  ask(brain, 'POST', '/team/invites', role === undefined ? {} : { role })
+/** POST /team/invites {role?, name?}: an invite link for a member or an owner (decision invite-role-set-at-invite), returned once; `name` is the space's, for the invitee. */
+export const createInvite = (brain: TeamBrain, role: unknown, name?: string): Promise<TeamAnswer> =>
+  ask(brain, 'POST', '/team/invites', { ...(role === undefined ? {} : { role }), ...(name === undefined ? {} : { name }) })
 
 /** POST /team/invites/:id/accept: the owner confirmed the join waiting on the invite; the role is the invite's. */
 export const confirmInvite = (brain: TeamBrain, inviteId: string): Promise<TeamAnswer> =>
@@ -134,6 +134,14 @@ export function brainOfInviteLink(link: string): string | null {
   try { url = new URL(link) } catch { return null }
   const [i, version, brain] = url.pathname.split('/').filter(Boolean)
   return i === 'i' && version === '1' && typeof brain === 'string' && UUID.test(brain) ? brain : null
+}
+
+/** The name the inviter gave the space, from the link's fragment; null when it carries none. */
+export function nameOfInviteLink(link: string): string | null {
+  let url: URL
+  try { url = new URL(link) } catch { return null }
+  const text = url.hash.slice(1).split('.')[1]
+  return text ? Buffer.from(text, 'base64url').toString('utf8').trim() || null : null
 }
 
 /**

@@ -274,6 +274,15 @@ describe('removeTeamSpace', () => {
   })
 })
 
+describe('nameOfInviteLink', () => {
+  it('reads the name out of the fragment; a link without one has none', () => {
+    const named = Buffer.from('EML Team').toString('base64url')
+    expect(mods.team.nameOfInviteLink(`https://relay.example/i/1/${BRAIN_D}/abc#secret.${named}`)).toBe('EML Team')
+    expect(mods.team.nameOfInviteLink(`https://relay.example/i/1/${BRAIN_D}/abc#secret`)).toBeNull()
+    expect(mods.team.nameOfInviteLink('not a link')).toBeNull()
+  })
+})
+
 describe('removeLocalSpace', () => {
   it('backs up first, then discards the brain and removes the space; no backup, nothing is deleted', async () => {
     const space = { id: BRAIN_D, url, token: 'tok-space' } as unknown as import('../src/brain-space.js').BrainSpace

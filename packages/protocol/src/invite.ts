@@ -82,6 +82,7 @@ export const INVITE_DAYS = 7
 export const NOTICE_SKEW_MS = 60_000
 
 const SECRET_BYTES = KEY_BYTES
+const INVITE_NAME_BYTES = 200
 export const INVITE_ID_BYTES = 16
 const MAC_BYTES = 32
 const NOTICE_DOMAIN = 'eml-invite-notice-v1\n'
@@ -104,13 +105,18 @@ export function newInvite(relay: string, brain: string, now: string): Invite {
   return invite
 }
 
-/** The link the invitee pastes into their cockpit: https://<relay>/i/1/<brain>/<invite_id>#<secret>. */
-export function inviteLink(invite: Invite): string {
-  return `https://${invite.relay}/i/${PROTOCOL_VERSION}/${invite.brain}/${invite.invite_id}#${toBase64url(invite.secret)}`
+/**
+ * The link the invitee pastes into their cockpit: https://<relay>/i/1/<brain>/<invite_id>#<secret>[.<name>].
+ * `name` is what the inviter calls the space; like the secret it stays in the
+ * fragment, which no request carries, so the relay never sees it.
+ */
+export function inviteLink(invite: Invite, name?: string): string {
+  const named = name ? `.${toBase64url(new TextEncoder().encode(name))}` : ''
+  return `https://${invite.relay}/i/${PROTOCOL_VERSION}/${invite.brain}/${invite.invite_id}#${toBase64url(invite.secret)}${named}`
 }
 
 /** The parts of an invite link, when it is exactly one; a link of a newer version is an UnsupportedVersionError. */
-export function parseInviteLink(link: string): { relay: string, brain: string, invite_id: string, secret: Uint8Array } {
+export function parseInviteLink(link: string): { relay: string, brain: string, invite_id: string, secret: Uint8Array, name?: string } {
   let url: URL
   try {
     url = new URL(link)
@@ -123,8 +129,20 @@ export function parseInviteLink(link: string): { relay: string, brain: string, i
   if (parts[2] !== String(PROTOCOL_VERSION)) throw new UnsupportedVersionError(parts[2])
   if (!UUID.test(parts[3])) throw new ProtocolError('the invite link\'s brain is not a lowercase UUID')
   fromBase64url(parts[4], INVITE_ID_BYTES, 'the invite id')
-  const secret = fromBase64url(url.hash.slice(1), SECRET_BYTES, 'the invite secret')
-  return { relay: url.host, brain: parts[3], invite_id: parts[4], secret }
+  const [secretText, nameText, ...more] = url.hash.slice(1).split('.')
+  if (more.length > 0) throw new ProtocolError('the invite link\'s fragment is not <secret>[.<name>]')
+  const secret = fromBase64url(secretText, SECRET_BYTES, 'the invite secret')
+  return { relay: url.host, brain: parts[3], invite_id: parts[4], secret, ...(nameText === undefined ? {} : { name: inviteName(nameText) }) }
+}
+
+function inviteName(text: string): string {
+  const bytes = fromBase64url(text, undefined, 'the invite name')
+  if (bytes.length === 0 || bytes.length > INVITE_NAME_BYTES) throw new ProtocolError(`the invite name is 1 to ${INVITE_NAME_BYTES} bytes`)
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new ProtocolError('the invite name is not UTF-8')
+  }
 }
 
 /** The notice the relay keeps: the invite without its secret, signed by `owner` (a device of an owner). */

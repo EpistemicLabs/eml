@@ -16,7 +16,7 @@ import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
 import { provisionSpace, type AgentNames, type Human } from './provision.js'
-import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -461,6 +461,16 @@ function validSpaceName(deps: HostDeps, name: string, self?: BrainSpace): { name
   return { name: trimmed }
 }
 
+/** `name`, cut to the limit, with a number when a space has it already: the name an invite link brought. */
+function freeSpaceName(deps: HostDeps, name: string): string {
+  const taken = (candidate: string) => deps.spaces.list().some((s) => s.name.toLowerCase() === candidate.toLowerCase())
+  const base = name.trim().slice(0, SPACE_NAME_MAX - 3)
+  if (!taken(base)) return base
+  let n = 2
+  while (taken(`${base} ${n}`)) n += 1
+  return `${base} ${n}`
+}
+
 /**
  * The binding every new space gets: the main space's agent and the home's
  * handle (the agent picker per space comes with Settings › Agents), with
@@ -507,7 +517,8 @@ type SharedSpaceResult = { status: number; body: Record<string, unknown> }
 
 /**
  * v0.21: POST /api/spaces {name, shared: {handle?}} — a new shared brain —
- * and {name, join: {link, handle?}} — joining one with an invite link
+ * and {name?, join: {link, handle?}} — joining one with an invite link, under
+ * the name the link brings unless one is given
  * (team-space.ts). Bound like a local space: the main space's agent, the
  * member handle defaulting to the home's handle. A join whose link names a
  * brain this cockpit has already (a new link after a stopped join) goes to
@@ -518,7 +529,9 @@ async function createSharedSpace(deps: HostDeps, body: Record<string, unknown>):
   const given = variant && typeof variant === 'object' ? (variant as Record<string, unknown>) : {}
   const link = typeof given.link === 'string' ? given.link : ''
   const existing = body.join ? deps.spaces.list().find((s) => s.id === brainOfInviteLink(link)) : undefined
-  const valid = existing ? { name: existing.name } : validSpaceName(deps, typeof body.name === 'string' ? body.name : '')
+  const asked = typeof body.name === 'string' ? body.name : ''
+  const name = body.join && !asked.trim() ? freeSpaceName(deps, nameOfInviteLink(link) ?? 'Shared space') : asked
+  const valid = existing ? { name: existing.name } : validSpaceName(deps, name)
   if ('error' in valid) return { status: 400, body: valid }
   const binding = await newSpaceBinding(deps)
   if ('error' in binding) return { status: 400, body: binding }
@@ -609,7 +622,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
         answer = await teamSnapshot(target)
       } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {
-        answer = await createInvite(target, (await readJson(req)).role)
+        answer = await createInvite(target, (await readJson(req)).role, target.name)
       } else if (sub === 'invites' && parts.length === 6 && inviteId && method === 'POST' && (action === 'accept' || action === 'cancel')) {
         answer = action === 'accept' ? await confirmInvite(target, inviteId) : await cancelInvite(target, inviteId)
       }

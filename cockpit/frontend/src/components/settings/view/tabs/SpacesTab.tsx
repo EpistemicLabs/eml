@@ -354,7 +354,6 @@ function NewSharedSpace() {
 
 /** Joining a shared space by the invite link its owner sent. */
 function JoinSharedSpace() {
-  const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -362,10 +361,9 @@ function JoinSharedSpace() {
   const join = async () => {
     setBusy(true);
     setError(null);
-    const result = await joinSharedSpace(name.trim(), link.trim());
+    const result = await joinSharedSpace('', link.trim());
     setBusy(false);
     if ('error' in result) { setError(result.error); return; }
-    setName('');
     setLink('');
     void refreshTeams();
     switchSpace(result.space);
@@ -374,9 +372,8 @@ function JoinSharedSpace() {
   return (
     <SettingsRow label="Join a shared space" description={error ?? (busy ? 'Talking to the relay…' : 'With the invite link you were sent.')}>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void join(); }}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Space name to join under" maxLength={40} disabled={busy} className={`w-28 ${spaceInput}`} />
-        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Invite link" aria-label="Invite link" spellCheck={false} disabled={busy} className={`w-44 font-mono ${spaceInput}`} />
-        <Button size="sm" className="h-8 text-xs" type="submit" disabled={busy || !name.trim() || !link.trim()}>Join</Button>
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Invite link" aria-label="Invite link" spellCheck={false} disabled={busy} className={`w-56 font-mono ${spaceInput}`} />
+        <Button size="sm" className="h-8 text-xs" type="submit" disabled={busy || !link.trim()}>Join</Button>
       </form>
     </SettingsRow>
   );
