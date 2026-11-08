@@ -12,6 +12,9 @@
     },
     {
       "path": "packages/bench"
+    },
+    {
+      "path": "packages/channel-bridge"
     }
   ]
 }
