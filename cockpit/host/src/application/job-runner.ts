@@ -3,9 +3,10 @@ import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
   isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
-  type Job, type JobRun,
+  type Job, type JobRun, type ReplyChannel,
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
+import type { WakeOutcome } from '../domain/job-contract.js'
 import type { JobStore } from '../job-store.js'
 
 /**
@@ -21,6 +22,9 @@ import type { JobStore } from '../job-store.js'
  * an hour after the run was due; then the run fails. Failures in a row pause
  * the job and tell whoever made it.
  */
+
+/** What came of trying to start a run. gone: its target no longer exists. */
+type Attempt = 'started' | 'retry' | 'failed' | 'gone'
 
 /** Where a run's session stands. */
 export type RunSessionState = 'queued' | 'working' | 'idle' | 'stopped'
@@ -52,6 +56,8 @@ const TICK_MS = 30_000
 const SETTLE_MS = 90_000
 // A queued worker that has not started in this time never will (the spawn queue drops it after a day).
 const QUEUED_LIMIT_MS = 24 * 60 * 60_000
+// How long a channel event's key keeps the same event from waking the job again.
+const KEY_MEMORY_MS = 7 * 24 * 60 * 60_000
 
 export class JobRunner {
   private timer: NodeJS.Timeout | null = null
@@ -102,6 +108,26 @@ export class JobRunner {
     return run
   }
 
+  /**
+   * A channel event for the job (the bridge's /v1 wake): a run that starts now
+   * or not at all. A key seen in the last 7 days is not woken for again.
+   */
+  async wake(job: Job, channel: ReplyChannel, message: string, key: string): Promise<WakeOutcome> {
+    if (job.endedAt) return 'refused'
+    if (job.paused) return 'retry'
+    const now = this.now()
+    if (this.deps.store.seenKey(job.id, key, now - KEY_MEMORY_MS)) return 'delivered'
+    const run = this.addRun(job, channel, now, { idempotencyKey: key, message })
+    const result = await this.attempt(job, run, true)
+    if (result === 'started') {
+      this.deps.store.rememberKey(job.id, key, new Date(now).toISOString(), now - KEY_MEMORY_MS)
+      return 'delivered'
+    }
+    if (result === 'gone') return 'refused'
+    if (result === 'retry') this.deps.store.dropRun(run)
+    return 'retry'
+  }
+
   private isWorkerRun(run: JobRun): boolean {
     const job = this.deps.store.get(run.jobId)
     return !!job && (job.target.type === 'worker' || (job.target.type === 'job-session' && job.target.sessionId === run.sessionId))
@@ -122,7 +148,7 @@ export class JobRunner {
       if (started >= JOB_LIMITS.startsPerTick) break
       const job = this.deps.store.get(run.jobId)
       if (!job) continue
-      if (await this.attempt(job, run)) started += 1
+      if (await this.attempt(job, run) === 'started') started += 1
     }
     for (const job of this.deps.store.list()) this.endIfDone(job)
   }
@@ -174,12 +200,13 @@ export class JobRunner {
     this.deps.store.put({ ...job, nextRunAt: next === null ? null : new Date(next).toISOString(), updatedAt: new Date(this.now()).toISOString() })
   }
 
-  private addRun(job: Job, trigger: JobRun['trigger'], due: number): JobRun {
+  private addRun(job: Job, trigger: JobRun['trigger'], due: number, extra: Pick<JobRun, 'idempotencyKey' | 'message'> = {}): JobRun {
     const fresh = this.deps.store.get(job.id) ?? job
     const run: JobRun = {
       id: randomUUID(), jobId: job.id, trigger, number: fresh.runCount + 1,
       dueAt: new Date(due).toISOString(), createdAt: new Date(this.now()).toISOString(),
       status: 'waiting', attempts: 0, nextAttemptAt: null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: null,
+      ...extra,
     }
     this.deps.store.put({ ...fresh, runCount: fresh.runCount + 1 })
     this.deps.store.addRun(run)
@@ -195,25 +222,33 @@ export class JobRunner {
     })
   }
 
-  /** Try to start one waiting run; true when it started. */
-  private async attempt(job: Job, run: JobRun): Promise<boolean> {
+  /**
+   * Try to start one waiting run. `once`: a channel wake, which the bridge
+   * retries itself, so a run that cannot start now gets no later attempt here.
+   */
+  private async attempt(job: Job, run: JobRun, once = false): Promise<Attempt> {
     const now = this.now()
     if (now - Date.parse(run.dueAt) > JOB_LIMITS.retryWindowMs && run.attempts > 0) {
       this.failRun(run, `could not start within ${formatDuration(JOB_LIMITS.retryWindowMs)}: ${run.note ?? 'no room'}`)
-      return false
+      return 'failed'
     }
-    const text = `${runHeader(job, run, now, jobTimeZone(job, this.deps.timeZone()))}\n\n${job.prompt}`
     const target = job.target
     const existing = target.type === 'session' ? target.sessionId : target.type === 'job-session' ? target.sessionId : null
     const known = existing !== null && this.deps.sessionState(existing) !== 'queued'
+    // A fresh session needs the job's prompt; one that has run it before gets only what is new.
+    const header = runHeader(job, run, now, jobTimeZone(job, this.deps.timeZone()))
+    const text = [header, !known || !run.message ? job.prompt : null, run.message ?? null].filter(Boolean).join('\n\n')
+    const wait = (why: string, counted = false): Attempt => {
+      if (!once) this.retry(this.current(run), why, counted)
+      return 'retry'
+    }
 
     if (target.type === 'session' && !known) {
       this.failRun(run, 'its session no longer exists')
-      return false
+      return 'gone'
     }
     if (!(known && this.deps.sessionRuns(existing)) && !this.deps.hasRoom()) {
-      this.retry(run, 'no room: too little free memory, or the running cap with every session busy')
-      return false
+      return wait('no room: too little free memory, or the running cap with every session busy')
     }
 
     if (!known) {
@@ -226,11 +261,11 @@ export class JobRunner {
       if (problem) {
         if (target.type === 'job-session') this.setJobSession(job.id, null)
         this.failRun(this.current(run), `the worker could not start: ${problem}`)
-        return false
+        return 'failed'
       }
       this.update(this.current(run), { status: 'started', startedAt: new Date(this.now()).toISOString(), note: null })
       this.deps.log(`[jobs] ${job.name}: run ${run.number} started worker ${sessionId}`)
-      return true
+      return 'started'
     }
 
     this.update(run, { status: 'starting', attempts: run.attempts + 1, sessionId: existing })
@@ -239,14 +274,12 @@ export class JobRunner {
     if (outcome === 'delivered' || outcome === 'resumed') {
       this.update(current, { status: 'started', startedAt: new Date(this.now()).toISOString(), note: null })
       this.deps.log(`[jobs] ${job.name}: run ${run.number} ${outcome} to ${existing}`)
-      return true
+      return 'started'
     }
-    if (outcome === 'busy' || outcome === 'running') {
-      this.retry(current, 'its session was busy (running in a terminal, or switching)', true)
-      return false
-    }
-    this.failRun(current, outcome === 'unknown' ? 'its session no longer exists' : 'its session cannot take messages (it does not run in the chat view)')
-    return false
+    if (outcome === 'busy' || outcome === 'running') return wait('its session was busy (running in a terminal, or switching)', true)
+    const gone = outcome === 'unknown'
+    this.failRun(current, gone ? 'its session no longer exists' : 'its session cannot take messages (it does not run in the chat view)')
+    return gone ? 'gone' : 'failed'
   }
 
   private setJobSession(jobId: string, sessionId: string | null): void {

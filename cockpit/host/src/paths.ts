@@ -134,6 +134,8 @@ export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
 // Jobs and their runs: what the cockpit wakes sessions for on a schedule (job-store.ts).
 export const JOBS_FILE = path.join(COCKPIT_HOME, 'jobs.json')
+// One token per space for the channel bridge's /v1 requests (job-tokens.ts): <dir>/<brain id>.
+export const JOB_TOKENS_DIR = path.join(COCKPIT_HOME, 'job-tokens')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.
 export const TASKS_DIR = path.join(COCKPIT_HOME, 'tasks')
 // Cockpit folders: made for brain projects that have no folder of their own

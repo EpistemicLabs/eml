@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
+import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
@@ -107,6 +108,8 @@ export interface HostDeps {
   chat: ChatBridge
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
+  /** The channel bridge's /v1 routes (job-contract-api.ts). */
+  jobContract?: JobContractDeps
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -1100,6 +1103,11 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }
+    }
+    // The channel bridge, with a space's token (job-contract-api.ts); no page calls these.
+    if (url.startsWith('/v1/') && deps.jobContract) {
+      void handleJobContract(req, res, deps.jobContract, json, readJson).catch((err) => fail(res, err))
+      return
     }
     // Only /api/brain and /api/brain/… — not host routes like /api/brain-info.
     if (/^\/api\/brain(\/|\?|$)/.test(url)) { void proxyBrain(req, res, deps); return }

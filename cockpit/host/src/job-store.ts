@@ -16,9 +16,11 @@ interface JobsFile {
   timeZone: string | null
   jobs: Record<string, Job>
   runs: Record<string, JobRun[]>
+  /** Per job, the channel event keys that woke it and when: the same event never wakes it twice. */
+  keys: Record<string, Record<string, string>>
 }
 
-const empty = (): JobsFile => ({ version: 1, timeZone: null, jobs: {}, runs: {} })
+const empty = (): JobsFile => ({ version: 1, timeZone: null, jobs: {}, runs: {}, keys: {} })
 
 function load(file: string): JobsFile {
   try {
@@ -29,6 +31,7 @@ function load(file: string): JobsFile {
       timeZone: typeof parsed.timeZone === 'string' ? parsed.timeZone : null,
       jobs: parsed.jobs && typeof parsed.jobs === 'object' ? parsed.jobs : {},
       runs: parsed.runs && typeof parsed.runs === 'object' ? parsed.runs : {},
+      keys: parsed.keys && typeof parsed.keys === 'object' ? parsed.keys : {},
     }
   } catch {
     return empty()
@@ -69,6 +72,7 @@ export class JobStore {
     if (!this.data.jobs[id]) return false
     delete this.data.jobs[id]
     delete this.data.runs[id]
+    delete this.data.keys[id]
     this.persist()
     return true
   }
@@ -101,6 +105,32 @@ export class JobStore {
     const index = runs?.findIndex((r) => r.id === run.id) ?? -1
     if (index < 0) return
     runs[index] = run
+    this.persist()
+  }
+
+  /** A run that never happened after all (a wake the bridge will retry); its number is given back. */
+  dropRun(run: JobRun): void {
+    const runs = this.data.runs[run.jobId]
+    const index = runs?.findIndex((r) => r.id === run.id) ?? -1
+    if (index < 0) return
+    runs.splice(index, 1)
+    const job = this.data.jobs[run.jobId]
+    if (job && job.runCount === run.number) this.data.jobs[run.jobId] = { ...job, runCount: job.runCount - 1 }
+    this.persist()
+  }
+
+  /** The key woke the job at or after `since`. */
+  seenKey(jobId: string, key: string, since: number): boolean {
+    const at = this.data.keys[jobId]?.[key]
+    return at !== undefined && Date.parse(at) >= since
+  }
+
+  /** Remember a key; keys older than `forgetBefore` go. */
+  rememberKey(jobId: string, key: string, at: string, forgetBefore: number): void {
+    const keys = this.data.keys[jobId] ?? {}
+    for (const [old, when] of Object.entries(keys)) if (Date.parse(when) < forgetBefore) delete keys[old]
+    keys[key] = at
+    this.data.keys[jobId] = keys
     this.persist()
   }
 

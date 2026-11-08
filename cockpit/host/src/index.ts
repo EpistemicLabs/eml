@@ -47,6 +47,7 @@ import { JobStore } from './job-store.js'
 import { JobRunner } from './application/job-runner.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
+import { ensureJobTokens } from './job-contract-api.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -317,6 +318,9 @@ async function main() {
     addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
     providerKnown: (id) => providers.get(id) !== undefined,
   })
+  // The channel bridge's tokens, one per space (job-contract-api.ts); a space added later gets one at the next start.
+  const jobSpaceIds = () => [spaces.main.id, ...spaces.list().filter((space) => !space.main).map((space) => space.id)]
+  ensureJobTokens(jobSpaceIds())
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -324,7 +328,10 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller } },
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene,
+      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller },
+      jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
+    },
     origins,
   )
 

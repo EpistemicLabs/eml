@@ -114,6 +114,8 @@ export interface JobRun {
   note: string | null
   /** A channel event's key; the same key never wakes the job twice. */
   idempotencyKey?: string
+  /** What a channel event says (counts, never content); the woken session reads it after the header. */
+  message?: string
 }
 
 /** Limits on what sessions may schedule. */
@@ -196,7 +198,9 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
   const late = now - Date.parse(run.dueAt)
   const when = run.trigger === 'manual'
     ? 'started by hand'
-    : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
+    : run.trigger !== 'schedule'
+      ? `woken by ${run.trigger}`
+      : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + 'Not from your user, and nobody may be watching: report how you stand with session_status if you have it. '
     + 'The schedule tool changes or stops this job.]'
