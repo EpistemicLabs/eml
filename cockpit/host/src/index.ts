@@ -16,7 +16,7 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
-import { ChatBridge } from './chat-bridge.js'
+import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
@@ -49,6 +49,9 @@ import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
+import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
+import { takeBackJobTools } from './application/take-back-job-tools.js'
+import type { GrantTool, Job } from './domain/job.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
@@ -295,10 +298,40 @@ async function main() {
     const entry = ledger.get(sessionId)
     return entry ? { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile } : null
   }
+  // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
+  const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)
+  const jobSessions: JobSessions = {
+    sessionsOf: (jobId) => ledger.list().filter((entry) => entry.jobId === jobId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => entry.sessionId),
+    runs: sessionRuns,
+    turnOver: (sessionId) => new Promise<void>((resolve) => {
+      const over = () => turns.get(sessionId)?.state !== 'working' || !sessionRuns(sessionId)
+      if (over()) return resolve()
+      const check = () => {
+        if (!over()) return
+        turns.off('turn', check)
+        clearInterval(timer)
+        resolve()
+      }
+      // The turn event is the signal; the look every few seconds covers a process that ended without one.
+      const timer = setInterval(check, 5_000)
+      timer.unref()
+      turns.on('turn', check)
+    }),
+    stop: (sessionId) => chat.isRunning(sessionId) ? chat.end(sessionId, IDLE_STOP) : bridge.end(sessionId),
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    timeZone: userTimeZone,
+    log,
+  }
+  const onGrant = (job: Job, tool: GrantTool) => void lendJobTool(jobSessions, job, tool)
+    .catch((err: unknown) => log(`[jobs] lending ${tool} to job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
+  const onGrantEnd = (job: Job, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
+    .catch((err: unknown) => log(`[jobs] taking ${tools.join(', ')} back from job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
   const jobRunner = new JobRunner({
     store: jobStore, log, timeZone: userTimeZone,
     hasRoom: (): boolean => startWorker.hasRoom(),
-    sessionRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
+    sessionRuns,
+    onGrantEnd,
     sessionState: (sessionId) => {
       if (!ledger.has(sessionId)) return 'queued'
       if (turns.get(sessionId)?.state === 'working') return 'working'
@@ -337,6 +370,7 @@ async function main() {
       return project ? project.customName ?? project.displayName : projectId
     },
     providerKnown: (id) => providers.get(id) !== undefined,
+    onGrant, onGrantEnd,
   })
   // The channel bridge's tokens, one per space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => [spaces.main.id, ...spaces.list().filter((space) => !space.main).map((space) => space.id)]
