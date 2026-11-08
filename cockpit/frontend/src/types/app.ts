@@ -24,6 +24,8 @@ export interface ProjectSession {
   paneId?: string | null;
   /** The brain task this session advances (a task run). */
   taskId?: string | null;
+  /** The job it works for, when a job started it. */
+  jobId?: string | null;
   state?: SessionState;
   /** Value at fetch time; the live source is the turn store. */
   turnState?: TurnState;

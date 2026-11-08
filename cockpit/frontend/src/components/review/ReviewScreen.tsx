@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Archive, Check, ChevronLeft, ChevronRight, ExternalLink, MessageSquareReply, X } from 'lucide-react';
 
 import { ChatPane } from '@/components/chat/ChatPane';
+import { DraftsPanel } from '@/components/review/DraftsPanel';
 import { MARK_WORD, agentLabel, allSessionState, sessionMark, type AllSession, type SessionMark } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
@@ -226,6 +227,7 @@ export function ReviewScreen() {
         )}
         {error && <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p>}
       </div>
+      {current?.jobId && <DraftsPanel key={current.id} jobId={current.jobId} />}
       <div ref={bodyRef} className="relative min-h-0 flex-1">
         {!current ? (
           <p className="p-4 text-xs text-muted-foreground">Loading…</p>
