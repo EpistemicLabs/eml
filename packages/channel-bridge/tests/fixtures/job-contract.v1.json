@@ -11,7 +11,18 @@
           { "kind": "domain", "domain": "customer.example" },
           { "kind": "address", "address": "support@partner.example" }
         ],
-        "reply": { "mail": "draft" }
+        "reply": { "mail": "draft" },
+        "paused": false
+      },
+      {
+        "jobId": "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "space": "11111111-2222-4333-8444-555555555555",
+        "matches": [
+          { "kind": "domain", "domain": "customer.example" },
+          { "kind": "address", "address": "support@partner.example" }
+        ],
+        "reply": { "mail": "draft" },
+        "paused": true
       }
     ]
   },

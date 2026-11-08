@@ -14,6 +14,7 @@ const routeSchema = z.object({
   space: z.string(),
   matches: z.array(z.unknown()),
   reply: z.record(z.string(), z.unknown()),
+  paused: z.boolean().optional(),
 })
 const matchSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('address'), address: z.string() }),
@@ -108,5 +109,5 @@ function toJobRoute(entry: unknown, channel: Channel): JobRoute[] {
     const mode = replyModeSchema.safeParse(parsed.data.reply[channel])
     reply[channel] = mode.success ? mode.data : 'draft'
   }
-  return [{ jobId: parsed.data.jobId, space: parsed.data.space, matches, reply }]
+  return [{ jobId: parsed.data.jobId, space: parsed.data.space, matches, reply, paused: parsed.data.paused ?? false }]
 }

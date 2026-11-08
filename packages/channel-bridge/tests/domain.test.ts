@@ -30,12 +30,14 @@ const customerJob: JobRoute = {
   space: 'support',
   matches: [{ kind: 'domain', domain: 'customer.example' }],
   reply: { mail: 'draft' },
+  paused: false,
 }
 const personJob: JobRoute = {
   jobId: 'job-person',
   space: 'support',
   matches: [{ kind: 'address', address: 'anna@customer.example' }],
   reply: { mail: 'send' },
+  paused: false,
 }
 
 describe('address', () => {
@@ -83,6 +85,20 @@ describe('routeMessage', () => {
     const second: JobRoute = { ...customerJob, jobId: 'job-second' }
     expect(routeMessage(message(), { routes: [customerJob, second], threadOwner: null })).toEqual({
       kind: 'inbox', reason: 'ambiguous',
+    })
+  })
+
+  it('prefers the open job when an open and a paused job match equally', () => {
+    const paused: JobRoute = { ...customerJob, jobId: 'job-paused', paused: true }
+    expect(routeMessage(message(), { routes: [paused, customerJob], threadOwner: null })).toEqual({
+      kind: 'job', jobId: 'job-customer', reason: 'domain',
+    })
+  })
+
+  it('routes to a paused job that alone matches, so its mail waits for it', () => {
+    const paused: JobRoute = { ...customerJob, paused: true }
+    expect(routeMessage(message(), { routes: [paused], threadOwner: null })).toEqual({
+      kind: 'job', jobId: 'job-customer', reason: 'domain',
     })
   })
 

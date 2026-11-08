@@ -4,8 +4,8 @@ import type { JobRoute } from '../../src/domain/routing'
 
 /** The jobs every JobDirectory under test is set up with. */
 export const contractRoutes: JobRoute[] = [
-  { jobId: 'job-a', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
-  { jobId: 'job-b', space: 'errands', matches: [{ kind: 'address', address: 'shop@shop.example' }], reply: { mail: 'send' } },
+  { jobId: 'job-a', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' }, paused: false },
+  { jobId: 'job-b', space: 'errands', matches: [{ kind: 'address', address: 'shop@shop.example' }], reply: { mail: 'send' }, paused: true },
 ]
 
 /** What every JobDirectory must do, given one set up with contractRoutes. */

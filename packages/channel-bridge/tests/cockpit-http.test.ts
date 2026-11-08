@@ -116,8 +116,8 @@ describe('CockpitHttpClient as job directory', () => {
     expect(await client().routesInSpace('support', 'mail')).toEqual({
       kind: 'routes',
       routes: [
-        { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
-        { jobId: 'job-new', space: 'support', matches: [{ kind: 'domain', domain: 'other.example' }], reply: { mail: 'draft' } },
+        { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' }, paused: false },
+        { jobId: 'job-new', space: 'support', matches: [{ kind: 'domain', domain: 'other.example' }], reply: { mail: 'draft' }, paused: false },
       ],
     })
   })
