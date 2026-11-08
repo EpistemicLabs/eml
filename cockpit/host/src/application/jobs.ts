@@ -43,6 +43,8 @@ export interface JobsDeps {
   defaultTimeZone(): string
   /** A grant was stored: the job's session should pick the tool up (restart it and tell it). */
   onGrant?(job: Job, tool: GrantTool): void
+  /** The user took a lent tool back: the host takes it from the session (the runner calls its own for expiry and done). */
+  onGrantEnd?(job: Job, tools: GrantTool[]): void
 }
 
 export interface JobAnswer {
@@ -323,8 +325,10 @@ export class Jobs {
 
   /** Take a lent tool back (the user's click). Only the page calls this. */
   revoke(job: Job, tool: GrantTool): JobAnswer {
+    const had = activeGrants(job, this.now()).some((g) => g.tool === tool)
     const next: Job = { ...job, grants: (job.grants ?? []).filter((g) => g.tool !== tool), updatedAt: new Date(this.now()).toISOString() }
     this.deps.store.put(next)
+    if (had) this.deps.onGrantEnd?.(next, [tool])
     return { status: 200, job: next, text: `Job "${job.name}" no longer has ${tool}.` }
   }
 
