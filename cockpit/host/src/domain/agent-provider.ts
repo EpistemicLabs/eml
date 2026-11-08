@@ -100,6 +100,8 @@ export interface LaunchRequest {
   reachable?: boolean
   /** What the session may use. */
   toolProfile?: ToolProfile | null
+  /** Browser control lent for now (a limited job's Chrome grant), whatever its space or limits say; a provider without it ignores it. */
+  chrome?: boolean
   /** MCP servers it gets beside its space's, by name; a provider without MCP ignores them. */
   extraMcpServers?: Record<string, McpServerSpec>
 }

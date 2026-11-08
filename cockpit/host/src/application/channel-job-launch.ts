@@ -33,8 +33,8 @@ export interface ChannelToolsDeps {
 
 /**
  * The provider, with every launch of a channel job's session given the bridge's tools, and limited
- * to the job's profile when the user marked the job limited. It is worked out at each launch, not
- * stored, so a resumed session gets the paths and grants of now.
+ * to the job's profile when the user marked the job limited, with browser control while Chrome is
+ * lent. It is worked out at each launch, not stored, so a resumed session gets the paths and grants of now.
  */
 export function withChannelTools(provider: AgentProvider, deps: ChannelToolsDeps): AgentProvider {
   const launch = (req: LaunchRequest) => {
@@ -43,6 +43,7 @@ export function withChannelTools(provider: AgentProvider, deps: ChannelToolsDeps
     return provider.launch({
       ...req,
       toolProfile: job.limited ? channelJobProfile(req.toolProfile ?? null, job.granted) : req.toolProfile ?? null,
+      ...(job.limited && job.granted.includes('chrome') ? { chrome: true } : {}),
       extraMcpServers: { ...req.extraMcpServers, channel_bridge: { type: 'stdio', ...deps.bridgeServer(job.jobId) } },
     })
   }

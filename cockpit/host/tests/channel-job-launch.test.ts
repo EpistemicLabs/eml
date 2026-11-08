@@ -49,6 +49,16 @@ describe('withChannelTools', () => {
     expect(launches[0]?.toolProfile?.deniedTools).not.toContain('SendMessage')
   })
 
+  it('gives a limited job\'s session browser control while Chrome is lent, and not otherwise', () => {
+    const { provider, launches } = fakeProvider()
+    let granted: Array<'chrome' | 'SendMessage'> = ['chrome']
+    const wrapped = withChannelTools(provider, { channelJobOf: () => ({ jobId: 'job-1', limited: true, granted }), bridgeServer: server })
+    wrapped.launch(request('s-job'))
+    granted = []
+    wrapped.launch(request('s-job'))
+    expect(launches.map((req) => req.chrome)).toEqual([true, undefined])
+  })
+
   it('leaves every other session as it is', () => {
     const { provider, launches } = fakeProvider()
     const wrapped = withChannelTools(provider, { channelJobOf: () => null, bridgeServer: server })

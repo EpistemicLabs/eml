@@ -110,8 +110,8 @@ class ClaudeProvider implements AgentProvider {
     const limitedMcp = profile?.mcpServers || extra
       ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile?.mcpServers ?? null, extra ?? {})
       : null
-    // An agent given browser control: the Chrome setting lives in the shared config, not the agent's.
-    const chrome = !!agent?.chrome && !limitedMcp
+    // An agent given browser control (the Chrome setting lives in the shared config, not the agent's), or a lent one.
+    const chrome = (!!agent?.chrome && !limitedMcp) || req.chrome === true
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
