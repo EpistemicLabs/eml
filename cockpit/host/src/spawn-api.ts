@@ -1,6 +1,7 @@
 import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
+import { unattended } from './domain/spawn-request.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { MessageRequest } from './application/deliver-message.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
@@ -52,7 +53,7 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
  * A project as a session names it: the registry id, a brain project id or
  * name, or a folder path the cockpit already knows.
  */
-async function resolveProject(space: BrainSpace, input: string): Promise<string | null> {
+export async function resolveProject(space: BrainSpace, input: string): Promise<string | null> {
   if (space.registry.get(input)) return input
   if (path.isAbsolute(input) || input === '~' || /^~[\\/]/.test(input)) {
     return space.registry.getByPath(input)?.projectId ?? null
@@ -199,7 +200,7 @@ export async function handleSpawnApi(
   if (claim && method === 'POST') {
     // Without room it stays queued, and the host starts it once there is (worker-start.ts).
     const waiting = deps.spawns.list().find((candidate) => candidate.id === claim[1])
-    if (waiting?.fromSessionId && !deps.workers.hasRoom()) {
+    if (waiting && unattended(waiting) && !deps.workers.hasRoom()) {
       json(res, 409, { error: { code: 'NO_ROOM', message: 'Too little free memory for another worker right now' } })
       return true
     }

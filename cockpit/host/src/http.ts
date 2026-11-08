@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
@@ -104,6 +105,8 @@ export interface HostDeps {
   hygiene: BrainHygiene
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
+  /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
+  jobs?: JobsApiDeps
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -481,6 +484,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
   if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).
@@ -1086,12 +1090,12 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // carry no Origin and are exempt: /api/hook (session hooks, per-boot token in
     // the x-cockpit-hook header), /api/spawn (worker spawn),
     // /api/session-title/<id> (a session naming itself) and
-    // /api/sessions/<target>/message, all X-Cockpit-Token. Reads
+    // /api/sessions/<target>/message and /api/jobs (a session scheduling), all X-Cockpit-Token. Reads
     // (GET/HEAD) are open; a cross-origin page still can't read the response.
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
+      const tokenEndpoint = /^\/api\/(hook|spawn|jobs|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
       if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return

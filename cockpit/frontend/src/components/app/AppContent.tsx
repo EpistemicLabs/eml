@@ -87,6 +87,12 @@ function AppContentInner() {
     refreshProjects: refreshProjectsSilently,
   });
 
+  // Scheduled jobs read their times on the user's clock, not the server's: tell the host this browser's zone.
+  useEffect(() => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) void api.setTimeZone(zone).catch(() => { /* an older host has no jobs */ });
+  }, []);
+
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
   // The phone has no way back from the Brain tab, so it stays on the desks.
@@ -184,7 +190,7 @@ function AppContentInner() {
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
         // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
-        if (request.fromSessionId && !request.open) continue;
+        if ((request.fromSessionId || request.origin === 'job') && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };

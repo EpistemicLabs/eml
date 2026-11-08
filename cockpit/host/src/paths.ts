@@ -31,6 +31,8 @@ export const SESSION_TITLE_CLI_JS = path.join(HOST_ROOT, 'dist', 'session-title-
 export const SESSION_MESSAGE_CLI_JS = path.join(HOST_ROOT, 'dist', 'session-message-cli.js')
 // CLI a session runs to find another one by name or description (session-directory-cli.ts).
 export const SESSION_DIRECTORY_CLI_JS = path.join(HOST_ROOT, 'dist', 'session-directory-cli.js')
+// CLI a session runs to schedule jobs when it has no schedule tool (schedule-cli.ts, skill schedule).
+export const SCHEDULE_CLI_JS = path.join(HOST_ROOT, 'dist', 'schedule-cli.js')
 // CLI a session runs for the cockpit's redacted diagnostics (diagnose-cli.ts, skill report-issue).
 export const DIAGNOSE_CLI_JS = path.join(HOST_ROOT, 'dist', 'diagnose-cli.js')
 // Skills that only make sense inside the cockpit (spawn-session).
@@ -130,6 +132,8 @@ export const CLAUDE_TURN_HOOK_CONFIG = path.join(CONFIG_DIR, 'turn-hook.json')
 export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 // What an outside service presents to send a session a message (message-token.ts).
 export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
+// Jobs and their runs: what the cockpit wakes sessions for on a schedule (job-store.ts).
+export const JOBS_FILE = path.join(COCKPIT_HOME, 'jobs.json')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.
 export const TASKS_DIR = path.join(COCKPIT_HOME, 'tasks')
 // Cockpit folders: made for brain projects that have no folder of their own

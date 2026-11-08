@@ -1,0 +1,297 @@
+import { randomUUID } from 'node:crypto'
+import type { DeliveryOutcome } from '../domain/session-delivery.js'
+import type { WorkerStatus } from '../domain/session-attention.js'
+import {
+  isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
+  type Job, type JobRun,
+} from '../domain/job.js'
+import { formatDuration } from '../domain/schedule.js'
+import type { JobStore } from '../job-store.js'
+
+/**
+ * Fires the jobs (domain/job.ts). Every tick it settles the runs whose session
+ * has answered, turns due schedules into runs, and starts the waiting runs,
+ * oldest first, a few per tick and each only while the machine has room: ten
+ * jobs due at 8:00 start one after another, not at once.
+ *
+ * A run is written before anything is started, and is 'starting' while it is:
+ * a host restart in that state retries it once. A worker's session id is
+ * chosen before its start, so a restart can tell whether it got that far.
+ * A target that is busy or a machine without room gets later attempts, up to
+ * an hour after the run was due; then the run fails. Failures in a row pause
+ * the job and tell whoever made it.
+ */
+
+/** Where a run's session stands. */
+export type RunSessionState = 'queued' | 'working' | 'idle' | 'stopped'
+
+export interface JobRunnerDeps {
+  store: JobStore
+  now?: () => number
+  /** Room for one more running session (StartWorker.hasRoom; may stop a quiet one to make it). */
+  hasRoom(): boolean
+  /** queued: not started yet (no ledger entry); working: mid-turn; idle: runs, waiting for input; stopped. */
+  sessionState(sessionId: string): RunSessionState
+  /** It runs now: a message reaches it without starting anything. */
+  sessionRuns(sessionId: string): boolean
+  /** The status it gave at or after `since`, if any. */
+  statusSince(sessionId: string, since: string): WorkerStatus | null
+  /** A message for a session; resumes a stopped one (application/deliver-message.ts). */
+  deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
+  /** Queue a worker under `sessionId` with the text as its first prompt; returns why it could not, or null. */
+  startWorker(job: Job, sessionId: string, text: string): string | null
+  /** Someone has to hear of this: the job could not run. */
+  alert(job: Job, text: string): void
+  log(line: string): void
+  /** Fallback zone for a job without a schedule. */
+  timeZone(): string
+}
+
+const TICK_MS = 30_000
+// A run's session that has stopped working this long without a status is finished all the same.
+const SETTLE_MS = 90_000
+// A queued worker that has not started in this time never will (the spawn queue drops it after a day).
+const QUEUED_LIMIT_MS = 24 * 60 * 60_000
+
+export class JobRunner {
+  private timer: NodeJS.Timeout | null = null
+  private running: Promise<void> | null = null
+  private readonly now: () => number
+
+  constructor(private deps: JobRunnerDeps) {
+    this.now = deps.now ?? Date.now
+  }
+
+  start(): void {
+    this.recover()
+    this.timer = setInterval(() => void this.tick(), TICK_MS)
+    this.timer.unref()
+    void this.tick()
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  /** One pass; a pass already under way is joined, not doubled. */
+  tick(): Promise<void> {
+    if (!this.running) this.running = this.pass().finally(() => { this.running = null })
+    return this.running
+  }
+
+  /** Runs a restart cut off while starting: one more try each. */
+  recover(): void {
+    for (const run of this.deps.store.allRuns()) {
+      if (run.status !== 'starting') continue
+      // The worker got far enough to exist: it has the prompt.
+      if (run.sessionId && this.deps.sessionState(run.sessionId) !== 'queued' && this.isWorkerRun(run)) {
+        this.update(run, { status: 'started', startedAt: run.startedAt ?? new Date(this.now()).toISOString() })
+        continue
+      }
+      if (run.attempts >= 2) this.failRun(run, 'cut off by a cockpit restart while starting')
+      else this.update(run, { status: 'waiting', nextAttemptAt: new Date(this.now()).toISOString(), note: 'retried after a cockpit restart' })
+    }
+  }
+
+  /** A run started by hand (run_now), due at once. Null when the previous run is still open. */
+  runNow(job: Job): JobRun | null {
+    if (this.deps.store.runs(job.id).some(isOpenRun)) return null
+    const run = this.addRun(job, 'manual', this.now())
+    void this.tick()
+    return run
+  }
+
+  private isWorkerRun(run: JobRun): boolean {
+    const job = this.deps.store.get(run.jobId)
+    return !!job && (job.target.type === 'worker' || (job.target.type === 'job-session' && job.target.sessionId === run.sessionId))
+  }
+
+  private async pass(): Promise<void> {
+    const now = this.now()
+    for (const job of this.deps.store.list()) {
+      for (const run of this.deps.store.runs(job.id)) if (run.status === 'started') this.settle(job, run, now)
+      const fresh = this.deps.store.get(job.id)
+      if (fresh && !fresh.paused && !fresh.endedAt) this.schedule(fresh, now)
+    }
+    let started = 0
+    const waiting = this.deps.store.allRuns()
+      .filter((run) => run.status === 'waiting' && Date.parse(run.nextAttemptAt ?? run.dueAt) <= now)
+      .sort((a, b) => (a.nextAttemptAt ?? a.dueAt).localeCompare(b.nextAttemptAt ?? b.dueAt))
+    for (const run of waiting) {
+      if (started >= JOB_LIMITS.startsPerTick) break
+      const job = this.deps.store.get(run.jobId)
+      if (!job) continue
+      if (await this.attempt(job, run)) started += 1
+    }
+    for (const job of this.deps.store.list()) this.endIfDone(job)
+  }
+
+  /** The run's session answered, or stopped working without a word. */
+  private settle(job: Job, run: JobRun, now: number): void {
+    if (!run.sessionId || !run.startedAt) return
+    const status = this.deps.statusSince(run.sessionId, run.startedAt)
+    const state = this.deps.sessionState(run.sessionId)
+    if (!status) {
+      if (state === 'queued' && now - Date.parse(run.startedAt) > QUEUED_LIMIT_MS) this.failRun(run, 'the worker never started')
+      if (state === 'working' || state === 'queued' || now - Date.parse(run.startedAt) < SETTLE_MS) return
+    }
+    this.update(run, { status: 'finished', outcome: status, finishedAt: new Date(now).toISOString() })
+    const fresh = this.deps.store.get(job.id)
+    if (!fresh) return
+    // Its session shows the failure itself; the count may still pause the job.
+    if (status === 'failed') this.countFailure(fresh, `run ${run.number} ended as failed`, false)
+    else if (fresh.failures) this.deps.store.put({ ...fresh, failures: 0 })
+  }
+
+  /** A schedule that is due becomes a run, is skipped, or was missed. */
+  private schedule(job: Job, now: number): void {
+    if (!job.nextRunAt || Date.parse(job.nextRunAt) > now) return
+    const due = Date.parse(job.nextRunAt)
+    const late = now - due
+    const open = this.deps.store.runs(job.id).some(isOpenRun)
+    // The next time first: a run is never made twice for the same due time.
+    const advanced: Job = { ...job, nextRunAt: null }
+    if (repeats(job) && late > JOB_LIMITS.lateLimitMs) {
+      this.putNext(advanced, now)
+      this.record(job, due, 'missed', `due ${formatDuration(late)} ago while the cockpit was not running`)
+      this.deps.log(`[jobs] ${job.name}: missed a run due ${new Date(due).toISOString()}`)
+      return
+    }
+    if (open) {
+      this.putNext(advanced, now)
+      this.record(job, due, 'skipped', 'the previous run was still going')
+      return
+    }
+    const run = this.addRun({ ...job }, 'schedule', due)
+    const counted = this.deps.store.get(job.id)
+    if (counted) this.putNext({ ...counted, nextRunAt: null }, Math.max(now, due))
+    this.deps.log(`[jobs] ${job.name}: run ${run.number} is due`)
+  }
+
+  private putNext(job: Job, after: number): void {
+    const next = nextDue(job, after)
+    this.deps.store.put({ ...job, nextRunAt: next === null ? null : new Date(next).toISOString(), updatedAt: new Date(this.now()).toISOString() })
+  }
+
+  private addRun(job: Job, trigger: JobRun['trigger'], due: number): JobRun {
+    const fresh = this.deps.store.get(job.id) ?? job
+    const run: JobRun = {
+      id: randomUUID(), jobId: job.id, trigger, number: fresh.runCount + 1,
+      dueAt: new Date(due).toISOString(), createdAt: new Date(this.now()).toISOString(),
+      status: 'waiting', attempts: 0, nextAttemptAt: null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: null,
+    }
+    this.deps.store.put({ ...fresh, runCount: fresh.runCount + 1 })
+    this.deps.store.addRun(run)
+    return run
+  }
+
+  /** A run that never ran: missed or skipped, kept in the history. */
+  private record(job: Job, due: number, status: 'missed' | 'skipped', note: string): void {
+    const at = new Date(this.now()).toISOString()
+    this.deps.store.addRun({
+      id: randomUUID(), jobId: job.id, trigger: 'schedule', number: 0, dueAt: new Date(due).toISOString(), createdAt: at,
+      status, attempts: 0, nextAttemptAt: null, sessionId: null, startedAt: null, finishedAt: at, outcome: null, note,
+    })
+  }
+
+  /** Try to start one waiting run; true when it started. */
+  private async attempt(job: Job, run: JobRun): Promise<boolean> {
+    const now = this.now()
+    if (now - Date.parse(run.dueAt) > JOB_LIMITS.retryWindowMs && run.attempts > 0) {
+      this.failRun(run, `could not start within ${formatDuration(JOB_LIMITS.retryWindowMs)}: ${run.note ?? 'no room'}`)
+      return false
+    }
+    const text = `${runHeader(job, run, now, jobTimeZone(job, this.deps.timeZone()))}\n\n${job.prompt}`
+    const target = job.target
+    const existing = target.type === 'session' ? target.sessionId : target.type === 'job-session' ? target.sessionId : null
+    const known = existing !== null && this.deps.sessionState(existing) !== 'queued'
+
+    if (target.type === 'session' && !known) {
+      this.failRun(run, 'its session no longer exists')
+      return false
+    }
+    if (!(known && this.deps.sessionRuns(existing)) && !this.deps.hasRoom()) {
+      this.retry(run, 'no room: too little free memory, or the running cap with every session busy')
+      return false
+    }
+
+    if (!known) {
+      // A fresh worker: for every run, or the first of a job session.
+      const sessionId = randomUUID()
+      this.update(run, { status: 'starting', attempts: run.attempts + 1, sessionId })
+      // Named before the start: a restart in between finds the session it belongs to (recover).
+      if (target.type === 'job-session') this.setJobSession(job.id, sessionId)
+      const problem = this.deps.startWorker(job, sessionId, text)
+      if (problem) {
+        if (target.type === 'job-session') this.setJobSession(job.id, null)
+        this.failRun(this.current(run), `the worker could not start: ${problem}`)
+        return false
+      }
+      this.update(this.current(run), { status: 'started', startedAt: new Date(this.now()).toISOString(), note: null })
+      this.deps.log(`[jobs] ${job.name}: run ${run.number} started worker ${sessionId}`)
+      return true
+    }
+
+    this.update(run, { status: 'starting', attempts: run.attempts + 1, sessionId: existing })
+    const outcome = await this.deps.deliver(existing, text)
+    const current = this.current(run)
+    if (outcome === 'delivered' || outcome === 'resumed') {
+      this.update(current, { status: 'started', startedAt: new Date(this.now()).toISOString(), note: null })
+      this.deps.log(`[jobs] ${job.name}: run ${run.number} ${outcome} to ${existing}`)
+      return true
+    }
+    if (outcome === 'busy' || outcome === 'running') {
+      this.retry(current, 'its session was busy (running in a terminal, or switching)', true)
+      return false
+    }
+    this.failRun(current, outcome === 'unknown' ? 'its session no longer exists' : 'its session cannot take messages (it does not run in the chat view)')
+    return false
+  }
+
+  private setJobSession(jobId: string, sessionId: string | null): void {
+    const job = this.deps.store.get(jobId)
+    if (job?.target.type === 'job-session') this.deps.store.put({ ...job, target: { ...job.target, sessionId } })
+  }
+
+  private current(run: JobRun): JobRun {
+    return this.deps.store.runs(run.jobId).find((r) => r.id === run.id) ?? run
+  }
+
+  private update(run: JobRun, patch: Partial<JobRun>): void {
+    this.deps.store.updateRun({ ...this.current(run), ...patch })
+  }
+
+  /** `counted`: this attempt is already in run.attempts (it got as far as 'starting'). */
+  private retry(run: JobRun, why: string, counted = false): void {
+    const attempts = counted ? run.attempts : run.attempts + 1
+    this.update(run, { status: 'waiting', attempts, note: why, nextAttemptAt: new Date(this.now() + retryDelay(attempts)).toISOString() })
+  }
+
+  private failRun(run: JobRun, why: string): void {
+    this.update(run, { status: 'failed', note: why, finishedAt: new Date(this.now()).toISOString() })
+    const job = this.deps.store.get(run.jobId)
+    this.deps.log(`[jobs] ${job?.name ?? run.jobId}: run ${run.number} failed: ${why}`)
+    if (job) this.countFailure(job, `run ${run.number} failed: ${why}`)
+  }
+
+  private countFailure(job: Job, why: string, tell = true): void {
+    const failures = job.failures + 1
+    if (failures >= JOB_LIMITS.failuresToPause && !job.paused) {
+      const reason = `${failures} failed runs in a row; last: ${why}`
+      this.deps.store.put({ ...job, failures, paused: true, pausedReason: reason, updatedAt: new Date(this.now()).toISOString() })
+      this.deps.alert(job, `Job "${job.name}" paused itself after ${reason}. Resume it with the schedule tool once fixed.`)
+      return
+    }
+    this.deps.store.put({ ...job, failures })
+    if (tell && job.notify !== 'never') this.deps.alert(job, `Job "${job.name}": ${why}`)
+  }
+
+  /** A job with nothing left to wake it ends once its last run is over. */
+  private endIfDone(job: Job): void {
+    if (job.endedAt || job.nextRunAt || !onlyScheduled(job)) return
+    if (this.deps.store.runs(job.id).some(isOpenRun)) return
+    this.deps.store.put({ ...job, endedAt: new Date(this.now()).toISOString() })
+    this.deps.log(`[jobs] ${job.name}: ended`)
+  }
+}

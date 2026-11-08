@@ -226,6 +226,16 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
   pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
+- **Jobs:** a session schedules work for later with the `schedule` tool (in the chat view's `cockpit` MCP server, next to
+  the status tool) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`): a repeating job (cron) or a one-time task (a date), read
+  in the user's time zone (the page tells the host its browser's zone). At the time the host wakes a fresh worker, the
+  job's own session, or a session that exists, with the job's prompt behind a line saying the cockpit sent it
+  (`domain/job.ts`, `application/job-runner.ts`). Jobs and their last 100 runs live in `<home>/jobs.json`, not in the
+  brain; a job runs in its maker's space with at most its maker's tools. Runs start a few at a time and only with room
+  (the worker check above); a busy target is tried again for up to an hour; a repeating run due more than 6 hours ago
+  (the cockpit was down) is recorded as missed, a one-time run still runs late; a run is skipped while the job's
+  previous one still works; three failures in a row pause the job and mark its maker "Needs you". A schedule is one
+  trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs later.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.

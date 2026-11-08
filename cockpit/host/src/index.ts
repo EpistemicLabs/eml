@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SCHEDULE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig } from './config.js'
@@ -43,6 +43,10 @@ import { runRemoteCommand } from './remote.js'
 import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
+import { JobStore } from './job-store.js'
+import { JobRunner } from './application/job-runner.js'
+import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
+import { resolveProject } from './spawn-api.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -183,6 +187,8 @@ async function main() {
     COCKPIT_MESSAGE_JS: SESSION_MESSAGE_CLI_JS,
     // Find a session by what the user calls it (session-directory-cli.ts).
     COCKPIT_SESSIONS_JS: SESSION_DIRECTORY_CLI_JS,
+    // The schedule tool for sessions without it (schedule-cli.ts, skill schedule).
+    COCKPIT_SCHEDULE_JS: SCHEDULE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,
@@ -208,7 +214,7 @@ async function main() {
     },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -233,6 +239,13 @@ async function main() {
       return { session: sessionLimits(settings), idleMs: idleMs(settings) }
     },
     overCap: (): boolean => cap() > 0 && running() > cap(),
+    // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
+    jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
+      const caller = jobCaller(sessionId)
+      if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
+      const answer: JobAnswer = await jobs.handle(caller, input)
+      return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
+    },
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -255,6 +268,55 @@ async function main() {
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
   })
+  // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
+  const jobStore = new JobStore()
+  const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  const jobCaller = (sessionId: string): JobCaller | null => {
+    const entry = ledger.get(sessionId)
+    return entry ? { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile } : null
+  }
+  const jobRunner = new JobRunner({
+    store: jobStore, log, timeZone: userTimeZone,
+    hasRoom: (): boolean => startWorker.hasRoom(),
+    sessionRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
+    sessionState: (sessionId) => {
+      if (!ledger.has(sessionId)) return 'queued'
+      if (turns.get(sessionId)?.state === 'working') return 'working'
+      return chat.isRunning(sessionId) || bridge.isRunning(sessionId) ? 'idle' : 'stopped'
+    },
+    statusSince: (sessionId, since) => {
+      const entry = ledger.get(sessionId)
+      const said = [entry?.attention, entry?.lastStatus].find((status) => status && status.at >= since)
+      return said?.kind ?? null
+    },
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    startWorker: (job, sessionId, text) => {
+      if (job.target.type === 'session') return 'not a worker job'
+      const parent = job.createdBy && ledger.has(job.createdBy) ? job.createdBy : null
+      spawns.add({
+        id: sessionId, projectId: job.target.projectId, prompt: text, title: job.name, fromSessionId: parent, origin: 'job',
+        ...(job.target.provider ? { provider: job.target.provider } : {}),
+        ...(job.toolProfile ? { toolProfile: job.toolProfile } : {}),
+        ...(job.spaceId ? { spaceId: job.spaceId } : {}),
+      })
+      return null
+    },
+    // Whoever made the job hears of it in the sidebar, as "Needs you".
+    alert: (job, text) => {
+      log(`[jobs] ${text}`)
+      if (job.notify === 'never' || !job.createdBy || !ledger.has(job.createdBy)) return
+      ledger.setAttention(job.createdBy, { kind: 'failed', reason: text.slice(0, 300) })
+      turns.apply({ sessionId: job.createdBy, state: 'waiting' })
+    },
+  })
+  const jobs = new Jobs({
+    store: jobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
+    resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
+    findSession: (spaceId, target) => ledger.list(undefined, spaceId)
+      .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
+    addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
+    providerKnown: (id) => providers.get(id) !== undefined,
+  })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -262,7 +324,7 @@ async function main() {
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller } },
     origins,
   )
 
@@ -303,6 +365,7 @@ async function main() {
     },
   })
   workers.start()
+  jobRunner.start()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -316,6 +379,7 @@ async function main() {
   const shutdown = shutDownOnSignal({
     stop: () => {
       workers.stop()
+      jobRunner.stop()
       try { bridge.dispose() } catch { /* best-effort */ }
       try { host.close() } catch { /* best-effort */ }
     },
