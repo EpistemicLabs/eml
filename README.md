@@ -38,6 +38,7 @@ installer from [INSTALL.md](INSTALL.md) instead. Details, updates and the develo
 | `packages/core` | The engram store: SQLite schema and migrations, typed validation, the graph, recall, boot. |
 | `packages/server` | The HTTP API over core, one SQLite file per brain, with token routing. |
 | `packages/mcp-server` | `@engramprotocol/mcp-server`: the brain as MCP tools for Claude Code, plus the session hooks and skills. |
+| `packages/channel-bridge` | The channel bridge: routes incoming mail to cockpit jobs, holds a job's replies as drafts and wakes its session ([README](packages/channel-bridge/README.md)). No channel plug-in ships yet. |
 
 ## Development
 

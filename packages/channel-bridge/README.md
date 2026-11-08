@@ -16,14 +16,18 @@ src/domain/        rules with no imports from outside: routing, send policy, out
 src/ports/         what the use cases need: channel accounts, stores, the job directory, the cockpit, clock, ids
 src/application/   use cases, one per file: sync a channel, dispatch wakes, request a send, approve or skip a draft
 src/adapters/      sqlite/ (the bridge's database), cockpit-http/ (the cockpit's /v1 job routes and wakes),
-                   memory/ (fakes for tests), fake-channel/ (scripted accounts)
+                   bridge-http/ (the job tools' side of the bridge API), memory/ (fakes for tests),
+                   fake-channel/ (scripted accounts)
 src/entrypoints/   main (the bridge process), bridge-api (its loopback /v1 API), bridge-loop (sync and wake
                    rounds), mcp-server and job-tools (msg_read and msg_reply for a job's session): wiring only
 ```
 
 ## Running
 
-The cockpit starts the bridge and the job tools; both refuse to start without their settings.
+No channel plug-in ships yet, and the cockpit does not start the bridge yet: for now `node
+dist/entrypoints/main.js` runs it and `node dist/entrypoints/mcp-server.js` serves one job's
+tools. Both refuse to start without their settings; the bridge also needs a non-empty token for
+at least one space.
 
 | Variable | Used by | Meaning |
 | --- | --- | --- |
@@ -39,12 +43,36 @@ The cockpit starts the bridge and the job tools; both refuse to start without th
 
 | Route | Token | Answer |
 | --- | --- | --- |
-| `POST /v1/jobs/<jobId>/messages/read` | tool | the job's unread messages, each once |
+| `POST /v1/jobs/<jobId>/messages/read` `{ ack }` | tool | the job's messages it has not confirmed; `ack` lists the ids of the last read to confirm them |
 | `POST /v1/jobs/<jobId>/messages/<messageId>/reply` `{ text }` | tool | `drafted`, `sent`, `failed` or `refused` |
 | `POST /v1/outbox/<id>/approve` | cockpit | sends a draft; `sent`, `failed` or `refused` |
 | `POST /v1/outbox/<id>/skip` | cockpit | drops a draft; `skipped` or `refused` |
 
-A refusal carries `reason` and `retryable`; 4xx means a retry cannot help, 5xx that it may.
+A refusal carries `reason` and `retryable`; 4xx means a retry cannot help, 5xx that it may
+(`unavailable` when the cockpit cannot answer, `failed` with `retryable` for a channel that may take
+it later). Approving or skipping again answers with the outcome and does nothing twice.
+
+## The cockpit routes the bridge calls (contract v1)
+
+The cockpit owns this contract (`cockpit/host/src/domain/job-contract.ts`); both sides test
+against the same examples in `tests/fixtures/job-contract.v1.json`. Every request carries
+`Authorization: Bearer <token>` with the token of one space, and reaches only that space's jobs.
+
+| Route | Answer |
+| --- | --- |
+| `GET /v1/jobs?space=<space>&channel=mail` | the space's open jobs with a mail trigger: `[{ jobId, space, matches, reply }]` |
+| `POST /v1/jobs/<jobId>/wake` `{ text, idempotencyKey }` | `{ outcome: 'delivered' \| 'retry' \| 'refused' }` |
+
+The bridge reads routes tolerantly: a match kind or reply mode it does not know is left out or
+counts as draft, a route it cannot read is skipped. A wake's text names counts only. The same
+`idempotencyKey` twice is one wake. A 4xx other than 408 and 429 refuses a wake; 408, 429, 5xx, an
+unreadable answer or an unreachable cockpit retry it.
+
+## Data kept
+
+The bridge's database holds incoming messages (sender, subject, text), outgoing drafts and sends,
+sync cursors and open wakes. Nothing is deleted yet; how long messages and drafts are kept is still
+to be decided.
 
 ## Rules the code holds
 
