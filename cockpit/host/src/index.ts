@@ -50,6 +50,7 @@ import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens } from './job-contract-api.js'
 import { isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
+import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
 import { createCodexProvider } from './infrastructure/providers/codex/index.js'
 import { NotificationFeed, type Notifier } from './notifications.js'
@@ -356,6 +357,7 @@ async function main() {
           return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk' } : null
         },
       },
+      channelBridge: bridgeFiles(),
       jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
     },
     origins,

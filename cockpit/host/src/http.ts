@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
+import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
@@ -110,6 +111,8 @@ export interface HostDeps {
   jobs?: JobsApiDeps
   /** The channel bridge's /v1 routes (job-contract-api.ts). */
   jobContract?: JobContractDeps
+  /** The channel bridge's draft routes for the page; absent, /api/bridge is not served. */
+  channelBridge?: BridgeApiDeps
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -283,6 +286,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     isPinned: entry.pinned,
     paneId: entry.paneId,
     taskId: entry.taskId,
+    jobId: entry.jobId ?? null,
     state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
     runtime: entry.runtime,
     attention: entry.attention,
@@ -1111,6 +1115,11 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // The channel bridge, with a space's token (job-contract-api.ts); no page calls these.
     if (url.startsWith('/v1/') && deps.jobContract) {
       void handleJobContract(req, res, deps.jobContract, json, readJson).catch((err) => fail(res, err))
+      return
+    }
+    // A job's drafts in the channel bridge, for the review card (channel-bridge-api.ts).
+    if (/^\/api\/bridge(\/|\?|$)/.test(url) && deps.channelBridge) {
+      void handleBridgeApi(req, res, deps.channelBridge).catch((err) => fail(res, err))
       return
     }
     // Only /api/brain and /api/brain/… — not host routes like /api/brain-info.
