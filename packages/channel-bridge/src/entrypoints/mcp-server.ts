@@ -56,6 +56,25 @@ export function createJobToolsServer(env: NodeJS.ProcessEnv): McpServer {
     },
     async (args) => ({ content: [{ type: 'text', text: await tools.reply(args.message_id, args.text) }] }),
   )
+  server.registerTool(
+    'msg_new',
+    {
+      title: 'Write a new mail',
+      description:
+        'Writes a new mail, not an answer: from the mail account of this job, to one of the people ' +
+        'this job is for (an address or domain it watches, or someone who wrote to it). Use msg_reply ' +
+        'to answer a message instead. Depending on the job, it is sent at once or saved as a draft that ' +
+        'waits for your user; the answer says which. Writing the same mail again sends nothing new.',
+      inputSchema: z
+        .object({
+          to: z.string().min(3).describe('The recipient\'s mail address.'),
+          subject: z.string().min(1).describe('The subject line.'),
+          text: z.string().min(1).describe('The full text of the mail.'),
+        })
+        .strict(),
+    },
+    async (args) => ({ content: [{ type: 'text', text: await tools.newMail(args.to, args.subject, args.text) }] }),
+  )
   return server
 }
 

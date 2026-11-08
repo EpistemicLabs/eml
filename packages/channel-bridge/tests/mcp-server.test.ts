@@ -27,9 +27,9 @@ afterAll(async () => {
 })
 
 describe('job tools MCP server', () => {
-  it('offers exactly msg_read and msg_reply', async () => {
+  it('offers exactly msg_read, msg_reply and msg_new', async () => {
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['msg_read', 'msg_reply'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['msg_new', 'msg_read', 'msg_reply'])
   })
 
   it('answers a tool call with text, also when the bridge is away', async () => {

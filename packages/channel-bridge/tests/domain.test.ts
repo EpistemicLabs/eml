@@ -4,7 +4,7 @@ import { routeMessage } from '../src/domain/routing'
 import type { JobRoute } from '../src/domain/routing'
 import type { InboundMessage } from '../src/domain/inbound-message'
 import { decideSend } from '../src/domain/send-policy'
-import { replySubject, replyKey } from '../src/domain/reply'
+import { replySubject, replyKey, newMailKey } from '../src/domain/reply'
 import { approveDraft, skipDraft, markSent, markFailed, editDraft } from '../src/domain/outbox'
 import type { OutboxItem } from '../src/domain/outbox'
 import { addToWake, wakeDueAt, afterFailedDelivery, describeWake, MAX_DELIVERY_ATTEMPTS } from '../src/domain/wake'
@@ -245,5 +245,13 @@ describe('reply', () => {
     expect(replyKey('msg-1', 'Thanks')).toBe(replyKey('msg-1', 'Thanks'))
     expect(replyKey('msg-1', 'Thanks')).not.toBe(replyKey('msg-1', 'Thanks!'))
     expect(replyKey('msg-1', 'Thanks')).not.toBe(replyKey('msg-2', 'Thanks'))
+  })
+})
+
+describe('newMailKey', () => {
+  it('names a new mail by its recipient, subject and text', () => {
+    expect(newMailKey('a@b.example', 'Hi', 'Text')).toBe(newMailKey('A@B.example', 'Hi', 'Text'))
+    expect(newMailKey('a@b.example', 'Hi', 'Text')).not.toBe(newMailKey('a@b.example', 'Hi', 'Other'))
+    expect(newMailKey('a@b.example', 'Hi', 'Text')).not.toBe(newMailKey('c@b.example', 'Hi', 'Text'))
   })
 })

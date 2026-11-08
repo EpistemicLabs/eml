@@ -6,6 +6,7 @@ import { approveOutboxDraft } from '../src/application/approve-outbox-draft'
 import { skipOutboxDraft } from '../src/application/skip-outbox-draft'
 import { readJobMessages } from '../src/application/read-job-messages'
 import { replyToMessage } from '../src/application/reply-to-message'
+import { startConversation } from '../src/application/start-conversation'
 import { listJobDrafts } from '../src/application/list-job-drafts'
 import { editOutboxDraft } from '../src/application/edit-outbox-draft'
 import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
@@ -437,6 +438,47 @@ describe('reading and replying', () => {
     expect(inbox).toBe(1)
     expect(await replyToMessage(w, { jobId: 'job-customer', messageId: 'msg-2', text: 'Hi' })).toEqual({
       kind: 'refused', reason: 'unknown_message', retryable: false,
+    })
+  })
+})
+
+describe('starting a conversation', () => {
+  let w: ReturnType<typeof world>
+  beforeEach(async () => {
+    w = world()
+    await syncChannel(w, { account: w.channel })
+  })
+
+  it('drafts a new mail to a contact of the job, from the mailbox of its space', async () => {
+    expect(await startConversation(w, { jobId: 'job-customer', to: 'team@customer.example', subject: 'Status?', text: 'Any news?' })).toEqual({
+      kind: 'drafted', outboxId: 'out-1',
+    })
+    expect(await w.outbox.get('out-1')).toMatchObject({
+      accountId: 'acc-1', to: 'team@customer.example', threadKey: null, subject: 'Status?', replyToMessageId: null, state: 'draft',
+    })
+    expect(w.channel.sent).toEqual([])
+  })
+
+  it('asking twice with the same mail is one draft', async () => {
+    const mail = { jobId: 'job-customer', to: 'team@customer.example', subject: 'Status?', text: 'Any news?' }
+    await startConversation(w, mail)
+    expect(await startConversation(w, mail)).toEqual({ kind: 'drafted', outboxId: 'out-1' })
+  })
+
+  it('refuses a recipient outside the job, and a space without a mailbox', async () => {
+    expect(await startConversation(w, { jobId: 'job-customer', to: 'x@elsewhere.example', subject: 's', text: 't' })).toEqual({
+      kind: 'refused', reason: 'not_job_contact', retryable: false,
+    })
+    w.jobs.set([{ ...customerJob, space: 'errands' }])
+    expect(await startConversation(w, { jobId: 'job-customer', to: 'team@customer.example', subject: 's', text: 't' })).toEqual({
+      kind: 'refused', reason: 'no_account', retryable: false,
+    })
+  })
+
+  it('refuses when the space has several mailboxes, since the job cannot say which', async () => {
+    const two = { ...w, channels: new ScriptedChannels([w.channel, new ScriptedChannel('acc-2', 'support')]) }
+    expect(await startConversation(two, { jobId: 'job-customer', to: 'team@customer.example', subject: 's', text: 't' })).toEqual({
+      kind: 'refused', reason: 'several_accounts', retryable: false,
     })
   })
 })

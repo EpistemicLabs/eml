@@ -78,6 +78,13 @@ describe('job tools', () => {
     expect(await away.reply('msg-1', 'Hi')).toMatch(/cannot reach the bridge/i)
   })
 
+  it('msg_new drafts a new mail and says that it waits for approval', async () => {
+    const answer = await tools.newMail('team@customer.example', 'Status?', 'Any news?')
+    expect(answer).toMatch(/draft/i)
+    expect(answer).toMatch(/not been sent/i)
+    expect(await tools.newMail('x@elsewhere.example', 's', 't')).toMatch(/not_job_contact/)
+  })
+
   it('msg_reply explains a refusal', async () => {
     expect(await tools.reply('msg-99', 'Hi')).toMatch(/unknown_message/)
   })

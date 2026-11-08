@@ -66,4 +66,8 @@ export class ScriptedChannels implements ChannelAccounts {
   account(accountId: string): ChannelAccount | null {
     return this.accounts.find((account) => account.accountId === accountId) ?? null
   }
+
+  inSpace(space: string): ChannelAccount[] {
+    return this.accounts.filter((account) => account.space === space)
+  }
 }

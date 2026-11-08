@@ -78,6 +78,15 @@ describe('bridge API: job tools', () => {
     })
   })
 
+  it('drafts a new mail to a contact of the job', async () => {
+    expect(await post('/v1/jobs/job-1/messages/new', TOOL, { to: 'team@customer.example', subject: 'Status?', text: 'Any news?' })).toEqual({
+      status: 200, body: { kind: 'drafted', outboxId: 'out-1' },
+    })
+    expect(await post('/v1/jobs/job-1/messages/new', TOOL, { to: 'x@elsewhere.example', subject: 's', text: 't' })).toMatchObject({ status: 403 })
+    expect(await post('/v1/jobs/job-1/messages/new', TOOL, { to: 'team@customer.example', text: 't' })).toMatchObject({ status: 400 })
+    expect((await post('/v1/jobs/job-1/messages/new', COCKPIT, { to: 'team@customer.example', subject: 's', text: 't' })).status).toBe(401)
+  })
+
   it('rejects a body that does not fit', async () => {
     expect(await post('/v1/jobs/job-1/messages/msg-1/reply', TOOL, { text: '' })).toMatchObject({
       status: 400, body: { reason: 'invalid_request', retryable: false },

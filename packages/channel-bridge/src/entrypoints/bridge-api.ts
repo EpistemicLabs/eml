@@ -4,6 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { z } from 'zod'
 import { readJobMessages } from '../application/read-job-messages'
 import { replyToMessage } from '../application/reply-to-message'
+import { startConversation } from '../application/start-conversation'
 import { approveOutboxDraft } from '../application/approve-outbox-draft'
 import { skipOutboxDraft } from '../application/skip-outbox-draft'
 import { listJobDrafts } from '../application/list-job-drafts'
@@ -25,6 +26,7 @@ export interface BridgeApiOptions {
 
 const MAX_BODY_BYTES = 1_000_000
 const replyBodySchema = z.object({ text: z.string().min(1).max(100_000) })
+const newMailBodySchema = z.object({ to: z.string().min(3).max(320), subject: z.string().min(1).max(500), text: z.string().min(1).max(100_000) })
 const readBodySchema = z.object({ ack: z.array(z.string()).max(1_000).default([]) })
 
 type Result = { kind: string; reason?: string; retryable?: boolean }
@@ -62,9 +64,10 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
 
   const read = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/read$/)
   const reply = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/([^/]+)\/reply$/)
+  const newMail = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/new$/)
   const decide = path.match(/^\/v1\/outbox\/([^/]+)\/(approve|skip|edit)$/)
 
-  if (read?.[1] || reply?.[1]) {
+  if (read?.[1] || reply?.[1] || newMail?.[1]) {
     if (!authorized(req, options.toolToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
   } else if (decide?.[1]) {
     if (!authorized(req, options.cockpitToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
@@ -81,6 +84,15 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
     const jobId = decodeURIComponent(read[1])
     const result = await readJobMessages(deps, { jobId, ack: parsed.data.ack })
     options.log('job.read', { jobId, outcome: result.kind, count: result.kind === 'messages' ? result.messages.length : 0 })
+    return send(res, statusOf(result), result)
+  }
+
+  if (newMail?.[1]) {
+    const parsed = newMailBodySchema.safeParse(body)
+    if (!parsed.success) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
+    const jobId = decodeURIComponent(newMail[1])
+    const result = await startConversation(deps, { jobId, ...parsed.data })
+    options.log('job.new', { jobId, outcome: result.kind, length: parsed.data.text.length })
     return send(res, statusOf(result), result)
   }
 

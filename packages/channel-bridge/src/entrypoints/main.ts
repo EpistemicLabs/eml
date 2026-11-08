@@ -35,7 +35,10 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
   mkdirSync(home, { recursive: true, mode: 0o700 })
   const db = openBridgeDatabase(join(home, 'bridge.db'))
   const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces })
-  const channels: ChannelAccounts = { account: (id) => accounts.find((account) => account.accountId === id) ?? null }
+  const channels: ChannelAccounts = {
+    account: (id) => accounts.find((account) => account.accountId === id) ?? null,
+    inSpace: (space) => accounts.filter((account) => account.space === space),
+  }
   const log: Log = (event, fields) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`)
   const deps = {
     store: new SqliteMessageStore(db),

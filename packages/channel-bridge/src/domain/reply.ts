@@ -1,3 +1,5 @@
+import { normalizeMailAddress } from './address'
+
 /** The subject of a reply: the original's, with one Re: in front. */
 export function replySubject(subject: string | null): string | null {
   if (subject === null) return null
@@ -10,6 +12,11 @@ export function replySubject(subject: string | null): string | null {
  */
 export function replyKey(messageId: string, text: string): string {
   return `reply:${messageId}:${fnv1a(text)}`
+}
+
+/** The name of a new mail: the same text with the same subject to the same person is the same mail. */
+export function newMailKey(to: string, subject: string | null, text: string): string {
+  return `new:${fnv1a(`${normalizeMailAddress(to)}\n${subject ?? ''}\n${text}`)}`
 }
 
 function fnv1a(text: string): string {

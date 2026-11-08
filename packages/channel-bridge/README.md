@@ -20,7 +20,7 @@ src/adapters/      gmail/ (a mailbox through the Gmail API), sqlite/ (the bridge
                    bridge-http/ (the job tools' side of the bridge API), memory/ (fakes for tests),
                    fake-channel/ (scripted accounts)
 src/entrypoints/   main (the bridge process), bridge-api (its loopback /v1 API), bridge-loop (sync and wake
-                   rounds), mcp-server and job-tools (msg_read and msg_reply for a job's session): wiring only
+                   rounds), mcp-server and job-tools (msg_read, msg_reply and msg_new for a job's session): wiring only
 ```
 
 ## Running
@@ -68,6 +68,7 @@ until it is renewed.
 | --- | --- | --- |
 | `POST /v1/jobs/<jobId>/messages/read` `{ ack }` | tool | the job's messages it has not confirmed; `ack` lists the ids of the last read to confirm them |
 | `POST /v1/jobs/<jobId>/messages/<messageId>/reply` `{ text }` | tool | `drafted`, `sent`, `failed` or `refused` |
+| `POST /v1/jobs/<jobId>/messages/new` `{ to, subject, text }` | tool | a new mail from the space's mail account to a contact of the job; `drafted`, `sent`, `failed` or `refused` (`no_account`, `several_accounts` too) |
 | `GET /health` | none | `{ ok: true }` once the bridge listens |
 | `GET /v1/jobs/<jobId>/drafts` | cockpit | the job's drafts waiting for a person, each with the message it answers |
 | `POST /v1/outbox/<id>/edit` `{ text }` | cockpit | changes a draft's text; `edited` or `refused` |

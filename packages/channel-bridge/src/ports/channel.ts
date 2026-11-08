@@ -45,4 +45,6 @@ export interface ChannelAccount {
 
 export interface ChannelAccounts {
   account(accountId: string): ChannelAccount | null
+  /** The accounts of one space. */
+  inSpace(space: string): ChannelAccount[]
 }

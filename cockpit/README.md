@@ -241,7 +241,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   decides which session that reaches and answers delivered, retry or refused.
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
-  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read` and
+  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
   `msg_reply` (`dist/channel-bridge-mcp.cjs`), no Bash and of its space's MCP servers only the brain
   (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
   skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's

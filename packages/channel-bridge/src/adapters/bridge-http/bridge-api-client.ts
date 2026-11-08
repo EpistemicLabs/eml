@@ -40,6 +40,10 @@ export class BridgeApiClient {
     return this.call(`/messages/${encodeURIComponent(messageId)}/reply`, { text }, replyAnswerSchema)
   }
 
+  async newMail(to: string, subject: string, text: string): Promise<ReplyAnswer> {
+    return this.call('/messages/new', { to, subject, text }, replyAnswerSchema)
+  }
+
   private async call<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T | Unreachable> {
     try {
       const base = `${this.options.url()}/v1/jobs/${encodeURIComponent(this.options.jobId)}`
