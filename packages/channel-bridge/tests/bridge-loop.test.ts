@@ -40,6 +40,9 @@ describe('runBridgeTick', () => {
     await runBridgeTick(s.deps, options)
     expect(s.deps.cockpit.requests).toHaveLength(1)
     expect(s.logged).toContainEqual({ event: 'sync.failed', fields: { accountId: 'acc-broken' } })
+    s.good.unavailable('access_revoked', false)
+    await runBridgeTick(s.deps, options)
+    expect(s.logged).toContainEqual({ event: 'sync.unavailable', fields: { accountId: 'acc-good', reason: 'access_revoked' } })
     expect(JSON.stringify(s.logged)).not.toContain('anna@')
   })
 })
@@ -56,7 +59,7 @@ describe('startBridgeLoop', () => {
       channel: 'mail', accountId: 'acc-slow', space: 'support',
       sync: () => {
         syncs += 1
-        return new Promise((resolve) => { finish = () => resolve({ messages: [], cursor: '0' }) })
+        return new Promise((resolve) => { finish = () => resolve({ kind: 'synced', messages: [], cursor: '0', gap: false }) })
       },
       send: async () => ({ kind: 'failed', reason: 'down', retryable: true }),
     }

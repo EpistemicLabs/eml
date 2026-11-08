@@ -1,6 +1,6 @@
 import type { Channel } from '../../domain/address'
 import type { InboundMessage } from '../../domain/inbound-message'
-import type { ChannelAccount, ChannelAccounts, OutgoingMessage, SendOutcome, SyncResult } from '../../ports/channel'
+import type { ChannelAccount, ChannelAccounts, ChannelUnavailable, OutgoingMessage, SendOutcome, SyncResult } from '../../ports/channel'
 
 /**
  * A channel account that lives in memory: a test or a scripted conversation puts messages in,
@@ -12,6 +12,8 @@ export class ScriptedChannel implements ChannelAccount {
   readonly sent: OutgoingMessage[] = []
   private readonly history: InboundMessage[] = []
   private refuseWith: { reason: string; retryable: boolean } | null = null
+  private down: ChannelUnavailable | null = null
+  private historyLost = false
 
   constructor(
     readonly accountId: string,
@@ -30,9 +32,23 @@ export class ScriptedChannel implements ChannelAccount {
     this.refuseWith = null
   }
 
+  unavailable(reason: ChannelUnavailable['reason'], retryable: boolean): void {
+    this.down = { kind: 'unavailable', reason, retryable }
+  }
+
+  /** The next sync cannot go on from its cursor, as when a channel's history has expired. */
+  loseHistory(): void {
+    this.historyLost = true
+  }
+
   async sync(cursor: string | null): Promise<SyncResult> {
+    if (this.down) return this.down
+    if (this.historyLost) {
+      this.historyLost = false
+      return { kind: 'synced', messages: [], cursor: String(this.history.length), gap: true }
+    }
     const from = cursor === null ? this.history.length : Number(cursor)
-    return { messages: this.history.slice(from), cursor: String(this.history.length) }
+    return { kind: 'synced', messages: this.history.slice(from), cursor: String(this.history.length), gap: false }
   }
 
   async send(message: OutgoingMessage): Promise<SendOutcome> {

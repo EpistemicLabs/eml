@@ -14,11 +14,23 @@ export type SendOutcome =
   | { kind: 'sent'; channelMessageId: string }
   | { kind: 'failed'; reason: string; retryable: boolean }
 
-export interface SyncResult {
-  messages: InboundMessage[]
-  /** Where the next sync goes on from. */
-  cursor: string
+/** The channel cannot be read or written now; whether asking again can help. */
+export interface ChannelUnavailable {
+  kind: 'unavailable'
+  reason: 'access_revoked' | 'unreachable' | 'rate_limited' | 'bad_answer'
+  retryable: boolean
 }
+
+export type SyncResult =
+  | {
+      kind: 'synced'
+      messages: InboundMessage[]
+      /** Where the next sync goes on from. */
+      cursor: string
+      /** The channel could not go on from the cursor and started again from now; messages between may be missing. */
+      gap: boolean
+    }
+  | ChannelUnavailable
 
 /** One account on one channel: a mailbox, later a number or a workspace. */
 export interface ChannelAccount {

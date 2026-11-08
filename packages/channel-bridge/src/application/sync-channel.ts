@@ -1,5 +1,5 @@
 import { routeMessage } from '../domain/routing'
-import type { ChannelAccount } from '../ports/channel'
+import type { ChannelAccount, ChannelUnavailable } from '../ports/channel'
 import type { Clock } from '../ports/clock'
 import type { JobRoute } from '../domain/routing'
 import type { DirectoryUnavailable, JobDirectory } from '../ports/job-directory'
@@ -15,6 +15,8 @@ export interface SyncChannelDeps {
 
 export interface SyncSummary {
   kind: 'synced'
+  /** The channel started again from now; messages between may be missing. */
+  gap: boolean
   stored: number
   duplicates: number
   toJobs: number
@@ -33,10 +35,11 @@ export interface SyncSummary {
 export async function syncChannel(
   deps: SyncChannelDeps,
   input: { account: ChannelAccount },
-): Promise<SyncSummary | DirectoryUnavailable> {
+): Promise<SyncSummary | DirectoryUnavailable | ChannelUnavailable> {
   const { account } = input
-  const summary: SyncSummary = { kind: 'synced', stored: 0, duplicates: 0, toJobs: 0, toInbox: 0, ignored: 0 }
   const result = await account.sync(await deps.store.cursor(account.accountId))
+  if (result.kind === 'unavailable') return result
+  const summary: SyncSummary = { kind: 'synced', gap: result.gap, stored: 0, duplicates: 0, toJobs: 0, toInbox: 0, ignored: 0 }
   let routes: JobRoute[] = []
   if (result.messages.length > 0) {
     const answer = await deps.jobs.routesInSpace(account.space, account.channel)

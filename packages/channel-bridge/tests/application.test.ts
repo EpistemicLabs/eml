@@ -70,10 +70,10 @@ describe('syncChannel', () => {
   it('stores a matching message once and queues one wake for its job', async () => {
     w.channel.receive(mail())
     const first = await syncChannel(w, { account: w.channel })
-    expect(first).toEqual({ kind: 'synced', stored: 1, duplicates: 0, toJobs: 1, toInbox: 0, ignored: 0 })
+    expect(first).toEqual({ kind: 'synced', gap: false, stored: 1, duplicates: 0, toJobs: 1, toInbox: 0, ignored: 0 })
     await w.store.setCursor('acc-1', '0')
     const again = await syncChannel(w, { account: w.channel })
-    expect(again).toEqual({ kind: 'synced', stored: 0, duplicates: 1, toJobs: 0, toInbox: 0, ignored: 0 })
+    expect(again).toEqual({ kind: 'synced', gap: false, stored: 0, duplicates: 1, toJobs: 0, toInbox: 0, ignored: 0 })
     const pending = await w.wakes.pending()
     expect(pending).toHaveLength(1)
     expect(pending[0]?.wake.entries).toHaveLength(1)
@@ -119,6 +119,18 @@ describe('syncChannel', () => {
     await w.store.setCursor('acc-1', '0')
     await syncChannel(w, { account: w.channel })
     expect(await w.wakes.pending()).toEqual([])
+  })
+
+  it('stores nothing and keeps the cursor when the channel cannot be read', async () => {
+    w.channel.receive(mail())
+    w.channel.unavailable('access_revoked', false)
+    expect(await syncChannel(w, { account: w.channel })).toEqual({ kind: 'unavailable', reason: 'access_revoked', retryable: false })
+    expect(await w.store.cursor('acc-1')).toBe('0')
+  })
+
+  it('reports a gap when the channel could not go on from the cursor', async () => {
+    w.channel.loseHistory()
+    expect(await syncChannel(w, { account: w.channel })).toMatchObject({ kind: 'synced', gap: true })
   })
 
   it('sees only the jobs of the account\'s own space', async () => {
