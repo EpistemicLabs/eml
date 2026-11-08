@@ -83,6 +83,8 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
   const state = job.endedAt ? 'Ended' : job.paused ? 'Paused' : null;
   const channels = (['mail', 'slack', 'whatsapp'] as const).filter((channel) => job.triggers.some((t) => t.type === channel));
   const [confirmSend, setConfirmSend] = useState<typeof channels[number] | null>(null);
+  const [confirmFree, setConfirmFree] = useState(false);
+  const grants = (job.grants ?? []).filter((grant) => Date.parse(grant.until) > Date.now());
 
   const decide = async (request: () => Promise<Response>) => {
     setBusy(true);
@@ -94,6 +96,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
     } finally {
       setBusy(false);
       setConfirmSend(null);
+      setConfirmFree(false);
     }
   };
 
@@ -154,6 +157,40 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
               </div>
             );
           })}
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            {job.limited ? (
+              <>
+                <span><span className="text-foreground/90">Limited</span>: no shell, no messages to sessions, only the brain</span>
+                {confirmFree ? (
+                  <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, false))} disabled={busy} className="rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/25">
+                    Yes, give it all its tools
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setConfirmFree(true)} disabled={busy} className="text-xs text-primary hover:underline">Remove limits…</button>
+                )}
+              </>
+            ) : (
+              <>
+                <span>Runs with all its maker’s tools</span>
+                <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, true))} disabled={busy} className="text-xs text-primary hover:underline">Limit it</button>
+              </>
+            )}
+          </div>
+          {job.limited && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              {grants.map((grant) => (
+                <span key={grant.tool} className="inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-px">
+                  <span className="text-foreground/90">{grant.tool === 'chrome' ? 'Chrome' : 'Messages'}</span> lent until {formatWhen(grant.until)}
+                  <button type="button" onClick={() => void decide(() => api.revokeJobTool(job.id, grant.tool))} disabled={busy} className="text-xs text-primary hover:underline">take back</button>
+                </span>
+              ))}
+              {(['chrome', 'SendMessage'] as const).filter((tool) => !grants.some((grant) => grant.tool === tool)).map((tool) => (
+                <button key={tool} type="button" onClick={() => void decide(() => api.grantJobTool(job.id, tool))} disabled={busy} className="text-xs text-primary hover:underline">
+                  Lend {tool === 'chrome' ? 'Chrome' : 'messages'} for 1 h
+                </button>
+              ))}
+            </div>
+          )}
           {message && <p className="mt-1 text-xs text-muted-foreground">{message}</p>}
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">

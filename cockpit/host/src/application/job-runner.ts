@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
-  isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
+  activeGrants, isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
   type Job, type JobRun, type ReplyChannel,
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
@@ -142,7 +142,12 @@ export class JobRunner {
     const now = this.now()
     for (const job of this.deps.store.list()) {
       for (const run of this.deps.store.runs(job.id)) if (run.status === 'started') this.settle(job, run, now)
-      const fresh = this.deps.store.get(job.id)
+      let fresh = this.deps.store.get(job.id)
+      // Expired grants leave the record; the session gets no tool from them anyway (activeGrants).
+      if (fresh?.grants?.some((g) => Date.parse(g.until) <= now)) {
+        fresh = { ...fresh, grants: activeGrants(fresh, now) }
+        this.deps.store.put(fresh)
+      }
       if (fresh && !isHeld(fresh) && !fresh.endedAt) this.schedule(fresh, now)
     }
     let started = 0
@@ -169,8 +174,13 @@ export class JobRunner {
       if (state === 'working' || state === 'queued' || now - Date.parse(run.startedAt) < SETTLE_MS) return
     }
     this.update(run, { status: 'finished', outcome: status, finishedAt: new Date(now).toISOString() })
-    const fresh = this.deps.store.get(job.id)
+    let fresh = this.deps.store.get(job.id)
     if (!fresh) return
+    // A lent tool is for the work at hand: it goes back once the session says it is done.
+    if (status === 'done' && fresh.grants?.length) {
+      fresh = { ...fresh, grants: [] }
+      this.deps.store.put(fresh)
+    }
     const needsYou = status === 'review' || status === 'question' || status === 'failed'
     if (fresh.notify === 'always' || (fresh.notify === 'needs-me' && needsYou)) {
       this.tell(fresh, status ?? 'done', `Run ${run.number}: ${said?.reason ?? (status ? STATUS_WORDS[status] : 'finished without saying how it went')}`, run.sessionId)

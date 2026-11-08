@@ -49,6 +49,11 @@ export const api = {
   approveJob: (jobId: string) => fetch(`/api/jobs/${encodeURIComponent(jobId)}/approve`, jsonInit('POST')),
   setJobReply: (jobId: string, channel: 'mail' | 'slack' | 'whatsapp', mode: 'send' | 'draft') =>
     fetch(`/api/jobs/${encodeURIComponent(jobId)}/reply`, jsonInit('POST', { channel, mode })),
+  setJobLimited: (jobId: string, limited: boolean) => fetch(`/api/jobs/${encodeURIComponent(jobId)}/limited`, jsonInit('POST', { limited })),
+  grantJobTool: (jobId: string, tool: 'chrome' | 'SendMessage', minutes = 60) =>
+    fetch(`/api/jobs/${encodeURIComponent(jobId)}/grant`, jsonInit('POST', { tool, minutes })),
+  revokeJobTool: (jobId: string, tool: 'chrome' | 'SendMessage') =>
+    fetch(`/api/jobs/${encodeURIComponent(jobId)}/revoke`, jsonInit('POST', { tool })),
   notifications: () => fetch('/api/notifications'),
   readNotifications: (ids?: string[]) => fetch('/api/notifications/read', jsonInit('POST', ids ? { ids } : {})),
   claudeLogin: (refresh = false) => fetch(`/api/agents/login${refresh ? '?refresh=1' : ''}`),

@@ -31,6 +31,20 @@ export type ChannelTrigger = { type: 'mail' | 'slack' | 'whatsapp'; match: unkno
 export type JobTrigger = ScheduleTrigger | ChannelTrigger
 
 export type ReplyChannel = 'mail' | 'slack' | 'whatsapp'
+
+/** What the user may lend a limited job for a while. */
+export type GrantTool = 'chrome' | 'SendMessage'
+export const GRANT_TOOLS: readonly GrantTool[] = ['chrome', 'SendMessage']
+
+export interface JobGrant {
+  tool: GrantTool
+  until: string
+  reason: string | null
+}
+
+/** The grants still running at `now`. */
+export const activeGrants = (job: Pick<Job, 'grants'>, now: number): JobGrant[] =>
+  (job.grants ?? []).filter((grant) => Date.parse(grant.until) > now)
 export type ReplyMode = 'send' | 'draft'
 
 /** When the job ends on its own: after so many runs, or at a time. */
@@ -72,6 +86,14 @@ export interface Job {
    * holds still like a paused one. Only the user clears it, never a session.
    */
   pendingApproval?: boolean
+  /**
+   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, no
+   * schedule tool and of the space's MCP servers only the brain; web tools stay. Set for a job
+   * with a channel trigger when it is made; only the user changes it, never a session.
+   */
+  limited?: boolean
+  /** Tools the user lent a limited job for a while; a grant ends at `until` or when its session reports done. */
+  grants?: JobGrant[]
   /** It will not run again. */
   endedAt: string | null
   /** When the schedule is due next; null when it has no further time. */

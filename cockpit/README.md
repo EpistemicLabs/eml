@@ -250,6 +250,10 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
   view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
   channel tools act for that job on every resume.
+- **Limited jobs and grants:** a job with a channel trigger starts **limited** (the Jobs view's switch, the user's
+  alone): its sessions get no shell, no messages to other sessions, no schedule tool and of the space's MCP servers
+  only the brain; web tools stay. The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
+  ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.

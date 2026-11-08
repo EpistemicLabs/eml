@@ -25,6 +25,7 @@ class World {
   delivered: Array<{ sessionId: string; text: string }> = []
   deliveryOutcome: DeliveryOutcome = 'resumed'
   alerts: string[] = []
+  granted: string[] = []
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   deps(): JobRunnerDeps {
@@ -63,6 +64,7 @@ function setup() {
     projectName: (_space, id) => (id === 'bp-eml' ? 'EML' : id),
     providerKnown: (id) => id === 'claude',
     defaultTimeZone: () => 'Asia/Makassar',
+    onGrant: (job, tool) => { world.granted.push(`${job.name}:${tool}`) },
   })
   return { world, runner, jobs }
 }
@@ -324,5 +326,48 @@ describe('mail jobs', () => {
     expect(jobs.setReply(world.store.get(job.id)!, 'mail', 'send').job!.reply).toEqual({ mail: 'send' })
     expect(jobs.setReply(world.store.get(job.id)!, 'slack', 'send').status).toBe(400)
     expect((await jobs.handle(caller, { action: 'update', job: job.id, reply: { mail: 'draft' } })).job!.reply).toEqual({ mail: 'send' })
+  })
+})
+
+describe('limited jobs and grants', () => {
+  it('limits a mail job from the start; a schedule-only job is not', async () => {
+    const { jobs } = setup()
+    const mail = await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
+    expect(mail.job!.limited).toBe(true)
+    const routine = await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
+    expect(routine.job!.limited).toBeUndefined()
+    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: false, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
+      .toMatchObject({ limited: true })
+    expect(jobs.setLimited(mail.job!, false).job!.limited).toBe(false)
+  })
+
+  it('lends a tool for a while, tells the host, and takes it back when the session is done', async () => {
+    const { world, runner, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.approve(world.store.get(job.id)!)
+    expect(jobs.grant(world.store.get(job.id)!, 'chrome', 2, null).status).toBe(400)
+    const lent = jobs.grant(world.store.get(job.id)!, 'chrome', 60, 'submit the return form')
+    expect(lent.job!.grants).toEqual([{ tool: 'chrome', until: new Date(world.now + HOUR).toISOString(), reason: 'submit the return form' }])
+    expect(world.granted).toEqual(['Returns:chrome'])
+    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/lent for now: chrome/)
+
+    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k')).toBe('delivered')
+    const sessionId = world.started[0].sessionId
+    world.statuses.set(sessionId, 'done')
+    world.states.set(sessionId, 'idle')
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(world.store.get(job.id)!.grants).toEqual([])
+  })
+
+  it('drops a grant once its time is up, and revoke takes it back at once', async () => {
+    const { world, runner, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.grant(world.store.get(job.id)!, 'SendMessage', 30, null)
+    jobs.grant(world.store.get(job.id)!, 'chrome', 90, null)
+    expect(jobs.revoke(world.store.get(job.id)!, 'chrome').job!.grants!.map((g) => g.tool)).toEqual(['SendMessage'])
+    world.now += 31 * MIN
+    await runner.tick()
+    expect(world.store.get(job.id)!.grants).toEqual([])
   })
 })
