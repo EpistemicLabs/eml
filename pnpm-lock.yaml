@@ -154,6 +154,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@engramprotocol/channel-bridge':
+        specifier: workspace:*
+        version: link:../../packages/channel-bridge
       '@engramprotocol/cockpit-frontend':
         specifier: workspace:*
         version: link:../frontend

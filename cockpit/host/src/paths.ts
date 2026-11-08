@@ -23,6 +23,9 @@ export const SERVER_JS = path.join(HOST_ROOT, 'dist', 'server.cjs')     // brain
 export const CORE_INDEX = path.join(HOST_ROOT, 'dist', 'core.cjs')      // core for provisioning, bundled
 // Preload for the brain server: exits it when the host is gone (brain-watchdog.ts).
 export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js')
+// The channel bridge, bundled: its process, and the MCP server that gives a job's session its tools.
+export const CHANNEL_BRIDGE_JS = path.join(HOST_ROOT, 'dist', 'channel-bridge.cjs')
+export const CHANNEL_BRIDGE_MCP_JS = path.join(HOST_ROOT, 'dist', 'channel-bridge-mcp.cjs')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).
 export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
 // CLI a greeted session runs to name itself (session-title-cli.ts, session-greeting.ts).
@@ -136,6 +139,10 @@ export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
 export const JOBS_FILE = path.join(COCKPIT_HOME, 'jobs.json')
 // What the cockpit told its user: the bell's list (notifications.ts).
 export const NOTIFICATIONS_FILE = path.join(COCKPIT_HOME, 'notifications.json')
+// The channel bridge's own folder: its database, its tokens and the accounts it watches.
+export const CHANNEL_BRIDGE_HOME = path.join(COCKPIT_HOME, 'channel-bridge')
+// The mailboxes the bridge watches; without this file the bridge does not start.
+export const CHANNEL_BRIDGE_ACCOUNTS_FILE = path.join(CHANNEL_BRIDGE_HOME, 'accounts.json')
 // One token per space for the channel bridge's /v1 requests (job-tokens.ts): <dir>/<brain id>.
 export const JOB_TOKENS_DIR = path.join(COCKPIT_HOME, 'job-tokens')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.
