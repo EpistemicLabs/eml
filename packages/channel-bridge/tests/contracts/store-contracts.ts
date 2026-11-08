@@ -76,13 +76,14 @@ export function wakeQueueContract(name: string, make: () => WakeQueue): void {
   describe(`WakeQueue contract: ${name}`, () => {
     it('collects entries per job in order, from the first entry\'s time', async () => {
       const queue = make()
-      await queue.add('job-1', { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
-      await queue.add('job-2', { kind: 'message', messageId: 'x' }, '2026-11-08T10:00:05.000Z')
-      await queue.add('job-1', { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:10.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
+      await queue.add({ jobId: 'job-2', space: 'support' }, { kind: 'message', messageId: 'x' }, '2026-11-08T10:00:05.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:10.000Z')
       const pending = await queue.pending()
       const job1 = pending.find((p) => p.wake.jobId === 'job-1')
       expect(job1?.wake).toEqual({
         jobId: 'job-1',
+        space: 'support',
         entries: [{ kind: 'message', messageId: 'a' }, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }],
         firstAt: '2026-11-08T10:00:00.000Z',
         draftAt: '2026-11-08T10:00:10.000Z',
@@ -94,9 +95,9 @@ export function wakeQueueContract(name: string, make: () => WakeQueue): void {
 
     it('removes only what a delivery carried', async () => {
       const queue = make()
-      await queue.add('job-1', { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
       const [first] = await queue.pending()
-      await queue.add('job-1', { kind: 'message', messageId: 'b' }, '2026-11-08T10:01:00.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'b' }, '2026-11-08T10:01:00.000Z')
       await queue.delivered('job-1', first?.upTo ?? 0)
       const [next] = await queue.pending()
       expect(next?.wake.entries).toEqual([{ kind: 'message', messageId: 'b' }])
@@ -105,13 +106,13 @@ export function wakeQueueContract(name: string, make: () => WakeQueue): void {
 
     it('keeps the retry state until a delivery or a dead end clears it', async () => {
       const queue = make()
-      await queue.add('job-1', { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
       await queue.retryLater('job-1', 2, '2026-11-08T10:05:00.000Z')
       expect((await queue.pending())[0]?.wake).toMatchObject({ attempts: 2, retryAt: '2026-11-08T10:05:00.000Z' })
       const [pending] = await queue.pending()
       await queue.dead('job-1', pending?.upTo ?? 0)
       expect(await queue.pending()).toEqual([])
-      await queue.add('job-1', { kind: 'message', messageId: 'b' }, '2026-11-08T10:06:00.000Z')
+      await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'b' }, '2026-11-08T10:06:00.000Z')
       expect((await queue.pending())[0]?.wake).toMatchObject({ attempts: 0, retryAt: null })
     })
   })

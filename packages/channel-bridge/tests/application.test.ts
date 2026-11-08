@@ -113,6 +113,7 @@ describe('dispatchWakes', () => {
     w.clock.advance(COLLECT_MS)
     expect(await dispatchWakes(w, { collectMs: COLLECT_MS })).toEqual({ delivered: 1, retrying: 0, dead: 0 })
     expect(w.cockpit.requests).toHaveLength(1)
+    expect(w.cockpit.requests[0]).toMatchObject({ jobId: 'job-customer', space: 'support' })
     expect(w.cockpit.requests[0]?.text).toContain('2 new messages')
     expect(w.cockpit.requests[0]?.text).not.toContain('Hello')
     expect(await w.wakes.pending()).toEqual([])
@@ -150,7 +151,7 @@ describe('dispatchWakes', () => {
   it('a message that arrives during delivery waits for the next wake', async () => {
     w.clock.advance(COLLECT_MS)
     const pendingBefore = await w.wakes.pending()
-    await w.wakes.add('job-customer', { kind: 'message', messageId: 'late' }, w.clock.now())
+    await w.wakes.add({ jobId: 'job-customer', space: 'support' }, { kind: 'message', messageId: 'late' }, w.clock.now())
     await w.wakes.delivered('job-customer', pendingBefore[0]?.upTo ?? 0)
     const after = await w.wakes.pending()
     expect(after).toHaveLength(1)

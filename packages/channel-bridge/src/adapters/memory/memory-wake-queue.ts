@@ -1,10 +1,11 @@
 import { addToWake } from '../../domain/wake'
-import type { Wake, WakeEntry } from '../../domain/wake'
+import type { Wake, WakeEntry, WakeOwner } from '../../domain/wake'
 import type { PendingWake, WakeQueue } from '../../ports/wake-queue'
 
 interface QueuedEntry {
   seq: number
   jobId: string
+  space: string
   entry: WakeEntry
   at: string
   dead: boolean
@@ -15,8 +16,8 @@ export class MemoryWakeQueue implements WakeQueue {
   private readonly retries = new Map<string, { attempts: number; retryAt: string }>()
   private nextSeq = 1
 
-  async add(jobId: string, entry: WakeEntry, at: string): Promise<void> {
-    this.entries.push({ seq: this.nextSeq++, jobId, entry, at, dead: false })
+  async add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void> {
+    this.entries.push({ seq: this.nextSeq++, ...owner, entry, at, dead: false })
   }
 
   async pending(): Promise<PendingWake[]> {
@@ -24,7 +25,7 @@ export class MemoryWakeQueue implements WakeQueue {
     for (const queued of this.entries) {
       if (queued.dead) continue
       const current = byJob.get(queued.jobId)
-      const wake: Wake = addToWake(current?.wake ?? null, queued.entry, queued.at, queued.jobId)
+      const wake: Wake = addToWake(current?.wake ?? null, queued.entry, queued.at, { jobId: queued.jobId, space: queued.space })
       byJob.set(queued.jobId, { wake, upTo: queued.seq })
     }
     for (const [jobId, pending] of byJob) {

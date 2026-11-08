@@ -3,9 +3,16 @@ export type WakeEntry =
   | { kind: 'message'; messageId: string }
   | { kind: 'draft'; outboxId: string; outcome: 'sent' | 'skipped' | 'failed' }
 
+/** The job a wake is for, and the space it belongs to. */
+export interface WakeOwner {
+  jobId: string
+  space: string
+}
+
 /** The open wake of one job: what piled up since its last delivery. */
 export interface Wake {
   jobId: string
+  space: string
   entries: WakeEntry[]
   firstAt: string
   /** When the first draft decision joined it, or null. */
@@ -18,9 +25,9 @@ export const MAX_DELIVERY_ATTEMPTS = 10
 const FIRST_RETRY_MS = 30_000
 const MAX_RETRY_MS = 30 * 60_000
 
-export function addToWake(wake: Wake | null, entry: WakeEntry, at: string, jobId: string): Wake {
+export function addToWake(wake: Wake | null, entry: WakeEntry, at: string, owner: WakeOwner): Wake {
   const draftAt = entry.kind === 'draft' ? at : null
-  if (!wake) return { jobId, entries: [entry], firstAt: at, draftAt, attempts: 0, retryAt: null }
+  if (!wake) return { ...owner, entries: [entry], firstAt: at, draftAt, attempts: 0, retryAt: null }
   return { ...wake, entries: [...wake.entries, entry], draftAt: wake.draftAt ?? draftAt }
 }
 

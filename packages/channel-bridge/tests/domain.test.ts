@@ -165,22 +165,23 @@ describe('outbox', () => {
 
 describe('wake', () => {
   const collectMs = 120_000
+  const owner = { jobId: 'job-1', space: 'support' }
 
   it('is due one collect window after its first entry, however many follow', () => {
-    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', 'job-1')
-    wake = addToWake(wake, { kind: 'message', messageId: 'b' }, '2026-11-08T10:01:30.000Z', 'job-1')
+    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', owner)
+    wake = addToWake(wake, { kind: 'message', messageId: 'b' }, '2026-11-08T10:01:30.000Z', owner)
     expect(wake.entries).toHaveLength(2)
     expect(wakeDueAt(wake, collectMs)).toBe('2026-11-08T10:02:00.000Z')
   })
 
   it('is due at once when it holds a draft decision', () => {
-    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', 'job-1')
-    wake = addToWake(wake, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:10.000Z', 'job-1')
+    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', owner)
+    wake = addToWake(wake, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:10.000Z', owner)
     expect(wakeDueAt(wake, collectMs)).toBe('2026-11-08T10:00:10.000Z')
   })
 
   it('backs off after a failed delivery and gives up after the last attempt', () => {
-    const wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', 'job-1')
+    const wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', owner)
     const first = afterFailedDelivery(wake, '2026-11-08T10:02:00.000Z')
     expect(first).toMatchObject({ kind: 'retry', wake: { attempts: 1, retryAt: '2026-11-08T10:02:30.000Z' } })
     let current = wake
@@ -193,16 +194,16 @@ describe('wake', () => {
   })
 
   it('a retry is due at its retry time, not at the collect window', () => {
-    const wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', 'job-1')
+    const wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', owner)
     const next = afterFailedDelivery(wake, '2026-11-08T10:05:00.000Z')
     if (next.kind !== 'retry') throw new Error('expected a retry')
     expect(wakeDueAt(next.wake, collectMs)).toBe('2026-11-08T10:05:30.000Z')
   })
 
   it('tells the session what arrived without quoting any message', () => {
-    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', 'job-1')
-    wake = addToWake(wake, { kind: 'message', messageId: 'b' }, '2026-11-08T10:00:01.000Z', 'job-1')
-    wake = addToWake(wake, { kind: 'draft', outboxId: 'o-1', outcome: 'skipped' }, '2026-11-08T10:00:02.000Z', 'job-1')
+    let wake = addToWake(null, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z', owner)
+    wake = addToWake(wake, { kind: 'message', messageId: 'b' }, '2026-11-08T10:00:01.000Z', owner)
+    wake = addToWake(wake, { kind: 'draft', outboxId: 'o-1', outcome: 'skipped' }, '2026-11-08T10:00:02.000Z', owner)
     const text = describeWake(wake)
     expect(text).toContain('2 new messages')
     expect(text).toContain('1 draft decided')

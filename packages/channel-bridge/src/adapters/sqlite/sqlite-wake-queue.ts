@@ -1,12 +1,13 @@
 import type Database from 'better-sqlite3'
 import { addToWake } from '../../domain/wake'
-import type { Wake, WakeEntry } from '../../domain/wake'
+import type { Wake, WakeEntry, WakeOwner } from '../../domain/wake'
 import type { PendingWake, WakeQueue } from '../../ports/wake-queue'
 import { parseWakeEntry } from './stored-shapes'
 
 interface EntryRow {
   seq: number
   job_id: string
+  space: string
   entry: string
   at: string
 }
@@ -14,12 +15,14 @@ interface EntryRow {
 export class SqliteWakeQueue implements WakeQueue {
   constructor(private readonly db: Database.Database) {}
 
-  async add(jobId: string, entry: WakeEntry, at: string): Promise<void> {
-    this.db.prepare('INSERT INTO wake_entries (job_id, entry, at) VALUES (?, ?, ?)').run(jobId, JSON.stringify(entry), at)
+  async add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void> {
+    this.db
+      .prepare('INSERT INTO wake_entries (job_id, space, entry, at) VALUES (?, ?, ?, ?)')
+      .run(owner.jobId, owner.space, JSON.stringify(entry), at)
   }
 
   async pending(): Promise<PendingWake[]> {
-    const rows = this.db.prepare('SELECT seq, job_id, entry, at FROM wake_entries WHERE dead = 0 ORDER BY seq').all() as EntryRow[]
+    const rows = this.db.prepare('SELECT seq, job_id, space, entry, at FROM wake_entries WHERE dead = 0 ORDER BY seq').all() as EntryRow[]
     const retries = this.db.prepare('SELECT job_id, attempts, retry_at FROM wake_retries').all() as {
       job_id: string
       attempts: number
@@ -27,7 +30,7 @@ export class SqliteWakeQueue implements WakeQueue {
     }[]
     const byJob = new Map<string, PendingWake>()
     for (const row of rows) {
-      const wake: Wake = addToWake(byJob.get(row.job_id)?.wake ?? null, parseWakeEntry(row.entry), row.at, row.job_id)
+      const wake: Wake = addToWake(byJob.get(row.job_id)?.wake ?? null, parseWakeEntry(row.entry), row.at, { jobId: row.job_id, space: row.space })
       byJob.set(row.job_id, { wake, upTo: row.seq })
     }
     for (const retry of retries) {

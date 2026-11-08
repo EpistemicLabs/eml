@@ -28,6 +28,6 @@ export async function approveOutboxDraft(deps: ApproveDraftDeps, input: { outbox
 
   await deps.outbox.update(decision.item)
   const result = await sendOutboxItem(deps.outbox, account, decision.item)
-  await deps.wakes.add(item.jobId, { kind: 'draft', outboxId: item.id, outcome: result.kind }, deps.clock.now())
+  await deps.wakes.add({ jobId: item.jobId, space: account.space }, { kind: 'draft', outboxId: item.id, outcome: result.kind }, deps.clock.now())
   return result
 }

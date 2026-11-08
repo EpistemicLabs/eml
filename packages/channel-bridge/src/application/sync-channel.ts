@@ -43,7 +43,7 @@ export async function syncChannel(deps: SyncChannelDeps, input: { account: Chann
     summary.stored += 1
     if (routing.kind === 'job') {
       summary.toJobs += 1
-      await deps.wakes.add(routing.jobId, { kind: 'message', messageId: saved.id }, deps.clock.now())
+      await deps.wakes.add({ jobId: routing.jobId, space: account.space }, { kind: 'message', messageId: saved.id }, deps.clock.now())
     } else if (routing.kind === 'inbox') {
       summary.toInbox += 1
     } else {

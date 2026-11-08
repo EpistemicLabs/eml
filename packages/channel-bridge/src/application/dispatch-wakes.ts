@@ -28,6 +28,7 @@ export async function dispatchWakes(deps: DispatchWakesDeps, input: { collectMs:
     if (Date.parse(wakeDueAt(wake, input.collectMs)) > Date.parse(now)) continue
     const outcome = await deps.cockpit.wakeJob({
       jobId: wake.jobId,
+      space: wake.space,
       text: describeWake(wake),
       idempotencyKey: `${wake.jobId}:${upTo}`,
     })
