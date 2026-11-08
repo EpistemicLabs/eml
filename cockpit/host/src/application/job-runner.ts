@@ -7,6 +7,7 @@ import {
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
+import type { NotificationInput, NotificationKind } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
 
 /**
@@ -38,17 +39,21 @@ export interface JobRunnerDeps {
   sessionState(sessionId: string): RunSessionState
   /** It runs now: a message reaches it without starting anything. */
   sessionRuns(sessionId: string): boolean
-  /** The status it gave at or after `since`, if any. */
-  statusSince(sessionId: string, since: string): WorkerStatus | null
+  /** The status it gave at or after `since`, with its reason, if any. */
+  statusSince(sessionId: string, since: string): { kind: WorkerStatus; reason: string | null } | null
   /** A message for a session; resumes a stopped one (application/deliver-message.ts). */
   deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
   /** Queue a worker under `sessionId` with the text as its first prompt; returns why it could not, or null. */
   startWorker(job: Job, sessionId: string, text: string): string | null
-  /** Someone has to hear of this: the job could not run. */
-  alert(job: Job, text: string): void
+  /** Tell the user (notifications.ts): a run that needs them, a failure, a pause. */
+  notify(input: NotificationInput): void
   log(line: string): void
   /** Fallback zone for a job without a schedule. */
   timeZone(): string
+}
+
+const STATUS_WORDS: Record<WorkerStatus, string> = {
+  done: 'done', review: 'finished, check the result', question: 'has a question for you', failed: 'failed',
 }
 
 const TICK_MS = 30_000
@@ -156,7 +161,8 @@ export class JobRunner {
   /** The run's session answered, or stopped working without a word. */
   private settle(job: Job, run: JobRun, now: number): void {
     if (!run.sessionId || !run.startedAt) return
-    const status = this.deps.statusSince(run.sessionId, run.startedAt)
+    const said = this.deps.statusSince(run.sessionId, run.startedAt)
+    const status = said?.kind ?? null
     const state = this.deps.sessionState(run.sessionId)
     if (!status) {
       if (state === 'queued' && now - Date.parse(run.startedAt) > QUEUED_LIMIT_MS) this.failRun(run, 'the worker never started')
@@ -165,6 +171,10 @@ export class JobRunner {
     this.update(run, { status: 'finished', outcome: status, finishedAt: new Date(now).toISOString() })
     const fresh = this.deps.store.get(job.id)
     if (!fresh) return
+    const needsYou = status === 'review' || status === 'question' || status === 'failed'
+    if (fresh.notify === 'always' || (fresh.notify === 'needs-me' && needsYou)) {
+      this.tell(fresh, status ?? 'done', `Run ${run.number}: ${said?.reason ?? (status ? STATUS_WORDS[status] : 'finished without saying how it went')}`, run.sessionId)
+    }
     // Its session shows the failure itself; the count may still pause the job.
     if (status === 'failed') this.countFailure(fresh, `run ${run.number} ended as failed`, false)
     else if (fresh.failures) this.deps.store.put({ ...fresh, failures: 0 })
@@ -181,6 +191,7 @@ export class JobRunner {
     if (repeats(job) && late > JOB_LIMITS.lateLimitMs) {
       this.putNext(advanced, now)
       this.record(job, due, 'missed', `due ${formatDuration(late)} ago while the cockpit was not running`)
+      this.tell(job, 'missed', `Missed a run due ${formatDuration(late)} ago while the cockpit was not running; the next one is on schedule.`)
       this.deps.log(`[jobs] ${job.name}: missed a run due ${new Date(due).toISOString()}`)
       return
     }
@@ -313,11 +324,17 @@ export class JobRunner {
     if (failures >= JOB_LIMITS.failuresToPause && !job.paused) {
       const reason = `${failures} failed runs in a row; last: ${why}`
       this.deps.store.put({ ...job, failures, paused: true, pausedReason: reason, updatedAt: new Date(this.now()).toISOString() })
-      this.deps.alert(job, `Job "${job.name}" paused itself after ${reason}. Resume it with the schedule tool once fixed.`)
+      // Always told, whatever the job's notify says: it will not run again until someone resumes it.
+      this.deps.notify({ kind: 'paused', title: job.name, body: `Paused itself after ${reason}. Resume it in Jobs once fixed.`, jobId: job.id, sessionId: null, spaceId: job.spaceId })
       return
     }
     this.deps.store.put({ ...job, failures })
-    if (tell && job.notify !== 'never') this.deps.alert(job, `Job "${job.name}": ${why}`)
+    if (tell) this.tell(job, 'failed', why[0].toUpperCase() + why.slice(1))
+  }
+
+  private tell(job: Job, kind: NotificationKind, body: string, sessionId: string | null = null): void {
+    if (job.notify === 'never') return
+    this.deps.notify({ kind, title: job.name, body, jobId: job.id, sessionId, spaceId: job.spaceId })
   }
 
   /** A job with nothing left to wake it ends once its last run is over. */

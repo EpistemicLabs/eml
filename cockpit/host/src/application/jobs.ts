@@ -258,6 +258,15 @@ export class Jobs {
       : { type: 'job-session', projectId, ...(provider ? { provider: provider as never } : {}), sessionId: null }
   }
 
+  /** What the page shows of a job: its schedule and target in words, its next run times. */
+  summary(job: Job): { schedule: string; wakes: string; nextRuns: string[] } {
+    return {
+      schedule: job.triggers.map(describeTrigger).join(' + '),
+      wakes: this.describeTarget(job),
+      nextRuns: job.paused || job.endedAt ? [] : this.nextRuns(job, 3).map((at) => new Date(at).toISOString()),
+    }
+  }
+
   /** One job in a few lines: schedule, next runs, target, last run. */
   describe(job: Job): string {
     const zone = jobTimeZone(job, this.deps.defaultTimeZone())

@@ -15,6 +15,8 @@ import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import { ReviewScreen } from '../review/ReviewScreen';
+import JobsView from '../jobs/JobsView';
+import HeaderJobs from '../jobs/HeaderJobs';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
@@ -95,9 +97,9 @@ function AppContentInner() {
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
-  // The phone has no way back from the Brain tab, so it stays on the desks.
+  // The phone has no way back from the Brain tab or Jobs, so it stays on the desks.
   useEffect(() => {
-    if (compact && topView === 'brain') setTopView('desks');
+    if (compact && (topView === 'brain' || topView === 'jobs')) setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
@@ -374,6 +376,8 @@ function AppContentInner() {
         <div className="min-w-0 flex-1">
           <DeskTabBar />
         </div>
+        {/* Scheduled jobs and what the cockpit tells the user about them. */}
+        <HeaderJobs />
       </div>
       )}
 
@@ -421,6 +425,11 @@ function AppContentInner() {
           {topView === 'brain' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
               <BrainDashboard />
+            </div>
+          )}
+          {topView === 'jobs' && (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+              <JobsView />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}

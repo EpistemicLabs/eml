@@ -239,6 +239,12 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
   space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
   decides which session that reaches and answers delivered, retry or refused.
+- **Jobs view and bell:** the header's **Jobs** shows every space's jobs with their next and last runs, pause, resume,
+  run now and delete. The bell next to it lists what the cockpit told the user (`notifications.ts`,
+  `<home>/notifications.json`, the last 200): a run that ended as review, question or failed, a missed run, a job
+  that paused itself (per job: `notify` needs-me, always or never). A new one shows as a toast while the cockpit is in
+  front and as a browser notification (Settings › Notifications) when it is not; the list waits for the next tab.
+  Everything that tells the user goes through a `Notifier`, so a push channel can join the feed later.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.

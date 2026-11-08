@@ -45,7 +45,7 @@ describe('job contract v1', () => {
     ensureJobTokens([SPACE, OTHER], dir)
     const runner = new JobRunner({
       store, hasRoom: () => room, sessionState: (id) => (started.includes(id) ? 'idle' : 'queued'), sessionRuns: () => false,
-      statusSince: () => null, deliver: async () => 'delivered', alert: () => {}, log: () => {}, timeZone: () => 'UTC',
+      statusSince: () => null, deliver: async () => 'delivered', notify: () => {}, log: () => {}, timeZone: () => 'UTC',
       startWorker: (_job, sessionId) => { started.push(sessionId); return null },
     })
     const json = (res: http.ServerResponse, status: number, payload: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)) }

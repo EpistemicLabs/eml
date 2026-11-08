@@ -34,7 +34,7 @@ class World {
       hasRoom: () => this.room,
       sessionState: (id) => this.states.get(id) ?? 'queued',
       sessionRuns: (id) => ['working', 'idle'].includes(this.states.get(id) ?? ''),
-      statusSince: (id) => this.statuses.get(id) ?? null,
+      statusSince: (id) => { const kind = this.statuses.get(id); return kind ? { kind, reason: kind === 'review' ? 'Brief written' : null } : null },
       deliver: async (sessionId, text) => {
         this.delivered.push({ sessionId, text })
         return this.deliveryOutcome
@@ -43,7 +43,7 @@ class World {
         this.started.push({ job, sessionId, text })
         return null
       },
-      alert: (_job, text) => { this.alerts.push(text) },
+      notify: (input) => { this.alerts.push(`${input.kind}: ${input.title}: ${input.body}`) },
       log: () => {},
       timeZone: () => 'Asia/Makassar',
     }
@@ -109,7 +109,7 @@ describe('job runner', () => {
     run = world.store.runs(job.id)[0]
     expect(run.status).toBe('failed')
     expect(run.note).toMatch(/could not start within 1 h/)
-    expect(world.alerts[0]).toMatch(/Daily brief/)
+    expect(world.alerts[0]).toMatch(/^failed: Daily brief: Run 1 failed: could not start within 1 h/)
   })
 
   it('records the session’s status as the run’s outcome', async () => {
@@ -125,6 +125,7 @@ describe('job runner', () => {
     world.states.set(sessionId, 'idle')
     await runner.tick()
     expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'finished', outcome: 'review' })
+    expect(world.alerts).toEqual(['review: Daily brief: Run 1: Brief written'])
   })
 
   it('skips a run while the previous one still works', async () => {
@@ -144,12 +145,13 @@ describe('job runner', () => {
     world.now = Date.parse('2026-11-09T09:00:00Z') // 17:00 local: 8 h late
     await runner.tick()
     expect(world.store.runs(daily.id).map((r) => r.status)).toEqual(['missed'])
+    expect(world.alerts).toEqual([expect.stringMatching(/^missed: Daily brief: Missed a run due 8 h ago/)])
     expect(world.store.get(daily.id)!.nextRunAt).toBe('2026-11-10T01:00:00.000Z')
     expect(world.store.runs(once.id).map((r) => r.status)).toEqual(['started'])
     expect(world.started[0].text).toMatch(/420 min late/)
   })
 
-  it('ends a one-time job once its run is over', async () => {
+  it('ends a one-time job once its run is over, quietly when it is done', async () => {
     const job = await create({ at: '2026-11-09T09:00' })
     world.now = Date.parse('2026-11-09T01:00:10Z')
     await runner.tick()
@@ -158,6 +160,7 @@ describe('job runner', () => {
     world.states.set(sessionId, 'stopped')
     await runner.tick()
     expect(world.store.get(job.id)!.endedAt).not.toBeNull()
+    expect(world.alerts).toEqual([])
   })
 
   it('wakes its own session again on later runs', async () => {
@@ -201,7 +204,7 @@ describe('job runner', () => {
     const stored = world.store.get(job.id)!
     expect(stored.paused).toBe(true)
     expect(stored.pausedReason).toMatch(/3 failed runs in a row/)
-    expect(world.alerts.at(-1)).toMatch(/paused itself/)
+    expect(world.alerts.at(-1)).toMatch(/^paused: Daily brief: Paused itself after 3 failed runs/)
     world.now += HOUR
     await runner.tick()
     expect(world.store.runs(job.id)).toHaveLength(3)

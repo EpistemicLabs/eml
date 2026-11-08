@@ -48,6 +48,7 @@ import { JobRunner } from './application/job-runner.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens } from './job-contract-api.js'
+import { NotificationFeed, type Notifier } from './notifications.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -271,6 +272,9 @@ async function main() {
   })
   // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
   const jobStore = new JobStore()
+  // What the user is told, under the bell; a push channel joins it here later (allOf).
+  const feed = new NotificationFeed()
+  const notifier: Notifier = feed
   const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
@@ -288,7 +292,7 @@ async function main() {
     statusSince: (sessionId, since) => {
       const entry = ledger.get(sessionId)
       const said = [entry?.attention, entry?.lastStatus].find((status) => status && status.at >= since)
-      return said?.kind ?? null
+      return said ? { kind: said.kind, reason: said.reason } : null
     },
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     startWorker: (job, sessionId, text) => {
@@ -302,12 +306,9 @@ async function main() {
       })
       return null
     },
-    // Whoever made the job hears of it in the sidebar, as "Needs you".
-    alert: (job, text) => {
-      log(`[jobs] ${text}`)
-      if (job.notify === 'never' || !job.createdBy || !ledger.has(job.createdBy)) return
-      ledger.setAttention(job.createdBy, { kind: 'failed', reason: text.slice(0, 300) })
-      turns.apply({ sessionId: job.createdBy, state: 'waiting' })
+    notify: (input) => {
+      log(`[jobs] tell: ${input.title}: ${input.body}`)
+      notifier.notify(input)
     },
   })
   const jobs = new Jobs({
@@ -333,7 +334,12 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene,
-      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller },
+      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, feed, spaceName: (spaceId) => spaces.resolve(spaceId).name,
+        sessionInfo: (sessionId) => {
+          const entry = ledger.get(sessionId)
+          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk' } : null
+        },
+      },
       jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
     },
     origins,
