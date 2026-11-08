@@ -122,7 +122,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
             <span className="font-medium text-foreground">{job.name}</span>
             {state && <span className="rounded bg-foreground/10 px-1.5 py-px text-[11px] text-muted-foreground">{state}</span>}
             {job.pendingApproval && <span className="rounded bg-warning/15 px-1.5 py-px text-[11px] text-warning">Waiting for your OK</span>}
-            <span className="text-xs text-muted-foreground">{job.schedule}</span>
+            <span className="text-xs text-muted-foreground">{job.schedule} · wakes {job.wakes}</span>
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
             {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map(formatWhen).join(' · ')}</>}
@@ -174,7 +174,6 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
       </div>
       {open && (
         <div className="mt-3 border-t border-foreground/10 pt-3 pl-7 text-sm">
-          <p className="text-muted-foreground">Wakes {job.wakes}</p>
           <p className="mt-2 whitespace-pre-wrap text-foreground/90">{job.prompt}</p>
           <h3 className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runs</h3>
           {job.runs.length === 0 && <p className="mt-1 text-muted-foreground">None yet.</p>}
