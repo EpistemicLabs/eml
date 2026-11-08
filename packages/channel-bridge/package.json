@@ -4,8 +4,7 @@
   "private": true,
   "description": "EML channel bridge \u2014 watches mail and chat channels, routes each message to its job and holds outgoing messages for review",
   "license": "AGPL-3.0-only",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/entrypoints/main.js",
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run",
@@ -13,7 +12,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
-    "zod": "4.4.3",
+    "zod": "^4.4.3",
     "@modelcontextprotocol/sdk": "^1.32.1"
   },
   "devDependencies": {
