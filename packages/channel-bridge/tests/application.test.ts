@@ -6,6 +6,8 @@ import { approveOutboxDraft } from '../src/application/approve-outbox-draft'
 import { skipOutboxDraft } from '../src/application/skip-outbox-draft'
 import { readJobMessages } from '../src/application/read-job-messages'
 import { replyToMessage } from '../src/application/reply-to-message'
+import { listJobDrafts } from '../src/application/list-job-drafts'
+import { editOutboxDraft } from '../src/application/edit-outbox-draft'
 import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
 import { MemoryWakeQueue } from '../src/adapters/memory/memory-wake-queue'
 import { MemoryOutboxStore } from '../src/adapters/memory/memory-outbox-store'
@@ -239,7 +241,7 @@ describe('sending', () => {
     await w.outbox.add({
       id: 'out-cut', jobId: 'job-customer', channel: 'mail', accountId: 'acc-1', to: 'anna@customer.example',
       threadKey: 't-1', subject: 'Re: Question', text: 'Answer', idempotencyKey: 'reply-1', state: 'sending',
-      channelMessageId: null, failure: null,
+      channelMessageId: null, failure: null, replyToMessageId: null,
     })
     expect(await requestSend(w, reply)).toEqual({ kind: 'sent', outboxId: 'out-cut' })
     expect(await requestSend(w, reply)).toEqual({ kind: 'sent', outboxId: 'out-cut' })
@@ -403,6 +405,31 @@ describe('reading and replying', () => {
     expect(await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })).toEqual({
       kind: 'drafted', outboxId: 'out-1',
     })
+  })
+
+  it('lists a job\'s drafts with the message each one answers', async () => {
+    const read = await readJobMessages(w, { jobId: 'job-customer', ack: [] })
+    const id = read.kind === 'messages' ? read.messages[0]?.id ?? '' : ''
+    await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })
+    expect(await listJobDrafts(w, { jobId: 'job-customer' })).toEqual({
+      kind: 'drafts',
+      drafts: [{
+        outboxId: 'out-1', to: 'anna@customer.example', subject: 'Re: Question', text: 'It ships today.',
+        replyTo: { id, from: 'anna@customer.example', subject: 'Question', receivedAt: '2026-11-08T10:00:00.000Z', text: 'Hello' },
+      }],
+    })
+  })
+
+  it('edits a draft before it is approved, and only then', async () => {
+    const read = await readJobMessages(w, { jobId: 'job-customer', ack: [] })
+    const id = read.kind === 'messages' ? read.messages[0]?.id ?? '' : ''
+    await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })
+    expect(await editOutboxDraft(w, { outboxId: 'out-1', text: 'It ships tomorrow.' })).toEqual({ kind: 'edited', outboxId: 'out-1' })
+    expect((await w.outbox.get('out-1'))?.text).toBe('It ships tomorrow.')
+    await approveOutboxDraft(w, { outboxId: 'out-1' })
+    expect(await editOutboxDraft(w, { outboxId: 'out-1', text: 'x' })).toEqual({ kind: 'refused', reason: 'not_a_draft', retryable: false })
+    expect(await editOutboxDraft(w, { outboxId: 'out-9', text: 'x' })).toEqual({ kind: 'refused', reason: 'unknown_draft', retryable: false })
+    expect(w.channel.sent[0]?.text).toBe('It ships tomorrow.')
   })
 
   it('refuses to reply to a message of another job or the inbox', async () => {

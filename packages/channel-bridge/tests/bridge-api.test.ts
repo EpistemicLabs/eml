@@ -126,6 +126,20 @@ describe('bridge API: draft decisions', () => {
     expect(mailbox.sent).toEqual([])
   })
 
+  it('lists a job\'s drafts and edits one, for the cockpit only', async () => {
+    const id = await draft()
+    const get = async (token: string) => {
+      const response = await fetch(`${base}/v1/jobs/job-1/drafts`, { headers: { authorization: `Bearer ${token}` } })
+      return { status: response.status, body: await response.json() as { drafts?: { outboxId: string; text: string }[] } }
+    }
+    expect((await get(TOOL)).status).toBe(401)
+    const listed = await get(COCKPIT)
+    expect(listed.body.drafts?.map((d) => d.outboxId)).toEqual([id])
+    expect(await post(`/v1/outbox/${id}/edit`, TOOL, { text: 'Changed' })).toMatchObject({ status: 401 })
+    expect(await post(`/v1/outbox/${id}/edit`, COCKPIT, { text: 'Changed' })).toEqual({ status: 200, body: { kind: 'edited', outboxId: id } })
+    expect((await get(COCKPIT)).body.drafts?.[0]?.text).toBe('Changed')
+  })
+
   it('logs ids and outcomes, never message text or addresses', async () => {
     const id = await draft()
     await post(`/v1/outbox/${id}/approve`, COCKPIT)

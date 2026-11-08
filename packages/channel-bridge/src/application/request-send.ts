@@ -26,6 +26,8 @@ export interface SendRequest {
   subject: string | null
   text: string
   idempotencyKey: string
+  /** The message it answers; a new conversation has none. */
+  replyToMessageId?: string | null
 }
 
 export type SendRequestResult =
@@ -73,6 +75,7 @@ export async function requestSend(deps: RequestSendDeps, request: SendRequest): 
     state: decision.kind === 'draft' ? 'draft' : 'sending',
     channelMessageId: null,
     failure: null,
+    replyToMessageId: request.replyToMessageId ?? null,
   }
   await deps.outbox.add(item)
   if (decision.kind === 'draft') return { kind: 'drafted', outboxId: item.id }

@@ -152,7 +152,7 @@ function item(over: Partial<OutboxItem> = {}): OutboxItem {
   return {
     id: 'o-1', jobId: 'job-1', channel: 'mail', accountId: 'acc-1', to: 'anna@customer.example',
     threadKey: null, subject: null, text: 'Answer', idempotencyKey: 'k-1', state: 'draft',
-    channelMessageId: null, failure: null, ...over,
+    channelMessageId: null, failure: null, replyToMessageId: null, ...over,
   }
 }
 
@@ -174,6 +174,15 @@ export function outboxStoreContract(name: string, make: () => OutboxStore): void
       expect(await outbox.replace(item({ state: 'sending' }), 'draft')).toBe(true)
       expect(await outbox.replace(item({ state: 'skipped' }), 'draft')).toBe(false)
       expect((await outbox.get('o-1'))?.state).toBe('sending')
+    })
+
+    it('lists a job\'s drafts, oldest first', async () => {
+      const outbox = make()
+      await outbox.add(item())
+      await outbox.add(item({ id: 'o-2', idempotencyKey: 'k-2', state: 'sent' }))
+      await outbox.add(item({ id: 'o-3', idempotencyKey: 'k-3' }))
+      await outbox.add(item({ id: 'o-4', jobId: 'job-2', idempotencyKey: 'k-4' }))
+      expect((await outbox.draftsForJob('job-1')).map((entry) => entry.id)).toEqual(['o-1', 'o-3'])
     })
 
     it('keeps an update', async () => {

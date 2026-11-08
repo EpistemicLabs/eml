@@ -16,6 +16,7 @@ interface OutboxRow {
   state: string
   channel_message_id: string | null
   failure: string | null
+  reply_to_message_id: string | null
 }
 
 export class SqliteOutboxStore implements OutboxStore {
@@ -25,12 +26,12 @@ export class SqliteOutboxStore implements OutboxStore {
     this.db
       .prepare(
         `INSERT INTO outbox (id, job_id, channel, account_id, recipient, thread_key, subject, body,
-           idempotency_key, state, channel_message_id, failure)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           idempotency_key, state, channel_message_id, failure, reply_to_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         item.id, item.jobId, item.channel, item.accountId, item.to, item.threadKey, item.subject, item.text,
-        item.idempotencyKey, item.state, item.channelMessageId, item.failure,
+        item.idempotencyKey, item.state, item.channelMessageId, item.failure, item.replyToMessageId,
       )
   }
 
@@ -44,6 +45,11 @@ export class SqliteOutboxStore implements OutboxStore {
       | OutboxRow
       | undefined
     return row ? toItem(row) : null
+  }
+
+  async draftsForJob(jobId: string): Promise<OutboxItem[]> {
+    const rows = this.db.prepare("SELECT * FROM outbox WHERE job_id = ? AND state = 'draft' ORDER BY rowid").all(jobId) as OutboxRow[]
+    return rows.map(toItem)
   }
 
   async update(item: OutboxItem): Promise<void> {
@@ -74,5 +80,6 @@ function toItem(row: OutboxRow): OutboxItem {
     state: parseOutboxState(row.state),
     channelMessageId: row.channel_message_id,
     failure: row.failure,
+    replyToMessageId: row.reply_to_message_id,
   }
 }

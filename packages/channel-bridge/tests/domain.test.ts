@@ -5,7 +5,7 @@ import type { JobRoute } from '../src/domain/routing'
 import type { InboundMessage } from '../src/domain/inbound-message'
 import { decideSend } from '../src/domain/send-policy'
 import { replySubject, replyKey } from '../src/domain/reply'
-import { approveDraft, skipDraft, markSent, markFailed } from '../src/domain/outbox'
+import { approveDraft, skipDraft, markSent, markFailed, editDraft } from '../src/domain/outbox'
 import type { OutboxItem } from '../src/domain/outbox'
 import { addToWake, wakeDueAt, afterFailedDelivery, describeWake, MAX_DELIVERY_ATTEMPTS } from '../src/domain/wake'
 
@@ -159,7 +159,7 @@ describe('outbox', () => {
   const draft: OutboxItem = {
     id: 'o-1', jobId: 'job-customer', channel: 'mail', accountId: 'acc-1', to: 'anna@customer.example',
     threadKey: 't-1', subject: 'Re: Question', text: 'Answer', idempotencyKey: 'k-1', state: 'draft',
-    channelMessageId: null, failure: null,
+    channelMessageId: null, failure: null, replyToMessageId: null,
   }
 
   it('approving a draft makes it sending, skipping makes it skipped', () => {
@@ -171,6 +171,11 @@ describe('outbox', () => {
     const sent: OutboxItem = { ...draft, state: 'sent' }
     expect(approveDraft(sent)).toEqual({ ok: false, reason: 'not_a_draft' })
     expect(skipDraft(sent)).toEqual({ ok: false, reason: 'not_a_draft' })
+  })
+
+  it('edits a draft\'s text, and nothing else', () => {
+    expect(editDraft(draft, 'Better answer')).toEqual({ ok: true, item: { ...draft, text: 'Better answer' } })
+    expect(editDraft({ ...draft, state: 'sent' }, 'x')).toEqual({ ok: false, reason: 'not_a_draft' })
   })
 
   it('records the channel id when sent and the reason when failed', () => {

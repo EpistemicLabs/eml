@@ -6,6 +6,8 @@ import { readJobMessages } from '../application/read-job-messages'
 import { replyToMessage } from '../application/reply-to-message'
 import { approveOutboxDraft } from '../application/approve-outbox-draft'
 import { skipOutboxDraft } from '../application/skip-outbox-draft'
+import { listJobDrafts } from '../application/list-job-drafts'
+import { editOutboxDraft } from '../application/edit-outbox-draft'
 import type { RequestSendDeps } from '../application/request-send'
 import type { ApproveDraftDeps } from '../application/approve-outbox-draft'
 
@@ -46,11 +48,20 @@ export function createBridgeApi(deps: BridgeApiDeps, options: BridgeApiOptions):
 
 async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname
+
+  const drafts = path.match(/^\/v1\/jobs\/([^/]+)\/drafts$/)
+  if (req.method === 'GET' && drafts?.[1]) {
+    if (!authorized(req, options.cockpitToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
+    const jobId = decodeURIComponent(drafts[1])
+    const result = await listJobDrafts(deps, { jobId })
+    options.log('job.drafts', { jobId, count: result.drafts.length })
+    return send(res, 200, result)
+  }
   if (req.method !== 'POST') return send(res, 404, { kind: 'refused', reason: 'unknown_route', retryable: false })
 
   const read = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/read$/)
   const reply = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/([^/]+)\/reply$/)
-  const decide = path.match(/^\/v1\/outbox\/([^/]+)\/(approve|skip)$/)
+  const decide = path.match(/^\/v1\/outbox\/([^/]+)\/(approve|skip|edit)$/)
 
   if (read?.[1] || reply?.[1]) {
     if (!authorized(req, options.toolToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
@@ -78,6 +89,15 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
     const jobId = decodeURIComponent(reply[1])
     const result = await replyToMessage(deps, { jobId, messageId: decodeURIComponent(reply[2]), text: parsed.data.text })
     options.log('job.reply', { jobId, outcome: result.kind, length: parsed.data.text.length })
+    return send(res, statusOf(result), result)
+  }
+
+  if (decide?.[1] && decide[2] === 'edit') {
+    const parsed = replyBodySchema.safeParse(body)
+    if (!parsed.success) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
+    const outboxId = decodeURIComponent(decide[1])
+    const result = await editOutboxDraft(deps, { outboxId, text: parsed.data.text })
+    options.log('outbox.edit', { outboxId, outcome: result.kind, length: parsed.data.text.length })
     return send(res, statusOf(result), result)
   }
 

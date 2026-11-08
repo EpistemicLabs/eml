@@ -19,6 +19,10 @@ export class MemoryOutboxStore implements OutboxStore {
     return null
   }
 
+  async draftsForJob(jobId: string): Promise<OutboxItem[]> {
+    return [...this.items.values()].filter((item) => item.jobId === jobId && item.state === 'draft')
+  }
+
   async update(item: OutboxItem): Promise<void> {
     this.items.set(item.id, item)
   }

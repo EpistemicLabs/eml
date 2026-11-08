@@ -24,5 +24,6 @@ export async function replyToMessage(
     subject: replySubject(message.subject),
     text: input.text,
     idempotencyKey: replyKey(message.id, input.text),
+    replyToMessageId: message.id,
   })
 }

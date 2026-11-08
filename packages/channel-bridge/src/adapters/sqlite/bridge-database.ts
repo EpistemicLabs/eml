@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS outbox (
   state TEXT NOT NULL,
   channel_message_id TEXT,
   failure TEXT,
+  reply_to_message_id TEXT,
   UNIQUE (job_id, idempotency_key)
 );
 `

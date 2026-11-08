@@ -24,6 +24,8 @@ export interface OutboxItem {
   state: OutboxState
   channelMessageId: string | null
   failure: string | null
+  /** The message it answers, or null for a new conversation. */
+  replyToMessageId: string | null
 }
 
 export type DraftDecision = { ok: true; item: OutboxItem } | { ok: false; reason: 'not_a_draft' }
@@ -31,6 +33,12 @@ export type DraftDecision = { ok: true; item: OutboxItem } | { ok: false; reason
 export function approveDraft(item: OutboxItem): DraftDecision {
   if (item.state !== 'draft') return { ok: false, reason: 'not_a_draft' }
   return { ok: true, item: { ...item, state: 'sending' } }
+}
+
+/** A person changed a draft's text before deciding on it. */
+export function editDraft(item: OutboxItem, text: string): DraftDecision {
+  if (item.state !== 'draft') return { ok: false, reason: 'not_a_draft' }
+  return { ok: true, item: { ...item, text } }
 }
 
 export function skipDraft(item: OutboxItem): DraftDecision {
