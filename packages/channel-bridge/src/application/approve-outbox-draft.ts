@@ -17,17 +17,30 @@ export type ApproveDraftResult =
   | SendStepResult
   | { kind: 'refused'; reason: 'unknown_draft' | 'not_a_draft' | 'unknown_account'; retryable: false }
 
-/** A person approved a draft: it is sent, and the job hears what came of it. */
+/**
+ * A person approved a draft: it is sent, and the job hears what came of it. The approval may come
+ * again (a retry, a second click): only the first moves the draft on, a cut-off send is finished,
+ * and a finished one is answered with its outcome.
+ */
 export async function approveOutboxDraft(deps: ApproveDraftDeps, input: { outboxId: string }): Promise<ApproveDraftResult> {
-  const item = await deps.outbox.get(input.outboxId)
+  let item = await deps.outbox.get(input.outboxId)
   if (!item) return { kind: 'refused', reason: 'unknown_draft', retryable: false }
-  const decision = approveDraft(item)
-  if (!decision.ok) return { kind: 'refused', reason: decision.reason, retryable: false }
   const account = deps.channels.account(item.accountId)
   if (!account) return { kind: 'refused', reason: 'unknown_account', retryable: false }
 
-  await deps.outbox.update(decision.item)
-  const result = await sendOutboxItem(deps.outbox, account, decision.item)
+  if (item.state === 'draft') {
+    const decision = approveDraft(item)
+    if (decision.ok && (await deps.outbox.replace(decision.item, 'draft'))) item = decision.item
+    else item = (await deps.outbox.get(input.outboxId)) ?? item
+  }
+  if (item.state === 'draft' || item.state === 'skipped') return { kind: 'refused', reason: 'not_a_draft', retryable: false }
+
+  const result: SendStepResult =
+    item.state === 'sending'
+      ? await sendOutboxItem(deps.outbox, account, item)
+      : item.state === 'sent'
+        ? { kind: 'sent', outboxId: item.id }
+        : { kind: 'failed', outboxId: item.id, reason: item.failure ?? 'unknown', retryable: false }
   await deps.wakes.add({ jobId: item.jobId, space: account.space }, { kind: 'draft', outboxId: item.id, outcome: result.kind }, deps.clock.now())
   return result
 }

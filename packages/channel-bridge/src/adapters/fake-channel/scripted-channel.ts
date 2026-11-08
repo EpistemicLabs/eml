@@ -26,6 +26,10 @@ export class ScriptedChannel implements ChannelAccount {
     this.refuseWith = { reason, retryable }
   }
 
+  acceptSends(): void {
+    this.refuseWith = null
+  }
+
   async sync(cursor: string | null): Promise<SyncResult> {
     const from = cursor === null ? this.history.length : Number(cursor)
     return { messages: this.history.slice(from), cursor: String(this.history.length) }

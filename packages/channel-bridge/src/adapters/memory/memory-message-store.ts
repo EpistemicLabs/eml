@@ -10,15 +10,15 @@ export class MemoryMessageStore implements MessageStore {
   private nextId = 1
 
   async save(message: InboundMessage, routing: Routing): Promise<SaveOutcome> {
-    const duplicate = this.messages.some(
+    const duplicate = this.messages.find(
       (stored) =>
         stored.channel === message.channel &&
         stored.accountId === message.accountId &&
         stored.channelMessageId === message.channelMessageId,
     )
-    if (duplicate) return { kind: 'duplicate' }
+    if (duplicate) return { kind: 'duplicate', id: duplicate.id }
     const id = `msg-${this.nextId++}`
-    this.messages.push({ ...message, id, routing })
+    this.messages.push({ ...message, id, routing, read: false })
     return { kind: 'stored', id }
   }
 
@@ -40,11 +40,12 @@ export class MemoryMessageStore implements MessageStore {
   }
 
   async get(id: string): Promise<StoredMessage | null> {
-    return this.messages.find((stored) => stored.id === id) ?? null
+    const stored = this.messages.find((message) => message.id === id)
+    return stored ? { ...stored, read: this.read.has(stored.id) } : null
   }
 
   async unreadForJob(jobId: string): Promise<StoredMessage[]> {
-    return (await this.forJob(jobId)).filter((stored) => !this.read.has(stored.id))
+    return (await this.forJob(jobId)).filter((stored) => !stored.read)
   }
 
   async markRead(ids: string[]): Promise<void> {
@@ -53,7 +54,9 @@ export class MemoryMessageStore implements MessageStore {
 
   /** Every message routed to the job, for tests to look at. */
   async forJob(jobId: string): Promise<StoredMessage[]> {
-    return this.messages.filter((stored) => stored.routing.kind === 'job' && stored.routing.jobId === jobId)
+    return this.messages
+      .filter((stored) => stored.routing.kind === 'job' && stored.routing.jobId === jobId)
+      .map((stored) => ({ ...stored, read: this.read.has(stored.id) }))
   }
 
   async cursor(accountId: string): Promise<string | null> {

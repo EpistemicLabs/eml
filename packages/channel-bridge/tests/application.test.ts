@@ -101,6 +101,25 @@ describe('syncChannel', () => {
     expect(await syncChannel(w, { account: w.channel })).toMatchObject({ stored: 1, toJobs: 1 })
   })
 
+  it('wakes the job for a message a crashed sync stored but did not queue', async () => {
+    w.channel.receive(mail())
+    const crashing = { ...w, wakes: { ...w.wakes, add: async () => { throw new Error('crash') } } as typeof w.wakes }
+    await expect(syncChannel(crashing, { account: w.channel })).rejects.toThrow('crash')
+    expect(await syncChannel(w, { account: w.channel })).toMatchObject({ duplicates: 1 })
+    expect((await w.wakes.pending())[0]?.wake.entries).toHaveLength(1)
+  })
+
+  it('does not wake again for a duplicate the job has already read', async () => {
+    w.channel.receive(mail())
+    await syncChannel(w, { account: w.channel })
+    const [pending] = await w.wakes.pending()
+    await w.wakes.delivered('job-customer', pending?.upTo ?? 0)
+    await w.store.markRead((await w.store.unreadForJob('job-customer')).map((m) => m.id))
+    await w.store.setCursor('acc-1', '0')
+    await syncChannel(w, { account: w.channel })
+    expect(await w.wakes.pending()).toEqual([])
+  })
+
   it('sees only the jobs of the account\'s own space', async () => {
     w.jobs.set([{ ...customerJob, space: 'errands' }])
     w.channel.receive(mail())
@@ -236,10 +255,73 @@ describe('sending', () => {
     expect(w.cockpit.requests[0]?.text).toContain('1 draft decided')
   })
 
-  it('approving twice sends once', async () => {
+  it('approving twice sends once and answers both with the outcome', async () => {
     await requestSend(w, reply)
     await approveOutboxDraft(w, { outboxId: 'out-1' })
-    expect(await approveOutboxDraft(w, { outboxId: 'out-1' })).toEqual({ kind: 'refused', reason: 'not_a_draft', retryable: false })
+    expect(await approveOutboxDraft(w, { outboxId: 'out-1' })).toEqual({ kind: 'sent', outboxId: 'out-1' })
+    expect(w.channel.sent).toHaveLength(1)
+    expect((await w.wakes.pending())[0]?.wake.entries).toHaveLength(1)
+  })
+
+  it('two approvals at the same time send once', async () => {
+    await requestSend(w, reply)
+    await Promise.all([approveOutboxDraft(w, { outboxId: 'out-1' }), approveOutboxDraft(w, { outboxId: 'out-1' })])
+    expect(w.channel.sent).toHaveLength(1)
+  })
+
+  it('an approval repeated after a cut-off send finishes it', async () => {
+    await requestSend(w, reply)
+    const draft = await w.outbox.get('out-1')
+    if (!draft) throw new Error('expected the draft')
+    await w.outbox.update({ ...draft, state: 'sending' })
+    expect(await approveOutboxDraft(w, { outboxId: 'out-1' })).toEqual({ kind: 'sent', outboxId: 'out-1' })
+    expect(w.channel.sent).toHaveLength(1)
+  })
+
+  it('skipping twice answers skipped twice and tells the job once', async () => {
+    await requestSend(w, reply)
+    await skipOutboxDraft(w, { outboxId: 'out-1' })
+    expect(await skipOutboxDraft(w, { outboxId: 'out-1' })).toEqual({ kind: 'skipped', outboxId: 'out-1' })
+    expect((await w.wakes.pending())[0]?.wake.entries).toHaveLength(1)
+  })
+
+  it('refuses to skip a draft that was approved, and to approve one that was skipped', async () => {
+    await requestSend(w, reply)
+    await approveOutboxDraft(w, { outboxId: 'out-1' })
+    expect(await skipOutboxDraft(w, { outboxId: 'out-1' })).toEqual({ kind: 'refused', reason: 'not_a_draft', retryable: false })
+    await requestSend(w, { ...reply, idempotencyKey: 'reply-2' })
+    await skipOutboxDraft(w, { outboxId: 'out-2' })
+    expect(await approveOutboxDraft(w, { outboxId: 'out-2' })).toEqual({ kind: 'refused', reason: 'not_a_draft', retryable: false })
+  })
+
+  it('refuses an unknown draft, and a draft whose account is gone without touching it', async () => {
+    expect(await approveOutboxDraft(w, { outboxId: 'out-9' })).toEqual({ kind: 'refused', reason: 'unknown_draft', retryable: false })
+    expect(await skipOutboxDraft(w, { outboxId: 'out-9' })).toEqual({ kind: 'refused', reason: 'unknown_draft', retryable: false })
+    await requestSend(w, reply)
+    const gone = { ...w, channels: new ScriptedChannels([]) }
+    expect(await approveOutboxDraft(gone, { outboxId: 'out-1' })).toEqual({ kind: 'refused', reason: 'unknown_account', retryable: false })
+    expect(await skipOutboxDraft(gone, { outboxId: 'out-1' })).toEqual({ kind: 'refused', reason: 'unknown_account', retryable: false })
+    expect((await w.outbox.get('out-1'))?.state).toBe('draft')
+  })
+
+  it('a request repeated after a skip or a final refusal answers with that, and sends nothing', async () => {
+    await requestSend(w, reply)
+    await skipOutboxDraft(w, { outboxId: 'out-1' })
+    expect(await requestSend(w, reply)).toEqual({ kind: 'failed', outboxId: 'out-1', reason: 'skipped', retryable: false })
+    w.jobs.set([{ ...customerJob, reply: { mail: 'send' } }])
+    w.channel.refuseSends('rejected', false)
+    const other = { ...reply, idempotencyKey: 'reply-2' }
+    expect(await requestSend(w, other)).toEqual({ kind: 'failed', outboxId: 'out-2', reason: 'rejected', retryable: false })
+    expect(await requestSend(w, other)).toEqual({ kind: 'failed', outboxId: 'out-2', reason: 'rejected', retryable: false })
+    expect(w.channel.sent).toEqual([])
+  })
+
+  it('a request repeated after a failure that may pass is sent again', async () => {
+    w.jobs.set([{ ...customerJob, reply: { mail: 'send' } }])
+    w.channel.refuseSends('rate_limited', true)
+    await requestSend(w, reply)
+    w.channel.acceptSends()
+    expect(await requestSend(w, reply)).toEqual({ kind: 'sent', outboxId: 'out-1' })
     expect(w.channel.sent).toHaveLength(1)
   })
 
@@ -254,7 +336,7 @@ describe('sending', () => {
     w.jobs.set([{ ...customerJob, reply: { mail: 'send' } }])
     w.channel.refuseSends('rate_limited', true)
     expect(await requestSend(w, reply)).toEqual({ kind: 'failed', outboxId: 'out-1', reason: 'rate_limited', retryable: true })
-    expect((await w.outbox.get('out-1'))?.state).toBe('failed')
+    expect((await w.outbox.get('out-1'))?.state).toBe('sending')
   })
 })
 

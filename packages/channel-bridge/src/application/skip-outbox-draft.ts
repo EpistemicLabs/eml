@@ -15,15 +15,22 @@ export type SkipDraftResult =
   | { kind: 'skipped'; outboxId: string }
   | { kind: 'refused'; reason: 'unknown_draft' | 'not_a_draft' | 'unknown_account'; retryable: false }
 
-/** A person decided against a draft: nothing is sent, and the job hears it. */
+/** A person decided against a draft: nothing is sent, and the job hears it. Skipping again answers the same. */
 export async function skipOutboxDraft(deps: SkipDraftDeps, input: { outboxId: string }): Promise<SkipDraftResult> {
   const item = await deps.outbox.get(input.outboxId)
   if (!item) return { kind: 'refused', reason: 'unknown_draft', retryable: false }
-  const decision = skipDraft(item)
-  if (!decision.ok) return { kind: 'refused', reason: decision.reason, retryable: false }
   const account = deps.channels.account(item.accountId)
   if (!account) return { kind: 'refused', reason: 'unknown_account', retryable: false }
-  await deps.outbox.update(decision.item)
+
+  if (item.state === 'draft') {
+    const decision = skipDraft(item)
+    const moved = decision.ok && (await deps.outbox.replace(decision.item, 'draft'))
+    if (!moved && (await deps.outbox.get(input.outboxId))?.state !== 'skipped') {
+      return { kind: 'refused', reason: 'not_a_draft', retryable: false }
+    }
+  } else if (item.state !== 'skipped') {
+    return { kind: 'refused', reason: 'not_a_draft', retryable: false }
+  }
   await deps.wakes.add({ jobId: item.jobId, space: account.space }, { kind: 'draft', outboxId: item.id, outcome: 'skipped' }, deps.clock.now())
   return { kind: 'skipped', outboxId: item.id }
 }

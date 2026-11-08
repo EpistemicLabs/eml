@@ -60,6 +60,8 @@ const main: StandIn = {
     'job-ended': { status: 200, body: { outcome: 'refused' } },
     'job-broken': { status: 500 },
     'job-garbled': { status: 200, body: { outcome: 'maybe' } },
+    'job-bad-request': { status: 400, body: { reason: 'invalid_request', retryable: false } },
+    'job-throttled': { status: 429 },
   },
   wakes: [],
 }
@@ -126,11 +128,13 @@ describe('CockpitHttpClient as cockpit', () => {
     expect(await wake('job-1', 'support', unreachable)).toBe('retry')
   })
 
-  it('treats an unknown job as refused', async () => {
+  it('treats an unknown job and a request the cockpit cannot take as refused, throttling as retry', async () => {
     expect(await wake('job-unknown')).toBe('refused')
+    expect(await wake('job-bad-request')).toBe('refused')
+    expect(await wake('job-throttled')).toBe('retry')
   })
 
-  it('answers retry for a space it has no token for, so the wake waits for a person to fix it', async () => {
-    expect(await wake('job-1', 'elsewhere')).toBe('retry')
+  it('refuses a wake for a space it has no token for: retrying cannot help', async () => {
+    expect(await wake('job-1', 'elsewhere')).toBe('refused')
   })
 })

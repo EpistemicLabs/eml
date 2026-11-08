@@ -3,6 +3,7 @@ import type { PendingWake, WakeEntry, WakeOwner } from '../domain/wake'
 export type { PendingWake }
 
 export interface WakeQueue {
+  /** Adds an entry; one the job's open wake already holds is not added twice. */
   add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void>
   pending(): Promise<PendingWake[]>
   /** The entries up to this position reached the job; later ones form the next wake. */

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { OutboxItem } from '../../domain/outbox'
+import type { OutboxItem, OutboxState } from '../../domain/outbox'
 import type { OutboxStore } from '../../ports/outbox-store'
 import { parseChannel, parseOutboxState } from './stored-shapes'
 
@@ -50,6 +50,13 @@ export class SqliteOutboxStore implements OutboxStore {
     this.db
       .prepare('UPDATE outbox SET state = ?, channel_message_id = ?, failure = ? WHERE id = ?')
       .run(item.state, item.channelMessageId, item.failure, item.id)
+  }
+
+  async replace(item: OutboxItem, expected: OutboxState): Promise<boolean> {
+    const result = this.db
+      .prepare('UPDATE outbox SET state = ?, channel_message_id = ?, failure = ? WHERE id = ? AND state = ?')
+      .run(item.state, item.channelMessageId, item.failure, item.id, expected)
+    return result.changes === 1
   }
 }
 

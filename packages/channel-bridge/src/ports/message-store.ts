@@ -4,9 +4,11 @@ import type { Routing } from '../domain/routing'
 export interface StoredMessage extends InboundMessage {
   id: string
   routing: Routing
+  /** The job it went to has read it. */
+  read: boolean
 }
 
-export type SaveOutcome = { kind: 'stored'; id: string } | { kind: 'duplicate' }
+export type SaveOutcome = { kind: 'stored'; id: string } | { kind: 'duplicate'; id: string }
 
 export interface MessageStore {
   /** Stores a message once; the same channel message again is a duplicate. */

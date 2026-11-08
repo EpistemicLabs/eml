@@ -32,10 +32,12 @@ CREATE TABLE IF NOT EXISTS wake_entries (
   job_id TEXT NOT NULL,
   space TEXT NOT NULL,
   entry TEXT NOT NULL,
+  entry_key TEXT NOT NULL,
   at TEXT NOT NULL,
   dead INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS wake_entries_job ON wake_entries (job_id, dead, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS wake_entries_live ON wake_entries (job_id, entry_key) WHERE dead = 0;
 
 CREATE TABLE IF NOT EXISTS wake_retries (
   job_id TEXT PRIMARY KEY,

@@ -99,13 +99,25 @@ describe('bridge API: draft decisions', () => {
     expect(mailbox.sent).toEqual([])
   })
 
-  it('approves a draft once and sends it; a second approval is refused', async () => {
+  it('approves a draft and sends it once, however often the approval comes', async () => {
     const id = await draft()
     expect(await post(`/v1/outbox/${id}/approve`, COCKPIT)).toEqual({ status: 200, body: { kind: 'sent', outboxId: id } })
+    expect(await post(`/v1/outbox/${id}/approve`, COCKPIT)).toEqual({ status: 200, body: { kind: 'sent', outboxId: id } })
     expect(mailbox.sent).toHaveLength(1)
-    expect(await post(`/v1/outbox/${id}/approve`, COCKPIT)).toEqual({
-      status: 409, body: { kind: 'refused', reason: 'not_a_draft', retryable: false },
-    })
+  })
+
+  it('answers a skipped draft\'s approval with 409', async () => {
+    const id = await draft()
+    await post(`/v1/outbox/${id}/skip`, COCKPIT)
+    expect((await post(`/v1/outbox/${id}/approve`, COCKPIT)).status).toBe(409)
+  })
+
+  it('answers a final send failure with a 4xx and one that may pass with a 5xx', async () => {
+    const id = await draft()
+    mailbox.refuseSends('rate_limited', true)
+    expect(await post(`/v1/outbox/${id}/approve`, COCKPIT)).toMatchObject({ status: 503, body: { retryable: true } })
+    mailbox.refuseSends('rejected', false)
+    expect(await post(`/v1/outbox/${id}/approve`, COCKPIT)).toMatchObject({ status: 422, body: { retryable: false } })
   })
 
   it('skips a draft', async () => {

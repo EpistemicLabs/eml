@@ -1,4 +1,4 @@
-import type { OutboxItem } from '../../domain/outbox'
+import type { OutboxItem, OutboxState } from '../../domain/outbox'
 import type { OutboxStore } from '../../ports/outbox-store'
 
 export class MemoryOutboxStore implements OutboxStore {
@@ -21,5 +21,11 @@ export class MemoryOutboxStore implements OutboxStore {
 
   async update(item: OutboxItem): Promise<void> {
     this.items.set(item.id, item)
+  }
+
+  async replace(item: OutboxItem, expected: OutboxState): Promise<boolean> {
+    if (this.items.get(item.id)?.state !== expected) return false
+    this.items.set(item.id, item)
+    return true
   }
 }

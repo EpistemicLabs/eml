@@ -51,10 +51,13 @@ export class CockpitHttpClient implements JobDirectory, Cockpit {
     return null
   }
 
-  /** Anything but a clear answer is a retry, so no wake is lost to a cockpit restart or a broken reply. */
+  /**
+   * A cockpit that is away, busy or answers unreadably is a retry, so no wake is lost to a restart.
+   * A request it rejects (an unknown job, a missing or wrong token) is refused: trying again cannot help.
+   */
   async wakeJob(request: WakeRequest): Promise<WakeOutcome> {
     const token = this.tokenFor(request.space)
-    if (!token) return 'retry'
+    if (!token) return 'refused'
     let response: Response
     try {
       response = await fetch(`${this.options.url}/v1/jobs/${encodeURIComponent(request.jobId)}/wake`, {
@@ -66,7 +69,8 @@ export class CockpitHttpClient implements JobDirectory, Cockpit {
     } catch {
       return 'retry'
     }
-    if (response.status === 404) return 'refused'
+    if (response.status === 408 || response.status === 429) return 'retry'
+    if (response.status >= 400 && response.status < 500) return 'refused'
     if (!response.ok) return 'retry'
     const answer = wakeAnswerSchema.safeParse(await response.json().catch(() => null))
     return answer.success ? answer.data.outcome : 'retry'

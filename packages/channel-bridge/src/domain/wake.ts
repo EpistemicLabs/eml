@@ -43,6 +43,11 @@ export const MAX_DELIVERY_ATTEMPTS = 10
 const FIRST_RETRY_MS = 30_000
 const MAX_RETRY_MS = 30 * 60_000
 
+/** A wake holds each message and each draft decision once. */
+export function wakeEntryKey(entry: WakeEntry): string {
+  return entry.kind === 'message' ? `message:${entry.messageId}` : `draft:${entry.outboxId}`
+}
+
 export function addToWake(wake: Wake | null, entry: WakeEntry, at: string, owner: WakeOwner): Wake {
   const draftAt = entry.kind === 'draft' ? at : null
   if (!wake) return { ...owner, entries: [entry], firstAt: at, draftAt, attempts: 0, retryAt: null }

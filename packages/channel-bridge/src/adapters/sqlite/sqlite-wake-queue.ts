@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { pendingWakes } from '../../domain/wake'
+import { pendingWakes, wakeEntryKey } from '../../domain/wake'
 import type { PendingWake, WakeEntry, WakeOwner } from '../../domain/wake'
 import type { WakeQueue } from '../../ports/wake-queue'
 import { parseWakeEntry } from './stored-shapes'
@@ -17,8 +17,11 @@ export class SqliteWakeQueue implements WakeQueue {
 
   async add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void> {
     this.db
-      .prepare('INSERT INTO wake_entries (job_id, space, entry, at) VALUES (?, ?, ?, ?)')
-      .run(owner.jobId, owner.space, JSON.stringify(entry), at)
+      .prepare(
+        `INSERT INTO wake_entries (job_id, space, entry, entry_key, at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT DO NOTHING`,
+      )
+      .run(owner.jobId, owner.space, JSON.stringify(entry), wakeEntryKey(entry), at)
   }
 
   async pending(): Promise<PendingWake[]> {

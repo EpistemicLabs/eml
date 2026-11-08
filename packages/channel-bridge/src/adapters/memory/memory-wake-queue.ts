@@ -1,4 +1,4 @@
-import { pendingWakes } from '../../domain/wake'
+import { pendingWakes, wakeEntryKey } from '../../domain/wake'
 import type { PendingWake, QueuedWakeEntry, WakeEntry, WakeOwner, WakeRetry } from '../../domain/wake'
 import type { WakeQueue } from '../../ports/wake-queue'
 
@@ -8,6 +8,9 @@ export class MemoryWakeQueue implements WakeQueue {
   private nextSeq = 1
 
   async add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void> {
+    const key = wakeEntryKey(entry)
+    const held = this.entries.some((queued) => !queued.dead && queued.jobId === owner.jobId && wakeEntryKey(queued.entry) === key)
+    if (held) return
     this.entries.push({ seq: this.nextSeq++, ...owner, entry, at, dead: false })
   }
 

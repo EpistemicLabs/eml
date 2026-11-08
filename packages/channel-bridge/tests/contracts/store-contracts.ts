@@ -31,7 +31,7 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       const store = make()
       const first = await store.save(message(), toJob)
       expect(first.kind).toBe('stored')
-      expect(await store.save(message({ text: 'changed' }), toJob)).toEqual({ kind: 'duplicate' })
+      expect(await store.save(message({ text: 'changed' }), toJob)).toEqual({ kind: 'duplicate', id: first.kind === 'stored' ? first.id : '' })
       expect((await store.save(message({ accountId: 'acc-2' }), toJob)).kind).toBe('stored')
     })
 
@@ -39,7 +39,7 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       const store = make()
       const saved = await store.save(message({ subject: null }), toJob)
       if (saved.kind !== 'stored') throw new Error('expected stored')
-      expect(await store.get(saved.id)).toEqual({ ...message({ subject: null }), id: saved.id, routing: toJob })
+      expect(await store.get(saved.id)).toEqual({ ...message({ subject: null }), id: saved.id, routing: toJob, read: false })
     })
 
     it('names the job a thread went to last, and none for an inbox thread', async () => {
@@ -113,6 +113,16 @@ export function wakeQueueContract(name: string, make: () => WakeQueue): void {
       expect(pending).toHaveLength(2)
     })
 
+    it('keeps one live entry per message or draft decision', async () => {
+      const queue = make()
+      const owner = { jobId: 'job-1', space: 'support' }
+      await queue.add(owner, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
+      await queue.add(owner, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:05.000Z')
+      await queue.add(owner, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:06.000Z')
+      await queue.add(owner, { kind: 'draft', outboxId: 'o-1', outcome: 'sent' }, '2026-11-08T10:00:07.000Z')
+      expect((await queue.pending())[0]?.wake.entries).toHaveLength(2)
+    })
+
     it('removes only what a delivery carried', async () => {
       const queue = make()
       await queue.add({ jobId: 'job-1', space: 'support' }, { kind: 'message', messageId: 'a' }, '2026-11-08T10:00:00.000Z')
@@ -156,6 +166,14 @@ export function outboxStoreContract(name: string, make: () => OutboxStore): void
       expect(await outbox.byKey('job-1', 'k-1')).toEqual(item())
       expect(await outbox.byKey('job-2', 'k-1')).toBeNull()
       expect(await outbox.get('o-2')).toBeNull()
+    })
+
+    it('moves an item on only from the state the caller saw', async () => {
+      const outbox = make()
+      await outbox.add(item())
+      expect(await outbox.replace(item({ state: 'sending' }), 'draft')).toBe(true)
+      expect(await outbox.replace(item({ state: 'skipped' }), 'draft')).toBe(false)
+      expect((await outbox.get('o-1'))?.state).toBe('sending')
     })
 
     it('keeps an update', async () => {

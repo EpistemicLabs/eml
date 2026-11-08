@@ -19,6 +19,7 @@ interface MessageRow {
   subject: string | null
   body: string
   routing: string
+  read: number
 }
 
 export class SqliteMessageStore implements MessageStore {
@@ -49,7 +50,11 @@ export class SqliteMessageStore implements MessageStore {
         JSON.stringify(routing),
         routing.kind === 'job' ? routing.jobId : null,
       )
-    return result.changes === 0 ? { kind: 'duplicate' } : { kind: 'stored', id }
+    if (result.changes > 0) return { kind: 'stored', id }
+    const existing = this.db
+      .prepare('SELECT id FROM messages WHERE channel = ? AND account_id = ? AND channel_message_id = ?')
+      .get(message.channel, message.accountId, message.channelMessageId) as { id: string }
+    return { kind: 'duplicate', id: existing.id }
   }
 
   async threadOwner(accountId: string, threadKey: string): Promise<string | null> {
@@ -114,5 +119,6 @@ function toStoredMessage(row: MessageRow): StoredMessage {
     subject: row.subject,
     text: row.body,
     routing: parseRouting(row.routing),
+    read: row.read === 1,
   }
 }

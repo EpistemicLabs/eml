@@ -24,7 +24,7 @@ export interface SyncSummary {
  * Takes what arrived on one account since its cursor: stores each message once, routes it
  * among the jobs of the account's space, and queues a wake for each job that got one. The
  * cursor moves only after everything is stored, so a crash repeats a sync instead of losing
- * messages; the duplicates it brings are recognised.
+ * messages; the duplicates it brings are recognised and their wakes made good.
  */
 export async function syncChannel(deps: SyncChannelDeps, input: { account: ChannelAccount }): Promise<SyncSummary> {
   const { account } = input
@@ -38,6 +38,7 @@ export async function syncChannel(deps: SyncChannelDeps, input: { account: Chann
     const saved = await deps.store.save(message, routing)
     if (saved.kind === 'duplicate') {
       summary.duplicates += 1
+      await wakeForUnread(deps, account.space, saved.id)
       continue
     }
     summary.stored += 1
@@ -53,4 +54,14 @@ export async function syncChannel(deps: SyncChannelDeps, input: { account: Chann
 
   await deps.store.setCursor(account.accountId, result.cursor)
   return summary
+}
+
+/**
+ * A duplicate means an earlier sync stopped before it moved the cursor, perhaps before it queued
+ * the wake. A message its job has not read yet is queued again; the queue holds it once.
+ */
+async function wakeForUnread(deps: SyncChannelDeps, space: string, messageId: string): Promise<void> {
+  const stored = await deps.store.get(messageId)
+  if (stored?.routing.kind !== 'job' || stored.read) return
+  await deps.wakes.add({ jobId: stored.routing.jobId, space }, { kind: 'message', messageId }, deps.clock.now())
 }

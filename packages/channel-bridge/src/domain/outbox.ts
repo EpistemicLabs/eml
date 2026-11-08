@@ -46,6 +46,11 @@ export function markFailed(item: OutboxItem, failure: string): OutboxItem {
   return { ...item, state: 'failed', failure }
 }
 
+/** A refusal that may pass later keeps the item sending, so the same request sends it again. */
+export function markRetryableFailure(item: OutboxItem, failure: string): OutboxItem {
+  return { ...item, state: 'sending', failure }
+}
+
 /** What an earlier item means for a request that names it again; an item still sending is finished by the caller. */
 export type OutboxOutcome =
   | { kind: 'drafted'; outboxId: string }

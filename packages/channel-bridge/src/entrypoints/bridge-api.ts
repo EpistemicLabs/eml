@@ -93,7 +93,7 @@ function statusOf(result: Result): number {
     if (result.reason === 'not_a_draft') return 409
     return 403
   }
-  if (result.kind === 'failed') return result.retryable ? 503 : 502
+  if (result.kind === 'failed') return result.retryable ? 503 : 422
   return 200
 }
 
