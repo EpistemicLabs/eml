@@ -350,18 +350,26 @@ describe('reading and replying', () => {
     await syncChannel(w, { account: w.channel })
   })
 
-  it('hands a job its unread messages once', async () => {
-    const first = await readJobMessages(w, { jobId: 'job-customer' })
+  it('hands a job its unread messages until it confirms them', async () => {
+    const first = await readJobMessages(w, { jobId: 'job-customer', ack: [] })
     expect(first.kind === 'messages' && first.messages.map((m) => m.from)).toEqual(['anna@customer.example'])
-    expect(await readJobMessages(w, { jobId: 'job-customer' })).toEqual({ kind: 'messages', messages: [] })
+    const again = await readJobMessages(w, { jobId: 'job-customer', ack: [] })
+    expect(again).toEqual(first)
+    const ids = first.kind === 'messages' ? first.messages.map((m) => m.id) : []
+    expect(await readJobMessages(w, { jobId: 'job-customer', ack: ids })).toEqual({ kind: 'messages', messages: [] })
+  })
+
+  it('a job cannot confirm another job\'s or the inbox\'s messages', async () => {
+    await readJobMessages(w, { jobId: 'job-customer', ack: ['msg-2'] })
+    expect((await w.store.get('msg-2'))?.read).toBe(false)
   })
 
   it('refuses to read for an unknown job', async () => {
-    expect(await readJobMessages(w, { jobId: 'job-gone' })).toEqual({ kind: 'refused', reason: 'unknown_job', retryable: false })
+    expect(await readJobMessages(w, { jobId: 'job-gone', ack: [] })).toEqual({ kind: 'refused', reason: 'unknown_job', retryable: false })
   })
 
   it('replies in the message\'s thread, to its sender, from its account', async () => {
-    const read = await readJobMessages(w, { jobId: 'job-customer' })
+    const read = await readJobMessages(w, { jobId: 'job-customer', ack: [] })
     const id = read.kind === 'messages' ? read.messages[0]?.id ?? '' : ''
     expect(await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })).toEqual({
       kind: 'drafted', outboxId: 'out-1',

@@ -23,6 +23,7 @@ export interface BridgeApiOptions {
 
 const MAX_BODY_BYTES = 1_000_000
 const replyBodySchema = z.object({ text: z.string().min(1).max(100_000) })
+const readBodySchema = z.object({ ack: z.array(z.string()).max(1_000).default([]) })
 
 type Result = { kind: string; reason?: string; retryable?: boolean }
 
@@ -63,8 +64,10 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
   if (body === null) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
 
   if (read?.[1]) {
+    const parsed = readBodySchema.safeParse(body)
+    if (!parsed.success) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
     const jobId = decodeURIComponent(read[1])
-    const result = await readJobMessages(deps, { jobId })
+    const result = await readJobMessages(deps, { jobId, ack: parsed.data.ack })
     options.log('job.read', { jobId, outcome: result.kind, count: result.kind === 'messages' ? result.messages.length : 0 })
     return send(res, statusOf(result), result)
   }

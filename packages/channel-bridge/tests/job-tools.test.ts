@@ -49,6 +49,15 @@ describe('job tools', () => {
     expect(await tools.read()).toContain('No new messages')
   })
 
+  it('shows the same messages again when an answer was lost, and confirms them on the next read', async () => {
+    const lost = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/jobs/job-1/messages/read`, {
+      method: 'POST', headers: { authorization: 'Bearer tool', 'content-type': 'application/json' }, body: '{}',
+    })
+    expect(((await lost.json()) as { messages: unknown[] }).messages).toHaveLength(1)
+    expect(await tools.read()).toContain('<untrusted-message')
+    expect(await tools.read()).toContain('No new messages')
+  })
+
   it('a message cannot close its own wrapper', async () => {
     const text = await tools.read()
     const inner = text.slice(text.indexOf('<untrusted-message'), text.lastIndexOf('</untrusted-message>'))

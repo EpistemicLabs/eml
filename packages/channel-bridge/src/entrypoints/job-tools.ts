@@ -21,6 +21,8 @@ const UNTRUSTED_NOTE =
 /** The job session's view of the bridge: read the job's new messages, reply to one of them. */
 export function jobTools(options: JobToolsOptions) {
   const base = `${options.url}/v1/jobs/${encodeURIComponent(options.jobId)}`
+  /** What the last read showed; the next read confirms it. */
+  let shown: string[] = []
 
   async function call(path: string, body: unknown): Promise<Record<string, unknown>> {
     const response = await fetch(`${base}${path}`, {
@@ -34,9 +36,10 @@ export function jobTools(options: JobToolsOptions) {
 
   return {
     async read(): Promise<string> {
-      const result = await call('/messages/read', {})
+      const result = await call('/messages/read', { ack: shown })
       if (result.kind !== 'messages') return refusal(result)
       const messages = result.messages as MessageView[]
+      shown = messages.map((message) => message.id)
       if (messages.length === 0) return 'No new messages for this job.'
       return [UNTRUSTED_NOTE, ...messages.map(wrap)].join('\n\n')
     },

@@ -20,11 +20,19 @@ export type ReadJobMessagesResult =
   | { kind: 'messages'; messages: JobMessageView[] }
   | { kind: 'refused'; reason: 'unknown_job'; retryable: false }
 
-/** Hands a job the messages it has not read yet, once. */
-export async function readJobMessages(deps: ReadJobMessagesDeps, input: { jobId: string }): Promise<ReadJobMessagesResult> {
+/**
+ * Hands a job the messages it has not confirmed yet. The job confirms what it got with its next
+ * read, so a read whose answer was lost shows the same messages again. A job confirms only its own.
+ */
+export async function readJobMessages(
+  deps: ReadJobMessagesDeps,
+  input: { jobId: string; ack: string[] },
+): Promise<ReadJobMessagesResult> {
   if (!(await deps.jobs.route(input.jobId))) return { kind: 'refused', reason: 'unknown_job', retryable: false }
-  const unread = await deps.store.unreadForJob(input.jobId)
-  await deps.store.markRead(unread.map((message) => message.id))
+  const confirmed = new Set(input.ack)
+  const unconfirmed = await deps.store.unreadForJob(input.jobId)
+  await deps.store.markRead(unconfirmed.filter((message) => confirmed.has(message.id)).map((message) => message.id))
+  const unread = unconfirmed.filter((message) => !confirmed.has(message.id))
   return {
     kind: 'messages',
     messages: unread.map((message) => ({
