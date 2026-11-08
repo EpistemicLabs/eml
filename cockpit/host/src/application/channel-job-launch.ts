@@ -1,5 +1,5 @@
 import type { AgentProvider, LaunchRequest } from '../domain/agent-provider.js'
-import type { Job } from '../domain/job.js'
+import { activeGrants, type Job } from '../domain/job.js'
 import { channelJobProfile, type GrantableTool, type McpServerSpec } from '../domain/tool-profile.js'
 
 /** A job that answers messages on a channel (mail, later Slack and WhatsApp), not only a schedule. */
@@ -17,11 +17,11 @@ export interface ChannelJobFacts {
 }
 
 /**
- * A channel job's facts for its launches. Until the job model marks jobs limited, every channel job
- * is; grants come with the model too.
+ * A channel job's facts for a launch now: limited unless the user took the limits off, and the
+ * tools still lent to it.
  */
-export function channelJobFacts(job: Pick<Job, 'id' | 'triggers'>): ChannelJobFacts {
-  return { jobId: job.id, limited: true, granted: [] }
+export function channelJobFacts(job: Pick<Job, 'id' | 'triggers' | 'limited' | 'grants'>, now: number): ChannelJobFacts {
+  return { jobId: job.id, limited: job.limited !== false, granted: activeGrants(job, now).map((grant) => grant.tool) }
 }
 
 export interface ChannelToolsDeps {

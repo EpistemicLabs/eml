@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { withChannelTools } from '../src/application/channel-job-launch.js'
+import { channelJobFacts, withChannelTools } from '../src/application/channel-job-launch.js'
 import type { AgentProvider, LaunchRequest, LaunchSpec } from '../src/domain/agent-provider.js'
 
 function fakeProvider() {
@@ -62,5 +62,24 @@ describe('withChannelTools', () => {
     const wrapped = withChannelTools(provider, { channelJobOf: () => ({ jobId: 'job-1', limited: true, granted: [] }), bridgeServer: server })
     expect(wrapped.id).toBe('claude')
     expect(wrapped.launch(request('s')).args).toEqual(['claude provider'])
+  })
+})
+
+describe('channelJobFacts', () => {
+  const now = Date.parse('2026-11-08T10:00:00.000Z')
+  const job = { id: 'job-1', triggers: [{ type: 'mail' as const, match: [] }] }
+
+  it('counts a channel job as limited unless the user took the limits off', () => {
+    expect(channelJobFacts(job, now).limited).toBe(true)
+    expect(channelJobFacts({ ...job, limited: true }, now).limited).toBe(true)
+    expect(channelJobFacts({ ...job, limited: false }, now).limited).toBe(false)
+  })
+
+  it('lists only the grants that still run', () => {
+    const grants = [
+      { tool: 'SendMessage' as const, until: '2026-11-08T11:00:00.000Z', reason: null },
+      { tool: 'chrome' as const, until: '2026-11-08T09:00:00.000Z', reason: null },
+    ]
+    expect(channelJobFacts({ ...job, grants }, now).granted).toEqual(['SendMessage'])
   })
 })

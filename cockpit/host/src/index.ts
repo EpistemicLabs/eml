@@ -105,7 +105,7 @@ async function main() {
   const channelJobOf = (sessionId: string) => {
     const jobId = ledger.get(sessionId)?.jobId
     const job = jobId ? jobStore.get(jobId) : undefined
-    return job && isChannelJob(job) ? channelJobFacts(job) : null
+    return job && isChannelJob(job) ? channelJobFacts(job, Date.now()) : null
   }
   const providers = new ProviderRegistry({
     providerOf: (sessionId) => ledger.get(sessionId)?.provider,
