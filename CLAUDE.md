@@ -3,13 +3,14 @@
 EML (Epistemic Memory Layer, brand: Engram Protocol) is a typed memory store for AI agents: typed
 engrams, graph relations, provenance, lifecycle. This repo is the local product — the **EML Cockpit**
 (`cockpit/host` = the `eml-cockpit` package, `cockpit/frontend`) and its building blocks
-(`packages/core`, `packages/server`, `packages/mcp-server`).
+(`packages/core`, `packages/server`, `packages/mcp-server`, `packages/channel-bridge`).
 
 ## Where to find what
 
 - `README.md` — overview and quick start; `cockpit/README.md` — cockpit architecture, dev setup, what it touches.
 - `packages/core/migrations/brain/` — `v0.<N>.sql` (fresh-brain schema) + `v0.<N>_migrate.sql` (one step each, from v0.13).
 - `packages/mcp-server/README.md` — MCP tool inventory and hooks.
+- `packages/channel-bridge/README.md` — the channel bridge: routing messages to jobs, drafts, wakes.
 - `packages/bench/README.md` — the release benchmark (stage 1 is a CI gate against the last release's result).
 - `scripts/bump-version.sh` — the one version bump; `scripts/pack-release.sh` — release assets (tarballs + SHA256SUMS) for the GitHub release the updater reads; `scripts/install-app.sh` — install a release as the app.
 
