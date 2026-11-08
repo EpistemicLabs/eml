@@ -115,6 +115,8 @@ export interface LaunchSpec {
    * after a host restart, until the user closes it.
    */
   keepRunning: boolean
+  /** It gets browser control (Claude in Chrome), for a runtime that doesn't use `args`. */
+  chrome?: boolean
   /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */
   limits?: { mcpConfig: string | null; deniedTools: string[] }
 }

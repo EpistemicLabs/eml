@@ -110,6 +110,8 @@ class ClaudeProvider implements AgentProvider {
     const limitedMcp = profile?.mcpServers || extra
       ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile?.mcpServers ?? null, extra ?? {})
       : null
+    // An agent given browser control: the Chrome setting lives in the shared config, not the agent's.
+    const chrome = !!agent?.chrome && !limitedMcp
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
@@ -119,8 +121,7 @@ class ClaudeProvider implements AgentProvider {
       '--mcp-config', limitedMcp ?? req.space.files.mcpConfig,
       // A space with its own agent, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
       ...(agent || limitedMcp ? ['--strict-mcp-config'] : []),
-      // An agent given browser control: the Chrome setting lives in the shared config, not the agent's.
-      ...(agent?.chrome && !limitedMcp ? ['--chrome'] : []),
+      ...(chrome ? ['--chrome'] : []),
       ...(profile?.deniedTools.length ? ['--disallowedTools', profile.deniedTools.join(',')] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);
@@ -145,6 +146,7 @@ class ClaudeProvider implements AgentProvider {
       args,
       // Driven from the Claude app too: it outlives the browser tab.
       keepRunning: remoteControl,
+      ...(chrome ? { chrome } : {}),
       ...(profile || limitedMcp ? { limits: { mcpConfig: limitedMcp, deniedTools: profile?.deniedTools ?? [] } } : {}),
       env: {
         CLAUDE_CONFIG_DIR: configDir,

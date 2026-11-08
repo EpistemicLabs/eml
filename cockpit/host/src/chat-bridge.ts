@@ -637,7 +637,7 @@ export class ChatBridge {
       cwd: projectPath, env, address,
       files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.agent || !!launch.limits?.mcpConfig,
-      ...(space.agent?.chrome && !launch.limits?.mcpConfig ? { chrome: true } : {}),
+      ...(launch.chrome ? { chrome: true } : {}),
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
       ...(this.ctx.jobs ? { jobs: (input: Record<string, unknown>) => this.ctx.jobs!(entry.sessionId, input) } : {}),
