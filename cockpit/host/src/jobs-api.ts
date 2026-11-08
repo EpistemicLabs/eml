@@ -4,6 +4,7 @@ import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
 import type { NotificationFeed } from './notifications.js'
 import { JOB_ACTIONS } from './application/jobs.js'
+import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 
 /**
  * Jobs over HTTP (application/jobs.ts):
@@ -15,6 +16,8 @@ import { JOB_ACTIONS } from './application/jobs.js'
  *   POST /api/jobs/<id>/<pause|resume|delete|run_now>   the page (Jobs view).
  *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
  *                             for new channel addresses, and send vs draft per channel.
+ *   POST /api/jobs/<id>/limited { limited }, /grant { tool, minutes?, reason? }, /revoke { tool }
+ *                             the page only: the Limited switch and tools lent for a while.
  *   GET  /api/notifications, POST /api/notifications/read { ids? }   the bell.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
  */
@@ -64,7 +67,7 @@ export async function handleJobsApi(
     return true
   }
   // The user's own decisions: never reachable from a session's tool.
-  const decide = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/(approve|reply)$/)
+  const decide = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/(approve|reply|limited|grant|revoke)$/)
   if (decide && method === 'POST') {
     const job = deps.store.get(decide[1])
     if (!job) {
@@ -77,6 +80,27 @@ export async function handleJobsApi(
       return true
     }
     const body = await readJson(req)
+    if (decide[2] === 'limited') {
+      if (typeof body.limited !== 'boolean') {
+        json(res, 400, { error: { code: 'INVALID', message: 'limited is true or false' } })
+        return true
+      }
+      const answer = deps.jobs.setLimited(job, body.limited)
+      json(res, answer.status, { text: answer.text })
+      return true
+    }
+    if (decide[2] === 'grant' || decide[2] === 'revoke') {
+      const tool = body.tool
+      if (!(GRANT_TOOLS as readonly unknown[]).includes(tool)) {
+        json(res, 400, { error: { code: 'INVALID_TOOL', message: `tool is one of ${GRANT_TOOLS.join(', ')}` } })
+        return true
+      }
+      const answer = decide[2] === 'grant'
+        ? deps.jobs.grant(job, tool as GrantTool, body.minutes === undefined ? 60 : Number(body.minutes), typeof body.reason === 'string' ? body.reason.slice(0, 200) : null)
+        : deps.jobs.revoke(job, tool as GrantTool)
+      json(res, answer.status, { text: answer.text })
+      return true
+    }
     const channel = body.channel
     const mode = body.mode
     if ((channel !== 'mail' && channel !== 'slack' && channel !== 'whatsapp') || (mode !== 'send' && mode !== 'draft')) {

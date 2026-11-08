@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   describeTrigger, isOpenRun, JOB_LIMITS, jobTimeZone, mailKeys, nextDue,
-  type ChannelTrigger, type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ReplyChannel, type ReplyMode, type ScheduleTrigger,
+  activeGrants, type ChannelTrigger, type GrantTool, type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ReplyChannel, type ReplyMode, type ScheduleTrigger,
 } from '../domain/job.js'
 import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
@@ -41,6 +41,8 @@ export interface JobsDeps {
   providerKnown(id: string): boolean
   /** The zone times read in when a job names none: the user's (from their browser), else the host's. */
   defaultTimeZone(): string
+  /** A grant was stored: the job's session should pick the tool up (restart it and tell it). */
+  onGrant?(job: Job, tool: GrantTool): void
 }
 
 export interface JobAnswer {
@@ -111,7 +113,7 @@ export class Jobs {
       taskId: str(input.task_id) ?? null, prompt, target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
       // Drafts until the user switches a channel to send in the Jobs view; a session never can.
       reply: mail ? { mail: 'draft' } : {}, end, notify,
-      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
+      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true, limited: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
     }
     const next = nextDue(draft, this.now())
     if (next === null && trigger) return bad('that schedule has no run before its end')
@@ -298,6 +300,34 @@ export class Jobs {
     return { status: 200, job: next, text: `Job "${job.name}" ${mode === 'send' ? 'sends' : 'drafts'} ${channel} replies.` }
   }
 
+  /** Limited or free (the user's switch in the Jobs view). Only the page calls this. */
+  setLimited(job: Job, limited: boolean): JobAnswer {
+    const next: Job = { ...job, limited, updatedAt: new Date(this.now()).toISOString() }
+    this.deps.store.put(next)
+    return { status: 200, job: next, text: `Job "${job.name}" is ${limited ? 'limited' : 'no longer limited'}.` }
+  }
+
+  /** Lend a limited job a tool for `minutes` (the user's click). Only the page calls this. */
+  grant(job: Job, tool: GrantTool, minutes: number, reason: string | null): JobAnswer {
+    if (!Number.isFinite(minutes) || minutes < GRANT_MINUTES.min || minutes > GRANT_MINUTES.max) {
+      return bad(`minutes is from ${GRANT_MINUTES.min} to ${GRANT_MINUTES.max}`)
+    }
+    const now = this.now()
+    const until = new Date(now + minutes * 60_000).toISOString()
+    const grants = [...activeGrants(job, now).filter((g) => g.tool !== tool), { tool, until, reason }]
+    const next: Job = { ...job, grants, updatedAt: new Date(now).toISOString() }
+    this.deps.store.put(next)
+    this.deps.onGrant?.(next, tool)
+    return { status: 200, job: next, text: `Job "${job.name}" may use ${tool} until ${until}.` }
+  }
+
+  /** Take a lent tool back (the user's click). Only the page calls this. */
+  revoke(job: Job, tool: GrantTool): JobAnswer {
+    const next: Job = { ...job, grants: (job.grants ?? []).filter((g) => g.tool !== tool), updatedAt: new Date(this.now()).toISOString() }
+    this.deps.store.put(next)
+    return { status: 200, job: next, text: `Job "${job.name}" no longer has ${tool}.` }
+  }
+
   /** What the page shows of a job: its schedule and target in words, its next run times. */
   summary(job: Job): { schedule: string; wakes: string; nextRuns: string[] } {
     return {
@@ -316,6 +346,10 @@ export class Jobs {
       : job.pendingApproval ? "waiting for the user's OK in the Jobs view"
         : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
     if (state) lines.push(`  state: ${state}`)
+    if (job.limited) {
+      const lent = activeGrants(job, this.now()).map((g) => g.tool)
+      lines.push(`  limited: no shell, no messages to sessions, no schedule tool, only the brain MCP${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
+    }
     else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
     lines.push(`  wakes: ${this.describeTarget(job)}`)
     const last = [...this.deps.store.runs(job.id)].reverse().find((run) => run.number > 0 || !isOpenRun(run))
@@ -348,6 +382,8 @@ function describeRun(run: JobRun, zone: string): string {
   const how = run.status === 'finished' ? (run.outcome ?? 'ended without a status') : run.status
   return `${when}, ${how}${run.note ? ` (${run.note})` : ''}`
 }
+
+const GRANT_MINUTES = { min: 5, max: 24 * 60 }
 
 const APPROVAL_NOTE = "It reacts to mail only after the user's OK in the Jobs view; until then mail for it waits. Replies are drafts the user approves."
 const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
