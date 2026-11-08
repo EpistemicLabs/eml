@@ -36,6 +36,8 @@ export interface JobsDeps {
   /** A session of the space by id or address; null when unknown or in another space. */
   findSession(spaceId: string | null, target: string): string | null
   addressOf(sessionId: string): string
+  /** A project's name as the user sees it; the id when unknown. */
+  projectName?(spaceId: string | null, projectId: string): string
   providerKnown(id: string): boolean
   /** The zone times read in when a job names none: the user's (from their browser), else the host's. */
   defaultTimeZone(): string
@@ -264,7 +266,7 @@ export class Jobs {
     const state = job.endedAt ? 'ended' : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
     if (state) lines.push(`  state: ${state}`)
     else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
-    lines.push(`  wakes: ${this.describeTarget(job.target)}`)
+    lines.push(`  wakes: ${this.describeTarget(job)}`)
     const last = [...this.deps.store.runs(job.id)].reverse().find((run) => run.number > 0 || !isOpenRun(run))
     if (last) lines.push(`  last run: ${describeRun(last, zone)}`)
     return lines.join('\n')
@@ -282,10 +284,11 @@ export class Jobs {
     return out
   }
 
-  private describeTarget(target: JobTarget): string {
+  private describeTarget({ target, spaceId }: Job): string {
     if (target.type === 'session') return `session ${this.deps.addressOf(target.sessionId)}`
-    if (target.type === 'job-session') return target.sessionId ? `its own session ${this.deps.addressOf(target.sessionId)}` : `its own session (started on the first run) in ${target.projectId}`
-    return `a new worker per run in ${target.projectId}`
+    const project = this.deps.projectName?.(spaceId, target.projectId) ?? target.projectId
+    if (target.type === 'job-session') return target.sessionId ? `its own session ${this.deps.addressOf(target.sessionId)}` : `its own session (started on the first run) in ${project}`
+    return `a new worker per run in ${project}`
   }
 }
 

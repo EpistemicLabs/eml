@@ -60,6 +60,7 @@ function setup() {
     resolveProject: async (_space, input) => (input === 'eml' ? 'bp-eml' : null),
     findSession: (_space, target) => (target === 'eml-other' ? 'other' : null),
     addressOf: (id) => `eml-${id}`,
+    projectName: (_space, id) => (id === 'bp-eml' ? 'EML' : id),
     providerKnown: (id) => id === 'claude',
     defaultTimeZone: () => 'Asia/Makassar',
   })
@@ -243,7 +244,7 @@ describe('schedule tool', () => {
     const { jobs } = setup()
     const answer = await jobs.handle(caller, { action: 'create', name: 'Daily brief', prompt: 'p', cron: '0 8 * * 1-5' })
     expect(answer.text).toMatch(/next: Tue 10 Nov 08:00, Wed 11 Nov 08:00, Thu 12 Nov 08:00/)
-    expect(answer.text).toMatch(/a new worker per run in bp-eml/)
+    expect(answer.text).toMatch(/a new worker per run in EML/)
   })
 
   it('keeps jobs in their space', async () => {

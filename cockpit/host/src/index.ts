@@ -316,6 +316,10 @@ async function main() {
     findSession: (spaceId, target) => ledger.list(undefined, spaceId)
       .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
     addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
+    projectName: (spaceId, projectId) => {
+      const project = spaces.resolve(spaceId).registry.get(projectId)
+      return project ? project.customName ?? project.displayName : projectId
+    },
     providerKnown: (id) => providers.get(id) !== undefined,
   })
   // The channel bridge's tokens, one per space (job-contract-api.ts); a space added later gets one at the next start.
