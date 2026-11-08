@@ -8,7 +8,8 @@
  *   node "$COCKPIT_SCHEDULE_JS" '{"action":"create","name":"…","at":"2026-11-13T10:00","prompt":"…"}'
  *
  * Flags are the tool's fields with dashes (--max-runs, --ends-at, --task-id,
- * --deny-tools a,b). Reads COCKPIT_SESSION_ID next to what host-request.ts needs.
+ * --deny-tools a,b); mail as --mail-domains a.com,b.com and --mail-addresses x@y.com.
+ * Reads COCKPIT_SESSION_ID next to what host-request.ts needs.
  */
 import { fail, requestHost } from './host-request.js'
 
@@ -27,7 +28,14 @@ function parse(argv: string[]): Record<string, unknown> {
     const value = rest[i + 1]
     if (!flag.startsWith('--') || value === undefined) fail(CLI, `${flag}: expected --field value. ${USAGE}`)
     const key = flag.slice(2).replace(/-/g, '_')
-    input[key] = key === 'max_runs' ? Number(value) : key === 'deny_tools' ? value.split(',').map((s) => s.trim()).filter(Boolean) : value
+    const list = () => value.split(',').map((s) => s.trim()).filter(Boolean)
+    if (key === 'mail_domains' || key === 'mail_addresses') {
+      const mail = (input.mail ?? {}) as Record<string, string[]>
+      mail[key === 'mail_domains' ? 'domains' : 'addresses'] = list()
+      input.mail = mail
+      continue
+    }
+    input[key] = key === 'max_runs' ? Number(value) : key === 'deny_tools' ? list() : value
   }
   return input
 }

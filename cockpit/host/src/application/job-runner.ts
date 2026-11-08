@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
-  isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
+  isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
   type Job, type JobRun, type ReplyChannel,
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
@@ -119,7 +119,7 @@ export class JobRunner {
    */
   async wake(job: Job, channel: ReplyChannel, message: string, key: string): Promise<WakeOutcome> {
     if (job.endedAt) return 'refused'
-    if (job.paused) return 'retry'
+    if (isHeld(job)) return 'retry'
     const now = this.now()
     if (this.deps.store.seenKey(job.id, key, now - KEY_MEMORY_MS)) return 'delivered'
     const run = this.addRun(job, channel, now, { idempotencyKey: key, message })
@@ -143,7 +143,7 @@ export class JobRunner {
     for (const job of this.deps.store.list()) {
       for (const run of this.deps.store.runs(job.id)) if (run.status === 'started') this.settle(job, run, now)
       const fresh = this.deps.store.get(job.id)
-      if (fresh && !fresh.paused && !fresh.endedAt) this.schedule(fresh, now)
+      if (fresh && !isHeld(fresh) && !fresh.endedAt) this.schedule(fresh, now)
     }
     let started = 0
     const waiting = this.deps.store.allRuns()

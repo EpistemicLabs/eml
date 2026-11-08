@@ -551,6 +551,7 @@ export class ChatBridge {
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
+        if (request.jobId) this.ctx.ledger.setJobId(sessionId, request.jobId)
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted.
         this.ctx.onTurn(sessionId, 'working')

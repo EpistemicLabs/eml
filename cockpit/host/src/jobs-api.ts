@@ -13,6 +13,8 @@ import { JOB_ACTIONS } from './application/jobs.js'
  *   GET  /api/jobs            the page: every space's jobs with their runs.
  *   PUT  /api/jobs/time-zone  the page: the user's time zone, from their browser.
  *   POST /api/jobs/<id>/<pause|resume|delete|run_now>   the page (Jobs view).
+ *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
+ *                             for new channel addresses, and send vs draft per channel.
  *   GET  /api/notifications, POST /api/notifications/read { ids? }   the bell.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
  */
@@ -59,6 +61,30 @@ export async function handleJobsApi(
       runs: [...deps.store.runs(job.id)].reverse().slice(0, 20).map((run) => ({ ...run, session: run.sessionId ? deps.sessionInfo(run.sessionId) : null })),
     }))
     json(res, 200, { timeZone: deps.store.timeZone(), jobs })
+    return true
+  }
+  // The user's own decisions: never reachable from a session's tool.
+  const decide = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/(approve|reply)$/)
+  if (decide && method === 'POST') {
+    const job = deps.store.get(decide[1])
+    if (!job) {
+      json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such job' } })
+      return true
+    }
+    if (decide[2] === 'approve') {
+      const answer = deps.jobs.approve(job)
+      json(res, answer.status, { text: answer.text })
+      return true
+    }
+    const body = await readJson(req)
+    const channel = body.channel
+    const mode = body.mode
+    if ((channel !== 'mail' && channel !== 'slack' && channel !== 'whatsapp') || (mode !== 'send' && mode !== 'draft')) {
+      json(res, 400, { error: { code: 'INVALID_REPLY', message: 'channel is mail, slack or whatsapp; mode is send or draft' } })
+      return true
+    }
+    const answer = deps.jobs.setReply(job, channel, mode)
+    json(res, answer.status, { text: answer.text })
     return true
   }
   const act = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/([a-z_]+)$/)

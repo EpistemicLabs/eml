@@ -29,6 +29,11 @@ export type Job = {
   prompt: string;
   paused: boolean;
   pausedReason: string | null;
+  /** New channel addresses wait for the user's OK (Approve). */
+  pendingApproval?: boolean;
+  /** Per channel: send freely or draft for review. */
+  reply: Partial<Record<'mail' | 'slack' | 'whatsapp', 'send' | 'draft'>>;
+  triggers: Array<{ type: string }>;
   endedAt: string | null;
   createdAt: string;
   notify: 'needs-me' | 'always' | 'never';

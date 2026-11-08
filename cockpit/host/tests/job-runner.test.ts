@@ -278,3 +278,51 @@ describe('schedule tool', () => {
     expect((await jobs.handle(caller, { action: 'run_now', job: 'Daily' })).status).toBe(409)
   })
 })
+
+describe('mail jobs', () => {
+  const createMail = async (jobs: Jobs, mail: unknown, extra: Record<string, unknown> = {}) =>
+    jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'Draft replies to Acme.', mail, ...extra })
+
+  it('listens on mail in one session of its own, drafts, and waits for the user’s OK', async () => {
+    const { jobs } = setup()
+    const answer = await createMail(jobs, { domains: ['Acme.example'], addresses: ['boss@partner.example'] })
+    expect(answer.status, answer.text).toBe(201)
+    expect(answer.job).toMatchObject({
+      kind: 'standing', pendingApproval: true, reply: { mail: 'draft' }, nextRunAt: null,
+      target: { type: 'job-session', projectId: 'bp-eml', sessionId: null },
+      triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'boss@partner.example' }, { kind: 'domain', domain: 'acme.example' }] }],
+    })
+    expect(answer.text).toMatch(/only after the user's OK in the Jobs view/)
+    expect((await createMail(jobs, { domains: ['@acme.example'] }, { name: 'x' })).text).toMatch(/not a mail address or domain: @acme.example/)
+  })
+
+  it('holds wakes and run_now until approved; a session cannot approve or resume past it', async () => {
+    const { world, runner, jobs } = setup()
+    const job = (await createMail(jobs, { domains: ['acme.example'] })).job!
+    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k1')).toBe('retry')
+    expect((await jobs.handle(caller, { action: 'run_now', job: job.id })).text).toMatch(/waits for the user's OK/)
+    await jobs.handle(caller, { action: 'resume', job: job.id })
+    expect(world.store.get(job.id)!.pendingApproval).toBe(true)
+    jobs.approve(world.store.get(job.id)!)
+    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k1')).toBe('delivered')
+    expect(world.started[0].text).toMatch(/woken by mail[\s\S]*Draft replies to Acme\.[\s\S]*1 new mail$/)
+  })
+
+  it('asks for the OK again when addresses grow, not when they shrink', async () => {
+    const { world, jobs } = setup()
+    const job = (await createMail(jobs, { domains: ['acme.example', 'acme.test'] })).job!
+    jobs.approve(world.store.get(job.id)!)
+    await jobs.handle(caller, { action: 'update', job: job.id, mail: { domains: ['acme.example'] } })
+    expect(world.store.get(job.id)!.pendingApproval).toBe(false)
+    const grown = await jobs.handle(caller, { action: 'update', job: job.id, mail: { domains: ['acme.example', 'other.example'] } })
+    expect(grown.job!.pendingApproval).toBe(true)
+  })
+
+  it('lets only the page switch a channel to send', async () => {
+    const { world, jobs } = setup()
+    const job = (await createMail(jobs, { domains: ['acme.example'] })).job!
+    expect(jobs.setReply(world.store.get(job.id)!, 'mail', 'send').job!.reply).toEqual({ mail: 'send' })
+    expect(jobs.setReply(world.store.get(job.id)!, 'slack', 'send').status).toBe(400)
+    expect((await jobs.handle(caller, { action: 'update', job: job.id, reply: { mail: 'draft' } })).job!.reply).toEqual({ mail: 'send' })
+  })
+})
