@@ -239,6 +239,13 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
   space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
   decides which session that reaches and answers delivered, retry or refused.
+- **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
+  `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
+  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read` and
+  `msg_reply` (`dist/channel-bridge-mcp.cjs`), no Bash and of its space's MCP servers only the brain
+  (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
+  skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
+  cockpit token in the host.
 - **Jobs view and bell:** the header's **Jobs** shows every space's jobs with their next and last runs, pause, resume,
   run now and delete. The bell next to it lists what the cockpit told the user (`notifications.ts`,
   `<home>/notifications.json`, the last 200): a run that ended as review, question or failed, a missed run, a job
@@ -391,6 +398,7 @@ the cockpit's own Claude Code; `claude-config/` =
 the app's `CLAUDE_CONFIG_DIR`, pre-seeded with onboarding/theme and per-project trust;
 `codex/` and `codex-config/` = the cockpit's own Codex CLI and its `CODEX_HOME`, once Codex is set up;
 `spawn-inbox/` = worker requests from sandboxed sessions, read and removed at once; `tasks/` = task-run files;
+`channel-bridge/` = the channel bridge's database, tokens, address and accounts file;
 `bin/node` = a link to the host's node for the session hooks (their text names it and `app/current/…`, so it survives updates);
 `projects.json` = the project registry; `sessions.json` = the session ledger; `config` = the
 local brain token, chmod 600; `eml/config` = brain URL + token for the session hooks, rewritten each boot).
