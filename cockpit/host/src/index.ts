@@ -48,7 +48,7 @@ import { JobRunner } from './application/job-runner.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens } from './job-contract-api.js'
-import { isChannelJob, withChannelTools } from './application/channel-job-launch.js'
+import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
@@ -102,10 +102,10 @@ async function main() {
   // (Settings › Models retries).
   const ledger = new SessionLedger()
   // A channel job's session gets the bridge's tools and its limits at every launch (channel-job-launch.ts).
-  const channelJobOf = (sessionId: string): string | null => {
+  const channelJobOf = (sessionId: string) => {
     const jobId = ledger.get(sessionId)?.jobId
     const job = jobId ? jobStore.get(jobId) : undefined
-    return job && isChannelJob(job) ? job.id : null
+    return job && isChannelJob(job) ? channelJobFacts(job) : null
   }
   const providers = new ProviderRegistry({
     providerOf: (sessionId) => ledger.get(sessionId)?.provider,

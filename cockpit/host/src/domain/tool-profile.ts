@@ -17,16 +17,25 @@ export interface McpServerSpec {
   env: Record<string, string>
 }
 
-/** Built-in tools a session that answers outside messages never gets: its text comes from strangers. */
-const CHANNEL_JOB_DENIED_TOOLS = ['Bash']
+/** A tool the user can lift for a limited job's session for a while. */
+export type GrantableTool = 'SendMessage' | 'chrome'
 
 /**
- * What a channel job's session may use: what its maker could not, and no shell; of its space's MCP
- * servers only the brain. Its channel tools come from the cockpit at every launch.
+ * Tools a limited job's session does not get, since its text comes from strangers: no shell, no
+ * messages to other sessions, and no scheduling jobs, which would run with its maker's wider tools.
+ * Web tools stay on.
  */
-export function channelJobProfile(base: ToolProfile | null): ToolProfile {
+const LIMITED_DENIED_TOOLS = ['Bash', 'SendMessage', 'mcp__cockpit__schedule']
+
+/**
+ * What a limited job's session may use: what its maker could not, minus the tools above unless the
+ * user granted one for now; of its space's MCP servers only the brain. Its channel tools come from
+ * the cockpit at every launch.
+ */
+export function channelJobProfile(base: ToolProfile | null, granted: GrantableTool[]): ToolProfile {
   const denied = base?.deniedTools ?? []
-  return { deniedTools: [...denied, ...CHANNEL_JOB_DENIED_TOOLS.filter((tool) => !denied.includes(tool))], mcpServers: [] }
+  const closed = LIMITED_DENIED_TOOLS.filter((tool) => !denied.includes(tool) && !granted.includes(tool as GrantableTool))
+  return { deniedTools: [...denied, ...closed], mcpServers: [] }
 }
 
 const names = (value: unknown): string[] | null =>

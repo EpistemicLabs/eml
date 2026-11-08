@@ -105,8 +105,10 @@ class ClaudeProvider implements AgentProvider {
     // a worker the host started without a pane, which the app is the way to follow.
     const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const profile = req.toolProfile ?? null
-    const limitedMcp = profile?.mcpServers
-      ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile.mcpServers, req.extraMcpServers ?? {})
+    // A session's own mcp.json: when its profile limits the servers, or it is given extra ones.
+    const extra = req.extraMcpServers && Object.keys(req.extraMcpServers).length > 0 ? req.extraMcpServers : null
+    const limitedMcp = profile?.mcpServers || extra
+      ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile?.mcpServers ?? null, extra ?? {})
       : null
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
@@ -143,7 +145,7 @@ class ClaudeProvider implements AgentProvider {
       args,
       // Driven from the Claude app too: it outlives the browser tab.
       keepRunning: remoteControl,
-      ...(profile ? { limits: { mcpConfig: limitedMcp, deniedTools: profile.deniedTools } } : {}),
+      ...(profile || limitedMcp ? { limits: { mcpConfig: limitedMcp, deniedTools: profile?.deniedTools ?? [] } } : {}),
       env: {
         CLAUDE_CONFIG_DIR: configDir,
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own
