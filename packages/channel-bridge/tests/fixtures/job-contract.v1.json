@@ -1,0 +1,31 @@
+{
+  "$comment": "Contract v1 between the EML cockpit and the channel bridge (cockpit/host/src/domain/job-contract.ts). Both sides test against these examples; change them only together with a new contract version.",
+  "space": "11111111-2222-4333-8444-555555555555",
+  "routes": {
+    "request": { "method": "GET", "path": "/v1/jobs?space=11111111-2222-4333-8444-555555555555&channel=mail", "headers": { "Authorization": "Bearer <space token>" } },
+    "response": [
+      {
+        "jobId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "space": "11111111-2222-4333-8444-555555555555",
+        "matches": [
+          { "kind": "domain", "domain": "customer.example" },
+          { "kind": "address", "address": "support@partner.example" }
+        ],
+        "reply": { "mail": "draft" }
+      }
+    ]
+  },
+  "wake": {
+    "request": {
+      "method": "POST",
+      "path": "/v1/jobs/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/wake",
+      "headers": { "Authorization": "Bearer <space token>" },
+      "body": { "text": "2 new mails from customer.example", "idempotencyKey": "mail:thread-1:msg-2", "channel": "mail" }
+    },
+    "responses": {
+      "delivered": { "outcome": "delivered" },
+      "retry": { "outcome": "retry" },
+      "refused": { "outcome": "refused" }
+    }
+  }
+}
