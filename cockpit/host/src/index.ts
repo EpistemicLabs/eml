@@ -48,6 +48,10 @@ import { JobRunner } from './application/job-runner.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens } from './job-contract-api.js'
+import { isChannelJob, withChannelTools } from './application/channel-job-launch.js'
+import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
+import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
+import { createCodexProvider } from './infrastructure/providers/codex/index.js'
 import { NotificationFeed, type Notifier } from './notifications.js'
 
 /**
@@ -96,7 +100,17 @@ async function main() {
   // wait for it. Until it is done, or if it fails, sessions say what's missing
   // (Settings › Models retries).
   const ledger = new SessionLedger()
-  const providers = new ProviderRegistry({ providerOf: (sessionId) => ledger.get(sessionId)?.provider, preferred: readDefaultProvider })
+  // A channel job's session gets the bridge's tools and its limits at every launch (channel-job-launch.ts).
+  const channelJobOf = (sessionId: string): string | null => {
+    const jobId = ledger.get(sessionId)?.jobId
+    const job = jobId ? jobStore.get(jobId) : undefined
+    return job && isChannelJob(job) ? job.id : null
+  }
+  const providers = new ProviderRegistry({
+    providerOf: (sessionId) => ledger.get(sessionId)?.provider,
+    preferred: readDefaultProvider,
+    providers: [withChannelTools(createClaudeProvider(), { channelJobOf, bridgeServer: bridgeServerFor }), createCodexProvider()],
+  })
   for (const provider of providers.all()) {
     const name = provider.label.toLowerCase()
     void provider.runtime.install().finally(() => {
@@ -326,6 +340,8 @@ async function main() {
   // The channel bridge's tokens, one per space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => [spaces.main.id, ...spaces.list().filter((space) => !space.main).map((space) => space.id)]
   ensureJobTokens(jobSpaceIds())
+  // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
+  const channelBridge = await startChannelBridge(url, log)
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -397,6 +413,7 @@ async function main() {
     stop: () => {
       workers.stop()
       jobRunner.stop()
+      channelBridge?.stop()
       try { bridge.dispose() } catch { /* best-effort */ }
       try { host.close() } catch { /* best-effort */ }
     },
