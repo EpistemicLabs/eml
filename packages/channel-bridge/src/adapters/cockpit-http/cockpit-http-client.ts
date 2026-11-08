@@ -1,21 +1,25 @@
 import { z } from 'zod'
-import type { JobRoute } from '../../domain/routing'
+import type { Channel } from '../../domain/address'
+import type { JobRoute, MailMatch, ReplyMode } from '../../domain/routing'
 import type { Cockpit, WakeOutcome, WakeRequest } from '../../ports/cockpit'
-import type { JobDirectory } from '../../ports/job-directory'
+import type { DirectoryUnavailable, JobDirectory, RouteAnswer, RoutesAnswer } from '../../ports/job-directory'
 
-/** The cockpit's /v1 job contract, as far as the bridge reads it. Unknown fields are dropped. */
-const jobRouteSchema = z.object({
+/**
+ * The cockpit's /v1 job routes, read tolerantly: unknown fields are dropped, a match of a kind the
+ * bridge does not know is left out, a reply mode it does not know counts as draft, and a route it
+ * cannot read is skipped. A newer cockpit never stops the bridge's sync.
+ */
+const routeSchema = z.object({
   jobId: z.string(),
   space: z.string(),
-  matches: z.array(
-    z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('address'), address: z.string() }),
-      z.object({ kind: z.literal('domain'), domain: z.string() }),
-    ]),
-  ),
-  reply: z.object({ mail: z.enum(['send', 'draft']).optional() }),
+  matches: z.array(z.unknown()),
+  reply: z.record(z.string(), z.unknown()),
 })
-const jobRoutesSchema = z.array(jobRouteSchema)
+const matchSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('address'), address: z.string() }),
+  z.object({ kind: z.literal('domain'), domain: z.string() }),
+])
+const replyModeSchema = z.enum(['send', 'draft'])
 const wakeAnswerSchema = z.object({ outcome: z.enum(['delivered', 'retry', 'refused']) })
 
 const TIMEOUT_MS = 10_000
@@ -30,25 +34,32 @@ export interface CockpitHttpOptions {
 export class CockpitHttpClient implements JobDirectory, Cockpit {
   constructor(private readonly options: CockpitHttpOptions) {}
 
-  /** Throws when the cockpit cannot answer: routing without the jobs would send every message to the inbox. */
-  async routesInSpace(space: string): Promise<JobRoute[]> {
+  async routesInSpace(space: string, channel: Channel): Promise<RoutesAnswer> {
     const token = this.tokenFor(space)
-    if (!token) throw new Error(`no token for space ${space}`)
-    const query = new URLSearchParams({ space, channel: 'mail' })
-    const response = await fetch(`${this.options.url}/v1/jobs?${query}`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
-    if (!response.ok) throw new Error(`job routes for space ${space}: status ${response.status}`)
-    return jobRoutesSchema.parse(await response.json()).map(toJobRoute)
+    if (!token) return unavailable('no_token')
+    let response: Response
+    try {
+      response = await fetch(`${this.options.url}/v1/jobs?${new URLSearchParams({ space, channel })}`, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+    } catch {
+      return unavailable('cockpit_unreachable')
+    }
+    if (!response.ok) return unavailable('bad_status')
+    const body: unknown = await response.json().catch(() => null)
+    if (!Array.isArray(body)) return unavailable('bad_answer')
+    return { kind: 'routes', routes: body.flatMap((entry) => toJobRoute(entry, channel)) }
   }
 
-  async route(jobId: string): Promise<JobRoute | null> {
+  async route(jobId: string): Promise<RouteAnswer> {
     for (const { space } of this.options.spaces) {
-      const found = (await this.routesInSpace(space)).find((route) => route.jobId === jobId)
-      if (found) return found
+      const answer = await this.routesInSpace(space, 'mail')
+      if (answer.kind === 'unavailable') return answer
+      const found = answer.routes.find((route) => route.jobId === jobId)
+      if (found) return { kind: 'route', route: found }
     }
-    return null
+    return { kind: 'route', route: null }
   }
 
   /**
@@ -81,11 +92,21 @@ export class CockpitHttpClient implements JobDirectory, Cockpit {
   }
 }
 
-function toJobRoute(parsed: z.infer<typeof jobRouteSchema>): JobRoute {
-  return {
-    jobId: parsed.jobId,
-    space: parsed.space,
-    matches: parsed.matches,
-    reply: parsed.reply.mail ? { mail: parsed.reply.mail } : {},
+function unavailable(reason: DirectoryUnavailable['reason']): DirectoryUnavailable {
+  return { kind: 'unavailable', reason, retryable: true }
+}
+
+function toJobRoute(entry: unknown, channel: Channel): JobRoute[] {
+  const parsed = routeSchema.safeParse(entry)
+  if (!parsed.success) return []
+  const matches: MailMatch[] = parsed.data.matches.flatMap((match) => {
+    const known = matchSchema.safeParse(match)
+    return known.success ? [known.data] : []
+  })
+  const reply: Partial<Record<Channel, ReplyMode>> = {}
+  if (channel in parsed.data.reply) {
+    const mode = replyModeSchema.safeParse(parsed.data.reply[channel])
+    reply[channel] = mode.success ? mode.data : 'draft'
   }
+  return [{ jobId: parsed.data.jobId, space: parsed.data.space, matches, reply }]
 }

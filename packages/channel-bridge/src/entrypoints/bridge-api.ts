@@ -97,6 +97,7 @@ function statusOf(result: Result): number {
     return 403
   }
   if (result.kind === 'failed') return result.retryable ? 503 : 422
+  if (result.kind === 'unavailable') return 503
   return 200
 }
 

@@ -26,9 +26,10 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
   const tokensDir = required(env, 'COCKPIT_JOB_TOKENS_DIR')
   if (!Number.isInteger(port) || port <= 0) throw new Error('CHANNEL_BRIDGE_PORT must be a port number')
 
+  const spaces = spaceTokens(tokensDir)
   mkdirSync(home, { recursive: true, mode: 0o700 })
   const db = openBridgeDatabase(join(home, 'bridge.db'))
-  const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces: spaceTokens(tokensDir) })
+  const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces })
   const channels: ChannelAccounts = { account: () => null }
   const log: Log = (event, fields) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`)
   const deps = {
@@ -73,10 +74,15 @@ function ownerOnlyToken(path: string): string {
   return readFileSync(path, 'utf8').trim()
 }
 
-/** One file per space, named after the space, holding that space's token. */
+/** One file per space, named after the space, holding that space's token. None, or an empty one, refuses the start. */
 function spaceTokens(dir: string): { space: string; token: string }[] {
-  if (!existsSync(dir)) return []
-  return readdirSync(dir).map((space) => ({ space, token: readFileSync(join(dir, space), 'utf8').trim() }))
+  const spaces = existsSync(dir) ? readdirSync(dir) : []
+  if (spaces.length === 0) throw new Error('COCKPIT_JOB_TOKENS_DIR must hold a token file for at least one space')
+  return spaces.map((space) => {
+    const token = readFileSync(join(dir, space), 'utf8').trim()
+    if (!token) throw new Error(`the token file for space ${space} is empty`)
+    return { space, token }
+  })
 }
 
 if (require.main === module) {

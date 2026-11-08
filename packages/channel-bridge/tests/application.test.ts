@@ -70,10 +70,10 @@ describe('syncChannel', () => {
   it('stores a matching message once and queues one wake for its job', async () => {
     w.channel.receive(mail())
     const first = await syncChannel(w, { account: w.channel })
-    expect(first).toEqual({ stored: 1, duplicates: 0, toJobs: 1, toInbox: 0, ignored: 0 })
+    expect(first).toEqual({ kind: 'synced', stored: 1, duplicates: 0, toJobs: 1, toInbox: 0, ignored: 0 })
     await w.store.setCursor('acc-1', '0')
     const again = await syncChannel(w, { account: w.channel })
-    expect(again).toEqual({ stored: 0, duplicates: 1, toJobs: 0, toInbox: 0, ignored: 0 })
+    expect(again).toEqual({ kind: 'synced', stored: 0, duplicates: 1, toJobs: 0, toInbox: 0, ignored: 0 })
     const pending = await w.wakes.pending()
     expect(pending).toHaveLength(1)
     expect(pending[0]?.wake.entries).toHaveLength(1)
@@ -95,9 +95,10 @@ describe('syncChannel', () => {
 
   it('stores nothing and keeps the cursor when the job directory cannot answer', async () => {
     w.channel.receive(mail())
-    const failing = { ...w, jobs: { routesInSpace: async () => { throw new Error('cockpit away') }, route: async () => null } }
-    await expect(syncChannel(failing, { account: w.channel })).rejects.toThrow('cockpit away')
+    w.jobs.unavailable('cockpit_unreachable')
+    expect(await syncChannel(w, { account: w.channel })).toEqual({ kind: 'unavailable', reason: 'cockpit_unreachable', retryable: true })
     expect(await w.store.cursor('acc-1')).toBe('0')
+    w.jobs.available()
     expect(await syncChannel(w, { account: w.channel })).toMatchObject({ stored: 1, toJobs: 1 })
   })
 
@@ -362,6 +363,16 @@ describe('reading and replying', () => {
   it('a job cannot confirm another job\'s or the inbox\'s messages', async () => {
     await readJobMessages(w, { jobId: 'job-customer', ack: ['msg-2'] })
     expect((await w.store.get('msg-2'))?.read).toBe(false)
+  })
+
+  it('says the cockpit is unavailable rather than refusing, when it cannot look the job up', async () => {
+    w.jobs.unavailable('cockpit_unreachable')
+    expect(await readJobMessages(w, { jobId: 'job-customer', ack: [] })).toEqual({
+      kind: 'unavailable', reason: 'cockpit_unreachable', retryable: true,
+    })
+    expect(await replyToMessage(w, { jobId: 'job-customer', messageId: 'msg-1', text: 'x' })).toEqual({
+      kind: 'unavailable', reason: 'cockpit_unreachable', retryable: true,
+    })
   })
 
   it('refuses to read for an unknown job', async () => {

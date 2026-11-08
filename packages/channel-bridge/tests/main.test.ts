@@ -34,9 +34,9 @@ describe('main', () => {
         const allowed = await fetch(`http://127.0.0.1:${port}/v1/jobs/job-1/messages/read`, {
           method: 'POST', headers: { authorization: `Bearer ${token}` },
         })
-        // The cockpit at COCKPIT_URL is away, so the job cannot be looked up: a retryable failure.
-        expect(allowed.status).toBe(500)
-        expect(await allowed.json()).toMatchObject({ retryable: true })
+        // The cockpit at COCKPIT_URL is away, so the job cannot be looked up: a retryable answer.
+        expect(allowed.status).toBe(503)
+        expect(await allowed.json()).toMatchObject({ kind: 'unavailable', retryable: true })
       } finally {
         await bridge.stop()
       }
@@ -47,5 +47,22 @@ describe('main', () => {
 
   it('refuses to start without its settings', async () => {
     await expect(main({})).rejects.toThrow('CHANNEL_BRIDGE_HOME')
+  })
+
+  it('refuses to start without a token for at least one space, or with an empty one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channel-bridge-main-'))
+    try {
+      const env = {
+        CHANNEL_BRIDGE_HOME: join(root, 'home'), CHANNEL_BRIDGE_PORT: '1',
+        COCKPIT_URL: 'http://127.0.0.1:1', COCKPIT_JOB_TOKENS_DIR: join(root, 'job-tokens'),
+      }
+      await expect(main(env)).rejects.toThrow('COCKPIT_JOB_TOKENS_DIR')
+      mkdirSync(join(root, 'job-tokens'))
+      await expect(main(env)).rejects.toThrow('COCKPIT_JOB_TOKENS_DIR')
+      writeFileSync(join(root, 'job-tokens', 'support'), '  \n')
+      await expect(main(env)).rejects.toThrow('support')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

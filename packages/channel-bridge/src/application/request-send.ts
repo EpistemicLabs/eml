@@ -4,7 +4,7 @@ import type { OutboxItem } from '../domain/outbox'
 import { decideSend } from '../domain/send-policy'
 import type { ChannelAccounts } from '../ports/channel'
 import type { IdSource } from '../ports/id-source'
-import type { JobDirectory } from '../ports/job-directory'
+import type { DirectoryUnavailable, JobDirectory } from '../ports/job-directory'
 import type { MessageStore } from '../ports/message-store'
 import type { OutboxStore } from '../ports/outbox-store'
 import { sendOutboxItem } from './send-outbox-item'
@@ -30,6 +30,7 @@ export interface SendRequest {
 
 export type SendRequestResult =
   | SendStepResult
+  | DirectoryUnavailable
   | { kind: 'drafted'; outboxId: string }
   | { kind: 'refused'; reason: 'unknown_job' | 'unknown_account' | 'not_job_contact' | 'channel_not_attached'; retryable: false }
 
@@ -39,7 +40,9 @@ export type SendRequestResult =
  * the same name answers with what came of the first, and finishes a send that was cut off.
  */
 export async function requestSend(deps: RequestSendDeps, request: SendRequest): Promise<SendRequestResult> {
-  const route = await deps.jobs.route(request.jobId)
+  const answer = await deps.jobs.route(request.jobId)
+  if (answer.kind === 'unavailable') return answer
+  const route = answer.route
   if (!route) return { kind: 'refused', reason: 'unknown_job', retryable: false }
   const account = deps.channels.account(request.accountId)
   if (!account || account.space !== route.space) return { kind: 'refused', reason: 'unknown_account', retryable: false }

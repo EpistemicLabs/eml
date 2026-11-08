@@ -50,10 +50,17 @@ const main: StandIn = {
   routes: {
     support: [
       { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' }, extra: 'ignored' },
+      {
+        jobId: 'job-new', space: 'support',
+        matches: [{ kind: 'domain', domain: 'other.example' }, { kind: 'regex', pattern: '.*' }],
+        reply: { mail: 'ask-first', whatsapp: 'send' },
+      },
+      { jobId: 42, broken: true },
     ],
     errands: [{ jobId: 'job-2', space: 'errands', matches: [], reply: {} }],
+    garbled: { not: 'a list' } as unknown as unknown[],
   },
-  tokens,
+  tokens: { ...tokens, garbled: 'token-garbled' },
   wakeAnswers: {
     'job-1': { status: 200, body: { outcome: 'delivered' } },
     'job-busy': { status: 200, body: { outcome: 'retry' } },
@@ -94,18 +101,23 @@ jobDirectoryContract('memory', () => new MemoryJobDirectory(contractRoutes))
 jobDirectoryContract('cockpit http', () => client(urls.contract))
 
 describe('CockpitHttpClient as job directory', () => {
-  it('reads a space\'s mail routes with that space\'s token and drops unknown fields', async () => {
-    expect(await client().routesInSpace('support')).toEqual([
-      { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
-    ])
+  it('reads a space\'s mail routes with that space\'s token, tolerating what it does not know', async () => {
+    expect(await client().routesInSpace('support', 'mail')).toEqual({
+      kind: 'routes',
+      routes: [
+        { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
+        { jobId: 'job-new', space: 'support', matches: [{ kind: 'domain', domain: 'other.example' }], reply: { mail: 'draft' } },
+      ],
+    })
   })
 
-  it('refuses a space it has no token for', async () => {
-    await expect(client().routesInSpace('elsewhere')).rejects.toThrow('no token')
-  })
-
-  it('fails loudly when the cockpit cannot be reached, so a sync keeps its cursor', async () => {
-    await expect(client(unreachable).routesInSpace('support')).rejects.toThrow()
+  it('answers unavailable for a space without a token, an unreachable cockpit and an unreadable answer', async () => {
+    expect(await client().routesInSpace('elsewhere', 'mail')).toEqual({ kind: 'unavailable', reason: 'no_token', retryable: true })
+    expect(await client(unreachable).routesInSpace('support', 'mail')).toEqual({
+      kind: 'unavailable', reason: 'cockpit_unreachable', retryable: true,
+    })
+    const garbled = new CockpitHttpClient({ url: urls.main, spaces: [{ space: 'garbled', token: 'token-garbled' }] })
+    expect(await garbled.routesInSpace('garbled', 'mail')).toEqual({ kind: 'unavailable', reason: 'bad_answer', retryable: true })
   })
 })
 

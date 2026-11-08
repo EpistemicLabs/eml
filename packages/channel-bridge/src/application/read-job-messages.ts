@@ -1,4 +1,4 @@
-import type { JobDirectory } from '../ports/job-directory'
+import type { DirectoryUnavailable, JobDirectory } from '../ports/job-directory'
 import type { MessageStore } from '../ports/message-store'
 
 export interface ReadJobMessagesDeps {
@@ -19,6 +19,7 @@ export interface JobMessageView {
 export type ReadJobMessagesResult =
   | { kind: 'messages'; messages: JobMessageView[] }
   | { kind: 'refused'; reason: 'unknown_job'; retryable: false }
+  | DirectoryUnavailable
 
 /**
  * Hands a job the messages it has not confirmed yet. The job confirms what it got with its next
@@ -28,7 +29,9 @@ export async function readJobMessages(
   deps: ReadJobMessagesDeps,
   input: { jobId: string; ack: string[] },
 ): Promise<ReadJobMessagesResult> {
-  if (!(await deps.jobs.route(input.jobId))) return { kind: 'refused', reason: 'unknown_job', retryable: false }
+  const answer = await deps.jobs.route(input.jobId)
+  if (answer.kind === 'unavailable') return answer
+  if (!answer.route) return { kind: 'refused', reason: 'unknown_job', retryable: false }
   const confirmed = new Set(input.ack)
   const unconfirmed = await deps.store.unreadForJob(input.jobId)
   await deps.store.markRead(unconfirmed.filter((message) => confirmed.has(message.id)).map((message) => message.id))

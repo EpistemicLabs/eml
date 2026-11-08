@@ -41,7 +41,7 @@ describe('scripted conversation: a standing customer job', () => {
     mailbox.receive({ ...base, channelMessageId: 'm-2', threadKey: 't-2', from: 'ben@customer.example' })
     mailbox.receive({ ...base, channelMessageId: 'm-3', threadKey: 't-3', from: 'news@shop.example', automated: true })
     mailbox.receive({ ...base, channelMessageId: 'm-4', threadKey: 't-4', from: 'x@customer.example', senderVerified: false })
-    expect(await syncChannel(w, { account: mailbox })).toEqual({ stored: 4, duplicates: 0, toJobs: 2, toInbox: 1, ignored: 1 })
+    expect(await syncChannel(w, { account: mailbox })).toEqual({ kind: 'synced', stored: 4, duplicates: 0, toJobs: 2, toInbox: 1, ignored: 1 })
 
     w.clock.advance(COLLECT_MS)
     await dispatchWakes(w, { collectMs: COLLECT_MS })

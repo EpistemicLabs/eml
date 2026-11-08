@@ -12,12 +12,12 @@ export const contractRoutes: JobRoute[] = [
 export function jobDirectoryContract(name: string, make: () => JobDirectory): void {
   describe(`JobDirectory contract: ${name}`, () => {
     it('lists the jobs of one space only', async () => {
-      expect(await make().routesInSpace('support')).toEqual([contractRoutes[0]])
+      expect(await make().routesInSpace('support', 'mail')).toEqual({ kind: 'routes', routes: [contractRoutes[0]] })
     })
 
     it('finds a job by id in any space, and null for an unknown one', async () => {
-      expect(await make().route('job-b')).toEqual(contractRoutes[1])
-      expect(await make().route('job-none')).toBeNull()
+      expect(await make().route('job-b')).toEqual({ kind: 'route', route: contractRoutes[1] })
+      expect(await make().route('job-none')).toEqual({ kind: 'route', route: null })
     })
   })
 }

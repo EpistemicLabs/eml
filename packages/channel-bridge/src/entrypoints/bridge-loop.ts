@@ -18,7 +18,8 @@ export async function runBridgeTick(deps: BridgeLoopDeps, options: BridgeLoopOpt
   for (const account of options.accounts) {
     try {
       const summary = await syncChannel(deps, { account })
-      if (summary.stored > 0) options.log('sync.stored', { accountId: account.accountId, ...summary })
+      if (summary.kind === 'unavailable') options.log('sync.unavailable', { accountId: account.accountId, reason: summary.reason })
+      else if (summary.stored > 0) options.log('sync.stored', { accountId: account.accountId, ...summary })
     } catch {
       options.log('sync.failed', { accountId: account.accountId })
     }

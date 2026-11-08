@@ -76,5 +76,6 @@ function escape(value: string): string {
 }
 
 function refusal(result: Record<string, unknown>): string {
+  if (result.kind === 'unavailable') return 'The bridge cannot reach the cockpit right now. Try again in a minute.'
   return `Refused: ${String(result.reason ?? 'unknown')}. ${result.retryable ? 'Trying again later may help.' : 'Trying again will not help.'}`
 }
