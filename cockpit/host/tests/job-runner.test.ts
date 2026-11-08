@@ -26,6 +26,7 @@ class World {
   deliveryOutcome: DeliveryOutcome = 'resumed'
   alerts: string[] = []
   granted: string[] = []
+  ended: string[] = []
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   deps(): JobRunnerDeps {
@@ -47,6 +48,7 @@ class World {
       notify: (input) => { this.alerts.push(`${input.kind}: ${input.title}: ${input.body}`) },
       log: () => {},
       timeZone: () => 'Asia/Makassar',
+      onGrantEnd: (job, tools) => { this.ended.push(`${job.name}:${tools.join(',')}`) },
     }
   }
 }
@@ -65,6 +67,7 @@ function setup() {
     providerKnown: (id) => id === 'claude',
     defaultTimeZone: () => 'Asia/Makassar',
     onGrant: (job, tool) => { world.granted.push(`${job.name}:${tool}`) },
+    onGrantEnd: (job, tools) => { world.ended.push(`${job.name}:${tools.join(',')}`) },
   })
   return { world, runner, jobs }
 }
@@ -358,6 +361,7 @@ describe('limited jobs and grants', () => {
     world.now += 2 * MIN
     await runner.tick()
     expect(world.store.get(job.id)!.grants).toEqual([])
+    expect(world.ended).toEqual(['Returns:chrome'])
   })
 
   it('drops a grant once its time is up, and revoke takes it back at once', async () => {
@@ -369,5 +373,6 @@ describe('limited jobs and grants', () => {
     world.now += 31 * MIN
     await runner.tick()
     expect(world.store.get(job.id)!.grants).toEqual([])
+    expect(world.ended).toEqual(['Returns:chrome', 'Returns:SendMessage'])
   })
 })

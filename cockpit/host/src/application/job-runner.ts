@@ -3,7 +3,7 @@ import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
   activeGrants, isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
-  type Job, type JobRun, type ReplyChannel,
+  type GrantTool, type Job, type JobRun, type ReplyChannel,
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
@@ -45,6 +45,8 @@ export interface JobRunnerDeps {
   deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
   /** Queue a worker under `sessionId` with the text as its first prompt; returns why it could not, or null. */
   startWorker(job: Job, sessionId: string, text: string): string | null
+  /** Lent tools went back (their time is up, or the session reported done): the host takes them from the session. */
+  onGrantEnd?(job: Job, tools: GrantTool[]): void
   /** Tell the user (notifications.ts): a run that needs them, a failure, a pause. */
   notify(input: NotificationInput): void
   log(line: string): void
@@ -145,8 +147,10 @@ export class JobRunner {
       let fresh = this.deps.store.get(job.id)
       // Expired grants leave the record; the session gets no tool from them anyway (activeGrants).
       if (fresh?.grants?.some((g) => Date.parse(g.until) <= now)) {
+        const ended = fresh.grants.filter((g) => Date.parse(g.until) <= now).map((g) => g.tool)
         fresh = { ...fresh, grants: activeGrants(fresh, now) }
         this.deps.store.put(fresh)
+        this.deps.onGrantEnd?.(fresh, ended)
       }
       if (fresh && !isHeld(fresh) && !fresh.endedAt) this.schedule(fresh, now)
     }
@@ -178,8 +182,10 @@ export class JobRunner {
     if (!fresh) return
     // A lent tool is for the work at hand: it goes back once the session says it is done.
     if (status === 'done' && fresh.grants?.length) {
+      const ended = activeGrants(fresh, now).map((g) => g.tool)
       fresh = { ...fresh, grants: [] }
       this.deps.store.put(fresh)
+      if (ended.length) this.deps.onGrantEnd?.(fresh, ended)
     }
     const needsYou = status === 'review' || status === 'question' || status === 'failed'
     if (fresh.notify === 'always' || (fresh.notify === 'needs-me' && needsYou)) {
