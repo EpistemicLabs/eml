@@ -29,6 +29,8 @@ export interface SpawnRequest {
   toolProfile?: ToolProfile
   /** 'job': a job's run (application/job-runner.ts) — unattended like a session's worker, also without a requester. */
   origin?: 'job'
+  /** The job whose run this is (origin 'job'): what its session's channel tools act for. */
+  jobId?: string
   createdAt: string
 }
 

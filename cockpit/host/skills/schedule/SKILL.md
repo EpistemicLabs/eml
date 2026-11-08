@@ -41,6 +41,19 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Check Acme reply' \
   belongs to), `--deny-tools a,b`, `--notify needs-me|always|never`
   (default needs-me: the user hears of runs that need them).
 
+### Jobs that answer mail
+
+```bash
+node "$COCKPIT_SCHEDULE_JS" create --name 'Acme mail' --mail-domains acme.example \
+  --prompt 'You answer mail from Acme for … Draft each reply; ask the user when unsure.'
+```
+
+A job with `--mail-domains` / `--mail-addresses` (with or without a schedule)
+wakes its own session (`job-session`) when such mail arrives. It reacts only
+after the user's OK in the cockpit's Jobs view, and its replies are drafts the
+user approves; neither can be changed from a session. Adding addresses later
+asks for the OK again.
+
 The answer lists the next run times in words. Check them against what the
 user asked before you tell them it is set.
 

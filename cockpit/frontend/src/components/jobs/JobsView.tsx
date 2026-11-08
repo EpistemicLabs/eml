@@ -81,6 +81,21 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
   const [message, setMessage] = useState<string | null>(null);
   const last = job.runs.find((run) => run.status !== 'waiting' || run.number > 0);
   const state = job.endedAt ? 'Ended' : job.paused ? 'Paused' : null;
+  const channels = (['mail', 'slack', 'whatsapp'] as const).filter((channel) => job.triggers.some((t) => t.type === channel));
+  const [confirmSend, setConfirmSend] = useState<typeof channels[number] | null>(null);
+
+  const decide = async (request: () => Promise<Response>) => {
+    setBusy(true);
+    try {
+      const response = await request();
+      const body = await response.json().catch(() => ({})) as { text?: string };
+      setMessage(response.ok ? null : body.text ?? `HTTP ${response.status}`);
+      await onChanged();
+    } finally {
+      setBusy(false);
+      setConfirmSend(null);
+    }
+  };
 
   const act = async (action: 'pause' | 'resume' | 'delete' | 'run_now') => {
     setBusy(true);
@@ -106,6 +121,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="font-medium text-foreground">{job.name}</span>
             {state && <span className="rounded bg-foreground/10 px-1.5 py-px text-[11px] text-muted-foreground">{state}</span>}
+            {job.pendingApproval && <span className="rounded bg-warning/15 px-1.5 py-px text-[11px] text-warning">Waiting for your OK</span>}
             <span className="text-xs text-muted-foreground">{job.schedule}</span>
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
@@ -113,6 +129,31 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
             {job.pausedReason && <span className="text-warning">{job.pausedReason}</span>}
           </div>
           {last && <LastRun run={last} spaceId={job.spaceId} />}
+          {job.pendingApproval && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-warning/10 px-2 py-1.5 text-sm">
+              <span className="text-foreground/90">This job wants to react to {job.schedule.split(' + ').filter((part) => part.startsWith('on ')).map((part) => part.slice(3)).join(' and ')}. Mail for it waits until you approve.</span>
+              <button type="button" onClick={() => void decide(() => api.approveJob(job.id))} disabled={busy} className="rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+                Approve
+              </button>
+            </div>
+          )}
+          {channels.map((channel) => {
+            const mode = job.reply[channel] ?? 'draft';
+            return (
+              <div key={channel} className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>Replies on {channel}: <span className={mode === 'send' ? 'text-warning' : 'text-foreground/90'}>{mode === 'send' ? 'sent without asking' : 'drafts you approve'}</span></span>
+                {mode === 'send' ? (
+                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'draft'))} disabled={busy} className="text-xs text-primary hover:underline">Back to drafts</button>
+                ) : confirmSend === channel ? (
+                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'send'))} disabled={busy} className="rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/25">
+                    Yes, send without asking
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => setConfirmSend(channel)} disabled={busy} className="text-xs text-primary hover:underline">Let it send…</button>
+                )}
+              </div>
+            );
+          })}
           {message && <p className="mt-1 text-xs text-muted-foreground">{message}</p>}
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">

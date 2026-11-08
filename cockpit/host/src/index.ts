@@ -299,7 +299,7 @@ async function main() {
       if (job.target.type === 'session') return 'not a worker job'
       const parent = job.createdBy && ledger.has(job.createdBy) ? job.createdBy : null
       spawns.add({
-        id: sessionId, projectId: job.target.projectId, prompt: text, title: job.name, fromSessionId: parent, origin: 'job',
+        id: sessionId, projectId: job.target.projectId, prompt: text, title: job.name, fromSessionId: parent, origin: 'job', jobId: job.id,
         ...(job.target.provider ? { provider: job.target.provider } : {}),
         ...(job.toolProfile ? { toolProfile: job.toolProfile } : {}),
         ...(job.spaceId ? { spaceId: job.spaceId } : {}),

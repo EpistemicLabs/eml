@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
-  describeTrigger, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue,
-  type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ScheduleTrigger,
+  describeTrigger, isOpenRun, JOB_LIMITS, jobTimeZone, mailKeys, nextDue,
+  type ChannelTrigger, type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ReplyChannel, type ReplyMode, type ScheduleTrigger,
 } from '../domain/job.js'
 import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
@@ -89,11 +89,16 @@ export class Jobs {
     if (active.length >= JOB_LIMITS.perSpace) return bad(`this space already has ${active.length} jobs; delete one first (at most ${JOB_LIMITS.perSpace})`)
     if (active.some((job) => job.name.toLowerCase() === name.toLowerCase())) return bad(`a job named "${name}" exists; pick another name or update it`)
 
-    const trigger = this.trigger(input, undefined)
+    const mail = mailTrigger(input.mail)
+    if (typeof mail === 'string') return bad(mail)
+    // A mail job needs no schedule; with one it is woken by both.
+    const scheduled = !mail || input.cron !== undefined || input.at !== undefined
+    const trigger = scheduled ? this.trigger(input, undefined) : null
     if (typeof trigger === 'string') return bad(trigger)
-    const end = this.end(input, trigger.timeZone)
+    const end = this.end(input, trigger?.timeZone ?? this.deps.defaultTimeZone())
     if (typeof end === 'string') return bad(end)
-    const target = await this.target(caller, input)
+    // One session that keeps the conversation fits a mail job; a fresh one per run a routine.
+    const target = await this.target(caller, mail && input.target === undefined && input.session === undefined ? { ...input, target: 'job-session' } : input)
     if (typeof target === 'string') return bad(target)
     const notify = this.notify(input.notify)
     if (notify === null) return bad('notify must be needs-me, always or never')
@@ -102,15 +107,18 @@ export class Jobs {
 
     const at = new Date(this.now()).toISOString()
     const draft: Job = {
-      id: randomUUID(), name, kind: 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
-      taskId: str(input.task_id) ?? null, prompt, target, triggers: [trigger], toolProfile, reply: {}, end, notify,
-      paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
+      id: randomUUID(), name, kind: mail && !trigger ? 'standing' : 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
+      taskId: str(input.task_id) ?? null, prompt, target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
+      // Drafts until the user switches a channel to send in the Jobs view; a session never can.
+      reply: mail ? { mail: 'draft' } : {}, end, notify,
+      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
     }
     const next = nextDue(draft, this.now())
-    if (next === null) return bad('that schedule has no run before its end')
-    const job = { ...draft, nextRunAt: new Date(next).toISOString() }
+    if (next === null && trigger) return bad('that schedule has no run before its end')
+    const job = { ...draft, nextRunAt: next === null ? null : new Date(next).toISOString() }
     this.deps.store.put(job)
-    return { status: 201, job, text: `Created job "${job.name}" (${job.id.slice(0, 8)}).\n${this.describe(job)}` }
+    const waits = mail ? `\n${APPROVAL_NOTE}` : ''
+    return { status: 201, job, text: `Created job "${job.name}" (${job.id.slice(0, 8)}).\n${this.describe(job)}${waits}` }
   }
 
   private list(caller: JobCaller): JobAnswer {
@@ -149,12 +157,25 @@ export class Jobs {
       next.notify = notify
     }
     if (input.task_id !== undefined) next.taskId = str(input.task_id) ?? null
+    let waits = ''
+    if (input.mail !== undefined) {
+      const mail = mailTrigger(input.mail)
+      if (typeof mail === 'string') return bad(mail)
+      next.triggers = [...next.triggers.filter((t) => t.type !== 'mail'), ...(mail ? [mail] : [])]
+      if (mail) next.reply = { ...next.reply, mail: next.reply.mail ?? 'draft' }
+      // Fewer addresses need nobody's OK; a new one does.
+      const before = mailKeys(job)
+      if ([...mailKeys(next)].some((key) => !before.has(key))) {
+        next.pendingApproval = true
+        waits = `\n${APPROVAL_NOTE}`
+      }
+    }
     const due = nextDue(next, this.now())
     next = { ...next, nextRunAt: due === null ? null : new Date(due).toISOString(), updatedAt: new Date(this.now()).toISOString() }
     // A new time can bring an ended job back.
     if (due !== null) next.endedAt = null
     this.deps.store.put(next)
-    return { status: 200, job: next, text: `Updated job "${next.name}".\n${this.describe(next)}` }
+    return { status: 200, job: next, text: `Updated job "${next.name}".\n${this.describe(next)}${waits}` }
   }
 
   private setPaused(job: Job, paused: boolean): JobAnswer {
@@ -177,6 +198,7 @@ export class Jobs {
 
   private runNow(job: Job): JobAnswer {
     if (job.endedAt) return bad(`job "${job.name}" has ended`)
+    if (job.pendingApproval) return bad(`job "${job.name}" waits for the user's OK in the Jobs view`)
     const run = this.deps.runner.runNow(job)
     if (!run) return { status: 409, text: `Job "${job.name}" has a run still going; wait for it to finish.` }
     return { status: 202, job, text: `Run ${run.number} of "${job.name}" starts as soon as there is room.` }
@@ -258,6 +280,24 @@ export class Jobs {
       : { type: 'job-session', projectId, ...(provider ? { provider: provider as never } : {}), sessionId: null }
   }
 
+  /** The user's OK in the Jobs view: the job's channel addresses may wake it. Only the page calls this. */
+  approve(job: Job): JobAnswer {
+    if (!job.pendingApproval) return { status: 200, job, text: `Job "${job.name}" needs no OK.` }
+    const next: Job = { ...job, pendingApproval: false, updatedAt: new Date(this.now()).toISOString() }
+    const due = nextDue(next, this.now())
+    next.nextRunAt = due === null ? null : new Date(due).toISOString()
+    this.deps.store.put(next)
+    return { status: 200, job: next, text: `Approved job "${job.name}".` }
+  }
+
+  /** Send freely or draft for review, per channel. Only the page calls this: a session never widens it. */
+  setReply(job: Job, channel: ReplyChannel, mode: ReplyMode): JobAnswer {
+    if (!job.triggers.some((t) => t.type === channel)) return bad(`job "${job.name}" does not listen on ${channel}`)
+    const next: Job = { ...job, reply: { ...job.reply, [channel]: mode }, updatedAt: new Date(this.now()).toISOString() }
+    this.deps.store.put(next)
+    return { status: 200, job: next, text: `Job "${job.name}" ${mode === 'send' ? 'sends' : 'drafts'} ${channel} replies.` }
+  }
+
   /** What the page shows of a job: its schedule and target in words, its next run times. */
   summary(job: Job): { schedule: string; wakes: string; nextRuns: string[] } {
     return {
@@ -272,7 +312,9 @@ export class Jobs {
     const zone = jobTimeZone(job, this.deps.defaultTimeZone())
     const schedule = job.triggers.map(describeTrigger).join(' + ')
     const lines = [`"${job.name}" (${job.id.slice(0, 8)}): ${schedule}`]
-    const state = job.endedAt ? 'ended' : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
+    const state = job.endedAt ? 'ended'
+      : job.pendingApproval ? "waiting for the user's OK in the Jobs view"
+        : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
     if (state) lines.push(`  state: ${state}`)
     else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
     lines.push(`  wakes: ${this.describeTarget(job)}`)
@@ -305,6 +347,28 @@ function describeRun(run: JobRun, zone: string): string {
   const when = formatInZone(Date.parse(run.startedAt ?? run.dueAt), zone)
   const how = run.status === 'finished' ? (run.outcome ?? 'ended without a status') : run.status
   return `${when}, ${how}${run.note ? ` (${run.note})` : ''}`
+}
+
+const APPROVAL_NOTE = "It reacts to mail only after the user's OK in the Jobs view; until then mail for it waits. Replies are drafts the user approves."
+const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const DOMAIN = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i
+const MAX_MAIL_MATCHES = 50
+
+/** The mail trigger from `mail: { addresses?, domains? }`; null when not given, or why it is wrong. */
+function mailTrigger(value: unknown): ChannelTrigger | null | string {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) return 'mail is { addresses?: [...], domains?: [...] }'
+  const { addresses = [], domains = [] } = value as { addresses?: unknown; domains?: unknown }
+  if (!Array.isArray(addresses) || !Array.isArray(domains)) return 'mail.addresses and mail.domains are lists'
+  const bad = [...addresses.filter((a) => typeof a !== 'string' || !ADDRESS.test(a)), ...domains.filter((d) => typeof d !== 'string' || !DOMAIN.test(d))]
+  if (bad.length) return `not a mail address or domain: ${bad.map(String).join(', ')} (a domain is written without @, e.g. example.com)`
+  const match = [
+    ...[...new Set((addresses as string[]).map((a) => a.toLowerCase()))].map((address) => ({ kind: 'address', address })),
+    ...[...new Set((domains as string[]).map((d) => d.toLowerCase()))].map((domain) => ({ kind: 'domain', domain })),
+  ]
+  if (match.length === 0) return 'mail needs at least one address or domain'
+  if (match.length > MAX_MAIL_MATCHES) return `at most ${MAX_MAIL_MATCHES} mail addresses and domains`
+  return { type: 'mail', match }
 }
 
 /** The caller's profile with more tools denied; never fewer. */

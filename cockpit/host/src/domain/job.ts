@@ -67,6 +67,11 @@ export interface Job {
   paused: boolean
   /** Why it paused itself (failures in a row); null when paused by hand or running. */
   pausedReason: string | null
+  /**
+   * New channel addresses wait for the user's OK in the Jobs view; until then the job
+   * holds still like a paused one. Only the user clears it, never a session.
+   */
+  pendingApproval?: boolean
   /** It will not run again. */
   endedAt: string | null
   /** When the schedule is due next; null when it has no further time. */
@@ -149,6 +154,22 @@ export function retryDelay(attempts: number): number {
 
 export const isScheduleTrigger = (trigger: JobTrigger): trigger is ScheduleTrigger => trigger.type === 'schedule'
 
+/** It does not run now: paused, or waiting for the user's OK. */
+export const isHeld = (job: Pick<Job, 'paused' | 'pendingApproval'>): boolean => job.paused || job.pendingApproval === true
+
+/** The mail addresses and domains a job listens on, as "address:x" / "domain:y". */
+export function mailKeys(job: Pick<Job, 'triggers'>): Set<string> {
+  const keys = new Set<string>()
+  for (const trigger of job.triggers) {
+    if (trigger.type !== 'mail') continue
+    for (const item of trigger.match as Array<Record<string, unknown>>) {
+      if (item?.kind === 'address' && typeof item.address === 'string') keys.add(`address:${item.address.toLowerCase()}`)
+      if (item?.kind === 'domain' && typeof item.domain === 'string') keys.add(`domain:${item.domain.toLowerCase()}`)
+    }
+  }
+  return keys
+}
+
 /** A run that has not come to an end: the next one waits for it. */
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'
 
@@ -182,6 +203,10 @@ export const repeats = (job: Pick<Job, 'triggers'>): boolean => job.triggers.som
 
 /** "every 0 8 * * 1-5 (Asia/Makassar)" or "once, Fri 13 Nov 10:00 (Asia/Makassar)". */
 export function describeTrigger(trigger: JobTrigger): string {
+  if (trigger.type === 'mail') {
+    const from = (trigger.match as Array<Record<string, unknown>>).map((m) => String(m.address ?? m.domain ?? '')).filter(Boolean)
+    return `on mail from ${from.join(', ')}`
+  }
   if (!isScheduleTrigger(trigger)) return `on ${trigger.type}`
   return trigger.cron !== undefined
     ? `cron "${trigger.cron}" (${trigger.timeZone})`

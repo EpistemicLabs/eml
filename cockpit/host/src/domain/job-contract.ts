@@ -1,4 +1,4 @@
-import type { Job, ReplyChannel, ReplyMode } from './job.js'
+import { isHeld, type Job, type ReplyChannel, type ReplyMode } from './job.js'
 
 /**
  * Contract v1 between the cockpit and the channel bridge: the bridge owns
@@ -28,7 +28,7 @@ export interface JobRouteV1 {
   /** For mail, MailMatchV1[]; other channels pass their trigger's match through. */
   matches: unknown[]
   reply: Partial<Record<ReplyChannel, ReplyMode>>
-  /** Paused by the user: route to it as usual; its wakes answer retry until it is resumed. */
+  /** Paused, or waiting for the user's OK: route to it as usual; its wakes answer retry until it runs again. */
   paused: boolean
 }
 
@@ -69,5 +69,5 @@ export function routeOf(job: Job, space: string, channel: ReplyChannel): JobRout
   const raw = triggers.flatMap((t) => ('match' in t && Array.isArray(t.match) ? t.match : []))
   const matches = channel === 'mail' ? mailMatches(raw) : raw
   // Draft until the user says otherwise: nothing goes out unseen by default.
-  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' }, paused: job.paused }
+  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' }, paused: isHeld(job) }
 }

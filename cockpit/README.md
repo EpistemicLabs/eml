@@ -245,6 +245,11 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   that paused itself (per job: `notify` needs-me, always or never). A new one shows as a toast while the cockpit is in
   front and as a browser notification (Settings › Notifications) when it is not; the list waits for the next tab.
   Everything that tells the user goes through a `Notifier`, so a push channel can join the feed later.
+- **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
+  mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
+  clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
+  view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
+  channel tools act for that job on every resume.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
