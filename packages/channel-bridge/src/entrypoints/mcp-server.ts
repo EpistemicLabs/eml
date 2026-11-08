@@ -5,15 +5,23 @@ import { z } from 'zod'
 import { jobTools } from './job-tools'
 
 /**
- * The job tools as an MCP server for one job's session. The job id, the bridge's address and the
- * tool token come from the environment the cockpit sets; without them there is no server.
+ * The job tools as an MCP server for one job's session. The job id, the file that holds the bridge's
+ * current address and the tool token come from the environment the cockpit sets; without them there
+ * is no server.
  */
 export function createJobToolsServer(env: NodeJS.ProcessEnv): McpServer {
-  const url = env.CHANNEL_BRIDGE_URL
+  const urlFile = env.CHANNEL_BRIDGE_URL_FILE
   const jobId = env.CHANNEL_BRIDGE_JOB_ID
   const tokenFile = env.CHANNEL_BRIDGE_TOOL_TOKEN_FILE
-  if (!url || !jobId || !tokenFile) {
-    throw new Error('CHANNEL_BRIDGE_URL, CHANNEL_BRIDGE_JOB_ID and CHANNEL_BRIDGE_TOOL_TOKEN_FILE must be set')
+  if (!urlFile || !jobId || !tokenFile) {
+    throw new Error('CHANNEL_BRIDGE_URL_FILE, CHANNEL_BRIDGE_JOB_ID and CHANNEL_BRIDGE_TOOL_TOKEN_FILE must be set')
+  }
+  const url = () => {
+    try {
+      return readFileSync(urlFile, 'utf8').trim()
+    } catch {
+      return ''
+    }
   }
   const tools = jobTools({ url, jobId, token: readFileSync(tokenFile, 'utf8').trim() })
 

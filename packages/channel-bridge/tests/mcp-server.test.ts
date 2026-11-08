@@ -12,8 +12,9 @@ let client: Client
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'channel-bridge-mcp-'))
   writeFileSync(join(root, 'tool-token'), 'tool\n')
+  writeFileSync(join(root, 'url'), 'http://127.0.0.1:1\n')
   const server = createJobToolsServer({
-    CHANNEL_BRIDGE_URL: 'http://127.0.0.1:1', CHANNEL_BRIDGE_JOB_ID: 'job-1', CHANNEL_BRIDGE_TOOL_TOKEN_FILE: join(root, 'tool-token'),
+    CHANNEL_BRIDGE_URL_FILE: join(root, 'url'), CHANNEL_BRIDGE_JOB_ID: 'job-1', CHANNEL_BRIDGE_TOOL_TOKEN_FILE: join(root, 'tool-token'),
   })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   await server.connect(serverSide)
@@ -42,6 +43,6 @@ describe('job tools MCP server', () => {
   })
 
   it('refuses to start without its environment', async () => {
-    await expect(startJobToolsServer({})).rejects.toThrow('CHANNEL_BRIDGE_URL')
+    await expect(startJobToolsServer({})).rejects.toThrow('CHANNEL_BRIDGE_URL_FILE')
   })
 })

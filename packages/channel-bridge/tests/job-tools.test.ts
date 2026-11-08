@@ -36,7 +36,7 @@ beforeEach(async () => {
   await syncChannel(deps, { account: mailbox })
   server = createBridgeApi(deps, { toolToken: 'tool', cockpitToken: 'cockpit', log: () => {} })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  tools = jobTools({ url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: 'tool', jobId: 'job-1' })
+  tools = jobTools({ url: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: 'tool', jobId: 'job-1' })
 })
 afterEach(() => new Promise<void>((resolve) => server.close(() => resolve())))
 
@@ -73,7 +73,7 @@ describe('job tools', () => {
   })
 
   it('says the bridge cannot be reached instead of failing, and reads an unexpected answer as such', async () => {
-    const away = jobTools({ url: 'http://127.0.0.1:1', token: 'tool', jobId: 'job-1' })
+    const away = jobTools({ url: () => 'http://127.0.0.1:1', token: 'tool', jobId: 'job-1' })
     expect(await away.read()).toMatch(/cannot reach the bridge/i)
     expect(await away.reply('msg-1', 'Hi')).toMatch(/cannot reach the bridge/i)
   })

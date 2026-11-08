@@ -54,6 +54,8 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
     log,
   })
   await new Promise<void>((resolve) => api.listen(port, '127.0.0.1', resolve))
+  // Where the job tools find the bridge; it changes with the port.
+  writeFileSync(join(home, 'url'), `http://127.0.0.1:${port}`, { mode: 0o600 })
   const loop = startBridgeLoop(deps, { accounts, collectMs: COLLECT_MS, everyMs: EVERY_MS, log })
   log('bridge.started', { accounts: accounts.length })
 

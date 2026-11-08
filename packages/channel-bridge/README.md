@@ -31,12 +31,12 @@ settings; the bridge also needs a non-empty token for at least one space.
 
 | Variable | Used by | Meaning |
 | --- | --- | --- |
-| `CHANNEL_BRIDGE_HOME` | bridge | folder for `bridge.db`, `tool-token` and `cockpit-token` (owner-only, made on first start) |
+| `CHANNEL_BRIDGE_HOME` | bridge | folder for `bridge.db`, `tool-token` and `cockpit-token` (owner-only, made on first start) and `url`, the bridge's current address |
 | `CHANNEL_BRIDGE_PORT` | bridge | loopback port of the bridge API |
 | `COCKPIT_URL` | bridge | the cockpit's address |
 | `COCKPIT_JOB_TOKENS_DIR` | bridge | one file per space, named after it, holding that space's job token |
 | `CHANNEL_BRIDGE_ACCOUNTS_FILE` | bridge | the mailboxes to watch, a JSON list (below) |
-| `CHANNEL_BRIDGE_URL` | job tools | the bridge API's address |
+| `CHANNEL_BRIDGE_URL_FILE` | job tools | the bridge's `url` file, read at every call |
 | `CHANNEL_BRIDGE_JOB_ID` | job tools | the job the session works for, set by the cockpit |
 | `CHANNEL_BRIDGE_TOOL_TOKEN_FILE` | job tools | path of the bridge's `tool-token` |
 

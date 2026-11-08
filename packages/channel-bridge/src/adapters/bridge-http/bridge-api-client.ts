@@ -22,18 +22,15 @@ export type ReadAnswer = z.infer<typeof readAnswerSchema> | Unreachable
 export type ReplyAnswer = z.infer<typeof replyAnswerSchema> | Unreachable
 
 export interface BridgeApiClientOptions {
-  url: string
+  /** The bridge API's address, asked at every call: the bridge may have moved since the last one. */
+  url: () => string
   token: string
   jobId: string
 }
 
 /** One job's side of the bridge API. A bridge that is away or answers unreadably is unreachable. */
 export class BridgeApiClient {
-  private readonly base: string
-
-  constructor(private readonly options: BridgeApiClientOptions) {
-    this.base = `${options.url}/v1/jobs/${encodeURIComponent(options.jobId)}`
-  }
+  constructor(private readonly options: BridgeApiClientOptions) {}
 
   async read(ack: string[]): Promise<ReadAnswer> {
     return this.call('/messages/read', { ack }, readAnswerSchema)
@@ -45,7 +42,8 @@ export class BridgeApiClient {
 
   private async call<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T | Unreachable> {
     try {
-      const response = await fetch(`${this.base}${path}`, {
+      const base = `${this.options.url()}/v1/jobs/${encodeURIComponent(this.options.jobId)}`
+      const response = await fetch(`${base}${path}`, {
         method: 'POST',
         headers: { authorization: `Bearer ${this.options.token}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
