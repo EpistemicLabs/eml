@@ -68,6 +68,7 @@ until it is renewed.
 | --- | --- | --- |
 | `POST /v1/jobs/<jobId>/messages/read` `{ ack }` | tool | the job's messages it has not confirmed; `ack` lists the ids of the last read to confirm them |
 | `POST /v1/jobs/<jobId>/messages/<messageId>/reply` `{ text }` | tool | `drafted`, `sent`, `failed` or `refused` |
+| `GET /health` | none | `{ ok: true }` once the bridge listens |
 | `GET /v1/jobs/<jobId>/drafts` | cockpit | the job's drafts waiting for a person, each with the message it answers |
 | `POST /v1/outbox/<id>/edit` `{ text }` | cockpit | changes a draft's text; `edited` or `refused` |
 | `POST /v1/outbox/<id>/approve` | cockpit | sends a draft; `sent`, `failed` or `refused` |

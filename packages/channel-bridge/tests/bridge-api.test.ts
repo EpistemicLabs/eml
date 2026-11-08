@@ -151,6 +151,14 @@ describe('bridge API: draft decisions', () => {
   })
 })
 
+describe('bridge API: health', () => {
+  it('answers /health without a token and says nothing else', async () => {
+    const response = await fetch(`${base}/health`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true })
+  })
+})
+
 describe('bridge API: anything else', () => {
   it('answers 404 for an unknown route', async () => {
     expect((await post('/v1/nothing', TOOL)).status).toBe(404)

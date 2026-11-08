@@ -48,6 +48,7 @@ export function createBridgeApi(deps: BridgeApiDeps, options: BridgeApiOptions):
 
 async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname
+  if (req.method === 'GET' && path === '/health') return send(res, 200, { ok: true })
 
   const drafts = path.match(/^\/v1\/jobs\/([^/]+)\/drafts$/)
   if (req.method === 'GET' && drafts?.[1]) {
