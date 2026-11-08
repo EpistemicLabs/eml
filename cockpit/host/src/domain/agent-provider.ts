@@ -1,4 +1,4 @@
-import type { ToolProfile } from './tool-profile.js'
+import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
  * The agent CLI a cockpit session runs, as the host sees it (ARCHITECTURE.md,
@@ -100,6 +100,8 @@ export interface LaunchRequest {
   reachable?: boolean
   /** What the session may use. */
   toolProfile?: ToolProfile | null
+  /** MCP servers it gets beside its space's, by name; a provider without MCP ignores them. */
+  extraMcpServers?: Record<string, McpServerSpec>
 }
 
 /** Binary, arguments and the provider's own environment for one session process. */

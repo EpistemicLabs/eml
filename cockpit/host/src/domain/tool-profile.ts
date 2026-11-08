@@ -9,6 +9,26 @@ export interface ToolProfile {
   mcpServers: string[] | null
 }
 
+/** An MCP server a session gets beside its space's, as a provider writes it into its config. */
+export interface McpServerSpec {
+  type: 'stdio'
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+/** Built-in tools a session that answers outside messages never gets: its text comes from strangers. */
+const CHANNEL_JOB_DENIED_TOOLS = ['Bash']
+
+/**
+ * What a channel job's session may use: what its maker could not, and no shell; of its space's MCP
+ * servers only the brain. Its channel tools come from the cockpit at every launch.
+ */
+export function channelJobProfile(base: ToolProfile | null): ToolProfile {
+  const denied = base?.deniedTools ?? []
+  return { deniedTools: [...denied, ...CHANNEL_JOB_DENIED_TOOLS.filter((tool) => !denied.includes(tool))], mcpServers: [] }
+}
+
 const names = (value: unknown): string[] | null =>
   Array.isArray(value) && value.every((name) => typeof name === 'string' && /^[\w.:*()-]+$/.test(name)) ? value as string[] : null
 

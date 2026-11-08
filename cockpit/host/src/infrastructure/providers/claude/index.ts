@@ -105,7 +105,9 @@ class ClaudeProvider implements AgentProvider {
     // a worker the host started without a pane, which the app is the way to follow.
     const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const profile = req.toolProfile ?? null
-    const limitedMcp = profile?.mcpServers ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile.mcpServers) : null
+    const limitedMcp = profile?.mcpServers
+      ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile.mcpServers, req.extraMcpServers ?? {})
+      : null
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
