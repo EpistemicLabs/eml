@@ -21,9 +21,10 @@ describe('main', () => {
       mkdirSync(tokens)
       writeFileSync(join(tokens, 'support'), 'space-token\n')
       const port = await freePort()
+      writeFileSync(join(root, 'accounts.json'), '[]')
       const bridge = await main({
         CHANNEL_BRIDGE_HOME: join(root, 'home'), CHANNEL_BRIDGE_PORT: String(port),
-        COCKPIT_URL: 'http://127.0.0.1:1', COCKPIT_JOB_TOKENS_DIR: tokens,
+        COCKPIT_URL: 'http://127.0.0.1:1', COCKPIT_JOB_TOKENS_DIR: tokens, CHANNEL_BRIDGE_ACCOUNTS_FILE: join(root, 'accounts.json'),
       })
       try {
         expect(statSync(join(root, 'home', 'tool-token')).mode & 0o777).toBe(0o600)
@@ -45,6 +46,31 @@ describe('main', () => {
     }
   })
 
+  it('refuses an accounts file it cannot read, naming the problem without its contents', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channel-bridge-main-'))
+    try {
+      mkdirSync(join(root, 'job-tokens'))
+      writeFileSync(join(root, 'job-tokens', 'support'), 'space-token')
+      const env = {
+        CHANNEL_BRIDGE_HOME: join(root, 'home'), CHANNEL_BRIDGE_PORT: '1', COCKPIT_URL: 'http://127.0.0.1:1',
+        COCKPIT_JOB_TOKENS_DIR: join(root, 'job-tokens'), CHANNEL_BRIDGE_ACCOUNTS_FILE: join(root, 'accounts.json'),
+      }
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([{ type: 'gmail', accountId: 'a', space: 'support' }]))
+      await expect(main(env)).rejects.toThrow('CHANNEL_BRIDGE_ACCOUNTS_FILE')
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([
+        { type: 'gmail', accountId: 'a', space: 'support', address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
+        { type: 'gmail', accountId: 'a', space: 'support', address: 'other@home.example', credentialsFile: '/x', tokenFile: '/y' },
+      ]))
+      await expect(main(env)).rejects.toThrow('accountId')
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([
+        { type: 'gmail', accountId: 'a', space: 'elsewhere', address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
+      ]))
+      await expect(main(env)).rejects.toThrow('space')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses to start without its settings', async () => {
     await expect(main({})).rejects.toThrow('CHANNEL_BRIDGE_HOME')
   })
@@ -52,9 +78,11 @@ describe('main', () => {
   it('refuses to start without a token for at least one space, or with an empty one', async () => {
     const root = mkdtempSync(join(tmpdir(), 'channel-bridge-main-'))
     try {
+      writeFileSync(join(root, 'accounts.json'), '[]')
       const env = {
         CHANNEL_BRIDGE_HOME: join(root, 'home'), CHANNEL_BRIDGE_PORT: '1',
         COCKPIT_URL: 'http://127.0.0.1:1', COCKPIT_JOB_TOKENS_DIR: join(root, 'job-tokens'),
+        CHANNEL_BRIDGE_ACCOUNTS_FILE: join(root, 'accounts.json'),
       }
       await expect(main(env)).rejects.toThrow('COCKPIT_JOB_TOKENS_DIR')
       mkdirSync(join(root, 'job-tokens'))

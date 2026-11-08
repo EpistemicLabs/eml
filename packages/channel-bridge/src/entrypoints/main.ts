@@ -6,7 +6,10 @@ import { SqliteMessageStore } from '../adapters/sqlite/sqlite-message-store'
 import { SqliteWakeQueue } from '../adapters/sqlite/sqlite-wake-queue'
 import { SqliteOutboxStore } from '../adapters/sqlite/sqlite-outbox-store'
 import { CockpitHttpClient } from '../adapters/cockpit-http/cockpit-http-client'
-import type { ChannelAccounts } from '../ports/channel'
+import { z } from 'zod'
+import { GmailAccount } from '../adapters/gmail/gmail-account'
+import { GoogleRefreshToken } from '../adapters/gmail/google-refresh-token'
+import type { ChannelAccount, ChannelAccounts } from '../ports/channel'
 import { createBridgeApi } from './bridge-api'
 import type { Log } from './bridge-api'
 import { startBridgeLoop } from './bridge-loop'
@@ -17,20 +20,22 @@ const EVERY_MS = 60_000
 /**
  * Starts the bridge: its database and tokens in CHANNEL_BRIDGE_HOME, its API on loopback at
  * CHANNEL_BRIDGE_PORT, the cockpit at COCKPIT_URL with one token per space from
- * COCKPIT_JOB_TOKENS_DIR.
+ * COCKPIT_JOB_TOKENS_DIR, the channel accounts from CHANNEL_BRIDGE_ACCOUNTS_FILE.
  */
 export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop(): Promise<void> }> {
   const home = required(env, 'CHANNEL_BRIDGE_HOME')
   const port = Number(required(env, 'CHANNEL_BRIDGE_PORT'))
   const cockpitUrl = required(env, 'COCKPIT_URL')
   const tokensDir = required(env, 'COCKPIT_JOB_TOKENS_DIR')
+  const accountsFile = required(env, 'CHANNEL_BRIDGE_ACCOUNTS_FILE')
   if (!Number.isInteger(port) || port <= 0) throw new Error('CHANNEL_BRIDGE_PORT must be a port number')
 
   const spaces = spaceTokens(tokensDir)
+  const accounts = channelAccounts(accountsFile, spaces.map((entry) => entry.space))
   mkdirSync(home, { recursive: true, mode: 0o700 })
   const db = openBridgeDatabase(join(home, 'bridge.db'))
   const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces })
-  const channels: ChannelAccounts = { account: () => null }
+  const channels: ChannelAccounts = { account: (id) => accounts.find((account) => account.accountId === id) ?? null }
   const log: Log = (event, fields) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`)
   const deps = {
     store: new SqliteMessageStore(db),
@@ -49,8 +54,8 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
     log,
   })
   await new Promise<void>((resolve) => api.listen(port, '127.0.0.1', resolve))
-  const loop = startBridgeLoop(deps, { accounts: [], collectMs: COLLECT_MS, everyMs: EVERY_MS, log })
-  log('bridge.started', {})
+  const loop = startBridgeLoop(deps, { accounts, collectMs: COLLECT_MS, everyMs: EVERY_MS, log })
+  log('bridge.started', { accounts: accounts.length })
 
   return {
     stop: async () => {
@@ -59,6 +64,44 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
       db.close()
     },
   }
+}
+
+const accountsSchema = z.array(
+  z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('gmail'),
+      accountId: z.string().min(1),
+      space: z.string().min(1),
+      address: z.string().email(),
+      /** An OAuth Desktop app client file and the token file of an existing sign-in; both only read. */
+      credentialsFile: z.string().min(1),
+      tokenFile: z.string().min(1),
+    }),
+  ]),
+)
+
+/** The mailboxes the bridge watches. Each belongs to a space the bridge has a token for, under a unique id. */
+function channelAccounts(file: string, spaces: string[]): ChannelAccount[] {
+  let parsed: z.infer<typeof accountsSchema>
+  try {
+    parsed = accountsSchema.parse(JSON.parse(readFileSync(file, 'utf8')))
+  } catch {
+    throw new Error('CHANNEL_BRIDGE_ACCOUNTS_FILE is not a valid list of accounts')
+  }
+  const ids = parsed.map((entry) => entry.accountId)
+  if (new Set(ids).size !== ids.length) throw new Error('every account needs its own accountId')
+  for (const entry of parsed) {
+    if (!spaces.includes(entry.space)) throw new Error(`account ${entry.accountId} names a space without a token`)
+  }
+  return parsed.map(
+    (entry) =>
+      new GmailAccount({
+        accountId: entry.accountId,
+        space: entry.space,
+        address: entry.address,
+        tokens: new GoogleRefreshToken({ credentialsFile: entry.credentialsFile, tokenFile: entry.tokenFile }),
+      }),
+  )
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {

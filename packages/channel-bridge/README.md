@@ -15,7 +15,8 @@ Domain-driven, cut as ports and adapters. Dependencies point inward.
 src/domain/        rules with no imports from outside: routing, send policy, outbox states, wakes
 src/ports/         what the use cases need: channel accounts, stores, the job directory, the cockpit, clock, ids
 src/application/   use cases, one per file: sync a channel, dispatch wakes, request a send, approve or skip a draft
-src/adapters/      sqlite/ (the bridge's database), cockpit-http/ (the cockpit's /v1 job routes and wakes),
+src/adapters/      gmail/ (a mailbox through the Gmail API), sqlite/ (the bridge's database),
+                   cockpit-http/ (the cockpit's /v1 job routes and wakes),
                    bridge-http/ (the job tools' side of the bridge API), memory/ (fakes for tests),
                    fake-channel/ (scripted accounts)
 src/entrypoints/   main (the bridge process), bridge-api (its loopback /v1 API), bridge-loop (sync and wake
@@ -24,10 +25,9 @@ src/entrypoints/   main (the bridge process), bridge-api (its loopback /v1 API),
 
 ## Running
 
-No channel plug-in ships yet, and the cockpit does not start the bridge yet: for now `node
-dist/entrypoints/main.js` runs it and `node dist/entrypoints/mcp-server.js` serves one job's
-tools. Both refuse to start without their settings; the bridge also needs a non-empty token for
-at least one space.
+The cockpit does not start the bridge yet: for now `node dist/entrypoints/main.js` runs it and
+`node dist/entrypoints/mcp-server.js` serves one job's tools. Both refuse to start without their
+settings; the bridge also needs a non-empty token for at least one space.
 
 | Variable | Used by | Meaning |
 | --- | --- | --- |
@@ -35,9 +35,32 @@ at least one space.
 | `CHANNEL_BRIDGE_PORT` | bridge | loopback port of the bridge API |
 | `COCKPIT_URL` | bridge | the cockpit's address |
 | `COCKPIT_JOB_TOKENS_DIR` | bridge | one file per space, named after it, holding that space's job token |
+| `CHANNEL_BRIDGE_ACCOUNTS_FILE` | bridge | the mailboxes to watch, a JSON list (below) |
 | `CHANNEL_BRIDGE_URL` | job tools | the bridge API's address |
 | `CHANNEL_BRIDGE_JOB_ID` | job tools | the job the session works for, set by the cockpit |
 | `CHANNEL_BRIDGE_TOOL_TOKEN_FILE` | job tools | path of the bridge's `tool-token` |
+
+### Accounts
+
+```json
+[
+  {
+    "type": "gmail",
+    "accountId": "home-mail",
+    "space": "<the space's id>",
+    "address": "me@home.example",
+    "credentialsFile": "<path to the OAuth Desktop app client file>",
+    "tokenFile": "<path to the token file of an existing sign-in>"
+  }
+]
+```
+
+Each account belongs to one space the bridge has a token for. A Gmail account uses an existing
+sign-in: the bridge only reads its two files and keeps the access token in memory, so another
+program can keep renewing the token file. It needs the Gmail scopes to read, modify and send. On
+its first sync it starts from now; when Gmail's history no longer reaches back to the cursor, it
+starts again from now and logs a gap. A sign-in Google has withdrawn is logged on every round
+until it is renewed.
 
 ## The bridge API (/v1, loopback)
 
