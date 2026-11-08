@@ -16,7 +16,6 @@ export interface MessageStore {
   /** Someone with this address wrote to the job before. */
   senderKnownToJob(jobId: string, address: string): Promise<boolean>
   get(id: string): Promise<StoredMessage | null>
-  forJob(jobId: string): Promise<StoredMessage[]>
   /** The job's messages it has not read yet, oldest first. */
   unreadForJob(jobId: string): Promise<StoredMessage[]>
   markRead(ids: string[]): Promise<void>

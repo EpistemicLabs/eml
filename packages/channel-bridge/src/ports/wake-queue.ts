@@ -1,10 +1,6 @@
-import type { Wake, WakeEntry, WakeOwner } from '../domain/wake'
+import type { PendingWake, WakeEntry, WakeOwner } from '../domain/wake'
 
-/** A job's open wake, and the position of its last entry, so a delivery removes only what it carried. */
-export interface PendingWake {
-  wake: Wake
-  upTo: number
-}
+export type { PendingWake }
 
 export interface WakeQueue {
   add(owner: WakeOwner, entry: WakeEntry, at: string): Promise<void>

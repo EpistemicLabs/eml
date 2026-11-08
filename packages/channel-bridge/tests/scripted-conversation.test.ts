@@ -61,6 +61,6 @@ describe('scripted conversation: a standing customer job', () => {
 
     mailbox.receive({ ...base, channelMessageId: 'm-5', threadKey: 't-1', from: 'colleague@partner.example' })
     expect(await syncChannel(w, { account: mailbox })).toMatchObject({ toJobs: 1 })
-    expect((await w.store.forJob('job-customer')).map((m) => m.channelMessageId)).toEqual(['m-1', 'm-2', 'm-5'])
+    expect((await w.store.unreadForJob('job-customer')).map((m) => m.channelMessageId)).toEqual(['m-1', 'm-2', 'm-5'])
   })
 })

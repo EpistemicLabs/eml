@@ -86,11 +86,6 @@ export class SqliteMessageStore implements MessageStore {
     })()
   }
 
-  async forJob(jobId: string): Promise<StoredMessage[]> {
-    const rows = this.db.prepare('SELECT * FROM messages WHERE job_id = ? ORDER BY rowid').all(jobId) as MessageRow[]
-    return rows.map(toStoredMessage)
-  }
-
   async cursor(accountId: string): Promise<string | null> {
     const row = this.db.prepare('SELECT cursor FROM cursors WHERE account_id = ?').get(accountId) as
       | { cursor: string }

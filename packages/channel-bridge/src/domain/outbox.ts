@@ -45,3 +45,23 @@ export function markSent(item: OutboxItem, channelMessageId: string): OutboxItem
 export function markFailed(item: OutboxItem, failure: string): OutboxItem {
   return { ...item, state: 'failed', failure }
 }
+
+/** What an earlier item means for a request that names it again; an item still sending is finished by the caller. */
+export type OutboxOutcome =
+  | { kind: 'drafted'; outboxId: string }
+  | { kind: 'sent'; outboxId: string }
+  | { kind: 'failed'; outboxId: string; reason: string; retryable: false }
+
+export function outcomeOf(item: OutboxItem): OutboxOutcome {
+  switch (item.state) {
+    case 'draft':
+      return { kind: 'drafted', outboxId: item.id }
+    case 'failed':
+      return { kind: 'failed', outboxId: item.id, reason: item.failure ?? 'unknown', retryable: false }
+    case 'skipped':
+      return { kind: 'failed', outboxId: item.id, reason: 'skipped', retryable: false }
+    case 'sending':
+    case 'sent':
+      return { kind: 'sent', outboxId: item.id }
+  }
+}

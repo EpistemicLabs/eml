@@ -1,4 +1,5 @@
 import { normalizeMailAddress } from '../domain/address'
+import { outcomeOf } from '../domain/outbox'
 import type { OutboxItem } from '../domain/outbox'
 import { decideSend } from '../domain/send-policy'
 import type { ChannelAccounts } from '../ports/channel'
@@ -45,7 +46,7 @@ export async function requestSend(deps: RequestSendDeps, request: SendRequest): 
 
   const earlier = await deps.outbox.byKey(request.jobId, request.idempotencyKey)
   if (earlier?.state === 'sending') return sendOutboxItem(deps.outbox, account, earlier)
-  if (earlier) return resultOf(earlier)
+  if (earlier) return outcomeOf(earlier)
 
   const to = normalizeMailAddress(request.to)
   const decision = decideSend({
@@ -75,16 +76,3 @@ export async function requestSend(deps: RequestSendDeps, request: SendRequest): 
   return sendOutboxItem(deps.outbox, account, item)
 }
 
-function resultOf(item: OutboxItem): SendRequestResult {
-  switch (item.state) {
-    case 'draft':
-      return { kind: 'drafted', outboxId: item.id }
-    case 'failed':
-      return { kind: 'failed', outboxId: item.id, reason: item.failure ?? 'unknown', retryable: false }
-    case 'skipped':
-      return { kind: 'failed', outboxId: item.id, reason: 'skipped', retryable: false }
-    case 'sending':
-    case 'sent':
-      return { kind: 'sent', outboxId: item.id }
-  }
-}

@@ -51,6 +51,7 @@ export class MemoryMessageStore implements MessageStore {
     for (const id of ids) this.read.add(id)
   }
 
+  /** Every message routed to the job, for tests to look at. */
   async forJob(jobId: string): Promise<StoredMessage[]> {
     return this.messages.filter((stored) => stored.routing.kind === 'job' && stored.routing.jobId === jobId)
   }

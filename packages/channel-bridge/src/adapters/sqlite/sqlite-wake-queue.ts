@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
-import { addToWake } from '../../domain/wake'
-import type { Wake, WakeEntry, WakeOwner } from '../../domain/wake'
-import type { PendingWake, WakeQueue } from '../../ports/wake-queue'
+import { pendingWakes } from '../../domain/wake'
+import type { PendingWake, WakeEntry, WakeOwner } from '../../domain/wake'
+import type { WakeQueue } from '../../ports/wake-queue'
 import { parseWakeEntry } from './stored-shapes'
 
 interface EntryRow {
@@ -28,16 +28,10 @@ export class SqliteWakeQueue implements WakeQueue {
       attempts: number
       retry_at: string
     }[]
-    const byJob = new Map<string, PendingWake>()
-    for (const row of rows) {
-      const wake: Wake = addToWake(byJob.get(row.job_id)?.wake ?? null, parseWakeEntry(row.entry), row.at, { jobId: row.job_id, space: row.space })
-      byJob.set(row.job_id, { wake, upTo: row.seq })
-    }
-    for (const retry of retries) {
-      const pending = byJob.get(retry.job_id)
-      if (pending) byJob.set(retry.job_id, { ...pending, wake: { ...pending.wake, attempts: retry.attempts, retryAt: retry.retry_at } })
-    }
-    return [...byJob.values()]
+    return pendingWakes(
+      rows.map((row) => ({ seq: row.seq, jobId: row.job_id, space: row.space, entry: parseWakeEntry(row.entry), at: row.at })),
+      new Map(retries.map((retry) => [retry.job_id, { attempts: retry.attempts, retryAt: retry.retry_at }])),
+    )
   }
 
   async delivered(jobId: string, upTo: number): Promise<void> {

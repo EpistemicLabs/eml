@@ -39,7 +39,7 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       const store = make()
       const saved = await store.save(message({ subject: null }), toJob)
       if (saved.kind !== 'stored') throw new Error('expected stored')
-      expect(await store.forJob('job-1')).toEqual([{ ...message({ subject: null }), id: saved.id, routing: toJob }])
+      expect(await store.get(saved.id)).toEqual({ ...message({ subject: null }), id: saved.id, routing: toJob })
     })
 
     it('names the job a thread went to last, and none for an inbox thread', async () => {
@@ -77,7 +77,7 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       expect((await store.unreadForJob('job-1')).map((m) => m.id)).toEqual([first.id, second.id])
       await store.markRead([first.id])
       expect((await store.unreadForJob('job-1')).map((m) => m.id)).toEqual([second.id])
-      expect(await store.forJob('job-1')).toHaveLength(2)
+      expect((await store.get(first.id))?.channelMessageId).toBe('m-1')
     })
 
     it('keeps a cursor per account', async () => {

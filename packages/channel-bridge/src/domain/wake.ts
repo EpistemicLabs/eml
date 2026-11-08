@@ -21,6 +21,24 @@ export interface Wake {
   retryAt: string | null
 }
 
+/** A job's open wake, and the position of its last entry, so a delivery removes only what it carried. */
+export interface PendingWake {
+  wake: Wake
+  upTo: number
+}
+
+/** One stored entry of a wake queue, in the order it was added. */
+export interface QueuedWakeEntry extends WakeOwner {
+  seq: number
+  entry: WakeEntry
+  at: string
+}
+
+export interface WakeRetry {
+  attempts: number
+  retryAt: string
+}
+
 export const MAX_DELIVERY_ATTEMPTS = 10
 const FIRST_RETRY_MS = 30_000
 const MAX_RETRY_MS = 30 * 60_000
@@ -40,6 +58,19 @@ export function wakeDueAt(wake: Wake, collectMs: number): string {
   if (wake.retryAt) return wake.retryAt
   if (wake.draftAt) return wake.draftAt
   return new Date(Date.parse(wake.firstAt) + collectMs).toISOString()
+}
+
+/** Folds a queue's live entries, oldest first, into one open wake per job, with its retry state laid over it. */
+export function pendingWakes(entries: QueuedWakeEntry[], retries: ReadonlyMap<string, WakeRetry>): PendingWake[] {
+  const byJob = new Map<string, PendingWake>()
+  for (const queued of entries) {
+    const wake = addToWake(byJob.get(queued.jobId)?.wake ?? null, queued.entry, queued.at, { jobId: queued.jobId, space: queued.space })
+    byJob.set(queued.jobId, { wake, upTo: queued.seq })
+  }
+  return [...byJob.values()].map((pending) => {
+    const retry = retries.get(pending.wake.jobId)
+    return retry ? { ...pending, wake: { ...pending.wake, ...retry } } : pending
+  })
 }
 
 export type AfterFailure = { kind: 'retry'; wake: Wake } | { kind: 'dead' }

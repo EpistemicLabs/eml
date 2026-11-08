@@ -6,7 +6,7 @@ import { SqliteMessageStore } from '../adapters/sqlite/sqlite-message-store'
 import { SqliteWakeQueue } from '../adapters/sqlite/sqlite-wake-queue'
 import { SqliteOutboxStore } from '../adapters/sqlite/sqlite-outbox-store'
 import { CockpitHttpClient } from '../adapters/cockpit-http/cockpit-http-client'
-import type { ChannelAccount, ChannelAccounts } from '../ports/channel'
+import type { ChannelAccounts } from '../ports/channel'
 import { createBridgeApi } from './bridge-api'
 import type { Log } from './bridge-api'
 import { startBridgeLoop } from './bridge-loop'
@@ -17,9 +17,9 @@ const EVERY_MS = 60_000
 /**
  * Starts the bridge: its database and tokens in CHANNEL_BRIDGE_HOME, its API on loopback at
  * CHANNEL_BRIDGE_PORT, the cockpit at COCKPIT_URL with one token per space from
- * COCKPIT_JOB_TOKENS_DIR. Channel accounts join with their plug-ins.
+ * COCKPIT_JOB_TOKENS_DIR.
  */
-export async function main(env: NodeJS.ProcessEnv = process.env, accounts: ChannelAccount[] = []): Promise<{ stop(): Promise<void> }> {
+export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop(): Promise<void> }> {
   const home = required(env, 'CHANNEL_BRIDGE_HOME')
   const port = Number(required(env, 'CHANNEL_BRIDGE_PORT'))
   const cockpitUrl = required(env, 'COCKPIT_URL')
@@ -29,7 +29,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env, accounts: Chann
   mkdirSync(home, { recursive: true, mode: 0o700 })
   const db = openBridgeDatabase(join(home, 'bridge.db'))
   const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces: spaceTokens(tokensDir) })
-  const channels: ChannelAccounts = { account: (id) => accounts.find((account) => account.accountId === id) ?? null }
+  const channels: ChannelAccounts = { account: () => null }
   const log: Log = (event, fields) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`)
   const deps = {
     store: new SqliteMessageStore(db),
@@ -48,8 +48,8 @@ export async function main(env: NodeJS.ProcessEnv = process.env, accounts: Chann
     log,
   })
   await new Promise<void>((resolve) => api.listen(port, '127.0.0.1', resolve))
-  const loop = startBridgeLoop(deps, { accounts, collectMs: COLLECT_MS, everyMs: EVERY_MS, log })
-  log('bridge.started', { accounts: accounts.length })
+  const loop = startBridgeLoop(deps, { accounts: [], collectMs: COLLECT_MS, everyMs: EVERY_MS, log })
+  log('bridge.started', {})
 
   return {
     stop: async () => {

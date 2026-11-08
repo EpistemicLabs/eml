@@ -7,10 +7,6 @@ export class FixedClock implements Clock {
     return this.current
   }
 
-  set(at: string): void {
-    this.current = at
-  }
-
   advance(ms: number): void {
     this.current = new Date(Date.parse(this.current) + ms).toISOString()
   }
