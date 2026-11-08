@@ -6,6 +6,7 @@ import type { MessageStore, SaveOutcome, StoredMessage } from '../../ports/messa
 export class MemoryMessageStore implements MessageStore {
   private readonly messages: StoredMessage[] = []
   private readonly cursors = new Map<string, string>()
+  private readonly read = new Set<string>()
   private nextId = 1
 
   async save(message: InboundMessage, routing: Routing): Promise<SaveOutcome> {
@@ -36,6 +37,18 @@ export class MemoryMessageStore implements MessageStore {
     return this.messages.some(
       (stored) => stored.routing.kind === 'job' && stored.routing.jobId === jobId && normalizeMailAddress(stored.from) === wanted,
     )
+  }
+
+  async get(id: string): Promise<StoredMessage | null> {
+    return this.messages.find((stored) => stored.id === id) ?? null
+  }
+
+  async unreadForJob(jobId: string): Promise<StoredMessage[]> {
+    return (await this.forJob(jobId)).filter((stored) => !this.read.has(stored.id))
+  }
+
+  async markRead(ids: string[]): Promise<void> {
+    for (const id of ids) this.read.add(id)
   }
 
   async forJob(jobId: string): Promise<StoredMessage[]> {

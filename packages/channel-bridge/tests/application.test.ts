@@ -4,6 +4,8 @@ import { dispatchWakes } from '../src/application/dispatch-wakes'
 import { requestSend } from '../src/application/request-send'
 import { approveOutboxDraft } from '../src/application/approve-outbox-draft'
 import { skipOutboxDraft } from '../src/application/skip-outbox-draft'
+import { readJobMessages } from '../src/application/read-job-messages'
+import { replyToMessage } from '../src/application/reply-to-message'
 import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
 import { MemoryWakeQueue } from '../src/adapters/memory/memory-wake-queue'
 import { MemoryOutboxStore } from '../src/adapters/memory/memory-outbox-store'
@@ -89,6 +91,14 @@ describe('syncChannel', () => {
     w.channel.receive(mail({ channelMessageId: 'm-2', from: 'colleague@partner.example' }))
     const result = await syncChannel(w, { account: w.channel })
     expect(result).toMatchObject({ toJobs: 2 })
+  })
+
+  it('stores nothing and keeps the cursor when the job directory cannot answer', async () => {
+    w.channel.receive(mail())
+    const failing = { ...w, jobs: { routesInSpace: async () => { throw new Error('cockpit away') }, route: async () => null } }
+    await expect(syncChannel(failing, { account: w.channel })).rejects.toThrow('cockpit away')
+    expect(await w.store.cursor('acc-1')).toBe('0')
+    expect(await syncChannel(w, { account: w.channel })).toMatchObject({ stored: 1, toJobs: 1 })
   })
 
   it('sees only the jobs of the account\'s own space', async () => {
@@ -245,5 +255,48 @@ describe('sending', () => {
     w.channel.refuseSends('rate_limited', true)
     expect(await requestSend(w, reply)).toEqual({ kind: 'failed', outboxId: 'out-1', reason: 'rate_limited', retryable: true })
     expect((await w.outbox.get('out-1'))?.state).toBe('failed')
+  })
+})
+
+describe('reading and replying', () => {
+  let w: ReturnType<typeof world>
+  beforeEach(async () => {
+    w = world()
+    await syncChannel(w, { account: w.channel })
+    w.channel.receive(mail())
+    w.channel.receive(mail({ channelMessageId: 'm-2', from: 'x@elsewhere.example', threadKey: 't-9' }))
+    await syncChannel(w, { account: w.channel })
+  })
+
+  it('hands a job its unread messages once', async () => {
+    const first = await readJobMessages(w, { jobId: 'job-customer' })
+    expect(first.kind === 'messages' && first.messages.map((m) => m.from)).toEqual(['anna@customer.example'])
+    expect(await readJobMessages(w, { jobId: 'job-customer' })).toEqual({ kind: 'messages', messages: [] })
+  })
+
+  it('refuses to read for an unknown job', async () => {
+    expect(await readJobMessages(w, { jobId: 'job-gone' })).toEqual({ kind: 'refused', reason: 'unknown_job', retryable: false })
+  })
+
+  it('replies in the message\'s thread, to its sender, from its account', async () => {
+    const read = await readJobMessages(w, { jobId: 'job-customer' })
+    const id = read.kind === 'messages' ? read.messages[0]?.id ?? '' : ''
+    expect(await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })).toEqual({
+      kind: 'drafted', outboxId: 'out-1',
+    })
+    expect(await w.outbox.get('out-1')).toMatchObject({
+      to: 'anna@customer.example', threadKey: 't-1', subject: 'Re: Question', accountId: 'acc-1', state: 'draft',
+    })
+    expect(await replyToMessage(w, { jobId: 'job-customer', messageId: id, text: 'It ships today.' })).toEqual({
+      kind: 'drafted', outboxId: 'out-1',
+    })
+  })
+
+  it('refuses to reply to a message of another job or the inbox', async () => {
+    const inbox = (await w.store.forJob('job-customer')).length
+    expect(inbox).toBe(1)
+    expect(await replyToMessage(w, { jobId: 'job-customer', messageId: 'msg-2', text: 'Hi' })).toEqual({
+      kind: 'refused', reason: 'unknown_message', retryable: false,
+    })
   })
 })

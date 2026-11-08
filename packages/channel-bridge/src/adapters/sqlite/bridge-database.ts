@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT NOT NULL,
   routing TEXT NOT NULL,
   job_id TEXT,
+  read INTEGER NOT NULL DEFAULT 0,
   UNIQUE (channel, account_id, channel_message_id)
 );
 CREATE INDEX IF NOT EXISTS messages_thread ON messages (account_id, thread_key);

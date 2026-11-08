@@ -69,6 +69,23 @@ export class SqliteMessageStore implements MessageStore {
     return row !== undefined
   }
 
+  async get(id: string): Promise<StoredMessage | null> {
+    const row = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined
+    return row ? toStoredMessage(row) : null
+  }
+
+  async unreadForJob(jobId: string): Promise<StoredMessage[]> {
+    const rows = this.db.prepare('SELECT * FROM messages WHERE job_id = ? AND read = 0 ORDER BY rowid').all(jobId) as MessageRow[]
+    return rows.map(toStoredMessage)
+  }
+
+  async markRead(ids: string[]): Promise<void> {
+    const mark = this.db.prepare('UPDATE messages SET read = 1 WHERE id = ?')
+    this.db.transaction(() => {
+      for (const id of ids) mark.run(id)
+    })()
+  }
+
   async forJob(jobId: string): Promise<StoredMessage[]> {
     const rows = this.db.prepare('SELECT * FROM messages WHERE job_id = ? ORDER BY rowid').all(jobId) as MessageRow[]
     return rows.map(toStoredMessage)

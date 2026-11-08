@@ -4,6 +4,7 @@ import { routeMessage } from '../src/domain/routing'
 import type { JobRoute } from '../src/domain/routing'
 import type { InboundMessage } from '../src/domain/inbound-message'
 import { decideSend } from '../src/domain/send-policy'
+import { replySubject, replyKey } from '../src/domain/reply'
 import { approveDraft, skipDraft, markSent, markFailed } from '../src/domain/outbox'
 import type { OutboxItem } from '../src/domain/outbox'
 import { addToWake, wakeDueAt, afterFailedDelivery, describeWake, MAX_DELIVERY_ATTEMPTS } from '../src/domain/wake'
@@ -208,5 +209,20 @@ describe('wake', () => {
     expect(text).toContain('2 new messages')
     expect(text).toContain('1 draft decided')
     expect(text).toContain('msg_read')
+  })
+})
+
+describe('reply', () => {
+  it('answers a subject with one Re:', () => {
+    expect(replySubject('Order')).toBe('Re: Order')
+    expect(replySubject('Re: Order')).toBe('Re: Order')
+    expect(replySubject('RE: Order')).toBe('RE: Order')
+    expect(replySubject(null)).toBeNull()
+  })
+
+  it('names a reply by the message it answers and its text', () => {
+    expect(replyKey('msg-1', 'Thanks')).toBe(replyKey('msg-1', 'Thanks'))
+    expect(replyKey('msg-1', 'Thanks')).not.toBe(replyKey('msg-1', 'Thanks!'))
+    expect(replyKey('msg-1', 'Thanks')).not.toBe(replyKey('msg-2', 'Thanks'))
   })
 })

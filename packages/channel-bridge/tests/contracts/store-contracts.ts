@@ -60,6 +60,26 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       expect(await store.senderKnownToJob('job-1', 'bob@customer.example')).toBe(false)
     })
 
+    it('gets a message by id', async () => {
+      const store = make()
+      const saved = await store.save(message(), toJob)
+      if (saved.kind !== 'stored') throw new Error('expected stored')
+      expect((await store.get(saved.id))?.channelMessageId).toBe('m-1')
+      expect(await store.get('no-such-id')).toBeNull()
+    })
+
+    it('hands out a job\'s unread messages until they are marked read', async () => {
+      const store = make()
+      const first = await store.save(message(), toJob)
+      const second = await store.save(message({ channelMessageId: 'm-2' }), toJob)
+      await store.save(message({ channelMessageId: 'm-3' }), toInbox)
+      if (first.kind !== 'stored' || second.kind !== 'stored') throw new Error('expected stored')
+      expect((await store.unreadForJob('job-1')).map((m) => m.id)).toEqual([first.id, second.id])
+      await store.markRead([first.id])
+      expect((await store.unreadForJob('job-1')).map((m) => m.id)).toEqual([second.id])
+      expect(await store.forJob('job-1')).toHaveLength(2)
+    })
+
     it('keeps a cursor per account', async () => {
       const store = make()
       expect(await store.cursor('acc-1')).toBeNull()
