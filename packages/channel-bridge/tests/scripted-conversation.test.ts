@@ -32,7 +32,7 @@ describe('scripted conversation: a standing customer job', () => {
       ]),
       clock: new FixedClock('2026-11-08T10:00:00.000Z'),
       ids: new SequentialIds('out'),
-      cockpit: new RecordingCockpit(),
+      cockpit: new RecordingCockpit(['job-customer']),
     }
     await syncChannel(w, { account: mailbox })
 

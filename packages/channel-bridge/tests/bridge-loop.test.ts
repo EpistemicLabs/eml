@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { runBridgeTick } from '../src/entrypoints/bridge-loop'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { runBridgeTick, startBridgeLoop } from '../src/entrypoints/bridge-loop'
 import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
 import { MemoryWakeQueue } from '../src/adapters/memory/memory-wake-queue'
 import { MemoryJobDirectory } from '../src/adapters/memory/memory-job-directory'
@@ -23,7 +23,7 @@ function setup() {
       { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
     ]),
     clock: new FixedClock('2026-11-08T10:00:00.000Z'),
-    cockpit: new RecordingCockpit(),
+    cockpit: new RecordingCockpit(['job-1']),
   }
   return { good, broken, logged, deps, log: (event: string, fields: Record<string, unknown>) => logged.push({ event, fields }) }
 }
@@ -41,5 +41,34 @@ describe('runBridgeTick', () => {
     expect(s.deps.cockpit.requests).toHaveLength(1)
     expect(s.logged).toContainEqual({ event: 'sync.failed', fields: { accountId: 'acc-broken' } })
     expect(JSON.stringify(s.logged)).not.toContain('anna@')
+  })
+})
+
+describe('startBridgeLoop', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('does not start a round while one is running, and stops when told', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    let syncs = 0
+    let finish: () => void = () => {}
+    const slow: ChannelAccount = {
+      channel: 'mail', accountId: 'acc-slow', space: 'support',
+      sync: () => {
+        syncs += 1
+        return new Promise((resolve) => { finish = () => resolve({ messages: [], cursor: '0' }) })
+      },
+      send: async () => ({ kind: 'failed', reason: 'down', retryable: true }),
+    }
+    const loop = startBridgeLoop(s.deps, { accounts: [slow], collectMs: 0, log: s.log, everyMs: 1_000 })
+    await vi.advanceTimersByTimeAsync(3_500)
+    expect(syncs).toBe(1)
+    finish()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(syncs).toBe(2)
+    loop.stop()
+    finish()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(syncs).toBe(2)
   })
 })

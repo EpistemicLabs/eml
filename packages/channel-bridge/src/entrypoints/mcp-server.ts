@@ -5,11 +5,10 @@ import { z } from 'zod'
 import { jobTools } from './job-tools'
 
 /**
- * The job tools as a stdio MCP server, started by the cockpit for one job's session. The job id,
- * the bridge's address and the tool token come from the environment the cockpit sets; without
- * them it does not start.
+ * The job tools as an MCP server for one job's session. The job id, the bridge's address and the
+ * tool token come from the environment the cockpit sets; without them there is no server.
  */
-export async function startJobToolsServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export function createJobToolsServer(env: NodeJS.ProcessEnv): McpServer {
   const url = env.CHANNEL_BRIDGE_URL
   const jobId = env.CHANNEL_BRIDGE_JOB_ID
   const tokenFile = env.CHANNEL_BRIDGE_TOOL_TOKEN_FILE
@@ -49,8 +48,12 @@ export async function startJobToolsServer(env: NodeJS.ProcessEnv = process.env):
     },
     async (args) => ({ content: [{ type: 'text', text: await tools.reply(args.message_id, args.text) }] }),
   )
+  return server
+}
 
-  await server.connect(new StdioServerTransport())
+/** Serves the job tools over stdio, as the cockpit starts them for a job's session. */
+export async function startJobToolsServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  await createJobToolsServer(env).connect(new StdioServerTransport())
 }
 
 if (require.main === module) {

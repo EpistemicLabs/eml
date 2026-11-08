@@ -72,6 +72,12 @@ describe('job tools', () => {
     expect(answer).toMatch(/not been sent/i)
   })
 
+  it('says the bridge cannot be reached instead of failing, and reads an unexpected answer as such', async () => {
+    const away = jobTools({ url: 'http://127.0.0.1:1', token: 'tool', jobId: 'job-1' })
+    expect(await away.read()).toMatch(/cannot reach the bridge/i)
+    expect(await away.reply('msg-1', 'Hi')).toMatch(/cannot reach the bridge/i)
+  })
+
   it('msg_reply explains a refusal', async () => {
     expect(await tools.reply('msg-99', 'Hi')).toMatch(/unknown_message/)
   })

@@ -5,6 +5,8 @@ import type { AddressInfo } from 'net'
 import { CockpitHttpClient } from '../src/adapters/cockpit-http/cockpit-http-client'
 import { MemoryJobDirectory } from '../src/adapters/memory/memory-job-directory'
 import { contractRoutes, jobDirectoryContract } from './contracts/job-directory-contract'
+import { cockpitContract } from './contracts/cockpit-contract'
+import { RecordingCockpit } from '../src/adapters/memory/recording-cockpit'
 
 // A stand-in cockpit that speaks the /v1 job contract: routes per space behind that space's
 // token, and a wake answer chosen per job.
@@ -78,7 +80,10 @@ const contract: StandIn = {
     errands: contractRoutes.filter((route) => route.space === 'errands'),
   },
   tokens,
-  wakeAnswers: {},
+  wakeAnswers: {
+    'job-a': { status: 200, body: { outcome: 'delivered' } },
+    'job-busy': { status: 200, body: { outcome: 'retry' } },
+  },
   wakes: [],
 }
 
@@ -99,6 +104,12 @@ const unreachable = 'http://127.0.0.1:1'
 
 jobDirectoryContract('memory', () => new MemoryJobDirectory(contractRoutes))
 jobDirectoryContract('cockpit http', () => client(urls.contract))
+cockpitContract('memory', () => {
+  const cockpit = new RecordingCockpit(['job-a', 'job-busy'])
+  cockpit.answer('job-busy', 'retry')
+  return cockpit
+})
+cockpitContract('cockpit http', () => client(urls.contract))
 
 describe('CockpitHttpClient as job directory', () => {
   it('reads a space\'s mail routes with that space\'s token, tolerating what it does not know', async () => {
