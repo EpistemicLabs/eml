@@ -7,7 +7,8 @@ import type { Job, ReplyChannel, ReplyMode } from './job.js'
  * importing them; both sides test against tests/fixtures/job-contract.v1.json.
  *
  *   GET  /v1/jobs?space=<brain id>&channel=mail   → JobRouteV1[]
- *        the space's open jobs (not paused, not ended) with a trigger on that channel
+ *        the space's jobs that have not ended with a trigger on that channel; a paused
+ *        one is listed (paused: true) so its mail still routes to it and waits
  *   POST /v1/jobs/<jobId>/wake  WakeRequestV1     → WakeResponseV1
  *        delivered: the job's session has it (a running one gets it with its next turn);
  *        retry: no room, a busy session, or the cockpit is down — try again later;
@@ -27,6 +28,8 @@ export interface JobRouteV1 {
   /** For mail, MailMatchV1[]; other channels pass their trigger's match through. */
   matches: unknown[]
   reply: Partial<Record<ReplyChannel, ReplyMode>>
+  /** Paused by the user: route to it as usual; its wakes answer retry until it is resumed. */
+  paused: boolean
 }
 
 export interface WakeRequestV1 {
@@ -58,13 +61,13 @@ export function mailMatches(match: unknown[]): MailMatchV1[] {
   })
 }
 
-/** The job as the bridge routes it on a channel; null when it does not listen there or is not open. */
+/** The job as the bridge routes it on a channel; null when it does not listen there or has ended. */
 export function routeOf(job: Job, space: string, channel: ReplyChannel): JobRouteV1 | null {
-  if (job.paused || job.endedAt) return null
+  if (job.endedAt) return null
   const triggers = job.triggers.filter((t) => t.type === channel)
   if (triggers.length === 0) return null
   const raw = triggers.flatMap((t) => ('match' in t && Array.isArray(t.match) ? t.match : []))
   const matches = channel === 'mail' ? mailMatches(raw) : raw
   // Draft until the user says otherwise: nothing goes out unseen by default.
-  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' } }
+  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' }, paused: job.paused }
 }

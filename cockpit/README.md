@@ -237,7 +237,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   previous one still works; three failures in a row pause the job and mark its maker "Needs you". A schedule is one
   trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs. It reaches the host at
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
-  space), reads the open jobs listening on a channel, and wakes one with a short text and an idempotency key; the host
+  space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
   decides which session that reaches and answers delivered, retry or refused.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same

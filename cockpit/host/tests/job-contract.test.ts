@@ -80,10 +80,11 @@ describe('job contract v1', () => {
     expect(token(SPACE)).not.toBe(token(OTHER))
   })
 
-  it('lists the space’s open mail jobs as the fixture shows, drafting by default', async () => {
+  it('lists the space’s mail jobs as the fixture shows, paused ones marked, drafting by default', async () => {
     store.put(job())
     store.put(job({ id: 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee', paused: true }))
     store.put(job({ id: 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee', spaceId: OTHER }))
+    store.put(job({ id: 'dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee', endedAt: '2026-11-08T01:00:00.000Z' }))
     const answer = await call(`/v1/jobs?space=${SPACE}&channel=mail`, SPACE)
     expect(answer).toEqual({ status: 200, body: fixture.routes.response })
   })
