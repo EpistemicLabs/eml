@@ -145,11 +145,6 @@ export function connectTurnEvents(
     window.dispatchEvent(new CustomEvent('cockpit:notes', { detail: JSON.parse((message as MessageEvent<string>).data) }));
   });
 
-  // What the cockpit tells the user (host notifications.ts) — the bell listens (components/jobs).
-  source.addEventListener('notification', (message) => {
-    window.dispatchEvent(new CustomEvent('cockpit:notification', { detail: JSON.parse((message as MessageEvent<string>).data) }));
-  });
-
   source.addEventListener('snapshot', (message) => {
     const events = JSON.parse((message as MessageEvent<string>).data) as TurnEvent[];
     const turns: Record<string, TurnInfo> = {};

@@ -234,17 +234,17 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   brain; a job runs in its maker's space with at most its maker's tools. Runs start a few at a time and only with room
   (the worker check above); a busy target is tried again for up to an hour; a repeating run due more than 6 hours ago
   (the cockpit was down) is recorded as missed, a one-time run still runs late; a run is skipped while the job's
-  previous one still works; three failures in a row pause the job and mark its maker "Needs you". A schedule is one
+  previous one still works; three failures in a row pause the job. A schedule is one
   trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs. It reaches the host at
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
   space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
   decides which session that reaches and answers delivered, retry or refused.
-- **Jobs view and bell:** the header's **Jobs** shows every space's jobs with their next and last runs, pause, resume,
-  run now and delete. The bell next to it lists what the cockpit told the user (`notifications.ts`,
-  `<home>/notifications.json`, the last 200): a run that ended as review, question or failed, a missed run, a job
-  that paused itself (per job: `notify` needs-me, always or never). A new one shows as a toast while the cockpit is in
-  front and as a browser notification (Settings › Notifications) when it is not; the list waits for the next tab.
-  Everything that tells the user goes through a `Notifier`, so a push channel can join the feed later.
+- **Jobs view:** the header's **Jobs** shows every space's jobs with their next and last runs (a missed run stands
+  out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
+  run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
+  session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
+  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements; until then
+  nothing leaves the host.
 - **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
   mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
   clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
