@@ -13,7 +13,9 @@ import AboutTab from './tabs/AboutTab';
 import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
-import BrainTab from './tabs/BrainTab';
+import DataTab from './tabs/DataTab';
+import SettingsHeading from './SettingsHeading';
+import SpacesTab from './tabs/SpacesTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
 import type { SettingsProps } from '../types/types';
@@ -92,13 +94,15 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
           <main className="flex-1 overflow-y-auto">
             <div key={activeTab} className="settings-content-enter space-y-8 p-6">
+              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <SettingsHeading tab={activeMeta} />}
+
               {activeTab === 'account' && <AccountTab />}
 
-              {activeTab === 'agents' && <AgentTab />}
+              {activeTab === 'agents' && <AgentTab tab={activeMeta} />}
 
               {activeTab === 'models' && <ModelsTab onCloseSettings={onClose} />}
 
-              {activeTab === 'brain' && <BrainTab />}
+              {activeTab === 'spaces' && <SpacesTab tab={activeMeta} />}
 
               {activeTab === 'preferences' && (
                 <PreferencesTab
@@ -113,7 +117,9 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'about' && <AboutTab />}
 
-              {(activeTab === 'plugins' || activeTab === 'data') && <SettingsPlaceholder tab={activeMeta} />}
+              {activeTab === 'data' && <DataTab tab={activeMeta} />}
+
+              {activeTab === 'plugins' && <SettingsPlaceholder tab={activeMeta} />}
             </div>
           </main>
         </div>

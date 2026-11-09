@@ -625,14 +625,14 @@ export class Sync {
    * notice goes to the relay, the secret and the role into the team file.
    * Returns the link once; it is not kept.
    */
-  async createInvite(now: string, role: Role = 'member'): Promise<{ invite_id: string, link: string, expires_at: string, role: Role }> {
+  async createInvite(now: string, role: Role = 'member', name?: string): Promise<{ invite_id: string, link: string, expires_at: string, role: Role }> {
     this.owner()
     const invite = newInvite(this.host, this.team.brain, now)
     await this.request({ t: 'invite_put', req: 0, notice: inviteNotice(invite, this.team.device.sign) as unknown as Record<string, unknown> })
     const before = this.team.invites
     this.team.invites = [...(before ?? []), { invite_id: invite.invite_id, secret: invite.secret, expires_at: invite.expires_at, role }]
     if (!this.kept(() => { this.team.invites = before })) throw readOnly('its team file could not be written', true)
-    return { invite_id: invite.invite_id, link: inviteLink(invite), expires_at: invite.expires_at, role }
+    return { invite_id: invite.invite_id, link: inviteLink(invite, name), expires_at: invite.expires_at, role }
   }
 
   /** Cancels an open invite of this device at the relay (a waiting invitee hears so) and forgets it. False when this device holds no such invite. */

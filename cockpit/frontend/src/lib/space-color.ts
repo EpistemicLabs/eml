@@ -10,7 +10,7 @@ export type SpaceColor = (typeof SPACE_COLORS)[number];
 export const spaceTone = (space: Pick<SpaceInfo, 'color'> | null | undefined): string | undefined =>
   space?.color ? `var(--space-${space.color})` : undefined;
 
-/** Change a space's colour (Settings › Brain); answers with what went wrong, or null. */
+/** Change a space's colour (Settings › Spaces); answers with what went wrong, or null. */
 export async function setSpaceColor(space: SpaceInfo, color: SpaceColor): Promise<string | null> {
   try {
     const response = await fetch(`/api/spaces/${encodeURIComponent(space.id)}`, {

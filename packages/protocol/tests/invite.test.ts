@@ -7,6 +7,7 @@ import {
   joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
   unwrapKey, verifyInviteNotice, wrapKey, NOTICE_SKEW_MS, genesisMembers, type Invite, type RotationAhead,
 } from '../src'
+import { toBase64url } from '../src/wire'
 import { joinRequestWith } from '../src/invite'
 import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, rotation, sha } from './helpers'
 
@@ -115,6 +116,28 @@ describe('the link', () => {
     ]
     for (const [bad, error] of cases) expect(() => parseInviteLink(bad), bad).toThrow(error)
     expect(() => parseInviteLink(link.replace('/i/1/', '/i/2/'))).toThrow(UnsupportedVersionError)
+  })
+})
+
+describe('the name in the link', () => {
+  const invite = () => newInvite('relay.example', BRAIN, '2026-11-01T08:00:00.000Z')
+
+  it('travels in the fragment, which no request carries, and leaves the secret as it is', () => {
+    const made = invite()
+    const link = inviteLink(made, 'EML Team — Köln')
+    expect(new URL(link).pathname).not.toContain('Team')
+    const parsed = parseInviteLink(link)
+    expect(parsed.name).toBe('EML Team — Köln')
+    expect(parsed.secret).toEqual(made.secret)
+    expect(parseInviteLink(inviteLink(made)).name).toBeUndefined()
+  })
+
+  it('refuses a name that is not one', () => {
+    const link = inviteLink(invite())
+    expect(() => parseInviteLink(`${link}.a.b`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.!`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.${toBase64url(new Uint8Array(201).fill(97))}`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.${toBase64url(new Uint8Array([0xff]))}`)).toThrow(ProtocolError)
   })
 })
 

@@ -43,7 +43,8 @@
  *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
  *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
  *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
- *   POST /team/invites      { role? }                                → An invite link into this team brain, by an owner, for a member or an owner (v0.21; host-facing)
+ *   DELETE /brain                                                    → Discard a private brain and its file: the host's removal of a local space, after its backup
+ *   POST /team/invites      { role?, name? }                                → An invite link into this team brain, by an owner, for a member or an owner (v0.21; host-facing)
  *   POST /team/invites/:id/accept                                    → Confirm the join waiting on an invite: add the member with the invite's role, wrap the key, answer (v0.21; host-facing)
  *   POST /team/invites/:id/cancel                                    → Cancel an open invite; a waiting invitee is told (v0.21; host-facing)
  *   POST /move/plan         { target, project }                      → What moving a project into another brain of this server would do (v0.21; host-facing)
@@ -265,9 +266,9 @@ function discardTeam(brainId: string, sync: Sync): void {
 }
 
 /**
- * v0.21: discards a brain that has no log yet — a shared brain that never came
- * to life, or an empty brain the host provisioned for one (DELETE /team): the
- * Sync and its team file, the pool's connection, the brain file, and the
+ * v0.21: discards a brain — a shared brain that never came to life or an empty
+ * brain the host provisioned for one (DELETE /team), a private brain the host
+ * backed up (DELETE /brain): the Sync and its team file, the pool's connection, the brain file, and the
  * control rows (brains; members, migrations and tokens go with it).
  */
 function discardBrain(brainId: string, brainFile: string): void {
@@ -717,6 +718,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return
     }
 
+    // DELETE /brain — discards a private brain with all it holds: the host's
+    // removal of a local space, after its backup. A shared brain is not
+    // discarded here.
+    if (url === '/brain' && method === 'DELETE') {
+      if (sync !== undefined) return json(res, 409, { error: 'A shared brain is not discarded here.', code: 'NOT_LOCAL' })
+      discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
     // POST /team/invites {role?} — an owner invites into this team brain (v0.21,
     // spec team-brain-membership-flows-spec §3) as a member (default) or an
     // owner (decision invite-role-set-at-invite): the notice goes to the relay,
@@ -726,7 +738,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       const role = body.role === undefined ? 'member' : body.role
       if (role !== 'owner' && role !== 'member') return json(res, 400, { error: 'role is owner or member', code: 'INVALID_ROLE' })
-      return json(res, 201, await sync.createInvite(eml.now(), role))
+      if (body.name !== undefined && typeof body.name !== 'string') return json(res, 400, { error: 'name is a string', code: 'INVALID_NAME' })
+      return json(res, 201, await sync.createInvite(eml.now(), role, body.name as string | undefined))
     }
 
     // POST /team/invites/:id/accept — the owner confirmed the join waiting on

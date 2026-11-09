@@ -20,6 +20,8 @@ export interface SpaceInfo {
   shared: boolean | null;
   /** The name its sessions go by: its agent's, null while none is bound. Never the space's own name. */
   agentName?: string | null;
+  /** Its sessions use the bound agent's own login and tools, not the cockpit's. */
+  ownRuntime?: boolean;
   /** What tells it apart: a name from the palette (lib/space-color.ts). */
   color?: string;
 }
@@ -53,6 +55,9 @@ export async function loadSpaces(): Promise<SpaceInfo[]> {
         agent: typeof s.agent === 'string' ? s.agent : null,
         upgrade: s.upgrade && typeof s.upgrade === 'object' ? s.upgrade : null,
         shared: typeof s.shared === 'boolean' ? s.shared : null,
+        agentName: typeof s.agentName === 'string' ? s.agentName : null,
+        ownRuntime: s.ownRuntime === true,
+        ...(typeof s.color === 'string' ? { color: s.color } : {}),
       }));
     // A persisted active space the host no longer knows → back to main.
     const active = paneStore.getActiveSpaceId();
@@ -100,9 +105,9 @@ export function joinSharedSpace(name: string, link: string): Promise<{ space: Sp
   return postSpace({ name, join: { link } }, (status) => `Could not join the shared space (${status}).`);
 }
 
-/** v0.21: remove a shared space that never came to life (host DELETE /api/spaces/:id). */
-export async function removeSpace(space: SpaceInfo): Promise<{ removed: true } | { error: string }> {
-  const answer = await removeOnHost(space.id);
+/** Remove a shared space that never came to life, or a local one with its name typed (host DELETE /api/spaces/:id). */
+export async function removeSpace(space: SpaceInfo, confirm?: string): Promise<{ removed: true } | { error: string }> {
+  const answer = await removeOnHost(space.id, confirm);
   if (answer.status !== 204) return { error: errorText(answer.body, `Could not remove the space (${answer.status}).`) };
   if (paneStore.getActiveSpaceId() === space.id) paneStore.activateSpace(null);
   await loadSpaces();

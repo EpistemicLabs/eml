@@ -5,7 +5,7 @@ import { readBrainInfo, revealBrainFile, type BrainInfo } from './brain-info.js'
 import { HANDLE, readCockpitConfig, updateCockpitConfig } from './config.js'
 
 /**
- * The agents of this home for the UI (Settings › Agents, Settings › Brain):
+ * The agents of this home for the UI (Settings › Agents, Settings › Spaces):
  *
  *   GET  /api/agents                     → { handle, agents: [{ id, name, brainId, spaces: [{ id, name }] }] }
  *   GET  /api/agents/:id/brain/<path>    → a read of that agent's brain, as /api/brain reads a space's

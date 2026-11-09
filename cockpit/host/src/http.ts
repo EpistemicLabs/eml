@@ -16,7 +16,7 @@ import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
 import { provisionSpace, type AgentNames, type Human } from './provision.js'
-import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, removeTeamSpace, teamSnapshot } from './team-space.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -461,6 +461,16 @@ function validSpaceName(deps: HostDeps, name: string, self?: BrainSpace): { name
   return { name: trimmed }
 }
 
+/** `name`, cut to the limit, with a number when a space has it already: the name an invite link brought. */
+function freeSpaceName(deps: HostDeps, name: string): string {
+  const taken = (candidate: string) => deps.spaces.list().some((s) => s.name.toLowerCase() === candidate.toLowerCase())
+  const base = name.trim().slice(0, SPACE_NAME_MAX - 3)
+  if (!taken(base)) return base
+  let n = 2
+  while (taken(`${base} ${n}`)) n += 1
+  return `${base} ${n}`
+}
+
 /**
  * The binding every new space gets: the main space's agent and the home's
  * handle (the agent picker per space comes with Settings › Agents), with
@@ -488,7 +498,7 @@ function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: s
 }
 
 /**
- * Settings › Brain › New space: a further local brain, bound to the main
+ * Settings › Spaces › New space: a further local brain, bound to the main
  * space's agent. The space gets no identity of its own — that is the agent
  * brain's — only the agent and user objects, so engrams in their scopes can
  * be written there.
@@ -507,7 +517,8 @@ type SharedSpaceResult = { status: number; body: Record<string, unknown> }
 
 /**
  * v0.21: POST /api/spaces {name, shared: {handle?}} — a new shared brain —
- * and {name, join: {link, handle?}} — joining one with an invite link
+ * and {name?, join: {link, handle?}} — joining one with an invite link, under
+ * the name the link brings unless one is given
  * (team-space.ts). Bound like a local space: the main space's agent, the
  * member handle defaulting to the home's handle. A join whose link names a
  * brain this cockpit has already (a new link after a stopped join) goes to
@@ -518,7 +529,9 @@ async function createSharedSpace(deps: HostDeps, body: Record<string, unknown>):
   const given = variant && typeof variant === 'object' ? (variant as Record<string, unknown>) : {}
   const link = typeof given.link === 'string' ? given.link : ''
   const existing = body.join ? deps.spaces.list().find((s) => s.id === brainOfInviteLink(link)) : undefined
-  const valid = existing ? { name: existing.name } : validSpaceName(deps, typeof body.name === 'string' ? body.name : '')
+  const asked = typeof body.name === 'string' ? body.name : ''
+  const name = body.join && !asked.trim() ? freeSpaceName(deps, nameOfInviteLink(link) ?? 'Shared space') : asked
+  const valid = existing ? { name: existing.name } : validSpaceName(deps, name)
   if ('error' in valid) return { status: 400, body: valid }
   const binding = await newSpaceBinding(deps)
   if ('error' in binding) return { status: 400, body: binding }
@@ -559,7 +572,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   // and its team brains, sign-out. The session stays in the host (account.ts).
   if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
 
-  // Spaces: the list, and a new local one (Settings › Brain).
+  // Spaces: the list, and a new local one (Settings › Spaces).
   if (resource === 'spaces' && !id && method === 'GET') {
     json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
     return true
@@ -582,8 +595,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   }
 
   // v0.21: a shared space's team — the brain server's view (team-space.ts),
-  // the invites an owner makes and confirms, and the removal of a shared
-  // space that never came to life. The server's answers pass through.
+  // the invites an owner makes and confirms, and the removal of a space: a
+  // shared one that never came to life, a local one with its name typed. The
+  // server's answers pass through.
   if (resource === 'spaces' && id && (method === 'DELETE' || parts[3] === 'team' || parts[3] === 'invites')) {
     const target = deps.spaces.get(id)
     if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
@@ -591,12 +605,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     let answer: { status: number; body: unknown } | null = null
     try {
       if (method === 'DELETE' && parts.length === 3) {
-        if (!target.shared) { json(res, 409, { error: { code: 'NOT_SHARED', message: 'Only a shared space is removed here.' } }); return true }
-        answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+        if (target.main) { json(res, 409, { error: { code: 'MAIN_SPACE', message: 'The main space cannot be deleted.' } }); return true }
+        if (target.shared === null) { json(res, 409, { error: { code: 'SPACE_UNKNOWN', message: 'The brain server did not say what this space is. Try again.' } }); return true }
+        if (target.shared) answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+        else {
+          if (deps.spaces.isAgentMain(target)) { json(res, 409, { error: { code: 'AGENT_MAIN', message: "This is its agent's main space and cannot be deleted." } }); return true }
+          if ((await readJson(req)).confirm !== target.name) { json(res, 400, { error: { code: 'CONFIRM_NAME', message: 'Type the name of the space to delete it.' } }); return true }
+          const sessions = deps.bridge.ledger.list(undefined, target.ledgerKey)
+          if (sessions.some((s) => deps.bridge.isRunning(s.sessionId) || deps.chat.isRunning(s.sessionId))) {
+            json(res, 409, { error: { code: 'SESSIONS_RUNNING', message: 'Sessions are running in this space. Stop them first.' } })
+            return true
+          }
+          answer = await removeLocalSpace(target, createBackup, (space) => deps.spaces.remove(space))
+          if (answer.status === 200) for (const s of sessions) deps.bridge.ledger.remove(s.sessionId)
+        }
       } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
         answer = await teamSnapshot(target)
       } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {
-        answer = await createInvite(target, (await readJson(req)).role)
+        answer = await createInvite(target, (await readJson(req)).role, target.name)
       } else if (sub === 'invites' && parts.length === 6 && inviteId && method === 'POST' && (action === 'accept' || action === 'cancel')) {
         answer = action === 'accept' ? await confirmInvite(target, inviteId) : await cancelInvite(target, inviteId)
       }
@@ -696,7 +722,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Settings › Brain: the local brain (file, id, schema, identity) and its
+    // Settings › Spaces: the local brain (file, id, schema, identity) and its
     // backups. Paths are display-only; the token never leaves the host.
     if (resource === 'brain-info' && !id && method === 'GET') {
       json(res, 200, readBrainInfo(space.token))

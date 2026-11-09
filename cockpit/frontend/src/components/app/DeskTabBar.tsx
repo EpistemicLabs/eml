@@ -44,6 +44,9 @@ export default function DeskTabBar() {
   // per tab — a dot for one, a count for more; gone once the desk is viewed.
   const turnSnapshot = useTurnStore();
   const activeSpaceId = paneStore.useActiveSpaceId();
+  // The active space comes into view when the bar scrolls (many spaces).
+  const activeSectionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { activeSectionRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); }, [activeSpaceId]);
   // Engrams flagged for review in the ACTIVE space's brain (the request names
   // the active space) — shown on that section's Brain tab only.
   const pendingReviews = usePendingReviews().data?.length ?? 0;
@@ -236,6 +239,7 @@ export default function DeskTabBar() {
           // It keeps a fixed height and sits centred in the taller header row.
           <div
             key={section.space?.id ?? 'all'}
+            ref={isActiveSpace ? activeSectionRef : undefined}
             data-active={isActiveSpace || undefined}
             className="space-band flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5"
             style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}

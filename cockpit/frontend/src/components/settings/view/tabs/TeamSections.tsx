@@ -1,10 +1,10 @@
-// Settings › Brain for a shared space (spec team-brain-membership-flows-spec
-// §5): the team as the brain server reports it — brain, relay, your member,
-// the state — the members, and, for an owner, the invites: a link made for a
+// Settings › Spaces for a shared space (spec team-brain-membership-flows-spec
+// §5): its state, the members, and, for an owner, the invites: a link made for a
 // member or an owner (decision invite-role-set-at-invite), shown once; the
 // open invites with their expiry; a join waiting on one, confirmed after the
 // fingerprint was compared, or declined. Every action goes through the host
-// (lib/team.ts); the store reads again after each.
+// (lib/team.ts); the store reads again after each. What is technical (relay,
+// brain id, your member) goes under the space's technical details.
 import { useState } from 'react';
 import { Check, Copy, Loader2 } from 'lucide-react';
 
@@ -23,30 +23,36 @@ const formatDate = (iso: string): string => {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 };
 
-export default function TeamSections({ spaceId, team }: { spaceId: string; team: TeamSnapshot }) {
+/** The state in one line: Live, or what the space is waiting for. */
+export function teamStatus(team: TeamSnapshot): string {
   const state = stateTitle(team) ?? 'Live';
-  const step = joinStep(team.state);
+  const note = joinStep(team.state) ?? team.read_only;
+  return note ? `${state} — ${note}` : state;
+}
+
+/** The team's rows of the technical details. */
+export function TeamDetailRows({ team }: { team: TeamSnapshot }) {
+  return (
+    <>
+      <SettingsRow label="Relay"><Mono>{relayHost(team.relay) ?? '—'}</Mono></SettingsRow>
+      <SettingsRow label="Brain ID"><Mono>{team.brain}</Mono></SettingsRow>
+      <SettingsRow label="Your handle"><Mono>{team.member?.handle ?? '—'}</Mono></SettingsRow>
+      <SettingsRow label="Your fingerprint"><Mono>{team.member?.fingerprint ?? '—'}</Mono></SettingsRow>
+    </>
+  );
+}
+
+export default function TeamSections({ spaceId, team }: { spaceId: string; team: TeamSnapshot }) {
   const owner = team.member?.role === 'owner';
   return (
     <>
-      <SettingsSection title="Team">
-        <SettingsCard divided>
-          <SettingsRow label="Brain ID"><Mono>{team.brain}</Mono></SettingsRow>
-          <SettingsRow label="Relay"><Mono>{relayHost(team.relay) ?? '—'}</Mono></SettingsRow>
-          <SettingsRow label="Your handle"><Mono>{team.member?.handle ?? '—'}</Mono></SettingsRow>
-          <SettingsRow label="Fingerprint"><Mono>{team.member?.fingerprint ?? '—'}</Mono></SettingsRow>
-          <SettingsRow label="Role"><Mono>{team.member?.role ?? '—'}</Mono></SettingsRow>
-          <SettingsRow label="State" description={step ?? team.read_only ?? undefined}><Mono>{state}</Mono></SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
       <SettingsSection title="Members">
         <SettingsCard divided>
           {team.members.length === 0 ? (
             <div className="px-4 py-4 text-sm text-muted-foreground">No members recorded yet.</div>
           ) : (
             team.members.map((m) => (
-              <SettingsRow key={m.id} label={m.handle ?? m.fingerprint} description={m.handle ? m.fingerprint : undefined}>
+              <SettingsRow key={m.id} label={m.handle ?? m.fingerprint}>
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
                   {m.self && <Pill>you</Pill>}
                   <span>{m.role}</span>

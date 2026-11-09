@@ -93,6 +93,8 @@ export interface SpaceView {
   shared: boolean | null
   /** The name its sessions go by (sessionAgentName); null while no agent is bound. */
   agentName: string | null
+  /** Its sessions use the bound agent's own runtime, not the cockpit's. */
+  ownRuntime: boolean
   color: SpaceColor
 }
 
@@ -104,7 +106,7 @@ export function sessionAgentName(space: BrainSpace): string | null {
   return space.agent ? space.agent.charAt(0).toUpperCase() + space.agent.slice(1) : null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), upgrade: space.upgrade, shared: space.shared, color: space.color })
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), ownRuntime: space.runtime !== null, upgrade: space.upgrade, shared: space.shared, color: space.color })
 
 export interface OpenSpaceOptions {
   id: string
@@ -232,6 +234,11 @@ export class BrainSpaces {
     this.byId.delete(space.id)
     removeSpaceFiles(space.id, space.runtime?.configDirs.claude)
     fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
+  }
+
+  /** The first space its agent is bound to: where the agent lives, so it is not deleted while the agent exists. */
+  isAgentMain(space: BrainSpace): boolean {
+    return space.agent !== null && this.list().find((s) => s.agent === space.agent) === space
   }
 
   /** Give a space its colour and persist it in the cockpit config. */

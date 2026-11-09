@@ -56,9 +56,9 @@ const asObject = (body: unknown): Record<string, unknown> =>
 /** GET /team: the shared brain's state, read-only text, member and member set (a private brain: shared false). */
 export const teamSnapshot = (brain: TeamBrain): Promise<TeamAnswer> => ask(brain, 'GET', '/team')
 
-/** POST /team/invites {role?}: an invite link for a member or an owner (decision invite-role-set-at-invite), returned once. */
-export const createInvite = (brain: TeamBrain, role: unknown): Promise<TeamAnswer> =>
-  ask(brain, 'POST', '/team/invites', role === undefined ? {} : { role })
+/** POST /team/invites {role?, name?}: an invite link for a member or an owner (decision invite-role-set-at-invite), returned once; `name` is the space's, for the invitee. */
+export const createInvite = (brain: TeamBrain, role: unknown, name?: string): Promise<TeamAnswer> =>
+  ask(brain, 'POST', '/team/invites', { ...(role === undefined ? {} : { role }), ...(name === undefined ? {} : { name }) })
 
 /** POST /team/invites/:id/accept: the owner confirmed the join waiting on the invite; the role is the invite's. */
 export const confirmInvite = (brain: TeamBrain, inviteId: string): Promise<TeamAnswer> =>
@@ -136,6 +136,14 @@ export function brainOfInviteLink(link: string): string | null {
   return i === 'i' && version === '1' && typeof brain === 'string' && UUID.test(brain) ? brain : null
 }
 
+/** The name the inviter gave the space, from the link's fragment; null when it carries none. */
+export function nameOfInviteLink(link: string): string | null {
+  let url: URL
+  try { url = new URL(link) } catch { return null }
+  const text = url.hash.slice(1).split('.')[1]
+  return text ? Buffer.from(text, 'base64url').toString('utf8').trim() || null : null
+}
+
 /**
  * Joining a team brain with an invite link: the empty brain under the link's
  * brain id, then the server's join. The space goes into the config once the
@@ -185,6 +193,23 @@ export async function removeTeamSpace(space: BrainSpace, remove: (space: BrainSp
   if (answer.status !== 204) return answer
   await remove(space)
   return { status: 204, body: {} }
+}
+
+/**
+ * DELETE /api/spaces/:id for a local space: a backup first, so the delete can
+ * be undone by hand; without it nothing is deleted. Then the server discards
+ * the brain, and the space leaves the registry and the config.
+ */
+export async function removeLocalSpace(
+  space: BrainSpace,
+  backup: (token: string) => Promise<unknown>,
+  remove: (space: BrainSpace) => Promise<void>,
+): Promise<TeamAnswer> {
+  const copy = await backup(space.token)
+  const answer = await ask(space, 'DELETE', '/brain')
+  if (answer.status !== 204) return answer
+  await remove(space)
+  return { status: 200, body: { backup: copy } }
 }
 
 // --- the boot sweep ---

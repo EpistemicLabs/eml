@@ -51,7 +51,7 @@ Settings › About › Updates shows the state, checks now, and goes back to the
 across a brain-schema change).
 
 **Start over:** stop the cockpit and delete `~/.eml-cockpit/`. That removes the brain, the
-session list and the cockpit's Claude login — back it up first (Settings › Brain › Back up).
+session list and the cockpit's Claude login — back it up first (Settings › Spaces › Back up).
 
 **Keep it running from source:** a source checkout can run as a login service too:
 
@@ -160,7 +160,7 @@ Env: `COCKPIT_PORT` (host port, default a free port / 4318 in dev), `COCKPIT_NO_
 
 A **space** is one brain that holds work: projects with their rules, entities with their profiles,
 tasks, decisions, notes. The cockpit starts with the brain it was set up with (the main space);
-**Settings › Brain › New space** or the space menu in the header adds a further local brain. Every
+**Settings › Spaces › New space** or the space menu in the header adds a further local brain. Every
 desk, session and project belongs to exactly one space, and a session only ever reaches its own
 space — the boundary between spaces is the space's per-boot MCP token, not a filter. The switch in
 the header (and the sidebar's group header) changes the space with its desks, projects and Brain tab.
