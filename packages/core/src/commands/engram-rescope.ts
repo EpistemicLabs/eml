@@ -27,9 +27,9 @@ export const engramRescope: CommandModule<EngramRescopeInput, EngramRescopeResul
     if (new Set(ids).size !== ids.length) throw new CommandError('INVALID', 'Invalid command: an id appears twice in ids.')
     return { ids: ids as string[], scope }
   },
-  apply(ctx, input) {
-    const missing = input.ids.filter(id => !ctx.eml.engrams.get(id))
+  apply(ctx, input, stamp) {
+    const missing = input.ids.filter(id => !ctx.eml.engrams.exists(id))
     if (missing.length > 0) throw new CommandError('NOT_FOUND', `engram not found: ${missing.join(', ')}`)
-    return ctx.engrams.rescope(input.ids, input.scope)
+    return ctx.engrams.rescope(input.ids, input.scope, stamp)
   },
 }

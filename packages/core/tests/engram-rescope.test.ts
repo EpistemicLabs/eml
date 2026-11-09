@@ -23,11 +23,13 @@ describe('engram.rescope', () => {
     throw new Error('not rejected')
   }
 
-  it('moves one engram and leaves everything but the scope alone', () => {
+  it('moves one engram: the scope changes and rev goes up, nothing else', () => {
     const d = create(validDecision({ scope: 'project.a' }))
     const before = row(d.id)
     expect(rescope([d.id], 'project.b')).toEqual({ moved: 1, unchanged: 0 })
-    expect(row(d.id)).toEqual({ ...before, scope: 'project.b' })
+    expect(row(d.id)).toEqual({ ...before, scope: 'project.b', rev: before.rev + 1 })
+    rescope([d.id], 'project.b')
+    expect(row(d.id).rev).toBe(before.rev + 1)
   })
 
   it('moves many of any type and status, closed ones and old statuses included', () => {

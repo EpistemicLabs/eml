@@ -24,6 +24,9 @@ import { EngramStore, renderLogContent, hasStartHere, CONFLICT_TYPES, CONFLICT_C
  * command modules (commands/) call it, inside apply()'s transaction, with the
  * write's one Stamp. EML exposes the read half (EngramStore) and apply().
  */
+/** Where a profile may live: it is about someone. */
+const PROFILE_SCOPE = /^(agent|user|entity)\./
+
 export class EngramWriter extends EngramStore {
   /**
    * v0.8 C3: hard scope validation (was: soft warning).
@@ -114,7 +117,7 @@ export class EngramWriter extends EngramStore {
       }
       if (props.binding === 'task') this.assertTaskOpenForBinding(input.task_id!, type)
     }
-    if (type === 'profile' && !/^(agent|user|entity)\./.test(input.scope)) {
+    if (type === 'profile' && !PROFILE_SCOPE.test(input.scope)) {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
     }
     if (input.from_learning !== undefined && type !== 'rule') {
@@ -386,21 +389,28 @@ export class EngramWriter extends EngramStore {
     return typeof p.state === 'string' ? p.state : null
   }
 
+  /** Rebuild the search row of one engram from its stored content, scope and title. */
+  private reindexFts(id: string): void {
+    this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
+    this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+  }
+
   /**
-   * engram.rescope: move engrams to another scope of this brain. Only the scope
-   * and the search index change: updated_at, rev, reviews, journals, tags,
-   * subjects and relations stay, so a re-sort does not read as an edit. All or
+   * engram.rescope: move engrams to another scope of this brain. The scope, the
+   * search index and rev change (rev tells watchers and sync that the engram
+   * moved); created_at, updated_at, reviews, journals, tags, subjects and
+   * relations stay, so a re-sort does not read as an edit. All or
    * nothing; an engram already in the scope counts as unchanged, so a run can
    * be repeated. What may not arrive is refused, never superseded: a second
    * active status or core profile, a profile outside agent, user or entity.
    */
-  rescope(ids: string[], scope: string): { moved: number, unchanged: number } {
+  rescope(ids: string[], scope: string, stamp: Stamp): { moved: number, unchanged: number } {
     this.validateScope(scope)
     const select = this.db.prepare(`SELECT id, type, status, scope, properties FROM engrams WHERE id = ?`)
     const rows = ids.map(id => select.get(id) as { id: string, type: string, status: string, scope: string, properties: string | null })
     const moving = rows.filter(r => r.scope !== scope)
     const isCore = (r: { properties: string | null }) => !!r.properties && JSON.parse(r.properties).core === true
-    if (moving.some(r => r.type === 'profile') && !/^(agent|user|entity)\./.test(scope)) {
+    if (moving.some(r => r.type === 'profile') && !PROFILE_SCOPE.test(scope)) {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
     }
     const statuses = moving.filter(r => r.type === 'status' && r.status === 'active')
@@ -413,12 +423,10 @@ export class EngramWriter extends EngramStore {
       throw new Error(`Invalid engram: scope ${scope} can hold one core profile — invalidate the others first.`)
     }
     const update = this.db.prepare(`UPDATE engrams SET scope = ? WHERE id = ?`)
-    const dropFts = this.db.prepare('DELETE FROM engrams_fts WHERE id = ?')
-    const addFts = this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`)
     for (const r of moving) {
       update.run(scope, r.id)
-      dropFts.run(r.id)
-      addFts.run(r.id)
+      this.reindexFts(r.id)
+      bumpRev(this.db, stamp, r.id)
     }
     return { moved: moving.length, unchanged: rows.length - moving.length }
   }
@@ -685,8 +693,7 @@ export class EngramWriter extends EngramStore {
       this.db.prepare(`UPDATE engrams SET ${sets.join(', ')} WHERE id = ?`).run(...params, stamp.at, id)
       bumpRev(this.db, stamp, id)
       if (input.content !== undefined || input.title !== undefined || scopeChanged) {
-        this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-        this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+        this.reindexFts(id)
       }
       if (contentChanged) wikilinks = this.materializeWikilinks(id, input.content!, input.scope ?? existing.scope, stamp)
 
@@ -1187,7 +1194,7 @@ export class EngramWriter extends EngramStore {
     if (patch.app !== undefined) newProps.app = patch.app
     const newScope = patch.scope ?? existing.scope
     // The profile scope rule applies to a move; a legacy profile elsewhere stays editable (and retirable).
-    if (type === 'profile' && patch.scope !== undefined && patch.scope !== existing.scope && !/^(agent|user|entity)\./.test(newScope)) {
+    if (type === 'profile' && patch.scope !== undefined && patch.scope !== existing.scope && !PROFILE_SCOPE.test(newScope)) {
       throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
     }
     if ((type === 'decision' || type === 'note') && fieldPatch.binding === 'task') {
@@ -1278,8 +1285,7 @@ export class EngramWriter extends EngramStore {
         bumpRev(this.db, stamp, id)
       }
       if (contentChanged || scopeChanged || titleChanged) {
-        this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-        this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+        this.reindexFts(id)
       }
       if (tagsChange !== undefined) this.replaceEngramTags(id, tagsChange, stamp)
       if (subjectsChange !== undefined) this.replaceEngramSubjects(id, subjectsChange, stamp)
@@ -1411,8 +1417,7 @@ export class EngramWriter extends EngramStore {
         if (input.content !== undefined && input.content !== existing.content) {
           this.db.prepare(`UPDATE engrams SET content = ?, updated_at = ? WHERE id = ?`).run(input.content, stamp.at, input.id)
           bumpRev(this.db, stamp, input.id!)
-          this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(input.id)
-          this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(input.id)
+          this.reindexFts(input.id!)
           appendEntry(this.db, input.id!, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
         } else {
           this.db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, input.id)
