@@ -13,7 +13,9 @@ import type { Engram, ListResponse } from '@/lib/types';
 import { useActiveSpace } from '@/stores/useSpaceStore';
 import { useAgents, type AgentInfo } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
+import SettingsHeading from '../SettingsHeading';
 import SettingsPicker from '../SettingsPicker';
+import type { SettingsMainTabMeta } from '../../constants/constants';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
@@ -63,7 +65,7 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
   return { data, failed };
 }
 
-export default function AgentTab() {
+export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
   const space = useActiveSpace();
   const { agents, handle, loaded, failed: agentsFailed } = useAgents();
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -76,8 +78,11 @@ export default function AgentTab() {
 
   if (loaded && !agent) {
     return (
-      <div className="text-sm text-muted-foreground">
-        This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
+      <div className="space-y-4">
+        <SettingsHeading tab={meta} />
+        <div className="text-sm text-muted-foreground">
+          This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
+        </div>
       </div>
     );
   }
@@ -85,7 +90,8 @@ export default function AgentTab() {
   return (
     <div className="space-y-8">
       {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
-      <SettingsSection description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session.">
+      <div className="space-y-4">
+        <SettingsHeading tab={meta} description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session." />
         <div>
           <SettingsPicker
             items={agents.map((a) => ({ id: a.id, label: a.name }))}
@@ -161,7 +167,7 @@ export default function AgentTab() {
           </div>
           )}
         </div>
-      </SettingsSection>
+      </div>
     </div>
   );
 }
