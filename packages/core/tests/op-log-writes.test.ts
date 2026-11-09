@@ -62,6 +62,8 @@ describe('writes through the op log', () => {
     write('task.track', { id: t.id, text: 'progress' })
     const d = write<{ id: string }>('engram.create', validDecision({ scope: 'project.p', title: 'pick' }))
     write('engram.update', { id: d.id, patch: { content: 'picked again' } })
+    write('object.create', { object: 'project', fields: { id: 'q', name: 'Q' } })
+    write('engram.rescope', { ids: [d.id], scope: 'project.q' })
     write('engram.confirm_review', { id: d.id, text: 'still holds' })
     write('relation.create', { source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' })
     const l = write<{ id: string }>('engram.create', { type: 'learning', scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', evidence: { source: 'self', happened: 'once' } })

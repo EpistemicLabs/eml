@@ -1,7 +1,7 @@
 import type { EML } from './index'
 import { REVIEWABLE_TYPES } from './review-due'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
-import { formatProblems, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
+import { formatProblems, PROFILE_SCOPE, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 
 type EngramRow = Record<string, any>
 
@@ -172,7 +172,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'supersedes=[<profile id>].',
     detect(eml) {
       return ACTIVE(eml)
-        .filter(c => c.type === 'profile' && !/^(agent|user|entity)\./.test(c.scope))
+        .filter(c => c.type === 'profile' && !PROFILE_SCOPE.test(c.scope))
         .map(c => finding(c, `profile in ${c.scope}.`))
     },
   },

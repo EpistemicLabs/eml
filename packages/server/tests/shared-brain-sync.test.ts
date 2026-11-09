@@ -143,6 +143,15 @@ describe('a shared brain through the server', () => {
     expect(list.body.engrams.map((e: { title: string }) => e.title)).toContain('t-through-the-relay')
   })
 
+  it('rescopes through the relay: 200 with the count, in the relay\'s log, the engram in its new scope', async () => {
+    const id = (await get(BRAIN, '/list?search=through')).body.engrams[0].id
+    expect((await post(BRAIN, '/object/project', { id: 'moved-here', name: 'Moved here' })).status).toBe(201)
+    const r = await post(BRAIN, '/rescope', { ids: [id], scope: 'project.moved-here' })
+    expect(r).toMatchObject({ status: 200, body: { moved: 1, unchanged: 0 } })
+    expect(relay.log).toHaveLength(4)
+    expect((await get(BRAIN, `/engram/${id}`)).body.scope).toBe('project.moved-here')
+  })
+
   it('GET /team: a private brain is not shared; the team brain shows its state, no read-only text, its member and the member set', async () => {
     expect(await get(OTHER, '/team')).toEqual({ status: 200, body: { shared: false } })
     const r = await get(BRAIN, '/team')

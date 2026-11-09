@@ -225,6 +225,24 @@ describe('v0.19 REST', () => {
     })
   })
 
+  describe('POST /rescope', () => {
+    it('moves engrams, keeps their dates and answers refusals with a clear status', async () => {
+      await post('/object/project', { name: 'Rescope Target' })
+      const a = (await create(validDecision())).body
+      const b = (await create(validNote())).body
+      const moved = await post('/rescope', { ids: [a.id, b.id], scope: 'project.rescope-target' })
+      expect(moved.status).toBe(200)
+      expect(moved.body).toEqual({ moved: 2, unchanged: 0 })
+      const after = (await get(`/engram/${a.id}`)).body
+      expect(after.scope).toBe('project.rescope-target')
+      expect(after.updated_at).toBe(a.updated_at)
+      expect((await post('/rescope', { ids: [a.id], scope: 'project.rescope-target' })).body).toEqual({ moved: 0, unchanged: 1 })
+      expect((await post('/rescope', { ids: ['ghost'], scope: 'project.rescope-target' })).status).toBe(404)
+      expect((await post('/rescope', { ids: [a.id], scope: 'project.ghost' })).status).toBe(400)
+      expect((await post('/rescope', { ids: [], scope: 'project.rescope-target' })).status).toBe(400)
+    })
+  })
+
   describe('POST /engram/:id/confirm-review', () => {
     it('a decision needs text and gets a review entry; unknown id → 404', async () => {
       const d = await create(validDecision())
