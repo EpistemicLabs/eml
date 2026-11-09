@@ -74,11 +74,8 @@ export default function AboutTab() {
       <SettingsSection title="License">
         <SettingsCard>
           <div className="space-y-2 px-4 py-4 text-sm text-muted-foreground">
-            <p>
-              EML Cockpit is free software under the GNU Affero General Public License v3.0
-              (AGPL-3.0-only). Copyright © 2026 Dominik Tilman and Lasse Lung.
-            </p>
-            <p>Third-party notices: NOTICE in the eml-cockpit package.</p>
+            <p>EML Cockpit is free software under the GNU Affero General Public License v3.0 (AGPL-3.0-only).</p>
+            <p>Copyright © 2026 Dominik Tilman and Lasse Lung.</p>
           </div>
         </SettingsCard>
       </SettingsSection>
