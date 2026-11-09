@@ -95,7 +95,7 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started or parked · active = started. Done things are not tasks.'),
       stage: z.enum(STAGES).optional().describe('ideation · planning · ready · implementation. Leave out for small tasks.'),
       priority: z.enum(PRIORITIES).optional().describe('urgent · high · normal (default) · low. Execution urgency.'),
-      assignee_id: z.string().optional().describe('Handle of who should act (agent id or user/member handle).'),
+      assignee_ids: z.array(z.string()).optional().describe('Handles of who should act — users or agents eml_read_object lists (object=user · agent). An unknown handle is refused.'),
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),

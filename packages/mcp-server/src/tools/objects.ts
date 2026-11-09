@@ -54,7 +54,9 @@ export function registerReadObjectTool(server: McpServer, http: EmlApi): void {
       'Without id: the objects of that kind with usage counts — check a project or entity exists before writing ' +
       'in its scope; reuse existing tags and subjects before creating. A tag is what engrams are ABOUT, a recurring ' +
       'category that never ends ("architecture", "deploy"); a subject is a strand they BELONG TO that can be done ' +
-      '("v0.14-planning"). Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
+      '("v0.14-planning"). user and agent: who works in this space — in a shared space its members and the agents ' +
+      'that have written in it, in a private one you and your agents. These handles are what assignee_ids takes. ' +
+      'Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
       'dashboard stays eml_show.',
     inputSchema: z.object({
       object: z.enum(OBJECTS).describe('project · entity · tag · subject · user · agent.'),

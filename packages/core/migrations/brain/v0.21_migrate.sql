@@ -6,7 +6,9 @@
 -- be rebuilt from it. This step adds the two log tables and ord — the
 -- insertion order — to engrams, relations and entries (rebuilt with it, filled
 -- in their current rowid order, so what is shown in which order stays as it
--- is). No value of an existing row changes, so there is no hygiene check.
+-- is). One value changes: a task's assignee_id (one handle) becomes
+-- assignee_ids (a list of handles), rewritten here without judgement, so
+-- there is no hygiene check.
 -- Right after this file, in the same transaction, the runner writes the log's
 -- genesis — seq 1 with a snapshot of the brain as it is now (database.ts
 -- applyMigration).
@@ -83,6 +85,16 @@ ORDER BY rowid;
 
 DROP TABLE engrams;
 ALTER TABLE engrams_v021 RENAME TO engrams;
+
+-- A task's one assignee (assignee_id) becomes a list (assignee_ids): a handle
+-- turns into a list of that handle, a blank one or one that is not text is
+-- dropped. Before the genesis, so the log starts from the rewritten state.
+UPDATE engrams
+SET properties = json_set(json_remove(properties, '$.assignee_id'), '$.assignee_ids', json_array(trim(json_extract(properties, '$.assignee_id'))))
+WHERE type = 'task' AND json_type(properties, '$.assignee_id') = 'text' AND trim(json_extract(properties, '$.assignee_id')) <> '';
+UPDATE engrams
+SET properties = json_remove(properties, '$.assignee_id')
+WHERE json_type(properties, '$.assignee_id') IS NOT NULL;
 CREATE INDEX idx_engrams_scope            ON engrams(scope);
 CREATE INDEX idx_engrams_title            ON engrams(title);
 CREATE INDEX idx_engrams_type             ON engrams(type);

@@ -40,7 +40,7 @@ export function registerTrackTaskTool(server: McpServer, http: EmlApi): void {
       intent: z.string().nullable().optional().describe('Set the intent once the user confirmed it (what will be different, for whom, and how we\'ll notice); null clears.'),
       context: z.string().nullable().optional().describe('Set the context; null clears.'),
       priority: z.enum(PRIORITIES).nullable().optional().describe('urgent · high · normal · low; null clears.'),
-      assignee_id: z.string().nullable().optional().describe('Handle of who should act; null clears.'),
+      assignee_ids: z.array(z.string()).nullable().optional().describe('Replaces the list of who should act (handles eml_read_object lists); [] or null clears.'),
       due_date: z.string().nullable().optional().describe('ISO date; null clears.'),
       blockers: z.array(z.string()).nullable().optional().describe('Replaces the list; [] or null clears.'),
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),

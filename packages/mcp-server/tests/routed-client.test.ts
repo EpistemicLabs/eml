@@ -119,14 +119,33 @@ describe('RoutedClient writes', () => {
     await expect(client.post('/update', { id: 'nowhere', patch: {} })).rejects.toMatchObject({ status: 404 })
   })
 
-  it('tracks a task in the space, and keeps users and agents in the agent brain, other objects in the space', async () => {
+  it('tracks a task in the space, writes users and agents in the agent brain and reads them from the space, other objects in the space', async () => {
     expect(target(await client.post('/task/s-task/track', { text: 'went on' }))).toBe('space')
     expect(target(await client.post('/object/user', { id: 'sam', name: 'Sam' }))).toBe('agent')
-    expect(target(await client.get('/object/agent', { id: 'juno' }))).toBe('agent')
+    expect(target(await client.get('/object/user'))).toBe('space')
+    expect(target(await client.get('/object/agent', { id: 'juno' }))).toBe('space')
     expect(target(await client.put('/object/agent/juno', { name: 'Juno' }))).toBe('agent')
     expect(target(await client.post('/object/project', { id: 'p', name: 'P' }))).toBe('space')
     expect(target(await client.get('/object/tag'))).toBe('space')
     expect(target(await client.put('/object/project/p', { name: 'Q' }))).toBe('space')
+  })
+})
+
+describe('RoutedClient agents of the space', () => {
+  it('lists the space\'s agents with the session\'s own, which works there before it has written', async () => {
+    space.get = async () => ({ count: 1, objects: [{ id: 'nova', name: 'nova', works_for: ['tester'] }] })
+    expect(await client.get('/object/agent')).toEqual({ count: 2, objects: [
+      { id: 'juno', name: 'juno', works_for: [] },
+      { id: 'nova', name: 'nova', works_for: ['tester'] },
+    ] })
+    space.get = async () => ({ count: 1, objects: [{ id: 'juno', name: 'juno', works_for: ['alex'] }] })
+    expect(await client.get('/object/agent')).toEqual({ count: 1, objects: [{ id: 'juno', name: 'juno', works_for: ['alex'] }] })
+  })
+
+  it('reads the session\'s own agent by id when the space has not seen it write', async () => {
+    space.get = async () => { throw new EmlApiError(404, null, 'agent "juno" not found') }
+    expect(await client.get('/object/agent', { id: 'juno' })).toEqual({ object: { id: 'juno', name: 'juno', works_for: [] } })
+    await expect(client.get('/object/agent', { id: 'nova' })).rejects.toMatchObject({ status: 404 })
   })
 })
 
@@ -186,7 +205,7 @@ describe('RoutedClient reads', () => {
     const boot = (await client.post('/boot', { budget: 1000 })) as any
     expect(boot.markdown).toBe('# EML Boot — juno\n- persona\n\n## EML System Rules\n- one')
     expect(boot.budget).toMatchObject({ limit: 1000, chars: boot.markdown.length, fits: true })
-    expect(space.posted.map((p) => p.body)).toEqual([{ part: 'system' }])
+    expect(space.posted.map((p) => p.body)).toEqual([{ part: 'system', agent: 'juno' }])
     expect(agent.posted.map((p) => p.body)).toEqual([{ part: 'identity', agent: 'juno', budget: 1000 - '## EML System Rules\n- one'.length - 2 }])
     expect(target(await client.post('/boot', { agent: 'juno' }))).toBeUndefined()
     await expect(client.post('/boot', { agent: 'scout' })).rejects.toMatchObject({ status: 403 })

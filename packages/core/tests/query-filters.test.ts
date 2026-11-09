@@ -22,13 +22,13 @@ describe('query property-filters apply before LIMIT (audit C0)', () => {
     for (let i = 0; i < 30; i++) {
       writes(eml).store({
         type: 'task', scope: 'project.eml', title: `alice-task-${i}`,
-        content: `Alice task ${i}`, properties: { assignee_id: 'alice' },
+        content: `Alice task ${i}`, properties: { assignee_ids: ['alice'] },
       })
     }
     for (let i = 0; i < 20; i++) {
       writes(eml).store({
         type: 'task', scope: 'project.eml', title: `bob-task-${i}`,
-        content: `Bob task ${i}`, properties: { assignee_id: 'bob' },
+        content: `Bob task ${i}`, properties: { assignee_ids: ['bob'] },
       })
     }
   })
@@ -40,13 +40,27 @@ describe('query property-filters apply before LIMIT (audit C0)', () => {
   it('returns ALL 30 assignee matches when the limit admits them (was: silently dropped)', () => {
     const results = eml.engrams.query({ type: 'task', assignee: 'alice', limit: 40 })
     expect(results).toHaveLength(30)
-    expect(results.every(r => r.properties?.assignee_id === 'alice')).toBe(true)
+    expect(results.every(r => (r.properties?.assignee_ids as string[]).includes('alice'))).toBe(true)
   })
 
   it('a small limit yields limit-many MATCHES, never limit-many raw rows then filtered to fewer', () => {
     const results = eml.engrams.query({ type: 'task', assignee: 'alice', limit: 10 })
     expect(results).toHaveLength(10)
-    expect(results.every(r => r.properties?.assignee_id === 'alice')).toBe(true)
+    expect(results.every(r => (r.properties?.assignee_ids as string[]).includes('alice'))).toBe(true)
+  })
+
+  it('a task with several assignees is one of each one\'s tasks; each handle is stored once, an empty list as none', () => {
+    const both = writes(eml).store({
+      type: 'task', scope: 'project.eml', title: 'pair-task',
+      content: 'Pair task', properties: { assignee_ids: ['alice', 'bob', 'alice'] },
+    })
+    expect(both.properties?.assignee_ids).toEqual(['alice', 'bob'])
+    for (const who of ['alice', 'bob']) {
+      expect(eml.engrams.query({ type: 'task', assignee: who, limit: 100 }).map(r => r.id)).toContain(both.id)
+    }
+    const none = writes(eml).store({ type: 'task', scope: 'project.eml', title: 'nobody-task', content: 'Nobody', properties: { assignee_ids: [] } })
+    expect(none.properties?.assignee_ids).toBeUndefined()
+    expect(() => writes(eml).store({ type: 'task', scope: 'project.eml', title: 'old-form', content: 'Old', properties: { assignee_ids: 'alice' } as never })).toThrow(/assignee_ids must be a list of text/)
   })
 
   it('priority filter is a SQL predicate', () => {

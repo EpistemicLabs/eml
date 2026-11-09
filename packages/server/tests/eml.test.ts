@@ -753,7 +753,7 @@ describe('EML v0.2', () => {
         status: 'planned',
         properties: {
           due_date: '2026-05-01',
-          assignee_id: 'alice',
+          assignee_ids: ['alice'],
           priority: 'high',
           context: 'Blocks assistant dogfooding of v0.3 features',
         },
@@ -761,7 +761,7 @@ describe('EML v0.2', () => {
       expect(engram.status).toBe('planned')
       expect(engram.properties).toEqual({
         due_date: '2026-05-01',
-        assignee_id: 'alice',
+        assignee_ids: ['alice'],
         priority: 'high',
         context: 'Blocks assistant dogfooding of v0.3 features',
       })

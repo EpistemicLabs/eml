@@ -30,9 +30,8 @@ export function registerListTool(server: McpServer, http: EmlApi): void {
           'superseded/invalidated/resolved for audits.',
         ),
         assignee: z.string().optional().describe(
-          'Filter tasks by assignee handle — an agent id (e.g. assistant) or a user/member handle ' +
-          '(e.g. alice/bob). Matches properties.assignee_id exactly. E.g. find "alice\'s open ' +
-          'tasks" → assignee=alice, type=task, then status planned and active.',
+          'Filter tasks by one handle: tasks whose assignee_ids contain it. E.g. alice\'s open tasks → ' +
+          'assignee=alice, type=task, then status planned and active.',
         ),
         tag: z.string().optional().describe(
           'Filter to engrams carrying this registered tag id (what they are ABOUT). Slugified.',

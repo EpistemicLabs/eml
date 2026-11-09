@@ -81,7 +81,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     intent: text({ notBlank: true }),
     context: text(),
     priority: oneOf(TASK_PRIORITIES),
-    assignee_id: text(),
+    assignee_ids: list(),
     due_date: date(),
     blockers: list(),
     stage: oneOf(STAGES),
@@ -156,6 +156,14 @@ export const TIMESTAMP_FIELDS: readonly string[] = ['review_due_at']
 /** Normalize the timestamp-valued fields of a properties object in place (after validateFields). */
 export function normalizeTimestampFields(props: Record<string, unknown>): void {
   for (const k of TIMESTAMP_FIELDS) if (typeof props[k] === 'string') props[k] = isoTimestamp(props[k] as string)
+}
+
+/** A task's assignee_ids as stored: each handle once, an empty list as no assignee. */
+export function normalizeAssignees(props: Record<string, unknown>): void {
+  if (!Array.isArray(props.assignee_ids)) return
+  const handles = [...new Set(props.assignee_ids as string[])]
+  if (handles.length === 0) delete props.assignee_ids
+  else props.assignee_ids = handles
 }
 
 /** One field's value against its spec; null is a clear (handled by the caller). Returns a problem or null. */

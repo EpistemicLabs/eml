@@ -1,6 +1,6 @@
 import { TASK_OPEN_STATUSES, type StoredEngram, type EngramStatus, type OpenSubtask, type BoundItem } from '../types'
 import { validateNoTemplateLeak } from '../validate'
-import { validateFields, unknownFieldsError, isBlank } from '../fields'
+import { validateFields, normalizeAssignees, unknownFieldsError, isBlank } from '../fields'
 import { appendEntry, bumpRev, type Entry } from '../entries'
 import { CLOSED_WITH_TASK, TRACK_TASK_KEYS, type TrackTaskInput } from '../engrams'
 import { validateScope } from '../write/scope'
@@ -81,11 +81,16 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_id', 'due_date', 'blockers', 'stage'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
   validateFields('task', fieldPatch, 'update')
+  // an empty assignee list is no assignee: [] clears like null
+  if (Array.isArray(fieldPatch.assignee_ids)) {
+    normalizeAssignees(fieldPatch)
+    if (fieldPatch.assignee_ids === undefined) fieldPatch.assignee_ids = null
+  }
 
   const stageChanged = input.stage !== undefined && (input.stage ?? undefined) !== old.stage
   const contentChanged = input.content !== undefined && input.content !== existing.content
@@ -184,9 +189,14 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
     else change(`status ${existing.status} → ${newStatus}`)
   }
   if (stageChanged) change(`stage ${show(old.stage)} → ${show(input.stage)}`)
-  for (const k of ['priority', 'assignee_id', 'due_date'] as const) {
+  const scalarChange = (k: 'priority' | 'due_date') => {
     if (input[k] !== undefined && (input[k] ?? undefined) !== old[k]) change(`${k} ${show(old[k])} → ${show(input[k])}`)
   }
+  scalarChange('priority')
+  if (input.assignee_ids !== undefined && JSON.stringify(props.assignee_ids ?? []) !== JSON.stringify(old.assignee_ids ?? [])) {
+    change(`assignee_ids ${show(old.assignee_ids)} → ${show(props.assignee_ids)}`)
+  }
+  scalarChange('due_date')
   if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
     change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
   }

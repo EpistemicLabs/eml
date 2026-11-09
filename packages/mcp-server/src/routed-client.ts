@@ -33,10 +33,16 @@ import { EmlApiError, type EmlApi } from './http-client'
  *   recall; list, show in an own    both, merged
  *   scope
  *   boot                            the agent part from the agent brain, the
- *                                   system rules from the space's server; one
+ *                                   system part (system rules, a shared
+ *                                   space's members) from the space's server; one
  *                                   budget, the agent part gets what the system
  *                                   rules leave; another agent is not readable
- *   objects                         user and agent → agent brain; else the space
+ *   objects                         user and agent: read from the space (who
+ *                                   works there: its users and agents, in a
+ *                                   shared space its members), the session's
+ *                                   own agent added; written in the agent
+ *                                   brain (whom it keeps profiles of); else
+ *                                   the space
  *   everything else                 the space
  *
  * A write to the agent brain brings its tags and subjects along from the
@@ -85,8 +91,30 @@ export class RoutedClient implements EmlApi {
       return { scope: query?.scope, markdown: joinMarkdown(markdownOf(agent), markdownOf(space)) }
     }
     const object = objectKind(path)
-    if (object && IDENTITY_OBJECTS.has(object)) return this.agent.get(path, query)
+    if (object === 'agent') return this.spaceAgents(path, query)
     return this.space.get(path, query)
+  }
+
+  /**
+   * The agents that work in the space, as its server lists them, with this
+   * session's own agent — it works there before it has written anything.
+   */
+  private async spaceAgents(path: string, query?: Query): Promise<unknown> {
+    const own = { id: this.agentId, name: this.agentId, works_for: [] as string[] }
+    const wanted = query?.id ?? (path.startsWith('/object/agent/') ? decodeURIComponent(path.slice('/object/agent/'.length)) : undefined)
+    if (wanted !== undefined) {
+      try {
+        return await this.space.get(path, query)
+      } catch (err) {
+        if (err instanceof EmlApiError && err.status === 404 && String(wanted) === this.agentId) return { object: own }
+        throw err
+      }
+    }
+    const listed = (await this.space.get(path, query)) as { objects?: Body[] }
+    const objects = listed.objects ?? []
+    if (objects.some(a => a.id === this.agentId)) return listed
+    const all = [...objects, own].sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    return { ...listed, count: all.length, objects: all }
   }
 
   async post(path: string, body?: unknown): Promise<unknown> {
@@ -185,7 +213,8 @@ export class RoutedClient implements EmlApi {
     if (typeof b.agent === 'string' && b.agent && b.agent !== this.agentId) {
       throw new EmlApiError(403, null, `${b.agent} is another agent; this session runs as ${this.agentId}, and another agent's brain is not readable from here.`)
     }
-    const system = markdownOf(await this.space.post('/boot', { part: 'system' }))
+    // the agent names who "(you)" is in a shared space's member list
+    const system = markdownOf(await this.space.post('/boot', { part: 'system', agent: this.agentId }))
     const budget = typeof b.budget === 'number' && Number.isFinite(b.budget) && b.budget > 0 ? Math.floor(b.budget) : undefined
     const remaining = budget !== undefined ? budget - system.length - 2 : undefined
     const identity = (await this.agent.post('/boot', {
