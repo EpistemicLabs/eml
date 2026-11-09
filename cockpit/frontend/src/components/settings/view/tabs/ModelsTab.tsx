@@ -62,7 +62,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
             onChange={(id) => setShown(id as LLMProvider)}
             ariaLabel="Provider settings"
           />
-          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/8 bg-foreground/4 p-4">
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
             {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
             {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
           </div>

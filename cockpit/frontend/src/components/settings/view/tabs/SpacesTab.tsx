@@ -260,7 +260,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
               ariaLabel="Spaces"
             />
             {shown && (
-              <SettingsCard divided className="rounded-tl-none">
+              <SettingsCard divided className="rounded-tl-none border-foreground/10">
                   <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
                   {shown.ownRuntime && (
                     <SettingsRow

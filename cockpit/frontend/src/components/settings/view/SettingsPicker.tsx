@@ -27,7 +27,7 @@ export default function SettingsPicker({ items, value, onChange, ariaLabel }: Se
           className={cn(
             'flex flex-shrink-0 items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm font-medium',
             item.id === value
-              ? 'border-foreground/8 bg-foreground/4 text-foreground'
+              ? 'border-foreground/10 text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground',
           )}
         >
