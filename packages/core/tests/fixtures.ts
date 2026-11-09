@@ -224,6 +224,7 @@ export function writeEverything(eml: EML): void {
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
 
   eml.apply({ name: 'engram.rescope', input: { ids: [log.id, kept.id], scope: 'project.q' } }, juno)
+  eml.apply({ name: 'engram.retag', input: { ids: [kept.id, note.id], add: ['ops'], remove: ['old'] } }, ada)
 
   // v0.21: a task with its journal leaves for another brain; its part_of edge crosses the set and is dropped
   const leaving = writes(eml).store(validTask({ scope, title: 'leaving', parent_id: successor.id }), juno)

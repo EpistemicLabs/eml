@@ -173,6 +173,22 @@ describe('a shared brain\'s log', () => {
     a.close(); b.close()
   })
 
+  it('a relayed retag lands the same on two replicas', () => {
+    const a = sharedBrain()
+    const b = sharedBrain()
+    const ops = [
+      envelope(2, 'object.create', { object: 'tag', fields: { name: 'area' } }),
+      envelope(3, 'engram.create', validNote({ title: 'tagged' })),
+    ]
+    for (const eml of [a, b]) ops.forEach((op, i) => expect(take(eml, i + 2, op)).toBeNull())
+    const id = (raw(a).prepare('SELECT id FROM engrams WHERE title = ?').get('tagged') as { id: string }).id
+    const retag = envelope(4, 'engram.retag', { ids: [id], add: ['area'] })
+    for (const eml of [a, b]) expect(take(eml, 4, retag)).toBeNull()
+    for (const eml of [a, b]) expect(raw(eml).prepare('SELECT tag_id FROM engram_tags WHERE engram_id = ?').all(id)).toEqual([{ tag_id: 'area' }])
+    expect(stateHash(stateDump(raw(b)))).toBe(stateHash(stateDump(raw(a))))
+    a.close(); b.close()
+  })
+
   it('rebuilds to the live state: applied ops replayed, rejected and non-state entries skipped', () => {
     const eml = sharedBrain()
     take(eml, 2, envelope(2, 'engram.create', validNote({ title: 'kept' })))

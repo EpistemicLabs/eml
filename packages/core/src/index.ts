@@ -62,7 +62,7 @@ export class EML {
 
   /**
    * v0.20: the one write entry (decision write-command-set). Runs a command —
-   * engram.create · engram.update · engram.rescope · task.track · learning.add_evidence ·
+   * engram.create · engram.update · engram.rescope · engram.retag · task.track · learning.add_evidence ·
    * engram.confirm_review · relation.create · object.create · object.update —
    * in one transaction with one time from `env` (default: no actor). A
    * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS · CONFLICT) and

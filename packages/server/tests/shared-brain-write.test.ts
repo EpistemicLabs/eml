@@ -68,6 +68,7 @@ describe('writes to a shared brain', () => {
       post(shared, '/learning', { content: 'x', scope: 'global', source: 'self', happened: 'x' }),
       post(shared, '/update', { id, patch: { title: 'x' } }),
       post(shared, '/rescope', { ids: [id], scope: 'global' }),
+      post(shared, '/retag', { ids: [id], add: ['x'] }),
       post(shared, `/engram/${id}/confirm-review`, { text: 'x' }),
       post(shared, '/object/tag', { name: 'shared-tag' }),
       put(shared, '/object/tag/shared-tag', { description: 'x' }),
