@@ -90,6 +90,22 @@ describe('PushNotifier', () => {
     expect(sent).toHaveLength(0)
   })
 
+  it('marks what cannot wait as high urgency and the rest as normal', async () => {
+    const { notifier, sent } = setup()
+    const kinds = ['question', 'failed', 'paused', 'review', 'done', 'missed'] as const
+    for (const [index, kind] of kinds.entries()) await notifier.deliver(input({ kind, sessionId: `s${index}` }))
+    const urgency = (device: string) => sent.filter((entry) => entry.device === device).map((entry) => entry.urgency)
+    expect(urgency('phone')).toEqual(['high', 'high', 'high', 'normal', 'normal', 'normal'])
+  })
+
+  it('tells the same job notice without a session once within two minutes', async () => {
+    const { notifier, sent } = setup()
+    await notifier.deliver(input({ kind: 'paused', sessionId: null, jobId: 'job-1' }))
+    await notifier.deliver(input({ kind: 'paused', sessionId: null, jobId: 'job-1' }))
+    await notifier.deliver(input({ kind: 'paused', sessionId: null, jobId: 'job-2' }))
+    expect(sent.map((entry) => (entry.message as { notification: { tag: string } }).notification.tag)).toEqual(['job:job-1', 'job:job-1', 'job:job-2', 'job:job-2'])
+  })
+
   it('sends a test to one device only', async () => {
     const { notifier, sent } = setup()
     expect(await notifier.test('https://push.example/mac')).toBe('sent')

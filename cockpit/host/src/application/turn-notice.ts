@@ -10,7 +10,7 @@ export interface TurnNotice {
 }
 
 /** What a notification about this change says: a batch of workers speaks up once, when its last one finishes. */
-export function turnNotice(deps: { ledger: SessionLedger; turns: Pick<TurnTracker, 'get'> }, event: TurnEvent): TurnNotice {
+export function turnNotice(deps: { ledger: Pick<SessionLedger, 'get' | 'list'>; turns: Pick<TurnTracker, 'get'> }, event: TurnEvent): TurnNotice {
   const entry = deps.ledger.get(event.sessionId)
   const title = entry?.title ?? entry?.agentTitle ?? null
   if (event.state !== 'done' || !entry?.parentSessionId) return { title }

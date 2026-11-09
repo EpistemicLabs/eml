@@ -33,7 +33,7 @@ beforeAll(async () => {
       notifier: {
         watching: (ids) => { watched.push(ids) },
         present: (endpoint) => { present.push(endpoint) },
-        test: async (endpoint) => { tested.push(endpoint); return endpoint.endsWith('/gone') ? 'gone' : 'sent' },
+        test: async (endpoint) => { tested.push(endpoint); return endpoint.endsWith('/gone') ? 'gone' : endpoint.endsWith('/unknown') ? 'unknown' : endpoint.endsWith('/down') ? 'failed' : 'sent' },
       },
     }, parsed, req.method ?? 'GET', json, readJson).then((handled) => { if (!handled) json(res, 404, {}) })
   })
@@ -75,6 +75,12 @@ describe('handlePushApi', () => {
     expect(await call('POST', '/api/push/test', { endpoint: 'https://push.example/phone' })).toEqual({ status: 200, body: { outcome: 'sent' } })
     expect(await call('POST', '/api/push/test', { endpoint: 'https://push.example/gone' })).toMatchObject({ status: 410, body: { error: { code: 'GONE' } } })
     expect(tested).toEqual(['https://push.example/phone', 'https://push.example/gone'])
+  })
+
+  it('says when the device is unknown and when the push service may take it on a retry', async () => {
+    expect(await call('POST', '/api/push/test', { endpoint: 'https://push.example/unknown' })).toMatchObject({ status: 404, body: { error: { code: 'UNKNOWN_DEVICE', retry: false } } })
+    expect(await call('POST', '/api/push/test', {})).toMatchObject({ status: 404, body: { error: { code: 'UNKNOWN_DEVICE' } } })
+    expect(await call('POST', '/api/push/test', { endpoint: 'https://push.example/down' })).toMatchObject({ status: 502, body: { error: { code: 'PUSH_FAILED', retry: true } } })
   })
 
   it('takes the sessions the user is looking at and the device they work on', async () => {

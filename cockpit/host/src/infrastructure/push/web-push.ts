@@ -78,6 +78,9 @@ export function vapidAuthorization(endpoint: string, keys: VapidKeys, subject: s
   return `vapid t=${unsigned}.${signature.toString('base64url')}, k=${keys.publicKey}`
 }
 
+/** How soon the push service delivers: a question cannot wait, a result can. */
+export type PushUrgency = 'normal' | 'high'
+
 export interface PushTarget extends ReceiverKeys {
   endpoint: string
 }
@@ -85,7 +88,7 @@ export interface PushTarget extends ReceiverKeys {
 export interface PushOptions {
   /** How long the push service keeps it for a device that is offline. */
   ttlSeconds: number
-  urgency: 'very-low' | 'low' | 'normal' | 'high'
+  urgency: PushUrgency
   /** A newer message with the same topic replaces one still waiting at the push service (base64url, at most 32 characters). */
   topic?: string
 }

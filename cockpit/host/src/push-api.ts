@@ -1,6 +1,6 @@
 import type * as http from 'node:http'
 import type { PushNotifier } from './application/push-notifier.js'
-import type { PushStore } from './push-store.js'
+import { isText, type PushStore } from './push-store.js'
 
 /**
  * Web push over HTTP, for the page (Settings › Notifications):
@@ -21,8 +21,6 @@ export interface PushApiDeps {
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
 type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
-
-const isText = (value: unknown): value is string => typeof value === 'string' && value !== ''
 
 const isHttpsUrl = (value: unknown): value is string => {
   if (!isText(value)) return false

@@ -35,7 +35,7 @@ interface PushFile {
 
 const empty = (): PushFile => ({ version: 1, vapid: null, devices: [] })
 
-const isText = (value: unknown): value is string => typeof value === 'string' && value !== ''
+export const isText = (value: unknown): value is string => typeof value === 'string' && value !== ''
 
 function readDevice(value: unknown): PushDevice | null {
   const entry = value as Partial<PushDevice> | null

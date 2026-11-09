@@ -59,7 +59,7 @@ import { createCodexProvider } from './infrastructure/providers/codex/index.js'
 import type { Notifier } from './notifications.js'
 import { PushStore } from './push-store.js'
 import { PushNotifier, notifySessions } from './application/push-notifier.js'
-import { turnNotice } from './application/turn-notice.js'
+import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush } from './infrastructure/push/web-push.js'
 
 /**
@@ -305,23 +305,10 @@ async function main() {
     now: () => Date.now(),
   })
   const notifier: Notifier = pushNotifier
-  const projectName = (spaceId: string | null | undefined, projectId: string | null | undefined) =>
-    projectId ? spaces.resolve(spaceId ?? null).registry.get(projectId)?.displayName : undefined
+  const projectName = (spaceId: string | null, projectId: string | null) =>
+    projectId ? spaces.resolve(spaceId).registry.get(projectId)?.displayName : undefined
   // Sessions tell what the review section shows: Needs you, Check this, a new result.
-  notifySessions({
-    turns, notifier,
-    facts: (sessionId) => {
-      const entry = ledger.get(sessionId)
-      if (!entry) return null
-      const state = turns.get(sessionId)?.state ?? 'idle'
-      const notice = turnNotice({ ledger, turns }, { sessionId, state, since: '' })
-      return {
-        sessionId, spaceId: entry.spaceId ?? null, jobId: entry.jobId ?? null, title: notice.title,
-        project: projectName(entry.spaceId, entry.projectId) ?? null, state, attention: entry.attention, resultAt: entry.resultAt,
-        ...(notice.batch ? { batch: notice.batch } : {}), ...(notice.silent ? { silent: true } : {}),
-      }
-    },
-  })
+  notifySessions({ turns, notifier, facts: (sessionId) => sessionFacts({ ledger, turns, projectName }, sessionId) })
   const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
@@ -385,9 +372,7 @@ async function main() {
     },
     notify: (input) => {
       log(`[jobs] tell: job=${input.jobId?.slice(0, 8) ?? '-'} kind=${input.kind}`)
-      const entry = input.sessionId ? ledger.get(input.sessionId) : undefined
-      const project = input.project ?? projectName(entry?.spaceId, entry?.projectId)
-      notifier.notify(project ? { ...input, project } : input)
+      notifier.notify(withProject({ ledger, projectName }, input))
     },
     // In the review section, as "Needs you": the job's own session if it has one, else whoever made it.
     flag: (job, text) => {

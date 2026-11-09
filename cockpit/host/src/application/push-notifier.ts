@@ -3,9 +3,8 @@ import type { EventEmitter } from 'node:events'
 import { pushMessage, sessionNotice, type SessionFacts } from '../domain/push-notice.js'
 import type { NotificationInput, Notifier } from '../notifications.js'
 import type { PushDevice } from '../push-store.js'
+import type { PushUrgency } from '../infrastructure/push/web-push.js'
 import type { TurnEvent } from '../turn-state.js'
-
-export type PushUrgency = 'normal' | 'high'
 
 export interface PushNotifierDeps {
   devices(): PushDevice[]
