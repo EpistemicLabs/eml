@@ -5,6 +5,7 @@ import { beginWrite, type Env } from '../env'
 import { CommandError, isValidationMessage, type CommandContext, type CommandModule } from './types'
 import { engramCreate, type EngramCreateInput, type EngramCreateResult } from './engram-create'
 import { engramUpdate, type EngramUpdateInput } from './engram-update'
+import { engramRescope, type EngramRescopeInput, type EngramRescopeResult } from './engram-rescope'
 import { taskTrack, type TaskTrackInput } from './task-track'
 import { learningAddEvidence, type LearningAddEvidenceInput } from './learning-add-evidence'
 import { engramConfirmReview, type EngramConfirmReviewInput } from './engram-confirm-review'
@@ -16,6 +17,7 @@ import { objectUpdate, type ObjectUpdateInput } from './object-update'
 export interface CommandMap {
   'engram.create': [EngramCreateInput, EngramCreateResult]
   'engram.update': [EngramUpdateInput, StoredEngram]
+  'engram.rescope': [EngramRescopeInput, EngramRescopeResult]
   'task.track': [TaskTrackInput, StoredEngram]
   'learning.add_evidence': [LearningAddEvidenceInput, { engram: Engram, learning: LearningState }]
   'engram.confirm_review': [EngramConfirmReviewInput, Engram]
@@ -29,6 +31,7 @@ export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] }
 const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap[N][1]> } = {
   'engram.create': engramCreate,
   'engram.update': engramUpdate,
+  'engram.rescope': engramRescope,
   'task.track': taskTrack,
   'learning.add_evidence': learningAddEvidence,
   'engram.confirm_review': engramConfirmReview,

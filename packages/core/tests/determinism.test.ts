@@ -41,6 +41,7 @@ function writeEverything(eml: EML): void {
   writes(eml).users.create({ id: 'ada', name: 'Ada' }, juno)
   writes(eml).users.update('ada', { email: 'ada@example.com' }, juno)
   createObject(eml, 'project', { id: 'p', name: 'P' }, juno)
+  createObject(eml, 'project', { id: 'q', name: 'Q' }, juno)
   createObject(eml, 'entity', { id: 'acme', name: 'Acme', kind: 'org' }, juno)
   createObject(eml, 'tag', { name: 'ops' }, juno)
   createObject(eml, 'tag', { name: 'old', status: 'archived' }, juno)
@@ -87,6 +88,8 @@ function writeEverything(eml: EML): void {
   writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
 
+  eml.apply({ name: 'engram.rescope', input: { ids: [log.id, kept.id], scope: 'project.q' } }, juno)
+
   updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
 }
 
@@ -102,7 +105,7 @@ describe('deterministic writes', () => {
   it('the same commands with the same env give the same brain, row for row', () => {
     const a = brain()
     const b = brain()
-    // every write goes through apply(), and the sequence uses all eight commands
+    // every write goes through apply(), and the sequence uses all nine commands
     const used = new Set<string>()
     const apply = a.apply.bind(a)
     a.apply = ((command: { name: string }, env?: unknown) => { used.add(command.name); return apply(command as never, env as never) }) as typeof a.apply
