@@ -234,10 +234,10 @@ export class RoutedClient implements EmlApi {
   /** The brain that holds engram `id`, with the engram: the space, else the agent brain. */
   private async owner(id: string): Promise<{ api: EmlApi; engram: Body }> {
     try {
-      return { api: this.space, engram: (await this.space.get(`/engram/${id}`)) as Body }
+      return { api: this.space, engram: (await this.space.get(`/engram/${encodeURIComponent(id)}`)) as Body }
     } catch (err) {
       if (!(err instanceof EmlApiError) || err.status !== 404) throw err
-      return { api: this.agent, engram: (await this.agent.get(`/engram/${id}`)) as Body } // a 404 here is the caller's error
+      return { api: this.agent, engram: (await this.agent.get(`/engram/${encodeURIComponent(id)}`)) as Body } // a 404 here is the caller's error
     }
   }
 
