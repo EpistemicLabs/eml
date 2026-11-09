@@ -18,6 +18,8 @@ export type SettingsMainTabMeta = {
   id: SettingsMainTab;
   label: string;
   keywords: string;
+  /** The tab's heading, when it differs from its name in the list. */
+  heading?: string;
   icon: ComponentType<{ className?: string }>;
   blurb: string;
 };
@@ -25,7 +27,8 @@ export type SettingsMainTabMeta = {
 export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'account',
-    label: 'EML Account',
+    label: 'Account',
+    heading: 'EML Account',
     keywords: 'account plan free pro team subscription name profile user',
     icon: UserRound,
     blurb: 'You in this brain, and your plan.',
@@ -60,7 +63,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   },
   {
     id: 'plugins',
-    label: 'Plugins',
+    label: 'EML Plugins',
     keywords: 'plugins extensions community install ports localhost',
     icon: Puzzle,
     blurb: 'Community plugins: install, enable and manage extensions for the cockpit.',
