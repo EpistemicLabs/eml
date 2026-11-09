@@ -846,10 +846,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
       for (const s of deps.spaces.list()) followNotes(s)
       detachNotes.push(deps.spaces.onAdd(followNotes))
-      // What the cockpit tells the user (notifications.ts): the bell and its toast.
-      const onNotification = (item: unknown) => send('notification', item)
-      deps.jobs?.feed.on('notification', onNotification)
-      detachNotes.push(() => { deps.jobs?.feed.off('notification', onNotification) })
       const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 25_000)
       req.on('close', () => {
         clearInterval(keepAlive)

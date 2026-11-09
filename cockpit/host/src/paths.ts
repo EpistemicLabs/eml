@@ -137,8 +137,6 @@ export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
 // Jobs and their runs: what the cockpit wakes sessions for on a schedule (job-store.ts).
 export const JOBS_FILE = path.join(COCKPIT_HOME, 'jobs.json')
-// What the cockpit told its user: the bell's list (notifications.ts).
-export const NOTIFICATIONS_FILE = path.join(COCKPIT_HOME, 'notifications.json')
 // The channel bridge's own folder: its database, its tokens and the accounts it watches.
 export const CHANNEL_BRIDGE_HOME = path.join(COCKPIT_HOME, 'channel-bridge')
 // The mailboxes the bridge watches; without this file the bridge does not start.

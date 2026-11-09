@@ -56,7 +56,7 @@ import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-br
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
 import { createCodexProvider } from './infrastructure/providers/codex/index.js'
-import { NotificationFeed, type Notifier } from './notifications.js'
+import { noNotifier, type Notifier } from './notifications.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -290,9 +290,8 @@ async function main() {
   })
   // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
   const jobStore = new JobStore()
-  // What the user is told, under the bell; a push channel joins it here later (allOf).
-  const feed = new NotificationFeed()
-  const notifier: Notifier = feed
+  // What tells the user outside the cockpit: web push joins here (cockpit-web-push-plan).
+  const notifier: Notifier = noNotifier
   const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
@@ -358,6 +357,14 @@ async function main() {
       log(`[jobs] tell: ${input.title}: ${input.body}`)
       notifier.notify(input)
     },
+    // In the review section, as "Needs you": the job's own session if it has one, else whoever made it.
+    flag: (job, text) => {
+      const own = job.target.type === 'worker' ? null : job.target.sessionId
+      const sessionId = [own, job.createdBy].find((id): id is string => !!id && ledger.has(id))
+      if (!sessionId) return
+      ledger.setAttention(sessionId, { kind: 'failed', reason: text.slice(0, 300) })
+      turns.apply({ sessionId, state: 'waiting' })
+    },
   })
   const jobs = new Jobs({
     store: jobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
@@ -385,7 +392,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene,
-      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, feed, spaceName: (spaceId) => spaces.resolve(spaceId).name,
+      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
           return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk' } : null
