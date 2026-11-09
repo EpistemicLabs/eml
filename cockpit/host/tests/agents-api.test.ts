@@ -80,6 +80,16 @@ describe('agents API', () => {
     expect(seen).toHaveLength(1)
   })
 
+  it('reads only what Settings › Agent reads (page-brain-routes.ts): another GET is not passed', async () => {
+    seen.length = 0
+    for (const path of ['/team', '/hygiene', '/stats', '/engram/x', '']) {
+      const res = await fetch(`${base}/api/agents/juno/brain${path}`)
+      expect(res.status, path).toBe(403)
+      expect((await res.json()).error.code).toBe('NOT_PASSED')
+    }
+    expect(seen).toEqual([])
+  })
+
   it('takes the handle once, checked, and says the upgrade runs at the next start', async () => {
     const post = (body: unknown) => fetch(`${base}/api/agent-upgrade/handle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     expect((await post({ handle: 'Not A Handle' })).status).toBe(400)
