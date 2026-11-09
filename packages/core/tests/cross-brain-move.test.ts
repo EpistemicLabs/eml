@@ -494,9 +494,12 @@ describe('moveEngrams', () => {
     raw(s.eml).prepare("UPDATE projects SET metadata = 'not json' WHERE id = 'p'").run()
     expect(planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).collisions).toEqual([expect.stringMatching(/rows\.projects\[1\] \(p\)\.metadata is JSON text/)])
     raw(s.eml).prepare(`UPDATE projects SET metadata = '{"repo":"r"}' WHERE id = 'p'`).run()
-    // a collision the import would refuse is listed
-    to.apply({ name: 'engram.import', input: importOf(s.eml, set) })
-    expect(planMove({ source: raw(s.eml), target: raw(to), ids: s.set }).collisions).toEqual([expect.stringMatching(/^engrams .* already in this brain$/), expect.stringMatching(/^entries/), expect.stringMatching(/^relations/)])
+    expect(plan.resume).toBeNull()
+    // a collision the import would refuse is listed: part of the set is in the target already
+    to.apply({ name: 'engram.import', input: importOf(s.eml, exportSet(raw(s.eml), [s.set[0]])) })
+    const clash = planMove({ source: raw(s.eml), target: raw(to), ids: s.set })
+    expect(clash.collisions).toEqual(expect.arrayContaining([`engrams ${s.set[0]} already in this brain`]))
+    expect(clash.resume).toBeNull()
     expect(opCount(s.eml)).toBe(before[0])
     to.close(); s.eml.close()
   })

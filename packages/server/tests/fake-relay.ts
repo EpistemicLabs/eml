@@ -148,6 +148,8 @@ export class FakeRelay {
     const s: Session = { ws, device: null, subscribed: false, waitingOn: null, silent: false }
     this.sessions.add(s)
     ws.on('close', () => this.sessions.delete(s))
+    // a client that resets the connection (ECONNRESET) is a close like any other, not an unhandled error
+    ws.on('error', () => {})
     const issued = loginChallenge(this.host, this.brain, this.now())
     const challenge: LoginChallenge & { used: boolean } = { ...issued, used: false }
     this.send(s, { t: 'challenge', challenge: issued as unknown as Record<string, unknown> })
