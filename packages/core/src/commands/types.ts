@@ -5,7 +5,7 @@ import type { Stamp } from '../env'
 
 // --- Commands (v0.20) ------------------------------------------------------------
 //
-// Every brain write is one of eight commands behind EML.apply(command, env)
+// Every brain write is one of nine commands behind EML.apply(command, env)
 // (decision write-command-set). A command module validates its input and
 // applies it inside the one transaction apply() opens, with the write's one
 // Stamp. The command names are the future op types; a payload carries only

@@ -386,6 +386,43 @@ export class EngramWriter extends EngramStore {
     return typeof p.state === 'string' ? p.state : null
   }
 
+  /**
+   * engram.rescope: move engrams to another scope of this brain. Only the scope
+   * and the search index change: updated_at, rev, reviews, journals, tags,
+   * subjects and relations stay, so a re-sort does not read as an edit. All or
+   * nothing; an engram already in the scope counts as unchanged, so a run can
+   * be repeated. What may not arrive is refused, never superseded: a second
+   * active status or core profile, a profile outside agent, user or entity.
+   */
+  rescope(ids: string[], scope: string): { moved: number, unchanged: number } {
+    this.validateScope(scope)
+    const select = this.db.prepare(`SELECT id, type, status, scope, properties FROM engrams WHERE id = ?`)
+    const rows = ids.map(id => select.get(id) as { id: string, type: string, status: string, scope: string, properties: string | null })
+    const moving = rows.filter(r => r.scope !== scope)
+    const isCore = (r: { properties: string | null }) => !!r.properties && JSON.parse(r.properties).core === true
+    if (moving.some(r => r.type === 'profile') && !/^(agent|user|entity)\./.test(scope)) {
+      throw new Error('Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.')
+    }
+    const statuses = moving.filter(r => r.type === 'status' && r.status === 'active')
+    const present = this.db.prepare(`SELECT 1 FROM engrams WHERE scope = ? AND type = 'status' AND status = 'active' LIMIT 1`).get(scope)
+    if (statuses.length > 1 || (statuses.length === 1 && present)) {
+      throw new Error(`Invalid engram: scope ${scope} can hold one active status — close the others first (a new status with eml_set_status, or invalidate one).`)
+    }
+    const cores = moving.filter(r => r.type === 'profile' && r.status === 'active' && isCore(r))
+    if (cores.length > 1 || (cores.length === 1 && this.activeCoreProfileIn(scope, cores[0].id))) {
+      throw new Error(`Invalid engram: scope ${scope} can hold one core profile — invalidate the others first.`)
+    }
+    const update = this.db.prepare(`UPDATE engrams SET scope = ? WHERE id = ?`)
+    const dropFts = this.db.prepare('DELETE FROM engrams_fts WHERE id = ?')
+    const addFts = this.db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`)
+    for (const r of moving) {
+      update.run(scope, r.id)
+      dropFts.run(r.id)
+      addFts.run(r.id)
+    }
+    return { moved: moving.length, unchanged: rows.length - moving.length }
+  }
+
   /** The scope's active core profile other than `exceptId`, if any. */
   private activeCoreProfileIn(scope: string, exceptId: string): string | null {
     const row = this.db.prepare(`

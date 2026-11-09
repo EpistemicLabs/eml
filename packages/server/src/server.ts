@@ -19,6 +19,7 @@
  *   POST /task/:id/track    { text?, status?, outcome?, keep?, base_rev?, … } → Everything about an existing task (v0.19)
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
  *   POST /update            { id, patch, base_rev? }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
+ *   POST /rescope           { ids, scope }                           → Move engrams to another scope of this brain (v0.20.10; all or nothing, dates and rev stay)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
@@ -616,6 +617,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         const result = eml.apply({ name: 'object.update', input: { object, id, patch: body } }, env)
         return json(res, 200, result)
       }
+    }
+
+    // POST /rescope { ids, scope } — move engrams, one or many, to another scope
+    // of this brain. Not an edit: updated_at, rev and reviews stay.
+    if (url === '/rescope' && method === 'POST') {
+      const body = await readBody(req)
+      return json(res, 200, eml.apply({ name: 'engram.rescope', input: body as never }, env))
     }
 
     // POST /relate — create relation between two engrams.

@@ -3,7 +3,7 @@ import * as core from '../src'
 import { EML, CommandError, COMMAND_NAMES, readObject } from '../src'
 import { validDecision, validTask, validNote } from './fixtures'
 
-// v0.20 (decision write-command-set): every brain write is one of eight
+// v0.20 (decision write-command-set): every brain write is one of nine
 // commands behind EML.apply(command, env); the rest of EML only reads, except
 // engrams.delete and agents.delete (decision no-delete-command).
 
@@ -22,9 +22,9 @@ describe('the command set', () => {
     throw new Error('not rejected')
   }
 
-  it('is closed: eight commands, and no public write besides apply and the two deletes', () => {
+  it('is closed: nine commands, and no public write besides apply and the two deletes', () => {
     expect(COMMAND_NAMES).toEqual([
-      'engram.create', 'engram.update', 'task.track', 'learning.add_evidence',
+      'engram.create', 'engram.update', 'engram.rescope', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
     ])
     const WRITE = /^(store|create|update|track|learn$|addEvidence|confirm|relate|insert|append|link|supersede|close|move|replace|set|delete)/i
