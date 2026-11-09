@@ -48,7 +48,8 @@ export const api = {
     fetch('/api/push/subscription', jsonInit('PUT', { ...subscription, label })),
   pushUnsubscribe: (endpoint: string) => fetch('/api/push/subscription', jsonInit('DELETE', { endpoint })),
   pushTest: (endpoint: string) => fetch('/api/push/test', jsonInit('POST', { endpoint })),
-  pushWatching: (sessionIds: string[]) => fetch('/api/push/watching', jsonInit('POST', { sessionIds })),
+  pushWatching: (sessionIds: string[], endpoint: string | null) =>
+    fetch('/api/push/watching', jsonInit('POST', { sessionIds, ...(endpoint ? { endpoint } : {}) })),
   // The Jobs view (host jobs-api.ts).
   jobs: () => fetch('/api/jobs'),
   jobAction: (jobId: string, action: 'pause' | 'resume' | 'delete' | 'run_now') =>

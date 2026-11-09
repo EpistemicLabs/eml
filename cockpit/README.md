@@ -253,8 +253,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
 - **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
   added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
-  subscribed device with the session's name, its project and what it said; a tap opens that session. No push about a
-  session someone has on screen, nor the same notice twice within two minutes. The host signs and encrypts each
+  subscribed device with the session's name, its project and what it said; a tap opens that session. While the user
+  works in the cockpit on a device (a click or key there within ten minutes), only that device is told and the phone
+  stays quiet. No push about a session someone has on screen, nor the same notice twice within two minutes. The host signs and encrypts each
   message itself (`infrastructure/push/web-push.ts`, RFC 8291/8292, no library) and sends it to the browser's push
   service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
   devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in

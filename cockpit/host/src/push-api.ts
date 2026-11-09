@@ -8,14 +8,15 @@ import type { PushStore } from './push-store.js'
  *   PUT    /api/push/subscription      { endpoint, keys: { p256dh, auth }, label }: subscribe this device
  *   DELETE /api/push/subscription      { endpoint }: unsubscribe it
  *   POST   /api/push/test              { endpoint }: a test notification to this device only
- *   POST   /api/push/watching          { sessionIds }: the sessions in front of the user now; no push about them
+ *   POST   /api/push/watching          { sessionIds, endpoint? }: the cockpit is in use on this device (sent while it is),
+ *                                      and the sessions in front of the user now; no push about them, nor to other devices
  * The host's gate (createHostServer) has let the page in; a write carries its Origin,
  * which is where a tap on a notification opens the cockpit again.
  */
 
 export interface PushApiDeps {
   store: Pick<PushStore, 'vapid' | 'devices' | 'subscribe' | 'unsubscribe'>
-  notifier: Pick<PushNotifier, 'watching' | 'test'>
+  notifier: Pick<PushNotifier, 'watching' | 'present' | 'test'>
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -72,6 +73,7 @@ export async function handlePushApi(
     const body = await readJson(req)
     const ids = Array.isArray(body.sessionIds) ? body.sessionIds.filter(isText) : []
     deps.notifier.watching(ids)
+    deps.notifier.present(isText(body.endpoint) ? body.endpoint : null)
     json(res, 200, { success: true })
     return true
   }

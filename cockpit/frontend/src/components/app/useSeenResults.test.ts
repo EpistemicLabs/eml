@@ -4,9 +4,10 @@ vi.mock('@/stores/usePaneStore', () => ({}));
 vi.mock('@/stores/useTopViewStore', () => ({ getTopView: () => 'desks' }));
 vi.mock('@/lib/session-actions', () => ({ SESSIONS_CHANGED_EVENT: 'x', markSessionRead: () => Promise.resolve(null) }));
 vi.mock('@/utils/api', () => ({ api: {} }));
+vi.mock('@/lib/push', () => ({ pushEndpoint: () => Promise.resolve(null) }));
 
 import type { AllSession } from '@/components/sidebar/allSessions';
-import { sessionsToMarkSeen, sessionsWatched } from './useSeenResults';
+import { cockpitInUse, sessionsToMarkSeen, sessionsWatched } from './useSeenResults';
 
 const NOW = 1_000_000;
 const unseen: AllSession = { id: 'a', spaceId: 's', resultAt: '2026-01-01T00:00:00.000Z' };
@@ -36,5 +37,14 @@ describe('sessionsWatched', () => {
     expect(sessionsWatched(new Set(['a', 'b']), here)).toEqual(['a', 'b']);
     expect(sessionsWatched(new Set(['a']), { ...here, foreground: false })).toEqual([]);
     expect(sessionsWatched(new Set(['a']), { ...here, lastInputAt: NOW - 60_000 })).toEqual([]);
+  });
+});
+
+describe('cockpitInUse', () => {
+  it('counts the cockpit in use for ten minutes after the last click or key, in front or not', () => {
+    const behind = { ...here, foreground: false, lastInputAt: NOW - 9 * 60_000 };
+    expect(cockpitInUse(behind)).toBe(true);
+    expect(cockpitInUse({ ...here, lastInputAt: NOW - 10 * 60_000 })).toBe(false);
+    expect(cockpitInUse({ ...here, lastInputAt: 0 })).toBe(false);
   });
 });

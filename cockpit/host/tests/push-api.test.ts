@@ -10,6 +10,7 @@ import { PushStore } from '../src/push-store.js'
 // The page's side of web push: the server key, this device's subscription, a test, and what the user is looking at.
 const store = new PushStore(join(mkdtempSync(join(tmpdir(), 'push-api-')), 'push.json'), () => ({ publicKey: 'server-public', privateKey: 'server-private' }))
 const watched: string[][] = []
+const present: (string | null)[] = []
 const tested: string[] = []
 let host: http.Server
 let url: string
@@ -31,6 +32,7 @@ beforeAll(async () => {
       store,
       notifier: {
         watching: (ids) => { watched.push(ids) },
+        present: (endpoint) => { present.push(endpoint) },
         test: async (endpoint) => { tested.push(endpoint); return endpoint.endsWith('/gone') ? 'gone' : 'sent' },
       },
     }, parsed, req.method ?? 'GET', json, readJson).then((handled) => { if (!handled) json(res, 404, {}) })
@@ -75,8 +77,11 @@ describe('handlePushApi', () => {
     expect(tested).toEqual(['https://push.example/phone', 'https://push.example/gone'])
   })
 
-  it('takes the sessions the user is looking at', async () => {
-    expect((await call('POST', '/api/push/watching', { sessionIds: ['s1', 42, 's2'] })).status).toBe(200)
+  it('takes the sessions the user is looking at and the device they work on', async () => {
+    expect((await call('POST', '/api/push/watching', { sessionIds: ['s1', 42, 's2'], endpoint: 'https://push.example/mac' })).status).toBe(200)
     expect(watched.at(-1)).toEqual(['s1', 's2'])
+    expect(present.at(-1)).toBe('https://push.example/mac')
+    await call('POST', '/api/push/watching', { sessionIds: [] })
+    expect(present.at(-1)).toBeNull()
   })
 })

@@ -21,16 +21,22 @@ export interface PushNotifierDeps {
 const WATCHING_MS = 60_000
 /** A job's notice and its session's own state often say the same thing moments apart. */
 const REPEAT_MS = 120_000
+/** A cockpit in use reports every 30 seconds (the page decides it is in use: input within 10 minutes). */
+const IN_USE_MS = 90_000
+/** A cockpit in use that has no subscription of its own. */
+const NO_DEVICE = ''
 
 /**
  * Web push as the cockpit's Notifier: every notice goes to every subscribed
  * device, unless the user is looking at that session or was just told the
- * same about it. Sending never blocks or fails the caller; what went wrong is
+ * same about it. While the user works in the cockpit on a device, only that
+ * device is told; the others (the phone) stay quiet. Sending never blocks or fails the caller; what went wrong is
  * logged with ids and outcomes only, never the text.
  */
 export class PushNotifier implements Notifier {
   private seen = new Map<string, number>()
   private told = new Map<string, number>()
+  private inUse = new Map<string, number>()
 
   constructor(private deps: PushNotifierDeps) {}
 
@@ -38,6 +44,11 @@ export class PushNotifier implements Notifier {
   watching(sessionIds: string[]): void {
     const now = this.deps.now()
     for (const sessionId of sessionIds) this.seen.set(sessionId, now)
+  }
+
+  /** A cockpit in use on this device; null: on one that gets no pushes. */
+  present(endpoint: string | null): void {
+    this.inUse.set(endpoint ?? NO_DEVICE, this.deps.now())
   }
 
   notify(input: NotificationInput): void {
@@ -54,7 +65,9 @@ export class PushNotifier implements Notifier {
     for (const [key, at] of this.told) if (now - at >= REPEAT_MS) this.told.delete(key)
 
     const urgency: PushUrgency = input.kind === 'question' || input.kind === 'failed' || input.kind === 'paused' ? 'high' : 'normal'
-    await Promise.all(this.deps.devices().map(async (device) => {
+    const inUse = new Set([...this.inUse].filter(([, at]) => now - at < IN_USE_MS).map(([endpoint]) => endpoint))
+    const targets = inUse.size > 0 ? this.deps.devices().filter((device) => inUse.has(device.endpoint)) : this.deps.devices()
+    await Promise.all(targets.map(async (device) => {
       const outcome = await this.sendOne(device, input, urgency)
       result[outcome] += 1
     }))

@@ -46,6 +46,11 @@ async function subscription(): Promise<PushSubscription | null> {
   return (await registration?.pushManager.getSubscription()) ?? null;
 }
 
+/** This device's push address, or null when it is not subscribed. */
+export async function pushEndpoint(): Promise<string | null> {
+  return (await subscription())?.endpoint ?? null;
+}
+
 /** Whether this device gets pushes: its browser holds a subscription and the host knows it. */
 export async function pushEnabled(): Promise<boolean> {
   const current = await subscription();

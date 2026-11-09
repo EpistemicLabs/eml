@@ -73,6 +73,23 @@ describe('PushNotifier', () => {
     await expect(notifier.deliver(input({ sessionId: 's2' }))).resolves.toEqual({ sent: 0, gone: 0, failed: 1 })
   })
 
+  it('sends only to the device in use while the user works on one, and to all again once it went quiet', async () => {
+    const { notifier, sent, tick } = setup()
+    notifier.present('https://push.example/mac')
+    await notifier.deliver(input())
+    expect(sent.map((entry) => entry.device)).toEqual(['mac'])
+    tick(91_000)
+    await notifier.deliver(input({ sessionId: 's2' }))
+    expect(sent.map((entry) => entry.device)).toEqual(['mac', 'phone', 'mac'])
+  })
+
+  it('stays quiet while the user works in a cockpit that gets no pushes itself', async () => {
+    const { notifier, sent } = setup()
+    notifier.present(null)
+    await notifier.deliver(input())
+    expect(sent).toHaveLength(0)
+  })
+
   it('sends a test to one device only', async () => {
     const { notifier, sent } = setup()
     expect(await notifier.test('https://push.example/mac')).toBe('sent')

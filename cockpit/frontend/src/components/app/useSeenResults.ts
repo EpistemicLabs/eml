@@ -5,13 +5,16 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { markSessionRead } from '@/lib/session-actions';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView } from '@/stores/useTopViewStore';
+import { pushEndpoint } from '@/lib/push';
 import { api } from '@/utils/api';
 
 // A hand on the mouse or keyboard this recently counts as someone being there.
 const ACTIVE_MS = 60_000;
 const CHECK_MS = 5_000;
-// The host holds back a push about a session it heard of within a minute (host push-notifier.ts).
-const WATCHING_MS = 20_000;
+// While the cockpit is in use here, the host pushes only to this device (host push-notifier.ts):
+// it is told every 30 seconds, and stops being told ten minutes after the last click or key.
+const IN_USE_MS = 10 * 60_000;
+const REPORT_MS = 30_000;
 
 /**
  * What the user sees right now is seen: its pane on screen, the tab in front and the
@@ -32,6 +35,11 @@ export function sessionsWatched(onScreen: ReadonlySet<string>, facts: { foregrou
   return [...onScreen];
 }
 
+/** Someone works in this cockpit: their notifications come here, not to the phone. */
+export function cockpitInUse(facts: { lastInputAt: number; now: number }): boolean {
+  return facts.lastInputAt > 0 && facts.now - facts.lastInputAt < IN_USE_MS;
+}
+
 function sessionsOnScreen(compact: boolean): Set<string> {
   if (getTopView() !== 'desks') return new Set();
   const panes = paneStore.getDeskPanesOnScreen(compact);
@@ -43,17 +51,19 @@ export function useSeenResults(compact: boolean): void {
   const known = useRef<AllSession[]>([]);
   known.current = sessions ?? [];
   const lastInputAt = useRef(0);
-  const toldWatchingAt = useRef(0);
+  const reportedAt = useRef(0);
 
   const check = useCallback(() => {
     const onScreen = sessionsOnScreen(compact);
     const facts = { foreground: document.visibilityState === 'visible' && document.hasFocus(), lastInputAt: lastInputAt.current, now: Date.now() };
     const ids = sessionsToMarkSeen(known.current, onScreen, facts);
     for (const id of ids) void markSessionRead(id);
-    const watched = sessionsWatched(onScreen, facts);
-    if (watched.length > 0 && facts.now - toldWatchingAt.current >= WATCHING_MS) {
-      toldWatchingAt.current = facts.now;
-      void api.pushWatching(watched).catch(() => { /* host unreachable: it may push once too often */ });
+    if (cockpitInUse(facts) && facts.now - reportedAt.current >= REPORT_MS) {
+      reportedAt.current = facts.now;
+      const watched = sessionsWatched(onScreen, facts);
+      void pushEndpoint()
+        .then((endpoint) => api.pushWatching(watched, endpoint))
+        .catch(() => { /* host unreachable: it may push once too often */ });
     }
   }, [compact]);
 

@@ -1,7 +1,8 @@
 // Settings › Preferences › Notifications. The in-app signals (desk-tab badge,
 // title count, sidebar dot) are always on; this section turns web push on for
 // this device: Needs you, Check this and new results reach it even with the
-// cockpit closed, unless that session is on screen (host push-notifier.ts).
+// cockpit closed, unless that session is on screen or the user works in the
+// cockpit on another device (host push-notifier.ts).
 import { useEffect, useState } from 'react';
 
 import { currentPushSupport, disablePush, enablePush, pushEnabled, sendTestPush } from '@/lib/push';
@@ -65,7 +66,7 @@ export default function NotificationsSection() {
       ? 'This browser does not support notifications'
       : note
         ? NOTE_TEXT[note]
-        : 'Needs you, Check this and new results, with the session and what it says — also with the cockpit closed';
+        : 'Needs you, Check this and new results, with the session and what it says. While you use the cockpit on another device, only that one is told';
 
   return (
     <SettingsSection title="Notifications">
