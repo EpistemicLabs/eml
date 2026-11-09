@@ -250,8 +250,15 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
   run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
   session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
-  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements; until then
-  nothing leaves the host.
+  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
+- **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
+  added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
+  subscribed device with the session's name, its project and what it said; a tap opens that session. No push about a
+  session someone has on screen, nor the same notice twice within two minutes. The host signs and encrypts each
+  message itself (`infrastructure/push/web-push.ts`, RFC 8291/8292, no library) and sends it to the browser's push
+  service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
+  devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in
+  `frontend/public/sw.js`.
 - **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
   mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
   clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
