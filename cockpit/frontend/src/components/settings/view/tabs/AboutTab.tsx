@@ -52,7 +52,7 @@ export default function AboutTab() {
 
       <SettingsSection
         title="Versions"
-        description="Paste these into a bug report. Claude Code and Codex are managed in Settings › Models."
+        description="Paste these into a bug report."
       >
         <SettingsCard divided>
           {versions.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{failed ? 'unknown' : '…'}</div>}
