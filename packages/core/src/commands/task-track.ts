@@ -2,6 +2,7 @@ import { TASK_OPEN_STATUSES, type StoredEngram, type EngramStatus, type OpenSubt
 import { validateNoTemplateLeak } from '../validate'
 import { validateFields, normalizeAssignees, unknownFieldsError, isBlank } from '../fields'
 import { appendEntry, bumpRev, type Entry } from '../entries'
+import { reindexEngram } from '../write/insert'
 import { CLOSED_WITH_TASK, TRACK_TASK_KEYS, type TrackTaskInput } from '../engrams'
 import { validateScope } from '../write/scope'
 import { planSupersedes, applySupersedes, liveSuccessorOf, assertNoLiveSuccessor } from '../write/supersede'
@@ -175,8 +176,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
     bumpRev(db, stamp, id)
   }
   if (contentChanged || titleChanged || scopeChanged) {
-    db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+    reindexEngram(db, id)
   }
   if (contentChanged) wikilinks = materializeWikilinks(ctx, id, input.content!, input.scope ?? existing.scope)
 

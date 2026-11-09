@@ -157,6 +157,22 @@ describe('a shared brain\'s log', () => {
     eml.close()
   })
 
+  it('a relayed rescope lands the same on two replicas', () => {
+    const a = sharedBrain()
+    const b = sharedBrain()
+    const ops = [
+      envelope(2, 'object.create', { object: 'project', fields: { id: 'q', name: 'Q' } }),
+      envelope(3, 'engram.create', validNote({ title: 'moving' })),
+    ]
+    for (const eml of [a, b]) ops.forEach((op, i) => expect(take(eml, i + 2, op)).toBeNull())
+    const id = (raw(a).prepare('SELECT id FROM engrams WHERE title = ?').get('moving') as { id: string }).id
+    const rescope = envelope(4, 'engram.rescope', { ids: [id], scope: 'project.q' })
+    for (const eml of [a, b]) expect(take(eml, 4, rescope)).toBeNull()
+    for (const eml of [a, b]) expect(raw(eml).prepare('SELECT scope, rev FROM engrams WHERE id = ?').get(id)).toEqual({ scope: 'project.q', rev: 2 })
+    expect(stateHash(stateDump(raw(b)))).toBe(stateHash(stateDump(raw(a))))
+    a.close(); b.close()
+  })
+
   it('rebuilds to the live state: applied ops replayed, rejected and non-state entries skipped', () => {
     const eml = sharedBrain()
     take(eml, 2, envelope(2, 'engram.create', validNote({ title: 'kept' })))

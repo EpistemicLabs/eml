@@ -1,6 +1,7 @@
 import type { Engram } from '../types'
 import { learningState, LEARNING_SHARPENED, type LearningState } from '../learning'
 import { appendEntry, bumpRev } from '../entries'
+import { reindexEngram } from '../write/insert'
 import type { LearnInput } from '../engrams'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 import { evidenceOf } from './learning'
@@ -43,8 +44,7 @@ function addEvidence(ctx: CommandContext, input: LearnInput & { id: string }): {
   if (input.content !== undefined && input.content !== existing.content) {
     db.prepare(`UPDATE engrams SET content = ?, updated_at = ? WHERE id = ?`).run(input.content, stamp.at, input.id)
     bumpRev(db, stamp, input.id!)
-    db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(input.id)
-    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(input.id)
+    reindexEngram(db, input.id!)
     appendEntry(db, input.id!, { kind: 'change', text: LEARNING_SHARPENED }, stamp)
   } else {
     db.prepare(`UPDATE engrams SET updated_at = ? WHERE id = ?`).run(stamp.at, input.id)

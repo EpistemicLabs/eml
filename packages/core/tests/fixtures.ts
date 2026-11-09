@@ -176,6 +176,7 @@ export function writeEverything(eml: EML): void {
   writes(eml).users.create({ id: 'ada', name: 'Ada' }, juno)
   writes(eml).users.update('ada', { email: 'ada@example.com' }, juno)
   createObject(eml, 'project', { id: 'p', name: 'P' }, juno)
+  createObject(eml, 'project', { id: 'q', name: 'Q' }, juno)
   createObject(eml, 'entity', { id: 'acme', name: 'Acme', kind: 'org' }, juno)
   createObject(eml, 'tag', { name: 'ops' }, juno)
   createObject(eml, 'tag', { name: 'old', status: 'archived' }, juno)
@@ -221,6 +222,8 @@ export function writeEverything(eml: EML): void {
   if (!learned.written) throw new Error('learning not written')
   writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
   writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
+
+  eml.apply({ name: 'engram.rescope', input: { ids: [log.id, kept.id], scope: 'project.q' } }, juno)
 
   // v0.21: a task with its journal leaves for another brain; its part_of edge crosses the set and is dropped
   const leaving = writes(eml).store(validTask({ scope, title: 'leaving', parent_id: successor.id }), juno)

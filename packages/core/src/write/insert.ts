@@ -45,6 +45,12 @@ export function insertEngramRow(db: Database.Database, row: EngramRow): void {
     .run(row.id, row.content, row.scope, row.title ?? '')
 }
 
+/** Rebuild an engram's search entry from its stored row (after its content, title or scope changed). */
+export function reindexEngram(db: Database.Database, id: string): void {
+  db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
+  db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+}
+
 /** A new engram by this write: created_at = updated_at = the write's time, its actor, rev 1. */
 export function insertEngram(ctx: WriteContext, row: {
   id: string, type: string, scope: string, title: string | null, content: string,

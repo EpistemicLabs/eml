@@ -130,6 +130,10 @@ const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
   /^entity\.[a-z0-9_-]+$/i,
 ]
 
+/** Where a profile may live: it is about someone. */
+export const PROFILE_SCOPE = /^(agent|user|entity)\./
+export const PROFILE_SCOPE_MESSAGE = 'Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.'
+
 /**
  * v0.21 (decisions rules-need-a-scope-no-global-rules and
  * agent-brain-rules-at-agent-user-is-profile): a rule has an owner — the agent
