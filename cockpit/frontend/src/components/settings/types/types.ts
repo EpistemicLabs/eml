@@ -4,7 +4,7 @@ export type SettingsMainTab =
   | 'account'
   | 'models'
   | 'agents'
-  | 'brain'
+  | 'spaces'
   | 'preferences'
   | 'plugins'
   | 'data'

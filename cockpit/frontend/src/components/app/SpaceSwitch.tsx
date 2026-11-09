@@ -1,28 +1,22 @@
 // The brain space menu (decision cockpit-naming-desks-spaces): the sidebar's
 // group header over the projects opens it — the spaces, the active one
-// marked, and the ways to a new one: "New space…" (a further local brain),
-// "New shared space…" (a shared brain on the relay, needs the EML account in
-// the team-brain beta) and "Join shared space…" (by an invite link); all
-// host POST /api/spaces. In the sidebar it also offers All spaces, a view of
-// the sidebar only. The header shows every space's desks as sections
+// marked; new spaces are made in Settings › Spaces. In the sidebar it also
+// offers All spaces, a view of the sidebar only. The header shows every space's desks as sections
 // (DeskTabBar), so a desk of another space is one click away there.
 // Switching a space switches its desks. A space whose brain failed to migrate
 // or whose shared brain is not live is marked here (a dot), so the state is
 // seen from every space; its banner says what happened.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Check, ChevronDown, Layers, Link2, Loader2, Plus, Users } from 'lucide-react';
+import { Brain, Check, ChevronDown, Layers } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { stateTitle, stateTone } from '@/lib/team';
 import { failedUnresolved, useUpdateStatus } from '@/stores/useUpdateStatusStore';
-import { refreshTeams, useTeams } from '@/stores/useTeamStore';
+import { useTeams } from '@/stores/useTeamStore';
 import { setTopView } from '@/stores/useTopViewStore';
 import {
-  createSharedSpace,
-  createSpace,
-  joinSharedSpace,
   loadSpaces,
   setAllView,
   switchSpace,
@@ -31,18 +25,6 @@ import {
   useSpaces,
   type SpaceInfo,
 } from '@/stores/useSpaceStore';
-import { useAccount } from '@/components/settings/hooks/useAccount';
-
-/** Which form the menu shows: a local space, a shared brain, or a join by link. */
-type NewSpace = 'local' | 'shared' | 'join';
-
-const FORM_HINT: Record<NewSpace, string> = {
-  local: 'A new local brain with your agent and profile. Enter to create.',
-  shared: 'Enter to create a shared brain on the relay.',
-  join: 'Enter to join.',
-};
-
-const NOT_ENTITLED = 'Shared spaces need an EML account in the team-brain beta (Settings › Account).';
 
 interface SpaceSwitchProps {
   /** header: a tab-like button; sidebar: the small uppercase group header. */
@@ -54,8 +36,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const active = useActiveSpace();
   const update = useUpdateStatus();
   const teams = useTeams();
-  const account = useAccount();
-  const entitled = account.status?.signedIn === true && account.status.beta;
   const failed = (space: SpaceInfo) => failedUnresolved(update?.brains[space.id]);
   /** A shared space's state when it is not live: its title and tone; null while live, local or unknown. */
   const notLive = (space: SpaceInfo): { title: string; tone: 'info' | 'destructive' } | null => {
@@ -72,14 +52,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const allView = useAllView();
   const showingAll = variant === 'sidebar' && allView;
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState<NewSpace | null>(null);
-  const [draft, setDraft] = useState('');
-  const [link, setLink] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   // The menu is a portal (the header clips overflow), placed under the trigger.
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
 
@@ -90,10 +64,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   }, [open]);
 
   useEffect(() => { void loadSpaces(); }, []);
-  // The account may have signed in or out in Settings since: read it again when the menu opens.
-  const refreshAccount = account.refresh;
-  useEffect(() => { if (open) void refreshAccount(); }, [open, refreshAccount]);
-
   // Close on a click outside or Escape.
   useEffect(() => {
     if (!open) return;
@@ -110,30 +80,13 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     };
   }, [open]);
 
-  useEffect(() => { if (creating) inputRef.current?.focus(); }, [creating]);
-
-  const close = () => { setOpen(false); setCreating(null); setDraft(''); setLink(''); setError(null); };
+  const close = () => setOpen(false);
 
   const select = (space: SpaceInfo) => {
     setAllView(false);
     switchSpace(space);
     setTopView('desks');
     close();
-  };
-
-  const submit = async () => {
-    const name = draft.trim();
-    if (!name || busy || !creating) return;
-    if (creating === 'join' && !link.trim()) return;
-    setBusy(true);
-    setError(null);
-    const result = creating === 'local' ? await createSpace(name)
-      : creating === 'shared' ? await createSharedSpace(name)
-        : await joinSharedSpace(name, link.trim());
-    setBusy(false);
-    if ('error' in result) { setError(result.error); return; }
-    if (creating !== 'local') void refreshTeams();
-    select(result.space);
   };
 
   const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
@@ -239,77 +192,9 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               </button>
             );
           })}
-          <div className="my-1 h-px bg-border" />
-          {creating ? (
-            <form
-              className="px-1 py-1"
-              onSubmit={(e) => { e.preventDefault(); void submit(); }}
-            >
-              <input
-                ref={inputRef}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="Space name"
-                aria-label="Space name"
-                maxLength={40}
-                disabled={busy}
-                autoFocus
-                className="w-full rounded-md border border-border bg-background px-2 py-1 text-body normal-case tracking-normal text-foreground outline-none focus:border-primary"
-              />
-              {creating === 'join' && (
-                <>
-                  <input
-                    value={link}
-                    onChange={(e) => setLink(e.target.value)}
-                    placeholder="https://…/i/1/…"
-                    aria-label="Invite link"
-                    spellCheck={false}
-                    disabled={busy}
-                    className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-caption normal-case tracking-normal text-foreground outline-none focus:border-primary"
-                  />
-                  {/* Two fields: a form submits on Enter only with a submit button (HTML implicit submission), so the join has one. */}
-                  <button
-                    type="submit"
-                    disabled={busy || !draft.trim() || !link.trim()}
-                    className="mt-1 w-full rounded-md bg-primary px-2 py-1 text-caption font-medium normal-case tracking-normal text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    Join
-                  </button>
-                </>
-              )}
-              {error && <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-destructive">{error}</p>}
-              <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-muted-foreground">
-                {busy && creating !== 'local' ? 'Talking to the relay…' : FORM_HINT[creating]}
-              </p>
-            </form>
-          ) : (
-            <>
-              <MenuAction icon={Plus} busy={busy} onClick={() => setCreating('local')}>New space…</MenuAction>
-              {entitled ? (
-                <MenuAction icon={Users} busy={busy} onClick={() => setCreating('shared')}>New shared space…</MenuAction>
-              ) : (
-                <p className="px-2 py-1.5 text-caption normal-case tracking-normal text-muted-foreground/70">{NOT_ENTITLED}</p>
-              )}
-              <MenuAction icon={Link2} busy={busy} onClick={() => setCreating('join')}>Join shared space…</MenuAction>
-            </>
-          )}
         </div>,
         document.body,
       )}
     </div>
-  );
-}
-
-function MenuAction({ icon: Icon, busy, onClick, children }: { icon: typeof Plus; busy: boolean; onClick: () => void; children: string }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal text-muted-foreground hover:bg-muted hover:text-foreground"
-    >
-      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
-      {children}
-    </button>
   );
 }

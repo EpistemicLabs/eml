@@ -1,6 +1,6 @@
-// Settings › Agents: the agent the active space is bound to, read from its
-// own brain (host GET /api/agents, GET /api/agents/:id/brain/…): where it
-// works, its persona (the core profile in agent.<id>), the rules that load in
+// Settings › Agents: the home's agents, and the picked one read from its own
+// brain (host GET /api/agents, GET /api/agents/:id/brain/…), the active space's
+// until another is picked: where it works, its persona (the core profile in agent.<id>), the rules that load in
 // every session (applies: always, in agent.<id> and in user.<handle> — the
 // ones about the person are marked), and what it knows about the people it
 // works with (the core profiles in user.*). Read-only: the agent keeps these
@@ -13,6 +13,9 @@ import type { Engram, ListResponse } from '@/lib/types';
 import { useActiveSpace } from '@/stores/useSpaceStore';
 import { useAgents, type AgentInfo } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
+import SettingsHeading from '../SettingsHeading';
+import SettingsPicker from '../SettingsPicker';
+import type { SettingsMainTabMeta } from '../../constants/constants';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
@@ -33,6 +36,8 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setData(null);
+    setFailed(false);
     if (!agentId) return;
     let cancelled = false;
     const own = `agent.${agentId}`;
@@ -60,87 +65,108 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
   return { data, failed };
 }
 
-export default function AgentTab() {
+export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
   const space = useActiveSpace();
   const { agents, handle, loaded, failed: agentsFailed } = useAgents();
-  // The active space's agent; a space without one shows the first agent of the home, if any.
-  const agent: AgentInfo | null = (space?.agent ? agents.find((a) => a.id === space.agent) : undefined) ?? agents[0] ?? null;
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  // The picked agent, else the active space's; a space without one shows the first agent of the home, if any.
+  const shownId = pickedId ?? space?.agent;
+  const agent: AgentInfo | null = (shownId ? agents.find((a) => a.id === shownId) : undefined) ?? agents[0] ?? null;
   const { data, failed } = useAgentEngrams(agent?.id ?? null, handle);
   const fallback = agentsFailed || failed ? 'unavailable' : '…';
   const name = agent?.name ?? 'your agent';
 
   if (loaded && !agent) {
     return (
-      <div className="text-sm text-muted-foreground">
-        This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
+      <div className="space-y-4">
+        <SettingsHeading tab={meta} />
+        <div className="text-sm text-muted-foreground">
+          This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
-      <SettingsSection title="Agents">
-        <SettingsCard divided>
-          {agents.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-          {agents.map((a) => (
-            <SettingsRow key={a.id} label={a.name} description={a.spaces.length ? `Works in ${a.spaces.map((s) => s.name).join(', ')}` : 'Bound to no space'}>
-              <span className="block font-mono text-xs text-foreground">{a.id}</span>
-            </SettingsRow>
-          ))}
-        </SettingsCard>
-      </SettingsSection>
+      {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
+      <div className="space-y-4">
+        <SettingsHeading tab={meta} description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session." />
+        <div>
+          <SettingsPicker
+            items={agents.map((a) => ({ id: a.id, label: a.name }))}
+            value={agent?.id}
+            onChange={setPickedId}
+            ariaLabel="Agents"
+          />
+          {agent && (
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
+            <SettingsSection title="Details">
+              <SettingsCard divided>
+                <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
+                  <span className="block font-mono text-xs text-foreground">{agent.id}</span>
+                </SettingsRow>
+                <div className="px-4 py-4">
+                  <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
+                  {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
+                  <ul className="mt-1 space-y-0.5">
+                    {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
+                  </ul>
+                </div>
+              </SettingsCard>
+            </SettingsSection>
 
-      <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
-        <SettingsCard>
-          <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-            {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
+            <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
+              <SettingsCard>
+                <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                  {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
+                </div>
+                {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
+                  <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                )}
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Always-on rules"
+              description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
+            >
+              <SettingsCard divided>
+                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+                {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
+                {data?.rules.map((rule) => (
+                  <details key={rule.id} className="group px-4 py-3">
+                    <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
+                      <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
+                      {ruleLabel(rule, agent?.id ?? '')}
+                    </summary>
+                    <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
+                    {rule.content.length > RULE_MAX_CHARS && (
+                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
+                    )}
+                  </details>
+                ))}
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
+              <SettingsCard divided>
+                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+                {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
+                {data?.people.map((profile) => (
+                  <div key={profile.id} className="px-4 py-3">
+                    <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
+                    <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
+                    {profile.content.length > PROFILE_MAX_CHARS && (
+                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                    )}
+                  </div>
+                ))}
+              </SettingsCard>
+            </SettingsSection>
           </div>
-          {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
-            <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
           )}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Always-on rules"
-        description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
-      >
-        <SettingsCard divided>
-          {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-          {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
-          {data?.rules.map((rule) => (
-            <details key={rule.id} className="group px-4 py-3">
-              <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-                <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
-                {ruleLabel(rule, agent?.id ?? '')}
-              </summary>
-              <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
-              {rule.content.length > RULE_MAX_CHARS && (
-                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
-              )}
-            </details>
-          ))}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
-        <SettingsCard divided>
-          {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-          {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
-          {data?.people.map((profile) => (
-            <div key={profile.id} className="px-4 py-3">
-              <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
-              <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
-              {profile.content.length > PROFILE_MAX_CHARS && (
-                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
-              )}
-            </div>
-          ))}
-        </SettingsCard>
-      </SettingsSection>
-
-      <div className="text-sm text-muted-foreground">
-        To change any of this, ask {name} in a session.
+        </div>
       </div>
     </div>
   );

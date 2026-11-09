@@ -8,7 +8,7 @@ import type { SettingsMainTabMeta } from '../constants/constants';
 export default function SettingsPlaceholder({ tab }: { tab: SettingsMainTabMeta }) {
   const Icon = tab.icon;
   return (
-    <SettingsSection title={tab.label}>
+    <SettingsSection>
       <SettingsCard>
         <div className="flex items-start gap-3 px-4 py-4">
           <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />

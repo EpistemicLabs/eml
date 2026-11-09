@@ -2,7 +2,7 @@
 // /api/spaces/:id/team, lib/team.ts): one poll for all subscribers, the
 // active space every 3 s while the window is focused, the others every 30 s —
 // enough for the dots on the space switch. The banner, the write controls
-// (writable) and Settings › Brain read it. Same module-store +
+// (writable) and Settings › Spaces read it. Same module-store +
 // useSyncExternalStore pattern as the other stores.
 import { useSyncExternalStore } from 'react';
 import * as paneStore from './usePaneStore';

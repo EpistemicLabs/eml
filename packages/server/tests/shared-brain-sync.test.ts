@@ -22,6 +22,7 @@ import { BRAIN, OTHER, Team, cert } from './team'
 const BROKEN = '1c9e6679-7425-40de-944b-e07fc1f90a01'  // its team file is cut off in the middle of a seed
 const RETRY = '2c9e6679-7425-40de-944b-e07fc1f90a02'   // created with a stale grant first
 const EMPTY = '4c9e6679-7425-40de-944b-e07fc1f90a04'   // provisioned for a creation that never happens; discarded
+const LOCAL = '5c9e6679-7425-40de-944b-e07fc1f90a05'   // a private brain the host deletes
 const JOINED = '3c9e6679-7425-40de-944b-e07fc1f90a03'  // juno's team brain at another relay, which lasse's server joins
 const NOW = '2026-11-03T08:00:00.000Z'
 
@@ -49,7 +50,7 @@ describe('a shared brain through the server', () => {
     const control = initControlDatabase(join(tmpDir, 'control.db'))
     control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'juno@example.com')`).run()
     // empty brains as the host provisions them for a creation: the schema, no rows, no log
-    for (const id of [BRAIN, BROKEN, RETRY, EMPTY, JOINED]) {
+    for (const id of [BRAIN, BROKEN, RETRY, EMPTY, LOCAL, JOINED]) {
       const brainFile = `brains/${id}.db`
       initDatabase(join(tmpDir, brainFile), undefined, id, { log: false }).close()
       control.prepare('INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES (?, ?, ?, ?, ?)').run(id, 'team', 'u1', brainFile, CURRENT_BRAIN_SCHEMA_VERSION)
@@ -168,6 +169,13 @@ describe('a shared brain through the server', () => {
     } finally {
       control.close()
     }
+  })
+
+  it('DELETE /brain discards a private brain with its file and refuses a shared one', async () => {
+    expect(await del(BRAIN, '/brain')).toMatchObject({ status: 409, body: { code: 'NOT_LOCAL' } })
+    expect((await del(LOCAL, '/brain')).status).toBe(204)
+    expect(existsSync(join(tmpDir, 'brains', `${LOCAL}.db`))).toBe(false)
+    expect((await get(LOCAL, '/list')).status).toBe(401)  // its token is gone with the brain
   })
 
   it('a creation the relay refuses leaves the brain new and empty: 403 GRANT_INVALID, then created with a good grant', async () => {

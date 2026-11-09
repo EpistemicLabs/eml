@@ -367,7 +367,11 @@ function AppContentInner() {
           )}
         </div>
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        <div className="min-w-0 flex-1">
+        {/* Many spaces scroll sideways; the mouse wheel scrolls it too. */}
+        <div
+          className="scrollbar-hide min-w-0 flex-1 overflow-x-auto"
+          onWheel={(e) => { if (e.deltaY !== 0 && e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY; }}
+        >
           <DeskTabBar />
         </div>
       </div>

@@ -6,7 +6,7 @@ import { BACKUPS_DIR, COCKPIT_HOME, DATA_DIR } from './paths.js'
 import { platform } from './infrastructure/platform/index.js'
 
 /**
- * Settings › Brain: what the local brain is (file, id, schema, identity) and
+ * Settings › Spaces: what the local brain is (file, id, schema, identity) and
  * WAL-safe backups of it. Read-only on the brain and control DBs except the
  * backup copy; paths never leave the host except as display strings.
  */
