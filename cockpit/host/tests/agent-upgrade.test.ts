@@ -328,6 +328,42 @@ describe('agent upgrade', () => {
     expect(withDb(agentFile, (db) => log.verify(db).ok)).toBe(true)
   })
 
+  it('a run that dies between the import and the move_out is finished by the next start: nothing refused, nothing superseded by itself', async () => {
+    const { upgradeHome } = await import('../src/agent-upgrade.js')
+    const data5 = join(home, 'home5', 'data')
+    const f = legacyHome(data5)
+    const backups = join(home, 'home5', 'backups')
+    const main5 = join(data5, f.main.brainFile)
+    // the real run's first move (the third call, after the dry run's two): the import commits, the move_out in the space does not
+    let moves = 0
+    const cut = { ...modules, log: { ...modules.log, moveEngrams: async (args: Row, env: unknown) => {
+      const at = ++moves
+      if (at === 3) args.source.exec(`CREATE TEMP TRIGGER cut BEFORE INSERT ON main.op_log WHEN json_extract(NEW.payload, '$.call') = 'engram.move_out' BEGIN SELECT RAISE(ABORT, 'power cut'); END`)
+      try { return await modules.log.moveEngrams(args, env) } finally { if (at === 3) args.source.exec('DROP TRIGGER temp.cut') }
+    } } }
+    const first = await upgradeHome({ dataDir: data5, config: f.config, backupsDir: backups, modules: cut, writeConfig: async () => {} })
+    expect(first.report).toMatchObject({ status: 'failed', reason: 'Main: power cut' })
+    const agentId = q(join(data5, 'control.db'), "SELECT id FROM brains WHERE name = 'motti' ORDER BY created_at DESC, rowid DESC LIMIT 1")[0].id
+    const agentFile = join(data5, 'brains', `${agentId}.db`)
+    // the identity is in both brains now: imported, not yet moved out
+    expect(q(agentFile, 'SELECT COUNT(*) AS n FROM engrams WHERE id = ?', f.ids.profile)[0].n).toBe(1)
+    expect(q(main5, 'SELECT COUNT(*) AS n FROM engrams WHERE id = ?', f.ids.profile)[0].n).toBe(1)
+
+    const second = await upgradeHome({ dataDir: data5, config: f.config, backupsDir: backups, modules, writeConfig: async () => {} })
+    expect(second.report.reason).toBeUndefined()
+    expect(second.report.status).toBe('ok')
+    const main = second.report.spaces[0]
+    expect(main.action).toBe('upgraded')
+    // the imported set is not taken for what the agent brain held before: no core profile superseded by itself, no seed retired
+    expect(main.collisions).toEqual({ superseded: [], seeds_retired: [], needs_review: [] })
+    expect(main.crossing).toMatchObject({ planned: 2, recreated: 2 })
+    expect(main.verify).toEqual({ space: true, agent: true })
+    expect(q(main5, 'SELECT COUNT(*) AS n FROM engrams WHERE id = ?', f.ids.profile)[0].n).toBe(0)
+    expect(q(agentFile, "SELECT status, scope FROM engrams WHERE id = ?", f.ids.profile)).toEqual([{ status: 'active', scope: 'agent.motti' }])
+    expect(q(agentFile, "SELECT COUNT(*) AS n FROM engrams WHERE type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1")[0].n).toBe(2)
+    expect(second.report.spaces[1]).toMatchObject({ action: 'upgraded', verify: { space: true, agent: true } })
+  })
+
   it('the host start after a run that failed once the first space was bound: the file\'s config wins, that space works, the rest carries the reason', async () => {
     const { upgradeAtStart, needsUpgrade } = await import('../src/agent-upgrade.js')
     const data4 = join(home, 'home4', 'data')
