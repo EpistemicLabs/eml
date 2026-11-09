@@ -90,11 +90,11 @@ describe('disablePush', () => {
 });
 
 describe('sendTestPush', () => {
-  it('reads the host\'s answer: sent, gone or failed', async () => {
+  it('reads the host\'s answer: sent, gone, refused or failed', async () => {
     expect(await sendTestPush()).toBe('gone');
     current = fakeSubscription('https://push.example/a');
     expect(await sendTestPush()).toBe('sent');
-    for (const [status, retry, outcome] of [[404, false, 'gone'], [410, false, 'gone'], [502, true, 'failed']] as const) {
+    for (const [status, retry, outcome] of [[404, false, 'gone'], [410, false, 'gone'], [502, false, 'refused'], [502, true, 'failed']] as const) {
       answers['POST /api/push/test'] = { status, body: { error: { retry } } };
       expect(await sendTestPush()).toBe(outcome);
     }

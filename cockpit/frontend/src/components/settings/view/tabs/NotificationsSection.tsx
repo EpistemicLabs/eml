@@ -13,13 +13,14 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 
-type Note = 'denied' | 'failed' | 'sent' | 'gone' | 'test-failed' | null;
+type Note = 'denied' | 'failed' | 'sent' | 'gone' | 'refused' | 'test-failed' | null;
 
 const NOTE_TEXT: Record<Exclude<Note, null>, string> = {
   denied: 'Blocked — allow notifications for the cockpit in the system settings, then try again',
   failed: 'Could not turn them on. Try again',
   sent: 'Test sent — it should show in a moment',
   gone: 'This device is no longer subscribed. Turn notifications on again',
+  refused: 'The push service turned the test down. Turn notifications off and on again',
   'test-failed': 'The push service did not take the test. Try again',
 };
 

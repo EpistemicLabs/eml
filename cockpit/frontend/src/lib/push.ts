@@ -86,10 +86,13 @@ export async function disablePush(): Promise<void> {
   await current.unsubscribe();
 }
 
-export async function sendTestPush(): Promise<'sent' | 'gone' | 'failed'> {
+/** sent · gone: subscribe again · refused: the push service turned it down, subscribe again · failed: try again. */
+export async function sendTestPush(): Promise<'sent' | 'gone' | 'refused' | 'failed'> {
   const current = await subscription();
   if (!current) return 'gone';
   const response = await api.pushTest(current.endpoint);
   if (response.ok) return 'sent';
-  return response.status === 404 || response.status === 410 ? 'gone' : 'failed';
+  if (response.status === 404 || response.status === 410) return 'gone';
+  const answer = (await response.json().catch(() => ({}))) as { error?: { retry?: boolean } };
+  return answer.error?.retry === false ? 'refused' : 'failed';
 }

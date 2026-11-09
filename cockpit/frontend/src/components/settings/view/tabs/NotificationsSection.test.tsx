@@ -67,6 +67,15 @@ describe('NotificationsSection', () => {
     expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
 
+  it('says to subscribe again when the push service turns the test down', async () => {
+    mocked.pushEnabled.mockResolvedValue(true);
+    mocked.sendTestPush.mockResolvedValue('refused');
+    render(<NotificationsSection />);
+    await waitFor(() => expect(screen.getByText('Send test')).toBeTruthy());
+    fireEvent.click(screen.getByText('Send test'));
+    await waitFor(() => expect(screen.getByText(/turned the test down/)).toBeTruthy());
+  });
+
   it('turns push off on this device', async () => {
     mocked.pushEnabled.mockResolvedValue(true);
     render(<NotificationsSection />);
