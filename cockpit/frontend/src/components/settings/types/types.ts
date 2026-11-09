@@ -22,8 +22,6 @@ export type SettingsProps = {
 /** What the cockpit persists client-side (localStorage `cockpit-settings`). */
 export type CockpitSettings = {
   projectSortOrder: ProjectSortOrder;
-  /** Browser notification when a session finishes while the cockpit isn't in front. */
-  notifyOnDone: boolean;
   /** A plain new session opens with a greeting and the project's state (default on). */
   greetOnStart: boolean;
   /** Claude sessions open in the chat view instead of the terminal: this browser's choice, else the cockpit's chat view switch. */

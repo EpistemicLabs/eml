@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/stores/usePaneStore', () => ({}));
 vi.mock('@/stores/useTopViewStore', () => ({ getTopView: () => 'desks' }));
 vi.mock('@/lib/session-actions', () => ({ SESSIONS_CHANGED_EVENT: 'x', markSessionRead: () => Promise.resolve(null) }));
+vi.mock('@/utils/api', () => ({ api: {} }));
 
 import type { AllSession } from '@/components/sidebar/allSessions';
-import { sessionsToMarkSeen } from './useSeenResults';
+import { sessionsToMarkSeen, sessionsWatched } from './useSeenResults';
 
 const NOW = 1_000_000;
 const unseen: AllSession = { id: 'a', spaceId: 's', resultAt: '2026-01-01T00:00:00.000Z' };
@@ -27,5 +28,13 @@ describe('sessionsToMarkSeen', () => {
 
   it('asks nothing of a session with nothing to see', () => {
     expect(sessionsToMarkSeen([{ id: 'a', spaceId: 's' }], new Set(['a']), here)).toEqual([]);
+  });
+});
+
+describe('sessionsWatched', () => {
+  it('names every session on screen while someone is there, seen or not: no push about them', () => {
+    expect(sessionsWatched(new Set(['a', 'b']), here)).toEqual(['a', 'b']);
+    expect(sessionsWatched(new Set(['a']), { ...here, foreground: false })).toEqual([]);
+    expect(sessionsWatched(new Set(['a']), { ...here, lastInputAt: NOW - 60_000 })).toEqual([]);
   });
 });

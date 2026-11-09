@@ -1,48 +1,71 @@
-// Settings › Preferences › Notifications. The in-app signals (desk-tab
-// badge, title count, sidebar dot) are always on; this section holds the
-// opt-in for browser notifications when a session finishes while the cockpit
-// isn't in front.
+// Settings › Preferences › Notifications. The in-app signals (desk-tab badge,
+// title count, sidebar dot) are always on; this section turns web push on for
+// this device: Needs you, Check this and new results reach it even with the
+// cockpit closed, unless that session is on screen (host push-notifier.ts).
 import { useEffect, useState } from 'react';
+
+import { currentPushSupport, disablePush, enablePush, pushEnabled, sendTestPush } from '@/lib/push';
 
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 
-type NotificationsSectionProps = {
-  notifyOnDone: boolean;
-  onNotifyOnDoneChange: (value: boolean) => void;
+type Note = 'denied' | 'failed' | 'sent' | 'gone' | 'test-failed' | null;
+
+const NOTE_TEXT: Record<Exclude<Note, null>, string> = {
+  denied: 'Blocked — allow notifications for the cockpit in the system settings, then try again',
+  failed: 'Could not turn them on. Try again',
+  sent: 'Test sent — it should show in a moment',
+  gone: 'This device is no longer subscribed. Turn notifications on again',
+  'test-failed': 'The push service did not take the test. Try again',
 };
 
-type Permission = NotificationPermission | 'unsupported';
+const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
 
-const readPermission = (): Permission =>
-  typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported';
+export default function NotificationsSection() {
+  const support = currentPushSupport();
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<Note>(null);
 
-export default function NotificationsSection({ notifyOnDone, onNotifyOnDoneChange }: NotificationsSectionProps) {
-  const [permission, setPermission] = useState<Permission>(readPermission);
+  useEffect(() => {
+    if (support !== 'supported') return;
+    void pushEnabled().then(setEnabled).catch(() => setEnabled(false));
+  }, [support]);
 
-  useEffect(() => { setPermission(readPermission()); }, []);
-
-  const supported = permission !== 'unsupported';
-  const denied = permission === 'denied';
-
-  const handleToggle = async (enabled: boolean) => {
-    if (!enabled) { onNotifyOnDoneChange(false); return; }
-    if (!supported) return;
-    let current = readPermission();
-    if (current === 'default') {
-      current = await Notification.requestPermission();
-      setPermission(current);
+  const handleToggle = async (on: boolean) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      if (!on) {
+        await disablePush();
+        setEnabled(false);
+        return;
+      }
+      const outcome = await enablePush();
+      setEnabled(outcome === 'enabled');
+      if (outcome !== 'enabled') setNote(outcome);
+    } finally {
+      setBusy(false);
     }
-    onNotifyOnDoneChange(current === 'granted');
   };
 
-  const description = !supported
-    ? 'This browser does not support notifications'
-    : denied
-      ? 'Blocked in the browser — allow notifications for this site to enable'
-      : 'When a session finishes while the cockpit is not in front';
+  const handleTest = async () => {
+    setBusy(true);
+    const outcome = await sendTestPush().catch(() => 'failed' as const);
+    setNote(outcome === 'failed' ? 'test-failed' : outcome);
+    if (outcome === 'gone') setEnabled(false);
+    setBusy(false);
+  };
+
+  const description = support === 'home-screen'
+    ? 'On iPhone: add the cockpit to the home screen (Share › Add to Home Screen) and open it from there'
+    : support === 'unsupported'
+      ? 'This browser does not support notifications'
+      : note
+        ? NOTE_TEXT[note]
+        : 'Needs you, Check this and new results, with the session and what it says — also with the cockpit closed';
 
   return (
     <SettingsSection title="Notifications">
@@ -53,13 +76,20 @@ export default function NotificationsSection({ notifyOnDone, onNotifyOnDoneChang
         >
           <span className="text-sm text-muted-foreground">Always on</span>
         </SettingsRow>
-        <SettingsRow label="Browser notifications" description={description}>
-          <SettingsToggle
-            checked={notifyOnDone && permission === 'granted'}
-            onChange={(value) => { void handleToggle(value); }}
-            ariaLabel="Browser notifications"
-            disabled={!supported || denied}
-          />
+        <SettingsRow label="Notifications on this device" description={description}>
+          <div className="flex items-center gap-3">
+            {enabled && (
+              <button type="button" className={button} disabled={busy} onClick={() => void handleTest()}>
+                Send test
+              </button>
+            )}
+            <SettingsToggle
+              checked={enabled}
+              onChange={(value) => { void handleToggle(value); }}
+              ariaLabel="Notifications on this device"
+              disabled={support !== 'supported' || busy}
+            />
+          </div>
         </SettingsRow>
       </SettingsCard>
     </SettingsSection>
