@@ -1,4 +1,4 @@
-// Settings › About: logo, name and version badge, then every version in one
+// Settings › About: logo and name, then every version in one
 // read-only list with a Copy button for bug reports — cockpit, Claude Code and
 // Node from the host (GET /api/about), Codex from the providers. Managing the
 // agent CLIs stays in Settings › Models. The License section carries the AGPL
@@ -22,7 +22,6 @@ export default function AboutTab() {
   const { data: providers } = useProviders();
   const [copied, setCopied] = useState(false);
 
-  const versionLabel = info ? `v${info.version}` : failed ? 'unknown' : '…';
   const codexVersion = providers?.find((provider) => provider.id === 'codex')?.version ?? null;
   const versions: Array<[string, string]> = info
     ? [
@@ -43,22 +42,12 @@ export default function AboutTab() {
 
   return (
     <div className="space-y-6">
-      {/* Logo + name + version */}
+      {/* Logo + name */}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-primary/90 shadow-sm">
           <Brain className="h-5 w-5 text-primary-foreground" />
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-base font-semibold text-foreground">EML Cockpit</span>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              {versionLabel}
-            </span>
-          </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Claude Code sessions with a brain — local, isolated, yours.
-          </p>
-        </div>
+        <span className="text-base font-semibold text-foreground">EML Cockpit</span>
       </div>
 
       <SettingsSection

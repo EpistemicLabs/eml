@@ -94,7 +94,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
           <main className="flex-1 overflow-y-auto">
             <div key={activeTab} className="settings-content-enter space-y-8 p-6">
-              {activeTab !== 'spaces' && activeTab !== 'agents' && <SettingsHeading tab={activeMeta} />}
+              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <SettingsHeading tab={activeMeta} />}
 
               {activeTab === 'account' && <AccountTab />}
 
