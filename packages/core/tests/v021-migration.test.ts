@@ -9,7 +9,7 @@ import { decodeSnapshot, stateDump, stateHash, type StateDump } from '../src/log
 import { createV20Brain } from './fixtures'
 
 // Schema 21 (release F2): the op log. The step adds op_log and op_snapshots
-// and changes no row; in the same transaction the runner writes the genesis —
+// and changes no row but a task's assignee (assignee_id → assignee_ids); in the same transaction the runner writes the genesis —
 // seq 1 with the hash of the brain's state and that state as the snapshot.
 
 const NOW = '2026-10-26T12:00:00.000Z'
@@ -88,6 +88,25 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       for (const table of ['engrams', 'entries']) expect((db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE agent IS NOT NULL`).get() as { n: number }).n, table).toBe(0)
       // the fixture fills every state table, so the comparison covers them all
       expect(Object.entries(before).filter(([, rows]) => rows.length === 0).map(([t]) => t)).toEqual([])
+    })
+  })
+
+  it('a task\'s one assignee becomes a list of that handle, before the genesis; a blank one is dropped', () => {
+    const file = join(dir, 'v20.db')
+    createV20Brain(file)
+    const db = new Database(file)
+    const task = db.prepare(`INSERT INTO engrams (id, type, scope, title, content, status, properties, created_at, updated_at, rev)
+      VALUES (?, 'task', 'global', ?, 'do it', 'active', ?, '${NOW}', '${NOW}', 1)`)
+    task.run('t-one', 'one', JSON.stringify({ assignee_id: 'dominik', priority: 'high' }))
+    task.run('t-blank', 'blank', JSON.stringify({ assignee_id: '  ' }))
+    db.close()
+    new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()
+    expectGenesis(file)
+    read(file, db => {
+      const props = (id: string) => JSON.parse((db.prepare('SELECT properties FROM engrams WHERE id = ?').get(id) as { properties: string }).properties)
+      expect(props('t-one')).toEqual({ priority: 'high', assignee_ids: ['dominik'] })
+      expect(props('t-blank')).toEqual({})
+      expect(props('t-1')).toEqual({ stage: 'planning' })
     })
   })
 

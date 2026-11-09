@@ -185,11 +185,11 @@ describe('v0.19 write model', () => {
       expect(() => writes(eml).trackTask(t.id, { status: 'resolved', outcome: 'x', keep: [] })).toThrow('Invalid engram: closing needs text')
       expect(() => writes(eml).trackTask(t.id, { stage: 'ready' })).toThrow('Invalid engram: a stage change needs text')
       expect(() => writes(eml).trackTask(t.id, { content: 'new definition' })).toThrow('Invalid engram: a content rewrite needs text')
-      const r = writes(eml).trackTask(t.id, { priority: 'high', assignee_id: 'ada', blockers: ['waiting on X'], status: 'planned' })!
+      const r = writes(eml).trackTask(t.id, { priority: 'high', assignee_ids: ['ada'], blockers: ['waiting on X'], status: 'planned' })!
       expect(r.entries_written!.map(e => e.text)).toEqual([
-        'status active → planned', 'priority none → high', 'assignee_id none → ada', 'blockers none → waiting on X',
+        'status active → planned', 'priority none → high', 'assignee_ids none → ada', 'blockers none → waiting on X',
       ])
-      expect(writes(eml).trackTask(t.id, { assignee_id: null })!.properties!.assignee_id).toBeUndefined()
+      expect(writes(eml).trackTask(t.id, { assignee_ids: null })!.properties!.assignee_ids).toBeUndefined()
     })
 
     it('outcome only on close; keep only on close; unknown fields error', () => {

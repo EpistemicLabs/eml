@@ -194,7 +194,7 @@ export interface TrackTaskInput {
   intent?: string | null
   context?: string | null
   priority?: string | null
-  assignee_id?: string | null
+  assignee_ids?: string[] | null
   due_date?: string | null
   blockers?: string[] | null
   parent_id?: string | null
@@ -206,7 +206,7 @@ export interface TrackTaskInput {
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
-  'assignee_id', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
+  'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
@@ -496,7 +496,7 @@ export class EngramStore {
       params.push(q.due_before)
     }
     if (q.assignee) {
-      conditions.push("json_extract(c.properties, '$.assignee_id') = ?")
+      conditions.push("EXISTS (SELECT 1 FROM json_each(c.properties, '$.assignee_ids') WHERE value = ?)")
       params.push(q.assignee)
     }
     if (q.priority) {
@@ -632,6 +632,16 @@ export class EngramStore {
   /** v0.20: an engram's revision counter, or undefined for an unknown id. */
   revOf(id: string): number | undefined {
     return (this.db.prepare('SELECT rev FROM engrams WHERE id = ?').get(id) as { rev: number } | undefined)?.rev
+  }
+
+  /** v0.21: every agent that has written in this brain (engrams and journal entries) with the handle it wrote for, ordered. */
+  writingAgents(): Array<{ agent: string, handle: string }> {
+    return this.db.prepare(`
+      SELECT agent, ingested_by AS handle FROM engrams WHERE agent IS NOT NULL AND ingested_by IS NOT NULL
+      UNION
+      SELECT agent, author AS handle FROM entries WHERE agent IS NOT NULL AND author IS NOT NULL
+      ORDER BY agent, handle
+    `).all() as Array<{ agent: string, handle: string }>
   }
 
   countInScope(scope: string): number {

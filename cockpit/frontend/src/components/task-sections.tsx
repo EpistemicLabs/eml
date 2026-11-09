@@ -393,7 +393,8 @@ export function TaskRow({
   showScope?: boolean;
 }) {
   const stage = taskStage(task);
-  const assignee = typeof task.properties?.assignee_id === "string" ? task.properties.assignee_id : null;
+  const ids = task.properties?.assignee_ids;
+  const assignee = Array.isArray(ids) && ids.length > 0 ? ids.join(", ") : null;
   const inProgress = task.status === "active";
   return (
     <Link

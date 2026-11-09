@@ -6,6 +6,11 @@ export const RECALL_PREVIEW_CHARS = 200
 export const SHOW_PREVIEW_CHARS = 160
 
 /** Collapse all whitespace/newlines to single spaces and cap to maxChars (… if truncated). */
+/** A task's assignee_ids as shown in lists ("a, b"), or undefined when it has none. */
+export function assigneesOf(value: unknown): string | undefined {
+  return Array.isArray(value) && value.length > 0 ? value.join(', ') : undefined
+}
+
 export function previewText(content: string | null | undefined, maxChars: number): string {
   const flat = (content ?? '').replace(/\s+/g, ' ').trim()
   return flat.length > maxChars ? flat.slice(0, maxChars) + '…' : flat
@@ -80,7 +85,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   for (const t of state.open_tasks) {
     const prio = (t.properties?.priority as string) ?? 'normal'
     // v0.11 team-brains: show assignee handle when present (who owns this task).
-    const asg = t.properties?.assignee_id ? ` → ${t.properties.assignee_id as string}` : ''
+    const assignees = assigneesOf(t.properties?.assignee_ids)
+    const asg = assignees ? ` → ${assignees}` : ''
     // v0.15: the task's stage, when set — [prio·status·stage]
     const stage = t.properties?.stage ? `·${t.properties.stage as string}` : ''
     // the task's intent, when set — the why next to the what

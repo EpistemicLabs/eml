@@ -4,7 +4,7 @@ import {
   newInvite, openAccept, openJoin, openRecord, parseRelayFrame, sealHandle, sealOp, syncPath, wrapKey,
   type BrainKey, type ClientFrame, type DeviceCert, type Invite, type Provenance, type RelayFrame, type Role, type RotationAhead, type TeamOp,
 } from '@engramprotocol/protocol'
-import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, NO_ACTOR, type CommandMap, type CommandName, type Env } from '@engramprotocol/core'
+import { CURRENT_BRAIN_SCHEMA_VERSION, CommandError, NO_ACTOR, type CommandMap, type CommandName, type Env, type SpaceMember } from '@engramprotocol/core'
 import { Replica, type Outcome } from './replica'
 import type { StoredInvite, TeamFile } from './team-file'
 import { SharedWriteError, readOnly } from '../write'
@@ -303,6 +303,11 @@ export class Sync {
   }
 
   /** The brain as the host shows it (GET /team): state, the read-only text a write would get, its member and the member set. */
+  /** Who is in this shared brain, for what reads it as its users (core spacePeople): each member's handle and whether it is this device's. */
+  spaceMembers(): SpaceMember[] {
+    return this.snapshot().members.map(m => ({ handle: m.handle, self: m.self }))
+  }
+
   snapshot(): TeamSnapshot {
     const state = this.state
     const set = this.replica.members()

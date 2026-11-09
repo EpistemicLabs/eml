@@ -4,7 +4,7 @@ import {
 } from '../types'
 import type { LearningState } from '../learning'
 import { validateEngramType, validateFormat, validateNoTemplateLeak } from '../validate'
-import { ORIGINS, SEED_ORIGIN, validateFields, normalizeTimestampFields, fieldProblem, unknownFieldsError, isBlank } from '../fields'
+import { ORIGINS, SEED_ORIGIN, validateFields, normalizeTimestampFields, normalizeAssignees, fieldProblem, unknownFieldsError, isBlank } from '../fields'
 import { appendEntry } from '../entries'
 import { addDays } from '../env'
 import { renderLogContent, CONFLICT_TYPES, STORE_INPUT_KEYS, createInputKeys } from '../engrams'
@@ -84,6 +84,7 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   // user and sets agreed with their words (decision v0.19-seed-rules-agreement).
   validateFields(type, props, 'create', type === 'rule' && input.origin === SEED_ORIGIN ? ['agreed'] : [])
   normalizeTimestampFields(props)
+  normalizeAssignees(props)
 
   // --- universal rules ---
   if (type !== 'log' && isBlank(input.content)) throw new Error('Invalid engram: content must not be empty.')

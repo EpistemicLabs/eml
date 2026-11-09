@@ -139,7 +139,7 @@ export const TASK_INACTIVITY_DAYS = 30
 export interface TaskProperties {
   intent?: string                 // what will be different, for whom, once done, and how we'll notice
   due_date?: string               // ISO date
-  assignee_id?: string            // → agents.id; optional = unassigned
+  assignee_ids?: string[]         // handles of who should act (users and agents of the space); optional = unassigned
   priority?: TaskPriority         // execution urgency (≠ significance)
   context?: string                // short note on why
   blockers?: string[]
@@ -582,7 +582,7 @@ export interface EngramQuery {
   // v0.10.9 (audit C0): property-filters pushed into SQL as json_extract so the
   // LIMIT applies AFTER filtering. Previously the CLI filtered post-LIMIT, so a
   // match sorted past the limit was silently dropped (H1). Each maps to a
-  // properties key: due_before→$.due_date (<), assignee→$.assignee_id (=),
+  // properties key: due_before→$.due_date (<), assignee→$.assignee_ids (contains),
   // priority→$.priority (=), change_type→$.change_type (=).
   due_before?: string
   assignee?: string

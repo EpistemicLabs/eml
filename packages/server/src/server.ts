@@ -53,7 +53,8 @@
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
  * POST /tag, POST /subject, PUT /subject/:id, POST /entity, PUT /entity/:id.
  * Removed in v0.20 (410): POST /user, PUT /user/:id, POST /agent, PUT /agent/:id —
- * users and agents are objects (/object/user, /object/agent).
+ * users and agents are objects (/object/user, /object/agent). v0.21: a shared
+ * brain's users are its members and its agents the ones that write in it (read only).
  *
  * v0.20: every write route decodes its request into one command and runs it
  * with eml.apply(command, env) (core commands/); core validates, the routes
@@ -108,7 +109,7 @@ import {
 import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
-import { applyWrite, SharedWriteError, readOnly } from './write'
+import { applyWrite, SharedWriteError, readOnly, spaceMembers } from './write'
 import { InviteError, Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
@@ -521,6 +522,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         systemRules: ALL_RULES,
         ...(budget !== undefined && { budget }),
         ...(body.part !== undefined && { part: body.part as BootPart }),
+        // v0.21: a shared brain's boot names it as shared and lists its members
+        ...(sync !== undefined && { members: spaceMembers(sync) }),
       })
       return json(res, 200, result)
     }
@@ -902,9 +905,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
         // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
         const wanted = id ?? q.id
-        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind })
+        // v0.21: a shared brain's users are its members (core spacePeople)
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync) })
         if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
         return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
+      }
+      // v0.21: a shared brain holds no user or agent objects — its members join by invite, its agents are the ones that write in it
+      if ((object === 'user' || object === 'agent') && (method === 'POST' || method === 'PUT') && sync !== undefined) {
+        return json(res, 409, { error: `This is a shared brain: its users are its members, who join by invite, and its agents are the ones that write in it — ${object === 'user' ? 'a user' : 'an agent'} is not created or changed here.`, code: 'SHARED_BRAIN_MEMBERS' })
       }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)

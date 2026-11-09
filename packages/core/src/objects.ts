@@ -91,6 +91,54 @@ export function diffOf(before: Record<string, unknown>, after: Record<string, un
   return diff
 }
 
+/**
+ * v0.21: a member of a shared brain as its server knows it from the member
+ * set — its handle (null while this device cannot open it yet) and whether it
+ * is this device's own member. A shared brain holds no user objects: its
+ * users are its members.
+ */
+export interface SpaceMember {
+  handle: string | null
+  self: boolean
+}
+
+/** An agent that works in a brain: its object's fields, when it has one, and the handles it has written for. */
+export interface SpaceAgent {
+  id: string
+  name: string
+  works_for: string[]
+  [field: string]: unknown
+}
+
+/**
+ * Who works in a brain — what eml_read_object lists as users and agents and
+ * what a task's assignee_ids may name. A private brain: its user objects, and
+ * its agent objects with the agents that have written in it. A shared brain
+ * (`members` given): its members, and the agents that have written in it —
+ * each with the handles it wrote for.
+ */
+export function spacePeople(eml: EML, members?: SpaceMember[]): { users: Array<Record<string, unknown>>, agents: SpaceAgent[] } {
+  const users = members !== undefined
+    ? members.filter(m => m.handle !== null).map(m => ({ id: m.handle as string, name: m.handle as string, ...(m.self ? { self: true } : {}) }))
+    : eml.users.list().map(u => ({ ...u, engram_count: scopeCount(eml, `user.${u.id}`) }))
+  const agents = new Map<string, SpaceAgent>()
+  if (members === undefined) {
+    for (const a of eml.agents.list()) agents.set(a.id, { ...a, works_for: [], engram_count: scopeCount(eml, `agent.${a.id}`) })
+  }
+  for (const { agent, handle } of eml.engrams.writingAgents()) {
+    const a = agents.get(agent) ?? { id: agent, name: agent, works_for: [] }
+    if (!a.works_for.includes(handle)) a.works_for.push(handle)
+    agents.set(agent, a)
+  }
+  return { users, agents: [...agents.values()].sort((a, b) => a.id.localeCompare(b.id)) }
+}
+
+/** The handles a task's assignee_ids may name in a brain: its users and agents (spacePeople). */
+export function knownAssignees(eml: EML, members?: SpaceMember[]): Set<string> {
+  const { users, agents } = spacePeople(eml, members)
+  return new Set([...users.map(u => u.id as string), ...agents.map(a => a.id)])
+}
+
 /** How many engrams live in a project's / entity's scope. */
 function scopeCount(eml: EML, scope: string): number {
   return eml.engrams.countInScope(scope)
@@ -101,7 +149,7 @@ function scopeCount(eml: EML, scope: string): number {
  * or closed ones only with a status filter. With id: one object with all its
  * fields, or null.
  */
-export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string } = {}): unknown {
+export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[] } = {}): unknown {
   assertObject(object)
   // An entity list can be narrowed by kind (person · org · asset); the other objects have none.
   if (opts.kind !== undefined) {
@@ -120,14 +168,8 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
       }
       case 'tag': return eml.tags.get(slugifyTag(opts.id))
       case 'subject': return eml.subjects.get(opts.id)
-      case 'user': {
-        const u = eml.users.get(opts.id)
-        return u ? { ...u, engram_count: scopeCount(eml, `user.${u.id}`) } : null
-      }
-      case 'agent': {
-        const a = eml.agents.get(opts.id)
-        return a ? { ...a, engram_count: scopeCount(eml, `agent.${a.id}`) } : null
-      }
+      case 'user': return spacePeople(eml, opts.members).users.find(u => u.id === opts.id) ?? null
+      case 'agent': return spacePeople(eml, opts.members).agents.find(a => a.id === opts.id) ?? null
     }
   }
   const statuses: Record<ObjectKind, readonly string[]> = {
@@ -151,8 +193,8 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
     case 'subject':
       return eml.subjects.list((opts.status ?? 'active') as 'active')
     case 'user':
-      return eml.users.list().map(u => ({ ...u, engram_count: scopeCount(eml, `user.${u.id}`) }))
+      return spacePeople(eml, opts.members).users
     case 'agent':
-      return eml.agents.list().map(a => ({ ...a, engram_count: scopeCount(eml, `agent.${a.id}`) }))
+      return spacePeople(eml, opts.members).agents
   }
 }

@@ -177,8 +177,11 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
   // v0.11 team-brains: assignee filter exposed on /list (agent or user handle).
   describe('task assignee filter', () => {
     it('GET /list?type=task&assignee=<handle> returns only that handle\'s tasks', async () => {
+      for (const name of ['carol', 'dave']) {
+        await request('POST', `${baseUrl}/object/user`, { Authorization: `Bearer ${provB.tokenPlaintext}` }, JSON.stringify({ name }))
+      }
       const mkTask = (assignee: string, content: string) =>
-        create(provB.tokenPlaintext, validTask({ scope: 'global', content, properties: { assignee_id: assignee } }))
+        create(provB.tokenPlaintext, validTask({ scope: 'global', content, properties: { assignee_ids: [assignee] } }))
       await mkTask('carol', 'carol task one')
       await mkTask('dave', 'dave task')
       await mkTask('carol', 'carol task two')

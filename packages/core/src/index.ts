@@ -204,7 +204,7 @@ export { RelayOrderError, type RelayedEntry } from './log/log'
 export type { Taken } from './log/apply-op'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
-export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'
+export { readObject, spacePeople, knownAssignees, OBJECT_KINDS, type ObjectKind, type SpaceMember, type SpaceAgent } from './objects'
 export {
   CommandError, COMMAND_NAMES, isValidationMessage,
   type Command, type CommandMap, type CommandName, type CommandErrorCode,

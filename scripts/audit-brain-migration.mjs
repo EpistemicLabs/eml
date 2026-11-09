@@ -28,7 +28,7 @@ const Database = require('better-sqlite3')
 const { EML, CURRENT_BRAIN_SCHEMA_VERSION } = require(join(root, 'packages', 'core', 'dist', 'index.js'))
 // the op log's pieces are not in core's index (only this script and the tests
 // use them; rebuild needs the EML class, so an index export would be a require cycle)
-const { GENESIS_PREV_HASH, chainHash, sha256Hex } = require(join(root, 'packages', 'core', 'dist', 'log', 'op.js'))
+const { GENESIS_PREV_HASH, chainHash, sha256Hex } = require(join(root, 'packages', 'protocol', 'dist', 'log.js'))
 const { stateDump, stateHash, decodeSnapshot } = require(join(root, 'packages', 'core', 'dist', 'log', 'snapshot.js'))
 const { verify } = require(join(root, 'packages', 'core', 'dist', 'log', 'rebuild.js'))
 
@@ -73,15 +73,32 @@ function stats(file) {
       formats,
       integrity: db.pragma('integrity_check', { simple: true }),
       fkViolations: db.pragma('foreign_key_check').length,
-      stateHash: stateHash(withoutOrd(stateDump(db))),
+      comparableHash: stateHash(comparable(stateDump(db), db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get().v === 20)),
       sizes: sizes(db, file),
     }
   } finally { db.close() }
 }
 
 /** The state without ord (schema 21 adds it to engrams, relations and entries; every other value stays). */
-function withoutOrd(dump) {
-  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord, ...row }) => row)]))
+/**
+ * The state as the step to 21 is compared on: without ord and the columns 21
+ * adds empty (agent, source_brain, target_brain), engram properties parsed —
+ * and, for a brain at 20, a task's one assignee as the list the step makes of it.
+ */
+function comparable(dump, from20) {
+  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord, ...row }) => {
+    for (const c of ['agent', 'source_brain', 'target_brain']) if (row[c] === null) delete row[c]
+    if (t === 'engrams' && typeof row.properties === 'string') {
+      const props = JSON.parse(row.properties)
+      if (from20 && 'assignee_id' in props) {
+        const a = props.assignee_id
+        delete props.assignee_id
+        if (row.type === 'task' && typeof a === 'string' && a.trim() !== '') props.assignee_ids = [a.trim()]
+      }
+      row.properties = props
+    }
+    return row
+  })]))
 }
 
 /** Schema 21: ord is filled on engrams, relations and entries — 1…n, unique, in the rows' rowid order. */
@@ -172,8 +189,8 @@ try {
     if (f.rows > 0 && (f.distinct_ord !== f.rows || f.min_ord !== 1 || f.max_ord !== f.rows)) problems.push(`${t}.ord is not 1…${f.rows} without gaps or repeats`)
     if (f.out_of_rowid_order > 0) problems.push(`${t}.ord: ${f.out_of_rowid_order} rows out of rowid order`)
   }
-  // from 20, the one step to 21 only adds the log and ord: the state without ord must be unchanged
-  if (before.schema === 20 && after.stateHash !== before.stateHash) problems.push('the state changed, but the step to 21 only adds the op log')
+  // from 20, the one step to 21 adds the log and ord and turns a task's assignee into a list: nothing else may change
+  if (before.schema === 20 && after.comparableHash !== before.comparableHash) problems.push('the state changed beyond what the step to 21 does (the op log, ord, assignee_ids)')
 
   console.log(JSON.stringify({ source, before, after, ord, problems }, null, 2))
   if (problems.length > 0) {

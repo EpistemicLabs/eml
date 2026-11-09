@@ -7,7 +7,7 @@ import { fingerprint, inviteLink, inviteNotice, joinAccept, newDeviceKeys, newIn
 import { CURRENT_BRAIN_SCHEMA_VERSION, EML, initControlDatabase, initDatabase, issueToken, provisionUser } from '@engramprotocol/core'
 import { Sync } from '../src/sync/sync'
 import { joinTeamBrain } from '../src/sync/join'
-import { validNote } from '../../core/tests/fixtures'
+import { validNote, validTask } from '../../core/tests/fixtures'
 import { teamFilePath, writeTeamFile } from '../src/sync/team-file'
 import { FakeRelay, GRANT } from './fake-relay'
 import { request, waitForReady, flat } from './http-helpers'
@@ -56,7 +56,7 @@ describe('a shared brain through the server', () => {
       tokens[id] = issueToken(control, { userId: 'u1', brainId: id, name: 'juno' }).plaintext
     }
     // a private brain, provisioned as usual
-    const own = provisionUser({ email: 'juno@example.com', agentId: 'pilot', userId: 'juno', control, dataDir: tmpDir })
+    const own = provisionUser({ email: 'juno@example.com', agentId: 'pilot', userId: 'juno', control, dataDir: tmpDir, tokenName: 'juno' })
     tokens[OTHER] = own.tokenPlaintext
     control.close()
 
@@ -300,6 +300,50 @@ describe('a shared brain through the server', () => {
       lasse.close()
     }
   }, 30000)
+
+  it('who works in the shared brain: its members as users, the agents that wrote in it, both in the boot; assignee_ids names only them', async () => {
+    const asPilot = { Authorization: `Bearer ${tokens[BRAIN]}`, 'x-eml-agent': 'pilot' }
+    const task = (assignee_ids: string[]) => request('POST', `${baseUrl}/engram/task`, asPilot, JSON.stringify(flat(validTask({ title: `t-for-${assignee_ids.join('-')}`, properties: { assignee_ids } })).body))
+    expect(await task(['lasse'])).toMatchObject({ status: 201, body: { properties: { assignee_ids: ['lasse'] }, ingested_by: 'juno' } })
+    const typo = await task(['lase', 'juno'])
+    expect(typo).toMatchObject({ status: 400 })
+    expect(typo.body.error).toBe('Invalid engram: assignee_ids names "lase", who does not work in this brain. Known handles: juno, lasse, pilot (eml_read_object object=user · agent).')
+
+    expect((await get(BRAIN, '/object/user')).body).toEqual({ count: 2, objects: [{ id: 'juno', name: 'juno', self: true }, { id: 'lasse', name: 'lasse' }] })
+    expect((await get(BRAIN, '/object/user/lasse')).body).toEqual({ object: { id: 'lasse', name: 'lasse' } })
+    expect((await get(BRAIN, '/object/agent')).body).toEqual({ count: 1, objects: [{ id: 'pilot', name: 'pilot', works_for: ['juno'] }] })
+    expect(await post(BRAIN, '/object/user', { name: 'sam' })).toMatchObject({ status: 409, body: { code: 'SHARED_BRAIN_MEMBERS' } })
+    expect((await request('PUT', `${baseUrl}/object/agent/pilot`, { Authorization: `Bearer ${tokens[BRAIN]}` }, JSON.stringify({ name: 'P' }))).status).toBe(409)
+
+    const boot = await post(BRAIN, '/boot', { part: 'system', agent: 'pilot' })
+    expect(boot.body.markdown).toContain([
+      '## Shared space',
+      'This space is shared: every member reads and writes the same brain, and what you write here they see.',
+      'Members:',
+      '- juno · agents: pilot (you)',
+      '- lasse',
+      "Assign work with assignee_ids (a member's or an agent's handle); eml_read_object object=user · agent lists them.",
+    ].join('\n'))
+    expect((await post(OTHER, '/boot', { part: 'system' })).body.markdown).not.toContain('## Shared space')
+  })
+
+  it('who works in a private brain: its user and agent objects; assignee_ids names only them, the writer or its agent', async () => {
+    expect((await get(OTHER, '/object/user')).body.objects.map((u: { id: string }) => u.id)).toEqual(['juno'])
+    expect((await get(OTHER, '/object/agent')).body.objects.map((a: { id: string, works_for: string[] }) => [a.id, a.works_for])).toEqual([['pilot', []]])
+    const task = (assignee_ids: string[], agent?: string) => request('POST', `${baseUrl}/engram/task`,
+      { Authorization: `Bearer ${tokens[OTHER]}`, ...(agent ? { 'x-eml-agent': agent } : {}) },
+      JSON.stringify(flat(validTask({ title: `p-for-${assignee_ids.join('-')}`, properties: { assignee_ids } })).body))
+    expect((await task(['juno', 'pilot'])).status).toBe(201)
+    expect((await task(['scout'], 'scout')).status).toBe(201)
+    expect((await get(OTHER, '/object/agent')).body.objects.map((a: { id: string, works_for: string[] }) => [a.id, a.works_for])).toEqual([['pilot', []], ['scout', ['juno']]])
+    const unknown = await task(['lasse'])
+    expect(unknown.status).toBe(400)
+    expect(unknown.body.error).toBe('Invalid engram: assignee_ids names "lasse", who does not work in this brain. Known handles: juno, pilot, scout (eml_read_object object=user · agent).')
+    const id = (await task(['juno'])).body.id
+    expect((await post(OTHER, `/task/${id}/track`, { assignee_ids: ['nobody'] })).status).toBe(400)
+    expect((await post(OTHER, `/task/${id}/track`, { assignee_ids: ['pilot', 'pilot'] })).body.properties.assignee_ids).toEqual(['pilot'])
+    expect((await post(OTHER, `/task/${id}/track`, { assignee_ids: [] })).body.properties.assignee_ids).toBeUndefined()
+  })
 
   it('cancels an invite: gone from GET /team, a second cancel is 404', async () => {
     const invited = await post(BRAIN, '/team/invites', {})
