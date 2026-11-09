@@ -94,69 +94,73 @@ export default function AgentTab() {
             ariaLabel="Agents"
           />
           {agent && (
-            <SettingsCard divided className="rounded-tl-none">
-              <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
-                <span className="block font-mono text-xs text-foreground">{agent.id}</span>
-              </SettingsRow>
-              <div className="px-4 py-4">
-                <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
-                {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
-                <ul className="mt-1 space-y-0.5">
-                  {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
-                </ul>
-              </div>
-            </SettingsCard>
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/8 bg-foreground/4 p-4">
+            <SettingsSection title="Details">
+              <SettingsCard divided>
+                <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
+                  <span className="block font-mono text-xs text-foreground">{agent.id}</span>
+                </SettingsRow>
+                <div className="px-4 py-4">
+                  <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
+                  {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
+                  <ul className="mt-1 space-y-0.5">
+                    {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
+                  </ul>
+                </div>
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
+              <SettingsCard>
+                <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                  {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
+                </div>
+                {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
+                  <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                )}
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Always-on rules"
+              description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
+            >
+              <SettingsCard divided>
+                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+                {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
+                {data?.rules.map((rule) => (
+                  <details key={rule.id} className="group px-4 py-3">
+                    <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
+                      <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
+                      {ruleLabel(rule, agent?.id ?? '')}
+                    </summary>
+                    <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
+                    {rule.content.length > RULE_MAX_CHARS && (
+                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
+                    )}
+                  </details>
+                ))}
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
+              <SettingsCard divided>
+                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+                {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
+                {data?.people.map((profile) => (
+                  <div key={profile.id} className="px-4 py-3">
+                    <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
+                    <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
+                    {profile.content.length > PROFILE_MAX_CHARS && (
+                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                    )}
+                  </div>
+                ))}
+              </SettingsCard>
+            </SettingsSection>
+          </div>
           )}
         </div>
-      </SettingsSection>
-
-      <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
-        <SettingsCard>
-          <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-            {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
-          </div>
-          {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
-            <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
-          )}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Always-on rules"
-        description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
-      >
-        <SettingsCard divided>
-          {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-          {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
-          {data?.rules.map((rule) => (
-            <details key={rule.id} className="group px-4 py-3">
-              <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-                <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
-                {ruleLabel(rule, agent?.id ?? '')}
-              </summary>
-              <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
-              {rule.content.length > RULE_MAX_CHARS && (
-                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
-              )}
-            </details>
-          ))}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
-        <SettingsCard divided>
-          {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-          {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
-          {data?.people.map((profile) => (
-            <div key={profile.id} className="px-4 py-3">
-              <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
-              <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
-              {profile.content.length > PROFILE_MAX_CHARS && (
-                <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
-              )}
-            </div>
-          ))}
-        </SettingsCard>
       </SettingsSection>
     </div>
   );
