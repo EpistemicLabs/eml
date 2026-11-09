@@ -56,7 +56,11 @@ import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-br
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
 import { createCodexProvider } from './infrastructure/providers/codex/index.js'
-import { noNotifier, type Notifier } from './notifications.js'
+import type { Notifier } from './notifications.js'
+import { PushStore } from './push-store.js'
+import { PushNotifier, notifySessions } from './application/push-notifier.js'
+import { turnNotice } from './application/turn-notice.js'
+import { sendPush } from './infrastructure/push/web-push.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -290,8 +294,34 @@ async function main() {
   })
   // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
   const jobStore = new JobStore()
-  // What tells the user outside the cockpit: web push joins here (cockpit-web-push-plan).
-  const notifier: Notifier = noNotifier
+  // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
+  const pushStore = new PushStore()
+  const pushNotifier = new PushNotifier({
+    devices: () => pushStore.devices(),
+    // The VAPID subject is the cockpit address the device subscribed on.
+    send: (device, payload, options) => sendPush(device, payload, pushStore.vapid(), device.origin, { ttlSeconds: 12 * 3600, ...options }),
+    forget: (endpoint) => { pushStore.unsubscribe(endpoint) },
+    log,
+    now: () => Date.now(),
+  })
+  const notifier: Notifier = pushNotifier
+  const projectName = (spaceId: string | null | undefined, projectId: string | null | undefined) =>
+    projectId ? spaces.resolve(spaceId ?? null).registry.get(projectId)?.displayName : undefined
+  // Sessions tell what the review section shows: Needs you, Check this, a new result.
+  notifySessions({
+    turns, notifier,
+    facts: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry) return null
+      const state = turns.get(sessionId)?.state ?? 'idle'
+      const notice = turnNotice({ ledger, turns }, { sessionId, state, since: '' })
+      return {
+        sessionId, spaceId: entry.spaceId ?? null, jobId: entry.jobId ?? null, title: notice.title,
+        project: projectName(entry.spaceId, entry.projectId) ?? null, state, attention: entry.attention, resultAt: entry.resultAt,
+        ...(notice.batch ? { batch: notice.batch } : {}), ...(notice.silent ? { silent: true } : {}),
+      }
+    },
+  })
   const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
@@ -354,8 +384,10 @@ async function main() {
       return null
     },
     notify: (input) => {
-      log(`[jobs] tell: ${input.title}: ${input.body}`)
-      notifier.notify(input)
+      log(`[jobs] tell: job=${input.jobId?.slice(0, 8) ?? '-'} kind=${input.kind}`)
+      const entry = input.sessionId ? ledger.get(input.sessionId) : undefined
+      const project = input.project ?? projectName(entry?.spaceId, entry?.projectId)
+      notifier.notify(project ? { ...input, project } : input)
     },
     // In the review section, as "Needs you": the job's own session if it has one, else whoever made it.
     flag: (job, text) => {
@@ -399,6 +431,7 @@ async function main() {
         },
       },
       channelBridge: bridgeFiles(),
+      push: { store: pushStore, notifier: pushNotifier },
       jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
     },
     origins,
