@@ -9,6 +9,7 @@ import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
+import { turnNotice } from './application/turn-notice.js'
 import { needsAnswer } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
 import { sessionAddress } from './session-address.js'
@@ -176,17 +177,6 @@ function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): v
 }
 
 // ── Project + session views ───────────────────────
-/** What a notification about this change says: a batch of workers speaks up once, when its last one finishes. */
-function turnNotice(deps: HostDeps, event: TurnEvent): { title: string | null; silent?: true; batch?: number } {
-  const ledger = deps.bridge.ledger
-  const entry = ledger.get(event.sessionId)
-  const title = entry?.title ?? entry?.agentTitle ?? null
-  if (event.state !== 'done' || !entry?.parentSessionId) return { title }
-  const batch = ledger.list().filter((other) => other.parentSessionId === entry.parentSessionId && !other.archivedAt)
-  if (batch.some((other) => other.sessionId !== event.sessionId && deps.turns.get(other.sessionId)?.state === 'working')) return { title, silent: true }
-  return { title, batch: batch.length }
-}
-
 /** What the sidebar and the review pane do to a session. All are the page's own: the same-origin guard holds them. */
 async function handleSessionActions(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps, resource: string | undefined, id: string | undefined, action: string | undefined, method: string): Promise<boolean> {
   if (resource !== 'sessions' || method !== 'POST' || !id) return false
@@ -835,7 +825,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       res.write('retry: 2000\n\n')
       send('snapshot', deps.turns.snapshot())
-      const onTurn = (event: TurnEvent) => send('turn', { ...event, ...turnNotice(deps, event) })
+      const onTurn = (event: TurnEvent) => send('turn', { ...event, ...turnNotice({ ledger: deps.bridge.ledger, turns: deps.turns }, event) })
       deps.turns.on('turn', onTurn)
       const detachSpawns = attachSpawnEvents(deps.spawns, send)
       // Note changes of every space, each tagged with its space (null = main,
