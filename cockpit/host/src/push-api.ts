@@ -27,30 +27,38 @@ const isHttpsUrl = (value: unknown): value is string => {
   try { return new URL(value).protocol === 'https:' } catch { return false }
 }
 
+/** The host could not write push.json: no key or device it would lose at the next restart. */
+function unwritable(res: http.ServerResponse, json: Json): void {
+  json(res, 503, { error: { code: 'STORE_UNWRITABLE', message: 'The cockpit could not save its push settings', retry: true } })
+}
+
 export async function handlePushApi(
   req: http.IncomingMessage, res: http.ServerResponse, deps: PushApiDeps, url: URL, method: string, json: Json, readJson: ReadJson,
 ): Promise<boolean> {
   if (url.pathname === '/api/push' && method === 'GET') {
+    const keys = deps.store.vapid()
+    if (!keys) { unwritable(res, json); return true }
     const endpoint = url.searchParams.get('endpoint')
-    json(res, 200, { publicKey: deps.store.vapid().publicKey, subscribed: !!endpoint && deps.store.devices().some((entry) => entry.endpoint === endpoint) })
+    json(res, 200, { publicKey: keys.publicKey, subscribed: !!endpoint && deps.store.devices().some((entry) => entry.endpoint === endpoint) })
     return true
   }
   if (url.pathname === '/api/push/subscription' && method === 'PUT') {
     const body = await readJson(req)
     const keys = body.keys as { p256dh?: unknown; auth?: unknown } | undefined
     if (!isHttpsUrl(body.endpoint) || !isText(keys?.p256dh) || !isText(keys?.auth)) {
-      json(res, 400, { error: { code: 'INVALID_SUBSCRIPTION', message: 'An https endpoint and the keys p256dh and auth are required' } })
+      json(res, 400, { error: { code: 'INVALID_SUBSCRIPTION', message: 'An https endpoint and the keys p256dh and auth are required', retry: false } })
       return true
     }
     const origin = req.headers.origin
     if (!isText(origin)) {
-      json(res, 400, { error: { code: 'NO_ORIGIN', message: 'Subscribe from the cockpit page' } })
+      json(res, 400, { error: { code: 'NO_ORIGIN', message: 'Subscribe from the cockpit page', retry: false } })
       return true
     }
     const device = deps.store.subscribe({
       endpoint: body.endpoint, p256dh: keys.p256dh, auth: keys.auth, origin, label: typeof body.label === 'string' ? body.label.slice(0, 60) : '',
     })
-    json(res, 200, { id: device.id })
+    if (!device) unwritable(res, json)
+    else json(res, 200, { id: device.id })
     return true
   }
   if (url.pathname === '/api/push/subscription' && method === 'DELETE') {
@@ -64,6 +72,7 @@ export async function handlePushApi(
     if (outcome === 'sent') json(res, 200, { outcome })
     else if (outcome === 'unknown') json(res, 404, { error: { code: 'UNKNOWN_DEVICE', message: 'This device is not subscribed', retry: false } })
     else if (outcome === 'gone') json(res, 410, { error: { code: 'GONE', message: 'The push service no longer knows this device; subscribe again', retry: false } })
+    else if (outcome === 'refused') json(res, 502, { error: { code: 'PUSH_REJECTED', message: 'The push service turned the message down; sending it again will not help', retry: false } })
     else json(res, 502, { error: { code: 'PUSH_FAILED', message: 'The push service did not take the message', retry: true } })
     return true
   }

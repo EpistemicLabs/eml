@@ -62,7 +62,15 @@ describe('PushNotifier', () => {
     expect(forgotten).toEqual(['https://push.example/mac'])
     expect(lines.join('\n')).not.toContain('Which one?')
     expect(lines.join('\n')).not.toContain('Push plan')
-    expect(lines.at(-1)).toMatch(/kind=question .*sent=1 gone=1 failed=0/)
+    expect(lines.at(-1)).toMatch(/kind=question .*sent=1 gone=1 failed=0 refused=0/)
+  })
+
+  it('tells a refusal by the push service apart from a failure a retry may fix', async () => {
+    const { notifier, lines } = setup((target) => (target.id === 'mac' ? 403 : 503))
+    expect(await notifier.deliver(input())).toEqual({ sent: 0, gone: 0, failed: 1, refused: 1 })
+    expect(await notifier.test('https://push.example/mac')).toBe('refused')
+    expect(await notifier.test('https://push.example/phone')).toBe('failed')
+    expect(lines.join('\n')).toMatch(/status=403/)
   })
 
   it('never throws into the caller when sending fails', async () => {
@@ -70,7 +78,7 @@ describe('PushNotifier', () => {
       devices: () => [device('phone')], send: async () => { throw new Error('offline') }, forget: () => {}, log: () => {}, now: () => 0,
     })
     expect(() => notifier.notify(input())).not.toThrow()
-    await expect(notifier.deliver(input({ sessionId: 's2' }))).resolves.toEqual({ sent: 0, gone: 0, failed: 1 })
+    await expect(notifier.deliver(input({ sessionId: 's2' }))).resolves.toEqual({ sent: 0, gone: 0, failed: 1, refused: 0 })
   })
 
   it('sends only to the device in use while the user works on one, and to all again once it went quiet', async () => {

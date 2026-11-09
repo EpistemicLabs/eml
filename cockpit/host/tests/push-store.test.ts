@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PushStore } from '../src/push-store.js'
@@ -37,11 +37,37 @@ describe('PushStore', () => {
     expect(new PushStore(file).devices().map((entry) => entry.endpoint)).toEqual(['https://push.example/b'])
   })
 
-  it('reads a file it does not understand as empty, and ignores fields it does not know', () => {
-    const broken = fileIn()
-    writeFileSync(broken, '{"version": 7}')
-    expect(new PushStore(broken).devices()).toEqual([])
+  it('moves a file it does not understand aside instead of writing over it', () => {
+    const later = fileIn()
+    writeFileSync(later, '{"version": 7}')
+    const store = new PushStore(later, () => ({ publicKey: 'new-public', privateKey: 'new-private' }))
+    expect(store.devices()).toEqual([])
+    expect(readFileSync(`${later}.unreadable`, 'utf8')).toBe('{"version": 7}')
+    store.vapid()
+    expect(JSON.parse(readFileSync(later, 'utf8')).version).toBe(1)
 
+    const garbled = fileIn()
+    writeFileSync(garbled, '{not json')
+    new PushStore(garbled)
+    expect(existsSync(`${garbled}.unreadable`)).toBe(true)
+  })
+
+  it('hands out no key and keeps no device it could not write down', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'push-store-'))
+    const locked = join(dir, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o500)
+    try {
+      const store = new PushStore(join(locked, 'push.json'))
+      expect(store.vapid()).toBeNull()
+      expect(store.subscribe(device('https://push.example/a'))).toBeNull()
+      expect(store.devices()).toEqual([])
+    } finally {
+      chmodSync(locked, 0o700)
+    }
+  })
+
+  it('ignores fields it does not know', () => {
     const extra = fileIn()
     writeFileSync(extra, JSON.stringify({ version: 1, vapid: null, devices: [{ ...device('https://push.example/a'), id: 'd1', createdAt: '2026-11-09T00:00:00.000Z', later: true }, { endpoint: 42 }] }))
     expect(new PushStore(extra).devices()).toEqual([{ ...device('https://push.example/a'), id: 'd1', createdAt: '2026-11-09T00:00:00.000Z' }])

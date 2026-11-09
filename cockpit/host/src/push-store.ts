@@ -46,17 +46,31 @@ function readDevice(value: unknown): PushDevice | null {
   }
 }
 
+/**
+ * A file that is not there starts empty. One this version cannot read (a later
+ * version, a broken write) is moved aside as push.json.unreadable rather than
+ * written over: its devices can still be recovered by hand.
+ */
 function load(file: string): PushFile {
+  let text: string
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<PushFile>
-    if (parsed.version !== 1) return empty()
+    text = fs.readFileSync(file, 'utf8')
+  } catch {
+    return empty()
+  }
+  let parsed: Partial<PushFile> | null = null
+  try { parsed = JSON.parse(text) as Partial<PushFile> } catch { /* reported below */ }
+  if (parsed?.version === 1) {
     const vapid = parsed.vapid && isText(parsed.vapid.publicKey) && isText(parsed.vapid.privateKey)
       ? { publicKey: parsed.vapid.publicKey, privateKey: parsed.vapid.privateKey } : null
     const devices = Array.isArray(parsed.devices) ? parsed.devices.map(readDevice).filter((entry): entry is PushDevice => entry !== null) : []
     return { version: 1, vapid, devices }
-  } catch {
-    return empty()
   }
+  // The reason names no content: the file holds keys and device addresses.
+  const reason = parsed ? `version ${String(parsed.version)}` : 'not JSON'
+  try { fs.renameSync(file, `${file}.unreadable`) } catch { /* kept where it is; the next write replaces it */ }
+  process.stderr.write(`[push] ${path.basename(file)} unreadable (${reason}), moved aside; starting without devices\n`)
+  return empty()
 }
 
 export class PushStore {
@@ -66,45 +80,47 @@ export class PushStore {
     this.data = load(file)
   }
 
-  /** The server's key pair; made and kept on the first call. */
-  vapid(): VapidKeys {
-    if (!this.data.vapid) {
-      this.data.vapid = this.generate()
-      this.persist()
-    }
-    return this.data.vapid
+  /** The server's key pair, made on the first call; null while it cannot be written down (a key lost at restart would orphan every device). */
+  vapid(): VapidKeys | null {
+    if (this.data.vapid) return this.data.vapid
+    const keys = this.generate()
+    if (!this.persist({ ...this.data, vapid: keys })) return null
+    return keys
   }
 
   devices(): PushDevice[] {
     return this.data.devices
   }
 
-  /** One entry per endpoint: a browser that subscribes again replaces its keys. */
-  subscribe(input: PushDeviceInput): PushDevice {
+  /** One entry per endpoint: a browser that subscribes again replaces its keys. Null when it could not be written down. */
+  subscribe(input: PushDeviceInput): PushDevice | null {
     const known = this.data.devices.find((entry) => entry.endpoint === input.endpoint)
     const device: PushDevice = { ...input, id: known?.id ?? randomUUID(), createdAt: known?.createdAt ?? new Date().toISOString() }
-    this.data.devices = [...this.data.devices.filter((entry) => entry.endpoint !== input.endpoint), device]
-    this.persist()
-    return device
+    const devices = [...this.data.devices.filter((entry) => entry.endpoint !== input.endpoint), device]
+    return this.persist({ ...this.data, devices }) ? device : null
   }
 
   unsubscribe(endpoint: string): boolean {
-    const before = this.data.devices.length
-    this.data.devices = this.data.devices.filter((entry) => entry.endpoint !== endpoint)
-    if (this.data.devices.length === before) return false
-    this.persist()
+    const devices = this.data.devices.filter((entry) => entry.endpoint !== endpoint)
+    if (devices.length === this.data.devices.length) return false
+    // Gone from the list even if the file keeps it: the push service no longer takes it.
+    if (!this.persist({ ...this.data, devices })) this.data = { ...this.data, devices }
     return true
   }
 
-  private persist(): void {
+  /** Writes the new state and takes it on only once it is on disk. */
+  private persist(next: PushFile): boolean {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 })
       const tmp = `${this.file}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { mode: 0o600 })
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 })
       fs.renameSync(tmp, this.file)
       fs.chmodSync(this.file, 0o600)
+      this.data = next
+      return true
     } catch (err) {
       process.stderr.write(`[push] persist failed: ${(err as Error).message}\n`)
+      return false
     }
   }
 }

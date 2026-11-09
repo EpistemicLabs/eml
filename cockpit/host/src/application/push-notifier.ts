@@ -16,6 +16,9 @@ export interface PushNotifierDeps {
   now(): number
 }
 
+/** sent: taken · gone: the device unsubscribed · refused: the push service turned the message down · failed: a retry may help. */
+export type SendOutcome = 'sent' | 'gone' | 'refused' | 'failed'
+
 /** The user has that session in front of them: a push would only repeat what they see. */
 const WATCHING_MS = 60_000
 /** A job's notice and its session's own state often say the same thing moments apart. */
@@ -54,9 +57,9 @@ export class PushNotifier implements Notifier {
     void this.deliver(input).catch((err: unknown) => this.deps.log(`[push] delivery failed: ${(err as Error).message}`))
   }
 
-  async deliver(input: NotificationInput): Promise<{ sent: number; gone: number; failed: number }> {
+  async deliver(input: NotificationInput): Promise<{ sent: number; gone: number; failed: number; refused: number }> {
     const now = this.deps.now()
-    const result = { sent: 0, gone: 0, failed: 0 }
+    const result = { sent: 0, gone: 0, failed: 0, refused: 0 }
     if (input.sessionId && now - (this.seen.get(input.sessionId) ?? -Infinity) < WATCHING_MS) return result
     const repeat = `${input.sessionId ?? input.jobId ?? ''}:${input.kind}`
     if (now - (this.told.get(repeat) ?? -Infinity) < REPEAT_MS) return result
@@ -70,12 +73,12 @@ export class PushNotifier implements Notifier {
       const outcome = await this.sendOne(device, input, urgency)
       result[outcome] += 1
     }))
-    this.deps.log(`[push] kind=${input.kind} session=${input.sessionId?.slice(0, 8) ?? '-'} job=${input.jobId?.slice(0, 8) ?? '-'} sent=${result.sent} gone=${result.gone} failed=${result.failed}`)
+    this.deps.log(`[push] kind=${input.kind} session=${input.sessionId?.slice(0, 8) ?? '-'} job=${input.jobId?.slice(0, 8) ?? '-'} sent=${result.sent} gone=${result.gone} failed=${result.failed} refused=${result.refused}`)
     return result
   }
 
   /** "Send test notification" in Settings: to the device that asked, nothing else. */
-  async test(endpoint: string): Promise<'sent' | 'gone' | 'failed' | 'unknown'> {
+  async test(endpoint: string): Promise<SendOutcome | 'unknown'> {
     const device = this.deps.devices().find((entry) => entry.endpoint === endpoint)
     if (!device) return 'unknown'
     const outcome = await this.sendOne(device, { kind: 'done', title: 'Test', body: 'Notifications from the cockpit reach this device.', jobId: null, sessionId: null, spaceId: null }, 'normal')
@@ -83,7 +86,7 @@ export class PushNotifier implements Notifier {
     return outcome
   }
 
-  private async sendOne(device: PushDevice, input: NotificationInput, urgency: PushUrgency): Promise<'sent' | 'gone' | 'failed'> {
+  private async sendOne(device: PushDevice, input: NotificationInput, urgency: PushUrgency): Promise<SendOutcome> {
     try {
       const message = pushMessage(input, device.origin)
       // A newer message about the same session replaces one the push service still holds for an offline device.
@@ -95,7 +98,8 @@ export class PushNotifier implements Notifier {
       }
       if (status >= 200 && status < 300) return 'sent'
       this.deps.log(`[push] device=${device.id.slice(0, 8)} status=${status}`)
-      return 'failed'
+      // The push service turned the message itself down (its token, its size): sending it again changes nothing.
+      return status >= 400 && status < 500 && status !== 429 ? 'refused' : 'failed'
     } catch (err) {
       this.deps.log(`[push] device=${device.id.slice(0, 8)} error=${(err as Error).name}`)
       return 'failed'

@@ -60,7 +60,7 @@ import type { Notifier } from './notifications.js'
 import { PushStore } from './push-store.js'
 import { PushNotifier, notifySessions } from './application/push-notifier.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
-import { sendPush } from './infrastructure/push/web-push.js'
+import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -298,8 +298,11 @@ async function main() {
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({
     devices: () => pushStore.devices(),
-    // The VAPID subject is the cockpit address the device subscribed on.
-    send: (device, payload, options) => sendPush(device, payload, pushStore.vapid(), device.origin, { ttlSeconds: 12 * 3600, ...options }),
+    send: (device, payload, options) => {
+      const keys = pushStore.vapid()
+      if (!keys) throw new Error('push key not stored')
+      return sendPush(device, payload, keys, vapidSubject(device.origin), { ttlSeconds: 12 * 3600, ...options })
+    },
     forget: (endpoint) => { pushStore.unsubscribe(endpoint) },
     log,
     now: () => Date.now(),

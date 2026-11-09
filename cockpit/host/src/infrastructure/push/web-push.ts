@@ -62,6 +62,11 @@ export function generateVapidKeys(): VapidKeys {
   return { publicKey: raw.toString('base64url'), privateKey: jwk.d! }
 }
 
+/** Where the cockpit can be reached about its pushes: its own https address, else the project's page (RFC 8292 wants an https or mailto contact). */
+export function vapidSubject(origin: string): string {
+  return origin.startsWith('https://') ? origin : 'https://github.com/EpistemicLabs/eml'
+}
+
 /** Twelve hours: RFC 8292 caps a token at 24. */
 const TOKEN_LIFETIME_S = 12 * 3600
 

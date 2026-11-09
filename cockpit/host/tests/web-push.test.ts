@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createPublicKey, verify } from 'node:crypto'
-import { encryptPayload, generateVapidKeys, sendPush, vapidAuthorization } from '../src/infrastructure/push/web-push.js'
+import { encryptPayload, generateVapidKeys, sendPush, vapidAuthorization, vapidSubject } from '../src/infrastructure/push/web-push.js'
 
 const b64 = (text: string) => Buffer.from(text.replace(/\s+/g, ''), 'base64url')
 
@@ -72,5 +72,12 @@ describe('sendPush', () => {
     } finally {
       await new Promise<void>((resolve) => service.close(() => resolve()))
     }
+  })
+})
+
+describe('vapidSubject', () => {
+  it('names the cockpit by its https address, and by the project page where it has none', () => {
+    expect(vapidSubject('https://cockpit.example:8443')).toBe('https://cockpit.example:8443')
+    expect(vapidSubject('http://localhost:4317')).toBe('https://github.com/EpistemicLabs/eml')
   })
 })
