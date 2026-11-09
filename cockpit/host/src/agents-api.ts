@@ -3,6 +3,7 @@ import type { AgentBrains } from './agents.js'
 import type { BrainSpaces } from './brain-space.js'
 import { readBrainInfo, revealBrainFile, type BrainInfo } from './brain-info.js'
 import { HANDLE, readCockpitConfig, updateCockpitConfig } from './config.js'
+import { AGENT_BRAIN_ROUTES, isPageRoute, NOT_PASSED } from './page-brain-routes.js'
 
 /**
  * The agents of this home for the UI (Settings › Agents, Settings › Spaces):
@@ -57,6 +58,7 @@ export async function handleAgentsApi(
     if (method !== 'GET') { json(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'An agent brain is read here; the agent writes it in a session.' } }); return true }
     const agent = deps.agents.get(decodeURIComponent(brain[1]))
     if (!agent) { json(res, 404, { error: { code: 'NO_SUCH_AGENT', message: 'No such agent' } }); return true }
+    if (!isPageRoute(AGENT_BRAIN_ROUTES, method, brain[2] || '/')) { json(res, 403, { error: NOT_PASSED }); return true }
     const query = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?')) : ''
     const rel = `${brain[2] || '/'}${query}`
     try {
