@@ -94,6 +94,8 @@ interface MovePlan {
   external_refs: unknown[]
   incoming_refs: unknown[]
   collisions: string[]
+  /** The import of this exact set, in the target already: an earlier run stopped before its move_out, and the move only finishes it. */
+  resume: { seq: number; op_id: string } | null
 }
 
 export const bundledCoreModules = (): CoreModules => ({ core: require(CORE_INDEX), log: require(CORE_LOG) })
@@ -324,21 +326,27 @@ export async function upgradeAgents(input: UpgradeInput, mode: 'dry-run' | 'run'
 
       // The identity set and the plan; every crossing relation must be buildable as a reference before anything moves.
       const ids = (spaceDb.prepare(IDENTITY_SET_SQL).all(`agent.${source}`) as Array<{ id: string }>).map((r) => r.id)
-      const existingIds = new Set((agentDb.prepare('SELECT id FROM engrams').all() as Array<{ id: string }>).map((r) => r.id))
+      // What the agent brain held before this space: on a resume the set is in it already and is not that.
+      const existingIds = new Set((agentDb.prepare('SELECT id FROM engrams WHERE id NOT IN (SELECT value FROM json_each(?))').all(JSON.stringify(ids)) as Array<{ id: string }>).map((r) => r.id))
       let crossingRows: Array<Record<string, unknown>> = []
       let plan: MovePlan | null = null
       sr.collisions = { superseded: [], seeds_retired: [], needs_review: [] }
       if (ids.length > 0) {
-        // A core profile arriving for a scope the agent brain already has one for (an earlier space's)
-        // cannot be imported next to it: the first wins, the second is retired in the space before the move.
-        const arrivingCore = spaceDb.prepare(`SELECT id, scope, title FROM engrams WHERE id IN (SELECT value FROM json_each(?)) AND type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1`).all(JSON.stringify(ids)) as Array<{ id: string; scope: string; title: string | null }>
-        for (const e of arrivingCore) {
-          const other = (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1`).get(e.scope) as { id: string } | undefined)?.id
-          if (!other) continue
-          spaceEml.apply({ name: 'engram.update', input: { id: e.id, patch: { status: 'invalidated' } } }, env)
-          sr.collisions.superseded.push({ id: e.id, by: other, title: e.title })
-        }
+        // An earlier run that stopped between the import and the move_out: the move finishes it, and the set
+        // stays as that run imported it (a change here would make it another set, no longer the import's).
         plan = modules.log.planMove({ source: spaceDb, target: agentDb, ids })
+        if (!plan.resume) {
+          // A core profile arriving for a scope the agent brain already has one for (an earlier space's)
+          // cannot be imported next to it: the first wins, the second is retired in the space before the move.
+          const arrivingCore = spaceDb.prepare(`SELECT id, scope, title FROM engrams WHERE id IN (SELECT value FROM json_each(?)) AND type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1`).all(JSON.stringify(ids)) as Array<{ id: string; scope: string; title: string | null }>
+          for (const e of arrivingCore) {
+            const other = (agentDb.prepare(`SELECT id FROM engrams WHERE scope = ? AND type = 'profile' AND status = 'active' AND json_extract(properties, '$.core') = 1`).get(e.scope) as { id: string } | undefined)?.id
+            if (!other) continue
+            spaceEml.apply({ name: 'engram.update', input: { id: e.id, patch: { status: 'invalidated' } } }, env)
+            sr.collisions.superseded.push({ id: e.id, by: other, title: e.title })
+          }
+          if (sr.collisions.superseded.length > 0) plan = modules.log.planMove({ source: spaceDb, target: agentDb, ids })
+        }
         if (plan.collisions.length > 0) return failed(report, `${name}: the move is refused — ${plan.collisions.join('; ')}`)
         const row = spaceDb.prepare('SELECT id, source_id, target_id, relation, detection_method, strength, explanation, metadata FROM relations WHERE id = ?')
         for (const c of plan.crossing) {
