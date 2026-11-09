@@ -5,10 +5,10 @@
 import { useEffect, useState } from 'react';
 
 import { useProviders, useSetDefaultProvider, type AgentProviderInfo } from '@/lib/providers';
-import { cn } from '@/lib/utils';
 import type { LLMProvider } from '@/types/app';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
+import SettingsPicker from '../SettingsPicker';
 import SettingsSection from '../SettingsSection';
 import SettingsSegmented from '../SettingsSegmented';
 import ClaudeSettings from './ClaudeSettings';
@@ -54,30 +54,20 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
         </SettingsCard>
       </SettingsSection>
 
-      <div className="space-y-6">
-        {/* Tabs, not a segmented control — it must not read like the default switch above. */}
-        <div role="tablist" aria-label="Provider settings" className="flex gap-5 border-b border-foreground/8">
-          {providers.map((provider) => (
-            <button
-              key={provider.id}
-              type="button"
-              role="tab"
-              aria-selected={provider.id === current.id}
-              onClick={() => setShown(provider.id)}
-              className={cn(
-                '-mb-px border-b-2 pb-2 text-sm font-medium transition-colors',
-                provider.id === current.id
-                  ? 'border-foreground text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {providerLabel(provider)}
-            </button>
-          ))}
+      <SettingsSection title="Settings">
+        <div>
+          <SettingsPicker
+            items={providers.map((provider) => ({ id: provider.id, label: providerLabel(provider) }))}
+            value={current.id}
+            onChange={(id) => setShown(id as LLMProvider)}
+            ariaLabel="Provider settings"
+          />
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/8 bg-foreground/4 p-4">
+            {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
+            {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
+          </div>
         </div>
-        {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
-        {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
-      </div>
+      </SettingsSection>
     </div>
   );
 }
