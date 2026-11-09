@@ -221,7 +221,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
         />
       </SettingsHeading>
 
-      <SettingsSection description="Each space has its own brain and never sees another space's brain.">
+      <SettingsSection title="Overview" description="Each space has its own brain and never sees another space's brain.">
         <SettingsCard divided>
           {listed.map(spaceRow)}
           {tab === 'local' ? (
@@ -251,28 +251,30 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
       </SettingsSection>
 
       {listed.length > 0 && (
-        <div>
-          <SettingsPicker
-            items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
-            value={shownId}
-            onChange={pick}
-            ariaLabel="Spaces"
-          />
-          {shown && (
-            <SettingsCard divided className="rounded-tl-none">
-                <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
-                {shown.ownRuntime && (
-                  <SettingsRow
-                    label="Login and tools"
-                    description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
-                  >
-                    <span className="text-sm text-foreground">Own</span>
-                  </SettingsRow>
-                )}
-                {!shown.shared && brainRows}
-            </SettingsCard>
-          )}
-        </div>
+        <SettingsSection title="Details">
+          <div>
+            <SettingsPicker
+              items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
+              value={shownId}
+              onChange={pick}
+              ariaLabel="Spaces"
+            />
+            {shown && (
+              <SettingsCard divided className="rounded-tl-none">
+                  <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
+                  {shown.ownRuntime && (
+                    <SettingsRow
+                      label="Login and tools"
+                      description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
+                    >
+                      <span className="text-sm text-foreground">Own</span>
+                    </SettingsRow>
+                  )}
+                  {!shown.shared && brainRows}
+              </SettingsCard>
+            )}
+          </div>
+        </SettingsSection>
       )}
 
       {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
