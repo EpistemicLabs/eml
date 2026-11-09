@@ -8,7 +8,7 @@ import { plainJson, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, renderBrainStateMarkdown, type Env } from '../src'
 import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
-import { legacyAuthorship, projectSet, remoteReferences } from '../src/log/move'
+import { exportSet, legacyAuthorship, projectSet, remoteReferences } from '../src/log/move'
 import { moveEngrams, moveProject, planMove, planProjectMove, type MoveTarget } from '../src/log/move-engrams'
 import { createObject, validDecision, validNote, validTask, writes } from './fixtures'
 
@@ -313,8 +313,12 @@ describe('moveProject', () => {
     const imports = () => count(shared, "op_log WHERE json_extract(payload, '$.call') = 'engram.import'")
     expect(imports()).toBe(1)
 
-    // the plan is the same: the source did not change
-    expect(planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' }).plan_hash).toBe(plan.plan_hash)
+    // the plan is the same (the source did not change) and says it resumes: what a reopened dialog shows, with nothing to refuse
+    const again = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    expect(again.plan_hash).toBe(plan.plan_hash)
+    expect(again.resume).toEqual({ seq: 2, op_id: expect.any(String) })
+    expect(again.collisions).toEqual([])
+    expect(again.created).toEqual({ projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] })
     const result = await moveProject({ source: raw(s.eml), target: sharedTarget(shared), project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'b.db') }, s.kai)
     expect(result.resumed).toBe(true)
     expect(result.created).toEqual({ projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] })
@@ -340,6 +344,21 @@ describe('moveProject', () => {
     expect(result.resumed).toBe(true)
     expect(result.import.seq).toBe(2)
     expect(inSet(s.eml, s)).toBe(0)
+    shared.close(); s.eml.close()
+  })
+
+  it('a shared brain refuses engram.move_out: a member cannot remove engrams on the replicas', async () => {
+    const s = source()
+    const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    await moveProject({ source: raw(s.eml), target: sharedTarget(shared), project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'a.db') }, s.kai)
+    const ids = [s.task.id]
+    const set = exportSet(raw(shared), ids)
+    await expect(sharedTarget(shared).write({ name: 'engram.move_out', input: { ids, set_hash: set.set_hash, drop_relations: set.crossing.map(r => r.id), target: { brain: 'elsewhere', op_id: 'x' } } }))
+      .rejects.toThrow(/a shared brain takes no engram\.move_out/)
+    expect(count(shared, 'engrams WHERE id = ?', s.task.id)).toBe(1)
+    expect(count(shared, "op_log WHERE rejected LIKE 'INVALID: Invalid command: a shared brain takes no engram.move_out%'")).toBe(1)
+    expect(verify(raw(shared))).toMatchObject({ ok: true })
     shared.close(); s.eml.close()
   })
 

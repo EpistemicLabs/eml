@@ -54,7 +54,7 @@ describe('moving a project into a team brain', () => {
     control.close()
     relay = await FakeRelay.start(BRAIN)
     serverProc = spawn('node', [join(__dirname, '..', 'dist', 'server.js')], {
-      env: { ...process.env, EML_PORT: String(port), EML_HOST: '127.0.0.1', EML_DATA_DIR: tmpDir, EML_MOVE_DEADLINE_MS: '400' },
+      env: { ...process.env, EML_PORT: String(port), EML_HOST: '127.0.0.1', EML_DATA_DIR: tmpDir, EML_MOVE_DEADLINE_MS: '2000' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     serverProc.stderr!.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
@@ -129,17 +129,17 @@ describe('moving a project into a team brain', () => {
     expect(existsSync(join(tmpDir, 'backups', 'move'))).toBe(false)
   })
 
-  it('the relay takes the import but the answer is lost: 504 SHARED_WRITE_PENDING, nothing removed; confirmed again once it landed, the move resumes without a second import', async () => {
+  it('the relay takes the import but no answer comes in time: 504 SHARED_WRITE_PENDING, nothing removed; confirmed again once it landed, the move resumes without a second import', async () => {
     const plan = (await post(own.tokenPlaintext, '/move/plan', { target: BRAIN, project: 'top' })).body
     const before = opLog(own.brainFile)
-    relay.dropNextAnswer = true
+    // the relay keeps the import and sends no answer: the move waits until its deadline, whatever the machine's speed
+    relay.hold = true
     const move = post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })
-    // meanwhile a write to the source: refused at once, nothing written, reads still work
-    await new Promise(resolve => setTimeout(resolve, 100))
-    const started = Date.now()
+    // meanwhile a write to the source is refused at once (BRAIN_BUSY, not the lock's busy timeout), nothing written, reads still work
+    for (let i = 0; i < 100 && !relay.log.some(e => e.seq > 1); i++) await new Promise(resolve => setTimeout(resolve, 20))
+    expect(relay.log.filter(e => e.seq > 1)).toHaveLength(1)
     const during = flat(validNote({ scope: 'project.elsewhere', title: 'during-the-move' }))
     const refused = await post(own.tokenPlaintext, `/engram/${during.type}`, during.body)
-    expect(Date.now() - started).toBeLessThan(300)
     expect(refused).toMatchObject({ status: 503, body: { code: 'BRAIN_BUSY', error: 'This brain is busy right now: a project is being moved out of it. Reads still work; try the write again in a moment.' } })
     expect((await get(own.tokenPlaintext, `/engram/${ids.outside}`)).status).toBe(200)
     expect(await post(own.tokenPlaintext, '/move', { target: BRAIN, project: 'top', plan_hash: plan.plan_hash })).toMatchObject({ status: 409, body: { code: 'MOVE_REFUSED', error: 'move refused: a move out of this brain is under way. Nothing was moved.' } })
@@ -152,12 +152,17 @@ describe('moving a project into a team brain', () => {
     expect((await get(own.tokenPlaintext, '/project/top')).body.project.status).toBe('active')
     // the plan is the same: the source did not change
     expect((await post(own.tokenPlaintext, '/move/plan', { target: BRAIN, project: 'top' })).body.plan_hash).toBe(plan.plan_hash)
-    // the import landed in the relay's log; the sync reconnects and the replica takes it
+    // the import landed in the relay's log; the connection drops, the sync reconnects and the replica takes it
     const imports = relay.log.filter(e => e.seq > 1)
     expect(imports).toHaveLength(1)
+    relay.hold = false
+    relay.closeAll()
     const live = async () => (await get(tokens[BRAIN], '/team')).body.state.kind === 'live' && (await get(tokens[BRAIN], `/engram/${ids.task}`)).status === 200
     for (let i = 0; i < 100 && !(await live()); i++) await new Promise(resolve => setTimeout(resolve, 100))
     expect(await live()).toBe(true)
+    // the plan a reopened dialog reads: the same plan, a resume of that import, nothing to refuse
+    const resumed = (await post(own.tokenPlaintext, '/move/plan', { target: BRAIN, project: 'top' })).body
+    expect(resumed).toMatchObject({ plan_hash: plan.plan_hash, resume: { seq: imports[0].seq, op_id: imports[0].opId }, collisions: [] })
 
     // the cockpit's name for the space travels with the confirmed run: control and format characters (a bidi override) go, whitespace collapses, the length is capped
     const name = ('Team brain ' + 'x'.repeat(100)).slice(0, 80)

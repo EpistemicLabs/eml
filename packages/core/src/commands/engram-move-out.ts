@@ -22,7 +22,8 @@ const MOVE_OUT_KEYS = ['ids', 'set_hash', 'drop_relations', 'target']
  * in the target; the command itself checks that the set is unchanged
  * (set_hash) and that drop_relations are exactly the crossing relations. Its
  * tags, subjects and scope objects stay. The removal as an op (decision
- * no-delete-command). Not reachable by agents: no route calls it.
+ * no-delete-command). Not reachable by agents: no route calls it. A shared
+ * brain refuses it: nothing in a team brain is removed.
  */
 export const engramMoveOut: CommandModule<EngramMoveOutInput, EngramMoveOutResult> = {
   name: 'engram.move_out',
@@ -44,6 +45,8 @@ export const engramMoveOut: CommandModule<EngramMoveOutInput, EngramMoveOutResul
     }
   },
   apply(ctx, input) {
+    // a member could otherwise seal it as an op and remove others' engrams on every replica
+    if (ctx.eml.teamBrain() !== null) throw new CommandError('INVALID', 'Invalid command: a shared brain takes no engram.move_out — engrams in a shared brain end through their lifecycle and are never removed.')
     const { db } = ctx
     const set = exportSet(db, input.ids)
     if (set.set_hash !== input.set_hash) {

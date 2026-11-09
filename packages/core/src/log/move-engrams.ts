@@ -86,7 +86,7 @@ export async function moveEngrams(args: MoveArgs, env: Env): Promise<MoveResult>
   checkIds(ids)
   const { from, to } = ends(source, target.db)
   // refused before the backup when the plan says so now; checked again under the lock
-  refusalOf({ target, ids, ...planned(source, target.db, ids), plan_hash, from })
+  refusalOf({ plan: planned(source, target.db, ids).plan, plan_hash })
   backupBrain(source, backup_path)
   return locked(source, async () => {
     const { plan, set } = planned(source, target.db, ids)
@@ -122,16 +122,15 @@ async function runMove(
 }
 
 /**
- * Why the move does not run: the plan is not the one confirmed, or — unless
- * the import is in the target already (a resume, returned) — the plan refuses.
+ * Why the move does not run: the plan is not the one confirmed, or the plan
+ * refuses. Returns the import when it is in the target already (a resume).
  */
-function refusalOf(m: { target: MoveTarget, ids: string[], plan: MovePlan, set: ExportedSet, plan_hash: string, from: string }): { seq: number, op_id: string } | undefined {
+function refusalOf(m: { plan: MovePlan, plan_hash: string }): { seq: number, op_id: string } | undefined {
   if (m.plan.plan_hash !== m.plan_hash) {
     throw new CommandError('CONFLICT', 'move refused: the plan changed since it was made (what moves or what is dropped differs); make the plan again. Nothing was moved.', { plan_hash: m.plan.plan_hash })
   }
-  const imported = importOf(m.target.db, m.from, m.set.set_hash, m.ids)
-  if (!imported && m.plan.collisions.length > 0) throw new CommandError('CONFLICT', `move refused: ${m.plan.collisions.join('; ')}. Nothing was moved.`)
-  return imported
+  if (m.plan.collisions.length > 0) throw new CommandError('CONFLICT', `move refused: ${m.plan.collisions.join('; ')}. Nothing was moved.`)
+  return m.plan.resume ?? undefined
 }
 
 /** A write to the target where its writes go: through the relay for a shared brain, writeOp for a private one. */
@@ -205,8 +204,10 @@ export interface MovePlan {
   created: EngramImportResult['created']
   /** The import's args as JSON, in bytes: one op into a team brain carries at most MAX_PAYLOAD. */
   payload_bytes: number
-  /** Why the move is refused (none: it goes): the rows' own checks, the target's collisions, a team brain as the source, a set too large for one op. */
+  /** Why the move is refused (none: it goes): the rows' own checks, the target's collisions (none on a resume), a team brain as the source, a set too large for one op. */
   collisions: string[]
+  /** The import of this set is in the target already (a move interrupted before its move_out): the run writes only the move_out. */
+  resume: { seq: number, op_id: string } | null
 }
 
 /** What moving `ids` from `source` into `target` would do. Reads only. */
@@ -227,7 +228,9 @@ function planned(source: Database.Database, target: Database.Database, ids: stri
     return { id: r.id, relation: r.relation, direction, other }
   })
   const payload_bytes = Buffer.byteLength(canonicalJson({ source: { brain: from, head_seq: 0 }, set_hash: set.set_hash, rows: set.rows }))
-  const collisions = rowProblems(set.rows) ?? importProblems(stores, set.rows)
+  // an import that ran already is not checked against the target again: the target holds its rows now
+  const resume = importOf(target, from, set.set_hash, ids) ?? null
+  const collisions = rowProblems(set.rows) ?? (resume ? [] : importProblems(stores, set.rows))
   if (from === to) collisions.unshift('the source and the target are the same brain')
   if (teamBrainOf(source) !== null) collisions.unshift('the source is a team brain; a move takes engrams out of a private brain only')
   if (teamBrainOf(target) !== null && payload_bytes > MAX_PAYLOAD) {
@@ -238,7 +241,7 @@ function planned(source: Database.Database, target: Database.Database, ids: stri
     plan_hash: sha256Hex(canonicalJson({ source: from, target: to, ids, set_hash: set.set_hash, crossing: crossing.map(r => r.id) })),
     moved: { engrams: set.rows.engrams.length, entries: set.rows.entries.length, relations: set.rows.relations.length },
     crossing, external_refs: set.external_refs, incoming_refs: set.incoming_refs,
-    created: missingObjects(stores, set.rows), payload_bytes, collisions,
+    created: resume ? empty() : missingObjects(stores, set.rows), payload_bytes, collisions, resume,
   }
   return { plan, set }
 }
@@ -321,7 +324,7 @@ export async function moveProject(args: ProjectMoveArgs, env: Env): Promise<Proj
   // refused before the backup when the plan says so now; made and checked again under the lock
   const first = projectPlanned(source, target.db, project)
   refuseLegacy(first.plan)
-  refusalOf({ target, ids: first.ids, plan: first.plan, set: first.set, plan_hash, from })
+  refusalOf({ plan: first.plan, plan_hash })
   backupBrain(source, backup_path)
   return locked(source, async () => {
     const { plan, set, ids } = projectPlanned(source, target.db, project)
