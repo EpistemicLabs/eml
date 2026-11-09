@@ -19,6 +19,8 @@ export interface NotificationInput {
   sessionId: string | null
   /** The brain space it belongs to; null = main. */
   spaceId: string | null
+  /** The project's name, when the producer knows it. */
+  project?: string
 }
 
 export interface Notifier {
