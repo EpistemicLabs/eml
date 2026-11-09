@@ -19,6 +19,7 @@
  *   POST /task/:id/track    { text?, status?, outcome?, keep?, base_rev?, … } → Everything about an existing task (v0.19)
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
  *   POST /update            { id, patch, base_rev? }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
+ *   POST /retag             { ids, add?, remove? }                   → Add and remove tags on engrams (v0.21; all or nothing, dates stay, rev goes up)
  *   POST /rescope           { ids, scope }                           → Move engrams to another scope of this brain (v0.20.10; all or nothing, dates stay, rev goes up)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
@@ -945,6 +946,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url === '/rescope' && method === 'POST') {
       const body = await readBody(req)
       return json(res, 200, await applyWrite(eml, { name: 'engram.rescope', input: body as never }, env, sync, held))
+    }
+
+    // POST /retag { ids, add, remove } — add and remove tags on engrams, one or
+    // many. Not an edit: updated_at and reviews stay; rev goes up so watchers see it.
+    if (url === '/retag' && method === 'POST') {
+      const body = await readBody(req)
+      return json(res, 200, await applyWrite(eml, { name: 'engram.retag', input: body as never }, env, sync, held))
     }
 
     // POST /relate — create relation between two engrams.

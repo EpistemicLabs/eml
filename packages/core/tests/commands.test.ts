@@ -26,7 +26,7 @@ describe('the command set', () => {
 
   it('is closed: the commands, and no public write besides apply', () => {
     expect(COMMAND_NAMES).toEqual([
-      'engram.create', 'engram.update', 'engram.rescope', 'task.track', 'learning.add_evidence',
+      'engram.create', 'engram.update', 'engram.rescope', 'engram.retag', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
       'engram.import', 'engram.move_out', 'provenance.restamp', 'relation.move_end',
     ])

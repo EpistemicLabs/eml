@@ -225,6 +225,23 @@ describe('v0.19 REST', () => {
     })
   })
 
+  describe('POST /retag', () => {
+    it('swaps tags, keeps the dates and answers refusals with a clear status', async () => {
+      await post('/object/tag', { name: 'retag-old' })
+      await post('/object/tag', { name: 'retag-new' })
+      const a = (await create(validDecision({ tags: ['retag-old'] }))).body
+      const r = await post('/retag', { ids: [a.id], add: ['retag-new'], remove: ['retag-old'] })
+      expect(r.status).toBe(200)
+      expect(r.body).toEqual({ changed: 1, unchanged: 0 })
+      const after = (await get(`/engram/${a.id}`)).body
+      expect(after.tags).toEqual(['retag-new'])
+      expect(after.updated_at).toBe(a.updated_at)
+      expect((await post('/retag', { ids: ['ghost'], add: ['retag-new'] })).status).toBe(404)
+      expect((await post('/retag', { ids: [a.id], add: ['nope'] })).status).toBe(400)
+      expect((await post('/retag', { ids: [a.id] })).status).toBe(400)
+    })
+  })
+
   describe('POST /rescope', () => {
     it('moves engrams, keeps their dates and answers refusals with a clear status', async () => {
       await post('/object/project', { name: 'Rescope Target' })

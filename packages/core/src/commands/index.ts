@@ -5,6 +5,7 @@ import { CommandError, asCommandError, type CommandContext, type CommandModule }
 import { engramCreate, type EngramCreateInput, type EngramCreateResult } from './engram-create'
 import { engramUpdate, type EngramUpdateInput } from './engram-update'
 import { engramRescope, type EngramRescopeInput, type EngramRescopeResult } from './engram-rescope'
+import { engramRetag, type EngramRetagInput, type EngramRetagResult } from './engram-retag'
 import { taskTrack, type TaskTrackInput } from './task-track'
 import { learningAddEvidence, type LearningAddEvidenceInput } from './learning-add-evidence'
 import { engramConfirmReview, type EngramConfirmReviewInput } from './engram-confirm-review'
@@ -21,6 +22,7 @@ export interface CommandMap {
   'engram.create': [EngramCreateInput, EngramCreateResult]
   'engram.update': [EngramUpdateInput, StoredEngram]
   'engram.rescope': [EngramRescopeInput, EngramRescopeResult]
+  'engram.retag': [EngramRetagInput, EngramRetagResult]
   'task.track': [TaskTrackInput, StoredEngram]
   'learning.add_evidence': [LearningAddEvidenceInput, { engram: Engram, learning: LearningState }]
   'engram.confirm_review': [EngramConfirmReviewInput, Engram]
@@ -39,6 +41,7 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
   'engram.create': engramCreate,
   'engram.update': engramUpdate,
   'engram.rescope': engramRescope,
+  'engram.retag': engramRetag,
   'task.track': taskTrack,
   'learning.add_evidence': learningAddEvidence,
   'engram.confirm_review': engramConfirmReview,

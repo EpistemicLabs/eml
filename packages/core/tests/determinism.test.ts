@@ -37,7 +37,7 @@ describe('deterministic writes', () => {
   it('the same commands with the same env give the same brain, row for row', () => {
     const a = brain()
     const b = brain()
-    // every write goes through apply(), and the sequence uses all nine commands
+    // every write goes through apply(), and the sequence uses every command
     const used = new Set<string>()
     const apply = a.apply.bind(a)
     a.apply = ((command: { name: string }, env?: unknown) => { used.add(command.name); return apply(command as never, env as never) }) as typeof a.apply
