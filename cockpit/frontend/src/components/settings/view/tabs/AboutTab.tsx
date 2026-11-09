@@ -76,6 +76,11 @@ export default function AboutTab() {
           <div className="space-y-2 px-4 py-4 text-sm text-muted-foreground">
             <p>EML Cockpit is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).</p>
             <p>Copyright © 2026 Dominik Tilman and Lasse Lung.</p>
+            <p>
+              <a href="https://github.com/EpistemicLabs/eml/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2 hover:text-primary">
+                Read the license
+              </a>
+            </p>
           </div>
         </SettingsCard>
       </SettingsSection>
