@@ -52,6 +52,7 @@ import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
 import type { AgentBrains } from './agents.js'
 import { handleAgentsApi } from './agents-api.js'
+import { isPageRoute, NOT_PASSED, SPACE_BRAIN_ROUTES } from './page-brain-routes.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -1140,6 +1141,11 @@ async function proxyBrain(req: http.IncomingMessage, res: http.ServerResponse, d
   if (!space) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return }
   const rel = (req.url ?? '').slice('/api/brain'.length) || '/'
   const method = req.method ?? 'GET'
+  // Only the routes the page uses pass (page-brain-routes.ts); a query only on a read.
+  if (!isPageRoute(SPACE_BRAIN_ROUTES, method, rel.split('?')[0]) || (method !== 'GET' && rel.includes('?'))) {
+    json(res, 403, { error: NOT_PASSED })
+    return
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${space.token}`,
     Accept: 'application/json',

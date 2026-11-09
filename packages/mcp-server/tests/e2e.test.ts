@@ -434,6 +434,13 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(textOf(r)).toMatch(/HTTP 404|HTTP 400/)
     })
 
+    it('eml_get keeps its id one path segment: `../stats` is an unknown id, not GET /stats', async () => {
+      const r = await call('eml_get', { id: '../stats' })
+      expect(r.isError).toBe(true)
+      expect(textOf(r)).toMatch(/HTTP 404|HTTP 400/)
+      expect(textOf(r)).not.toContain('total_engrams')
+    })
+
     it('eml_update with an unknown ID → isError:true', async () => {
       const r = await call('eml_update', { id: 'no-such-id-12345', content: 'irrelevant' })
       expect(r.isError).toBe(true)

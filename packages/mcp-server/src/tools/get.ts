@@ -31,7 +31,7 @@ export function registerGetTool(server: McpServer, http: EmlApi): void {
     async (args) => callTool(async () => {
       const params: Record<string, string | number | undefined> = {}
       if (args.with_relations !== undefined) params.with_relations = String(args.with_relations)
-      const engram = await http.get(`/engram/${args.id}`, params) as { entries?: Array<{ kind: string }> }
+      const engram = await http.get(`/engram/${encodeURIComponent(args.id)}`, params) as { entries?: Array<{ kind: string }> }
       if (args.notes_only && Array.isArray(engram.entries)) engram.entries = engram.entries.filter(e => e.kind !== 'change')
       return engram
     }),
