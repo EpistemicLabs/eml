@@ -25,6 +25,7 @@ class World {
   delivered: Array<{ sessionId: string; text: string }> = []
   deliveryOutcome: DeliveryOutcome = 'resumed'
   alerts: string[] = []
+  flagged: string[] = []
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   deps(): JobRunnerDeps {
@@ -44,6 +45,7 @@ class World {
         return null
       },
       notify: (input) => { this.alerts.push(`${input.kind}: ${input.title}: ${input.body}`) },
+      flag: (_job, text) => { this.flagged.push(text) },
       log: () => {},
       timeZone: () => 'Asia/Makassar',
     }
@@ -110,6 +112,7 @@ describe('job runner', () => {
     expect(run.status).toBe('failed')
     expect(run.note).toMatch(/could not start within 1 h/)
     expect(world.alerts[0]).toMatch(/^failed: Daily brief: Run 1 failed: could not start within 1 h/)
+    expect(world.flagged).toEqual([expect.stringMatching(/^Job "Daily brief": run 1 failed: could not start within 1 h/)])
   })
 
   it('records the session’s status as the run’s outcome', async () => {
@@ -126,6 +129,8 @@ describe('job runner', () => {
     await runner.tick()
     expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'finished', outcome: 'review' })
     expect(world.alerts).toEqual(['review: Daily brief: Run 1: Brief written'])
+    // Its own session shows the review itself: nothing stands in for it.
+    expect(world.flagged).toEqual([])
   })
 
   it('skips a run while the previous one still works', async () => {
@@ -205,6 +210,7 @@ describe('job runner', () => {
     expect(stored.paused).toBe(true)
     expect(stored.pausedReason).toMatch(/3 failed runs in a row/)
     expect(world.alerts.at(-1)).toMatch(/^paused: Daily brief: Paused itself after 3 failed runs/)
+    expect(world.flagged.at(-1)).toMatch(/^Job "Daily brief" paused itself after 3 failed runs/)
     world.now += HOUR
     await runner.tick()
     expect(world.store.runs(job.id)).toHaveLength(3)

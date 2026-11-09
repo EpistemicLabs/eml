@@ -47,6 +47,11 @@ export interface JobRunnerDeps {
   startWorker(job: Job, sessionId: string, text: string): string | null
   /** Tell the user (notifications.ts): a run that needs them, a failure, a pause. */
   notify(input: NotificationInput): void
+  /**
+   * Show it in the cockpit's review section: the job could not run, or paused itself. No session
+   * of the job's own says so itself, so one stands in (its target, else its maker) as "Needs you".
+   */
+  flag(job: Job, text: string): void
   log(line: string): void
   /** Fallback zone for a job without a schedule. */
   timeZone(): string
@@ -325,11 +330,15 @@ export class JobRunner {
       const reason = `${failures} failed runs in a row; last: ${why}`
       this.deps.store.put({ ...job, failures, paused: true, pausedReason: reason, updatedAt: new Date(this.now()).toISOString() })
       // Always told, whatever the job's notify says: it will not run again until someone resumes it.
-      this.deps.notify({ kind: 'paused', title: job.name, body: `Paused itself after ${reason}. Resume it in Jobs once fixed.`, jobId: job.id, sessionId: null, spaceId: job.spaceId })
+      const body = `Paused itself after ${reason}. Resume it in Jobs once fixed.`
+      this.deps.notify({ kind: 'paused', title: job.name, body, jobId: job.id, sessionId: null, spaceId: job.spaceId })
+      this.deps.flag(job, `Job "${job.name}" ${body[0].toLowerCase()}${body.slice(1)}`)
       return
     }
     this.deps.store.put({ ...job, failures })
-    if (tell) this.tell(job, 'failed', why[0].toUpperCase() + why.slice(1))
+    if (!tell) return
+    this.tell(job, 'failed', why[0].toUpperCase() + why.slice(1))
+    if (job.notify !== 'never') this.deps.flag(job, `Job "${job.name}": ${why}`)
   }
 
   private tell(job: Job, kind: NotificationKind, body: string, sessionId: string | null = null): void {

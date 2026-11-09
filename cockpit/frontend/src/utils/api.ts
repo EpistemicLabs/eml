@@ -42,12 +42,10 @@ export const api = {
   claimSpawn: (id: string) => fetch(`/api/spawns/${encodeURIComponent(id)}/claim`, jsonInit('POST')),
   // The zone a scheduled job's times read in when it names none (host jobs-api.ts).
   setTimeZone: (timeZone: string) => fetch('/api/jobs/time-zone', jsonInit('PUT', { timeZone })),
-  // The Jobs view and the bell (host jobs-api.ts).
+  // The Jobs view (host jobs-api.ts).
   jobs: () => fetch('/api/jobs'),
   jobAction: (jobId: string, action: 'pause' | 'resume' | 'delete' | 'run_now') =>
     fetch(`/api/jobs/${encodeURIComponent(jobId)}/${action}`, jsonInit('POST')),
-  notifications: () => fetch('/api/notifications'),
-  readNotifications: (ids?: string[]) => fetch('/api/notifications/read', jsonInit('POST', ids ? { ids } : {})),
   claudeLogin: (refresh = false) => fetch(`/api/agents/login${refresh ? '?refresh=1' : ''}`),
   setLoginMode: (mode: 'login' | 'token') => fetch('/api/agents/login', jsonInit('PATCH', { mode })),
   setPermissionMode: (permissionMode: 'auto' | 'bypassPermissions') =>

@@ -33,16 +33,11 @@ export default function JobsView() {
     }
   }, []);
 
-  // Runs change on the host's clock: follow it, and at once when the cockpit tells something.
+  // Runs change on the host's clock: follow it.
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 15_000);
-    const onNotification = () => void load();
-    window.addEventListener('cockpit:notification', onNotification);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('cockpit:notification', onNotification);
-    };
+    return () => window.clearInterval(timer);
   }, [load]);
 
   const spaces = jobs ? [...new Set(jobs.map((job) => job.spaceName))] : [];

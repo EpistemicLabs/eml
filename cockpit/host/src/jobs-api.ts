@@ -2,7 +2,6 @@ import type * as http from 'node:http'
 import type { JobCaller, Jobs } from './application/jobs.js'
 import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
-import type { NotificationFeed } from './notifications.js'
 import { JOB_ACTIONS } from './application/jobs.js'
 
 /**
@@ -13,7 +12,6 @@ import { JOB_ACTIONS } from './application/jobs.js'
  *   GET  /api/jobs            the page: every space's jobs with their runs.
  *   PUT  /api/jobs/time-zone  the page: the user's time zone, from their browser.
  *   POST /api/jobs/<id>/<pause|resume|delete|run_now>   the page (Jobs view).
- *   GET  /api/notifications, POST /api/notifications/read { ids? }   the bell.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
  */
 
@@ -23,7 +21,6 @@ export interface JobsApiDeps {
   spawnToken: string
   /** The session as a caller: its space, project and tool profile; null when unknown. */
   callerOf(sessionId: string): JobCaller | null
-  feed: NotificationFeed
   /** A space's name for the page; null = main. */
   spaceName(spaceId: string | null): string
   /** Where the page opens a session: its project and whether it runs in the chat view; null when unknown. */
@@ -72,18 +69,6 @@ export async function handleJobsApi(
     // The user acts on any space's job: as a caller of that space.
     const answer = await deps.jobs.handle({ sessionId: null, spaceId: job.spaceId, projectId: null, toolProfile: null }, { action, job: job.id })
     json(res, answer.status, { text: answer.text })
-    return true
-  }
-  if (pathname === '/api/notifications' && method === 'GET') {
-    const items = deps.feed.list().map((item) => ({ ...item, session: item.sessionId ? deps.sessionInfo(item.sessionId) : null }))
-    json(res, 200, { items, unread: deps.feed.unread() })
-    return true
-  }
-  if (pathname === '/api/notifications/read' && method === 'POST') {
-    const body = await readJson(req)
-    const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : undefined
-    deps.feed.markRead(ids)
-    json(res, 200, { unread: deps.feed.unread() })
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'PUT') {

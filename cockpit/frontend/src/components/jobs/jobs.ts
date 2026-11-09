@@ -1,5 +1,4 @@
-// What the Jobs view and the bell read from the host (host jobs-api.ts,
-// notifications.ts), and the small helpers both use.
+// What the Jobs view reads from the host (host jobs-api.ts), and its small helpers.
 import * as paneStore from '@/stores/usePaneStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
@@ -38,18 +37,6 @@ export type Job = {
   runs: JobRun[];
 };
 
-export type CockpitNotification = {
-  id: string;
-  at: string;
-  kind: 'review' | 'question' | 'failed' | 'done' | 'missed' | 'paused';
-  title: string;
-  body: string;
-  jobId: string | null;
-  sessionId: string | null;
-  spaceId: string | null;
-  read: boolean;
-  session?: SessionInfo;
-};
 
 /** "Mon 9 Nov 08:00", in this browser's zone — the zone jobs read in by default. */
 export function formatWhen(iso: string): string {
@@ -69,7 +56,7 @@ export function formatAgo(iso: string): string {
   return `${Math.round(minutes / (24 * 60))} days ago`;
 }
 
-/** Open the session a run or a notification points at, in its space. */
+/** Open a run's session, in its space. */
 export function openSession(spaceId: string | null, sessionId: string, session: SessionInfo | undefined): void {
   setTopView('desks');
   paneStore.openSessionInSpace(spaceId, {
@@ -86,7 +73,9 @@ export function runLabel(run: JobRun): { text: string; tone: 'ok' | 'attention' 
     return { text: run.outcome ?? 'ended', tone: 'ok' };
   }
   if (run.status === 'failed') return { text: 'failed', tone: 'bad' };
-  if (run.status === 'missed' || run.status === 'skipped') return { text: run.status, tone: 'muted' };
+  // A missed run shows only here (the cockpit was down): it stands out.
+  if (run.status === 'missed') return { text: 'missed', tone: 'attention' };
+  if (run.status === 'skipped') return { text: 'skipped', tone: 'muted' };
   if (run.status === 'waiting') return { text: 'waiting for room', tone: 'muted' };
   return { text: 'running', tone: 'ok' };
 }
