@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 
 import { currentPushSupport, disablePush, enablePush, pushEnabled, sendTestPush } from '@/lib/push';
 
+import { SETTINGS_BUTTON_CLASS } from '../../constants/constants';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -21,8 +22,6 @@ const NOTE_TEXT: Record<Exclude<Note, null>, string> = {
   gone: 'This device is no longer subscribed. Turn notifications on again',
   'test-failed': 'The push service did not take the test. Try again',
 };
-
-const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
 
 export default function NotificationsSection() {
   const support = currentPushSupport();
@@ -80,7 +79,7 @@ export default function NotificationsSection() {
         <SettingsRow label="Notifications on this device" description={description}>
           <div className="flex items-center gap-3">
             {enabled && (
-              <button type="button" className={button} disabled={busy} onClick={() => void handleTest()}>
+              <button type="button" className={SETTINGS_BUTTON_CLASS} disabled={busy} onClick={() => void handleTest()}>
                 Send test
               </button>
             )}

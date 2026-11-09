@@ -7,7 +7,7 @@ vi.mock('@/utils/api', () => ({ api: {} }));
 vi.mock('@/lib/push', () => ({ pushEndpoint: () => Promise.resolve(null) }));
 
 import type { AllSession } from '@/components/sidebar/allSessions';
-import { cockpitInUse, sessionsToMarkSeen, sessionsWatched } from './useSeenResults';
+import { cockpitInUse, sessionsToMarkSeen, sessionsWatched, shouldReport } from './useSeenResults';
 
 const NOW = 1_000_000;
 const unseen: AllSession = { id: 'a', spaceId: 's', resultAt: '2026-01-01T00:00:00.000Z' };
@@ -46,5 +46,13 @@ describe('cockpitInUse', () => {
     expect(cockpitInUse(behind)).toBe(true);
     expect(cockpitInUse({ ...here, lastInputAt: NOW - 10 * 60_000 })).toBe(false);
     expect(cockpitInUse({ ...here, lastInputAt: 0 })).toBe(false);
+  });
+});
+
+describe('shouldReport', () => {
+  it('tells the host every 30 seconds while the cockpit is in use, and not at all once it is not', () => {
+    expect(shouldReport(here, NOW - 30_000)).toBe(true);
+    expect(shouldReport(here, NOW - 29_000)).toBe(false);
+    expect(shouldReport({ ...here, lastInputAt: NOW - 10 * 60_000 }, 0)).toBe(false);
   });
 });

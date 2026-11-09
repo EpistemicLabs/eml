@@ -15,6 +15,7 @@ import { useAppUpdate } from '@/hooks/useAppUpdate';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import { SETTINGS_BUTTON_CLASS } from '../../constants/constants';
 
 export default function AboutTab() {
   const { info, failed } = useAboutInfo();
@@ -146,7 +147,7 @@ function UpdatesCard() {
   }
 
   const busy = phase !== 'idle' || status.busy;
-  const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
+  const button = SETTINGS_BUTTON_CLASS;
 
   return (
     <SettingsCard divided>

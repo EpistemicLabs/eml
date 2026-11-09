@@ -14,6 +14,9 @@ import {
 
 import type { ProjectSortOrder, SettingsMainTab } from '../types/types';
 
+/** A small outlined button in a settings row (About, Notifications). */
+export const SETTINGS_BUTTON_CLASS = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
+
 export type SettingsMainTabMeta = {
   id: SettingsMainTab;
   label: string;

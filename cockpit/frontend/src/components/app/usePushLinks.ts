@@ -5,7 +5,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { getSpaces, loadSpaces, paneSpaceKey } from '@/stores/useSpaceStore';
 
 /** Open the session a notification names, in its own space; one the host no longer knows is ignored. */
-async function openLinkedSession(sessionId: string): Promise<void> {
+export async function openLinkedSession(sessionId: string): Promise<void> {
   const response = await fetch('/api/sessions/all');
   if (!response.ok) return;
   const { sessions } = (await response.json()) as { sessions?: AllSession[] };

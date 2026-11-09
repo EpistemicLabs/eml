@@ -40,6 +40,11 @@ export function cockpitInUse(facts: { lastInputAt: number; now: number }): boole
   return facts.lastInputAt > 0 && facts.now - facts.lastInputAt < IN_USE_MS;
 }
 
+/** Whether to tell the host now: while in use, every 30 seconds — its 90-second window counts on that. */
+export function shouldReport(facts: { lastInputAt: number; now: number }, reportedAt: number): boolean {
+  return cockpitInUse(facts) && facts.now - reportedAt >= REPORT_MS;
+}
+
 function sessionsOnScreen(compact: boolean): Set<string> {
   if (getTopView() !== 'desks') return new Set();
   const panes = paneStore.getDeskPanesOnScreen(compact);
@@ -58,7 +63,7 @@ export function useSeenResults(compact: boolean): void {
     const facts = { foreground: document.visibilityState === 'visible' && document.hasFocus(), lastInputAt: lastInputAt.current, now: Date.now() };
     const ids = sessionsToMarkSeen(known.current, onScreen, facts);
     for (const id of ids) void markSessionRead(id);
-    if (cockpitInUse(facts) && facts.now - reportedAt.current >= REPORT_MS) {
+    if (shouldReport(facts, reportedAt.current)) {
       reportedAt.current = facts.now;
       const watched = sessionsWatched(onScreen, facts);
       void pushEndpoint()
