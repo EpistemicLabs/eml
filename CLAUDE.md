@@ -26,9 +26,17 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
 - Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.
 - Agent-facing texts (MCP tool descriptions, system rules, hook output) are product surface — review changes deliberately.
-- Branch work happens in its own git worktree, never by switching the main checkout. After the merge, GitHub
+- Changes reach `main` through a pull request: one branch per topic, as many commits as it takes. Its author
+  merges it with a merge commit once CI is green; an outside PR may be squashed. Read an outside PR's diff
+  before approving its CI run: CI runs that code.
+- Branch work happens in its own git worktree, never by switching the main checkout: other sessions
+  work there too. In a shared checkout, stage and commit in one command with explicit paths (never
+  `git add -A` / `commit -a`); check `git branch --show-current`, `git status --short` and `git log -1`
+  first, and `git fetch` before, others push to main too. After the merge, GitHub
   deletes the remote branch; remove the worktree (`git worktree remove <path>`) and the local branch
   (`git branch -d <branch>`) once `git status` is clean and everything is pushed. No `--force` deletes.
+- Check UI and host changes in the running dev cockpit in a browser before committing; `tsc` and the
+  build alone miss them. One browser tab per cockpit: a second tab takes over every pane's PTY.
 
 ## Releases (maintainers)
 
@@ -43,5 +51,6 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 4. Tag the merge commit on `main`: `git tag vX.Y.Z && git push origin refs/tags/vX.Y.Z` (the branch
    has the same name, so push the tag by its full ref).
 5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file <notes>`.
-   The cockpit updater installs exactly these three assets from the latest release.
-6. Remove the release worktree and the local `vX.Y.Z` branch.
+   The cockpit updater and the installers download the tarballs and SHA256SUMS by name from the latest release.
+6. Production cockpits update through the in-app banner; check `/api/about` afterwards.
+7. Remove the release worktree and the local `vX.Y.Z` branch.
