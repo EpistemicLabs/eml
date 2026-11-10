@@ -39,7 +39,7 @@ export async function launchBrainServer(): Promise<LoopbackServer> {
     'node',
     [...watchdog, SERVER_JS, '--port', String(port), '--host', '127.0.0.1', '--data-dir', DATA_DIR,
       '--backup-dir', BACKUPS_DIR],
-    { cwd: COCKPIT_HOME, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] },
+    { cwd: COCKPIT_HOME, env: { ...process.env, ...(process.env.EML_COCKPIT_DEV === '1' ? { EML_LOCAL_RELAY: '1' } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] },
   )
   const started = Date.now()
   let waitMs = STARTUP_WAIT_MS
