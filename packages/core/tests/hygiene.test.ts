@@ -38,6 +38,15 @@ describe('hygieneCheck()', () => {
     }
   })
 
+  // v0.21: agent.<id> and user.<id> live in the agent brain; a re-scope or supersedes from a space
+  // into them is refused (mcp-server routed-client), so no check's how may send an agent there (#179).
+  it('no how re-scopes into agent.<id> or user.<id>', () => {
+    for (const c of HYGIENE_CHECKS) {
+      expect(c.how, c.id).not.toMatch(/eml_update\(scope\) to (agent|user)\./)
+      expect(c.how, c.id).not.toMatch(/Re-scope the (rule|learning|profile) with eml_update\(scope\)/)
+    }
+  })
+
   describe('rule-profile-format', () => {
     it('finds legacy rules and profiles in every scope, with the format problem as reason', () => {
       const long = rule('project.demo', 'long-one')

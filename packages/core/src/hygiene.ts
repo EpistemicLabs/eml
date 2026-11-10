@@ -168,8 +168,9 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'information is a note or a reference, a way of working a rule.',
     how:
       'Write it as the type it is (eml_note / eml_reference / eml_rule — a rule only with the user\'s yes) with ' +
-      'supersedes=[<profile id>]. If it really is a facet of someone, write it as a profile in their scope with ' +
-      'supersedes=[<profile id>].',
+      'supersedes=[<profile id>]. If it really is a facet of someone: in entity.<id>, write it as a profile with ' +
+      'supersedes=[<profile id>]; in user.<id> or agent.<id>, write it with eml_profile there, then invalidate the old ' +
+      'one with eml_update(status=invalidated).',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'profile' && !PROFILE_SCOPE.test(c.scope))
@@ -295,8 +296,10 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
     what:
       'A rule has an owner: agent.<id> for how an agent works, project.<id> for work in a project. Global holds no rules.',
     how:
-      'Re-scope the rule with eml_update(scope): agent.<id> when it says how the agent works (the usual case for a ' +
-      'rule written before v0.21), project.<id> when it governs that project. In a brain with one agent, that agent is the owner.',
+      'A rule that says how the agent works (the usual case for a rule written before v0.21): write it anew with eml_rule ' +
+      'in agent.<id> (in a brain with one agent, that agent), content, why, trigger and agreed carried over, then ' +
+      'invalidate the old one with eml_update(status=invalidated). A rule that governs a project: re-scope it with ' +
+      'eml_update(scope) to project.<id>.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && c.scope === 'global')
@@ -313,8 +316,8 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
       'A rule belongs to an agent (agent.<id>) or to a project (project.<id>). user.<id> holds the person\'s profile; ' +
       'a rule there was written before v0.21, when a person could own rules.',
     how:
-      'Re-scope the rule with eml_update(scope) to agent.<id> — in a brain with one agent, that agent. The rule keeps ' +
-      'its id, content and agreement.',
+      'Write the rule anew with eml_rule in agent.<id> (in a brain with one agent, that agent), content, why, trigger ' +
+      'and agreed carried over, then invalidate the old one with eml_update(status=invalidated).',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'rule' && c.scope.startsWith('user.'))
@@ -329,10 +332,13 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
     since_schema: 21,
     what:
       'A learning is the agent\'s own (agent.<id>): what it learned about how it works, also with a person. ' +
-      'user.<id> holds the person\'s profile, a project and global hold work; a learning there was written before v0.21.',
+      'user.<id> holds the person\'s profile, a project and global hold work; a learning there was written before v0.21, ' +
+      'and some are knowledge about the work rather than a lesson.',
     how:
-      'Re-scope the learning with eml_update(scope) to agent.<id> — in a brain with one agent, that agent — and, ' +
-      'if it came from a task or project, link that with eml_relate. The learning keeps its id, content and evidence.',
+      'Decide per entry what it is. A lesson about how the agent works: write it anew with eml_learning in agent.<id> ' +
+      '(in a brain with one agent, that agent), title and content carried over, then invalidate the old one with ' +
+      'eml_update(status=invalidated); its evidence stays on the old one. If it came from a task, link that with ' +
+      'eml_relate. Knowledge about the work: write it as a note in its scope with supersedes=[<learning id>]. Unsure → ask.',
     detect(eml) {
       return ACTIVE(eml)
         .filter(c => c.type === 'learning' && !c.scope.startsWith('agent.'))
