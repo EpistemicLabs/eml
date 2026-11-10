@@ -4,8 +4,8 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
 import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
 
-const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, label: 'Alpha' };
-const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, label: 'Beta' };
+const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, agent: null, upgrade: null, shared: false, agentName: 'Alpha' };
+const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, agent: null, upgrade: null, shared: false, agentName: 'Beta' };
 const spaces = [main, other];
 const NOW = Date.parse('2026-02-01T12:00:00.000Z');
 const OLD = '2026-01-01T00:00:00.000Z';
@@ -84,11 +84,11 @@ describe('the one model for every session', () => {
 
 describe('agentLetter', () => {
   it('is the first letter of the agent, upper case', () => {
-    expect(agentLetter({ id: 'a', name: 'Main', main: true, label: 'motti' })).toBe('M');
+    expect(agentLetter({ id: 'a', name: 'Main', main: true, agent: null, upgrade: null, shared: false, agentName: 'motti' })).toBe('M');
   });
 
   it('falls back to the space name', () => {
-    expect(agentLetter({ id: 'b', name: 'Life', main: false })).toBe('L');
+    expect(agentLetter({ id: 'b', name: 'Life', main: false, agent: null, upgrade: null, shared: false })).toBe('L');
   });
 });
 

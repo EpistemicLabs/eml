@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 
 import { registerBootTool } from './boot'
 import { registerRecallTool } from './recall'
@@ -32,7 +32,7 @@ import { registerReadObjectTool, registerCreateObjectTool, registerUpdateObjectT
  *
  * Order only affects the tools/list ordering; the most-used come first.
  */
-export function registerAllTools(server: McpServer, http: HttpClient): void {
+export function registerAllTools(server: McpServer, http: EmlApi): void {
   registerBootTool(server, http)
   registerRecallTool(server, http)
   registerShowTool(server, http)

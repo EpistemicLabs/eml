@@ -1,0 +1,193 @@
+import { canonicalJson } from './canonical'
+import { signText, verifyText, type DeviceCert, type DeviceKeys, type KeyPair } from './keys'
+import { box, memberOfDevice, type Box, type MemberSet } from './membership'
+import type { BrainKey } from './seal'
+import { KEY_BYTES, NONCE_BYTES, PROTOCOL_VERSION, ProtocolError, asObject, checkVersion, exactFields, fromBase64url, openBox, sealBox, sodium, toBase64url } from './wire'
+
+// --- The brain key (v0.21) -------------------------------------------------------
+//
+// One symmetric key per epoch seals a shared brain's ops. The log names each
+// key by its id (genesis root, team.rotate_key), and each rotation carries the
+// previous key sealed under the new one, so the newest key opens every older
+// epoch and a new member reads the whole history. A device receives a key
+// wrapped for its encryption key and signed by the device that wrapped it — an
+// unsigned box could be swapped by the relay for a key it knows
+// (spec team-brain-protocol-package-spec §4).
+
+/** A brain key wrapped for one device, as the relay keeps it. */
+export interface WrappedKey {
+  v: 1
+  brain: string
+  epoch: number
+  recipient: string
+  sealed: string
+  wrapper: string
+  sig: string
+}
+
+const SEAL_BYTES = KEY_BYTES + 48  // crypto_box_seal: ephemeral public key (32) + MAC (16)
+const KEY_ID_DOMAIN = 'eml-brain-key-id-v1'
+const WRAP_DOMAIN = 'eml-wrapped-key-v1\n'
+
+/** A new random brain key for `epoch`. */
+export function newBrainKey(epoch: number): BrainKey {
+  return { epoch, key: sodium.randombytes_buf(KEY_BYTES) }
+}
+
+/** The id the log names a key by: BLAKE2b-256 keyed with the key over "eml-brain-key-id-v1". */
+export function keyId(key: Uint8Array): string {
+  if (key.length !== KEY_BYTES) throw new ProtocolError(`a brain key is ${KEY_BYTES} bytes`)
+  return toBase64url(sodium.crypto_generichash(KEY_BYTES, sodium.from_string(KEY_ID_DOMAIN), key))
+}
+
+/**
+ * The next key after `current` (the brain's current key) and the args of the
+ * team.rotate_key record that announces it: {epoch, key_id, prev}, prev the
+ * current key sealed under the next one.
+ */
+export function rotateKey(set: MemberSet, current: BrainKey): { next: BrainKey, args: { epoch: number, key_id: string, prev: Box } } {
+  return rotateKeyWith(sodium.randombytes_buf(KEY_BYTES), sodium.randombytes_buf(NONCE_BYTES), set, current)
+}
+
+/** rotateKey with a given key and nonce — for the test vectors. */
+export function rotateKeyWith(key: Uint8Array, nonce: Uint8Array, set: MemberSet, current: BrainKey): { next: BrainKey, args: { epoch: number, key_id: string, prev: Box } } {
+  if (current.epoch !== set.epoch || keyId(current.key) !== set.keys[set.epoch].key_id) throw new ProtocolError('the key to rotate is not the brain\'s current key')
+  const next = { epoch: set.epoch + 1, key }
+  return { next, args: { epoch: next.epoch, key_id: keyId(next.key), prev: sealBox(current.key, prevAad(set.brain, next.epoch), nonce, next.key) } }
+}
+
+/**
+ * Every key of the brain from epoch 0 to `newest`'s epoch, opened backwards
+ * through the rotations' prev boxes, each checked against the id the log
+ * names it by. Throws ProtocolError when a key is not the log's.
+ */
+export function epochKeys(set: MemberSet, newest: BrainKey): BrainKey[] {
+  if (!Number.isSafeInteger(newest.epoch) || newest.epoch < 0 || newest.epoch > set.epoch) throw new ProtocolError(`the brain has no epoch ${newest.epoch}`)
+  const keys = [newest]
+  for (let epoch = newest.epoch; ; epoch--) {
+    const key = keys[0].key
+    if (keyId(key) !== set.keys[epoch].key_id) throw new ProtocolError(`the key of epoch ${epoch} is not the one the log names`)
+    const prev = set.keys[epoch].prev
+    if (!prev) return keys
+    const older = openBox(prev.ct, prev.nonce, prevAad(set.brain, epoch), key, `the prev of epoch ${epoch} does not open with its key`)
+    keys.unshift({ epoch: epoch - 1, key: older })
+  }
+}
+
+/**
+ * `key` wrapped for `recipient` (a current device's signing key; its
+ * encryption key comes from its certificate in `set`), signed by `wrapper`.
+ */
+export function wrapKey(set: MemberSet, key: BrainKey, recipient: string, wrapper: KeyPair): WrappedKey {
+  const member = memberOfDevice(set, recipient)
+  if (!member) throw new ProtocolError('the recipient is not a current device of a member')
+  if (key.key.length !== KEY_BYTES) throw new ProtocolError(`a brain key is ${KEY_BYTES} bytes`)
+  const enc = fromBase64url(set.members[member].devices[recipient].device_enc, KEY_BYTES, 'the recipient\'s encryption key')
+  const body = { v: PROTOCOL_VERSION, brain: set.brain, epoch: key.epoch, recipient, sealed: toBase64url(sodium.crypto_box_seal(key.key, enc)), wrapper: wrapper.publicKey }
+  return { ...body, sig: signText(wrapper, WRAP_DOMAIN, canonicalJson(body)) }
+}
+
+/**
+ * A wrapped key of `set`'s brain as far as it can be checked without the
+ * recipient's key — what the relay checks before it keeps one: exactly a
+ * wrapped-key record of this brain, for a current device, with an epoch,
+ * signed by a current device of an owner or of the recipient's own member.
+ * Which epochs to take is the caller's: a device unwraps only those the log
+ * has reached, the relay also keeps the next one for a rotation.
+ */
+export function checkWrappedKey(set: MemberSet, record: unknown): WrappedKey {
+  const r = asObject(record, 'a wrapped key')
+  checkVersion(r.v)
+  exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
+  if (r.brain !== set.brain) throw new ProtocolError('the wrapped key is for another brain')
+  if (!Number.isSafeInteger(r.epoch) || (r.epoch as number) < 0) throw new ProtocolError('the epoch is not a non-negative integer')
+  const recipientMember = memberOfDevice(set, r.recipient)
+  if (!recipientMember) throw new ProtocolError('the recipient is not a current device of a member')
+  const wrapperMember = memberOfDevice(set, r.wrapper)
+  if (!wrapperMember) throw new ProtocolError('the wrapper is not a current device of a member')
+  if (set.members[wrapperMember].role !== 'owner' && wrapperMember !== recipientMember) {
+    throw new ProtocolError('a key is wrapped by an owner or by the recipient\'s own member')
+  }
+  fromBase64url(r.sealed, SEAL_BYTES, 'sealed')
+  const { sig, ...body } = r
+  if (!verifyText(r.wrapper as string, WRAP_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the wrapped key is not signed by its wrapper')
+  return r as unknown as WrappedKey
+}
+
+/**
+ * The brain key in `record`, wrapped for `device`: checkWrappedKey, for this
+ * device, for an epoch the log has reached, and the key the log names for
+ * that epoch. Throws ProtocolError otherwise.
+ */
+export function unwrapKey(set: MemberSet, record: unknown, device: DeviceKeys): BrainKey {
+  return open(set, checkWrappedKey(set, record), device)
+}
+
+/** The key in a checked wrapped-key record, for `device`, for an epoch the log has reached, the key the log names. */
+function open(set: MemberSet, r: WrappedKey, device: DeviceKeys): BrainKey {
+  if (r.recipient !== device.sign.publicKey) throw new ProtocolError('the wrapped key is for another device')
+  if (r.epoch > set.epoch) throw new ProtocolError(`the brain has no epoch ${r.epoch}`)
+  const own = sodium.crypto_box_seed_keypair(device.enc.seed)
+  let key: Uint8Array
+  try {
+    key = sodium.crypto_box_seal_open(fromBase64url(r.sealed, SEAL_BYTES, 'sealed'), own.publicKey, own.privateKey)
+  } catch (err) {
+    if (err instanceof ProtocolError) throw err
+    throw new ProtocolError('the wrapped key does not open with this device\'s key')
+  }
+  if (keyId(key) !== set.keys[r.epoch].key_id) throw new ProtocolError(`the wrapped key is not the key the log names for epoch ${r.epoch}`)
+  return { epoch: r.epoch, key }
+}
+
+/** A rotation the served log names ahead of where a joiner stands: the args of a `team.rotate_key` record it has not applied yet. */
+export interface RotationAhead {
+  epoch: number
+  key_id: string
+  prev: Box
+}
+
+/**
+ * unwrapKey for a device that just joined, giving every key of the brain:
+ * the key must be wrapped by the inviter's device from the accept — not by
+ * any owner the log it was served names, since that log may be the relay's
+ * own. The accept, checked under the invite secret, vouches for that device,
+ * so the member set is not asked whether the wrapper or the recipient are
+ * current devices: the joiner unwraps at the genesis, before its own joining
+ * record is replayed, and a sealed entry ahead of that record does not stall
+ * the join. A brain that rotated before the invite hands the joiner a later
+ * epoch's key; `ahead` are the rotations the served log names between the
+ * joiner's position and that epoch, read ahead (not applied ahead): they give
+ * the chain down to the genesis key, each key checked by the id the log
+ * names, the genesis's verified already — a forged rotation yields a key
+ * that fails there. The device unwraps first (the chain links need the
+ * payload hashes inside the sealed records), but writes nothing and treats
+ * the served log as genuine only once checkAnchor has passed.
+ */
+export function unwrapInviteKey(set: MemberSet, record: unknown, device: DeviceKeys, inviter: DeviceCert, ahead: RotationAhead[] = []): BrainKey[] {
+  const r = asObject(record, 'a wrapped key')
+  checkVersion(r.v)
+  exactFields(r, ['v', 'brain', 'epoch', 'recipient', 'sealed', 'wrapper', 'sig'], 'a wrapped key')
+  if (r.brain !== set.brain) throw new ProtocolError('the wrapped key is for another brain')
+  if (!Number.isSafeInteger(r.epoch) || (r.epoch as number) < 0) throw new ProtocolError('the epoch is not a non-negative integer')
+  if (r.wrapper !== inviter.device_sign) throw new ProtocolError('the key is not wrapped by the inviter\'s device')
+  fromBase64url(r.sealed, SEAL_BYTES, 'sealed')
+  const { sig, ...body } = r
+  if (!verifyText(r.wrapper as string, WRAP_DOMAIN, canonicalJson(body), sig as string)) throw new ProtocolError('the wrapped key is not signed by its wrapper')
+  const chain = withRotationsAhead(set, ahead)
+  return epochKeys(chain, open(chain, r as unknown as WrappedKey, device))
+}
+
+/** The member set's key chain extended by the rotations the log names ahead, in order — only for opening keys, nothing else of the set moves. */
+function withRotationsAhead(set: MemberSet, ahead: RotationAhead[]): MemberSet {
+  let keys = set.keys
+  for (const rotation of ahead) {
+    if (rotation.epoch !== keys.length) throw new ProtocolError(`a rotation ahead names epoch ${rotation.epoch}, the chain stands at ${keys.length - 1}`)
+    fromBase64url(rotation.key_id, KEY_BYTES, 'a rotation\'s key_id')
+    keys = [...keys, { key_id: rotation.key_id, prev: box(rotation.prev, 'a rotation\'s prev', KEY_BYTES) }]
+  }
+  return keys === set.keys ? set : { ...set, epoch: keys.length - 1, keys }
+}
+
+function prevAad(brain: string, epoch: number): string {
+  return canonicalJson({ brain, epoch })
+}

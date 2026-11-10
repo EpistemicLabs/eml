@@ -1,16 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, sep } from 'path'
 import { EML, addDays, COMMAND_NAMES, type Env } from '../src'
-import {
-  validDecision, validTask, validNote, validRule, validProfile, validStatus, validEvent, validLog, validReference, writes, createObject, updateObject,
-} from './fixtures'
+import { validDecision, validTask, validNote, writes, writeEverything } from './fixtures'
+import { stateDump } from '../src/log/snapshot'
 
 // v0.20 (spec sync-ready-write-path §2): a brain write is a function of
 // (DB state, input, env). Core write code reads no clock and draws no id of its
 // own; each write takes its time once and stamps every row it touches with it.
 
 const START = Date.parse('2026-10-23T08:00:00.000Z')
+
+/** A row's key across brains: its id, or its link for engram_tags / engram_subjects. */
+const rowKey = (table: string, row: Record<string, unknown>) => `${table}:${row.id ?? `${row.engram_id}/${row.tag_id ?? row.subject_id}`}`
 
 /** A clock that moves 1 ms on every read, and ids from a counter. */
 function fixedEnv() {
@@ -28,84 +30,14 @@ function brain(): EML {
 
 const raw = (eml: EML): any => (eml as any).db
 
-/**
- * The same writes on any brain: every mutator, with the side effects that touch
- * several rows (supersede, part_of, task_id, bound items, wikilinks, tags,
- * subjects, objects).
- */
-function writeEverything(eml: EML): void {
-  const juno = eml.env({ handle: 'juno', session_id: 's1', model: 'm', harness: 'h', ingestion_method: 'mcp' })
-  const ada = eml.env({ handle: 'ada', session_id: 's2', ingestion_method: 'direct' })
-  writes(eml).agents.store({ id: 'juno', name: 'Juno' }, juno)
-  writes(eml).agents.update('juno', { description: 'the agent' })
-  writes(eml).users.create({ id: 'ada', name: 'Ada' }, juno)
-  writes(eml).users.update('ada', { email: 'ada@example.com' }, juno)
-  createObject(eml, 'project', { id: 'p', name: 'P' }, juno)
-  createObject(eml, 'project', { id: 'q', name: 'Q' }, juno)
-  createObject(eml, 'entity', { id: 'acme', name: 'Acme', kind: 'org' }, juno)
-  createObject(eml, 'tag', { name: 'ops' }, juno)
-  createObject(eml, 'tag', { name: 'old', status: 'archived' }, juno)
-  createObject(eml, 'subject', { name: 'launch' }, juno)
-  createObject(eml, 'subject', { name: 'done-strand', status: 'closed' }, juno)
-  updateObject(eml, 'entity', 'acme', { description: 'a customer' }, juno)
-  updateObject(eml, 'tag', 'ops', { description: 'operations' }, juno)
-  updateObject(eml, 'subject', 'launch', { description: 'the launch' }, juno)
-
-  const scope = 'project.p'
-  const parent = writes(eml).store(validTask({ scope, title: 'parent', status: 'active' }), juno)
-  const child = writes(eml).store(validTask({ scope, title: 'child', parent_id: parent.id }), juno)
-  const bound = writes(eml).store(validDecision({ scope, title: 'bound', task_id: parent.id, properties: { binding: 'task' } }), juno)
-  const kept = writes(eml).store(validNote({ scope, title: 'kept', task_id: parent.id, properties: { binding: 'task' } }), juno)
-  const note = writes(eml).store(validNote({ scope, title: 'note', content: 'see [[bound]] and [[nowhere]]', tags: ['ops'], subjects: ['launch'] }), ada)
-  writes(eml).store(validStatus({ scope }), juno)
-  writes(eml).store(validStatus({ scope, content: 'next state', properties: { state: 'next' } }), ada)
-  writes(eml).store(validRule({ scope, title: 'rule-one' }), juno)
-  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada', properties: { core: true } }), juno)
-  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada-2', properties: { core: true } }), juno)
-  writes(eml).store(validEvent({ scope, title: 'shipped' }), juno)
-  const log = writes(eml).store(validLog({ scope, title: 'session' }), juno)
-  writes(eml).store(validReference({ scope, title: 'ref' }), juno)
-
-  writes(eml).trackTask(child.id, { text: 'started', status: 'active', stage: 'implementation', tags: ['ops'] }, juno)
-  writes(eml).trackTask(child.id, { status: 'resolved', outcome: 'done', text: 'finished' }, juno)
-  writes(eml).trackTask(parent.id, { status: 'resolved', outcome: 'done', text: 'closed', keep: [kept.id] }, ada)
-  writes(eml).trackTask(parent.id, { status: 'active', text: 'reopened' }, ada)
-  const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
-  writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
-
-  writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
-  writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)
-  const decision = writes(eml).store(validDecision({ scope, title: 'standing-one' }), juno)
-  writes(eml).update(decision.id, { review_note: 'still holds' }, juno)
-  writes(eml).confirmReview(decision.id, 'confirmed again', ada)
-  writes(eml).confirmReview(successor.id, 'still relevant', ada)
-  const replacement = writes(eml).store(validDecision({ scope, title: 'replacement' }), juno)
-  writes(eml).update(replacement.id, { supersedes: [decision.id] }, juno)
-  writes(eml).update(bound.id, { status: 'invalidated' }, juno)
-
-  const learned = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask before acting.', source: 'user', happened: 'once', quote: 'ask me' }, juno)
-  if (!learned.written) throw new Error('learning not written')
-  writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
-  writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
-
-  eml.apply({ name: 'engram.rescope', input: { ids: [log.id, kept.id], scope: 'project.q' } }, juno)
-
-  updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
-}
-
-/** Every brain table as sorted JSON rows (FTS shadow tables and the migration log aside). */
-function dump(eml: EML): Record<string, string[]> {
-  const tables = (raw(eml).prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'engrams_fts_%' ORDER BY name`).all() as Array<{ name: string }>)
-    .map(r => r.name)
-    .filter(n => n !== '_eml_migrations')
-  return Object.fromEntries(tables.map(t => [t, (raw(eml).prepare(`SELECT * FROM ${t}`).all() as unknown[]).map(r => JSON.stringify(r)).sort()]))
-}
+/** The brain's state, as the op log compares and hashes it (log/snapshot.ts). */
+const dump = (eml: EML) => stateDump(raw(eml))
 
 describe('deterministic writes', () => {
   it('the same commands with the same env give the same brain, row for row', () => {
     const a = brain()
     const b = brain()
-    // every write goes through apply(), and the sequence uses all nine commands
+    // every write goes through apply(), and the sequence uses every command
     const used = new Set<string>()
     const apply = a.apply.bind(a)
     a.apply = ((command: { name: string }, env?: unknown) => { used.add(command.name); return apply(command as never, env as never) }) as typeof a.apply
@@ -126,11 +58,20 @@ describe('deterministic writes', () => {
     writeEverything(eml)
     const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
     const end = Date.parse(eml.now())
+    // v0.21: rows that came by engram.import keep the source brain's times
+    const imported = new Set<string>()
+    for (const { payload } of (eml as any).db.prepare(`SELECT payload FROM op_log WHERE json_extract(payload, '$.call') = 'engram.import'`).all() as Array<{ payload: string }>) {
+      for (const [table, rows] of Object.entries(JSON.parse(payload).args.rows as Record<string, Array<Record<string, unknown>>>)) {
+        for (const row of rows) imported.add(rowKey(table, row))
+      }
+    }
+    expect(imported.size).toBeGreaterThan(0)
     for (const [table, rows] of Object.entries(dump(eml))) {
-      for (const row of rows.map(r => JSON.parse(r) as Record<string, unknown>)) {
+      for (const row of rows) {
         for (const col of ['created_at', 'updated_at', 'at']) {
           if (!(col in row)) continue
           expect(row[col], `${table}.${col}`).toMatch(iso)
+          if (imported.has(rowKey(table, row))) continue
           const ms = Date.parse(row[col] as string)
           expect(ms >= START && ms <= end, `${table}.${col} ${row[col]}`).toBe(true)
         }
@@ -181,6 +122,7 @@ describe('deterministic writes', () => {
       return r
     }
     once(env => writes(eml).projects.create({ id: 'p', name: 'P' }, env))
+    once(env => writes(eml).agents.store({ id: 'juno', name: 'Juno' }, env))
     once(env => writes(eml).projects.update('p', { goal: 'ship' }, env))
     const scope = 'project.p'
     const d = once(env => writes(eml).store(validDecision({ scope, title: 'pick-sqlite', content: 'Use SQLite for the brain store.' }), env))
@@ -190,9 +132,9 @@ describe('deterministic writes', () => {
     const t = once(env => writes(eml).store(validTask({ scope, title: 'hub', status: 'active' }), env))
     once(env => writes(eml).trackTask(t.id, { text: 'progress' }, env))
     once(env => writes(eml).relate({ source_id: d.id, target_id: t.id, relation: 'supports', detection_method: 'manual' }, env))
-    const l = once(env => writes(eml).learn({ scope: 'global', title: 'ask-first', content: 'Ask before acting.', source: 'self', happened: 'once' }, env))
+    const l = once(env => writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', source: 'self', happened: 'once' }, env))
     if (!l.written) throw new Error('not written')
-    once(env => writes(eml).learn({ scope: 'global', title: 'ask-first-again', content: 'Ask before acting.', source: 'self', happened: 'twice' }, env))
+    once(env => writes(eml).learn({ scope: 'agent.juno', title: 'ask-first-again', content: 'Ask before acting.', source: 'self', happened: 'twice' }, env))
     once(env => writes(eml).learn({ id: l.engram.id, source: 'observed', happened: 'again' }, env))
     eml.close()
   })
@@ -211,10 +153,21 @@ describe('no clock or id source in core write code', () => {
     [/new Date\(\)/, 'new Date()'],
     [/datetime\('now'/, "datetime('now')"],
     [/CURRENT_TIMESTAMP/, 'CURRENT_TIMESTAMP'],
-    [/\buuid\w*\(|randomUUID\(/, 'uuid()'],
+    // id sources, not call names: a random draw under any name (an aliased
+    // randomUUID, the uuid package, raw random bytes) fails; uuidv5 — an id
+    // derived from the op (log/op.ts) — is deterministic and passes
+    [/\brandomUUID\b/, 'randomUUID'],
+    [/\buuid(v[1-46-8])?\(/, 'uuid() / uuidv1–4, 6–8()'],
+    [/from 'uuid'|require\('uuid'\)/, "the 'uuid' package"],
+    [/\brandomBytes\b|getRandomValues|Math\.random/, 'random bytes'],
   ]
   const src = join(__dirname, '..', 'src')
-  for (const file of readdirSync(src).filter(f => f.endsWith('.ts') && !ALLOWED.has(f))) {
+  // recursive: the write code lives in commands/ and write/; paths are relative to src
+  const files = (readdirSync(src, { recursive: true }) as string[])
+    .map(f => f.split(sep).join('/'))  // Windows lists commands\\x.ts; the checks and names use /
+    .filter(f => f.endsWith('.ts') && !ALLOWED.has(f))
+    .sort()
+  for (const file of files) {
     it(file, () => {
       const lines = readFileSync(join(src, file), 'utf-8').split('\n')
       const hits = lines.flatMap((line, i) => FORBIDDEN.filter(([re]) => re.test(line)).map(([, what]) => `${file}:${i + 1} ${what}`))

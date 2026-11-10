@@ -108,6 +108,9 @@ describe('v0.12 tags', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      // v0.21: a brain made inside the test's timeline — the op log's times never go back before its genesis
+      eml.close()
+      eml = new EML({ namespace: 'test', dbPath: join(dir, 't-timeline.db') })
       writes(eml).tags.create({ name: 'x' })
       const e = writes(eml).store({ type: 'note', scope: 'global', title: 'n', content: 'c' })
       const stored = eml.engrams.get(e.id)!.updated_at

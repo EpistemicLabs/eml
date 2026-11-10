@@ -7,7 +7,7 @@ import * as path from 'node:path'
 import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
-import { readCockpitConfig } from './config.js'
+import { readCockpitConfig, writeCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
 import { BrainHygiene } from './brain-hygiene.js'
@@ -34,6 +34,13 @@ import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
+import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
+import { loadAgentBrains } from './agents.js'
+import { upgradeAtStart } from './agent-upgrade.js'
+import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
+import { BACKUPS_DIR, DATA_DIR } from './paths.js'
+import type { UpgradeState } from './brain-space.js'
+import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
 import { WorkerStarter } from './worker-start.js'
 import { refreshServiceUnit, runServiceCommand } from './service.js'
@@ -131,43 +138,76 @@ async function main() {
   // The per-boot token keeps other local processes from spoofing session state.
   const hookToken = randomBytes(16).toString('hex')
   const hookUrl = `http://127.0.0.1:${hostPort}/api/hook`
+  // The brain MCP endpoint every session reaches its brains through, and the
+  // hook routes the session hooks read from (brain-mcp.ts).
+  const mcpUrl = `http://127.0.0.1:${hostPort}${MCP_PATH}`
+  const hooksUrl = `http://127.0.0.1:${hostPort}${HOOKS_PATH}`
 
   // Each agent CLI writes the files its sessions share across spaces (for
   // Claude Code: the turn-hook config, the skills, .claude.json; for Codex:
   // config.toml and hooks.json). A space's own files follow below.
   for (const provider of providers.all()) {
-    provider.prepare({ hookUrl, hookToken, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
+    provider.prepare({ hookUrl, hookToken, mcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
   }
   log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME)')
 
-  // The brain spaces (brain-space.ts): the local brain this home was
-  // provisioned with (main) plus the further local brains of the config. Each
-  // space writes its own session files.
-  const config = await readCockpitConfig()
-  const row = brainForLocalToken(brain.token)
+  // The agent brains (agents.ts) and the brain spaces (brain-space.ts): the
+  // local brain this home was provisioned with (main) plus the further local
+  // brains of the config, each bound to one agent. Each space writes its own
+  // session files. A space without a bound agent (a home from before agent
+  // brains, until the agent upgrade) gets no brain in its sessions.
+  // A home from before agent brains gets them now (agent-upgrade.ts): a dry
+  // run on copies, the real run only when every check passed, the config last.
+  // When it cannot (no handle to tell, a check failed), the spaces stay
+  // unbound and carry the reason for the banner and the boot refusal.
+  // The config as the file has it after the upgrade, whatever its outcome, and why a space stayed unbound.
+  const { config, upgrade, states: upgradeStates } = await upgradeAtStart({
+    dataDir: DATA_DIR, backupsDir: BACKUPS_DIR, readConfig: readCockpitConfig, writeConfig: (next) => writeCockpitConfig(next), log,
+  })
+  const upgradeStateOf = (brainId: string, bound: string | null | undefined): UpgradeState | null => (bound ? null : upgrade ?? upgradeStates.get(brainId) ?? null)
+  const agents = loadAgentBrains(config, server.baseUrl, log)
+  const row = brainForLocalToken(config?.token ?? brain.token)
   const main = openBrainSpace({
     id: row?.id ?? 'main',
     name: config?.mainName ?? 'Main',
-    brainName: row?.name ?? 'main',
+    agent: config?.agent ?? null,
+    ownRuntime: agents.expectsRuntime(config?.agent),
+    upgrade: upgradeStateOf(row?.id ?? 'main', config?.agent),
     main: true,
     color: config?.mainColor,
     url: server.baseUrl,
-    token: brain.token,
+    token: config?.token ?? brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
+    mcpUrl,
+    hooksUrl,
   })
   const spaces = new BrainSpaces(main)
   for (const extra of config?.spaces ?? []) {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, brainName: extraRow.name, main: false, color: extra.color,
-      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, agentId: extra.agent,
+      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color,
+      url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl, ownRuntime: agents.expectsRuntime(extra.agent),
     }))
-    const agent = spaces.get(extraRow.id)?.agent
-    const problem = agent?.problem('claude')
-    if (agent) log(`space ${extra.name ?? extraRow.name}: agent ${agent.id}${problem ? ` — ${problem}` : ''}`)
+    const runtime = spaces.get(extraRow.id)?.runtime
+    const problem = runtime?.problem('claude')
+    if (runtime) log(`space ${extra.name ?? extraRow.name}: runtime of ${runtime.id}${problem ? ` — ${problem}` : ''}`)
   }
-  log(`spaces: ${spaces.list().map((s) => `${s.name} (${s.registry.list().length} local projects)`).join(', ')}`)
+  // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
+  await loadSharedFlags(spaces.list())
+  log(`agents: ${agents.list().map((a) => a.id).join(', ') || 'none'}${config?.handle ? ` (handle ${config.handle})` : ''}`)
+  log(`spaces: ${spaces.list().map((s) => `${s.name}${s.shared ? ' (shared)' : s.shared === null ? ' (shared?)' : ''} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
+  // A brain no token of the config belongs to is one a shared-space creation
+  // or join left behind (a crash before the config was written): discarded
+  // when it has no log, logged otherwise (team-space.ts). Runs after the agent
+  // upgrade at host start (it writes its agent brains into the config last),
+  // so a fresh agent brain never looks like an orphan — keep that order.
+  await sweepOrphanBrains({
+    // the main token as the config has it now: the agent upgrade may have re-issued it under the handle
+    tokens: [config?.token ?? brain.token, ...(config?.spaces ?? []).map((s) => s.token), ...(config?.agents ?? []).map((a) => a.token)],
+    url: server.baseUrl,
+    log,
+  }).catch((err: Error) => log(`sweep: ${err.message}`))
 
   // Sessions can open worker sessions (skill spawn-session → cockpit-spawn →
   // POST /api/spawn); the per-boot token keeps other local processes out.
@@ -203,7 +243,7 @@ async function main() {
       .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
     chatRuns: (sessionId) => chat.isRunning(sessionId),
     sameReach: (fromSessionId, sessionId) => {
-      const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent?.id ?? null
+      const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent
       return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
     },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
@@ -261,8 +301,10 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
+  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
+
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene },
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
     origins,
   )
 
@@ -351,6 +393,7 @@ async function runDiagnoseCommand(argv: string[]): Promise<boolean> {
 runServiceCommand(process.argv.slice(2))
   .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
+  .then(async (handled) => handled || runUpgradeAgentsCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runAgentCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })

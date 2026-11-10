@@ -177,8 +177,11 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
   // v0.11 team-brains: assignee filter exposed on /list (agent or user handle).
   describe('task assignee filter', () => {
     it('GET /list?type=task&assignee=<handle> returns only that handle\'s tasks', async () => {
+      for (const name of ['carol', 'dave']) {
+        await request('POST', `${baseUrl}/object/user`, { Authorization: `Bearer ${provB.tokenPlaintext}` }, JSON.stringify({ name }))
+      }
       const mkTask = (assignee: string, content: string) =>
-        create(provB.tokenPlaintext, validTask({ scope: 'global', content, properties: { assignee_id: assignee } }))
+        create(provB.tokenPlaintext, validTask({ scope: 'global', content, properties: { assignee_ids: [assignee] } }))
       await mkTask('carol', 'carol task one')
       await mkTask('dave', 'dave task')
       await mkTask('carol', 'carol task two')
@@ -518,14 +521,16 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
     })
 
     it('GET /hygiene lists the checks with their findings', async () => {
-      const r = await create(tok(), validRule({ title: 'fits-the-format', content: 'do Y' }))
+      // v0.21: a rule has an owner; the brain's agent is created first
+      await request('POST', `${baseUrl}/object/agent`, { Authorization: `Bearer ${tok()}` }, JSON.stringify({ id: 'bob', name: 'Bob' }))
+      const r = await create(tok(), validRule({ scope: 'agent.bob', title: 'fits-the-format', content: 'do Y' }))
       expect(r.status).toBe(201)
       const h = await get('/hygiene')
       expect(h.status).toBe(200)
       expect(h.body.checks.map((c: { id: string }) => c.id)).toEqual([
         'rule-profile-format', 'reference-without-source', 'profile-scope',
         'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
-        'review-due', 'learning-unclear',
+        'rule-in-global-scope', 'rule-in-user-scope', 'learning-outside-agent-scope', 'review-due', 'learning-unclear',
       ])
       expect(h.body.checks[0]).toMatchObject({ kind: 'migration', since_schema: 18, findings: [] })
       expect(typeof h.body.total).toBe('number')

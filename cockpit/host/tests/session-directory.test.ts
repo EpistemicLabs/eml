@@ -129,7 +129,7 @@ describe('the session directory endpoint', () => {
     ledger.recordSpawn('other-agent', null, 'p1', 'claude', false, null, 'agent-brain')
     ledger.recordSpawn('codex-session', null, 'p1', 'codex')
     const space = (id: string, agentId: string | null) => ({
-      id, name: id, brainName: 'agent', main: id === 'main', agent: agentId ? { id: agentId } : null, ledgerKey: id === 'main' ? null : id,
+      id, name: id, main: id === 'main', agent: agentId ?? null, ledgerKey: id === 'main' ? null : id,
       url: 'http://127.0.0.1:1', token: 'secret',
       registry: { get: (projectId: string) => ({ projectId, path: `/work/${projectId}`, displayName: 'Shop', customName: null }) },
       notes: { subscribe: () => () => {} },

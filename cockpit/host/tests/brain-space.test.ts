@@ -12,6 +12,10 @@ const TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = 'hooktoken0123456789'
 const HOOK_URL = 'http://127.0.0.1:4318/api/hook'
 const SPACE_ID = 'fe2dcdfb-0000-4bb3-a3b4-d5261f93e165'
+const GONE_ID = 'fe2dcdfb-0001-4bb3-a3b4-d5261f93e165'
+const KEPT_ID = 'fe2dcdfb-0002-4bb3-a3b4-d5261f93e165'
+const MCP_URL = 'http://127.0.0.1:4318/mcp'
+const HOOKS_URL = 'http://127.0.0.1:4318/hooks'
 
 
 
@@ -20,6 +24,8 @@ describe('brain spaces', () => {
     writeIsolationFiles: typeof import('../src/infrastructure/providers/claude/isolation.js')['writeIsolationFiles']
     openBrainSpace: typeof import('../src/brain-space.js')['openBrainSpace']
     BrainSpaces: typeof import('../src/brain-space.js')['BrainSpaces']
+    writeCockpitConfig: typeof import('../src/config.js')['writeCockpitConfig']
+    readCockpitConfig: typeof import('../src/config.js')['readCockpitConfig']
     shellLine: typeof import('../src/infrastructure/providers/shared.js')['shellLine']
     CONFIG_DIR: string
     EML_HOOK_DIR: string
@@ -30,7 +36,8 @@ describe('brain spaces', () => {
     const space = await import('../src/brain-space.js')
     const paths = await import('../src/paths.js')
     const { shellLine } = await import('../src/infrastructure/providers/shared.js')
-    mods = { ...isolation, ...space, shellLine, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
+    const { writeCockpitConfig, readCockpitConfig } = await import('../src/config.js')
+    mods = { ...isolation, ...space, shellLine, writeCockpitConfig, readCockpitConfig, CONFIG_DIR: paths.CONFIG_DIR, EML_HOOK_DIR: paths.EML_HOOK_DIR }
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -89,21 +96,28 @@ describe('brain spaces', () => {
     }
   })
 
-  it('gives a space its own session files, owner-only, with the token only in env and the hook config', () => {
+  it('gives a space its own session files, owner-only, naming the host with the space\'s MCP token and never the brain token', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const space = mods.openBrainSpace({
-      id: SPACE_ID, name: 'Main', brainName: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig,
+      id: SPACE_ID, name: 'Main', agent: 'atlas', main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
+    expect(space.agent).toBe('atlas')
 
     expect(space.files.mcpConfig).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'mcp.json'))
     expect(space.files.settings).toBe(join(mods.CONFIG_DIR, 'spaces', SPACE_ID, 'settings.json'))
     expect(space.files.emlConfig).toBe(join(mods.EML_HOOK_DIR, 'spaces', SPACE_ID, 'config'))
     for (const file of Object.values(space.files)) expectOwnerOnly(file)
 
-    const mcp = JSON.parse(readFileSync(space.files.mcpConfig, 'utf8'))
-    expect(mcp.mcpServers.eml_brain.env).toEqual({ EML_API_URL: 'http://127.0.0.1:60000', EML_API_TOKEN: TOKEN })
-    expect(mcp.mcpServers.eml_brain.args.join(' ')).not.toContain(TOKEN)
+    // The brain MCP: the host's endpoint with the space's MCP token; the brain token stays in the host.
+    const mcpRaw = readFileSync(space.files.mcpConfig, 'utf8')
+    expect(mcpRaw).not.toContain(TOKEN)
+    expect(JSON.parse(mcpRaw).mcpServers.eml_brain).toEqual({
+      type: 'http',
+      url: MCP_URL,
+      headers: { 'x-cockpit-mcp-token': space.mcpToken, 'x-eml-session': '${COCKPIT_SESSION_ID}' },
+    })
+    expect(space.mcpToken).toMatch(/^[0-9a-f]{64}$/)
 
     const settings = readFileSync(space.files.settings, 'utf8')
     expect(settings).not.toContain(TOKEN)
@@ -128,14 +142,18 @@ describe('brain spaces', () => {
     expect(hooks.PreToolUse[0].hooks[0].async).toBeUndefined()
     expect(line(hooks.UserPromptSubmit[1].hooks[0])).toMatch(/user-prompt-submit .*--no-cwd-nudge$/)
 
-    expect(readFileSync(space.files.emlConfig, 'utf8')).toContain(`EML_API_TOKEN=${TOKEN}`)
+    // The EML hooks talk to the host's hook routes with the space's MCP token (brain-mcp.ts HOOKS_PATH).
+    const emlConfig = readFileSync(space.files.emlConfig, 'utf8')
+    expect(emlConfig).toContain(`EML_URL=${HOOKS_URL}\n`)
+    expect(emlConfig).toContain(`EML_API_TOKEN=${space.mcpToken}\n`)
+    expect(emlConfig).not.toContain(TOKEN)
   })
 
   it('resolves a space by id and falls back to main', () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string) => mods.openBrainSpace({
-      id, name, brainName: name, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
-      turnHookConfig: isolation.turnHookConfig,
+      id, name, agent: null, main: true, url: 'http://127.0.0.1:60000', token: TOKEN,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
     })
     const main = open(SPACE_ID, 'Main')
     const spaces = new mods.BrainSpaces(main)
@@ -145,5 +163,33 @@ describe('brain spaces', () => {
     expect(spaces.resolve(SPACE_ID)).toBe(main)
     expect(spaces.resolve(undefined)).toBe(main)
     expect(spaces.resolve('no-such-space')).toBe(main)
+  })
+
+  it('v0.21: a removed space leaves the registry, the config, and takes its session files and local state with it', async () => {
+    const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
+    const open = (id: string, name: string, main: boolean, token: string) => mods.openBrainSpace({
+      id, name, agent: 'atlas', main, shared: !main, url: 'http://127.0.0.1:60000', token,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
+    })
+    const main = open(SPACE_ID, 'Main', true, TOKEN)
+    const gone = open(GONE_ID, 'Gone', false, 'eml_gone')
+    const kept = open(KEPT_ID, 'Kept', false, 'eml_kept')
+    await mods.writeCockpitConfig({ token: TOKEN, agent: 'atlas', spaces: [{ token: 'eml_gone', name: 'Gone', agent: 'atlas' }, { token: 'eml_kept', name: 'Kept', agent: 'atlas' }] })
+    const spaces = new mods.BrainSpaces(main)
+    spaces.add(gone)
+    spaces.add(kept)
+    gone.registry.ensureBrain('p1', 'Project')
+    const stateDir = join(home, 'spaces', GONE_ID)
+    expect(existsSync(stateDir)).toBe(true)
+
+    await spaces.remove(gone)
+
+    expect(spaces.list().map((s) => s.name)).toEqual(['Main', 'Kept'])
+    expect((await mods.readCockpitConfig())?.spaces).toEqual([{ token: 'eml_kept', name: 'Kept', agent: 'atlas' }])
+    expect(existsSync(join(mods.CONFIG_DIR, 'spaces', GONE_ID))).toBe(false)
+    expect(existsSync(join(mods.EML_HOOK_DIR, 'spaces', GONE_ID))).toBe(false)
+    expect(existsSync(stateDir)).toBe(false)
+    for (const file of Object.values(kept.files)) expect(existsSync(file)).toBe(true)
+    await expect(spaces.remove(main)).rejects.toThrow('the main space is not removed')
   })
 })

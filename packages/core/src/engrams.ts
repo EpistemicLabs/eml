@@ -194,7 +194,7 @@ export interface TrackTaskInput {
   intent?: string | null
   context?: string | null
   priority?: string | null
-  assignee_id?: string | null
+  assignee_ids?: string[] | null
   due_date?: string | null
   blockers?: string[] | null
   parent_id?: string | null
@@ -206,7 +206,7 @@ export interface TrackTaskInput {
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
-  'assignee_id', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
+  'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
@@ -266,6 +266,15 @@ export function renderLogContent(p: Record<string, unknown>, narrative: string):
   return narrative && narrative.trim() !== '' ? `${block}\n\n${narrative}` : block
 }
 
+/**
+ * v0.21: where a project went when a move archived it (log/move-engrams.ts writes
+ * moved_to, moved_at and, when the caller named the target space, moved_to_name).
+ */
+export function movedFrom(metadata: Record<string, unknown> | null): ScopedBrainState['moved'] {
+  if (!metadata || typeof metadata.moved_to !== 'string' || typeof metadata.moved_at !== 'string') return null
+  return { to: metadata.moved_to, at: metadata.moved_at, name: typeof metadata.moved_to_name === 'string' ? metadata.moved_to_name : null }
+}
+
 export class EngramStore {
   constructor(
     protected db: Database.Database,
@@ -289,7 +298,7 @@ export class EngramStore {
   sessionLog(sessionId: string | null): Engram | null {
     if (!sessionId) return null
     const row = this.db.prepare(
-      `SELECT * FROM engrams WHERE type = 'log' AND session_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT * FROM engrams WHERE type = 'log' AND session_id = ? AND status = 'active' ORDER BY created_at DESC, ord DESC LIMIT 1`,
     ).get(sessionId) as any
     return row ? this.rowToEngram(row) : null
   }
@@ -320,7 +329,7 @@ export class EngramStore {
         AND e.type IN ('decision', 'note')
         AND json_extract(e.properties, '$.binding') = 'task'
         AND e.status IN (${statuses.map(() => '?').join(', ')})
-      ORDER BY e.created_at ASC
+      ORDER BY e.created_at ASC, e.ord ASC
     `).all(taskId, ...statuses) as BoundItem[]
   }
 
@@ -337,7 +346,27 @@ export class EngramStore {
     const engram = this.rowToEngram(row)
     this.hydrateFacets([engram])
 
-    // v0.9.1 Cluster 1: relations are loaded without a namespace filter (no multi-tenancy).
+    // v0.15: a task carries its journal, so a fresh session can take it over cold.
+    // v0.19: every engram its entries (evidence, reviews); a task its bound items,
+    // a learning its ripeness.
+    const entries = this.entries(id)
+    return {
+      ...engram,
+      relations: this.relationsOf(id),
+      ...(entries.length > 0 ? { entries } : {}),
+      ...(engram.type === 'task' ? { bound: this.boundItems(id) } : {}),
+      ...(engram.type === 'learning' ? { learning: learningState(entries) } : {}),
+    }
+  }
+
+  /**
+   * Every relation with `id` at either end, with the bodies of the ends this
+   * brain holds. v0.9.1 Cluster 1: no namespace filter. v0.21: the engram
+   * itself need not be in this brain — a cross-brain reference (source_brain /
+   * target_brain) names an engram of another brain, and that brain's host
+   * asks here for the links that point at it.
+   */
+  relationsOf(id: string): RelationWithTarget[] {
     const rels = this.db.prepare(`
       SELECT r.*,
         c1.content as src_engram_content, c1.type as src_engram_type,
@@ -346,19 +375,9 @@ export class EngramStore {
       LEFT JOIN engrams c1 ON r.source_id = c1.id
       LEFT JOIN engrams c2 ON r.target_id = c2.id
       WHERE (r.source_id = ? OR r.target_id = ?)
+      ORDER BY r.ord
     `).all(id, id) as any[]
-
-    // v0.15: a task carries its journal, so a fresh session can take it over cold.
-    // v0.19: every engram its entries (evidence, reviews); a task its bound items,
-    // a learning its ripeness.
-    const entries = this.entries(id)
-    return {
-      ...engram,
-      relations: rels.map(r => this.rowToRelationWithTarget(r)),
-      ...(entries.length > 0 ? { entries } : {}),
-      ...(engram.type === 'task' ? { bound: this.boundItems(id) } : {}),
-      ...(engram.type === 'learning' ? { learning: learningState(entries) } : {}),
-    }
+    return rels.map(r => this.rowToRelationWithTarget(r))
   }
 
   /**
@@ -372,6 +391,7 @@ export class EngramStore {
       SELECT r.* FROM relations r
       WHERE r.source_id IN (SELECT id FROM engrams WHERE scope = ?)
          OR r.target_id IN (SELECT id FROM engrams WHERE scope = ?)
+      ORDER BY r.ord
     `).all(scope, scope) as any[]
     return rows.map(r => this.rowToRelation(r))
   }
@@ -476,7 +496,7 @@ export class EngramStore {
       params.push(q.due_before)
     }
     if (q.assignee) {
-      conditions.push("json_extract(c.properties, '$.assignee_id') = ?")
+      conditions.push("EXISTS (SELECT 1 FROM json_each(c.properties, '$.assignee_ids') WHERE value = ?)")
       params.push(q.assignee)
     }
     if (q.priority) {
@@ -556,6 +576,7 @@ export class EngramStore {
         case 'created_at':
         default:               orderClause = 'c.created_at DESC'; break
       }
+      orderClause += ', c.ord DESC'  // v0.21: one write stamps its rows alike — the newer insert first
     }
 
     const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1'
@@ -591,19 +612,6 @@ export class EngramStore {
     return engrams
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare(
-      'DELETE FROM engrams WHERE id = ?'
-    ).run(id)
-    if (result.changes > 0) {
-      this.db.prepare('DELETE FROM engrams_fts WHERE id = ?').run(id)
-      this.db.prepare(
-        'DELETE FROM relations WHERE (source_id = ? OR target_id = ?)'
-      ).run(id, id)
-    }
-    return result.changes > 0
-  }
-
   /** A learning's ripeness from its evidence (brain hygiene, lists). */
   learningStateOf(id: string): LearningState {
     return learningState(this.entries(id))
@@ -624,6 +632,16 @@ export class EngramStore {
   /** v0.20: an engram's revision counter, or undefined for an unknown id. */
   revOf(id: string): number | undefined {
     return (this.db.prepare('SELECT rev FROM engrams WHERE id = ?').get(id) as { rev: number } | undefined)?.rev
+  }
+
+  /** v0.21: every agent that has written in this brain (engrams and journal entries) with the handle it wrote for, ordered. */
+  writingAgents(): Array<{ agent: string, handle: string }> {
+    return this.db.prepare(`
+      SELECT agent, ingested_by AS handle FROM engrams WHERE agent IS NOT NULL AND ingested_by IS NOT NULL
+      UNION
+      SELECT agent, author AS handle FROM entries WHERE agent IS NOT NULL AND author IS NOT NULL
+      ORDER BY agent, handle
+    `).all() as Array<{ agent: string, handle: string }>
   }
 
   countInScope(scope: string): number {
@@ -655,7 +673,7 @@ export class EngramStore {
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'status'
         AND status = 'active'
-      ORDER BY updated_at DESC LIMIT 3
+      ORDER BY updated_at DESC, ord DESC LIMIT 3
     `, [scope])
 
     const now = this.env.now()
@@ -669,14 +687,14 @@ export class EngramStore {
     const recent_decisions = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'decision'
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, ord DESC
       LIMIT 5
     `, [scope])
 
     const recent_logs = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'log'
-      ORDER BY created_at DESC LIMIT 5
+      ORDER BY created_at DESC, ord DESC LIMIT 5
     `, [scope])
 
     // v0.10.5: active rules in scope — name-only in the dashboard render. (relations
@@ -684,7 +702,7 @@ export class EngramStore {
     const rules = this.queryEngramsRaw(`
       SELECT * FROM engrams
       WHERE scope = ? AND type = 'rule' AND status = 'active'
-      ORDER BY created_at DESC LIMIT 15
+      ORDER BY created_at DESC, ord DESC LIMIT 15
     `, [scope])
 
     // v0.13: engrams in scope that are review due (review-due.ts: standing
@@ -694,7 +712,7 @@ export class EngramStore {
     const pending_reviews = this.queryEngramsRaw(`
       SELECT c.* FROM engrams c
       WHERE c.scope = ? AND ${reviewDueSql('c')}
-      ORDER BY json_extract(c.properties, '$.review_due_at') ASC
+      ORDER BY json_extract(c.properties, '$.review_due_at') ASC, c.ord ASC
       LIMIT 15
     `, [scope, ...reviewDueParams(now)], now)
 
@@ -703,10 +721,12 @@ export class EngramStore {
     const object = m
       ? this.db.prepare(`SELECT status_tracks, metadata FROM ${m[1] === 'project' ? 'projects' : 'entities'} WHERE id = ?`).get(m[2]) as { status_tracks: string | null, metadata: string | null } | undefined
       : undefined
+    const metadata = object?.metadata ? JSON.parse(object.metadata) as Record<string, unknown> : null
     return {
       scope, current_status, open_tasks, open_tasks_total, backlog_tasks, recent_decisions, recent_logs, rules, pending_reviews,
       status_tracks: object?.status_tracks ?? null,
-      metadata: object?.metadata ? JSON.parse(object.metadata) : null,
+      metadata,
+      moved: movedFrom(metadata),
     }
   }
 
@@ -729,11 +749,13 @@ export class EngramStore {
       explanation: row.explanation ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
       created_at: row.created_at,
+      source_brain: row.source_brain ?? null,
+      target_brain: row.target_brain ?? null,
     }
   }
 
   /** `now`: the read's time — a write passes its stamp's, so the response reads no clock of its own. */
-  protected getRaw(id: string, now?: string): Engram | null {
+  getRaw(id: string, now?: string): Engram | null {
     const row = this.db.prepare(
       'SELECT * FROM engrams WHERE id = ?'
     ).get(id) as any
@@ -781,6 +803,8 @@ export class EngramStore {
       explanation: row.explanation ?? null,
       metadata: row.metadata ? JSON.parse(row.metadata) : null,
       created_at: row.created_at,
+      source_brain: row.source_brain ?? null,
+      target_brain: row.target_brain ?? null,
       ...(row.src_engram_content ? { source_engram: { content: row.src_engram_content, type: row.src_engram_type } } : {}),
       ...(row.tgt_engram_content ? { target_engram: { content: row.tgt_engram_content, type: row.tgt_engram_type } } : {}),
     }

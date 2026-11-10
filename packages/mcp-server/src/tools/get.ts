@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
-export function registerGetTool(server: McpServer, http: HttpClient): void {
+export function registerGetTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_get',
     {
@@ -11,11 +11,13 @@ export function registerGetTool(server: McpServer, http: HttpClient): void {
       description:
         'Fetches one engram by ID with full content + properties — the drill-down after an ID ' +
         'surfaces in eml_recall / eml_list / eml_show. Not a search: if you don\'t have the ID, ' +
-        'use eml_recall. The returned `ingested_by` field is the authorship handle — who wrote ' +
-        'the engram (the token\'s caller), useful in a shared team brain. `session_id` and `model` say which ' +
+        'use eml_recall. `ingested_by` is who is accountable for the engram (the token\'s caller; in a shared ' +
+        'brain the member), `agent` the agent that wrote it for them (null when they wrote it themself). `session_id` and `model` say which ' +
         'session and model wrote it. Its entries come with it, oldest ' +
         'first: a task\'s journal (note = written by an agent, change = written by the server) and the decisions ' +
-        'and notes bound to it, a learning\'s evidence and ripeness, review confirmations.',
+        'and notes bound to it, a learning\'s evidence and ripeness, review confirmations. A relation whose other end ' +
+        'lives in another brain names that brain (source_brain / target_brain); with with_relations, a space engram ' +
+        'also lists under agent_links what your agent brain links to it — your learnings and rules about this work.',
       inputSchema: z.object({
         id: z.string().describe('Engram UUID, from a recall / list / show result.'),
         with_relations: z.boolean().optional().describe(
@@ -29,7 +31,7 @@ export function registerGetTool(server: McpServer, http: HttpClient): void {
     async (args) => callTool(async () => {
       const params: Record<string, string | number | undefined> = {}
       if (args.with_relations !== undefined) params.with_relations = String(args.with_relations)
-      const engram = await http.get(`/engram/${args.id}`, params) as { entries?: Array<{ kind: string }> }
+      const engram = await http.get(`/engram/${encodeURIComponent(args.id)}`, params) as { entries?: Array<{ kind: string }> }
       if (args.notes_only && Array.isArray(engram.entries)) engram.entries = engram.entries.filter(e => e.kind !== 'change')
       return engram
     }),

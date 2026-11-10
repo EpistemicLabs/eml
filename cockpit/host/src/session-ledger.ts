@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
-import { PROVIDER_IDS, type ProviderId, type SessionAgent, type SessionRef } from './domain/agent-provider.js'
+import { PROVIDER_IDS, type ProviderId, type SessionAgentRuntime, type SessionRef } from './domain/agent-provider.js'
 import type { SessionRuntimeKind } from './domain/session-runtime.js'
 import type { WorkerStatus } from './domain/session-attention.js'
 import type { ToolProfile } from './domain/tool-profile.js'
@@ -160,9 +160,9 @@ export class SessionLedger {
   }
 
   /** What a provider needs to find this session's conversation. */
-  ref(sessionId: string, projectPath: string | null, agent?: SessionAgent | null): SessionRef {
+  ref(sessionId: string, projectPath: string | null, runtime?: SessionAgentRuntime | null): SessionRef {
     const entry = this.data.sessions[sessionId]
-    return { sessionId, providerSessionId: entry?.providerSessionId ?? null, projectPath, greeted: entry?.greeted ?? null, ...(agent ? { agent } : {}) }
+    return { sessionId, providerSessionId: entry?.providerSessionId ?? null, projectPath, greeted: entry?.greeted ?? null, ...(runtime ? { runtime } : {}) }
   }
 
   /**

@@ -1,0 +1,322 @@
+import type Database from 'better-sqlite3'
+import {
+  DivergedError, GENESIS_PREV_HASH, ProtocolError, UnsupportedVersionError,
+  applyMembership, canonicalJson, checkAuthor, checkCheckpoint, checkRecord, epochKeys, genesisMembers, isClearCall, keyId,
+  memberHandles, memberOfDevice, openRecord, unwrapInviteKey, unwrapKey, wrapKey,
+  type BrainKey, type DeviceCert, type MemberSet, type OpenedOp, type RotationAhead, type TeamOp, type WrappedKey,
+} from '@engramprotocol/protocol'
+import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
+import type { TeamFile } from './team-file'
+
+// --- The replica (v0.21, spec team-brain-sync-client-spec §4) ---------------------
+//
+// One per shared brain: it takes the entries its relay delivers, one at a time
+// in seq order, and decides for each what every replica decides for it —
+// applied, or kept as rejected (decision shared-log-rejected-entries). Where
+// replicas could not decide alike, or this code cannot decide at all, it
+// stops: the brain stays readable and takes nothing more. Nothing of that is
+// kept on disk; a restart meets the same entry again.
+
+/** A relayed entry as the relay's op frame carries it. */
+export interface Delivered {
+  seq: number
+  at: string
+  record: unknown
+}
+
+export type Outcome =
+  /** the command's result; `checkpoint`: whether a checkpoint sat right after the state it names and was compared with this replica's (PROTOCOL.md §10) */
+  | { kind: 'applied', result?: unknown, checkpoint?: boolean }
+  /** kept in the log, changed nothing; `error` when the brain refused the op */
+  | { kind: 'rejected', why: string, error?: CommandError }
+  /** nothing written: the device has no key for the brain's current epoch yet (addKey) */
+  | { kind: 'waiting', epoch: number }
+  /** the brain stops: replicas went apart, or the relay's log is not one */
+  | { kind: 'stopped', why: string }
+  /** the brain stops until this cockpit is updated: a newer protocol or brain schema */
+  | { kind: 'update_needed', why: string }
+
+type Halt = Extract<Outcome, { kind: 'stopped' | 'update_needed' }>
+
+export class Replica {
+  private readonly eml: EML
+  /** the member set at the head; null before the genesis */
+  private set: MemberSet | null = null
+  private readonly keys = new Map<number, Uint8Array>()
+  private handles_: Record<string, string | null> | null = null
+  private halt: Halt | null = null
+  private waiting: number | null = null
+
+  /** The replica of the brain on `db` (empty, or with a shared log) with its team file. */
+  constructor(private readonly db: Database.Database, private readonly team: TeamFile) {
+    this.eml = EML.fromConnection(db, 'replica')
+    if (this.head().seq === 0) return
+    const brain = this.eml.teamBrain()
+    if (brain !== team.brain) {
+      this.stop(`the brain's genesis names team brain ${String(brain)}, its team file ${team.brain}`)
+      return
+    }
+    try {
+      this.set = memberSetOf(db)
+    } catch (err) {
+      this.stop(`the log's membership does not replay: ${(err as Error).message}`)
+    }
+  }
+
+  /** live, waiting for a key, or halted. */
+  get state(): Outcome | { kind: 'live' } {
+    return this.halt ?? (this.waiting !== null ? { kind: 'waiting', epoch: this.waiting } : { kind: 'live' })
+  }
+
+  /**
+   * Takes a wrapped key the relay holds for this device: that epoch's key and
+   * every older one. A device that joined takes its first key only from the
+   * `inviter` its accept named (PROTOCOL.md §8). Throws ProtocolError when the
+   * key is not the log's, or not the inviter's.
+   */
+  addKey(wrapped: unknown, inviter?: DeviceCert, ahead: RotationAhead[] = []): void {
+    if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
+    const keys = inviter
+      ? unwrapInviteKey(this.set, wrapped, this.team.device, inviter, ahead)
+      : epochKeys(this.set, unwrapKey(this.set, wrapped, this.team.device))
+    for (const k of keys) this.keys.set(k.epoch, k.key)
+    this.handles_ = null
+  }
+
+  /**
+   * Takes a brain key this device holds itself (the epoch-0 key of a brain it
+   * created): that epoch's key and every older one, checked against the log.
+   * Returns the key wrapped for this device by itself, for the relay to keep.
+   * Throws ProtocolError before the genesis or when the key is not the log's.
+   */
+  takeOwnKey(key: BrainKey): WrappedKey {
+    if (!this.set) throw new ProtocolError('the brain has no members before its genesis')
+    for (const k of epochKeys(this.set, key)) this.keys.set(k.epoch, k.key)
+    this.handles_ = null
+    return wrapKey(this.set, key, this.team.device.sign.publicKey, this.team.device.sign)
+  }
+
+  /** Takes the next relayed entry. */
+  take(entry: Delivered): Outcome {
+    if (this.halt) return this.halt
+    try {
+      const outcome = this.decide(entry)
+      this.waiting = outcome.kind === 'waiting' ? outcome.epoch : null
+      return outcome
+    } catch (err) {
+      if (err instanceof RelayOrderError) return this.stop(err.message)
+      throw err
+    }
+  }
+
+  private decide({ seq, at, record }: Delivered): Outcome {
+    const head = this.head()
+    if (seq !== head.seq + 1) return this.stop(`relayed entry ${seq}: the log expects seq ${head.seq + 1}`)
+    const keyFor = (epoch: number) => this.keys.get(epoch)
+
+    let header
+    try {
+      header = checkRecord(record, this.team.brain)
+    } catch (err) {
+      return this.unopened(seq, at, record, err)
+    }
+    if (this.db.prepare('SELECT 1 FROM op_log WHERE op_id = ?').get(header.op_id)) {
+      return this.reject(seq, at, header.op_id, canonicalJson(record), null, 'DUPLICATE: the op_id is in the log already')
+    }
+    if (header.kind === 'op') {
+      if (!this.set) return this.stop('the log does not start with a genesis')
+      // only the current epoch is opened (PROTOCOL.md §4): whether a replica
+      // still holds an older key must not change what it logs
+      if (header.epoch !== this.set.epoch) {
+        return this.reject(seq, at, header.op_id, canonicalJson(record), null, `REFUSED: the op is sealed under epoch ${header.epoch}, the brain is at ${this.set.epoch}`)
+      }
+      if (!keyFor(header.epoch)) return { kind: 'waiting', epoch: header.epoch }
+    }
+
+    let opened: OpenedOp
+    try {
+      opened = openRecord(record, this.team.brain, keyFor)
+    } catch (err) {
+      return this.unopened(seq, at, record, err)
+    }
+    const op = opened.envelope
+    if (op.schema > CURRENT_BRAIN_SCHEMA_VERSION) {
+      return this.halted({ kind: 'update_needed', why: `entry ${seq} is brain schema ${op.schema}; this cockpit knows ${CURRENT_BRAIN_SCHEMA_VERSION}` })
+    }
+
+    if (seq === 1) {
+      let founded: MemberSet
+      try {
+        founded = genesisMembers(opened)
+      } catch (err) {
+        return this.stop(`the log does not start with a genesis: ${(err as Error).message}`)
+      }
+      try {
+        this.eml.takeRelayed(this.entry(seq, at, opened), op)
+      } catch (err) {
+        if (err instanceof RelayOrderError) throw err
+        return this.stop(`the genesis does not found this brain: ${(err as Error).message}`)
+      }
+      this.set = founded
+      return { kind: 'applied' }
+    }
+
+    if (op.team.base_seq >= seq) return this.reject(seq, at, op.op_id, opened.payload, opened.sig, `REFUSED: base_seq ${op.team.base_seq} is not before the op's seq`)
+    if (op.team.head_hash !== this.hashAt(op.team.base_seq)) {
+      return this.stop(`entry ${seq}: its author's log differs from this one at seq ${op.team.base_seq}`)
+    }
+
+    const set = this.set as MemberSet
+    let next = set
+    try {
+      if (isClearCall(op.call)) {
+        next = applyMembership(set, opened)
+        // a key this device derived from a rotation it read ahead of here (a joiner's) must be the one the log names now
+        if (op.call === 'team.rotate_key') {
+          const { epoch, key_id } = op.args as { epoch: number, key_id: string }
+          const held = this.keys.get(epoch)
+          if (held && keyId(held) !== key_id) return this.stop(`entry ${seq}: the key this device holds for epoch ${epoch} is not the one the log names`)
+        }
+      } else {
+        checkAuthor(set, opened, this.handles_ ??= memberHandles(set, keyFor))
+        // a checkpoint counts when it sits right after the state it names:
+        // this replica is at that state now and compares. One that another
+        // entry slipped in before gets the format check only — every replica
+        // has its head's hash only, and a device replaying the log passes
+        // every seq in order, so it meets each adjacent checkpoint the same way.
+        if (op.call === 'brain.checkpoint') checkCheckpoint(opened, s => s === head.seq ? this.eml.stateHash() : (op.args as { state_hash: string }).state_hash)
+      }
+    } catch (err) {
+      if (err instanceof DivergedError) return this.stop(err.message)
+      if (err instanceof ProtocolError) return this.reject(seq, at, op.op_id, opened.payload, opened.sig, `REFUSED: ${err.message}`)
+      throw err
+    }
+
+    const taken = this.eml.takeRelayed(this.entry(seq, at, opened), op)
+    if (taken.rejected !== null) return { kind: 'rejected', why: taken.rejected, ...(taken.error ? { error: taken.error } : {}) }
+    if (next !== set) {
+      this.set = next
+      this.handles_ = null
+    }
+    if (op.call === 'brain.checkpoint') return { kind: 'applied', result: taken.result, checkpoint: op.team.base_seq === head.seq }
+    return { kind: 'applied', result: taken.result }
+  }
+
+  /** A record that did not open: a newer protocol stops; otherwise it is kept as rejected, as delivered. */
+  private unopened(seq: number, at: string, record: unknown, err: unknown): Outcome {
+    if (err instanceof UnsupportedVersionError) return this.halted({ kind: 'update_needed', why: `entry ${seq}: ${err.message}` })
+    if (!(err instanceof ProtocolError)) throw err
+    if (seq === 1) return this.stop(`the log does not start with a genesis: ${err.message}`)
+    const opId = (record as { op_id?: unknown } | null)?.op_id
+    return this.reject(seq, at, typeof opId === 'string' && UUID.test(opId) ? opId : null, canonicalJson(record), null, `UNOPENABLE: ${err.message}`)
+  }
+
+  private reject(seq: number, at: string, opId: string | null, payload: string, sig: string | null, why: string): Outcome {
+    this.eml.takeRelayed({ seq, at, op_id: opId, payload, signature: sig === null ? null : Buffer.from(sig, 'base64url'), rejected: why }, null)
+    return { kind: 'rejected', why }
+  }
+
+  private entry(seq: number, at: string, opened: OpenedOp) {
+    return { seq, at, op_id: opened.envelope.op_id, payload: opened.payload, signature: Buffer.from(opened.sig, 'base64url'), rejected: null }
+  }
+
+  /** The hash of the brain's state as it is now — what a checkpoint at the head states. */
+  stateHash(): string {
+    return this.eml.stateHash()
+  }
+
+  /**
+   * The seq of the last applied checkpoint that sits right after the state it
+   * names, or 1 — the genesis states the hash of the state it starts from —
+   * or 0 before the genesis. What the checkpoint policy counts from.
+   */
+  lastCheckpointSeq(): number {
+    const row = this.db.prepare(`SELECT seq FROM op_log WHERE rejected IS NULL AND json_extract(payload, '$.call') = 'brain.checkpoint' AND json_extract(payload, '$.args.seq') = seq - 1 ORDER BY seq DESC LIMIT 1`).get() as { seq: number } | undefined
+    return row?.seq ?? Math.min(this.head().seq, 1)
+  }
+
+  /** The log's head: its seq and chain link (seq 0 before the genesis). */
+  head(): { seq: number, hash: string } {
+    const head = this.db.prepare('SELECT seq, hash FROM op_log ORDER BY seq DESC LIMIT 1').get() as { seq: number, hash: string } | undefined
+    return head ?? { seq: 0, hash: GENESIS_PREV_HASH }
+  }
+
+  /** The key a write of this device is sealed under: the brain's current epoch's, when this device holds it. */
+  currentKey(): BrainKey | undefined {
+    if (!this.set) return undefined
+    const key = this.keys.get(this.set.epoch)
+    return key ? { epoch: this.set.epoch, key } : undefined
+  }
+
+  /** The handle the log binds to this device's member — what its writes name — or null. */
+  ownHandle(): string | null {
+    if (!this.set) return null
+    const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
+    if (!member) return null
+    return this.handleOf(member)
+  }
+
+  /** The member set at the head, null before the genesis. */
+  members(): MemberSet | null {
+    return this.set
+  }
+
+  /** This device's certificate as the log carries it, or null while its member is not in the set. */
+  ownCert(): DeviceCert | null {
+    if (!this.set) return null
+    const member = memberOfDevice(this.set, this.team.device.sign.publicKey)
+    return member ? this.set.members[member].devices[this.team.device.sign.publicKey] ?? null : null
+  }
+
+  /** Every handle the log binds, by member — the ones this device can open. */
+  handles(): Record<string, string | null> {
+    if (!this.set) return {}
+    return (this.handles_ ??= memberHandles(this.set, epoch => this.keys.get(epoch)))
+  }
+
+  /** The op_id of the genesis (what an accept's anchor names), or null before it. */
+  genesisOpId(): string | null {
+    return (this.db.prepare('SELECT op_id FROM op_log WHERE seq = 1').get() as { op_id: string } | undefined)?.op_id ?? null
+  }
+
+  /** The handle the log binds to `member`, or null while this device cannot open it (no key of that epoch yet). */
+  handleOf(member: string): string | null {
+    if (!this.set) return null
+    return this.handles()[member] ?? null
+  }
+
+  /** Closes this replica's connection to the brain file (the brain is discarded or the server stops). */
+  close(): void {
+    this.db.close()
+  }
+
+  /** The chain link after `seq` (the genesis's prev_hash before seq 1). */
+  private hashAt(seq: number): string | undefined {
+    if (seq === 0) return GENESIS_PREV_HASH
+    return (this.db.prepare('SELECT hash FROM op_log WHERE seq = ?').get(seq) as { hash: string } | undefined)?.hash
+  }
+
+  private stop(why: string): Outcome {
+    return this.halted({ kind: 'stopped', why })
+  }
+
+  private halted(halt: Halt): Outcome {
+    this.halt = halt
+    return halt
+  }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** The member set at the head of a shared log: its genesis and every applied membership record after it. */
+function memberSetOf(db: Database.Database): MemberSet {
+  const rows = db.prepare(`SELECT seq, payload, signature FROM op_log WHERE rejected IS NULL AND (seq = 1 OR json_extract(payload, '$.call') LIKE 'team.%') ORDER BY seq`)
+    .iterate() as IterableIterator<{ seq: number, payload: string, signature: Buffer }>
+  let set: MemberSet | null = null
+  for (const row of rows) {
+    const opened: OpenedOp = { envelope: JSON.parse(row.payload) as TeamOp, payload: row.payload, sig: row.signature.toString('base64url'), epoch: null }
+    set = set === null ? genesisMembers(opened) : applyMembership(set, opened)
+  }
+  if (set === null) throw new Error('the log has no genesis')
+  return set
+}

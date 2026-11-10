@@ -1,4 +1,8 @@
-import type { EngramInput, EML, StoredEngram, Env, LearnInput, LearnResult, RelationInput } from '../src'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import Database from 'better-sqlite3'
+import { EML, type EngramInput, type StoredEngram, type Env, type LearnInput, type LearnResult, type RelationInput } from '../src'
+import { brainRef, exportSet } from '../src/log/move'
 
 // Shared fixtures for engram writes in tests. v0.19: every type has required
 // fields (fields.ts) and a title (except status); tests that are not about those
@@ -33,9 +37,39 @@ export function validTask(overrides: Overrides = {}): Typed<'task'> {
   return build('task', {}, overrides)
 }
 
-/** A rule the user agreed to (always, unless properties say otherwise). */
+/** A rule the user agreed to (always, unless properties say otherwise). v0.21: a rule has an owner — agent.assistant unless the test says. */
 export function validRule(overrides: Overrides = {}): Typed<'rule'> {
-  return build('rule', { applies: 'always', why: 'test why', agreed: 'yes' }, { content: 'Do the test thing.', ...overrides })
+  return build('rule', { applies: 'always', why: 'test why', agreed: 'yes' }, { content: 'Do the test thing.', scope: 'agent.assistant', ...overrides })
+}
+
+/**
+ * A rule in global as it sits in a brain written before v0.21 (no rule is
+ * written there any more): stored in `owner`, then re-scoped raw.
+ */
+export function legacyGlobalRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, owner = 'agent.assistant'): StoredEngram {
+  return legacyRule(eml, input, 'global', owner)
+}
+
+/**
+ * A rule in a scope no rule is written in any more (global, or a user scope —
+ * decision agent-brain-rules-at-agent-user-is-profile), as a brain written
+ * before v0.21 holds it: stored in `owner`, then re-scoped raw.
+ */
+export function legacyRule(eml: EML, input: Omit<EngramInput, 'type' | 'scope'>, scope: string, owner = 'agent.assistant'): StoredEngram {
+  return rescopeRaw(eml, writes(eml).store({ ...input, type: 'rule', scope: owner } as EngramInput), scope)
+}
+
+/** A learning outside an agent scope (user, project or global), as a brain written before v0.21 holds it. */
+export function legacyLearning(eml: EML, input: { title: string; content: string }, scope: string, owner = 'agent.assistant'): StoredEngram {
+  const r = writes(eml).learn({ ...input, scope: owner, source: 'self', happened: 'once', new_topic: true })
+  if (!r.written) throw new Error('learning not written')
+  return rescopeRaw(eml, r.engram, scope)
+}
+
+function rescopeRaw(eml: EML, r: StoredEngram, scope: string): StoredEngram {
+  ;(eml as any).db.prepare(`UPDATE engrams SET scope = ? WHERE id = ?`).run(scope, r.id)
+  ;(eml as any).db.prepare(`UPDATE engrams_fts SET scope = ? WHERE id = ?`).run(scope, r.id)
+  return { ...r, scope }
 }
 
 export function validNote(overrides: Overrides = {}): Typed<'note'> {
@@ -127,4 +161,159 @@ export function createObject(eml: EML, object: string, fields: AnyFields, env?: 
 }
 export function updateObject(eml: EML, object: string, id: string, patch: AnyFields, env?: Env): { object: any, diff: Record<string, [unknown, unknown]> } | null {
   return orNull(() => eml.apply({ name: 'object.update', input: { object, id, patch } }, env)) as never
+}
+
+/**
+ * The same writes on any brain: every mutator, with the side effects that touch
+ * several rows (supersede, part_of, task_id, bound items, wikilinks, tags,
+ * subjects, objects).
+ */
+export function writeEverything(eml: EML): void {
+  const juno = eml.env({ handle: 'juno', session_id: 's1', model: 'm', harness: 'h', ingestion_method: 'mcp' })
+  const ada = eml.env({ handle: 'ada', session_id: 's2', ingestion_method: 'direct' })
+  writes(eml).agents.store({ id: 'juno', name: 'Juno' }, juno)
+  writes(eml).agents.update('juno', { description: 'the agent' })
+  writes(eml).users.create({ id: 'ada', name: 'Ada' }, juno)
+  writes(eml).users.update('ada', { email: 'ada@example.com' }, juno)
+  createObject(eml, 'project', { id: 'p', name: 'P' }, juno)
+  createObject(eml, 'project', { id: 'q', name: 'Q' }, juno)
+  createObject(eml, 'entity', { id: 'acme', name: 'Acme', kind: 'org' }, juno)
+  createObject(eml, 'tag', { name: 'ops' }, juno)
+  createObject(eml, 'tag', { name: 'old', status: 'archived' }, juno)
+  createObject(eml, 'subject', { name: 'launch' }, juno)
+  createObject(eml, 'subject', { name: 'done-strand', status: 'closed' }, juno)
+  updateObject(eml, 'entity', 'acme', { description: 'a customer' }, juno)
+  updateObject(eml, 'tag', 'ops', { description: 'operations' }, juno)
+  updateObject(eml, 'subject', 'launch', { description: 'the launch' }, juno)
+
+  const scope = 'project.p'
+  const parent = writes(eml).store(validTask({ scope, title: 'parent', status: 'active' }), juno)
+  const child = writes(eml).store(validTask({ scope, title: 'child', parent_id: parent.id }), juno)
+  const bound = writes(eml).store(validDecision({ scope, title: 'bound', task_id: parent.id, properties: { binding: 'task' } }), juno)
+  const kept = writes(eml).store(validNote({ scope, title: 'kept', task_id: parent.id, properties: { binding: 'task' } }), juno)
+  const note = writes(eml).store(validNote({ scope, title: 'note', content: 'see [[bound]] and [[nowhere]]', tags: ['ops'], subjects: ['launch'] }), ada)
+  writes(eml).store(validStatus({ scope }), juno)
+  writes(eml).store(validStatus({ scope, content: 'next state', properties: { state: 'next' } }), ada)
+  writes(eml).store(validRule({ scope, title: 'rule-one' }), juno)
+  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada', properties: { core: true } }), juno)
+  writes(eml).store(validProfile({ scope: 'user.ada', title: 'ada-2', properties: { core: true } }), juno)
+  writes(eml).store(validEvent({ scope, title: 'shipped' }), juno)
+  const log = writes(eml).store(validLog({ scope, title: 'session' }), juno)
+  writes(eml).store(validReference({ scope, title: 'ref' }), juno)
+
+  writes(eml).trackTask(child.id, { text: 'started', status: 'active', stage: 'implementation', tags: ['ops'] }, juno)
+  writes(eml).trackTask(child.id, { status: 'resolved', outcome: 'done', text: 'finished' }, juno)
+  writes(eml).trackTask(parent.id, { status: 'resolved', outcome: 'done', text: 'closed', keep: [kept.id] }, ada)
+  writes(eml).trackTask(parent.id, { status: 'active', text: 'reopened' }, ada)
+  const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
+  writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
+
+  writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
+  writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)
+  const decision = writes(eml).store(validDecision({ scope, title: 'standing-one' }), juno)
+  writes(eml).update(decision.id, { review_note: 'still holds' }, juno)
+  writes(eml).confirmReview(decision.id, 'confirmed again', ada)
+  writes(eml).confirmReview(successor.id, 'still relevant', ada)
+  const replacement = writes(eml).store(validDecision({ scope, title: 'replacement' }), juno)
+  writes(eml).update(replacement.id, { supersedes: [decision.id] }, juno)
+  writes(eml).update(bound.id, { status: 'invalidated' }, juno)
+
+  const learned = writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask before acting.', source: 'user', happened: 'once', quote: 'ask me' }, juno)
+  if (!learned.written) throw new Error('learning not written')
+  writes(eml).learn({ id: learned.engram.id, source: 'observed', happened: 'twice', content: 'Ask before acting, always.' }, ada)
+  writes(eml).relate({ source_id: note.id, target_id: decision.id, relation: 'supports', detection_method: 'manual' }, juno)
+
+  eml.apply({ name: 'engram.rescope', input: { ids: [log.id, kept.id], scope: 'project.q' } }, juno)
+  eml.apply({ name: 'engram.retag', input: { ids: [kept.id, note.id], add: ['ops'], remove: ['old'] } }, ada)
+
+  // v0.21: a task with its journal leaves for another brain; its part_of edge crosses the set and is dropped
+  const leaving = writes(eml).store(validTask({ scope, title: 'leaving', parent_id: successor.id }), juno)
+  writes(eml).trackTask(leaving.id, { text: 'handed over' }, ada)
+  moveOut(eml, [leaving.id], juno)
+
+  updateObject(eml, 'project', 'p', { status: 'archived' }, juno)
+
+  // v0.21: a cockpit that stamped the agent's name as the handle sets the record straight
+  eml.apply({ name: 'provenance.restamp', input: { from_handle: 'juno', to_handle: 'ada', agent: 'juno' } }, ada)
+
+  // v0.21: a reference into another brain follows the engram it names when that one moves on
+  const ELSEWHERE = '0f8fad5b-d9cb-469f-a165-70867728950e'
+  const MOVED_TO = '1f8fad5b-d9cb-469f-a165-70867728950e'
+  writes(eml).relate({ source_id: learned.engram.id, target_id: '2f8fad5b-d9cb-469f-a165-70867728950e', relation: 'refines', detection_method: 'manual', target_brain: ELSEWHERE }, juno)
+  const reference = (eml as any).db.prepare('SELECT id FROM relations WHERE target_brain = ?').get(ELSEWHERE).id as string
+  eml.apply({ name: 'relation.move_end', input: { from_brain: ELSEWHERE, to_brain: MOVED_TO, relations: [reference] } }, juno)
+
+  // v0.21: engrams from another brain, with their history and their project
+  const other = otherBrain()
+  const set = exportSet((other as any).db, (((other as any).db.prepare('SELECT id FROM engrams').all()) as Array<{ id: string }>).map(r => r.id))
+  eml.apply({ name: 'engram.import', input: { source: brainRef((other as any).db), set_hash: set.set_hash, rows: set.rows } }, juno)
+  other.close()
+}
+
+/** A brain with a clock that moves 1 ms per read from `start` and ids from a counter: the same on every call. */
+export function fixedBrain(namespace: string, start: string, idPrefix: string): EML {
+  let t = Date.parse(start)
+  let n = 0
+  return new EML({
+    dbPath: ':memory:', namespace,
+    clock: () => new Date(t++).toISOString(),
+    newId: () => `${idPrefix}-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}`,
+  })
+}
+
+/**
+ * The two ops of a cross-brain move by hand: engrams `ids` imported into a
+ * fresh brain, then engram.move_out in `eml` naming that import and dropping
+ * the relations that cross the set.
+ */
+export function moveOut(eml: EML, ids: string[], env?: Env): unknown {
+  const db = (eml as any).db
+  const set = exportSet(db, ids)
+  const there = fixedBrain('there', '2026-10-21T08:00:00.000Z', '20000000')
+  there.apply({ name: 'engram.import', input: { source: brainRef(db), set_hash: set.set_hash, rows: set.rows } })
+  const target = { brain: brainRef((there as any).db).brain, op_id: (there as any).db.prepare('SELECT op_id FROM op_log ORDER BY seq DESC LIMIT 1').get().op_id as string }
+  there.close()
+  return eml.apply({ name: 'engram.move_out', input: { ids, set_hash: set.set_hash, drop_relations: set.crossing.map(r => r.id), target } }, env)
+}
+
+/**
+ * A second brain, the same on every call: a project with a task, its journal
+ * and a decision bound to it, tagged with a tag of its own and one (ops) that
+ * writeEverything's brain has too.
+ */
+export function otherBrain(): EML {
+  const other = fixedBrain('other', '2026-10-20T08:00:00.000Z', '10000000')
+  const kai = other.env({ handle: 'kai', session_id: 's9', ingestion_method: 'mcp' })
+  createObject(other, 'project', { id: 'moved', name: 'Moved' }, kai)
+  createObject(other, 'tag', { name: 'ops' }, kai)
+  createObject(other, 'tag', { name: 'carried' }, kai)
+  const task = writes(other).store(validTask({ scope: 'project.moved', title: 'moved-task', status: 'active', tags: ['carried', 'ops'] }), kai)
+  writes(other).trackTask(task.id, { text: 'progress' }, kai)
+  writes(other).store(validDecision({ scope: 'project.moved', title: 'moved-decision', task_id: task.id, properties: { binding: 'task' } }), kai)
+  return other
+}
+
+/** A brain file as v0.20 left it (tests/fixtures/brain-v20.sql), with a row in every state table. */
+export function createV20Brain(file: string): void {
+  const db = new Database(file)
+  db.exec(readFileSync(join(__dirname, 'fixtures', 'brain-v20.sql'), 'utf-8'))
+  const at = '2026-10-23T09:00:00.000Z'
+  db.prepare(`INSERT INTO agents (id, name, created_at) VALUES ('juno', 'Juno', ?)`).run(at)
+  db.prepare(`INSERT INTO users (id, name, created_at, updated_at) VALUES ('ada', 'Ada', ?, ?)`).run(at, at)
+  db.prepare(`INSERT INTO entities (id, name, kind, created_at, updated_at) VALUES ('acme', 'Acme', 'org', ?, ?)`).run(at, at)
+  db.prepare(`INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p', 'P', ?, ?)`).run(at, at)
+  db.prepare(`INSERT INTO tags (id, name, created_at) VALUES ('ops', 'ops', ?)`).run(at)
+  db.prepare(`INSERT INTO subjects (id, name, created_at, updated_at) VALUES ('launch', 'launch', ?, ?)`).run(at, at)
+  const engram = db.prepare(`INSERT INTO engrams (id, type, scope, title, content, status, properties, created_at, updated_at, rev)
+    VALUES (?, ?, 'project.p', ?, ?, 'active', ?, ?, ?, 1)`)
+  engram.run('d-1', 'decision', 'pick', 'chose the test option', JSON.stringify({ rationale: 'r', alternatives: ['a'] }), at, at)
+  engram.run('t-1', 'task', 'build', 'build it', JSON.stringify({ stage: 'planning' }), at, at)
+  for (const id of ['d-1', 't-1']) {
+    db.prepare(`INSERT INTO engrams_fts (id, content, scope, title) SELECT id, content, scope, COALESCE(title, '') FROM engrams WHERE id = ?`).run(id)
+  }
+  db.prepare(`INSERT INTO relations (id, source_id, target_id, relation, detection_method, created_at) VALUES ('rel-1', 'd-1', 't-1', 'supports', 'manual', ?)`).run(at)
+  db.prepare(`INSERT INTO engram_tags (engram_id, tag_id, created_at) VALUES ('d-1', 'ops', ?)`).run(at)
+  db.prepare(`INSERT INTO engram_subjects (engram_id, subject_id, created_at) VALUES ('t-1', 'launch', ?)`).run(at)
+  db.prepare(`INSERT INTO entries (id, engram_id, kind, at, text) VALUES ('e-1', 't-1', 'change', ?, 'created (planned)')`).run(at)
+  db.close()
 }

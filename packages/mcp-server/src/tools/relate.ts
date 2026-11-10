@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 // v0.19: supersedes and part_of are not drawn by hand — they come from
@@ -16,7 +16,7 @@ const RELATION_VERBS = [
  * supersede + `[[wikilinks]]` (which materialize `related_to` on write) — with
  * explicit, typed threading the write path can't infer.
  */
-export function registerRelateTool(server: McpServer, http: HttpClient): void {
+export function registerRelateTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_relate',
     {
@@ -29,7 +29,9 @@ export function registerRelateTool(server: McpServer, http: HttpClient): void {
         'materializes a related_to edge). A replacement is supersedes on the new engram (on create, ' +
         'or eml_update(new_id, supersedes=[old_id]) when both exist — eml_track_task for a task); a sub-task is parent_id on ' +
         'eml_create_task / eml_track_task. Verbs: supports / contradicts / derived_from / refines / ' +
-        'related_to / blocks.',
+        'related_to / blocks. One end may be in your agent brain and the other in this space (a learning refining ' +
+        'the task it came from): the relation is kept in your agent brain as a reference to the space. Both ends in ' +
+        'two different spaces is not possible.',
       inputSchema: z.object({
         source_id: z.string().describe('The engram the edge points FROM (full id).'),
         target_id: z.string().describe('The engram the edge points TO (full id). Must differ from source_id.'),

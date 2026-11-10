@@ -60,7 +60,8 @@ export type RelationType =
 //   bulk   → migration / mass import
 //   other  → catch-all
 // v0.19: mcp → written through the MCP server (stamped by the server, not the agent)
-export type IngestionMethod = 'hook' | 'direct' | 'bulk' | 'mcp' | 'other'
+export const INGESTION_METHODS = ['hook', 'direct', 'bulk', 'mcp', 'other'] as const
+export type IngestionMethod = typeof INGESTION_METHODS[number]
 
 // v0.9.1 Cluster 1: SourceType type removed (source_id/source_type dropped from the schema).
 
@@ -138,7 +139,7 @@ export const TASK_INACTIVITY_DAYS = 30
 export interface TaskProperties {
   intent?: string                 // what will be different, for whom, once done, and how we'll notice
   due_date?: string               // ISO date
-  assignee_id?: string            // → agents.id; optional = unassigned
+  assignee_ids?: string[]         // handles of who should act (users and agents of the space); optional = unassigned
   priority?: TaskPriority         // execution urgency (≠ significance)
   context?: string                // short note on why
   blockers?: string[]
@@ -285,6 +286,9 @@ export interface RelationInput {
   strength?: number
   explanation?: string
   metadata?: Record<string, unknown>
+  /** v0.21: the brain holding source_id when it is another brain (a cross-brain reference); at most one of the two. */
+  source_brain?: string
+  target_brain?: string
 }
 
 // === Stored types ===
@@ -303,6 +307,8 @@ export interface Engram {
   // stamps it from the authenticated token (tokens.name = caller) on write. null on
   // legacy/in-process writes; pre-v0.11 rows carry NULL or old legacy brain audit values.
   ingested_by: string | null
+  // v0.21: the agent that wrote for ingested_by; null for the human's own write (decision provenance-agent-field).
+  agent: string | null
   ingestion_method: IngestionMethod | null
   session_id: string | null
   // v0.19: the software that wrote it, and the model and harness of the session.
@@ -480,6 +486,10 @@ export interface ScopedBrainState {
   // facts (project / entity). Ripe learnings: eml_list type=learning state=ripe.
   status_tracks?: string | null
   metadata?: Record<string, unknown> | null
+  // v0.21: a project moved into another brain (log/move-engrams.ts archives it with
+  // moved_to / moved_at / moved_to_name in its metadata): where it went, under which
+  // name the space was known at the move (null when none was recorded), and when.
+  moved?: { to: string, name: string | null, at: string } | null
 }
 
 /**
@@ -500,6 +510,9 @@ export interface Relation {
   explanation: string | null
   metadata: Record<string, unknown> | null
   created_at: string
+  /** v0.21: the brain holding the end that is not in this brain (null = this brain); never both. */
+  source_brain: string | null
+  target_brain: string | null
 }
 
 // === Entities (v0.8 C6) — external parties (people, orgs, assets) ===
@@ -569,7 +582,7 @@ export interface EngramQuery {
   // v0.10.9 (audit C0): property-filters pushed into SQL as json_extract so the
   // LIMIT applies AFTER filtering. Previously the CLI filtered post-LIMIT, so a
   // match sorted past the limit was silently dropped (H1). Each maps to a
-  // properties key: due_before→$.due_date (<), assignee→$.assignee_id (=),
+  // properties key: due_before→$.due_date (<), assignee→$.assignee_ids (contains),
   // priority→$.priority (=), change_type→$.change_type (=).
   due_before?: string
   assignee?: string
@@ -668,4 +681,7 @@ export interface EMLConfig {
   // the system clock. And its id source; default random UUID v4. Tests fix both.
   clock?: () => string
   newId?: () => string
+  // v0.21: the brain's id, written into the genesis when this opens a new
+  // brain or migrates one to schema 21; default a random UUID.
+  brainId?: string
 }

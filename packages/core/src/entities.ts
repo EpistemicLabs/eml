@@ -20,7 +20,7 @@ export class EntityStore {
     if (filter?.kind) { where.push('kind = ?'); params.push(filter.kind) }
     if (filter?.status) { where.push('status = ?'); params.push(filter.status) }
     return (this.db.prepare(
-      `SELECT * FROM entities ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC`,
+      `SELECT * FROM entities ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC, id`,
     ).all(...params) as any[]).map(r => this.rowToEntity(r))
   }
 

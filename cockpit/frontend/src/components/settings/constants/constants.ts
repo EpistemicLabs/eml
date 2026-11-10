@@ -18,6 +18,8 @@ export type SettingsMainTabMeta = {
   id: SettingsMainTab;
   label: string;
   keywords: string;
+  /** The tab's heading, when it differs from its name in the list. */
+  heading?: string;
   icon: ComponentType<{ className?: string }>;
   blurb: string;
 };
@@ -26,16 +28,17 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'account',
     label: 'Account',
+    heading: 'EML Account',
     keywords: 'account plan free pro team subscription name profile user',
     icon: UserRound,
     blurb: 'You in this brain, and your plan.',
   },
   {
     id: 'agents',
-    label: 'Agent',
-    keywords: 'agent agents identity persona profile rules always on',
+    label: 'Agents',
+    keywords: 'agent agents identity persona profile rules always on people',
     icon: Bot,
-    blurb: 'Your agent: its name, profile and the rules it always follows.',
+    blurb: 'Your agent: who it is, the rules it always follows, and what it knows about you.',
   },
   {
     id: 'models',
@@ -45,11 +48,11 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
     blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code and Codex (beta).',
   },
   {
-    id: 'brain',
-    label: 'Brain',
+    id: 'spaces',
+    label: 'Spaces',
     keywords: 'brain spaces local token backup stats paths home folder config directory',
     icon: Brain,
-    blurb: 'The brain instance: spaces, source, where the cockpit keeps its files, backups.',
+    blurb: 'Your spaces: source, where the cockpit keeps its files, backups.',
   },
   {
     id: 'preferences',
@@ -60,7 +63,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   },
   {
     id: 'plugins',
-    label: 'Plugins',
+    label: 'EML Plugins',
     keywords: 'plugins extensions community install ports localhost',
     icon: Puzzle,
     blurb: 'Community plugins: install, enable and manage extensions for the cockpit.',
@@ -68,7 +71,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'data',
     label: 'Data',
-    keywords: 'data import export migrate settings sessions',
+    keywords: 'data import export migrate settings sessions home folder config directory backups paths',
     icon: Database,
     blurb: 'Import & export: bring settings and sessions over from an existing setup, export them again.',
   },

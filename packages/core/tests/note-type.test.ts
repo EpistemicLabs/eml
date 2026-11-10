@@ -75,7 +75,7 @@ const V14_INDEXES = [
 ]
 // v0.19 adds idx_engrams_core_profile, idx_engrams_origin and idx_engrams_session.
 const EXPECTED_INDEXES = [
-  'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_origin', 'idx_engrams_scope',
+  'idx_engrams_core_profile', 'idx_engrams_created', 'idx_engrams_ingested_by', 'idx_engrams_ord', 'idx_engrams_origin', 'idx_engrams_scope',
   'idx_engrams_session', 'idx_engrams_significance', 'idx_engrams_status', 'idx_engrams_title', 'idx_engrams_type',
 ]
 
@@ -119,7 +119,7 @@ describe('v0.14 note type', () => {
     const db = new Database(join(dir, 't.db'))
     try {
       expect(() => db.prepare(
-        `INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev) VALUES ('bad', 'bogus', 'global', 'x', 'now', 'now', 1)`,
+        `INSERT INTO engrams (id, type, scope, content, created_at, updated_at, rev, ord) VALUES ('bad', 'bogus', 'global', 'x', 'now', 'now', 1, 1)`,
       ).run()).toThrow(/CHECK constraint failed/)
     } finally { db.close() }
   })

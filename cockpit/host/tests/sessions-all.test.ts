@@ -14,12 +14,12 @@ const OTHER = 'other-brain-id'
 const PLAIN = 'plain-brain-id'
 const SECRET = 'eml_testprefix_testsecret'
 
-const fakeSpace = (id: string, name: string, fields: { main?: boolean; brainName?: string; agentId?: string; projectPath: string }) => ({
+const fakeSpace = (id: string, name: string, fields: { main?: boolean; agentId?: string; projectPath: string }) => ({
   id,
   name,
-  brainName: fields.brainName ?? 'first-agent',
   main: fields.main ?? false,
-  agent: fields.agentId ? { id: fields.agentId } : null,
+  agent: fields.agentId ?? null,
+  runtime: null,
   ledgerKey: fields.main ? null : id,
   url: 'http://127.0.0.1:1',
   token: SECRET,
@@ -105,13 +105,13 @@ describe('sessions across spaces', () => {
     expect(text).not.toContain(SECRET)
   })
 
-  it('labels a space by its agent, main by its brain name, any other by its own name', async () => {
+  it('names a session by the bound agent, never by the space or its brain', async () => {
     const res = await fetch(`${base}/api/spaces`)
     const text = await res.text()
-    const { spaces } = JSON.parse(text) as { spaces: Array<{ id: string; label: string }> }
-    expect(spaces.find((s) => s.id === MAIN)?.label).toBe('First-agent')
-    expect(spaces.find((s) => s.id === OTHER)?.label).toBe('Second-agent')
-    expect(spaces.find((s) => s.id === PLAIN)?.label).toBe('Plain')
+    const { spaces } = JSON.parse(text) as { spaces: Array<{ id: string; name: string; agentName: string | null }> }
+    expect(spaces.find((s) => s.id === MAIN)?.agentName).toBeNull()
+    expect(spaces.find((s) => s.id === OTHER)?.agentName).toBe('Second-agent')
+    expect(spaces.find((s) => s.id === PLAIN)).toMatchObject({ name: 'Plain', agentName: null })
     expect(text).not.toContain(SECRET)
   })
 

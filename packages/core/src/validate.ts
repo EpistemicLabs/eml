@@ -130,6 +130,28 @@ const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
   /^entity\.[a-z0-9_-]+$/i,
 ]
 
+/** Where a profile may live: it is about someone. */
+export const PROFILE_SCOPE = /^(agent|user|entity)\./
+export const PROFILE_SCOPE_MESSAGE = 'Invalid engram: a profile is about someone — scope agent.<id>, user.<id> or entity.<id>.'
+
+/**
+ * v0.21 (decisions rules-need-a-scope-no-global-rules and
+ * agent-brain-rules-at-agent-user-is-profile): a rule has an owner — the agent
+ * whose way of working it is (also a rule about working with a person) or the
+ * project it governs. user.<id> holds the person's profile; there are no global
+ * rules, global keeps facts.
+ */
+export const RULE_SCOPE = /^(agent|project)\./
+export const RULE_SCOPE_MESSAGE = 'Invalid engram: a rule needs an owner — scope agent.<id> (how this agent works) or project.<id> (work in that project); user.<id> holds a person\'s profile, global holds no rules.'
+
+/**
+ * A learning is the agent's own: what it learned about how it works, also with
+ * a person. It lives in agent.<id> and nowhere else; the task or project it came
+ * from is linked by a relation (same decision, extended to learnings).
+ */
+export const LEARNING_SCOPE = /^agent\./
+export const LEARNING_SCOPE_MESSAGE = 'Invalid engram: a learning is the agent\'s — scope agent.<id>, also for a lesson about working with a person; user.<id> holds a person\'s profile, project.<id> and global hold work. Link the task or project it came from with a relation.'
+
 /**
  * v0.8 C3: pattern validation.
  * Throws if scope does not match one of the allowed patterns.
@@ -160,14 +182,22 @@ export interface ScopeStores {
   entities?: { exists(id: string): boolean }
 }
 
+/** The scope kinds with an object: the prefix, the object's table (and store) and its label. */
+const SCOPE_OBJECTS: ReadonlyArray<[prefix: string, table: keyof ScopeStores, label: string]> = [
+  ['project.',  'projects', 'project'],
+  ['user.',     'users',    'user'],
+  ['agent.',    'agents',   'agent'],
+  ['entity.',   'entities', 'entity'],
+]
+
+/** The scope's object as [table, id]; undefined for global. */
+export function scopeObject(scope: string): [table: keyof ScopeStores, id: string] | undefined {
+  const kind = SCOPE_OBJECTS.find(([prefix]) => scope.startsWith(prefix))
+  return kind ? [kind[1], scope.slice(kind[0].length)] : undefined
+}
+
 export function validateScopeExists(scope: string, stores: ScopeStores): void {
-  const checks: Array<[string, keyof ScopeStores, string]> = [
-    ['project.',  'projects', 'project'],
-    ['user.',     'users',    'user'],
-    ['agent.',    'agents',   'agent'],
-    ['entity.',   'entities', 'entity'],
-  ]
-  for (const [prefix, storeKey, label] of checks) {
+  for (const [prefix, storeKey, label] of SCOPE_OBJECTS) {
     if (!scope.startsWith(prefix)) continue
     const store = stores[storeKey]
     if (!store) return  // Store not wired → no check (test DI gap)

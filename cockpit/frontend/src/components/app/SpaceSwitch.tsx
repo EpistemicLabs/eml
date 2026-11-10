@@ -1,18 +1,22 @@
 // The brain space menu (decision cockpit-naming-desks-spaces): the sidebar's
 // group header over the projects opens it — the spaces, the active one
-// marked, and "New space…" (a further local brain, host POST /api/spaces). In
-// the sidebar it also offers All spaces, a view of the sidebar only.
-// The header shows every space's desks as sections (DeskTabBar), so a desk of
-// another space is one click away there. Switching a space switches its desks.
+// marked; new spaces are made in Settings › Spaces. In the sidebar it also
+// offers All spaces, a view of the sidebar only. The header shows every space's desks as sections
+// (DeskTabBar), so a desk of another space is one click away there.
+// Switching a space switches its desks. A space whose brain failed to migrate
+// or whose shared brain is not live is marked here (a dot), so the state is
+// seen from every space; its banner says what happened.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Check, ChevronDown, Layers, Loader2, Plus } from 'lucide-react';
+import { Brain, Check, ChevronDown, Layers } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
+import { stateTitle, stateTone } from '@/lib/team';
+import { failedUnresolved, useUpdateStatus } from '@/stores/useUpdateStatusStore';
+import { useTeams } from '@/stores/useTeamStore';
 import { setTopView } from '@/stores/useTopViewStore';
 import {
-  createSpace,
   loadSpaces,
   setAllView,
   switchSpace,
@@ -30,16 +34,26 @@ interface SpaceSwitchProps {
 export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   const spaces = useSpaces();
   const active = useActiveSpace();
+  const update = useUpdateStatus();
+  const teams = useTeams();
+  const failed = (space: SpaceInfo) => failedUnresolved(update?.brains[space.id]);
+  /** A shared space's state when it is not live: its title and tone; null while live, local or unknown. */
+  const notLive = (space: SpaceInfo): { title: string; tone: 'info' | 'destructive' } | null => {
+    const team = teams[space.id];
+    if (!space.shared || !team?.shared) return null;
+    const title = stateTitle(team);
+    return title ? { title, tone: stateTone(team.state) } : null;
+  };
+  // Another space's brain is offline or not live: the trigger carries the mark too, in the worse tone.
+  const otherFailed = spaces.some((s) => s.id !== active?.id && failed(s));
+  const others = spaces.filter((s) => s.id !== active?.id).map(notLive);
+  const otherNotLive = others.some((state) => state !== null);
+  const otherBroken = otherFailed || others.some((state) => state?.tone === 'destructive');
   const allView = useAllView();
   const showingAll = variant === 'sidebar' && allView;
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   // The menu is a portal (the header clips overflow), placed under the trigger.
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
 
@@ -50,7 +64,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
   }, [open]);
 
   useEffect(() => { void loadSpaces(); }, []);
-
   // Close on a click outside or Escape.
   useEffect(() => {
     if (!open) return;
@@ -67,9 +80,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     };
   }, [open]);
 
-  useEffect(() => { if (creating) inputRef.current?.focus(); }, [creating]);
-
-  const close = () => { setOpen(false); setCreating(false); setDraft(''); setError(null); };
+  const close = () => setOpen(false);
 
   const select = (space: SpaceInfo) => {
     setAllView(false);
@@ -78,19 +89,13 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
     close();
   };
 
-  const submit = async () => {
-    const name = draft.trim();
-    if (!name || busy) return;
-    setBusy(true);
-    setError(null);
-    const result = await createSpace(name);
-    setBusy(false);
-    if ('error' in result) { setError(result.error); return; }
-    select(result.space);
-  };
-
   const label = showingAll ? 'All spaces' : active?.name ?? 'Main';
-  const title = showingAll ? 'All spaces' : `Space: ${label}`;
+  const title = showingAll
+    ? 'All spaces'
+    : otherFailed
+      ? `Space: ${label} — the brain update failed in another space`
+      : otherNotLive ? `Space: ${label} — a shared brain is not live in another space` : `Space: ${label}`;
+  const mark = otherFailed || otherNotLive;
   const SpaceIcon = showingAll ? Layers : Brain;
   const tone = showingAll ? undefined : spaceTone(active);
 
@@ -110,6 +115,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <Brain className="h-4 w-4" strokeWidth={1.8} style={{ color: tone }} />
           <span className="truncate">{label}</span>
+          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       ) : (
@@ -123,6 +129,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
         >
           <SpaceIcon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
       )}
@@ -154,6 +161,8 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           )}
           {spaces.map((space) => {
             const isActive = !showingAll && space.id === active?.id;
+            const state = notLive(space);
+            const unknown = space.shared === null;
             return (
               <button
                 key={space.id}
@@ -161,6 +170,7 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 role="menuitemradio"
                 aria-checked={isActive}
                 onClick={() => select(space)}
+                title={state?.title ?? (unknown ? 'The cockpit could not ask the brain server.' : undefined)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal',
                   isActive ? 'text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -169,41 +179,19 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
                 <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="flex-1 truncate">{space.name}</span>
+                {failed(space) && (
+                  <span className="flex items-center gap-1 text-[10px] text-destructive" title="The brain update failed — open the space for details">
+                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-destructive" />
+                    update failed
+                  </span>
+                )}
+                {state && !failed(space) && (
+                  <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', state.tone === 'destructive' ? 'bg-destructive' : 'bg-warning')} />
+                )}
+                {space.shared && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">shared</span>}
               </button>
             );
           })}
-          <div className="my-1 h-px bg-border" />
-          {creating ? (
-            <form
-              className="px-1 py-1"
-              onSubmit={(e) => { e.preventDefault(); void submit(); }}
-            >
-              <input
-                ref={inputRef}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="Space name"
-                maxLength={40}
-                disabled={busy}
-                autoFocus
-                className="w-full rounded-md border border-border bg-background px-2 py-1 text-body normal-case tracking-normal text-foreground outline-none focus:border-primary"
-              />
-              {error && <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-destructive">{error}</p>}
-              <p className="mt-1 px-0.5 text-caption normal-case tracking-normal text-muted-foreground">
-                A new local brain with your agent and profile. Enter to create.
-              </p>
-            </form>
-          ) : (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setCreating(true)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              New space…
-            </button>
-          )}
         </div>,
         document.body,
       )}

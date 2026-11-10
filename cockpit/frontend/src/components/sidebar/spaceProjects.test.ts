@@ -5,8 +5,8 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 import { bySpace, listProjects, projectKey } from './spaceProjects';
 
-const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true };
-const other: SpaceInfo = { id: 'other-id', name: 'Privat', main: false };
+const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, agent: null, upgrade: null, shared: false };
+const other: SpaceInfo = { id: 'other-id', name: 'Privat', main: false, agent: null, upgrade: null, shared: false };
 const project = (projectId: string): Project => ({ projectId, displayName: projectId }) as Project;
 
 describe('the projects the sidebar lists', () => {

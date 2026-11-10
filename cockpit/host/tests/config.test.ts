@@ -34,6 +34,19 @@ describe('cockpit config writes', () => {
     })
   })
 
+  it('reads the human, the agents and each space\'s binding, and drops what is not an agent id', async () => {
+    await config.writeCockpitConfig({
+      token: 't', handle: 'alex', agent: 'juno', agents: [{ id: 'juno', token: 'j' }, { id: 'Bad Id', token: 'x' } as never, { id: 'scout', token: '' }],
+      spaces: [{ token: 'u', name: 'Privat', agent: 'juno' }, { token: 'v', agent: 'NOT-AN-ID' }],
+    })
+    expect(await config.readCockpitConfig()).toEqual({
+      token: 't', handle: 'alex', agent: 'juno', agents: [{ id: 'juno', token: 'j' }],
+      spaces: [{ token: 'u', name: 'Privat', agent: 'juno' }, { token: 'v' }],
+    })
+    // Back to the shape the other tests build on.
+    await config.writeCockpitConfig({ token: 't', onboarding: 'done', mainName: 'Work', spaces: [{ token: 'u', name: 'Privat' }] })
+  })
+
   it('leaves the file as it is when the change returns null', async () => {
     const before = readFileSync(join(home, 'config'), 'utf8')
     expect(await config.updateCockpitConfig(() => null)).toBeNull()

@@ -18,6 +18,18 @@ import path from 'path'
  * The pool is a cache of open handles, not a semaphore-bounded borrow pool.
  */
 
+/** Opens a brain file the way every server connection to it is opened: WAL, foreign keys enforced. */
+export function openBrain(file: string): Database.Database {
+  // v0.10.10 C3: fail closed if a registered brain's file is missing. Without
+  // fileMustExist, better-sqlite3 silently creates an empty schemaless DB —
+  // masking data loss and routing writes into a phantom brain. SQLITE_CANTOPEN
+  // is mapped to 503 + needs_intervention upstream (routing.ts).
+  const db = new Database(file, { fileMustExist: true })
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+  return db
+}
+
 export interface PoolOptions {
   dataDir: string                   // absolute base path; brain_file (relative) is resolved against it
   cap?: number                      // default 50
@@ -63,13 +75,7 @@ export class ConnectionPool {
     const fullPath = path.isAbsolute(brainFile)
       ? brainFile
       : path.join(this.dataDir, brainFile)
-    // v0.10.10 C3: fail closed if a registered brain's file is missing. Without
-    // fileMustExist, better-sqlite3 silently creates an empty schemaless DB —
-    // masking data loss and routing writes into a phantom brain. SQLITE_CANTOPEN
-    // is mapped to 503 + needs_intervention upstream (routing.ts).
-    const db = new Database(fullPath, { fileMustExist: true })
-    db.pragma('journal_mode = WAL')
-    db.pragma('foreign_keys = ON')
+    const db = openBrain(fullPath)
     this.entries.set(brainId, { brainId, db, lastUsedAt: Date.now() })
     return db
   }

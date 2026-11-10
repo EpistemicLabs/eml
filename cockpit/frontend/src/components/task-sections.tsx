@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { engramQuery, useAddTaskEntry } from "@/lib/queries";
+import { useWritable } from "@/stores/useTeamStore";
 import { TypeBadge, TYPE_COLORS, withAlpha } from "@/components/ui/badge";
 import { BrainCard } from "@/components/brain/ui";
 import { TASK_STAGES, TASK_STAGE_HINTS, taskStage, type Engram, type Relation, type TaskEntry, type TaskStage } from "@/lib/types";
@@ -243,6 +244,7 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
   // newest first: where the task stands is the latest entry
   const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change").reverse();
   const add = useAddTaskEntry();
+  const brain = useWritable();
   const [text, setText] = useState("");
   const [stage, setStage] = useState<TaskStage | "">("");
   const closed = !OPEN.has(engram.status);
@@ -286,7 +288,8 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
         )}
         <button
           type="submit"
-          disabled={!text.trim() || add.isPending}
+          disabled={!text.trim() || add.isPending || !brain.writable}
+          title={brain.reason ?? undefined}
           className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
         >
           {add.isPending ? "Adding…" : "Add"}
@@ -390,7 +393,8 @@ export function TaskRow({
   showScope?: boolean;
 }) {
   const stage = taskStage(task);
-  const assignee = typeof task.properties?.assignee_id === "string" ? task.properties.assignee_id : null;
+  const ids = task.properties?.assignee_ids;
+  const assignee = Array.isArray(ids) && ids.length > 0 ? ids.join(", ") : null;
   const inProgress = task.status === "active";
   return (
     <Link

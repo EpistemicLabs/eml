@@ -58,7 +58,8 @@ export const OPEN_TASKS_IN_SCOPE_SQL = `
       ELSE 2  -- no priority reads as normal, as every list shows it
     END DESC,
     COALESCE(json_extract(e.properties, '$.due_date'), '9999-12-31') ASC,
-    ${LAST_MOVEMENT} DESC
+    ${LAST_MOVEMENT} DESC,
+    e.ord DESC
   LIMIT 10
 `
 

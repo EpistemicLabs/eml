@@ -34,9 +34,21 @@ export class Provenance {
   readonly sessionId: string
   private harnessName: string | null = null
   private cached: { at: number, model: string | null } | null = null
+  private modelLookup: (() => Promise<string | null>) | null = null
 
   constructor(private env: ProvenanceEnv = process.env as ProvenanceEnv, private fetchImpl: typeof fetch = fetch) {
     this.sessionId = env.COCKPIT_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || `process-${randomUUID()}`
+  }
+
+  /**
+   * Provenance for a server that serves many sessions (the cockpit host's MCP
+   * endpoint): the session id comes from the caller, which has checked it, and
+   * the model from the caller's own lookup instead of this process's env.
+   */
+  static forSession(sessionId: string, model: () => Promise<string | null>): Provenance {
+    const provenance = new Provenance({ COCKPIT_SESSION_ID: sessionId })
+    provenance.modelLookup = model
+    return provenance
   }
 
   /** Set from the MCP client's name once the handshake is done. */
@@ -50,7 +62,9 @@ export class Provenance {
 
   async model(): Promise<string | null> {
     if (this.cached && Date.now() - this.cached.at < MODEL_CACHE_MS) return this.cached.model
-    const model = (await this.fromCockpit()) ?? this.fromTranscript()
+    const model = this.modelLookup
+      ? await this.modelLookup().catch(() => null)
+      : (await this.fromCockpit()) ?? this.fromTranscript()
     this.cached = { at: Date.now(), model }
     return model
   }

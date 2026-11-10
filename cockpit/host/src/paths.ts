@@ -21,6 +21,7 @@ export const HOST_ROOT = path.resolve(__dirname, '..')
 
 export const SERVER_JS = path.join(HOST_ROOT, 'dist', 'server.cjs')     // brain server + core, bundled
 export const CORE_INDEX = path.join(HOST_ROOT, 'dist', 'core.cjs')      // core for provisioning, bundled
+export const CORE_LOG = path.join(HOST_ROOT, 'dist', 'core-log.cjs')    // core's op-log tools (move, verify) for the agent upgrade, bundled
 // Preload for the brain server: exits it when the host is gone (brain-watchdog.ts).
 export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).
@@ -62,7 +63,7 @@ export const DATA_DIR = path.join(COCKPIT_HOME, 'data')          // control.db +
 export const BACKUPS_DIR = path.join(COCKPIT_HOME, 'backups')    // manual backups; pre-migration/ from the brain server
 export const MIGRATION_REPORTS_DIR = path.join(DATA_DIR, 'migration-reports') // one JSON per attempted brain migration
 export const CONFIG_DIR = path.join(COCKPIT_HOME, 'claude-config') // isolated CLAUDE_CONFIG_DIR
-// A space's own agent (agent-config.ts): <AGENTS_DIR>/<agent id>/agent.json and what it names.
+// A space's own agent (agent-runtime.ts): <AGENTS_DIR>/<agent id>/agent.json and what it names.
 export const AGENTS_DIR = path.join(COCKPIT_HOME, 'agents')
 export const CODEX_CONFIG_DIR = path.join(COCKPIT_HOME, 'codex-config') // isolated CODEX_HOME
 // The cockpit's own Codex CLI + its versions (providers/codex/runtime.ts).
@@ -114,6 +115,9 @@ export const AGENTS_FILE = path.join(COCKPIT_HOME, 'agents.json')
 export const LIMITS_FILE = path.join(COCKPIT_HOME, 'limits.json')
 // Remote access through tailscale serve (remote-access.ts): allowed origins and users. chmod 600.
 export const REMOTE_FILE = path.join(COCKPIT_HOME, 'remote.json')
+export const ACCOUNT_FILE = path.join(COCKPIT_HOME, 'account')     // { url, email, session } chmod 600 — the EML account's session (account.ts)
+/** The EML account service; the dev cockpit points EML_ACCOUNT_URL at a locally started one. */
+export const ACCOUNT_URL = (process.env.EML_ACCOUNT_URL || 'https://account.eml-cockpit.com').replace(/\/+$/, '')
 // EML client config the session hooks read (brain URL + token of this boot).
 export const EML_HOOK_DIR = path.join(COCKPIT_HOME, 'eml')
 // Per brain space (brain-space.ts): the files a space's sessions start with —

@@ -13,15 +13,16 @@ const BRAIN_TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = '0123456789abcdef0123456789abcdef'
 
 describe('brain MCP server entry', () => {
-  const entry = brainMcpServer('http://127.0.0.1:60000', BRAIN_TOKEN)
+  const MCP_TOKEN = 'f'.repeat(64)
+  const entry = brainMcpServer('http://127.0.0.1:4318/mcp', MCP_TOKEN)
 
-  it('keeps the brain token out of the arguments', () => {
-    expect(entry.args.join(' ')).not.toContain(BRAIN_TOKEN)
-    expect(entry.args).not.toContain('--token')
-  })
-
-  it('passes URL and token through the environment the mcp-server CLI reads', () => {
-    expect(entry.env).toEqual({ EML_API_URL: 'http://127.0.0.1:60000', EML_API_TOKEN: BRAIN_TOKEN })
+  it('is the host endpoint over HTTP, with no process, arguments or brain token', () => {
+    expect(entry).toEqual({
+      type: 'http',
+      url: 'http://127.0.0.1:4318/mcp',
+      headers: { 'x-cockpit-mcp-token': MCP_TOKEN, 'x-eml-session': '${COCKPIT_SESSION_ID}' },
+    })
+    expect(JSON.stringify(entry)).not.toContain(BRAIN_TOKEN)
   })
 })
 

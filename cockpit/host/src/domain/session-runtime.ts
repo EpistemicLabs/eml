@@ -7,7 +7,7 @@ import type { WorkerStatus } from './session-attention.js'
  *
  * Domain layer: types only, no I/O.
  */
-import type { SessionAgent } from './agent-provider.js'
+import type { SessionAgentRuntime } from './agent-provider.js'
 
 /** Which of a session's two ways of running holds it. Not a provider: both are the same conversation. */
 export type SessionRuntimeKind = 'terminal' | 'sdk'
@@ -179,9 +179,9 @@ export interface SessionRuntimeStart {
   address: string
   /** The session's brain space, as the agent CLI takes it. */
   files: { mcpConfig: string; settings: string }
-  /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with its own agent. */
+  /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with a runtime of its own. */
   strictMcp: boolean
-  /** Browser control for a strict session: only an agent that is given it. */
+  /** Browser control for a strict session: only a runtime that is given it. */
   chrome?: boolean
   /** Built-in tools this session may not use (its tool profile). */
   deniedTools?: string[]
@@ -200,8 +200,8 @@ export interface SessionRuntimeStart {
 
 export interface SessionRuntimeFactory {
   start(request: SessionRuntimeStart): SessionRuntime
-  /** The stored conversation as events, oldest first; `agent`: it is in that agent's folder. */
-  history(conversationId: string, cwd: string, agent?: SessionAgent | null): Promise<RuntimeEvent[]>
+  /** The stored conversation as events, oldest first; `runtime`: it is in that runtime's folder. */
+  history(conversationId: string, cwd: string, runtime?: SessionAgentRuntime | null): Promise<RuntimeEvent[]>
 }
 
 export interface StoredEvent {

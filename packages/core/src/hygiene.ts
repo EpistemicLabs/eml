@@ -1,7 +1,7 @@
 import type { EML } from './index'
 import { REVIEWABLE_TYPES } from './review-due'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
-import { formatProblems, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
+import { formatProblems, PROFILE_SCOPE, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 
 type EngramRow = Record<string, any>
 
@@ -172,7 +172,7 @@ const SCHEMA_19_CHECKS: readonly HygieneCheck[] = [
       'supersedes=[<profile id>].',
     detect(eml) {
       return ACTIVE(eml)
-        .filter(c => c.type === 'profile' && !/^(agent|user|entity)\./.test(c.scope))
+        .filter(c => c.type === 'profile' && !PROFILE_SCOPE.test(c.scope))
         .map(c => finding(c, `profile in ${c.scope}.`))
     },
   },
@@ -279,10 +279,73 @@ const LEARNING_CHECKS: readonly HygieneCheck[] = [
   },
 ]
 
+// --- Schema 21 (agent brain) -----------------------------------------------------
+//
+// Rules have an owner (decision rules-need-a-scope-no-global-rules): a new rule
+// is refused in global; one written before v0.21 sits there until it is
+// re-scoped. The cockpit's upgrade moves a space's global rules to its bound
+// agent; a brain outside the cockpit gets this check.
+
+const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'rule-in-global-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A rule has an owner: agent.<id> for how an agent works, project.<id> for work in a project. Global holds no rules.',
+    how:
+      'Re-scope the rule with eml_update(scope): agent.<id> when it says how the agent works (the usual case for a ' +
+      'rule written before v0.21), project.<id> when it governs that project. In a brain with one agent, that agent is the owner.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && c.scope === 'global')
+        .map(c => finding(c, 'a rule in global has no owner.'))
+    },
+  },
+  {
+    // decision agent-brain-rules-at-agent-user-is-profile: every rule is an agent's; user.<id> holds the person's profile
+    id: 'rule-in-user-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A rule belongs to an agent (agent.<id>) or to a project (project.<id>). user.<id> holds the person\'s profile; ' +
+      'a rule there was written before v0.21, when a person could own rules.',
+    how:
+      'Re-scope the rule with eml_update(scope) to agent.<id> — in a brain with one agent, that agent. The rule keeps ' +
+      'its id, content and agreement.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'rule' && c.scope.startsWith('user.'))
+        .map(c => finding(c, 'a rule in a user scope belongs to the agent.'))
+    },
+  },
+  {
+    // the same decision, extended to learnings: a learning is the agent's own, wherever it came from
+    id: 'learning-outside-agent-scope',
+    kind: 'migration',
+    decides: 'agent',
+    since_schema: 21,
+    what:
+      'A learning is the agent\'s own (agent.<id>): what it learned about how it works, also with a person. ' +
+      'user.<id> holds the person\'s profile, a project and global hold work; a learning there was written before v0.21.',
+    how:
+      'Re-scope the learning with eml_update(scope) to agent.<id> — in a brain with one agent, that agent — and, ' +
+      'if it came from a task or project, link that with eml_relate. The learning keeps its id, content and evidence.',
+    detect(eml) {
+      return ACTIVE(eml)
+        .filter(c => c.type === 'learning' && !c.scope.startsWith('agent.'))
+        .map(c => finding(c, `a learning in ${c.scope} is the agent's.`))
+    },
+  },
+]
+
 /** Every check, migration checks by schema, then the recurring review. */
 export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
   ...SCHEMA_19_CHECKS,
+  ...SCHEMA_21_CHECKS,
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
   ...LEARNING_CHECKS,
 ]

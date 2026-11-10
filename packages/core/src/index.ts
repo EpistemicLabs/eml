@@ -2,9 +2,11 @@ import type Database from 'better-sqlite3'
 import { EMLConfig } from './types'
 import { initDatabase } from './database'
 import { EngramStore } from './engrams'
-import { EngramWriter } from './engram-writer'
-import { ObjectWriter } from './object-writer'
-import { runCommand, type CommandMap, type CommandName } from './commands'
+import { type CommandMap, type CommandName } from './commands'
+import { commandStores, takeRelayed, writeOp, type Taken } from './log/apply-op'
+import { brainIdOf, hasGenesis, teamBrainOf, type RelayedEntry } from './log/log'
+import { stateDump, stateHash } from './log/snapshot'
+import type { OpEnvelope } from '@engramprotocol/protocol/log'
 import { AgentStore } from './agents'
 import { ProjectStore } from './projects'
 import { UserStore } from './users'
@@ -25,12 +27,9 @@ export class EML {
   private ownsConnection: boolean = true
   private clock!: Clock
   private newId!: IdSource
-  // v0.20: the write side, internal — reached only through apply()
-  private engramWriter!: EngramWriter
-  private objectWriter!: ObjectWriter
 
   constructor(config: EMLConfig) {
-    this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock)
+    this.db = initDatabase(config.dbPath ?? ':memory:', config.clock ?? systemClock, config.brainId)
     this.ownsConnection = true
     this.wireStores(config.namespace, config)
   }
@@ -63,15 +62,48 @@ export class EML {
 
   /**
    * v0.20: the one write entry (decision write-command-set). Runs a command —
-   * engram.create · engram.update · engram.rescope · task.track · learning.add_evidence ·
+   * engram.create · engram.update · engram.rescope · engram.retag · task.track · learning.add_evidence ·
    * engram.confirm_review · relation.create · object.create · object.update —
    * in one transaction with one time from `env` (default: no actor). A
    * rejection is a CommandError (INVALID · NOT_FOUND · TOPIC_EXISTS · CONFLICT) and
-   * writes nothing. Outside the set only engrams.delete writes (decision
-   * no-delete-command).
+   * writes nothing. Nothing else writes a brain; v0.21: engrams.delete and
+   * agents.delete are gone (decision no-delete-command).
+   *
+   * v0.21: the write is an op in the brain's log (log/apply-op.ts) — env's
+   * newId gives the op_id, its clock the entry's time; the ids the write
+   * draws are derived from the op_id.
    */
   apply<N extends CommandName>(command: { name: N, input: CommandMap[N][0] }, env: Env = this.env()): CommandMap[N][1] {
-    return runCommand(this.db, { eml: this, engrams: this.engramWriter, objects: this.objectWriter }, command, env)
+    return writeOp(commandStores(this, this.db), command, env)
+  }
+
+  /** v0.21: this brain's id, as its genesis carries it; control.db's brains.id is a cache of it. */
+  brainId(): string | null {
+    return brainIdOf(this.db)
+  }
+
+  /** v0.21: true once this brain's log has its genesis; false while it waits for one from its relay (create or join). */
+  hasGenesis(): boolean {
+    return hasGenesis(this.db)
+  }
+
+  /** v0.21: the team brain this brain's log belongs to (its genesis names it), null for a private brain. */
+  teamBrain(): string | null {
+    return teamBrainOf(this.db)
+  }
+
+  /**
+   * v0.21: takes one entry its relay delivered into this shared brain — the
+   * replica's write path (log/apply-op.ts takeRelayed): `op` applied, or the
+   * entry kept as rejected. Returns the command's result or why it was rejected.
+   */
+  takeRelayed(entry: RelayedEntry, op: OpEnvelope | null): Taken {
+    return takeRelayed(commandStores(this, this.db), entry, op)
+  }
+
+  /** v0.21: the hash of this brain's state (log/snapshot.ts) — what a checkpoint states. */
+  stateHash(): string {
+    return stateHash(stateDump(this.db))
   }
 
   /** v0.20: the current time on this brain's clock (ISO-8601 UTC, ms). */
@@ -93,11 +125,6 @@ export class EML {
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
       this.tags, this.subjects, env,
     )
-    this.engramWriter = new EngramWriter(
-      this.db, namespace, this.projects, this.users, this.agents, this.entities,
-      this.tags, this.subjects, env,
-    )
-    this.objectWriter = new ObjectWriter(this.db, this.projects, this.entities, this.users, this.agents, this.tags, this.subjects)
   }
 
   close(): void {
@@ -152,26 +179,32 @@ export {
 export { initDatabase } from './database'
 export {
   provisionUser,
+  provisionBrain,
   type ProvisionOptions,
+  type ProvisionBrainOptions,
   type ProvisionResult,
 } from './provisioning'
 export {
   runForwardMigrations,
+  checkBrainIds,
+  type BrainIdMismatch,
   type ForwardMigrationsReport,
   type BrainMigrationOutcome,
   type RunForwardMigrationsOptions,
   type MigrationReport,
   type MigrationOutcomeKind,
 } from './forward-migrations'
-export { boot, type BootResult, type BootOptions } from './boot'
+export { boot, BOOT_PARTS, type BootResult, type BootOptions, type BootPart } from './boot'
 export {
   TYPE_FIELDS, ORIGINS, SEED_ORIGIN, BINDINGS, CHANGE_TYPES, RULE_TYPES, APPLIES, TASK_PRIORITIES, STAGES, REMOVED_KEYS, UPGRADE_HINT,
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
+export { RelayOrderError, type RelayedEntry } from './log/log'
+export type { Taken } from './log/apply-op'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'
-export { readObject, OBJECT_KINDS, type ObjectKind } from './objects'
+export { readObject, spacePeople, knownAssignees, OBJECT_KINDS, type ObjectKind, type SpaceMember, type SpaceAgent } from './objects'
 export {
   CommandError, COMMAND_NAMES, isValidationMessage,
   type Command, type CommandMap, type CommandName, type CommandErrorCode,

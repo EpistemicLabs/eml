@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, boot, ALL_RULES, type SystemRule } from '../src'
 import {
-  validDecision, validTask, validNote, validStatus, validLog, closedTask, writes,
+  validDecision, validTask, validNote, validStatus, validLog, closedTask, writes, legacyGlobalRule, legacyRule,
 } from './fixtures'
 
 // Legacy entries (written before the short format) cannot be stored through
@@ -16,11 +16,12 @@ function makeLegacy(eml: EML, id: string, content: string, properties?: Record<s
 describe('boot()', () => {
   let eml: EML
 
-  const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`, trigger?: string) =>
-    writes(eml).store({
-      type: 'rule', scope, title, content,
-      properties: { applies, why: 'test why', agreed: 'yes', ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) },
-    })
+  // v0.21: no rule is written in global any more; one from before sits there as a legacy entry and still boots.
+  const rule = (scope: string, title: string, applies: 'always' | 'situational', content = `${title} body`, trigger?: string) => {
+    const input = { title, content, properties: { applies, why: 'test why', agreed: 'yes', ...(applies === 'situational' && { trigger: trigger ?? `${title} situation` }) } }
+    // global and user rules: as a brain from before v0.21 holds them (the boot still loads them until the upgrade)
+    return scope === 'global' || scope.startsWith('user.') ? legacyRule(eml, input, scope) : writes(eml).store({ ...input, type: 'rule', scope })
+  }
   // v0.19: the identity is the profile marked core (one per scope), not a title.
   const profile = (scope: string, title: string, content = `${title} facts`, core = true) =>
     writes(eml).store({ type: 'profile', scope, title, content, properties: core ? { core: true } : {} })
@@ -228,7 +229,7 @@ describe('boot()', () => {
 
     it('does not render properties', () => {
       writes(eml).store({
-        type: 'rule', scope: 'global', title: 'r', content: 'body',
+        type: 'rule', scope: 'agent.assistant', title: 'r', content: 'body',
         properties: { applies: 'always', why: 'because-text', agreed: 'agreed-text', detail: 'detail-text', review_due_at: '2026-10-14' },
       })
       const md = boot(eml, 'assistant').markdown

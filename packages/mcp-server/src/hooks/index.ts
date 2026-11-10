@@ -106,6 +106,7 @@ export async function sessionStart(
   let status = 0
   let body: {
     markdown?: string
+    error?: unknown
     version?: string
     legacy?: number
     budget?: {
@@ -126,7 +127,7 @@ export async function sessionStart(
       signal: AbortSignal.timeout(BOOT_TIMEOUT_MS),
     })
     status = res.status
-    if (res.ok) body = (await res.json()) as typeof body
+    body = (await res.json().catch(() => ({}))) as typeof body
   } catch (err) {
     return {
       output: `⚠️ EML boot failed — brain server unreachable at ${cfg.EML_URL}.`,
@@ -143,9 +144,12 @@ export async function sessionStart(
     }
   }
   if (status !== 200 || typeof body.markdown !== 'string') {
+    // The server's reason, when it gave one: a host that answers for several
+    // brains says why this session gets none (the cockpit: no agent bound).
+    const reason = typeof body.error === 'string' ? ` ${body.error}` : ''
     return {
-      output: `⚠️ EML boot failed — server error (HTTP ${status}).`,
-      log: `FAIL http ${status}`,
+      output: `⚠️ EML boot failed — server error (HTTP ${status}).${reason}`,
+      log: `FAIL http ${status}${reason}`,
     }
   }
 

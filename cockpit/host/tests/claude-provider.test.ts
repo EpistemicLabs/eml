@@ -12,7 +12,7 @@ const configDir = join(home, 'claude-config')
 
 // The space a session runs in; its files are written by brain-space.ts, not the provider.
 const space: SessionSpace = {
-  id: 'space-1', url: 'http://127.0.0.1:60000', token: 'eml_testprefix_testsecret',
+  id: 'space-1', mcpToken: 'f'.repeat(64),
   files: {
     mcpConfig: join(configDir, 'spaces', 'space-1', 'mcp.json'),
     settings: join(configDir, 'spaces', 'space-1', 'settings.json'),
@@ -26,7 +26,7 @@ describe('Claude Code provider', () => {
   beforeAll(async () => {
     const { createClaudeProvider } = await import('../src/infrastructure/providers/claude/index.js')
     provider = createClaudeProvider()
-    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', writableDirs: [] })
+    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', mcpUrl: 'http://127.0.0.1:60001/mcp', writableDirs: [] })
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 

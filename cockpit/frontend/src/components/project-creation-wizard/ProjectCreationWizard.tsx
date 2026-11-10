@@ -15,6 +15,7 @@ import { Brain, FolderPlus, X } from 'lucide-react';
 
 import { Button, Input } from '@/shared/view/ui';
 import { brainGet, brainPost } from '@/lib/api';
+import { useWritable } from '@/stores/useTeamStore';
 import { cn } from '@/lib/utils';
 import type { ProjectsResponse } from '@/lib/types';
 
@@ -121,7 +122,9 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
     }
   }, [brainDescription, brainGoal, brainId, brainName, onClose, onProjectCreated, queryClient]);
 
-  const canCreate = mode === 'brain' ? Boolean(brainId) : Boolean(folderPath.trim());
+  // A brain project is a write; a shared brain that is not live takes none (useTeamStore). A folder-only project is local.
+  const brain = useWritable();
+  const canCreate = mode === 'brain' ? Boolean(brainId) && brain.writable : Boolean(folderPath.trim());
   const handleCreate = mode === 'brain' ? handleCreateBrain : handleCreateFolder;
   const submitOnEnter = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -258,7 +261,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
           <Button variant="outline" onClick={onClose} disabled={isCreating}>
             Cancel
           </Button>
-          <Button onClick={() => void handleCreate()} loading={isCreating} disabled={!canCreate}>
+          <Button onClick={() => void handleCreate()} loading={isCreating} disabled={!canCreate} title={mode === 'brain' ? brain.reason ?? undefined : undefined}>
             {mode === 'brain' ? 'Create project' : 'Add folder'}
           </Button>
         </div>

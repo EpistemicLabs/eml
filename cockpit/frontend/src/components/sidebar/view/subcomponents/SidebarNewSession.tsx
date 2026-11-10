@@ -8,7 +8,6 @@ import { cn } from '@/lib/utils';
 import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
-import { agentLabel } from '../../allSessions';
 import type { SidebarController } from '../../useSidebarController';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
@@ -149,8 +148,8 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
         </div>
         {spaces.length > 1 && (
           <PickField icon={<Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: tone }} />}>
-            <select aria-label="Agent" className={cn(FIELD, 'appearance-none pr-6 pl-7')} value={space?.id ?? ''} onChange={(event) => setSpaceId(event.target.value)}>
-              {spaces.map((candidate) => <option key={candidate.id} value={candidate.id}>{agentLabel(candidate)}</option>)}
+            <select aria-label="Space" className={cn(FIELD, 'appearance-none pr-6 pl-7')} value={space?.id ?? ''} onChange={(event) => setSpaceId(event.target.value)}>
+              {spaces.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
             </select>
           </PickField>
         )}

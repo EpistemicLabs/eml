@@ -1,16 +1,14 @@
 import type { EML } from '../index'
-import type { EngramWriter } from '../engram-writer'
-import type { ObjectWriter } from '../object-writer'
-import type { Stamp } from '../env'
+import type { WriteContext } from '../write/context'
 
 // --- Commands (v0.20) ------------------------------------------------------------
 //
-// Every brain write is one of nine commands behind EML.apply(command, env)
-// (decision write-command-set). A command module validates its input and
-// applies it inside the one transaction apply() opens, with the write's one
-// Stamp. The command names are the future op types; a payload carries only
-// what the caller intends — never what the env provides (time, actor, ids the
-// brain draws).
+// Every brain write is one of the commands behind EML.apply(command, env)
+// (decision write-command-set; v0.21 adds the cross-brain move's). A command
+// module validates its input and applies it inside the one transaction apply()
+// opens, with the write's one Stamp. The command names are the future op
+// types; a payload carries only what the caller intends — never what the env
+// provides (time, actor, ids the brain draws).
 
 export type CommandErrorCode = 'INVALID' | 'NOT_FOUND' | 'TOPIC_EXISTS' | 'CONFLICT'
 
@@ -22,18 +20,19 @@ export class CommandError extends Error {
   }
 }
 
-/** What a command's apply works with: the reads (EML) and the internal writers. */
-export interface CommandContext {
+/**
+ * What a command's apply works with: the reads (EML) and the write context of
+ * the helpers in write/ — the connection, the stores and the write's one Stamp.
+ */
+export interface CommandContext extends WriteContext {
   eml: EML
-  engrams: EngramWriter
-  objects: ObjectWriter
 }
 
 export interface CommandModule<I, R> {
   name: string
   /** Checks the input's shape; returns it typed. Rules that need the brain run in apply. */
   validate(input: unknown): I
-  apply(ctx: CommandContext, input: I, stamp: Stamp): R
+  apply(ctx: CommandContext, input: I): R
 }
 
 /**
@@ -54,6 +53,13 @@ export function isValidationMessage(msg: string): boolean {
     || msg.startsWith('subject "')          // an unknown subject on a write
     || msg.startsWith('invalid subject')    // an unslugifiable name / bad status
     || msg.startsWith('subject name must')  // an empty rename
+}
+
+/** A rejection by the caller's input as CommandError INVALID; a CommandError or a fault as it is. */
+export function asCommandError(err: unknown): unknown {
+  if (err instanceof CommandError) return err
+  const msg = String((err as Error)?.message ?? '')
+  return isValidationMessage(msg) ? new CommandError('INVALID', msg) : err
 }
 
 /** The input as a plain object, or INVALID. */

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useConfirmReview, useRetireEngram, useCreateReviewTask } from "@/lib/queries";
+import { useWritable } from "@/stores/useTeamStore";
 import type { Engram } from "@/lib/types";
 import { parseBrainTime } from "@/components/task-sections";
 
@@ -41,7 +42,9 @@ export function ReviewActions({ engram }: { engram: Engram }) {
     confirm.mutate({ id: engram.id, text }, { onSuccess: () => { setWhy(""); setConfirmOpen(false); } });
   }
 
-  const busy = confirm.isPending || retire.isPending || createTask.isPending;
+  // A shared brain that is not live takes no write: the buttons say so (useTeamStore).
+  const brain = useWritable();
+  const busy = confirm.isPending || retire.isPending || createTask.isPending || !brain.writable;
   const error =
     (confirm.error as Error | null)?.message ??
     (retire.error as Error | null)?.message ??
@@ -86,9 +89,9 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           onClick={() => (isTask ? confirm.mutate({ id: engram.id }) : setConfirmOpen((v) => !v))}
           disabled={busy}
           title={
-            isTask
+            brain.reason ?? (isTask
               ? "Still relevant — counts as movement; flagged again after 30 days without movement"
-              : "Still current — say why; it is kept as a review entry and the review clock restarts (decision 60d · rule 90d · profile 180d)"
+              : "Still current — say why; it is kept as a review entry and the review clock restarts (decision 60d · rule 90d · profile 180d)")
           }
           className={
             confirmOpen
@@ -103,9 +106,9 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           onClick={() => retire.mutate(engram)}
           disabled={busy}
           title={
-            isTask
+            brain.reason ?? (isTask
               ? "Drop it — invalidated with outcome “retired in review”; bound decisions and notes close with it. Open sub-tasks have to be closed or moved first"
-              : "Outdated — marks the engram invalidated and drops the flag"
+              : "Outdated — marks the engram invalidated and drops the flag")
           }
           className={action}
         >
@@ -115,7 +118,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           type="button"
           onClick={() => setTaskOpen((v) => !v)}
           disabled={busy}
-          title="Needs work — spin up a follow-up task linked to this engram"
+          title={brain.reason ?? "Needs work — spin up a follow-up task linked to this engram"}
           className={
             taskOpen
               ? "h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground disabled:opacity-40"

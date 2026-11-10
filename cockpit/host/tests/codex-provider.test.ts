@@ -12,6 +12,8 @@ process.env.EML_COCKPIT_HOME = home
 const codexHome = join(home, 'codex-config')
 const BRAIN_TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = '0123456789abcdef'
+const MCP_TOKEN = 'f'.repeat(64)
+const MCP_URL = 'http://127.0.0.1:60001/mcp'
 
 describe('config.toml tables', () => {
   it('replaces managed tables and leaves everything else as Codex wrote it', () => {
@@ -83,9 +85,9 @@ describe('config.toml tables', () => {
   })
 })
 
-// The space a session runs in; Codex gets its brain through the session env, not a file of its own.
+// The space a session runs in; Codex gets its MCP token through the session env, not a file of its own.
 const space: SessionSpace = {
-  id: 'space-1', url: 'http://127.0.0.1:60000', token: BRAIN_TOKEN,
+  id: 'space-1', mcpToken: MCP_TOKEN,
   files: {
     mcpConfig: join(home, 'claude-config', 'spaces', 'space-1', 'mcp.json'),
     settings: join(home, 'claude-config', 'spaces', 'space-1', 'settings.json'),
@@ -104,7 +106,7 @@ describe('Codex provider', () => {
     mkdirSync(codexHome, { recursive: true })
     writeFileSync(join(codexHome, 'config.toml'), `[mcp_servers.eml_brain.env]\nEML_API_URL = "http://old"\nEML_API_TOKEN = "${BRAIN_TOKEN}"\n`)
     provider.prepare({
-      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: HOOK_TOKEN,
+      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: HOOK_TOKEN, mcpUrl: MCP_URL,
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
     })
   })
@@ -114,11 +116,12 @@ describe('Codex provider', () => {
     expect(config().startsWith('check_for_update_on_startup = false\n')).toBe(true)
   })
 
-  it('registers the brain MCP server with pre-approved tools, the brain forwarded from the session env — no token in the file', () => {
-    expect(config()).toContain('[mcp_servers.eml_brain]\ncommand = "node"')
-    expect(config()).toContain('env_vars = ["EML_API_URL", "EML_API_TOKEN"]')
+  it('registers the host\'s brain MCP endpoint over HTTP with pre-approved tools, the space and session as headers from the session env — no token in the file', () => {
+    expect(config()).toContain(`[mcp_servers.eml_brain]\nurl = "${MCP_URL}"`)
+    expect(config()).toContain('env_http_headers = { "x-cockpit-mcp-token" = "COCKPIT_MCP_TOKEN", "x-eml-session" = "COCKPIT_SESSION_ID" }')
     expect(config()).toContain('default_tools_approval_mode = "approve"')
     expect(config()).not.toContain('[mcp_servers.eml_brain.env]')
+    expect(config()).not.toContain('env_vars')
     expect(config()).not.toContain(BRAIN_TOKEN)
   })
 
@@ -140,7 +143,7 @@ describe('Codex provider', () => {
     expect(first).not.toContain('--config')
     expect(JSON.parse(first).hooks.Stop[0].hooks[0]).toMatchObject({ async: true, command: expect.stringContaining('turn-hook.js') })
     provider.prepare({
-      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210',
+      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210', mcpUrl: MCP_URL,
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
     })
     expect(read()).toBe(first)
@@ -175,14 +178,15 @@ describe('Codex provider', () => {
     expect(launch.env.CODEX_HOME).toBe(codexHome)
     expect(launch.env.PATH.split(delimiter)[0]).toBe(join(home, 'codex', ...(platform.linksFiles ? [] : ['current']), 'bin'))
     expect(launch.args.join(' ')).not.toContain('c-1')
-    expect(launch.args.join(' ')).not.toContain(BRAIN_TOKEN)
+    expect(launch.args.join(' ')).not.toContain(MCP_TOKEN)
   })
 
-  it('hands the session its space\'s brain through the environment', () => {
+  it('hands the session its space through the environment: the MCP token for the host\'s endpoint, the hook config — no brain token', () => {
     const { env } = provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
-    expect(env.EML_API_URL).toBe(space.url)
-    expect(env.EML_API_TOKEN).toBe(space.token)
+    expect(env.COCKPIT_MCP_TOKEN).toBe(MCP_TOKEN)
     expect(env.EML_HOOK_CONFIG).toBe(space.files.emlConfig)
+    expect(env.EML_API_URL).toBeUndefined()
+    expect(env.EML_API_TOKEN).toBeUndefined()
   })
 
   const unattended = ['--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write', '--config', 'approvals_reviewer="auto_review"']

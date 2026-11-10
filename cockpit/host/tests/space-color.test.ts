@@ -31,7 +31,7 @@ describe('space colours', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   const open = (id: string, main: boolean, token: string, color?: 'violet') => mods.space.openBrainSpace({
-    id, name: id, brainName: id, main, url: 'http://127.0.0.1:60000', token, color,
+    id, name: id, main, url: 'http://127.0.0.1:60000', token, color,
     turnHookConfig: mods.isolation.turnHookConfig,
   })
 

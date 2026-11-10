@@ -6,6 +6,11 @@ export const RECALL_PREVIEW_CHARS = 200
 export const SHOW_PREVIEW_CHARS = 160
 
 /** Collapse all whitespace/newlines to single spaces and cap to maxChars (… if truncated). */
+/** A task's assignee_ids as shown in lists ("a, b"), or undefined when it has none. */
+export function assigneesOf(value: unknown): string | undefined {
+  return Array.isArray(value) && value.length > 0 ? value.join(', ') : undefined
+}
+
 export function previewText(content: string | null | undefined, maxChars: number): string {
   const flat = (content ?? '').replace(/\s+/g, ' ').trim()
   return flat.length > maxChars ? flat.slice(0, maxChars) + '…' : flat
@@ -17,6 +22,12 @@ export function previewText(content: string | null | undefined, maxChars: number
  * full id for eml_get. No full body, no properties dump — the full engram is one
  * eml_get away.
  */
+/** " · by <handle>", with the agent that wrote for them: " · by dominik (via motti)" (v0.21); empty without a handle. */
+function byline(e: { ingested_by: string | null, agent: string | null }): string {
+  if (!e.ingested_by) return ''
+  return e.agent ? ` · by ${e.ingested_by} (via ${e.agent})` : ` · by ${e.ingested_by}`
+}
+
 export function renderRecallMarkdown(query: string, results: Engram[]): string {
   const lines = [`# EML Recall — "${query}"`, '', `_${results.length} engram(s)_`, '']
   for (const c of results) {
@@ -27,11 +38,18 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
     lines.push(`- **[${meta.join(' | ')}]**`)
     lines.push(`  ${previewText(c.content, RECALL_PREVIEW_CHARS)}`)
     // v0.11 team-brains: surface authorship when present (shared-brain "who wrote this").
-    const by = c.ingested_by ? ` · by ${c.ingested_by}` : ''
-    lines.push(`  id: ${c.id}${by} · eml_get for full content`)
+    lines.push(`  id: ${c.id}${byline(c)} · eml_get for full content`)
     lines.push('')
   }
   return lines.join('\n')
+}
+
+/** The metadata keys the archive op of a move writes (log/move-engrams.ts). */
+const MOVE_KEYS = new Set(['moved_to', 'moved_at', 'moved_to_name'])
+
+/** Under the header of a moved project: where it went (the space's name as recorded at the move, else the brain id) and when. */
+function movedLine(moved: NonNullable<ScopedBrainState['moved']>): string {
+  return `_Moved to the shared space ${moved.name ?? moved.to} on ${moved.at.slice(0, 10)} — its engrams live there; nothing new is filed here._`
 }
 
 /**
@@ -44,7 +62,11 @@ export function renderRecallMarkdown(query: string, results: Engram[]): string {
  * rules name-only (eml_get for the body).
  */
 export function renderBrainStateMarkdown(state: ScopedBrainState): string {
-  const lines: string[] = [`# ${state.scope} — brain state`, '']
+  const lines: string[] = [`# ${state.scope} — brain state`]
+  // v0.21: a project moved into a shared space — the one line that says so comes
+  // first; the scope keeps nothing new (engrams.movedFrom).
+  if (state.moved) lines.push(movedLine(state.moved))
+  lines.push('')
 
   lines.push('## Status')
   // v0.19: what this scope's status is about (the object's status_tracks).
@@ -53,8 +75,7 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   for (const s of state.current_status) {
     const st = s.properties?.state ? `[${s.properties.state}] ` : ''
     const next = s.properties?.next_step ? ` · next: ${s.properties.next_step}` : ''
-    const by = s.ingested_by ? ` · by ${s.ingested_by}` : ''
-    lines.push(`- ${st}${previewText(s.content, SHOW_PREVIEW_CHARS)}${next}${by} · ${s.id}`)
+    lines.push(`- ${st}${previewText(s.content, SHOW_PREVIEW_CHARS)}${next}${byline(s)} · ${s.id}`)
   }
   lines.push('')
 
@@ -64,11 +85,13 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
   for (const t of state.open_tasks) {
     const prio = (t.properties?.priority as string) ?? 'normal'
     // v0.11 team-brains: show assignee handle when present (who owns this task).
-    const asg = t.properties?.assignee_id ? ` → ${t.properties.assignee_id as string}` : ''
+    const assignees = assigneesOf(t.properties?.assignee_ids)
+    const asg = assignees ? ` → ${assignees}` : ''
     // v0.15: the task's stage, when set — [prio·status·stage]
     const stage = t.properties?.stage ? `·${t.properties.stage as string}` : ''
     // the task's intent, when set — the why next to the what
-    const intent = typeof t.properties?.intent === 'string' ? ` · intent: ${previewText(t.properties.intent, SHOW_PREVIEW_CHARS)}` : ''
+    // a blank intent (accepted by v0.20.0–v0.20.4) reads as none
+    const intent = typeof t.properties?.intent === 'string' && t.properties.intent.trim() !== '' ? ` · intent: ${previewText(t.properties.intent, SHOW_PREVIEW_CHARS)}` : ''
     lines.push(`- [${prio}·${t.status}${stage}]${asg} ${t.title ?? '(no title)'} — ${previewText(t.content, SHOW_PREVIEW_CHARS)}${intent} · ${t.id}`)
   }
   // the list stops at 10; the rest as a count with the call that lists them (as the project block does)
@@ -117,8 +140,8 @@ export function renderBrainStateMarkdown(state: ScopedBrainState): string {
     lines.push('')
   }
 
-  // v0.19: the project's or entity's stable facts.
-  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata) : []
+  // v0.19: the project's or entity's stable facts. The move marker is the line under the header, not a fact.
+  const meta = state.metadata && typeof state.metadata === 'object' ? Object.entries(state.metadata).filter(([k]) => !MOVE_KEYS.has(k)) : []
   if (meta.length > 0) {
     lines.push('## Metadata')
     for (const [k, v] of meta) lines.push(`- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)

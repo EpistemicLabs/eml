@@ -38,9 +38,10 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  *   (journal, evidence, review); tag / entity status, status_tracks; free
  *   properties folded into the typed fields.
  * v0.20: the sync-ready write path — engrams.rev (revision counter).
+ * v0.21: the local op log — op_log and op_snapshots, with the genesis.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 20
+export const CURRENT_BRAIN_SCHEMA_VERSION = 21
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or

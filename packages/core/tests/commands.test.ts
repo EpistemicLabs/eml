@@ -3,9 +3,11 @@ import * as core from '../src'
 import { EML, CommandError, COMMAND_NAMES, readObject } from '../src'
 import { validDecision, validTask, validNote } from './fixtures'
 
-// v0.20 (decision write-command-set): every brain write is one of nine
-// commands behind EML.apply(command, env); the rest of EML only reads, except
-// engrams.delete and agents.delete (decision no-delete-command).
+// v0.20 (decision write-command-set): every brain write is one of eight
+// commands behind EML.apply(command, env); the rest of EML only reads.
+// v0.21: engrams.delete and agents.delete are gone (decision no-delete-command);
+// engram.import and engram.move_out join for the cross-brain move (spec
+// cross-brain-move-spec).
 
 describe('the command set', () => {
   let eml: EML
@@ -22,10 +24,11 @@ describe('the command set', () => {
     throw new Error('not rejected')
   }
 
-  it('is closed: nine commands, and no public write besides apply and the two deletes', () => {
+  it('is closed: the commands, and no public write besides apply', () => {
     expect(COMMAND_NAMES).toEqual([
-      'engram.create', 'engram.update', 'engram.rescope', 'task.track', 'learning.add_evidence',
+      'engram.create', 'engram.update', 'engram.rescope', 'engram.retag', 'task.track', 'learning.add_evidence',
       'engram.confirm_review', 'relation.create', 'object.create', 'object.update',
+      'engram.import', 'engram.move_out', 'provenance.restamp', 'relation.move_end',
     ])
     const WRITE = /^(store|create|update|track|learn$|addEvidence|confirm|relate|insert|append|link|supersede|close|move|replace|set|delete)/i
     const methods = (o: object): string[] => {
@@ -39,8 +42,8 @@ describe('the command set', () => {
     for (const store of ['engrams', 'projects', 'entities', 'users', 'agents', 'tags', 'subjects'] as const) {
       for (const m of methods((eml as any)[store])) if (WRITE.test(m)) writes.push(`${store}.${m}`)
     }
-    expect(writes.sort()).toEqual(['agents.delete', 'engrams.delete'])
-    expect(methods(eml).filter(m => !m.startsWith('wire')).sort()).toEqual(['apply', 'close', 'env', 'now'])
+    expect(writes.sort()).toEqual([])
+    expect(methods(eml).filter(m => !m.startsWith('wire')).sort()).toEqual(['apply', 'brainId', 'close', 'env', 'hasGenesis', 'now', 'stateHash', 'takeRelayed', 'teamBrain'])
     // the writers and the old write functions are not exported
     for (const name of ['EngramWriter', 'ObjectWriter', 'appendEntry', 'createObject', 'updateObject']) expect(name in core).toBe(false)
   })
@@ -127,7 +130,7 @@ describe('the command set', () => {
       const rel = (extra: Record<string, unknown>) => ({ name: 'relation.create' as const, input: { source_id: a.id, target_id: b.id, relation: 'supports', ...extra } as never })
       const before = count('relations')
       expect(reject(() => eml.apply(rel({ scope: 'global', bogus: 1 })))).toMatchObject({
-        code: 'INVALID', message: 'unknown fields scope, bogus — a relation takes source_id, target_id, relation, detection_method, strength, explanation, metadata',
+        code: 'INVALID', message: 'unknown fields scope, bogus — a relation takes source_id, target_id, relation, detection_method, strength, explanation, metadata, source_brain, target_brain',
       })
       expect(reject(() => eml.apply(rel({ detection_method: 'bogus' })))).toMatchObject({
         code: 'INVALID', message: 'invalid detection_method "bogus" — one of manual, agent_declared, auto_temporal, auto_semantic',

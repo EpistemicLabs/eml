@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 /**
@@ -10,7 +10,7 @@ import { callTool } from './_helpers'
  * Useful for quick "what does the brain look like" — e.g. after migrations,
  * before strategic decisions, or as an onboarding sanity check.
  */
-export function registerStatsTool(server: McpServer, http: HttpClient): void {
+export function registerStatsTool(server: McpServer, http: EmlApi): void {
   server.registerTool(
     'eml_stats',
     {

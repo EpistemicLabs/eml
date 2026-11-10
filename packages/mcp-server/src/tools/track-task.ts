@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import { PRIORITIES, STAGES, subjects, tags } from './_shared'
 
@@ -9,7 +9,7 @@ import { PRIORITIES, STAGES, subjects, tags } from './_shared'
  * Replaces eml_task_entry and closing through eml_update. Core enforces the
  * rules (text where required, outcome on close, keep for bound items).
  */
-export function registerTrackTaskTool(server: McpServer, http: HttpClient): void {
+export function registerTrackTaskTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_track_task', {
     title: 'Track Task',
     description:
@@ -40,7 +40,7 @@ export function registerTrackTaskTool(server: McpServer, http: HttpClient): void
       intent: z.string().nullable().optional().describe('Set the intent once the user confirmed it (what will be different, for whom, and how we\'ll notice); null clears.'),
       context: z.string().nullable().optional().describe('Set the context; null clears.'),
       priority: z.enum(PRIORITIES).nullable().optional().describe('urgent · high · normal · low; null clears.'),
-      assignee_id: z.string().nullable().optional().describe('Handle of who should act; null clears.'),
+      assignee_ids: z.array(z.string()).nullable().optional().describe('Replaces the list of who should act (handles eml_read_object lists); [] or null clears.'),
       due_date: z.string().nullable().optional().describe('ISO date; null clears.'),
       blockers: z.array(z.string()).nullable().optional().describe('Replaces the list; [] or null clears.'),
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),

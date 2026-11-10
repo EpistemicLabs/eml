@@ -24,7 +24,7 @@ describe('render — authorship + assignee surfacing', () => {
       ],
       open_tasks: [
         { id: 't1', status: 'active', title: 'ship-it', content: 'do the thing',
-          significance: 'normal', properties: { assignee_id: 'carol', priority: 'high' } } as any,
+          significance: 'normal', properties: { assignee_ids: ['carol'], priority: 'high' } } as any,
       ],
       recent_logs: [
         { id: 'l1', title: 'session-1', content: 'worked on x',

@@ -3,23 +3,28 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
 import { readCockpitConfig, updateCockpitConfig, type CockpitConfig } from './config.js'
+import { readBrainInfo } from './brain-info.js'
+import { provisionAgent, type Core as ProvisionCore } from './provision.js'
 import {
-  AGENT_ID, BRAIN_MCP_SERVER, agentDir, agentMcpFile, agentRecordFile, allowedMcpServers, readAgentRecord,
-  writeAgentRecord, type AgentRecord,
-} from './agent-config.js'
+  AGENT_ID, BRAIN_MCP_SERVER, agentDir, agentMcpFile, agentRuntimeFile, allowedMcpServers, readAgentRuntime,
+  writeAgentRuntime, type AgentRuntime,
+} from './agent-runtime.js'
 import { copyAgentSkills, agentLoginStatus } from './infrastructure/providers/claude/isolation.js'
 import { AGENTS_DIR, CONFIG_DIR, CORE_INDEX, DATA_DIR } from './paths.js'
 
 /**
  * `eml-cockpit agent create|status|sync-skills` and `eml-cockpit rotate-brain-token`:
- * set up a space's own agent (agent-config.ts) and replace a brain token. No
+ * set up an agent's own runtime (agent-runtime.ts) and replace a brain token. No
  * command prints a credential or the value of an MCP definition.
  *
  * agent create <id> --space <name|brain id>
  *              [--mcp <a,b>] [--mcp-from <json file>] [--skills <x,y>] [--skills-from <folder>]
- *   With the cockpit stopped: makes the agent's folder, MCP file and record, and
- *   binds it to the space in the cockpit config. The brain is not touched: the
- *   space keeps its token, and sessions boot as the agent the brain is named after.
+ *   With the cockpit stopped: makes the runtime's folder, MCP file and record,
+ *   marks the agent's runtime and binds the agent to the space in the cockpit
+ *   config. An id the home has already keeps its brain and gains the runtime,
+ *   which follows it into every space that binds it; a new id gets its own agent
+ *   brain (agents.ts) and takes the space over. A home from before agent brains
+ *   gets the brain from the agent upgrade at the next start.
  *   Start the cockpit afterwards; then run /login once in a session of the space.
  *
  * agent status [<id>]
@@ -53,7 +58,7 @@ interface Core {
   revokeToken(control: ControlDb, tokenId: string): boolean
 }
 
-const loadCore = () => require(CORE_INDEX) as Core
+const loadCore = () => require(CORE_INDEX) as Core & ProvisionCore
 const controlPath = () => path.join(DATA_DIR, 'control.db')
 
 /** The token and display name of a further space, by its display name or brain id. */
@@ -92,7 +97,7 @@ function chosenDefinitions(allowed: string[], from: string | undefined): Record<
   return allowedMcpServers(allowed, parsed.mcpServers ?? {})
 }
 
-async function createAgent(argv: string[]): Promise<void> {
+async function createAgent(argv: string[], core: Core & ProvisionCore): Promise<void> {
   const opts = parseCreate(argv)
   await refuseRunningHost('agent create')
   if (opts.mcp.includes(BRAIN_MCP_SERVER)) throw new Error(`agent create: the brain's server "${BRAIN_MCP_SERVER}" is always there and cannot be listed`)
@@ -104,47 +109,64 @@ async function createAgent(argv: string[]): Promise<void> {
   const config = await readCockpitConfig()
   if (!config) throw new Error('agent create: this home has no cockpit config')
 
-  const core = loadCore()
   const control = core.initControlDatabase(controlPath())
+  let space: ReturnType<typeof findSpace>
   try {
-    const space = findSpace(config, control, core, opts.spaceName)
-    if (!space) throw new Error(`agent create: no further space "${opts.spaceName}" (the main space keeps the shared config)`)
-
-    const dir = agentDir(opts.agentId)
-    const configDir = path.join(dir, 'claude-config')
-    const tempDir = path.join(dir, 'tmp')
-    fs.mkdirSync(AGENTS_DIR, { recursive: true, mode: 0o700 })
-    fs.mkdirSync(configDir, { recursive: true, mode: 0o700 })
-    fs.mkdirSync(tempDir, { recursive: true, mode: 0o700 })
-    fs.writeFileSync(agentMcpFile(opts.agentId), JSON.stringify({ mcpServers: definitions }, null, 2) + '\n', { mode: 0o600 })
-    copyAgentSkills(opts.skills, opts.skillsFrom, configDir)
-    const record: AgentRecord = {
-      agentId: opts.agentId,
-      brainId: space.verified.brainId,
-      mcpServers: opts.mcp,
-      skills: opts.skills,
-      tempDir,
-      harnesses: { claude: { configDir } },
-    }
-    writeAgentRecord(record)
-    // Last, so a failed run above leaves the space as it was.
-    await updateCockpitConfig((current) => current && ({
-      ...current,
-      spaces: (current.spaces ?? []).map((s) => (s.token === space.token ? { ...s, agent: opts.agentId } : s)),
-    }))
-    say(`agent ${opts.agentId}: created for brain ${space.verified.brainId} (${opts.mcp.length} MCP servers + the brain, ${opts.skills.length} skills + the managed ones)`)
-    say(`config folder: ${configDir}`)
-    say('Start the cockpit, then run /login once in a session of this space.')
+    space = findSpace(config, control, core, opts.spaceName)
   } finally {
     control.close()
   }
+  if (!space) throw new Error(`agent create: no further space "${opts.spaceName}" (the main space keeps the shared config)`)
+  const { token, agent: previous } = space
+  const spaceName = space.name ?? opts.spaceName
+
+  // A new id gets its agent brain first: a failure leaves no runtime behind, and the next run finds the brain.
+  if (config.handle && !config.agents?.some((a) => a.id === opts.agentId)) {
+    const human = readBrainInfo(config.token).users.find((u) => u.id === config.handle)?.name ?? config.handle
+    await provisionAgent({ id: opts.agentId, name: opts.agentId }, { handle: config.handle, name: human }, core)
+  }
+
+  const dir = agentDir(opts.agentId)
+  const configDir = path.join(dir, 'claude-config')
+  const tempDir = path.join(dir, 'tmp')
+  fs.mkdirSync(AGENTS_DIR, { recursive: true, mode: 0o700 })
+  fs.mkdirSync(configDir, { recursive: true, mode: 0o700 })
+  fs.mkdirSync(tempDir, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(agentMcpFile(opts.agentId), JSON.stringify({ mcpServers: definitions }, null, 2) + '\n', { mode: 0o600 })
+  copyAgentSkills(opts.skills, opts.skillsFrom, configDir)
+  const record: AgentRuntime = {
+    agentId: opts.agentId,
+    mcpServers: opts.mcp,
+    skills: opts.skills,
+    tempDir,
+    harnesses: { claude: { configDir } },
+  }
+  writeAgentRuntime(record)
+  // Last, so a failed run above leaves the space as it was.
+  await updateCockpitConfig((current) => current && ({
+    ...current,
+    agents: current.agents?.map((a) => (a.id === opts.agentId ? { ...a, runtime: true as const } : a)),
+    spaces: (current.spaces ?? []).map((s) => (s.token === token ? { ...s, agent: opts.agentId } : s)),
+  }))
+  say(`agent ${opts.agentId}: created and bound to space ${spaceName} (${opts.mcp.length} MCP servers + the brain, ${opts.skills.length} skills + the managed ones)`)
+  if (previous && previous !== opts.agentId) say(`space ${spaceName} was bound to ${previous}; it now runs as ${opts.agentId}. ${previous} keeps its brain.`)
+  say(`config folder: ${configDir}`)
+  say('Start the cockpit, then run /login once in a session of this space.')
 }
 
-function statusLines(record: AgentRecord): string[] {
+/** The spaces that bind an agent, by name. */
+function boundSpaces(config: CockpitConfig | null, agentId: string): string[] {
+  return [
+    ...(config?.agent === agentId ? [config.mainName ?? 'Main'] : []),
+    ...(config?.spaces ?? []).filter((s) => s.agent === agentId).map((s) => s.name ?? '?'),
+  ]
+}
+
+function statusLines(record: AgentRuntime, spaces: string[]): string[] {
   const configDir = record.harnesses.claude?.configDir
   const lines = [
     `agent ${record.agentId}`,
-    `  brain: ${record.brainId}`,
+    `  spaces: ${spaces.join(', ') || '(none)'}`,
     `  MCP allowlist: ${record.mcpServers.join(', ') || '(only the brain)'}`,
     `  MCP file: ${fs.existsSync(agentMcpFile(record.agentId)) ? 'present' : 'MISSING'}`,
     `  skill list: ${record.skills.join(', ') || '(only the managed ones)'}`,
@@ -161,16 +183,17 @@ function statusLines(record: AgentRecord): string[] {
   return lines
 }
 
-function showStatus(wanted: string | undefined): void {
+async function showStatus(wanted: string | undefined): Promise<void> {
+  const config = await readCockpitConfig()
   let ids: string[] = []
   if (wanted) ids = [wanted]
   else {
-    try { ids = fs.readdirSync(AGENTS_DIR).filter((id) => fs.existsSync(agentRecordFile(id))) } catch { /* no agents yet */ }
+    try { ids = fs.readdirSync(AGENTS_DIR).filter((id) => fs.existsSync(agentRuntimeFile(id))) } catch { /* no agents yet */ }
   }
   if (ids.length === 0) say('no agents in this home')
   for (const id of ids) {
     try {
-      for (const line of statusLines(readAgentRecord(id))) say(line)
+      for (const line of statusLines(readAgentRuntime(id), boundSpaces(config, id))) say(line)
     } catch (err) {
       say(`agent ${id}: ${(err as Error).message}`)
     }
@@ -180,7 +203,7 @@ function showStatus(wanted: string | undefined): void {
 function syncSkills(argv: string[]): void {
   const agentId = argv[0]
   if (!agentId) throw new Error('agent sync-skills <id> [--skills-from <folder>]')
-  const record = readAgentRecord(agentId)
+  const record = readAgentRuntime(agentId)
   const configDir = record.harnesses.claude?.configDir
   if (!configDir || !fs.existsSync(configDir)) throw new Error(`agent sync-skills: the config folder of ${agentId} is missing`)
   const from = flag(argv, 'skills-from') ?? path.join(CONFIG_DIR, 'skills')
@@ -231,15 +254,15 @@ async function rotateBrainToken(argv: string[]): Promise<void> {
   }
 }
 
-export async function runAgentCommand(argv: string[]): Promise<boolean> {
+export async function runAgentCommand(argv: string[], core?: Core & ProvisionCore): Promise<boolean> {
   if (argv[0] === 'rotate-brain-token') {
     await rotateBrainToken(argv.slice(1))
     return true
   }
   if (argv[0] !== 'agent') return false
   const [, sub, ...rest] = argv
-  if (sub === 'create') await createAgent(rest)
-  else if (sub === 'status') showStatus(rest[0])
+  if (sub === 'create') await createAgent(rest, core ?? loadCore())
+  else if (sub === 'status') await showStatus(rest[0])
   else if (sub === 'sync-skills') syncSkills(rest)
   else throw new Error('usage: eml-cockpit agent create|status|sync-skills')
   return true

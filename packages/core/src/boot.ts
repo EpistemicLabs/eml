@@ -2,6 +2,7 @@ import type { EML } from './index'
 import type { SystemRule } from './system-rules'
 import { isLegacyFormat } from './validate'
 import { REVIEWABLE_TYPES } from './review-due'
+import { spacePeople, type SpaceMember } from './objects'
 
 type EngramRow = Record<string, any>
 
@@ -20,15 +21,32 @@ export interface BootResult {
   budget?: BootBudgetReport
 }
 
+/**
+ * Which part of the boot to render (v0.21, decision cockpit-identity-agent-brain):
+ * the cockpit host composes a session's boot from two brains — the agent's own
+ * (identity: profiles and rules) and the running server's system rules — so
+ * each part renders on its own. all (default) is the whole, as before.
+ */
+export type BootPart = 'all' | 'identity' | 'system'
+export const BOOT_PARTS: readonly BootPart[] = ['all', 'identity', 'system']
+
 export interface BootOptions {
   reviewDays?: number
   version?: string
   systemRules?: SystemRule[]
+  part?: BootPart
   /**
    * The user the session works for (user.<id> scope). Omitted: every user of
    * the brain — in a single-user brain, that user.
    */
   user?: string
+  /**
+   * v0.21: a shared brain's members (from its server's member set). Given, the
+   * system part names the space as shared and lists the members with the
+   * agents that work for them; the session's own agent (`agentId`) is marked
+   * "(you)" under this device's member.
+   */
+  members?: SpaceMember[]
   /**
    * Hard cap for `markdown`, in characters (string length). The caller passes
    * the limit of the harness and output form it serves — see "Size budget"
@@ -123,9 +141,34 @@ function scopeOrder(agentScope: string) {
     rank(a.scope) - rank(b.scope) || a.scope.localeCompare(b.scope) || (a.title ?? '').localeCompare(b.title ?? '')
 }
 
+/**
+ * The shared-space block (text agreed by Dominik 2026-11-09): each member with
+ * the agents that have written for it; the session's own agent under this
+ * device's member, marked (you), also before it has written.
+ */
+function sharedSpaceLines(eml: EML, agentId: string, members: SpaceMember[]): string[] {
+  const { agents } = spacePeople(eml, members)
+  const lines = [
+    '## Shared space',
+    'This space is shared: every member reads and writes the same brain, and what you write here they see.',
+    'Members:',
+  ]
+  for (const m of members) {
+    if (m.handle === null) { lines.push('- (handle not readable yet)'); continue }
+    const own = agents.filter(a => a.works_for.includes(m.handle as string)).map(a => a.id)
+    if (m.self && !own.includes(agentId)) own.push(agentId)
+    const shown = own.map(id => (m.self && id === agentId ? `${id} (you)` : id))
+    lines.push(`- ${m.handle}${shown.length > 0 ? ` · agents: ${shown.join(', ')}` : ''}`)
+  }
+  lines.push("Assign work with assignee_ids (a member's or an agent's handle); eml_read_object object=user · agent lists them.")
+  return lines
+}
+
 export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootResult {
   const reviewDays = opts.reviewDays ?? 14
-  const systemRules = opts.systemRules ?? []
+  const part = opts.part ?? 'all'
+  const systemRules = part === 'identity' ? [] : (opts.systemRules ?? [])
+  const withIdentity = part !== 'system'
 
   const agentScope = `agent.${agentId}`
   const userIds = opts.user !== undefined ? [opts.user] : eml.users.list().map(u => u.id)
@@ -133,9 +176,11 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   const bootScopes = new Set(['global', agentScope, ...userScopes])
   const order = scopeOrder(agentScope)
 
-  const active = eml.engrams
-    .query({ limit: 10000, status: 'active' })
-    .filter((c: EngramRow) => (c.type === 'rule' || c.type === 'profile') && bootScopes.has(c.scope))
+  const active = withIdentity
+    ? eml.engrams
+      .query({ limit: 10000, status: 'active' })
+      .filter((c: EngramRow) => (c.type === 'rule' || c.type === 'profile') && bootScopes.has(c.scope))
+    : []
   const legacy = (c: EngramRow) => isLegacyFormat(c.type, c.content, c.properties)
 
   // Core profiles: the one per self scope marked core (v0.19; the migration set
@@ -162,6 +207,7 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   }
 
   const systemLines: string[] = []
+  if (part !== 'identity' && opts.members !== undefined) systemLines.push(...sharedSpaceLines(eml, agentId, opts.members), '')
   if (systemRules.length > 0) {
     const versionTag = opts.version ? ` v${opts.version}` : ''
     systemLines.push(`## EML System Rules (managed by engramprotocol${versionTag})`)
@@ -181,7 +227,8 @@ export function boot(eml: EML, agentId: string, opts: BootOptions = {}): BootRes
   const assemble = (titleOnly: Set<string>, leftOut: Set<string>): string => {
     const short = (c: EngramRow) => legacy(c) || capped.has(c.id) || titleOnly.has(c.id)
     const shown = (list: EngramRow[]) => list.filter(c => !leftOut.has(c.id))
-    const lines: string[] = [`# EML Boot — ${agentId}`, '']
+    // the system part stands alone, without the header (the identity part carries it)
+    const lines: string[] = withIdentity ? [`# EML Boot — ${agentId}`, ''] : []
     const identity = shown(profiles)
     if (identity.length > 0) {
       lines.push('## Identity', ...identity.map(c => short(c) ? titleOnlyLine(c) : fullLine(c)), '')

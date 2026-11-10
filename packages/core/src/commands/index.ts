@@ -1,29 +1,38 @@
-import type Database from 'better-sqlite3'
 import type { StoredEngram, Engram, RelationInput } from '../types'
 import type { LearningState } from '../learning'
 import { beginWrite, type Env } from '../env'
-import { CommandError, isValidationMessage, type CommandContext, type CommandModule } from './types'
+import { CommandError, asCommandError, type CommandContext, type CommandModule } from './types'
 import { engramCreate, type EngramCreateInput, type EngramCreateResult } from './engram-create'
 import { engramUpdate, type EngramUpdateInput } from './engram-update'
 import { engramRescope, type EngramRescopeInput, type EngramRescopeResult } from './engram-rescope'
+import { engramRetag, type EngramRetagInput, type EngramRetagResult } from './engram-retag'
 import { taskTrack, type TaskTrackInput } from './task-track'
 import { learningAddEvidence, type LearningAddEvidenceInput } from './learning-add-evidence'
 import { engramConfirmReview, type EngramConfirmReviewInput } from './engram-confirm-review'
 import { relationCreate } from './relation-create'
 import { objectCreate, type ObjectCreateInput } from './object-create'
 import { objectUpdate, type ObjectUpdateInput } from './object-update'
+import { engramImport, type EngramImportInput, type EngramImportResult } from './engram-import'
+import { engramMoveOut, type EngramMoveOutInput, type EngramMoveOutResult } from './engram-move-out'
+import { provenanceRestamp, type ProvenanceRestampInput, type ProvenanceRestampResult } from './provenance-restamp'
+import { relationMoveEnd, type RelationMoveEndInput, type RelationMoveEndResult } from './relation-move-end'
 
 /** The closed command set: name → [input, result]. */
 export interface CommandMap {
   'engram.create': [EngramCreateInput, EngramCreateResult]
   'engram.update': [EngramUpdateInput, StoredEngram]
   'engram.rescope': [EngramRescopeInput, EngramRescopeResult]
+  'engram.retag': [EngramRetagInput, EngramRetagResult]
   'task.track': [TaskTrackInput, StoredEngram]
   'learning.add_evidence': [LearningAddEvidenceInput, { engram: Engram, learning: LearningState }]
   'engram.confirm_review': [EngramConfirmReviewInput, Engram]
   'relation.create': [RelationInput, { created: boolean }]
   'object.create': [ObjectCreateInput, { object: unknown, created: boolean }]
   'object.update': [ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }]
+  'engram.import': [EngramImportInput, EngramImportResult]
+  'engram.move_out': [EngramMoveOutInput, EngramMoveOutResult]
+  'provenance.restamp': [ProvenanceRestampInput, ProvenanceRestampResult]
+  'relation.move_end': [RelationMoveEndInput, RelationMoveEndResult]
 }
 export type CommandName = keyof CommandMap
 export type Command = { [N in CommandName]: { name: N, input: CommandMap[N][0] } }[CommandName]
@@ -32,38 +41,40 @@ const COMMANDS: { [N in CommandName]: CommandModule<CommandMap[N][0], CommandMap
   'engram.create': engramCreate,
   'engram.update': engramUpdate,
   'engram.rescope': engramRescope,
+  'engram.retag': engramRetag,
   'task.track': taskTrack,
   'learning.add_evidence': learningAddEvidence,
   'engram.confirm_review': engramConfirmReview,
   'relation.create': relationCreate,
   'object.create': objectCreate,
   'object.update': objectUpdate,
+  'engram.import': engramImport,
+  'engram.move_out': engramMoveOut,
+  'provenance.restamp': provenanceRestamp,
+  'relation.move_end': relationMoveEnd,
 }
 
 export const COMMAND_NAMES = Object.keys(COMMANDS) as CommandName[]
 
 /**
- * Run one command: validate its input and apply it in ONE transaction, with
- * one Stamp (one time) from `env`. A rejection is a CommandError and leaves
- * the brain as it was.
+ * Run one command inside the caller's transaction: validate its input and
+ * apply it with one Stamp (one time) from `env`. A rejection is a
+ * CommandError. v0.21: the caller is the op log (log/apply-op.ts), whose
+ * write owns the one transaction — a rejection rolls it back, so the brain
+ * and its log stay as they were.
  */
-export function runCommand<N extends CommandName>(db: Database.Database, ctx: CommandContext, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
+export function runCommand<N extends CommandName>(stores: Omit<CommandContext, 'stamp'>, command: { name: N, input: CommandMap[N][0] }, env: Env): CommandMap[N][1] {
   const mod = COMMANDS[command?.name] as CommandModule<CommandMap[N][0], CommandMap[N][1]> | undefined
   if (!mod) throw new CommandError('INVALID', `Invalid command: unknown command "${String(command?.name)}". One of ${COMMAND_NAMES.join(', ')}.`)
   try {
-    return db.transaction(() => {
-      const input = mod.validate(command.input)
-      return mod.apply(ctx, input, beginWrite(env))
-    })()
+    const input = mod.validate(command.input)
+    return mod.apply({ ...stores, stamp: beginWrite(env) }, input)
   } catch (err) {
-    if (err instanceof CommandError) throw err
-    const msg = String((err as Error)?.message ?? '')
-    if (isValidationMessage(msg)) throw new CommandError('INVALID', msg)
-    throw err
+    throw asCommandError(err)
   }
 }
 
-export { CommandError, isValidationMessage, type CommandErrorCode, type CommandContext } from './types'
+export { CommandError, asCommandError, isValidationMessage, type CommandErrorCode, type CommandContext } from './types'
 export type { EngramCreateInput, EngramCreateResult, LearningCreateInput } from './engram-create'
 export type { EngramUpdateInput } from './engram-update'
 export type { TaskTrackInput } from './task-track'
@@ -71,3 +82,7 @@ export type { LearningAddEvidenceInput } from './learning-add-evidence'
 export type { EngramConfirmReviewInput } from './engram-confirm-review'
 export type { ObjectCreateInput } from './object-create'
 export type { ObjectUpdateInput } from './object-update'
+export type { EngramImportInput, EngramImportResult } from './engram-import'
+export type { RelationMoveEndInput, RelationMoveEndResult } from './relation-move-end'
+export type { EngramMoveOutInput, EngramMoveOutResult } from './engram-move-out'
+export type { ProvenanceRestampInput, ProvenanceRestampResult } from './provenance-restamp'

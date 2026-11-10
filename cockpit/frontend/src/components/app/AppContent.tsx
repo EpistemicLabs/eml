@@ -40,7 +40,9 @@ import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
+import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
+import TeamBanner from './TeamBanner';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
@@ -365,15 +367,22 @@ function AppContentInner() {
           )}
         </div>
         {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        <div className="min-w-0 flex-1">
+        {/* Many spaces scroll sideways; the mouse wheel scrolls it too. */}
+        <div
+          className="scrollbar-hide min-w-0 flex-1 overflow-x-auto"
+          onWheel={(e) => { if (e.deltaY !== 0 && e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY; }}
+        >
           <DeskTabBar />
         </div>
       </div>
       )}
 
-      {/* Update (available → installing → outcome) and brain hygiene, full width under the header. */}
+      {/* Full width under the header, in this order: update (available → installing → outcome),
+          a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
       <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
         <UpdateBanner />
+        <AgentUpgradeBanner />
+        <TeamBanner />
         <BrainHygieneBanner />
       </div>
 

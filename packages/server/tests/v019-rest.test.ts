@@ -53,7 +53,7 @@ describe('v0.19 REST', () => {
   describe('POST /engram/:type', () => {
     it('creates every type except learning with its fields flat in the body', async () => {
       const inputs: EngramInput[] = [
-        validDecision(), validTask(), validNote(), validRule(), validEvent(), validLog(), validReference(),
+        validDecision(), validTask(), validNote(), validRule({ scope: 'agent.default' }), validEvent(), validLog(), validReference(),
         validProfile(), validStatus(),
       ]
       for (const input of inputs) {
@@ -141,7 +141,7 @@ describe('v0.19 REST', () => {
   describe('POST /learning', () => {
     it('create → 201 with ripeness; the same topic → 200 written:false with the match; evidence by id', async () => {
       const first = await post('/learning', {
-        scope: 'user.default', title: 'ask-before-push', content: 'Ask before pushing.',
+        scope: 'agent.default', title: 'ask-before-push', content: 'Ask before pushing.',
         source: 'user', happened: 'pushed without asking', quote: 'frag erst',
       }, MCP)
       expect(first.status).toBe(201)
@@ -149,7 +149,7 @@ describe('v0.19 REST', () => {
       expect(first.body.learning.state).toBe('collecting')
 
       const again = await post('/learning', {
-        scope: 'user.default', title: 'ask-before-pushing', content: 'Ask before pushing code.', source: 'self', happened: 'again',
+        scope: 'agent.default', title: 'ask-before-pushing', content: 'Ask before pushing code.', source: 'self', happened: 'again',
       })
       expect(again.status).toBe(200)
       expect(again.body.written).toBe(false)
@@ -222,6 +222,23 @@ describe('v0.19 REST', () => {
 
     it('unknown id → 404', async () => {
       expect((await post('/update', { id: 'nope', patch: { content: 'x' } })).status).toBe(404)
+    })
+  })
+
+  describe('POST /retag', () => {
+    it('swaps tags, keeps the dates and answers refusals with a clear status', async () => {
+      await post('/object/tag', { name: 'retag-old' })
+      await post('/object/tag', { name: 'retag-new' })
+      const a = (await create(validDecision({ tags: ['retag-old'] }))).body
+      const r = await post('/retag', { ids: [a.id], add: ['retag-new'], remove: ['retag-old'] })
+      expect(r.status).toBe(200)
+      expect(r.body).toEqual({ changed: 1, unchanged: 0 })
+      const after = (await get(`/engram/${a.id}`)).body
+      expect(after.tags).toEqual(['retag-new'])
+      expect(after.updated_at).toBe(a.updated_at)
+      expect((await post('/retag', { ids: ['ghost'], add: ['retag-new'] })).status).toBe(404)
+      expect((await post('/retag', { ids: [a.id], add: ['nope'] })).status).toBe(400)
+      expect((await post('/retag', { ids: [a.id] })).status).toBe(400)
     })
   })
 
@@ -396,6 +413,57 @@ describe('v0.19 REST', () => {
       const r = await request('POST', `${baseUrl}/engram/note`, auth(), '{"scope": "global",')
       expect(r.status).toBe(400)
       expect(r.body.error).toBe('Invalid JSON')
+    })
+  })
+
+  // v0.21 (decision cockpit-identity-agent-brain): the cockpit host names the
+  // agent that writes for the handle, and composes a session's boot in parts.
+  describe('x-eml-agent and POST /boot part', () => {
+    it('x-eml-agent is stamped as the agent next to the handle; a malformed one is a 400', async () => {
+      const r = await create(validNote({ title: 'via-agent' }), { ...MCP, 'X-EML-Agent': 'motti' })
+      expect(r.status).toBe(201)
+      expect(r.body).toMatchObject({ ingested_by: 'bootstrap', agent: 'motti' })
+      const own = await create(validNote({ title: 'own' }), MCP)
+      expect(own.body).toMatchObject({ ingested_by: 'bootstrap', agent: null })
+      const bad = await create(validNote({ title: 'bad' }), { ...MCP, 'X-EML-Agent': 'Motti Bot' })
+      expect(bad.status).toBe(400)
+      expect(bad.body.error).toBe('x-eml-agent is 1–63 characters of a-z, 0-9, _ and -')
+    })
+
+    it('part=identity carries the header without system rules, part=system only the system rules; an unknown part is a 400', async () => {
+      const all = await post('/boot', { agent: 'default' })
+      const identity = await post('/boot', { agent: 'default', part: 'identity' })
+      const system = await post('/boot', { agent: 'default', part: 'system' })
+      expect([all.status, identity.status, system.status]).toEqual([200, 200, 200])
+      expect(identity.body.markdown.startsWith('# EML Boot — default')).toBe(true)
+      expect(identity.body.markdown).not.toContain('## EML System Rules')
+      expect(system.body.markdown.startsWith('## EML System Rules (managed by engramprotocol v')).toBe(true)
+      expect(system.body.markdown).not.toContain('# EML Boot')
+      expect(all.body.markdown.endsWith(system.body.markdown)).toBe(true)
+      const bad = await post('/boot', { agent: 'default', part: 'rules' })
+      expect(bad.status).toBe(400)
+      expect(bad.body.error).toBe('part must be one of all, identity, system')
+    })
+
+    it('a relation with an end in another brain goes through POST /relate and comes back with eml_get', async () => {
+      const note = (await create(validNote({ title: 'local-end' }))).body
+      const remote = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+      const brain = '0f8fad5b-d9cb-469f-a165-70867728950e'
+      const r = await post('/relate', { source_id: note.id, target_id: remote, relation: 'refines', detection_method: 'manual', target_brain: brain })
+      expect(r.status).toBe(201)
+      expect(r.body).toEqual({ ok: true, created: true })
+      const g = await get(`/engram/${note.id}?with_relations=true`)
+      expect(g.body.relations).toHaveLength(1)
+      expect(g.body.relations[0]).toMatchObject({ target_id: remote, source_brain: null, target_brain: brain })
+      const both = await post('/relate', { source_id: note.id, target_id: remote, relation: 'supports', detection_method: 'manual', source_brain: brain, target_brain: brain })
+      expect(both.status).toBe(400)
+      // The remote engram's own host asks this brain for the links that point at it.
+      const links = await get(`/relations?engram=${remote}`)
+      expect(links.status).toBe(200)
+      expect(links.body.count).toBe(1)
+      expect(links.body.relations[0]).toMatchObject({ source_id: note.id, target_id: remote, relation: 'refines', target_brain: brain })
+      expect((await get('/relations')).status).toBe(400)
+      expect((await get('/relations?engram=x&y=1')).status).toBe(400)
     })
   })
 })

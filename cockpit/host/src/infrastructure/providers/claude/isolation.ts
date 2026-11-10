@@ -4,7 +4,7 @@ import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_SKILLS_DIR, CONFIG_DIR, LEGACY_EML_HOO
 import { currentVersion } from './runtime.js'
 import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
-import { readAgentMcpDefinitions, allowedMcpServers, type SpaceAgent } from '../../../agent-config.js'
+import { readAgentMcpDefinitions, allowedMcpServers, type SpaceRuntime } from '../../../agent-runtime.js'
 import {
   EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
   installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
@@ -36,15 +36,17 @@ import { platform } from '../../platform/index.js'
  *     so it follows the cockpit's light/dark theme (see seededClaudeTheme).
  *
  * Per brain space, under spaces/<id>/ (writeSpaceFiles, called by brain-space.ts):
- *   - mcp.json (chmod 600): the brain MCP server (eml_brain) pointed at the
- *     space's brain with its token, both passed as env (never argv).
+ *   - mcp.json (chmod 600): the brain MCP server (eml_brain), the host's MCP
+ *     endpoint over HTTP with the space's per-boot MCP token (brain-mcp.ts);
+ *     the brain token itself stays in the host.
  *   - settings.json (passed via --settings): skips the interactive "Bypass
  *     Permissions mode" acceptance dialog that --dangerously-skip-permissions
  *     otherwise shows on every TUI start; carries the session hooks — turn
  *     state to the host, and the EML hooks (boot, reminder, consolidate at stop) from the bundled
  *     @engramprotocol/mcp-server, reading the space's EML config.
- *   - <home>/eml/spaces/<id>/config (chmod 600): brain URL + token of the space
- *     for those EML hooks — the app's own EML client config, never the user's ~/.eml.
+ *   - <home>/eml/spaces/<id>/config (chmod 600): the host's hook routes and the
+ *     space's MCP token for those EML hooks — the app's own EML client config,
+ *     never the user's ~/.eml. No brain token in any of them.
  */
 
 /** The shared isolation files of this boot; a space's own files are SpaceFiles. */
@@ -132,12 +134,19 @@ export { HOOK_TOKEN_HEADER, brainMcpServer }
 
 /** The files a brain space's sessions start with (brain-space.ts). */
 export interface SpaceFiles {
-  /** --mcp-config: the brain MCP server with this space's URL + token. */
+  /** --mcp-config: the brain MCP endpoint with this space's MCP token. */
   mcpConfig: string
   /** --settings: the session hooks, with the EML hooks reading `emlConfig`. */
   settings: string
-  /** EML client config of this space for those hooks (URL + token). */
+  /** EML client config of this space for those hooks (the host's hook routes + the space's MCP token). */
   emlConfig: string
+}
+
+/** What a space's session files point at: the host's brain MCP endpoint and hook routes, with the space's per-boot MCP token. */
+export interface SpaceHost {
+  mcpUrl: string
+  hooksUrl: string
+  mcpToken: string
 }
 
 /**
@@ -146,22 +155,21 @@ export interface SpaceFiles {
  */
 export function writeSpaceFiles(
   spaceId: string,
-  loopbackUrl: string,
-  brainToken: string,
   turnHookConfig: string,
-  agent?: { id: string; configDir: string; mcpServers: Record<string, unknown> },
+  host: SpaceHost,
+  runtime?: { id: string; configDir: string; mcpServers: Record<string, unknown> },
 ): SpaceFiles {
-  const dir = agent ? agentSpaceDir(agent.configDir, spaceId) : spaceConfigDir(spaceId)
+  const dir = runtime ? runtimeSpaceDir(runtime.configDir, spaceId) : spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   fs.chmodSync(dir, 0o700)
   const mcpConfig = path.join(dir, 'mcp.json')
   const settings = path.join(dir, 'settings.json')
   const emlConfig = path.join(spaceEmlDir(spaceId), 'config')
 
-  writeEmlHookConfig(emlConfig, loopbackUrl, brainToken)
+  writeEmlHookConfig(emlConfig, host.hooksUrl, host.mcpToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { ...agent?.mcpServers, eml_brain: brainMcpServer(loopbackUrl, brainToken) } }),
+    JSON.stringify({ mcpServers: { ...runtime?.mcpServers, eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)
@@ -197,6 +205,13 @@ export function writeSpaceFiles(
   return { mcpConfig, settings, emlConfig }
 }
 
+/** A space that leaves the cockpit (a shared space removed, brain-space.ts) takes its session files with it, also those in its agent's runtime folder. */
+export function removeSpaceFiles(spaceId: string, runtimeConfigDir?: string): void {
+  fs.rmSync(spaceConfigDir(spaceId), { recursive: true, force: true })
+  fs.rmSync(spaceEmlDir(spaceId), { recursive: true, force: true })
+  if (runtimeConfigDir) fs.rmSync(runtimeSpaceDir(runtimeConfigDir, spaceId), { recursive: true, force: true })
+}
+
 /** A session's servers under a tool profile: the listed ones and always the brain. */
 export function limitMcpServers(config: { mcpServers: Record<string, unknown> }, allowed: string[]): { mcpServers: Record<string, unknown> } {
   const mcpServers = Object.fromEntries(Object.entries(config.mcpServers).filter(([name]) => name === 'eml_brain' || allowed.includes(name)))
@@ -213,11 +228,11 @@ export function writeLimitedMcpConfig(spaceMcpConfig: string, sessionId: string,
 }
 
 /** Where a space with an agent keeps its session files: in the agent's own folder. */
-const agentSpaceDir = (configDir: string, spaceId: string) => path.join(configDir, 'spaces', spaceId)
+const runtimeSpaceDir = (configDir: string, spaceId: string) => path.join(configDir, 'spaces', spaceId)
 
 /** The paths writeSpaceFiles uses under an agent's folder, known before anything is written. */
-export function agentMcpConfigPath(configDir: string, spaceId: string): string {
-  return path.join(agentSpaceDir(configDir, spaceId), 'mcp.json')
+export function runtimeMcpConfigPath(configDir: string, spaceId: string): string {
+  return path.join(runtimeSpaceDir(configDir, spaceId), 'mcp.json')
 }
 
 /** Copy skills into an agent's folder: real files, so no agent can change another's through a link. */
@@ -259,23 +274,21 @@ export function syncAgentSkills(allowed: string[], configDir: string): string[] 
  * creates the folder: a missing one is the agent's problem to report. On a
  * problem nothing is written and the problem goes to the agent.
  */
-export function writeAgentFiles(
-  agent: SpaceAgent, spaceId: string, loopbackUrl: string, brainToken: string, turnHookConfig: string,
-): void {
-  const configDir = agent.configDirs.claude
-  if (!configDir || agent.record === null || !fs.existsSync(configDir)) return
+export function writeRuntimeFiles(runtime: SpaceRuntime, spaceId: string, turnHookConfig: string, host: SpaceHost): void {
+  const configDir = runtime.configDirs.claude
+  if (!configDir || runtime.record === null || !fs.existsSync(configDir)) return
   try {
-    const mcpServers = allowedMcpServers(agent.record.mcpServers, readAgentMcpDefinitions(agent.id))
-    const missing = syncAgentSkills(agent.record.skills, configDir)
+    const mcpServers = allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
+    const missing = syncAgentSkills(runtime.record.skills, configDir)
     if (missing.length > 0) throw new Error(`the listed skills ${missing.join(', ')} are not in its folder (run eml-cockpit agent sync-skills)`)
     seedClaudeJson(configDir)
     const hookConfig = path.join(configDir, 'turn-hook.json')
     fs.copyFileSync(turnHookConfig, hookConfig)
     fs.chmodSync(hookConfig, 0o600)
-    writeSpaceFiles(spaceId, loopbackUrl, brainToken, hookConfig, { id: agent.id, configDir, mcpServers })
-    fs.mkdirSync(agent.tempDir, { recursive: true, mode: 0o700 })
+    writeSpaceFiles(spaceId, hookConfig, host, { id: runtime.id, configDir, mcpServers })
+    fs.mkdirSync(runtime.tempDir, { recursive: true, mode: 0o700 })
   } catch (err) {
-    agent.setProblem((err as Error).message)
+    runtime.setProblem((err as Error).message)
   }
 }
 

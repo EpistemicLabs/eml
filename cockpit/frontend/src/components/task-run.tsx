@@ -5,6 +5,7 @@
 // so a running run shows here and a task has at most one run.
 import { useMemo, useState } from "react";
 import { Play, SquareTerminal } from "lucide-react";
+import { useWritable } from "@/stores/useTeamStore";
 
 import { BrainCard } from "@/components/brain/ui";
 import type { Engram } from "@/lib/types";
@@ -54,6 +55,8 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
   const defaultProject = useMemo(() => projectOfTask(projects, engram), [projects, engram]);
 
   const [open, setOpen] = useState(false);
+  // A shared brain that is not live takes no write; a run would write (useTeamStore).
+  const brain = useWritable();
   const [deskId, setDeskId] = useState<string>(activeDeskId);
   const [projectId, setProjectId] = useState<string>(defaultProject?.projectId ?? "");
   const [extra, setExtra] = useState("");
@@ -124,7 +127,9 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90"
+            disabled={!brain.writable}
+            title={brain.reason ?? undefined}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
             <Play className="h-3.5 w-3.5" />
             Advance task

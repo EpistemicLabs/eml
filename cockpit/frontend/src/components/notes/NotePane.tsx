@@ -11,6 +11,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Markdown } from '@tiptap/markdown';
 import { Archive, Bold, Italic, List, ListChecks, ListOrdered, Loader2, NotebookPen, Plus, Strikethrough, type LucideIcon } from 'lucide-react';
+import { useWritable } from '@/stores/useTeamStore';
 
 import { ApiError } from '@/lib/api';
 import {
@@ -68,6 +69,7 @@ function PaneMessage({ children }: { children: React.ReactNode }) {
 function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
   const notes = useNotes(project.projectId);
   const create = useCreateNote();
+  const brain = useWritable();
   const open = (id: string) => updatePane(paneId, { noteId: id });
 
   return (
@@ -76,7 +78,8 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
         variant="outline"
         size="sm"
         className="self-start"
-        disabled={create.isPending}
+        disabled={create.isPending || !brain.writable}
+        title={brain.reason ?? undefined}
         onClick={() => create.mutate(project.projectId, { onSuccess: (note) => open(note.id) })}
       >
         <Plus className="h-3 w-3" /> New note
@@ -110,6 +113,8 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   const qc = useQueryClient();
   const query = useNote(noteId);
   const archive = useArchiveNote();
+  // A shared brain that is not live takes no write: the editor is read-only and says why (useTeamStore).
+  const brain = useWritable();
   useNoteOpen(noteId);
 
   // What the editor content is based on; a save is checked against it.
@@ -161,6 +166,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
       TaskItem.configure({ nested: true }),
       Markdown,
     ],
+    editable: brain.writable,
     editorProps: { attributes: { class: 'note-editor' } },
     onUpdate: () => {
       dirtyRef.current = true;
@@ -171,6 +177,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
     },
   });
   editorRef.current = editor;
+  useEffect(() => { editor?.setEditable(brain.writable); }, [editor, brain.writable]);
 
   // First load and every change from outside (agent edit, another tab).
   const note = query.data;
@@ -238,8 +245,9 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
         </span>
         <button
           type="button"
-          title="Archive this note"
-          className="ml-auto rounded p-1 hover:bg-foreground/5 hover:text-foreground"
+          title={brain.reason ?? 'Archive this note'}
+          disabled={!brain.writable}
+          className="ml-auto rounded p-1 hover:bg-foreground/5 hover:text-foreground disabled:opacity-40"
           onClick={() => {
             if (timerRef.current) clearTimeout(timerRef.current);
             dirtyRef.current = false;

@@ -1,0 +1,28 @@
+{
+  "description": "Keys and device certificates (spec team-brain-protocol-package-spec §3). Seeds are sha256 of the UTF-8 text \"eml protocol test vector: <name>\". Byte strings are hex, keys and signatures base64url without padding.",
+  "identity": {
+    "seed": "9cd8b7f23d9a1c7fa25b16463d804849db3647cc0736cd481e21d48190c0ee5f",
+    "public_key": "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY",
+    "fingerprint": "69004 4e4f9 aa174 bf915 0ae7f d32a8 f1e44 f5648"
+  },
+  "device_sign": {
+    "seed": "82238500caee59d262bbfc6532d0f28d58809b632e5d08ccdea4b04993d37b58",
+    "public_key": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4"
+  },
+  "device_enc": {
+    "seed": "6ebf4564710808d5a6d74686b12e7a440b687c2260f7efb6233b272c77024cf2",
+    "public_key": "jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns"
+  },
+  "device_cert": {
+    "signed_text": "eml-device-cert-v1\n{\"brain\":\"7c9e6679-7425-40de-944b-e07fc1f90ae7\",\"created_at\":\"2026-10-26T08:00:00.000Z\",\"device_enc\":\"jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns\",\"device_sign\":\"a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4\",\"member\":\"uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY\",\"v\":1}",
+    "cert": {
+      "v": 1,
+      "brain": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "member": "uc5QcptnOoPdVd21lZH0tCY-bjphymapgJzx9avAMoY",
+      "device_sign": "a3sZzh-3scuWtpRhBZ11JKFldGAAN8sXviHJMKrc6U4",
+      "device_enc": "jjH1W8VzfaPJ_saPZahedkcPSPH6VHGLDMc0yeuuSns",
+      "created_at": "2026-10-26T08:00:00.000Z",
+      "sig": "ohtIdhHTeX1-vveQtcZeJyQ_SehcPQOetBr0s8aMAcOJDJRdlonx5vs4bCMLl6_sM5qT6nq68RsgJgvxDlDrAQ"
+    }
+  }
+}

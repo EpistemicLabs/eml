@@ -1,0 +1,376 @@
+import { describe, it, expect, beforeAll } from 'vitest'
+import { createHmac, createPrivateKey, createPublicKey, verify } from 'crypto'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import {
+  GENESIS_PREV_HASH, INVITE_DAYS, ProtocolError, chainHash, checkAccept, checkAnchor, checkJoin, unwrapInviteKey, UnsupportedVersionError, applyMembership, canonicalJson, checkInviteOpen, inviteLink, inviteNotice,
+  joinAccept, joinRequest, memberHandles, newInvite, openAccept, openJoin, parseInviteLink, ready, sha256Hex, signingKeyFromSeed,
+  unwrapKey, verifyInviteNotice, wrapKey, NOTICE_SKEW_MS, genesisMembers, type Invite, type RotationAhead,
+} from '../src'
+import { toBase64url } from '../src/wire'
+import { joinRequestWith } from '../src/invite'
+import { BRAIN, K, addMember, cert, found, keyFor, nodeOpen, person, rotation, sha } from './helpers'
+
+// v0.21 (spec team-brain-protocol-package-spec §5, block 6): the invite — the
+// link with its secret in the fragment, the notice the relay keeps, the join
+// with the invitee's handle sealed under the secret, the accept bound to the
+// join signed with the key derived from the secret, the accept bound to the
+// join — against the frozen vectors in vectors/invite.json, whose join key and
+// signatures, MAC and handle box node:crypto checks independently.
+
+const I = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'invite.json'), 'utf-8'))
+const M = JSON.parse(readFileSync(join(__dirname, '..', 'vectors', 'membership.json'), 'utf-8'))
+const hex = (s: string): Buffer => Buffer.from(s, 'hex')
+const b64 = (s: string): Buffer => Buffer.from(s, 'base64url')
+const ED25519_SPKI = hex('302a300506032b6570032100')
+const vectorInvite = (): Invite => ({ relay: I.invite.relay, brain: BRAIN, invite_id: I.invite.invite_id, secret: hex(I.invite.secret), expires_at: I.invite.expires_at, redeemed: false })
+const DAY1 = '2026-10-27T08:00:00.000Z'
+const NOW = '2026-10-26T08:00:00.000Z'
+/** HMAC-SHA-512-256, as crypto_auth computes it: the first 32 bytes of HMAC-SHA-512. */
+const nodeMac = (key: Buffer, text: string): string => createHmac('sha512', key).update(text, 'utf-8').digest().subarray(0, 32).toString('base64url')
+const nodeVerify = (publicKey: string, text: string, sig: string): boolean =>
+  verify(null, Buffer.from(text, 'utf-8'), { key: Buffer.concat([ED25519_SPKI, b64(publicKey)]), format: 'der', type: 'spki' }, b64(sig))
+/** The Ed25519 public key of a 32-byte seed, through node:crypto (PKCS#8 wraps the seed). */
+const nodePublicKey = (seed: Buffer): string =>
+  createPublicKey(createPrivateKey({ key: Buffer.concat([hex('302e020100300506032b657004220420'), seed]), format: 'der', type: 'pkcs8' }))
+    .export({ format: 'der', type: 'spki' }).subarray(12).toString('base64url')
+
+beforeAll(() => ready())
+
+describe('the vectors', () => {
+  it('the link: https, the relay, version 1, the brain, the invite id, the secret in the fragment', () => {
+    expect(inviteLink(vectorInvite())).toBe(I.invite.link)
+    const parsed = parseInviteLink(I.invite.link)
+    expect(parsed).toEqual({ relay: I.invite.relay, brain: BRAIN, invite_id: I.invite.invite_id, secret: new Uint8Array(hex(I.invite.secret)) })
+    expect(new URL(I.invite.link).hash).toBe(`#${hex(I.invite.secret).toString('base64url')}`)
+  })
+
+  it('reproduces the join, and node:crypto derives its key, checks its signature and opens its handle', () => {
+    const joiner = signingKeyFromSeed(sha('identity'))
+    expect(joinRequestWith(sha('join nonce').subarray(0, 24), I.invite.link, joiner, K.device_cert.cert, 'juno')).toEqual(I.join)
+    expect(nodePublicKey(hex(I.keys.join_seed))).toBe(I.keys.join_key)
+    expect(I.notice.join_key).toBe(I.keys.join_key)
+    const { sig, ...body } = I.join
+    expect(nodeVerify(I.keys.join_key, `eml-invite-join-v1\n${canonicalJson(body)}`, sig)).toBe(true)
+    const padded = nodeOpen(hex(I.keys.enc_key), b64(I.join.handle.nonce), canonicalJson({ brain: BRAIN, invite_id: I.invite.invite_id, member: I.join.member }), b64(I.join.handle.ct))
+    expect(padded[0]).toBe(4)
+    expect(padded.subarray(1, 5).toString('utf-8')).toBe('juno')
+    expect(I.join_hash).toBe(sha256Hex(canonicalJson(I.join)))
+  })
+
+  it('the inviter opens the join; reproduces the accept, whose MAC node:crypto checks; the invitee opens it', () => {
+    const opened = openJoin(vectorInvite(), I.join, DAY1)
+    expect(opened).toEqual({ member: K.identity.public_key, device_cert: K.device_cert.cert, handle: 'juno', join_hash: I.join_hash })
+    expect(joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, I.accept.anchor)).toEqual(I.accept)
+    const { mac, ...body } = I.accept
+    expect(nodeMac(hex(I.keys.mac_key), canonicalJson({ t: 'eml-invite-accept-v1', ...body }))).toBe(mac)
+    expect(openAccept(I.invite.link, I.join, I.accept)).toEqual({ inviter: I.accept.inviter, anchor: I.accept.anchor })
+    // the anchor is the membership.json genesis as seq 1: its op_id and its chain link at a fixed time
+    expect(I.accept.anchor).toEqual({ genesis: M.genesis.record.op_id, seq: 1, head_hash: chainHash(GENESIS_PREV_HASH, 1, '2026-10-26T08:00:00.000Z', sha256Hex(M.genesis.record.payload)) })
+  })
+
+  it('the notice: node:crypto checks the inviter\'s signature; it carries the join key and no secret', () => {
+    const { sig, ...body } = I.notice
+    expect(nodeVerify(I.notice.inviter, `eml-invite-notice-v1\n${canonicalJson(body)}`, sig)).toBe(true)
+    expect(Object.keys(I.notice)).toEqual(['v', 'brain', 'invite_id', 'expires_at', 'inviter', 'join_key', 'sig'])
+  })
+
+  it('nothing the relay carries holds the secret, its keys or the handle', () => {
+    const relaySees = JSON.stringify([I.notice, I.join, I.accept])
+    for (const secret of [hex(I.invite.secret), hex(I.keys.mac_key), hex(I.keys.enc_key), hex(I.keys.join_seed)]) {
+      expect(relaySees).not.toContain(secret.toString('base64url'))
+      expect(relaySees).not.toContain(secret.toString('hex'))
+    }
+    expect(relaySees).not.toContain('juno')
+  })
+})
+
+describe('the link', () => {
+  it('a new invite: random id and secret, open for 7 days, its link parses back', () => {
+    const a = newInvite('relay.example.org', BRAIN, '2026-10-26T08:00:00.000Z')
+    const b = newInvite('relay.example.org:8443', BRAIN, '2026-10-26T08:00:00.000Z')
+    expect(INVITE_DAYS).toBe(7)
+    expect(a.expires_at).toBe('2026-11-02T08:00:00.000Z')
+    expect(a.redeemed).toBe(false)
+    expect(a.invite_id).not.toBe(b.invite_id)
+    expect(parseInviteLink(inviteLink(b)).relay).toBe('relay.example.org:8443')
+    expect(() => newInvite('Relay.Example.org', BRAIN, '2026-10-26T08:00:00.000Z')).toThrow(/not a host name/)
+    expect(() => newInvite('relay.example.org/x', BRAIN, '2026-10-26T08:00:00.000Z')).toThrow(ProtocolError)
+    expect(() => newInvite('relay.example.org', BRAIN, 'today')).toThrow(/now is ISO/)
+  })
+
+  it('refuses what is not exactly an invite link', () => {
+    const link = I.invite.link as string
+    const [base, secret] = link.split('#')
+    const cases: Array<[string, RegExp]> = [
+      ['not a link', /not a URL/],
+      [link.replace('https:', 'http:'), /not https/],
+      [`${base}?x=1#${secret}`, /not https/],
+      [link.replace('https://', 'https://user@'), /not https/],
+      [base, /secret is not base64url|secret is 0 bytes/],
+      [`${base}#${secret.slice(0, 20)}`, /invite secret/],
+      [link.replace('/i/1/', '/j/1/'), /path/],
+      [link.replace('/i/1/', '/i/1/x/'), /path/],
+      [link.replace(BRAIN, BRAIN.toUpperCase()), /brain/],
+      [link.replace(I.invite.invite_id, 'short'), /invite id/],
+    ]
+    for (const [bad, error] of cases) expect(() => parseInviteLink(bad), bad).toThrow(error)
+    expect(() => parseInviteLink(link.replace('/i/1/', '/i/2/'))).toThrow(UnsupportedVersionError)
+  })
+})
+
+describe('the name in the link', () => {
+  const invite = () => newInvite('relay.example', BRAIN, '2026-11-01T08:00:00.000Z')
+
+  it('travels in the fragment, which no request carries, and leaves the secret as it is', () => {
+    const made = invite()
+    const link = inviteLink(made, 'EML Team — Köln')
+    expect(new URL(link).pathname).not.toContain('Team')
+    const parsed = parseInviteLink(link)
+    expect(parsed.name).toBe('EML Team — Köln')
+    expect(parsed.secret).toEqual(made.secret)
+    expect(parseInviteLink(inviteLink(made)).name).toBeUndefined()
+  })
+
+  it('refuses a name that is not one', () => {
+    const link = inviteLink(invite())
+    expect(() => parseInviteLink(`${link}.a.b`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.!`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.${toBase64url(new Uint8Array(201).fill(97))}`)).toThrow(ProtocolError)
+    expect(() => parseInviteLink(`${link}.${toBase64url(new Uint8Array([0xff]))}`)).toThrow(ProtocolError)
+  })
+})
+
+describe('expiry and single use', () => {
+  it('an invite is open until it expires and until it is used', () => {
+    const open = { expires_at: '2026-11-02T08:00:00.000Z', redeemed: false }
+    expect(() => checkInviteOpen(open, '2026-11-02T07:59:59.999Z')).not.toThrow()
+    expect(() => checkInviteOpen(open, '2026-11-02T08:00:00.000Z')).toThrow(/expired/)
+    expect(() => checkInviteOpen({ ...open, redeemed: true }, DAY1)).toThrow(/used already/)
+    expect(() => openJoin({ ...vectorInvite(), redeemed: true }, I.join, DAY1)).toThrow(/used already/)
+    expect(() => openJoin(vectorInvite(), I.join, '2026-11-03T08:00:00.000Z')).toThrow(/expired/)
+  })
+})
+
+describe('the relay\'s notice', () => {
+  it('is accepted from a current device of an owner, refused from a member, another brain or a forged signature', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys } = found(ada)
+    const two = applyMembership(set, addMember(set, keys, ada, bo))
+    const invite = newInvite('relay.example.org', BRAIN, '2026-10-26T08:00:00.000Z')
+    const notice = inviteNotice(invite, ada.device.sign)
+    expect(verifyInviteNotice(two, JSON.parse(JSON.stringify(notice)), NOW)).toEqual(notice)
+    expect(JSON.stringify(notice)).not.toContain(Buffer.from(invite.secret).toString('base64url'))
+    expect(() => verifyInviteNotice(two, inviteNotice(invite, bo.device.sign), NOW)).toThrow(/not from a current device of an owner/)
+    expect(() => verifyInviteNotice(two, { ...notice, expires_at: '2026-10-30T00:00:00.000Z' }, NOW)).toThrow(/not signed by its inviter/)
+    expect(() => verifyInviteNotice(two, { ...notice, brain: '00000000-0000-4000-8000-000000000000' }, NOW)).toThrow(/another brain/)
+    expect(() => verifyInviteNotice(two, { ...notice, v: 2 }, NOW)).toThrow(UnsupportedVersionError)
+    expect(() => verifyInviteNotice(two, { ...notice, secret: 'x' }, NOW)).toThrow(/no field secret/)
+    // a notice that keeps an invite open longer than 7 days, correctly signed by the owner — a minute of clock skew is allowed
+    expect(NOTICE_SKEW_MS).toBe(60_000)
+    const long = inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.001Z' }, ada.device.sign)
+    expect(() => verifyInviteNotice(two, long, NOW)).toThrow(/at most 7 days/)
+    expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:01:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:01:00.000Z')
+    expect(verifyInviteNotice(two, inviteNotice({ ...invite, expires_at: '2026-11-02T08:00:00.000Z' }, ada.device.sign), NOW).expires_at).toBe('2026-11-02T08:00:00.000Z')
+  })
+})
+
+describe('what the relay could swap', () => {
+  const invite = vectorInvite
+  const other = person('mallory')
+
+  it('the join: another member, another device, another handle, a join key from another secret', () => {
+    const unsigned = /not signed with the invite's join key/
+    expect(() => openJoin(invite(), { ...I.join, member: other.identity.publicKey }, DAY1)).toThrow(unsigned)
+    expect(() => openJoin(invite(), { ...I.join, device_cert: cert(other) }, DAY1)).toThrow(unsigned)
+    const flipped = b64(I.join.handle.ct)
+    flipped[3] ^= 1
+    expect(() => openJoin(invite(), { ...I.join, handle: { ...I.join.handle, ct: flipped.toString('base64url') } }, DAY1)).toThrow(unsigned)
+    // a join made with a guessed secret: well-formed, but not this invite's
+    const guessed = I.invite.link.replace(/#.*/, `#${Buffer.alloc(32, 7).toString('base64url')}`)
+    expect(() => openJoin(invite(), joinRequest(guessed, other.identity, cert(other), 'mallory'), DAY1)).toThrow(unsigned)
+    expect(() => openJoin(invite(), { ...I.join, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, DAY1)).toThrow(/another invite/)
+    expect(() => openJoin(invite(), { ...I.join, v: 2 }, DAY1)).toThrow(UnsupportedVersionError)
+    expect(() => openJoin(invite(), { ...I.join, note: 'x' }, DAY1)).toThrow(/no field note/)
+  })
+
+  it('a joiner with the secret but someone else\'s certificate is refused', () => {
+    expect(() => joinRequest(I.invite.link, other.identity, K.device_cert.cert, 'mallory')).toThrow(/not the joiner's/)
+  })
+
+  it('the accept: another inviter certificate, an answer to another join, a MAC under another secret', () => {
+    const mallory = cert(other)
+    expect(() => openAccept(I.invite.link, I.join, { ...I.accept, inviter: mallory })).toThrow(/MAC is not the invite's/)
+    const otherJoin = joinRequest(I.invite.link, signingKeyFromSeed(sha('identity')), K.device_cert.cert, 'juno')
+    expect(() => openAccept(I.invite.link, otherJoin, I.accept)).toThrow(/answers another join/)
+    expect(() => openAccept(I.invite.link, I.join, { ...I.accept, anchor: { ...I.accept.anchor, seq: 2 } })).toThrow(/MAC is not the invite's/)
+    const forged = joinAccept({ ...invite(), secret: Buffer.alloc(32, 9) }, I.join_hash, mallory, I.accept.anchor)
+    expect(() => openAccept(I.invite.link, I.join, forged)).toThrow(/MAC is not the invite's/)
+  })
+})
+
+describe('what the relay checks without the secret', () => {
+  const other = person('mallory')
+  const guessed = I.invite.link.replace(/#.*/, `#${Buffer.alloc(32, 7).toString('base64url')}`)
+
+  it('a join: signed with the notice\'s join key, for its invite, with the joiner\'s certificate', () => {
+    expect(checkJoin(JSON.parse(JSON.stringify(I.join)), I.notice)).toEqual(I.join)
+    // whoever lacks the secret cannot take the invite: a join under a guessed secret is refused
+    expect(() => checkJoin(joinRequest(guessed, other.identity, cert(other), 'mallory'), I.notice)).toThrow(/not signed with the invite's join key/)
+    expect(() => checkJoin(I.join, { ...I.notice, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' })).toThrow(/another invite/)
+    expect(() => checkJoin({ ...I.join, sig: I.notice.sig }, I.notice)).toThrow(/not signed/)
+    for (const sig of [7, null, { x: 1 }, '']) expect(() => checkJoin({ ...I.join, sig }, I.notice)).toThrow(ProtocolError)
+    expect(() => checkJoin({ ...I.join, v: 2 }, I.notice)).toThrow(UnsupportedVersionError)
+    expect(() => checkJoin({ ...I.join, mac: 'x' }, I.notice)).toThrow(/no field mac/)
+  })
+
+  it('a join signed with the right key but with another member\'s certificate, or a handle box of the wrong size', () => {
+    const invite = { ...vectorInvite(), secret: Buffer.alloc(32, 7) }
+    const link = inviteLink(invite)
+    const notice = inviteNotice(invite, signingKeyFromSeed(sha('inviter device sign')))
+    expect(() => joinRequest(link, other.identity, K.device_cert.cert, 'mallory')).toThrow(/not the joiner's/)
+    const good = joinRequest(link, other.identity, cert(other), 'mallory')
+    expect(checkJoin(good, notice)).toEqual(good)
+  })
+
+  it('an accept: of the join\'s invite, answering exactly that join, with a certificate and an anchor', () => {
+    expect(checkAccept(JSON.parse(JSON.stringify(I.accept)), I.join)).toEqual(I.accept)
+    const otherJoin = joinRequest(I.invite.link, signingKeyFromSeed(sha('identity')), K.device_cert.cert, 'juno')
+    expect(() => checkAccept(I.accept, otherJoin)).toThrow(/answers another join/)
+    expect(() => checkAccept({ ...I.accept, invite_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, I.join)).toThrow(/another invite/)
+    expect(() => checkAccept({ ...I.accept, anchor: { ...I.accept.anchor, seq: 0 } }, I.join)).toThrow(/anchor.seq/)
+    expect(() => checkAccept({ ...I.accept, inviter: { ...I.accept.inviter, sig: I.notice.sig } }, I.join)).toThrow(ProtocolError)
+    // the relay cannot check the MAC: an accept under another secret passes here and fails at the invitee
+    const forged = joinAccept({ ...vectorInvite(), secret: Buffer.alloc(32, 9) }, I.join_hash, cert(other), I.accept.anchor)
+    expect(checkAccept(forged, I.join)).toEqual(forged)
+    expect(() => openAccept(I.invite.link, I.join, forged)).toThrow(/MAC is not the invite's/)
+  })
+
+  it('a notice without a join key, or with one that is no key', () => {
+    const ada = person('ada')
+    const { set } = found(ada)
+    const notice = inviteNotice(newInvite('relay.example.org', BRAIN, NOW), ada.device.sign)
+    const { join_key: _k, ...without } = notice
+    expect(() => verifyInviteNotice(set, without, NOW)).toThrow(/lacks join_key/)
+    expect(() => verifyInviteNotice(set, { ...notice, join_key: 'short' }, NOW)).toThrow(/join key/)
+  })
+})
+
+describe('a join played through', () => {
+  it('invite → notice → join → the owner adds the member with its handle → wraps the key → accept → the invitee trusts the wrapper', () => {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys, genesis } = found(ada)
+    const invite = newInvite('relay.example.org', BRAIN, '2026-10-26T08:00:00.000Z')
+    verifyInviteNotice(set, inviteNotice(invite, ada.device.sign), NOW)
+    const link = inviteLink(invite)
+
+    const request = joinRequest(link, bo.identity, cert(bo), 'bo')
+    const joined = openJoin(invite, JSON.parse(JSON.stringify(request)), DAY1)
+    expect(joined.handle).toBe('bo')
+    invite.redeemed = true
+    expect(() => openJoin(invite, request, DAY1)).toThrow(/used already/)
+
+    const two = applyMembership(set, addMember(set, keys, ada, { ...bo, handle: joined.handle }))
+    const wrapped = wrapKey(two, keys[0], bo.device.sign.publicKey, ada.device.sign)
+    const head = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(genesis.payload))
+    const accept = joinAccept(invite, joined.join_hash, cert(ada), { genesis: genesis.envelope.op_id, seq: 1, head_hash: head })
+    const { inviter, anchor } = openAccept(link, request, JSON.parse(JSON.stringify(accept)))
+    expect(inviter.device_sign).toBe(wrapped.wrapper)
+    // the invitee replays the log the relay serves and checks it against the anchor
+    expect(() => checkAnchor(anchor, genesis.envelope.op_id, s => (s === 1 ? head : undefined))).not.toThrow()
+    expect(unwrapInviteKey(two, wrapped, bo.device, inviter)).toEqual([keys[0]])
+    expect(unwrapKey(two, wrapped, bo.device)).toEqual(keys[0])
+    expect(memberHandles(two, keyFor(keys))[bo.identity.publicKey]).toBe('bo')
+  })
+})
+
+// --- review fixes (eml-cd030656) ---------------------------------------------------
+
+describe('the accept anchors the log the invitee replays', () => {
+  /** ada founds the real brain and invites bo; the accept carries the real log's anchor. */
+  function invited() {
+    const ada = person('ada')
+    const bo = person('bo')
+    const { set, keys, genesis } = found(ada)
+    const invite = newInvite('relay.example.org', BRAIN, NOW)
+    const link = inviteLink(invite)
+    const request = joinRequest(link, bo.identity, cert(bo), 'bo')
+    const joined = openJoin(invite, request, DAY1)
+    const head = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(genesis.payload))
+    const two = applyMembership(set, addMember(set, keys, ada, bo))
+    const accept = joinAccept(invite, joined.join_hash, cert(ada), { genesis: genesis.envelope.op_id, seq: 1, head_hash: head })
+    return { ada, bo, keys, genesis, head, two, link, request, accept }
+  }
+
+  it('a log the relay made up — its own genesis, its own owner, a key wrapped for the invitee — is refused (PoC 3)', () => {
+    const { bo, link, request, accept } = invited()
+    const { inviter, anchor } = openAccept(link, request, accept)
+    // the relay founds a brain of the same id with an owner of its own, adds bo and wraps its own key for him
+    const relayOwner = person('relay')
+    const fake = found(relayOwner)
+    const fakeSet = applyMembership(fake.set, addMember(fake.set, fake.keys, relayOwner, bo))
+    const fakeHead = chainHash(GENESIS_PREV_HASH, 1, NOW, sha256Hex(fake.genesis.payload))
+    expect(() => checkAnchor(anchor, fake.genesis.envelope.op_id, s => (s === 1 ? fakeHead : undefined))).toThrow(/another genesis/)
+    const fakeKey = wrapKey(fakeSet, fake.keys[0], bo.device.sign.publicKey, relayOwner.device.sign)
+    expect(unwrapKey(fakeSet, fakeKey, bo.device)).toEqual(fake.keys[0])  // by the fake log alone it would pass
+    expect(() => unwrapInviteKey(fakeSet, fakeKey, bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+  })
+
+  it('the joiner unwraps its key at the genesis, before its own add_member is replayed — a sealed entry ahead of it does not stall the join', () => {
+    const { ada, bo, keys, two, link, request, accept } = invited()
+    const { inviter } = openAccept(link, request, accept)
+    const { set: genesisOnly } = found(ada)  // not bo's log: only the set as the joiner has it at seq 1 — ada alone, epoch 0
+    const atGenesis = { ...genesisOnly, brain: two.brain, keys: two.keys }
+    const wrapped = wrapKey(two, keys[0], bo.device.sign.publicKey, ada.device.sign)
+    // by the member set at seq 1 alone, bo's device is nobody's: unwrapKey refuses; the accept vouches for the wrapper, so unwrapInviteKey opens it
+    expect(() => unwrapKey(atGenesis, wrapped, bo.device)).toThrow(/recipient is not a current device/)
+    expect(unwrapInviteKey(atGenesis, wrapped, bo.device, inviter)).toEqual([keys[0]])
+    // still refused: another wrapper, another brain, a forged signature, a key the log does not name, another recipient
+    const mira = person('mira')
+    const three = applyMembership(two, addMember(two, keys, ada, mira, 'owner'))
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(three, keys[0], bo.device.sign.publicKey, mira.device.sign), bo.device, inviter)).toThrow(/not wrapped by the inviter's device/)
+    expect(() => unwrapInviteKey({ ...atGenesis, brain: '00000000-0000-4000-8000-000000000000' }, wrapped, bo.device, inviter)).toThrow(/another brain/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, epoch: 1 }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, sig: wrapped.sig.slice(0, 10) + (wrapped.sig[10] === 'A' ? 'B' : 'A') + wrapped.sig.slice(11) }, bo.device, inviter)).toThrow(/not signed by its wrapper/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, mira.device, inviter)).toThrow(/for another device/)
+    const otherKey = { epoch: 0, key: keys[0].key.map(b => b ^ 1) }
+    expect(() => unwrapInviteKey(atGenesis, wrapKey(two, otherKey, bo.device.sign.publicKey, ada.device.sign), bo.device, inviter)).toThrow(/not the key the log names/)
+    expect(() => unwrapInviteKey(atGenesis, { ...wrapped, extra: 1 }, bo.device, inviter)).toThrow(/no field extra/)
+  })
+
+  it('a brain that rotated before the invite: the later epoch\'s key opens every epoch through the rotations read ahead, each checked by its id', () => {
+    const { ada, bo, keys, genesis, two, link, request, accept } = invited()
+    const { inviter } = openAccept(link, request, accept)
+    const atGenesis = genesisMembers(genesis)  // where the joiner stands: ada alone, epoch 0
+    const rotated = rotation(two, keys, ada)  // keys[1] is the brain's key now
+    const three = applyMembership(two, rotated)
+    const ahead = [rotated.envelope.args as unknown as RotationAhead]
+    const wrapped = wrapKey(three, keys[1], bo.device.sign.publicKey, ada.device.sign)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter)).toThrow(/no epoch 1/)
+    expect(unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, ahead)).toEqual([keys[0], keys[1]])
+    expect(unwrapInviteKey(three, wrapped, bo.device, inviter)).toEqual([keys[0], keys[1]])  // once the log is replayed, nothing ahead
+    // a rotation ahead that does not fit the chain, or whose prev is not sealed under the key, gives no key
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], epoch: 2 }])).toThrow(/names epoch 2, the chain stands at 0/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], prev: { ...ahead[0].prev, ct: ahead[0].prev.ct.slice(0, -2) + 'AA' } }])).toThrow(/prev of epoch 1 does not open/)
+    expect(() => unwrapInviteKey(atGenesis, wrapped, bo.device, inviter, [{ ...ahead[0], key_id: ahead[0].key_id.slice(0, 10) + (ahead[0].key_id[10] === 'A' ? 'B' : 'A') + ahead[0].key_id.slice(11) }])).toThrow(/not the key the log names/)
+  })
+
+  it('the real genesis with another history, or a log that stops short, is refused', () => {
+    const { link, request, accept, genesis } = invited()
+    const { anchor } = openAccept(link, request, accept)
+    expect(() => checkAnchor(anchor, genesis.envelope.op_id, s => (s === 1 ? 'f'.repeat(64) : undefined))).toThrow(/differs from the inviter's at seq 1/)
+    expect(() => checkAnchor({ ...anchor, seq: 5 }, genesis.envelope.op_id, s => (s === 1 ? anchor.head_hash : undefined))).toThrow(/does not reach seq 5/)
+  })
+
+  it('the anchor is under the MAC, and malformed anchors are refused on both sides', () => {
+    const { link, request, accept } = invited()
+    expect(() => openAccept(link, request, { ...accept, anchor: { ...accept.anchor, head_hash: 'f'.repeat(64) } })).toThrow(/MAC is not the invite's/)
+    expect(() => openAccept(link, request, { ...accept, anchor: { ...accept.anchor, extra: 1 } })).toThrow(/MAC is not the invite's|no field extra/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, seq: 0 })).toThrow(/anchor.seq/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, genesis: 'x' })).toThrow(/anchor.genesis/)
+    expect(() => joinAccept(vectorInvite(), I.join_hash, I.accept.inviter, { ...I.accept.anchor, head_hash: 'x' })).toThrow(/anchor.head_hash/)
+  })
+})
+

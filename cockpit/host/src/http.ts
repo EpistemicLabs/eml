@@ -15,7 +15,8 @@ import type { PtyBridge } from './pty-bridge.js'
 import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
-import { provisionSpace } from './provision.js'
+import { provisionSpace, type AgentNames, type Human } from './provision.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -25,6 +26,7 @@ import {
   type ProjectEntry,
   type ProjectRegistry,
 } from './project-registry.js'
+import { brainProjectOf, moveProject, planProjectMove } from './project-move.js'
 import { BrainRenameError, type BrainProject } from './brain-projects.js'
 import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -42,10 +44,15 @@ import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './bra
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
+import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
+import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
+import type { AgentBrains } from './agents.js'
+import { handleAgentsApi } from './agents-api.js'
+import { isPageRoute, NOT_PASSED, SPACE_BRAIN_ROUTES } from './page-brain-routes.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -102,6 +109,12 @@ export interface HostDeps {
   deliver: SpawnDeps['deliver']
   /** The brain-hygiene offer of the open space (brain-hygiene.ts). */
   hygiene: BrainHygiene
+  /** The home's agent brains (agents.ts); a new space binds the main space's. */
+  agents: AgentBrains
+  /** The brain MCP endpoint and the hook routes (brain-mcp.ts), and their URLs, which a new space's session files name. */
+  brainMcp: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void>; handleHooks(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
+  mcpUrl: string
+  hooksUrl: string
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
 }
@@ -160,8 +173,8 @@ async function providerViews(deps: HostDeps) {
 function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): void {
   const sessionSpace = sessionSpaceOf(space)
   for (const provider of deps.providers.all()) {
-    // An agent's project stays out of the configs of the CLIs it does not run with.
-    if (space.agent && !space.agent.configDirs[provider.id]) continue
+    // A runtime's project stays out of the configs of the CLIs it does not run with.
+    if (space.runtime && !space.runtime.configDirs[provider.id]) continue
     provider.trustProject(projectPath, sessionSpace)
   }
 }
@@ -300,7 +313,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
  */
 function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
   const ledger = deps.bridge.ledger
-  const agentOf = (spaceId: string | null) => deps.spaces.resolve(spaceId).agent?.id ?? null
+  const agentOf = (spaceId: string | null) => deps.spaces.resolve(spaceId).agent
   const caller = ledger.get(callerId)
   if (!caller) return []
   const addressOf = (sessionId: string) => {
@@ -449,29 +462,86 @@ function validSpaceName(deps: HostDeps, name: string, self?: BrainSpace): { name
   return { name: trimmed }
 }
 
-/** Settings › Brain › New space: a further local brain with the main brain's identity. */
+/** `name`, cut to the limit, with a number when a space has it already: the name an invite link brought. */
+function freeSpaceName(deps: HostDeps, name: string): string {
+  const taken = (candidate: string) => deps.spaces.list().some((s) => s.name.toLowerCase() === candidate.toLowerCase())
+  const base = name.trim().slice(0, SPACE_NAME_MAX - 3)
+  if (!taken(base)) return base
+  let n = 2
+  while (taken(`${base} ${n}`)) n += 1
+  return `${base} ${n}`
+}
+
+/**
+ * The binding every new space gets: the main space's agent and the home's
+ * handle (the agent picker per space comes with Settings › Agents), with
+ * the display names as the agent brain knows them.
+ */
+async function newSpaceBinding(deps: HostDeps): Promise<{ agent: AgentNames; human: Human } | SpaceError> {
+  const agent = deps.agents.get(deps.spaces.main.agent)
+  const handle = (await readCockpitConfig())?.handle
+  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
+  const info = readBrainInfo(agent.token)
+  return {
+    agent: { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
+    human: { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
+  }
+}
+
+/** A space made just now joins the registry with its session files. */
+function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: string; token: string; shared: boolean }): BrainSpace {
+  const space = openBrainSpace({
+    id: opts.id, name: opts.name, agent: opts.agent, main: false, shared: opts.shared, url: deps.spaces.main.url, token: opts.token, ownRuntime: deps.agents.expectsRuntime(opts.agent),
+    turnHookConfig: deps.turnHookConfig, mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
+  })
+  deps.spaces.add(space)
+  return space
+}
+
+/**
+ * Settings › Spaces › New space: a further local brain, bound to the main
+ * space's agent. The space gets no identity of its own — that is the agent
+ * brain's — only the agent and user objects, so engrams in their scopes can
+ * be written there.
+ */
 async function createSpace(deps: HostDeps, name: string): Promise<{ space: BrainSpace } | SpaceError> {
   const valid = validSpaceName(deps, name)
   if ('error' in valid) return valid
-  const trimmed = valid.name
-  // The identity the main brain was set up with: its agent (= the brain's
-  // control-plane name) and the user behind this cockpit's token.
-  const main = deps.spaces.main
-  const info = readBrainInfo(main.token)
-  const agentId = main.brainName
-  const userId = info.author ?? info.users[0]?.id
-  if (!userId) return { error: { code: 'NO_IDENTITY', message: 'The main brain has no user to copy.' } }
-  const { brainId, token } = await provisionSpace(trimmed, {
-    agentId,
-    agentName: info.agents.find((a) => a.id === agentId)?.name ?? agentId,
-    userId,
-    userName: info.users.find((u) => u.id === userId)?.name ?? userId,
-  })
-  const space = openBrainSpace({
-    id: brainId, name: trimmed, brainName: agentId, main: false, url: main.url, token, turnHookConfig: deps.turnHookConfig,
-  })
-  deps.spaces.add(space)
-  return { space }
+  const binding = await newSpaceBinding(deps)
+  if ('error' in binding) return binding
+  const { brainId, token } = await provisionSpace(valid.name, binding.agent, binding.human)
+  return { space: openNewSpace(deps, { id: brainId, name: valid.name, agent: binding.agent.id, token, shared: false }) }
+}
+
+/** What POST /api/spaces answers for a shared space: the space it made (201), the space it re-joined (200), or what refused it, passed through. */
+type SharedSpaceResult = { status: number; body: Record<string, unknown> }
+
+/**
+ * v0.21: POST /api/spaces {name, shared: {handle?}} — a new shared brain —
+ * and {name?, join: {link, handle?}} — joining one with an invite link, under
+ * the name the link brings unless one is given
+ * (team-space.ts). Bound like a local space: the main space's agent, the
+ * member handle defaulting to the home's handle. A join whose link names a
+ * brain this cockpit has already (a new link after a stopped join) goes to
+ * that space; the space's name stays.
+ */
+async function createSharedSpace(deps: HostDeps, body: Record<string, unknown>): Promise<SharedSpaceResult> {
+  const variant = body.shared ?? body.join
+  const given = variant && typeof variant === 'object' ? (variant as Record<string, unknown>) : {}
+  const link = typeof given.link === 'string' ? given.link : ''
+  const existing = body.join ? deps.spaces.list().find((s) => s.id === brainOfInviteLink(link)) : undefined
+  const asked = typeof body.name === 'string' ? body.name : ''
+  const name = body.join && !asked.trim() ? freeSpaceName(deps, nameOfInviteLink(link) ?? 'Shared space') : asked
+  const valid = existing ? { name: existing.name } : validSpaceName(deps, name)
+  if ('error' in valid) return { status: 400, body: valid }
+  const binding = await newSpaceBinding(deps)
+  if ('error' in binding) return { status: 400, body: binding }
+  const handle = typeof given.handle === 'string' && given.handle.trim() ? given.handle.trim() : binding.human.handle
+  const ctx = { url: deps.spaces.main.url, agent: binding.agent, handle }
+  const result = body.join ? await joinTeamSpace(ctx, valid.name, link, existing) : await createTeamSpace(ctx, valid.name)
+  if ('refused' in result) return result.refused
+  const space = existing ?? openNewSpace(deps, { id: result.brainId, name: valid.name, agent: binding.agent.id, token: result.token, shared: true })
+  return { status: existing ? 200 : 201, body: { space: spaceView(space), team: result.answer.body } }
 }
 
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps): Promise<boolean> {
@@ -481,6 +551,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
   if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  // The home's agents and the agent upgrade's leftovers (agents-api.ts).
+  if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).
@@ -492,13 +564,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     const entry = deps.bridge.ledger.get(id)
     if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-    const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
-    const summary = deps.providers.forSession(id).summary(deps.bridge.sessionRef(id, project?.path ?? null))
-    json(res, 200, { model: summary.model, provider: entry.provider })
+    const model = sessionModel({ spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, id)
+    json(res, 200, { model, provider: entry.provider })
     return true
   }
 
-  // Spaces: the list, and a new local one (Settings › Brain).
+  // The EML account (Settings › Account): sign-in by email code, the account
+  // and its team brains, sign-out. The session stays in the host (account.ts).
+  if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
+
+  // Spaces: the list, and a new local one (Settings › Spaces).
   if (resource === 'spaces' && !id && method === 'GET') {
     json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
     return true
@@ -506,12 +581,59 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (resource === 'spaces' && !id && method === 'POST') {
     const body = await readJson(req)
     try {
+      if (body.shared || body.join) {
+        const answer = await createSharedSpace(deps, body)
+        json(res, answer.status, answer.body)
+        return true
+      }
       const result = await createSpace(deps, typeof body.name === 'string' ? body.name : '')
       if ('error' in result) json(res, 400, { error: result.error })
       else json(res, 201, { space: spaceView(result.space) })
     } catch (err) {
       json(res, 500, { error: { code: 'SPACE_CREATE_FAILED', message: (err as Error).message } })
     }
+    return true
+  }
+
+  // v0.21: a shared space's team — the brain server's view (team-space.ts),
+  // the invites an owner makes and confirms, and the removal of a space: a
+  // shared one that never came to life, a local one with its name typed. The
+  // server's answers pass through.
+  if (resource === 'spaces' && id && (method === 'DELETE' || parts[3] === 'team' || parts[3] === 'invites')) {
+    const target = deps.spaces.get(id)
+    if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+    const [, , , sub, inviteId, action] = parts
+    let answer: { status: number; body: unknown } | null = null
+    try {
+      if (method === 'DELETE' && parts.length === 3) {
+        if (target.main) { json(res, 409, { error: { code: 'MAIN_SPACE', message: 'The main space cannot be deleted.' } }); return true }
+        if (target.shared === null) { json(res, 409, { error: { code: 'SPACE_UNKNOWN', message: 'The brain server did not say what this space is. Try again.' } }); return true }
+        if (target.shared) answer = await removeTeamSpace(target, (space) => deps.spaces.remove(space))
+        else {
+          if (deps.spaces.isAgentMain(target)) { json(res, 409, { error: { code: 'AGENT_MAIN', message: "This is its agent's main space and cannot be deleted." } }); return true }
+          if ((await readJson(req)).confirm !== target.name) { json(res, 400, { error: { code: 'CONFIRM_NAME', message: 'Type the name of the space to delete it.' } }); return true }
+          const sessions = deps.bridge.ledger.list(undefined, target.ledgerKey)
+          if (sessions.some((s) => deps.bridge.isRunning(s.sessionId) || deps.chat.isRunning(s.sessionId))) {
+            json(res, 409, { error: { code: 'SESSIONS_RUNNING', message: 'Sessions are running in this space. Stop them first.' } })
+            return true
+          }
+          answer = await removeLocalSpace(target, createBackup, (space) => deps.spaces.remove(space))
+          if (answer.status === 200) for (const s of sessions) deps.bridge.ledger.remove(s.sessionId)
+        }
+      } else if (sub === 'team' && parts.length === 4 && method === 'GET') {
+        answer = await teamSnapshot(target)
+      } else if (sub === 'invites' && parts.length === 4 && method === 'POST') {
+        answer = await createInvite(target, (await readJson(req)).role, target.name)
+      } else if (sub === 'invites' && parts.length === 6 && inviteId && method === 'POST' && (action === 'accept' || action === 'cancel')) {
+        answer = action === 'accept' ? await confirmInvite(target, inviteId) : await cancelInvite(target, inviteId)
+      }
+    } catch (err) {
+      json(res, 500, { error: { code: 'TEAM_FAILED', message: (err as Error).message } })
+      return true
+    }
+    if (!answer) return false
+    if (answer.status === 204) { res.writeHead(204); res.end(); return true }
+    json(res, answer.status, answer.body)
     return true
   }
 
@@ -601,7 +723,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Settings › Brain: the local brain (file, id, schema, identity) and its
+    // Settings › Spaces: the local brain (file, id, schema, identity) and its
     // backups. Paths are display-only; the token never leaves the host.
     if (resource === 'brain-info' && !id && method === 'GET') {
       json(res, 200, readBrainInfo(space.token))
@@ -657,21 +779,22 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Update banner (v0.14 Cluster 0): the newest brain-migration report and
-    // the in-app update this host runs. Dismissing a failure is refused until
-    // the brain has caught up.
+    // Update banner (v0.14 Cluster 0): per brain the newest migration report,
+    // and the in-app update this host runs. The page shows the active space's
+    // brain; dismissing and revealing act on the requesting space's brain.
+    // Dismissing a failure is refused until the brain has caught up.
     if (resource === 'update-status' && !id && method === 'GET') {
       json(res, 200, readUpdateStatus((brainId) => deps.spaces.get(brainId)?.name))
       return true
     }
     if (resource === 'update-status' && id === 'ack' && method === 'POST') {
-      const result = acknowledgeUpdateStatus()
+      const result = acknowledgeUpdateStatus(space.id)
       if (result.ok) json(res, 200, { success: true })
       else json(res, 409, { error: { code: 'NOT_RESOLVED', message: result.reason } })
       return true
     }
     if (resource === 'update-status' && id === 'reveal-backup' && method === 'POST') {
-      const backup = readUpdateStatus().report?.backupPath
+      const backup = readUpdateStatus().brains[space.id]?.report.backupPath
       if (!backup || !fs.existsSync(backup)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'No backup for this report' } }); return true }
       await revealBrainFile(backup)
       json(res, 200, { success: true })
@@ -860,6 +983,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       json(res, created ? 201 : 200, { success: true, created, project: projectView(deps, space, project) })
       return true
     }
+    // Moving a project into a shared space (project-move.ts): the plan, then
+    // the run against the plan's hash. The source is this space, the target a
+    // space of this cockpit; the brain server does the move and its refusals.
+    if (resource === 'projects' && id && parts[3] === 'move-plan' && method === 'GET') {
+      const target = deps.spaces.get(url.searchParams.get('target') ?? '')
+      if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+      const answer = await planProjectMove(space, target, brainProjectOf(id))
+      json(res, answer.status, answer.body)
+      return true
+    }
+    if (resource === 'projects' && id && parts[3] === 'move' && method === 'POST') {
+      const body = await readJson(req)
+      const target = deps.spaces.get(typeof body.target === 'string' ? body.target : '')
+      if (!target) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
+      const answer = await moveProject(space, target, brainProjectOf(id), typeof body.plan_hash === 'string' ? body.plan_hash : '')
+      json(res, answer.status, answer.body)
+      return true
+    }
     if (resource === 'projects' && id && method === 'PATCH') {
       const body = await readJson(req)
       const { entry, brain } = await resolveEntry(space, id)
@@ -1000,6 +1141,11 @@ async function proxyBrain(req: http.IncomingMessage, res: http.ServerResponse, d
   if (!space) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return }
   const rel = (req.url ?? '').slice('/api/brain'.length) || '/'
   const method = req.method ?? 'GET'
+  // Only the routes the page uses pass (page-brain-routes.ts); a query only on a read.
+  if (!isPageRoute(SPACE_BRAIN_ROUTES, method, rel.split('?')[0]) || (method !== 'GET' && rel.includes('?'))) {
+    json(res, 403, { error: NOT_PASSED })
+    return
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${space.token}`,
     Accept: 'application/json',
@@ -1065,6 +1211,16 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
     '<p>Host is up. Frontend not built yet — run the frontend build.</p>')
 }
 
+/**
+ * The write routes a session reaches with its own per-boot token instead of
+ * the page's Origin: /api/hook, /api/spawn, /api/session-title/<id>. Every
+ * other write — a project's move into a shared space among them — needs the
+ * cockpit page's Origin.
+ */
+export function isTokenEndpoint(url: string): boolean {
+  return /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
+}
+
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/'
@@ -1079,6 +1235,11 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
       json(res, 403, { error: { code: 'FORBIDDEN', message: 'Not allowed from here' } })
       return
     }
+    // The brain MCP endpoint (brain-mcp.ts): local agent sessions only, no
+    // Origin; the space's MCP token and a known session are its guard.
+    if (url === MCP_PATH || url.startsWith(`${MCP_PATH}?`)) { void deps.brainMcp.handle(req, res); return }
+    // The hook routes (brain-mcp.ts HOOKS_PATH): the session hooks' reads, the space's MCP token as the bearer.
+    if (url.startsWith(`${HOOKS_PATH}/`)) { void deps.brainMcp.handleHooks(req, res); return }
     // CSRF guard for the whole API surface, including the brain proxy (the host
     // injects the brain token, so a cross-origin write would otherwise reach the
     // real brain): every state-changing /api/* call must carry an allowlisted
@@ -1091,8 +1252,7 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
       const write = method !== 'GET' && method !== 'HEAD'
-      const tokenEndpoint = /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
-      if (write && !tokenEndpoint && !gate.origins.includes(req.headers.origin ?? '')) {
+      if (write && !isTokenEndpoint(url) && !gate.origins.includes(req.headers.origin ?? '')) {
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }

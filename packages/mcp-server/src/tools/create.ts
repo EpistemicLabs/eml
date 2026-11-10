@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool, writeBanner } from './_helpers'
 import {
   BINDINGS, CHANGE_TYPES, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
@@ -19,7 +19,7 @@ function body(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined))
 }
 
-export function registerDecideTool(server: McpServer, http: HttpClient): void {
+export function registerDecideTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_decide', {
     title: 'Record Decision',
     description:
@@ -50,7 +50,7 @@ export function registerDecideTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/decision', body(args)), { prefix: writeBanner }))
 }
 
-export function registerSetStatusTool(server: McpServer, http: HttpClient): void {
+export function registerSetStatusTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_set_status', {
     title: 'Set Status',
     description:
@@ -74,7 +74,7 @@ export function registerSetStatusTool(server: McpServer, http: HttpClient): void
   }, async (args) => callTool(() => http.post('/engram/status', body(args)), { prefix: writeBanner }))
 }
 
-export function registerCreateTaskTool(server: McpServer, http: HttpClient): void {
+export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_create_task', {
     title: 'Create Task',
     description:
@@ -95,7 +95,7 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
       status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started or parked · active = started. Done things are not tasks.'),
       stage: z.enum(STAGES).optional().describe('ideation · planning · ready · implementation. Leave out for small tasks.'),
       priority: z.enum(PRIORITIES).optional().describe('urgent · high · normal (default) · low. Execution urgency.'),
-      assignee_id: z.string().optional().describe('Handle of who should act (agent id or user/member handle).'),
+      assignee_ids: z.array(z.string()).optional().describe('Handles of who should act — users or agents eml_read_object lists (object=user · agent). An unknown handle is refused.'),
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),
@@ -106,7 +106,7 @@ export function registerCreateTaskTool(server: McpServer, http: HttpClient): voi
   }, async (args) => callTool(() => http.post('/engram/task', body(args)), { prefix: writeBanner }))
 }
 
-export function registerNoteTool(server: McpServer, http: HttpClient): void {
+export function registerNoteTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_note', {
     title: 'Write Note',
     description:
@@ -135,7 +135,7 @@ export function registerNoteTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/note', body(args)), { prefix: writeBanner }))
 }
 
-export function registerRuleTool(server: McpServer, http: HttpClient): void {
+export function registerRuleTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_rule', {
     title: 'Record Rule',
     description:
@@ -148,13 +148,13 @@ export function registerRuleTool(server: McpServer, http: HttpClient): void {
       'eml_decide.\n\n' +
       'Keep it short: content says only what to do (≤ 200 chars); the reason goes in why, a playbook or examples ' +
       'in detail.\n\n' +
-      'applies = always → binding within its scope; global, agent and user rules are delivered at session start ' +
-      '(boot), project rules with eml_show of the project. situational → binding when its trigger occurs; listed ' +
-      'as title + trigger, body via eml_get.\n\n' +
+      'applies = always → binding within its scope; your rules (agent.<id>) come from your agent brain at session ' +
+      'start (boot), project rules with eml_show of the project. situational → binding when its trigger occurs; ' +
+      'listed as title + trigger, body via eml_get.\n\n' +
       'Refining a rule → eml_update; replacing it → eml_rule(supersedes).',
     inputSchema: z.object({
       content: content('Only what to do, at most 200 characters.'),
-      scope: scope('agent.<id> · user.<id> · project.<id> · global.'),
+      scope: scope('agent.<id> (how you work — your agent brain, also for rules the user gives you about working with them) · project.<id> (work in this space). A rule always has an owner; user.<handle> holds a profile only, global is refused.'),
       title: title('Short name of the trigger or topic.'),
       applies: z.enum(['always', 'situational']).describe('always · situational.'),
       trigger: z.string().max(80).optional().describe('Required when situational: the situation, at most 80 characters; not repeated in content.'),
@@ -171,7 +171,7 @@ export function registerRuleTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/rule', body(args)), { prefix: writeBanner }))
 }
 
-export function registerEventTool(server: McpServer, http: HttpClient): void {
+export function registerEventTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_event', {
     title: 'Record Event',
     description:
@@ -196,7 +196,7 @@ export function registerEventTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/event', body(args)), { prefix: writeBanner }))
 }
 
-export function registerReferenceTool(server: McpServer, http: HttpClient): void {
+export function registerReferenceTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_reference', {
     title: 'Record Reference',
     description:
@@ -221,7 +221,7 @@ export function registerReferenceTool(server: McpServer, http: HttpClient): void
   }, async (args) => callTool(() => http.post('/engram/reference', body(args)), { prefix: writeBanner }))
 }
 
-export function registerLogTool(server: McpServer, http: HttpClient): void {
+export function registerLogTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_log', {
     title: 'Write Session Log',
     description:
@@ -247,19 +247,19 @@ export function registerLogTool(server: McpServer, http: HttpClient): void {
   }, async (args) => callTool(() => http.post('/engram/log', body({ ...args, content: args.content ?? '' })), { prefix: writeBanner }))
 }
 
-export function registerProfileTool(server: McpServer, http: HttpClient): void {
+export function registerProfileTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_profile', {
     title: 'Record Profile',
     description:
       'Records a facet of who someone is: an agent, a user, or an entity (person, organization). Identity, ' +
       'preferences, background, how they work — short.\n\n' +
-      'Every agent and every user has one core profile, in its own scope: the identity the boot loads every ' +
-      'session (the agent\'s and each user\'s). Other profiles are facets, loaded on demand.\n\n' +
+      'Every agent and every person has one core profile, in its own scope in the agent brain: the identity the ' +
+      'boot loads every session (the agent\'s and the person\'s). Other profiles are facets, loaded on demand.\n\n' +
       'NOT a profile: how-to, setup or access info → eml_note / eml_reference · a way of working to follow → ' +
       'eml_rule.',
     inputSchema: z.object({
       content: content('At most 400 characters.'),
-      scope: scope('agent.<id> · user.<id> · entity.<id> only — a profile is always about someone.'),
+      scope: scope('agent.<id> · user.<handle> (your agent brain) · entity.<id> (this space) only — a profile is always about someone.'),
       title: title(),
       core: z.boolean().optional().describe('true = this scope\'s core profile (agent.<id> or user.<id>). If the scope already has one, it is replaced (superseded); other scopes are untouched.'),
       detail: z.string().optional().describe('Additions beyond 400 characters.'),

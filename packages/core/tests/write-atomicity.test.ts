@@ -4,8 +4,8 @@ import {
   validDecision, writes,
 } from './fixtures'
 
-// v0.10.10 L1: store() and update() wrap their row-write + FTS re-sync (+ the
-// status auto-supersede) in a single db.transaction(). A mid-write failure must
+// v0.10.10 L1: a write's row-write + FTS re-sync (+ the status auto-supersede)
+// run in one transaction — since v0.20 the one apply() opens. A mid-write failure must
 // roll back wholesale instead of leaving the engrams table committed but its FTS
 // index (or a half-applied supersede) out of sync — silent recall corruption on
 // the live write path. We force the failure by dropping engrams_fts so the second

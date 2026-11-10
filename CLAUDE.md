@@ -18,8 +18,8 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `main` is development; a tag `vX.Y.Z` is a release. One product version for the whole repo.
 - Brain schema N ↔ release v0.N: a schema change is a new minor with a migrate file and an updated
   fresh schema (the `schema-baseline` test keeps both paths identical).
-- A change to the engram model (fields, validation, a type's format) is a new brain schema, even
-  without a SQL change.
+- A brain schema change is one that needs a SQL migration, or a new hygiene check for existing
+  engrams. A change to validation or a type's format that leaves existing engrams readable ships in a patch.
 - A new requirement for existing engrams: what the migrate SQL can rewrite on its own, it rewrites
   there; what needs judgement becomes a check in `packages/core/src/hygiene.ts` with `since_schema`.
 - English everywhere in the repo (code, comments, docs, commits).

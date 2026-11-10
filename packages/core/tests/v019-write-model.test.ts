@@ -18,12 +18,15 @@ describe('v0.19 write model', () => {
   const ctx = (session = 's1', caller = 'juno'): Env =>
     eml.env({ handle: caller, session_id: session, model: 'test-model', harness: 'claude-code', ingestion_method: 'mcp' })
 
-  beforeEach(() => {
-    eml = new EML({ dbPath: ':memory:', namespace: 'juno' })
-    writes(eml).agents.store({ id: 'juno', name: 'Juno' })
-    writes(eml).users.create({ id: 'ada', name: 'Ada' })
-    writes(eml).projects.create({ id: 'p', name: 'P' })
-  })
+  /** A brain with the agent, user and project the tests write as and into. */
+  function openBrain(): EML {
+    const brain = new EML({ dbPath: ':memory:', namespace: 'juno' })
+    writes(brain).agents.store({ id: 'juno', name: 'Juno' })
+    writes(brain).users.create({ id: 'ada', name: 'Ada' })
+    writes(brain).projects.create({ id: 'p', name: 'P' })
+    return brain
+  }
+  beforeEach(() => { eml = openBrain() })
   afterEach(() => { vi.useRealTimers(); eml.close() })
 
   const rawDb = (): any => (eml.engrams as any).db
@@ -51,13 +54,13 @@ describe('v0.19 write model', () => {
     it('checks field kinds and enums', () => {
       expect(() => writes(eml).store(validEvent({ properties: { change_type: 'launched' } }))).toThrow(/change_type must be one of created, started/)
       expect(() => writes(eml).store(validEvent({ properties: { occurred_at: 'yesterday' } }))).toThrow(/occurred_at must be an ISO date/)
-      expect(() => writes(eml).store(validRule({ properties: { rule_type: 'guideline' } }))).toThrow(/rule_type must be one of/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', properties: { rule_type: 'guideline' } }))).toThrow(/rule_type must be one of/)
       expect(() => writes(eml).store(validStatus({ properties: { blockers: 'one' } }))).toThrow(/blockers must be a list of text/)
       expect(() => writes(eml).store(validProfile({ properties: { core: 'yes' } }))).toThrow(/core must be true or false/)
     })
 
     it('every type needs its required fields; a rule needs why and agreed', () => {
-      expect(() => writes(eml).store({ type: 'rule', scope: 'global', title: 'r', content: 'Do X.', properties: { applies: 'always' } }))
+      expect(() => writes(eml).store({ type: 'rule', scope: 'agent.juno', title: 'r', content: 'Do X.', properties: { applies: 'always' } }))
         .toThrow('Invalid engram: a rule needs why. a rule needs agreed.')
       expect(() => writes(eml).store({ type: 'reference', scope: 'global', title: 'r', content: 'x' })).toThrow('a reference needs source.')
       expect(() => writes(eml).store({ type: 'log', scope: 'global', title: 'l', content: 'x' })).toThrow('a log needs what.')
@@ -182,11 +185,11 @@ describe('v0.19 write model', () => {
       expect(() => writes(eml).trackTask(t.id, { status: 'resolved', outcome: 'x', keep: [] })).toThrow('Invalid engram: closing needs text')
       expect(() => writes(eml).trackTask(t.id, { stage: 'ready' })).toThrow('Invalid engram: a stage change needs text')
       expect(() => writes(eml).trackTask(t.id, { content: 'new definition' })).toThrow('Invalid engram: a content rewrite needs text')
-      const r = writes(eml).trackTask(t.id, { priority: 'high', assignee_id: 'ada', blockers: ['waiting on X'], status: 'planned' })!
+      const r = writes(eml).trackTask(t.id, { priority: 'high', assignee_ids: ['ada'], blockers: ['waiting on X'], status: 'planned' })!
       expect(r.entries_written!.map(e => e.text)).toEqual([
-        'status active → planned', 'priority none → high', 'assignee_id none → ada', 'blockers none → waiting on X',
+        'status active → planned', 'priority none → high', 'assignee_ids none → ada', 'blockers none → waiting on X',
       ])
-      expect(writes(eml).trackTask(t.id, { assignee_id: null })!.properties!.assignee_id).toBeUndefined()
+      expect(writes(eml).trackTask(t.id, { assignee_ids: null })!.properties!.assignee_ids).toBeUndefined()
     })
 
     it('outcome only on close; keep only on close; unknown fields error', () => {
@@ -287,9 +290,13 @@ describe('v0.19 write model', () => {
     })
 
     it('a learning takes content, title, status, tags and subjects; sharpening its content writes a change entry', () => {
-      const l = writes(eml).learn({ scope: 'user.ada', title: 'ask-first', content: 'Ask first.', source: 'self', happened: 'did not ask' }, ctx())
+      const l = writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask first.', source: 'self', happened: 'did not ask' }, ctx())
       if (!l.written) throw new Error('not written')
-      expect(() => writes(eml).update(l.engram.id, { properties: { detail: 'x' } })).toThrow(/a learning takes content, title, status, tags, subjects and supersedes/)
+      expect(() => writes(eml).update(l.engram.id, { properties: { detail: 'x' } })).toThrow(/a learning takes content, title, scope, status, tags, subjects and supersedes/)
+      // v0.21: a learning is re-scoped like any engram, to an agent only
+      writes(eml).agents.store({ id: 'kai', name: 'Kai' })
+      expect(writes(eml).update(l.engram.id, { scope: 'agent.kai' }, ctx())?.scope).toBe('agent.kai')
+      expect(() => writes(eml).update(l.engram.id, { scope: 'user.ada' }, ctx())).toThrow(/a learning is the agent's/)
       expect(() => writes(eml).update(l.engram.id, { supersedes: [writes(eml).store(validNote()).id] })).toThrow(/a learning supersedes only a rule/)
       expect(() => writes(eml).update(l.engram.id, { content: 'x'.repeat(201) })).toThrow(/at most 200 characters/)
       const r = writes(eml).update(l.engram.id, { content: 'Ask before acting.' }, ctx())!
@@ -301,7 +308,7 @@ describe('v0.19 write model', () => {
   // Known gap (reported): a field patch on a learning hits the generic unknown-field
   // error with an empty list ("Allowed: .") before the learning-specific message.
   it('a field patch on a learning gets the learning message, not "Allowed: ."', () => {
-    const l = writes(eml).learn({ scope: 'user.ada', title: 'x', content: 'Do x.', source: 'self', happened: 'h' })
+    const l = writes(eml).learn({ scope: 'agent.juno', title: 'x', content: 'Do x.', source: 'self', happened: 'h' })
     if (!l.written) throw new Error('not written')
     expect(() => writes(eml).update(l.engram.id, { properties: { detail: 'x' } })).toThrow(/new evidence goes through eml_learning/)
   })
@@ -369,7 +376,7 @@ describe('v0.19 write model', () => {
     })
 
     it('confirmReview needs text for a decision, rule or profile and writes the same review entry', () => {
-      const r = writes(eml).store(validRule())
+      const r = writes(eml).store(validRule({ scope: 'agent.juno' }))
       expect(() => writes(eml).confirmReview(r.id)).toThrow('Invalid engram: confirming a review needs text — why it still holds.')
       writes(eml).confirmReview(r.id, 'still how we work', ctx())
       expect(eml.engrams.entries(r.id).map(e => `${e.kind}:${e.text}`)).toEqual(['review:still how we work'])
@@ -408,7 +415,7 @@ describe('v0.19 write model', () => {
 
   describe('learning', () => {
     const lesson = (over: Record<string, unknown> = {}, c = ctx()) =>
-      writes(eml).learn({ scope: 'user.ada', title: 'ask-before-push', content: 'Ask before pushing.', source: 'user', happened: 'pushed without asking', quote: 'frag erst', ...over } as any, c)
+      writes(eml).learn({ scope: 'agent.juno', title: 'ask-before-push', content: 'Ask before pushing.', source: 'user', happened: 'pushed without asking', quote: 'frag erst', ...over } as any, c)
 
     it('creates with evidence; the topic check finds a match and writes nothing; new_topic bypasses it', () => {
       const a = lesson()
@@ -434,7 +441,7 @@ describe('v0.19 write model', () => {
       expect(() => writes(eml).learn({ id: a.engram.id, source: 'self', happened: 'asked', stance: 'declined' })).toThrow(/a decline needs quote/)
       expect(() => writes(eml).learn({ id: a.engram.id, source: 'self', happened: 'x', stance: 'maybe' })).toThrow(/stance must be one of/)
       expect(() => writes(eml).learn({ id: a.engram.id, source: 'self', happened: 'x', scope: 'global' } as any)).toThrow(/only on create/)
-      expect(() => writes(eml).learn({ scope: 'user.ada', title: 't', content: 'c', source: 'self', happened: 'h', stance: 'contradicts' })).toThrow(/starts from supporting evidence/)
+      expect(() => writes(eml).learn({ scope: 'agent.juno', title: 't', content: 'c', source: 'self', happened: 'h', stance: 'contradicts' })).toThrow(/starts from supporting evidence/)
     })
 
     it('ripeness: collecting → ripe (2 sessions, one from the user) → unclear on a contradiction → ripe again once sharpened', () => {
@@ -472,6 +479,9 @@ describe('v0.19 write model', () => {
     it('a decline pauses it until two more supporting pieces from different sessions', () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date('2026-10-01T10:00:00Z'))
+      // v0.21: a brain made inside the test's timeline — the op log's times never go back before its genesis
+      eml.close()
+      eml = openBrain()
       const a = lesson()
       if (!a.written) throw new Error('not written')
       vi.setSystemTime(new Date('2026-10-02T10:00:00Z'))
@@ -490,13 +500,13 @@ describe('v0.19 write model', () => {
     it('a rule with from_learning supersedes the learnings; from_learning is only for rules and needs active learnings', () => {
       const a = lesson()
       if (!a.written) throw new Error('not written')
-      const rule = writes(eml).store(validRule({ scope: 'user.ada', title: 'ask-before-push', from_learning: [a.engram.id] }))
+      const rule = writes(eml).store(validRule({ scope: 'agent.juno', title: 'ask-before-push', from_learning: [a.engram.id] }))
       expect(rule.superseded).toEqual([a.engram.id])
       expect(statusOf(a.engram.id)).toBe('superseded')
       expect(edge(rule.id, a.engram.id, 'supersedes')).toBeTruthy()
       expect(() => writes(eml).store(validNote({ from_learning: [a.engram.id] }))).toThrow(/from_learning is only for a rule/)
-      expect(() => writes(eml).store(validRule({ from_learning: [a.engram.id] }))).toThrow(/is superseded, not active/)
-      expect(() => writes(eml).store(validRule({ from_learning: [rule.id] }))).toThrow(/is not a learning/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', from_learning: [a.engram.id] }))).toThrow(/is superseded, not active/)
+      expect(() => writes(eml).store(validRule({ scope: 'agent.juno', from_learning: [rule.id] }))).toThrow(/is not a learning/)
       expect(() => writes(eml).learn({ id: a.engram.id, source: 'self', happened: 'x' })).toThrow(/evidence goes to an active learning/)
     })
 
@@ -508,7 +518,7 @@ describe('v0.19 write model', () => {
       if (!a.written) throw new Error('not written')
       vi.setSystemTime(new Date('2026-10-02T10:00:00Z'))
       writes(eml).learn({ id: a.engram.id, source: 'observed', happened: 'x' }, ctx('s2'))
-      expect(eml.engrams.query({ scope: 'user.ada', learning_state: 'ripe' }).map(e => e.id)).toEqual([a.engram.id])
+      expect(eml.engrams.query({ scope: 'agent.juno', learning_state: 'ripe' }).map(e => e.id)).toEqual([a.engram.id])
     })
   })
 

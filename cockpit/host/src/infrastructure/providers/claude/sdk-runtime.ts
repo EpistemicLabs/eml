@@ -732,9 +732,9 @@ export function createClaudeSdkRuntimes(): SessionRuntimeFactory {
   let reads: Promise<unknown> = Promise.resolve()
   return {
     start: (request) => new ClaudeSdkRuntime(request),
-    history(conversationId, cwd, agent) {
-      const configDir = agent ? agent.configDirs.claude : CONFIG_DIR
-      if (!configDir) return Promise.reject(new Error(`Agent "${agent?.id}" has no config folder for Claude Code.`))
+    history(conversationId, cwd, runtime) {
+      const configDir = runtime ? runtime.configDirs.claude : CONFIG_DIR
+      if (!configDir) return Promise.reject(new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`))
       const read = reads.then(async () => {
         process.env.CLAUDE_CONFIG_DIR = configDir
         return historyEvents(await getSessionMessages(conversationId, { dir: cwd }))

@@ -72,8 +72,8 @@ export const MARK_SYMBOL: Record<SessionMark, string> = {
   result: '●',
 };
 
-/** What a space's sessions are labelled with: its agent, else the space's name (host spaceLabel). */
-export const agentLabel = (space: SpaceInfo): string => space.label ?? space.name;
+/** Who a session of this space is, for a row or its letter: the agent's name (host sessionAgentName); without an agent bound the row falls back to the space. */
+export const agentLabel = (space: SpaceInfo): string => space.agentName ?? space.name;
 
 export const agentLetter = (space: SpaceInfo): string => agentLabel(space).charAt(0).toUpperCase();
 

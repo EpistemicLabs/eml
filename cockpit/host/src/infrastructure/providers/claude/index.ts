@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
-  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgent, SessionRef, SessionSpace, SessionSummary, TurnSignal,
+  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
 import { claudeLoginStatus, invalidateAccountCache, readChatView, readPermissionMode, readRemoteControl, readRenderer, sessionToken, writeChatView } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
@@ -29,19 +29,19 @@ const WAITING_TYPES = new Set([
 const transcriptId = (session: SessionRef) => session.providerSessionId ?? session.sessionId
 
 /**
- * What a session of a space with its own agent runs with on top: connectors off,
+ * What a session of a space with a runtime of its own runs with on top: connectors off,
  * MCP servers get only the environment their definition names, no second memory
- * beside the brain, its own temp folder. The login is the one in the agent's
+ * beside the brain, its own temp folder. The login is the one in the runtime's
  * folder; launch() adds no token, and the session env is an allowlist (pty-bridge.ts).
  */
-function agentEnv(agent: SessionAgent): Record<string, string> {
-  fs.mkdirSync(agent.tempDir, { recursive: true, mode: 0o700 })
+function runtimeEnv(runtime: SessionAgentRuntime): Record<string, string> {
+  fs.mkdirSync(runtime.tempDir, { recursive: true, mode: 0o700 })
   return {
     ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     CLAUDE_CODE_MCP_ALLOWLIST_ENV: '1',
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-    CLAUDE_CODE_TMPDIR: agent.tempDir,
-    TMPDIR: agent.tempDir,
+    CLAUDE_CODE_TMPDIR: runtime.tempDir,
+    TMPDIR: runtime.tempDir,
   }
 }
 
@@ -75,31 +75,31 @@ class ClaudeProvider implements AgentProvider {
     return this.isolation
   }
 
-  /** The config folder of a session: its agent's, never the shared one for a session that has an agent. */
-  private configDirFor(agent: SessionAgent | null | undefined): string | null {
-    return agent ? agent.configDirs.claude ?? null : this.files().configDir
+  /** The config folder of a session: its runtime's, never the shared one for a session that has a runtime. */
+  private configDirFor(runtime: SessionAgentRuntime | null | undefined): string | null {
+    return runtime ? runtime.configDirs.claude ?? null : this.files().configDir
   }
 
   trustProject(projectPath: string, space?: SessionSpace): void {
-    const agent = space?.agent
+    const runtime = space?.runtime
     // A missing folder is reported at launch and must not be created here.
-    if (agent?.problem('claude')) return
-    const configDir = this.configDirFor(agent)
+    if (runtime?.problem('claude')) return
+    const configDir = this.configDirFor(runtime)
     // The project's trust flag lives in the APP's .claude.json — never the user's.
     if (configDir) ensureProjectTrusted(projectPath, configDir)
   }
 
-  /** The chat runtime passes no login token: token mode stays in the terminal, except for an agent, which has its own login. */
+  /** The chat runtime passes no login token: token mode stays in the terminal, except for a runtime, which has its own login. */
   workerRunsInChat(space: SessionSpace): boolean {
-    return readChatView() && (!!space.agent || !sessionToken())
+    return readChatView() && (!!space.runtime || !sessionToken())
   }
 
   launch(req: LaunchRequest): LaunchSpec {
-    const agent = req.space.agent ?? null
-    const problem = agent?.problem('claude')
+    const runtime = req.space.runtime ?? null
+    const problem = runtime?.problem('claude')
     if (problem) throw new Error(problem)
-    const configDir = this.configDirFor(agent)
-    if (!configDir) throw new Error(`Agent "${agent?.id}" has no config folder for Claude Code.`)
+    const configDir = this.configDirFor(runtime)
+    if (!configDir) throw new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`)
     // Settings › Models: reachable from the Claude app. Not for unattended
     // sessions (workers, task runs), which nobody drives from a phone — except
     // a worker the host started without a pane, which the app is the way to follow.
@@ -113,10 +113,10 @@ class ClaudeProvider implements AgentProvider {
       // ~/.claude.json never reaches a session — CLAUDE_CONFIG_DIR isolates it.
       // Both files are the session's space's: its brain, its hooks.
       '--mcp-config', limitedMcp ?? req.space.files.mcpConfig,
-      // A space with its own agent, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
-      ...(agent || limitedMcp ? ['--strict-mcp-config'] : []),
-      // An agent given browser control: the Chrome setting lives in the shared config, not the agent's.
-      ...(agent?.chrome && !limitedMcp ? ['--chrome'] : []),
+      // A space with a runtime of its own, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
+      ...(runtime || limitedMcp ? ['--strict-mcp-config'] : []),
+      // A runtime given browser control: the Chrome setting lives in the shared config, not the runtime's.
+      ...(runtime?.chrome && !limitedMcp ? ['--chrome'] : []),
       ...(profile?.deniedTools.length ? ['--disallowedTools', profile.deniedTools.join(',')] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);
@@ -134,8 +134,8 @@ class ClaudeProvider implements AgentProvider {
     // Login mode (default): no token — Claude Code uses the sign-in stored in
     // the app's config dir, or asks for one on first start. Token mode: the
     // setup-token from Settings › Models.
-    // A space with its own agent always uses the login in its folder.
-    const oauthToken = agent ? null : sessionToken()
+    // A space with a runtime of its own always uses the login in its folder.
+    const oauthToken = runtime ? null : sessionToken()
     return {
       bin: CLAUDE_BIN,
       args,
@@ -156,7 +156,7 @@ class ClaudeProvider implements AgentProvider {
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
         // The session knows its own address — a worker it spawns is told where to answer (skill spawn-session).
         COCKPIT_SESSION_ADDRESS: req.address,
-        ...(agent ? agentEnv(agent) : {}),
+        ...(runtime ? runtimeEnv(runtime) : {}),
         ...(limitedMcp ? { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } : {}),
       },
     }
@@ -169,7 +169,7 @@ class ClaudeProvider implements AgentProvider {
    * and the slug rule (truncation + hash for long paths) is Claude Code's.
    */
   canResume(session: SessionRef): boolean {
-    const configDir = this.configDirFor(session.agent)
+    const configDir = this.configDirFor(session.runtime)
     if (!configDir) return false
     const projectsDir = path.join(configDir, 'projects')
     try {
@@ -208,12 +208,12 @@ class ClaudeProvider implements AgentProvider {
   }
 
   summary(session: SessionRef): SessionSummary {
-    const configDir = this.configDirFor(session.agent)
+    const configDir = this.configDirFor(session.runtime)
     return readSessionSummary(configDir ? session.projectPath : null, transcriptId(session), session.greeted, configDir ?? undefined)
   }
 
   deleteTranscript(session: SessionRef): void {
-    const configDir = this.configDirFor(session.agent)
+    const configDir = this.configDirFor(session.runtime)
     if (configDir) deleteTranscript(session.projectPath, transcriptId(session), configDir)
   }
 }

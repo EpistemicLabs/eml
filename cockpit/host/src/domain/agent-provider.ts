@@ -29,6 +29,8 @@ export interface IsolationContext {
   /** POST target for the provider's session hooks, and the per-boot token they send as HOOK_TOKEN_HEADER. */
   hookUrl: string
   hookToken: string
+  /** The host's brain MCP endpoint (brain-mcp.ts), for a provider whose MCP config is shared by every space. */
+  mcpUrl: string
   /**
    * Folders outside a session's project that it must be able to write to
    * (worker requests, task files) — for providers that confine writes.
@@ -37,33 +39,33 @@ export interface IsolationContext {
 }
 
 /**
- * The brain space a session runs in (brain-space.ts): the brain it talks to
- * and the files the host wrote for the space. A session only ever gets its own
- * space's brain — the token reaches the agent CLI through its config files or
- * the session's environment, never argv.
+ * The brain space a session runs in (brain-space.ts): the files the host wrote
+ * for the space and its per-boot MCP token, which picks the space on the
+ * host's brain MCP endpoint and hook routes (brain-mcp.ts). A session only
+ * ever gets its own space, and never a brain token — the MCP token reaches the
+ * agent CLI through the space's config files or the session's environment,
+ * never argv.
  */
 export interface SessionSpace {
   id: string
-  /** The space's own agent (agent-config.ts); absent = the provider's shared config. */
-  agent?: SessionAgent | null
-  /** Base URL and token of the space's brain. */
-  url: string
-  token: string
+  mcpToken: string
+  /** The bound agent's runtime (agent-runtime.ts); absent = the provider's shared config. */
+  runtime?: SessionAgentRuntime | null
   files: {
     /** The brain MCP server for this space, as Claude Code's --mcp-config takes it. */
     mcpConfig: string
     /** The session hooks for this space, as Claude Code's --settings takes them. */
     settings: string
-    /** The EML client config (URL + token) the EML hooks of this space read. */
+    /** The EML client config (the host's hook routes + the MCP token) the EML hooks of this space read. */
     emlConfig: string
   }
 }
 
 /**
- * A brain space's own agent as a session sees it: everything the session keeps
- * goes into this agent's folders, never into the shared config.
+ * An agent's runtime as a session sees it: everything the session keeps goes
+ * into this runtime's folders, never into the shared config.
  */
-export interface SessionAgent {
+export interface SessionAgentRuntime {
   id: string
   /** The agent's config folder per agent CLI, as stored in its record. A CLI not named here cannot run this agent. */
   configDirs: Partial<Record<ProviderId, string>>
@@ -133,8 +135,8 @@ export interface SessionRef {
    * null when the ledger does not know (an entry from before it recorded this).
    */
   greeted: boolean | null
-  /** The agent of the session's space; absent = the provider's shared config. */
-  agent?: SessionAgent | null
+  /** The runtime of the session's space; absent = the provider's shared config. */
+  runtime?: SessionAgentRuntime | null
 }
 
 /** Best-effort display data for the sidebar, read from the provider's transcript. */

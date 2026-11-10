@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TURN_JS, MCP_CLI_JS } from '../../paths.js'
+import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TURN_JS } from '../../paths.js'
 import type { PlatformOs } from '../../domain/platform.js'
 import { platform } from '../platform/index.js'
 
@@ -90,22 +90,27 @@ export const LIST_AGENTS_HOOK_OPTIONS = { timeout: 10 }
 /** The turn hook read its token from this curl config up to 0.17.19; the file carries the token and goes on boot. */
 export const LEGACY_CURL_CONFIG = 'hook-curl.conf'
 
-/** How the brain MCP server (the bundled mcp-server CLI) is started; it reads URL and token from its environment. */
-export const BRAIN_MCP_COMMAND = { command: 'node', args: [MCP_CLI_JS] }
+/** The session environment variable with its space's MCP token, for an agent CLI that takes headers from the env (Codex). */
+export const MCP_TOKEN_ENV = 'COCKPIT_MCP_TOKEN'
 
-/** The two environment variables the brain MCP server reads. */
-export const BRAIN_MCP_ENV_VARS = ['EML_API_URL', 'EML_API_TOKEN'] as const
+/** The header with a space's MCP token on every request to the host's brain MCP endpoint (brain-mcp.ts). */
+export const MCP_TOKEN_HEADER = 'x-cockpit-mcp-token'
+
+/** The header naming the cockpit session on the brain MCP endpoint; the agent CLI fills it from the session's env. */
+export const MCP_SESSION_HEADER = 'x-eml-session'
 
 /**
- * The brain MCP server entry for Claude Code's mcp.json (one per brain space).
- * URL and token go in through the environment (read by the mcp-server CLI),
- * not as arguments: arguments show up in every local user's ps output, a
- * process's environment does not.
+ * The brain MCP server entry for Claude Code's mcp.json (one per brain space):
+ * the host's MCP endpoint over HTTP (brain-mcp.ts), not a process per session.
+ * The space's MCP token picks the brain; Claude Code expands
+ * ${COCKPIT_SESSION_ID} from each session's environment, so one file serves
+ * every session of the space.
  */
-export function brainMcpServer(loopbackUrl: string, brainToken: string) {
+export function brainMcpServer(mcpUrl: string, mcpToken: string) {
   return {
-    ...BRAIN_MCP_COMMAND,
-    env: { EML_API_URL: loopbackUrl, EML_API_TOKEN: brainToken },
+    type: 'http',
+    url: mcpUrl,
+    headers: { [MCP_TOKEN_HEADER]: mcpToken, [MCP_SESSION_HEADER]: '${COCKPIT_SESSION_ID}' },
   }
 }
 
@@ -169,14 +174,19 @@ export function ensureHookNode(): string {
   return HOOK_NODE
 }
 
-/** The EML client config (URL + token) of one brain space, read by that space's EML hooks. */
-export function writeEmlHookConfig(file: string, loopbackUrl: string, brainToken: string): void {
+/**
+ * The EML client config of one brain space, read by that space's EML hooks:
+ * the host's hook routes (brain-mcp.ts HOOKS_PATH) as the EML API, with the
+ * space's per-boot MCP token as the bearer. The host answers the boot from the
+ * bound agent's brain and the space; no brain token reaches a session.
+ */
+export function writeEmlHookConfig(file: string, hooksUrl: string, mcpToken: string): void {
   const dir = path.dirname(file)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   fs.chmodSync(dir, 0o700)
   fs.writeFileSync(
     file,
-    `# EML client config for the cockpit's session hooks — rewritten on every boot.\nEML_URL=${loopbackUrl}\nEML_API_TOKEN=${brainToken}\n`,
+    `# EML client config for the cockpit's session hooks — rewritten on every boot.\nEML_URL=${hooksUrl}\nEML_API_TOKEN=${mcpToken}\n`,
     { mode: 0o600 },
   )
   fs.chmodSync(file, 0o600)

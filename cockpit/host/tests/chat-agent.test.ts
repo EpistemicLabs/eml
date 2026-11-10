@@ -60,7 +60,7 @@ describe('the chat view in a space with its own agent', () => {
     mkdirSync(configDir, { recursive: true })
     writeFileSync(join(agentRoot, 'mcp-servers.json'), JSON.stringify({ mcpServers: { alpha: { command: 'a' } } }))
     writeFileSync(join(agentRoot, 'agent.json'), JSON.stringify({
-      agentId: AGENT, brainId: SPACE, mcpServers: ['alpha'], skills: [], tempDir: join(agentRoot, 'tmp'), harnesses: { claude: { configDir } },
+      agentId: AGENT, mcpServers: ['alpha'], skills: [], tempDir: join(agentRoot, 'tmp'), harnesses: { claude: { configDir } },
     }))
     isolation = await import('../src/infrastructure/providers/claude/isolation.js')
     const { createClaudeProvider } = await import('../src/infrastructure/providers/claude/index.js')
@@ -76,8 +76,8 @@ describe('the chat view in a space with its own agent', () => {
     provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', writableDirs: [] })
     Object.defineProperty(provider.runtime, 'problem', { value: () => null })
     const open = (id: string, main: boolean, agentId?: string) => openBrainSpace({
-      id, name: id, brainName: 'main-agent', main, url: 'http://127.0.0.1:60000', token: 'eml_testprefix_testsecret',
-      turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, ...(agentId ? { agentId } : {}),
+      id, name: id, agent: agentId ?? null, upgrade: null, main, url: 'http://127.0.0.1:60000', token: 'eml_testprefix_testsecret',
+      turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl: 'http://127.0.0.1:60001/mcp', hooksUrl: 'http://127.0.0.1:60001/hooks', ownRuntime: !!agentId,
     })
     spaces = new BrainSpaces(open(PLAIN, true))
     spaces.add(open(SPACE, false, AGENT))
@@ -204,13 +204,13 @@ describe('the chat view in a space with its own agent', () => {
 
   it('reads history from each session\'s own folder, one read at a time', async () => {
     const factory = createClaudeSdkRuntimes()
-    const agent = spaces.get(SPACE)?.agent
+    const runtime = spaces.get(SPACE)?.runtime
     await Promise.all([
-      factory.history('a', '/work', agent),
+      factory.history('a', '/work', runtime),
       factory.history('b', '/work'),
-      factory.history('c', '/work', agent),
+      factory.history('c', '/work', runtime),
     ])
     expect(sdk.dirs).toEqual([configDir, join(home, 'claude-config'), configDir])
-    await expect(factory.history('d', '/work', { ...agent, configDirs: {} } as never)).rejects.toThrow(/no config folder/)
+    await expect(factory.history('d', '/work', { ...runtime, configDirs: {} } as never)).rejects.toThrow(/no config folder/)
   })
 })

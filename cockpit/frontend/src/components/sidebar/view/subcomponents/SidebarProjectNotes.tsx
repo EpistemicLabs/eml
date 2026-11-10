@@ -5,6 +5,7 @@
 // the engram) like session rows; old notes fold behind the History toggle.
 import { useEffect, useRef, useState } from 'react';
 import { Brain, Check, Edit2, MoreHorizontal, NotebookPen, Plus, Terminal, Trash2, X } from 'lucide-react';
+import { useWritable } from '@/stores/useTeamStore';
 
 import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
@@ -39,6 +40,8 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
     };
   }, [open]);
 
+  // A shared brain that is not live takes no write (useTeamStore).
+  const brain = useWritable(project.__spaceId);
   const terminals: Array<{ label: string; Icon: typeof Terminal; disabled?: string; run: () => void }> =
     newSessionEntries(useProviders().data ?? []).map(({ label, provider }) => ({
       label,
@@ -58,7 +61,7 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
     {
       label: 'New note',
       Icon: NotebookPen,
-      disabled: inBrain ? undefined : 'Notes need a brain project — this project exists only as a folder',
+      disabled: inBrain ? brain.reason ?? undefined : 'Notes need a brain project — this project exists only as a folder',
       run: () => create.mutate(project.projectId, { onSuccess: (note) => openNote(note.id, project.projectId) }),
     },
   ];
@@ -171,6 +174,7 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
   const activePane = useActivePane();
   const rename = useRenameNote();
   const archive = useArchiveNote();
+  const brain = useWritable(project.__spaceId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const isSelected = activePane?.paneView === 'note' && activePane.noteId === note.id;
@@ -247,22 +251,24 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
           <>
             <button
               className={ROW_ACTION}
+              disabled={!brain.writable}
               onClick={(event) => {
                 event.stopPropagation();
                 setDraft(note.title);
                 setEditing(true);
               }}
-              title="Rename note"
+              title={brain.reason ?? 'Rename note'}
             >
               <Edit2 className="h-3.5 w-3.5" />
             </button>
             <button
               className={cn(ROW_ACTION, 'hover:border-destructive/60 hover:text-destructive')}
+              disabled={!brain.writable}
               onClick={(event) => {
                 event.stopPropagation();
                 archive.mutate(note, { onSuccess: () => forgetNoteInPanes(note.id) });
               }}
-              title="Delete note (archived in the brain)"
+              title={brain.reason ?? 'Delete note (archived in the brain)'}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>

@@ -51,7 +51,7 @@ Settings › About › Updates shows the state, checks now, and goes back to the
 across a brain-schema change).
 
 **Start over:** stop the cockpit and delete `~/.eml-cockpit/`. That removes the brain, the
-session list and the cockpit's Claude login — back it up first (Settings › Brain › Back up).
+session list and the cockpit's Claude login — back it up first (Settings › Spaces › Back up).
 
 **Keep it running from source:** a source checkout can run as a login service too:
 
@@ -156,17 +156,54 @@ project and `EML_COCKPIT_HOME=<scratch> npx eml-cockpit`.
 Env: `COCKPIT_PORT` (host port, default a free port / 4318 in dev), `COCKPIT_NO_OPEN=1`
 (don't open a browser tab), `EML_COCKPIT_HOME` (the app home, default `~/.eml-cockpit`).
 
-## Brain spaces
+## Brain spaces and agents
 
-A **space** is one brain. The cockpit starts with the brain it was set up with (the main space);
-**Settings › Brain › New space** or the space menu in the header adds a further local brain with the same
-agent and profile. Every desk, session and project belongs to exactly one space, and a session only
-ever gets its own space's brain token — the boundary between spaces is the token, not a filter. The
-switch in the header (and the sidebar's group header) changes the space with its desks, projects and
-Brain tab. Host side: `brain-space.ts` (one `BrainSpace` per brain: token, session files under
-`claude-config/spaces/<brain id>/`, project list, local registry, notes); the frontend names the active
-space in the `x-cockpit-space` header of every host request (missing = main). Shared team brains join the
-same registry later (task `cockpit-brain-spaces`).
+A **space** is one brain that holds work: projects with their rules, entities with their profiles,
+tasks, decisions, notes. The cockpit starts with the brain it was set up with (the main space);
+**Settings › Spaces › New space** or the space menu in the header adds a further local brain. Every
+desk, session and project belongs to exactly one space, and a session only ever reaches its own
+space — the boundary between spaces is the space's per-boot MCP token, not a filter. The switch in
+the header (and the sidebar's group header) changes the space with its desks, projects and Brain tab.
+
+An **agent** is its own brain: its persona, its rules, its learnings and its view of the people it
+works with (scopes `agent.<id>` and `user.<handle>`). Every space binds one agent, and the same agent
+may be bound to several spaces — it is the same agent in each. A session runs as its space's agent:
+the host boots its identity from the agent brain and the system rules from the space, routes a
+profile, rule or learning in `agent.<id>` / `user.<handle>` to the agent brain and everything else to
+the space, and stamps every write with the agent (`ingested_by` names you, `agent` the agent). A
+relation between a space engram and an agent-brain engram is kept in the agent brain as a
+cross-brain reference. The first-run setup creates the main space and the first agent; the agent
+brains' tokens are the host's alone.
+
+Host side: `brain-space.ts` (one `BrainSpace` per brain: token, bound agent, session files under
+`claude-config/spaces/<brain id>/`, project list, local registry, notes), `agents.ts` (the agent
+brains), `brain-mcp.ts` (the routing); the frontend names the active space in the `x-cockpit-space`
+header of every host request (missing = main).
+
+A shared team brain (v0.21) is a space like any other: `POST /api/spaces` with `shared: {handle?}`
+founds one (a creation grant from the EML account, an empty brain the brain server founds on the
+relay) and with `join: {link, handle?}` joins one by its invite link; the member handle defaults to
+the home's handle. The host provisions the empty brain, holds its token, binds the main space's
+agent and writes the space into the config once the server took the brain; a brain the server
+refused is discarded again. `GET /api/spaces/:id/team` is the server's view (state, read-only
+text, members, invites), `POST …/invites {role?}` (member or owner, chosen at the invite),
+`…/invites/:id/accept`, `…/cancel` the owner's invite flow, `DELETE /api/spaces/:id` removes a shared space that never came to life. At boot the host
+asks the server which spaces are shared and discards an empty brain no config token holds
+(`team-space.ts`).
+
+**Moving a project into a shared space.** On a project's page in the Brain tab of a local space,
+"Move to shared space…" opens the one dialog of the move: the shared space to move into, and the
+plan the brain server makes for it — the project with its sub-projects, how many engrams, journal
+entries and links move, which links to things that stay behind are dropped (they stay in the
+backup), the size against the 16 MiB one op carries. A plan the server refuses says why in the
+server's words (entries still written under an agent's name, a space not connected, a set too
+large); otherwise one confirm runs it. The host backs up the space's brain first, the server writes
+one import op into the shared brain and removes the set here in the same transaction, and the
+project's local state (name, pin, folder, hidden flag) follows it into the other space's sidebar.
+The copy left behind is archived and points at the shared space, in the Brain tab and in `eml_show`.
+A move the relay did not confirm in time removes nothing; once the space is live again, Move picks
+up where it stopped. Host side: `project-move.ts` (`GET /api/projects/:id/move-plan?target=`,
+`POST /api/projects/:id/move {target, plan_hash}`).
 
 With more than one space, the sidebar's switch also offers **All spaces** (the default): one list of every
 space's sessions with the sections Waiting, Pinned, Working and Recent, each row marked with its agent's
@@ -259,7 +296,11 @@ the project's `CLAUDE.md`, `.claude/settings.json` and `.claude/settings.local.j
 trust entry matches Claude's cwd). Local project state lives in
 `~/.eml-cockpit/projects.json`; the host trusts each project path in the
 app's `.claude.json` so the TUI opens straight into the session. The brain MCP is always attached
-(`--mcp-config`, rewritten on every host start). Your own MCPs load next to it as long as you set
+(`--mcp-config`, rewritten on every host start): one HTTP endpoint in the host (`/mcp`, loopback
+only) serves every session instead of a process per session. A space's own per-boot token picks
+its brain and the bound agent's, and the session must be one the host started in that space; no
+brain token leaves the host. The session hooks (boot, project block) read through the host the same
+way (`/hooks`), so the boot a session gets is its agent's identity plus the system rules. Your own MCPs load next to it as long as you set
 them up *inside* the cockpit: `claude mcp add -s user …` in a cockpit session (stored in the
 cockpit's `.claude.json`, survives restarts), claude.ai connectors via `/mcp`, plugins via
 `/plugin`, and a project's `.mcp.json` (Claude asks before loading it). MCPs from your normal
@@ -339,11 +380,12 @@ starts a session with either). The cockpit owns its copy the same way
   check.
 - **Own home:** `~/.eml-cockpit/codex-config` (`CODEX_HOME`): sign-in, `config.toml`, hooks, sessions,
   skills — separate from your `~/.codex`. Codex's own update check is off there.
-- **One home, every brain space:** nothing in that home names a brain. A session gets its space's
-  brain through its environment — `EML_API_URL` and `EML_API_TOKEN`, which `config.toml` tells Codex
-  to forward to the brain MCP server (`env_vars`), and `EML_HOOK_CONFIG`, the path of the space's EML
-  hook config, which the hook commands read through the shell. So the hook text never changes
-  between spaces or boots, and no brain token sits in a file Codex rewrites.
+- **One home, every brain space:** nothing in that home names a brain. A session gets its space
+  through its environment — `COCKPIT_MCP_TOKEN` and `COCKPIT_SESSION_ID`, which `config.toml` tells
+  Codex to send as headers to the host's brain MCP endpoint (`env_http_headers`), and
+  `EML_HOOK_CONFIG`, the path of the space's EML hook config, which the hook commands read through
+  the shell. So the hook text never changes between spaces or boots, and no brain token reaches a
+  session or a file Codex rewrites.
 - **Permissions** (Settings › Models › Codex permissions): a session runs in Codex's sandbox — writes
   only inside the project folder, no network for shell commands. What happens when it wants to go
   beyond that is the setting: **Auto** (default) — a second model reviews the request (Codex's
@@ -369,7 +411,12 @@ the app's `CLAUDE_CONFIG_DIR`, pre-seeded with onboarding/theme and per-project 
 `spawn-inbox/` = worker requests from sandboxed sessions, read and removed at once; `tasks/` = task-run files;
 `bin/node` = a link to the host's node for the session hooks (their text names it and `app/current/…`, so it survives updates);
 `projects.json` = the project registry; `sessions.json` = the session ledger; `config` = the
-local brain token, chmod 600; `eml/config` = brain URL + token for the session hooks, rewritten each boot).
+brain tokens (the spaces' and the agents'), the human's handle and the spaces' agent bindings, chmod
+600; `eml/spaces/<id>/config` = the host's hook routes + the space's MCP token for the session hooks,
+rewritten each boot).
+Each brain file also holds its op log: every write since brain schema 21, in order and hash-chained, and
+a snapshot of the brain as it was when the log began (once, roughly a quarter of the brain's size). The log
+is never rewritten — a secret that lands in a brain stays in its history, so rotate the secret.
 Claude sign-in (Settings › Models): by default the regular Claude Code login (`/login` on first start), which
 Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
 runtimes without a browser: stored as `claude-login` (chmod 600, write-only from the browser) and injected via

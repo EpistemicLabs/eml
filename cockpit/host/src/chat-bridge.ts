@@ -407,7 +407,7 @@ export class ChatBridge {
     const problem = provider.runtime.problem()
     if (problem) return refuse(`${problem} ${provider.runtime.problemHint}`)
     // A space with its own agent never falls back to the shared config.
-    const agentProblem = space.agent?.problem(provider.id)
+    const agentProblem = space.runtime?.problem(provider.id)
     if (agentProblem) return refuse(agentProblem)
 
     // Asked to wait: no session yet, so the same socket can send its init again.
@@ -464,7 +464,7 @@ export class ChatBridge {
 
     opts.onSwitch()
     const fromTerminal = this.ctx.ledger.get(sessionId)?.runtime === 'terminal'
-    const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
+    const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
       openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
@@ -476,7 +476,7 @@ export class ChatBridge {
     // and was never streamed; from here on it renders from this one log.
     if (resume) {
       const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
-      for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.agent)) this.emit(entry, event)
+      for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.runtime)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
     if (opts.readOnly) {
@@ -512,7 +512,7 @@ export class ChatBridge {
     const known = this.ctx.ledger.has(sessionId)
     const provider = known ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
     if (!provider) throw new Error('This session\'s agent is gone')
-    this.startEntry(entry, provider, space, this.ctx.ledger.get(sessionId)?.paneId ?? null, known && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent)))
+    this.startEntry(entry, provider, space, this.ctx.ledger.get(sessionId)?.paneId ?? null, known && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime)))
   }
 
   /**
@@ -526,7 +526,7 @@ export class ChatBridge {
     const project = this.projectFor(space, request.projectId)
     if (!project?.path) return `project ${request.projectId} has no folder`
     const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
-    const problem = provider.runtime.problem() ?? space.agent?.problem(provider.id)
+    const problem = provider.runtime.problem() ?? space.runtime?.problem(provider.id)
     if (problem) return problem
     if (this.entries.has(sessionId)) return 'already running'
     const { projectId, path } = project
@@ -583,7 +583,7 @@ export class ChatBridge {
     const space = this.ctx.spaces.resolve(stored.spaceId)
     const path = this.projectFor(space, projectId)?.path
     const provider = this.ctx.providers.forSession(sessionId)
-    if (!path || provider.runtime.problem() || space.agent?.problem(provider.id)) return 'refused'
+    if (!path || provider.runtime.problem() || space.runtime?.problem(provider.id)) return 'refused'
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
@@ -591,10 +591,10 @@ export class ChatBridge {
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
-      const resume = provider.canResume(this.ctx.ledger.ref(sessionId, null, space.agent))
+      const resume = provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
       if (resume) {
         const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
-        for (const event of await this.ctx.runtimes.history(conversationId, path, space.agent)) this.emit(entry, event)
+        for (const event of await this.ctx.runtimes.history(conversationId, path, space.runtime)) this.emit(entry, event)
       }
       provider.trustProject(path, sessionSpaceOf(space))
       this.ctx.ledger.recordSpawn(sessionId, stored.paneId, projectId, provider.id, false, null, space.ledgerKey)
@@ -633,8 +633,8 @@ export class ChatBridge {
       sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
       cwd: projectPath, env, address,
       files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
-      strictMcp: !!space.agent || !!launch.limits?.mcpConfig,
-      ...(space.agent?.chrome && !launch.limits?.mcpConfig ? { chrome: true } : {}),
+      strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
+      ...(space.runtime?.chrome && !launch.limits?.mcpConfig ? { chrome: true } : {}),
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
       onEvent: (event) => this.onRuntimeEvent(entry, event),

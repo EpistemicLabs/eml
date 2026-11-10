@@ -422,9 +422,9 @@ export class PtyBridge {
   }
 
   // ── Spawn ────────────────────────────────────────────────────────────
-  /** What a provider needs to find this session's conversation: the ledger's ids and its space's agent. */
+  /** What a provider needs to find this session's conversation: the ledger's ids and its space's runtime. */
   sessionRef(sessionId: string, projectPath: string | null): SessionRef {
-    return this.ledger.ref(sessionId, projectPath, this.ctx.spaces.resolve(this.ledger.get(sessionId)?.spaceId).agent)
+    return this.ledger.ref(sessionId, projectPath, this.ctx.spaces.resolve(this.ledger.get(sessionId)?.spaceId).runtime)
   }
 
   /** Whether the session's provider has a stored conversation for it — only after the first turn. */
@@ -443,7 +443,7 @@ export class PtyBridge {
     const entry = this.ledger.get(sessionId)
     if (!entry || entry.title || entry.pinned) return false
     // A folder that is away says nothing about the transcript in it.
-    if (this.ctx.spaces.resolve(entry.spaceId).agent?.problem(entry.provider)) return false
+    if (this.ctx.spaces.resolve(entry.spaceId).runtime?.problem(entry.provider)) return false
     if (this.sessionState(sessionId) !== 'ended' || this.hasTranscript(sessionId)) return false
     this.ledger.remove(sessionId)
     this.log(`session ${sessionId} ended without a turn → forgotten`)
@@ -798,7 +798,7 @@ export class PtyBridge {
       const project = entry.projectId ? space?.registry.get(entry.projectId) : undefined
       const provider = this.ctx.providers.forSession(entry.sessionId)
       // Its agent's folder is away: stays kept, and comes back on a start with the folder in place.
-      const agentProblem = space?.agent?.problem(provider.id)
+      const agentProblem = space?.runtime?.problem(provider.id)
       if (agentProblem) {
         this.log(`kept session ${entry.sessionId} not resumed: ${agentProblem}`)
         continue
@@ -832,7 +832,7 @@ export class PtyBridge {
     const project = this.projectFor(space, request.projectId)
     if (!project?.path) return `project ${request.projectId} has no folder`
     const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
-    const problem = provider.runtime.problem() ?? space.agent?.problem(provider.id)
+    const problem = provider.runtime.problem() ?? space.runtime?.problem(provider.id)
     if (problem) return problem
     if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
     this.startSession({
@@ -1097,7 +1097,7 @@ export class PtyBridge {
       return null
     }
     // A space with its own agent never falls back to the shared config.
-    const agentProblem = space.agent?.problem(provider.id)
+    const agentProblem = space.runtime?.problem(provider.id)
     if (agentProblem) {
       sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${agentProblem}\x1b[0m\r\n` })
       this.log(`not starting session ${sessionId}: ${agentProblem}`)

@@ -19,7 +19,7 @@ function writeAgent(record: Record<string, unknown> = {}, definitions: Record<st
   mkdirSync(configDir, { recursive: true })
   writeFileSync(join(agentRoot, 'mcp-servers.json'), JSON.stringify({ mcpServers: definitions }))
   writeFileSync(join(agentRoot, 'agent.json'), JSON.stringify({
-    agentId: AGENT, brainId: SPACE, mcpServers: ['alpha'], skills: [], tempDir: join(agentRoot, 'tmp'),
+    agentId: AGENT, mcpServers: ['alpha'], skills: [], tempDir: join(agentRoot, 'tmp'),
     harnesses: { claude: { configDir } }, ...record,
   }))
 }
@@ -34,11 +34,11 @@ describe('a space with its own agent', () => {
     readCockpitConfig: typeof import('../src/config.js')['readCockpitConfig']
     sharedConfigDir: string
   }
-  const open = (agentId?: string) => mods.openBrainSpace({
-    id: SPACE, name: 'Test', brainName: 'main-agent', main: false, url: 'http://127.0.0.1:60000', token: TOKEN, turnHookConfig: mods.turnHookConfig,
-    ...(agentId ? { agentId } : {}),
+  const open = (agent?: string, opts: { id?: string; ownRuntime?: boolean } = {}) => mods.openBrainSpace({
+    id: opts.id ?? SPACE, name: 'Test', agent: agent ?? null, upgrade: null, main: false, url: 'http://127.0.0.1:60000', token: TOKEN, turnHookConfig: mods.turnHookConfig,
+    mcpUrl: 'http://127.0.0.1:60001/mcp', hooksUrl: 'http://127.0.0.1:60001/hooks', ownRuntime: opts.ownRuntime ?? !!agent,
   })
-  const sessionSpace = (space: ReturnType<typeof open>): SessionSpace => ({ id: space.id, url: space.url, token: space.token, files: space.files, agent: space.agent })
+  const sessionSpace = (space: ReturnType<typeof open>): SessionSpace => ({ id: space.id, mcpToken: space.mcpToken, files: space.files, runtime: space.runtime })
   const launchReq = (space: SessionSpace) => ({ sessionId: 'abc-1', address: 'eml-abc1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
 
   beforeAll(async () => {
@@ -56,7 +56,7 @@ describe('a space with its own agent', () => {
 
   it('a space without an agent keeps today\'s arguments, environment and files exactly', () => {
     const space = open()
-    expect(space.agent).toBeNull()
+    expect(space.runtime).toBeNull()
     expect(space.files.mcpConfig).toBe(join(mods.sharedConfigDir, 'spaces', SPACE, 'mcp.json'))
     const launch = provider.launch(launchReq(sessionSpace(space)))
     expect(launch.args).toEqual([
@@ -72,14 +72,14 @@ describe('a space with its own agent', () => {
     expect(launch.env.CLAUDE_CONFIG_DIR).toBe(mods.sharedConfigDir)
     const mcp = JSON.parse(readFileSync(space.files.mcpConfig, 'utf8'))
     expect(Object.keys(mcp.mcpServers)).toEqual(['eml_brain'])
-    expect(Object.keys(mcp.mcpServers.eml_brain.env)).toEqual(['EML_API_URL', 'EML_API_TOKEN'])
+    expect(mcp.mcpServers.eml_brain.url).toBe('http://127.0.0.1:60001/mcp')
     expect(readFileSync(space.files.emlConfig, 'utf8')).not.toContain('EML_AGENT')
   })
 
   it('runs in the agent\'s folder, strict on MCP, connectors off, with its own temp folder', () => {
     writeAgent()
     const space = open(AGENT)
-    expect(space.agent?.problem('claude')).toBeNull()
+    expect(space.runtime?.problem('claude')).toBeNull()
     const launch = provider.launch(launchReq(sessionSpace(space)))
     expect(launch.args.slice(0, 3)).toEqual(['--mcp-config', mcpFile, '--strict-mcp-config'])
     expect(launch.env.CLAUDE_CONFIG_DIR).toBe(configDir)
@@ -98,12 +98,37 @@ describe('a space with its own agent', () => {
     if (process.platform !== 'win32') expect(statSync(mcpFile).mode & 0o777).toBe(0o600)
   })
 
-  it('the session files name no agent: the brain\'s name decides who boots', () => {
+  it('the session files carry the host\'s per-boot token, no brain token', () => {
     writeAgent()
     const space = open(AGENT)
-    expect(space.brainName).toBe('main-agent')
     expect(readFileSync(space.files.emlConfig, 'utf8')).not.toContain('EML_AGENT')
-    expect(Object.keys(JSON.parse(readFileSync(mcpFile, 'utf8')).mcpServers.eml_brain.env).sort()).toEqual(['EML_API_TOKEN', 'EML_API_URL'])
+    const files = readFileSync(mcpFile, 'utf8') + readFileSync(space.files.emlConfig, 'utf8')
+    expect(files).toContain(space.mcpToken)
+    expect(files).not.toContain(TOKEN)
+  })
+
+  it('an agent with no runtime expected runs on the home\'s: its binding says nothing about folders', () => {
+    const space = open('motti', { ownRuntime: false })
+    expect(space.agent).toBe('motti')
+    expect(space.runtime).toBeNull()
+    expect(provider.launch(launchReq(sessionSpace(space))).env.CLAUDE_CONFIG_DIR).toBe(mods.sharedConfigDir)
+  })
+
+  it('the runtime follows the agent: two spaces share its folder, each with its own session files', () => {
+    writeAgent()
+    const other = 'aaaaaaaa-0000-4bb3-a3b4-d5261f93e165'
+    const first = open(AGENT)
+    const second = open(AGENT, { id: other })
+    expect(first.runtime?.problem('claude')).toBeNull()
+    expect(second.runtime?.problem('claude')).toBeNull()
+    expect(provider.launch(launchReq(sessionSpace(second))).env.CLAUDE_CONFIG_DIR).toBe(configDir)
+    expect(second.files.mcpConfig).toBe(join(configDir, 'spaces', other, 'mcp.json'))
+    expect(first.files.mcpConfig).not.toBe(second.files.mcpConfig)
+  })
+
+  it('a record from before agent brains still opens: its brainId is ignored', () => {
+    writeAgent({ brainId: 'some-other-brain' })
+    expect(open(AGENT).runtime?.problem('claude')).toBeNull()
   })
 
   it('the token mode does not override the agent\'s login', () => {
@@ -122,14 +147,13 @@ describe('a space with its own agent', () => {
   it('resume, trust, summary and transcripts use the agent\'s folder', () => {
     writeAgent()
     const space = open(AGENT)
-    const agent = space.agent
-    const ref = { sessionId: 'sess-a', providerSessionId: null, projectPath: '/work/p', greeted: null, agent }
+    const ref = { sessionId: 'sess-a', providerSessionId: null, projectPath: '/work/p', greeted: null, runtime: space.runtime }
     expect(provider.canResume(ref)).toBe(false)
     const transcript = mods.readSummary('/work/p', 'sess-a', configDir)
     mkdirSync(join(transcript, '..'), { recursive: true })
     writeFileSync(transcript, JSON.stringify({ type: 'user', message: { role: 'user', content: 'in the agent folder' } }) + '\n')
     expect(provider.canResume(ref)).toBe(true)
-    expect(provider.canResume({ ...ref, agent: null })).toBe(false)
+    expect(provider.canResume({ ...ref, runtime: null })).toBe(false)
     expect(provider.summary(ref).summary).toBe('in the agent folder')
     provider.trustProject('/work/p', sessionSpace(space))
     const stored = JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8'))
@@ -176,11 +200,10 @@ describe('a space with its own agent', () => {
     ['a listed skill that is not there', { skills: ['absent'] }, undefined, /absent/],
     ['an allowed server without a definition', { mcpServers: ['gamma'] }, undefined, /gamma/],
     ['an allowed server claiming the brain\'s name', { mcpServers: ['eml_brain'] }, undefined, /eml_brain/],
-    ['a record of another brain', { brainId: 'other' }, undefined, /another brain/],
   ])('refuses to start with %s', (_name, record, definitions, message) => {
     writeAgent(record, definitions)
     const space = open(AGENT)
-    expect(space.agent?.problem('claude')).toMatch(message)
+    expect(space.runtime?.problem('claude')).toMatch(message)
     expect(() => provider.launch(launchReq(sessionSpace(space)))).toThrow(message)
   })
 
@@ -189,28 +212,28 @@ describe('a space with its own agent', () => {
     const space = open(AGENT)
     const away = `${configDir}.away`
     renameSync(configDir, away)
-    expect(space.agent?.problem('claude')).toMatch(/config folder .* is missing/)
+    expect(space.runtime?.problem('claude')).toMatch(/config folder .* is missing/)
     expect(() => provider.launch(launchReq(sessionSpace(space)))).toThrow(/never falls back/)
     provider.trustProject('/work/q', sessionSpace(space))
     expect(existsSync(configDir)).toBe(false)
     // Across a boot too: nothing recreates the folder.
     const reopened = open(AGENT)
     expect(existsSync(configDir)).toBe(false)
-    expect(reopened.agent?.problem('claude')).toMatch(/is missing/)
+    expect(reopened.runtime?.problem('claude')).toMatch(/is missing/)
     renameSync(away, configDir)
 
     rmSync(mcpFile)
-    expect(space.agent?.problem('claude')).toMatch(/generated MCP file/)
+    expect(space.runtime?.problem('claude')).toMatch(/generated MCP file/)
     open(AGENT)
-    expect(space.agent?.problem('claude')).toBeNull()
+    expect(space.runtime?.problem('claude')).toBeNull()
     rmSync(join(agentRoot, 'mcp-servers.json'))
-    expect(space.agent?.problem('claude')).toMatch(/MCP file .* is missing/)
+    expect(space.runtime?.problem('claude')).toMatch(/MCP file .* is missing/)
   })
 
   it('a bound agent whose record is gone refuses too: no folder is no reason for the shared config', () => {
     rmSync(agentRoot, { recursive: true, force: true })
     const space = open(AGENT)
-    expect(space.agent?.problem('claude')).toMatch(/agent\.json is missing/)
+    expect(space.runtime?.problem('claude')).toMatch(/agent\.json is missing/)
     expect(() => provider.launch(launchReq(sessionSpace(space)))).toThrow(/agent\.json is missing/)
     expect(existsSync(agentRoot)).toBe(false)
   })

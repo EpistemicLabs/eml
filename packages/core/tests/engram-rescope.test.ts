@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EML, CommandError } from '../src'
-import { closedTask, validDecision, validNote, validProfile, validStatus, validTask } from './fixtures'
+import { closedTask, legacyLearning, legacyRule, validDecision, validNote, validProfile, validRule, validStatus, validTask, writes } from './fixtures'
 
 // engram.rescope: a re-sort moves engrams between scopes of one brain without
 // reading as an edit, and refuses what may not arrive instead of retiring it.
@@ -109,5 +109,33 @@ describe('engram.rescope', () => {
     expect(reject(() => rescope([p.id], 'project.b')).code).toBe('INVALID')
     const q = create(validProfile({ scope: 'agent.juno', properties: { core: true } }))
     expect(reject(() => rescope([q.id], 'user.default')).message).toContain('one core profile')
+  })
+
+  it('moves a rule only to its owner, an agent or a project; nothing moves on a refusal', () => {
+    const r = create(validRule({ scope: 'project.a', title: 'r' }))
+    const d = create(validDecision({ scope: 'project.a' }))
+    for (const scope of ['user.default', 'global']) {
+      expect(reject(() => rescope([d.id, r.id], scope)).message).toMatch(/a rule needs an owner/)
+      expect(row(d.id).scope).toBe('project.a')
+    }
+    expect(rescope([r.id], 'project.b').moved).toBe(1)
+    expect(rescope([r.id], 'agent.juno').moved).toBe(1)
+  })
+
+  it('moves a learning only to an agent scope', () => {
+    const l = writes(eml).learn({ scope: 'agent.juno', title: 'ask-first', content: 'Ask first.', source: 'self', happened: 'h' })
+    if (!l.written) throw new Error('not written')
+    for (const scope of ['project.b', 'user.default', 'global']) {
+      expect(reject(() => rescope([l.engram.id], scope)).message).toMatch(/a learning is the agent's/)
+    }
+    expect(row(l.engram.id).scope).toBe('agent.juno')
+  })
+
+  it('leaves a legacy rule or learning where it is: already there counts as unchanged, a move goes to the owner', () => {
+    const rule = legacyRule(eml, { title: 'old-rule', content: 'Do X.', properties: { applies: 'always', why: 'w', agreed: 'yes' } }, 'user.default', 'agent.juno')
+    const learning = legacyLearning(eml, { title: 'old-lesson', content: 'Do Y.' }, 'user.default', 'agent.juno')
+    const p = create(validProfile({ scope: 'agent.juno' }))
+    expect(rescope([rule.id, learning.id, p.id], 'user.default')).toEqual({ moved: 1, unchanged: 2 })
+    expect(rescope([rule.id, learning.id], 'agent.juno')).toEqual({ moved: 2, unchanged: 0 })
   })
 })

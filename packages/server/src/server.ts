@@ -19,10 +19,12 @@
  *   POST /task/:id/track    { text?, status?, outcome?, keep?, base_rev?, … } → Everything about an existing task (v0.19)
  *   POST /learning          { id?, content?, scope?, title?, source, happened, … } → A learning or its evidence (v0.19)
  *   POST /update            { id, patch, base_rev? }                            → Correct / retire an engram that is not a task (v0.19: flat typed patch)
+ *   POST /retag             { ids, add?, remove? }                   → Add and remove tags on engrams (v0.21; all or nothing, dates stay, rev goes up)
  *   POST /rescope           { ids, scope }                           → Move engrams to another scope of this brain (v0.20.10; all or nothing, dates stay, rev goes up)
  *   POST /relate            { source_id, target_id, relation, ... }  → Create relation (v0.4, v0.7 idempotent; v0.19 without supersedes / part_of)
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
+ *   GET  /relations         ?engram=<id>                             → The relations with that id at either end (v0.21: also a cross-brain reference to an engram of another brain)
  *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent), or one (v0.19; kind: entities)
  *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
@@ -39,16 +41,28 @@
  *   POST /engram/:id/confirm-review { text }                          → Confirm a review (v0.8 C9; v0.15: tasks too; v0.19: a review entry)
  *   GET  /entities          ?kind=                                   → List entities (v0.8 C6)
  *   GET  /entity/:id                                                 → Get entity (v0.8 C6)
+ *   POST /team/create       { relay, grant, handle }                 → Found a team brain in this new, empty brain (v0.21; host-facing)
+ *   POST /team/join         { link, handle }                         → Join a team brain with an invite link, in this new, empty brain (v0.21; host-facing)
+ *   GET  /team                                                       → The shared brain as the host shows it: state, read-only text, members (v0.21; host-facing)
+ *   DELETE /team                                                     → Discard a brain that has no log yet: files and control rows (v0.21; host-facing)
+ *   DELETE /brain                                                    → Discard a private brain and its file: the host's removal of a local space, after its backup
+ *   POST /team/invites      { role?, name? }                                → An invite link into this team brain, by an owner, for a member or an owner (v0.21; host-facing)
+ *   POST /team/invites/:id/accept                                    → Confirm the join waiting on an invite: add the member with the invite's role, wrap the key, answer (v0.21; host-facing)
+ *   POST /team/invites/:id/cancel                                    → Cancel an open invite; a waiting invitee is told (v0.21; host-facing)
+ *   POST /move/plan         { target, project }                      → What moving a project into another brain of this server would do (v0.21; host-facing)
+ *   POST /move              { target, project, plan_hash, target_name? } → Move the project as planned: one import op in the target, one move_out here (v0.21; host-facing)
  *
  * Removed in v0.19 (410 with the upgrade hint): POST /store, /context,
  * /task/:id/entry, and the object writes POST /project, PUT /project/:id,
  * POST /tag, POST /subject, PUT /subject/:id, POST /entity, PUT /entity/:id.
  * Removed in v0.20 (410): POST /user, PUT /user/:id, POST /agent, PUT /agent/:id —
- * users and agents are objects (/object/user, /object/agent).
+ * users and agents are objects (/object/user, /object/agent). v0.21: a shared
+ * brain's users are its members and its agents the ones that write in it (read only).
  *
  * v0.20: every write route decodes its request into one command and runs it
  * with eml.apply(command, env) (core commands/); core validates, the routes
- * keep only their query-string whitelists.
+ * keep only their query-string whitelists. v0.21: through applyWrite
+ * (write.ts), which refuses a write to a shared brain while it is read-only.
  *
  * Provenance (v0.19): the MCP server sends X-EML-Session, X-EML-Model,
  * X-EML-Harness and X-EML-Ingestion; the server stamps them on every write
@@ -69,6 +83,7 @@ import {
   EML,
   initControlDatabase,
   runForwardMigrations,
+  checkBrainIds,
   boot,
   projectBlock,
   inheritedRules,
@@ -76,6 +91,8 @@ import {
   renderRecallMarkdown,
   renderBrainStateMarkdown,
   ALL_RULES,
+  BOOT_PARTS,
+  type BootPart,
   ENGRAM_TYPES,
   UPGRADE_HINT,
   splitFields,
@@ -92,9 +109,16 @@ import {
   type SubjectStatus,
   type EngramInput,
 } from '@engramprotocol/core'
-import { ConnectionPool } from './pool'
+import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
+import { applyWrite, SharedWriteError, readOnly, spaceMembers } from './write'
+import { InviteError, Sync } from './sync/sync'
+import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
+import { createTeamBrain } from './sync/create'
+import { MoveRouteError, moveRoute, moving, planMoveRoute } from './move'
+import { joinTeamBrain } from './sync/join'
+import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parseInviteLink, ready } from '@engramprotocol/protocol'
 
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
@@ -140,6 +164,8 @@ const DATA_DIR = path.resolve(
 // Pre-migration backups land in <backup-dir>/pre-migration (default <data-dir>/backups).
 const BACKUP_DIR = path.resolve(getArg('backup-dir', process.env.EML_BACKUP_DIR) ?? path.join(DATA_DIR, 'backups'))
 const POOL_CAP = parseInt(process.env.EML_POOL_CAP || '50', 10)
+// v0.21: how long a project move waits for its import to be confirmed through the relay (one op of a few MB, applied on every replica)
+const MOVE_DEADLINE_MS = parseInt(process.env.EML_MOVE_DEADLINE_MS || String(5 * 60_000), 10)
 const POOL_IDLE_MIN = parseInt(process.env.EML_POOL_IDLE_TIMEOUT_MIN || '15', 10)
 
 // v0.9: version from our own package.json. Loaded synchronously at module import
@@ -190,8 +216,74 @@ if (migrationReport.failedCount > 0) {
 if (migrationReport.migratedCount > 0) {
   console.log(`[migrations] migrated ${migrationReport.migratedCount} brain(s)`)
 }
+// v0.21: a brain's id is in its genesis; a control row naming another is refused until fixed.
+for (const m of checkBrainIds({ control: controlDb, dataDir: DATA_DIR })) {
+  console.error(`[brains] ${m.brainId} (${m.brainName}): its genesis names brain ${m.genesisId ?? 'none'} — set to needs_intervention`)
+}
+
+// v0.21: a shared brain — one with a team file, <data-dir>/team/<brain id>.json —
+// is synced with its relay through its own connection to the brain file
+// (sync/sync.ts); its writes go through it (write.ts). A team file that cannot
+// be used still makes its brain shared: the Error here keeps it read-only.
+const syncs = new Map<string, Sync | Error>()
+const persistTeamFile = (file: Parameters<typeof writeTeamFile>[1]) => writeTeamFile(DATA_DIR, file)
+function startSyncs(): void {
+  let ids: string[]
+  try {
+    ids = fs.readdirSync(path.join(DATA_DIR, 'team')).filter(n => n.endsWith('.json')).map(n => n.slice(0, -'.json'.length))
+  } catch {
+    return
+  }
+  for (const id of ids) {
+    const row = controlDb.prepare(`SELECT brain_file FROM brains WHERE id = ? AND status = 'ok'`).get(id) as { brain_file: string } | undefined
+    if (!row) {
+      console.error(`[sync] ${id}: a team file without a usable brain; not synced`)
+      continue
+    }
+    try {
+      const team = readTeamFile(DATA_DIR, id)
+      if (!team) continue
+      const file = path.isAbsolute(row.brain_file) ? row.brain_file : path.join(DATA_DIR, row.brain_file)
+      const sync = new Sync(openBrain(file), team, { persist: persistTeamFile })
+      syncs.set(id, sync)
+      sync.start()
+    } catch (err) {
+      // a fixed reason (team-file.ts), or an open that failed: nothing of the file itself
+      const why = err instanceof TeamFileError ? err.message : 'its brain file could not be opened'
+      syncs.set(id, new Error(why))
+      console.error(`[sync] ${id}: its team file cannot be used (${why})`)
+    }
+  }
+}
 
 // --- Helpers ---
+
+/** A text as the body of a request carried it, or null. */
+const bodyText = (value: unknown): string | null => typeof value === 'string' && value !== '' ? value : null
+
+/** v0.21: a creation the relay never took leaves nothing behind — the Sync, its team file — and the brain is new and empty again. */
+function discardTeam(brainId: string, sync: Sync): void {
+  sync.discard()
+  syncs.delete(brainId)
+  removeTeamFile(DATA_DIR, brainId)
+}
+
+/**
+ * v0.21: discards a brain — a shared brain that never came to life or an empty
+ * brain the host provisioned for one (DELETE /team), a private brain the host
+ * backed up (DELETE /brain): the Sync and its team file, the pool's connection, the brain file, and the
+ * control rows (brains; members, migrations and tokens go with it).
+ */
+function discardBrain(brainId: string, brainFile: string): void {
+  const sync = syncs.get(brainId)
+  if (sync instanceof Sync) sync.discard()
+  syncs.delete(brainId)
+  removeTeamFile(DATA_DIR, brainId)
+  pool.evict(brainId)
+  const file = path.resolve(DATA_DIR, brainFile)
+  for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${file}${suffix}`, { force: true })
+  controlDb.prepare('DELETE FROM brains WHERE id = ?').run(brainId)
+}
 
 /** v0.20: the review_due list filter (true · false). */
 function reviewDueParam(q: Record<string, string | undefined>): boolean | undefined | Error {
@@ -291,6 +383,8 @@ const ALLOWED_ENGRAM_GET_PARAMS = new Set([
   'with_relations',
 ])
 
+const ALLOWED_RELATIONS_PARAMS = new Set(['engram'])
+
 /**
  * v0.7: validate query params against a whitelist.
  * Returns true if response was sent (400 with allowed-list); caller should
@@ -338,6 +432,9 @@ function rejectNestedProperties(type: EngramType, body: RequestBody): void {
     throw unknownFieldsError(type, ['properties'], ['the type\'s fields, flat in the body'])
   }
 }
+
+/** An agent as provenance names it (core apply-op.ts AGENT; decision provenance-agent-field). */
+const AGENT_HEADER = /^[a-z0-9_-]{1,63}$/
 
 const header = (req: IncomingMessage, name: string): string | null => {
   const v = req.headers[name]
@@ -404,6 +501,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
   const defaultAgent = routingResult.ctx.brainName
+  const sync = syncs.get(routingResult.ctx.brainId)
+  // v0.21: a project move holds this brain (move.ts); its writes are refused at once
+  const held = moving.has(routingResult.ctx.brainId)
 
   try {
     // POST /boot
@@ -414,11 +514,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // hook passes the limit of the harness it serves (core/boot.ts, "Size budget").
       const budget = typeof body.budget === 'number' && Number.isFinite(body.budget) && body.budget > 0
         ? Math.floor(body.budget) : undefined
+      // part: the cockpit host composes a session's boot from the agent's brain
+      // (identity) and this server's system rules (core/boot.ts BootPart).
+      if (body.part !== undefined && !BOOT_PARTS.includes(body.part)) {
+        return json(res, 400, { error: `part must be one of ${BOOT_PARTS.join(', ')}` })
+      }
       const result = boot(eml, body.agent || defaultAgent, {
         reviewDays,
         version: SERVER_VERSION,
         systemRules: ALL_RULES,
         ...(budget !== undefined && { budget }),
+        ...(body.part !== undefined && { part: body.part as BootPart }),
+        // v0.21: a shared brain's boot names it as shared and lists its members
+        ...(sync !== undefined && { members: spaceMembers(sync) }),
       })
       return json(res, 200, result)
     }
@@ -434,8 +542,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // v0.19: who writes. The token gives the handle; the MCP server adds the
     // session, model and harness it runs in. Other callers write as 'direct'.
     // v0.20: the write env — the brain's clock and ids with this actor.
+    // v0.21: x-eml-agent names the agent that writes for the handle — set by
+    // the cockpit host from the space's binding (decision cockpit-identity-agent-brain).
+    const agent = header(req, 'x-eml-agent')
+    if (agent !== null && !AGENT_HEADER.test(agent)) {
+      return json(res, 400, { error: 'x-eml-agent is 1–63 characters of a-z, 0-9, _ and -' })
+    }
     const env = eml.env({
       handle: authCtx.caller ?? null,
+      agent,
       session_id: header(req, 'x-eml-session') ?? null,
       model: header(req, 'x-eml-model') ?? null,
       harness: header(req, 'x-eml-harness') ?? null,
@@ -461,6 +576,195 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, 410, { error: `${method} ${url} was removed in EML v0.20 — a ${removedKind} is an object: POST /object/${removedKind} to create, PUT /object/${removedKind}/<id> to update.` })
     }
 
+    // POST /team/create {relay, grant, handle} — founds a team brain in this
+    // brain, which must be new and empty (v0.21, spec team-brain-sync-client-spec
+    // §5): keys, genesis and team file (sync/create.ts), then a Sync in create
+    // mode; answers once the brain is live. Called again while that is under
+    // way, it waits on the same creation.
+    if (url === '/team/create' && method === 'POST') {
+      const body = await readBody(req)
+      // read again after the body: a creation another request started while
+      // this body was read is in the map now; from here to syncs.set nothing waits
+      const current = syncs.get(routingResult.ctx.brainId)
+      if (current instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${current.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+      const relay = bodyText(body.relay)
+      const handle = bodyText(body.handle)
+      const grant = bodyText(body.grant)
+      if (relay === null || !isRelayOrigin(relay)) return json(res, 400, { error: 'The relay is a wss:// origin (scheme and host, no path).', code: 'INVALID_RELAY' })
+      try {
+        checkHandle(handle ?? '')
+      } catch (err) {
+        if (!(err instanceof ProtocolError)) throw err
+        return json(res, 400, { error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.', code: 'INVALID_HANDLE' })
+      }
+      if (grant === null) return json(res, 400, { error: 'grant required' })
+      let creation = current
+      // a creation that stopped before the relay took it (a stale grant after a restart): this one replaces it
+      if (creation?.team.create && (creation.state.kind === 'stopped' || creation.state.kind === 'update_needed')) {
+        discardTeam(routingResult.ctx.brainId, creation)
+        creation = undefined
+      }
+      if (!creation) {
+        if (eml.hasGenesis()) return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+        const team = createTeamBrain({ brain: routingResult.ctx.brainId, relay, grant, handle: handle as string, stateHash: eml.stateHash(), now: eml.now() })
+        writeTeamFile(DATA_DIR, team)
+        creation = new Sync(openBrain(path.resolve(DATA_DIR, routingResult.ctx.brainFile)), team, { persist: persistTeamFile })
+        syncs.set(routingResult.ctx.brainId, creation)
+        creation.start()
+      } else if (creation.mode !== 'create' && eml.hasGenesis()) {
+        return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+      }
+      const state = await creation.whenLive()
+      if (state.kind === 'live') {
+        return json(res, 201, { brain: routingResult.ctx.brainId, member: creation.team.identity ? fingerprint(creation.team.identity.publicKey) : null, handle: creation.ownHandle() ?? handle })
+      }
+      if (state.kind === 'stopped' || state.kind === 'update_needed') {
+        if (creation.team.create) discardTeam(routingResult.ctx.brainId, creation)
+        const answer = state.kind === 'stopped' ? state.relay : undefined
+        if (answer?.code === 'grant_invalid') return json(res, 403, { error: `The relay did not accept the creation grant: ${answer.message}. Try again.`, code: 'GRANT_INVALID' })
+        if (answer?.code === 'brain_exists') return json(res, 409, { error: 'The relay already has a brain with this id.', code: 'BRAIN_EXISTS' })
+        return json(res, 502, { error: `The relay did not create the brain: ${state.why}.`, code: 'TEAM_CREATE_FAILED' })
+      }
+      return json(res, 504, { error: 'The relay took the new brain but it is not live yet; it will finish on its own.', code: 'TEAM_CREATE_PENDING' })
+    }
+
+    // POST /team/join {link, handle} — joins the team brain an invite link
+    // names, in this brain, which must be new and empty (v0.21, spec
+    // team-brain-sync-client-spec §5): keys and the join (sync/join.ts), then a
+    // Sync in join mode; answers once the relay has the join. The join goes on
+    // by itself — the inviter's accept, the owner adding the member, the key —
+    // and a call while it is under way answers where it stands. A join that
+    // stopped before anything was written (its invite closed) is discarded,
+    // so a new link starts over.
+    if (url === '/team/join' && method === 'POST') {
+      const body = await readBody(req)
+      const current = syncs.get(routingResult.ctx.brainId)
+      if (current instanceof Error) return json(res, 503, { error: readOnly(`it stopped: its team file cannot be used (${current.message})`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+      const link = bodyText(body.link)
+      const handle = bodyText(body.handle)
+      try {
+        checkHandle(handle ?? '')
+      } catch (err) {
+        if (!(err instanceof ProtocolError)) throw err
+        return json(res, 400, { error: 'A handle is 1–63 characters of a–z, 0–9, _ and -.', code: 'INVALID_HANDLE' })
+      }
+      const invalidInvite = () => json(res, 400, { error: 'This is not an invite link for this brain.', code: 'INVALID_INVITE' })
+      let invite
+      try {
+        invite = parseInviteLink(link ?? '')
+      } catch (err) {
+        if (err instanceof ProtocolError || err instanceof UnsupportedVersionError) return invalidInvite()
+        throw err
+      }
+      if (invite.brain !== routingResult.ctx.brainId) return invalidInvite()
+      let joining = current
+      // a join that stopped before anything was written (its invite closed, the relay refused it): this one replaces it
+      if (joining?.mode === 'join' && (joining.state.kind === 'stopped' || joining.state.kind === 'update_needed') && !eml.hasGenesis()) {
+        discardTeam(routingResult.ctx.brainId, joining)
+        joining = undefined
+      }
+      if (!joining) {
+        if (eml.hasGenesis()) return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+        const team = joinTeamBrain({ brain: routingResult.ctx.brainId, link: link as string, handle: handle as string, now: eml.now() })
+        writeTeamFile(DATA_DIR, team)
+        joining = new Sync(openBrain(path.resolve(DATA_DIR, routingResult.ctx.brainFile)), team, { persist: persistTeamFile })
+        syncs.set(routingResult.ctx.brainId, joining)
+        joining.start()
+      } else if (joining.mode !== 'join') {
+        return json(res, 409, { error: 'This brain already has a log; a team brain is created or joined only into a new, empty brain.', code: 'TEAM_BRAIN_NOT_EMPTY' })
+      }
+      const state = await joining.whenLive()
+      if (state.kind === 'live') {
+        return json(res, 201, { brain: routingResult.ctx.brainId, member: joining.team.identity ? fingerprint(joining.team.identity.publicKey) : null, handle: joining.ownHandle() ?? handle })
+      }
+      if (state.kind === 'stopped' || state.kind === 'update_needed') {
+        if (eml.hasGenesis()) return json(res, 503, { error: readOnly(`it stopped: ${state.why}`, true).message, code: 'SHARED_BRAIN_READ_ONLY' })
+        discardTeam(routingResult.ctx.brainId, joining)
+        const answer = state.kind === 'stopped' ? state.relay : undefined
+        if (answer?.code === 'invite_closed') return json(res, 410, { error: `This invite is closed (${answer.message}); ask the owner for a new link.`, code: 'INVITE_CLOSED' })
+        return json(res, 502, { error: `The relay did not take the join: ${state.why}.`, code: 'TEAM_JOIN_FAILED' })
+      }
+      return json(res, 202, { code: 'TEAM_JOIN_PENDING', message: 'The join is with the relay; the brain is live once the owner has accepted it and this device holds the key.', brain: routingResult.ctx.brainId, member: joining.team.identity ? fingerprint(joining.team.identity.publicKey) : null, handle })
+    }
+
+    // GET /team — the shared brain as the host shows it (v0.21, spec
+    // team-brain-membership-flows-spec §2): its sync state, the read-only text a
+    // write would get, its member and the member set. A private brain: shared false.
+    if (url === '/team' && method === 'GET') {
+      if (sync === undefined) return json(res, 200, { shared: false })
+      if (sync instanceof Error) {
+        const state = { kind: 'stopped', why: `its team file cannot be used (${sync.message})` }
+        return json(res, 200, { shared: true, brain: routingResult.ctx.brainId, relay: null, mode: null, state, read_only: readOnly(`it stopped: ${state.why}`, true).message, member: null, members: [], invites: [] })
+      }
+      return json(res, 200, sync.snapshot())
+    }
+
+    // POST /move/plan, POST /move — a project with its sub-projects leaves this
+    // brain for a team brain of this server (v0.21, spec team-brain-move-project-spec;
+    // move.ts). The plan is read only and lists every reason the move would be
+    // refused; the run takes the plan's hash as the confirmation.
+    if ((url === '/move/plan' || url === '/move') && method === 'POST') {
+      const body = await readBody(req)
+      const moveCtx = { controlDb, pool, syncs, dataDir: DATA_DIR, backupDir: BACKUP_DIR, deadlineMs: MOVE_DEADLINE_MS }
+      if (url === '/move/plan') return json(res, 200, planMoveRoute(moveCtx, { brainId: routingResult.ctx.brainId, db: routingResult.ctx.brainDb }, body))
+      if (sync !== undefined) return json(res, 409, { error: 'move refused: a project moves out of a private brain only. Nothing was moved.', code: 'MOVE_REFUSED' })
+      return json(res, 200, await moveRoute(moveCtx, { brainId: routingResult.ctx.brainId, brainFile: routingResult.ctx.brainFile }, body, env))
+    }
+
+    // DELETE /team — discards a brain that has no log yet: a shared brain that
+    // never came to life (a stopped join, a creation the relay refused) or an
+    // empty brain the host provisioned for one. The host's cleanup; a brain
+    // with a log is not discarded here.
+    if (url === '/team' && method === 'DELETE') {
+      if (eml.hasGenesis()) return json(res, 409, { error: 'A shared brain with a log is not discarded here.', code: 'TEAM_BRAIN_HAS_LOG' })
+      discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    // DELETE /brain — discards a private brain with all it holds: the host's
+    // removal of a local space, after its backup. A shared brain is not
+    // discarded here.
+    if (url === '/brain' && method === 'DELETE') {
+      if (sync !== undefined) return json(res, 409, { error: 'A shared brain is not discarded here.', code: 'NOT_LOCAL' })
+      discardBrain(routingResult.ctx.brainId, routingResult.ctx.brainFile)
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    // POST /team/invites {role?} — an owner invites into this team brain (v0.21,
+    // spec team-brain-membership-flows-spec §3) as a member (default) or an
+    // owner (decision invite-role-set-at-invite): the notice goes to the relay,
+    // the secret and the role into the team file, the link comes back once.
+    if (url === '/team/invites' && method === 'POST') {
+      if (!(sync instanceof Sync)) return json(res, 409, { error: 'This brain is not a shared brain.', code: 'NOT_SHARED' })
+      const body = await readBody(req)
+      const role = body.role === undefined ? 'member' : body.role
+      if (role !== 'owner' && role !== 'member') return json(res, 400, { error: 'role is owner or member', code: 'INVALID_ROLE' })
+      if (body.name !== undefined && typeof body.name !== 'string') return json(res, 400, { error: 'name is a string', code: 'INVALID_NAME' })
+      return json(res, 201, await sync.createInvite(eml.now(), role, body.name as string | undefined))
+    }
+
+    // POST /team/invites/:id/accept — the owner confirmed the join waiting on
+    // the invite (name and fingerprint compared): the member is added with the
+    // invite's role, the brain key wrapped for the new device, the join
+    // answered. POST /team/invites/:id/cancel — the invite is closed; also how
+    // an owner declines a join.
+    const inviteMatch = /^\/team\/invites\/([A-Za-z0-9_-]{22})\/(accept|cancel)$/.exec(url)
+    if (inviteMatch && method === 'POST') {
+      if (!(sync instanceof Sync)) return json(res, 409, { error: 'This brain is not a shared brain.', code: 'NOT_SHARED' })
+      const [, inviteId, action] = inviteMatch
+      if (action === 'cancel') {
+        if (!await sync.cancelInvite(inviteId)) return json(res, 404, { error: 'No such invite.', code: 'NO_SUCH_INVITE' })
+        return json(res, 200, { invite_id: inviteId, cancelled: true })
+      }
+      const member = await sync.confirmJoin(inviteId, eml.now())
+      if (!member) return json(res, 404, { error: 'This invite has no join to confirm.', code: 'NO_PENDING_JOIN' })
+      return json(res, 200, { member })
+    }
+
     // POST /engram/:type — create an engram. The body is flat: the universal
     // fields plus the type's own; core splits and checks them (fields.ts).
     const createMatch = /^\/engram\/([a-z]+)$/.exec(url)
@@ -473,7 +777,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       if (body.origin === SEED_ORIGIN) return json(res, 400, { error: `Invalid engram: origin ${SEED_ORIGIN} is set by the brain's own seed only.` })
       const { fields, rest } = splitFields(type, body)
       const input = { ...rest, type, properties: fields } as unknown as EngramInput
-      const engram = eml.apply({ name: 'engram.create', input }, env)
+      const engram = await applyWrite(eml, { name: 'engram.create', input }, env, sync, held)
       return json(res, 201, withClosedSubjectNotice(engram, body.subjects))
     }
 
@@ -481,7 +785,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     const trackMatch = /^\/task\/([^/]+)\/track$/.exec(url)
     if (trackMatch && method === 'POST') {
       const body = await readBody(req)
-      const task = eml.apply({ name: 'task.track', input: { ...body, id: trackMatch[1] } }, env)
+      const task = await applyWrite(eml, { name: 'task.track', input: { ...body, id: trackMatch[1] } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(task, body.subjects))
     }
 
@@ -490,13 +794,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const body = await readBody(req)
       // id → learning.add_evidence; without → engram.create of a learning with its first evidence
       if (body.id !== undefined) {
-        const r = eml.apply({ name: 'learning.add_evidence', input: body as never }, env)
+        const r = await applyWrite(eml, { name: 'learning.add_evidence', input: body as never }, env, sync, held)
         return json(res, 201, { written: true, ...r })
       }
       const { source, happened, quote, stance, rule_id, ...lesson } = body
       const evidence = Object.fromEntries(Object.entries({ source, happened, quote, stance, rule_id }).filter(([, v]) => v !== undefined))
       try {
-        const { learning, ...engram } = eml.apply({ name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env)
+        const { learning, ...engram } = await applyWrite(eml, { name: 'engram.create', input: { ...lesson, type: 'learning', evidence } as never }, env, sync, held)
         return json(res, 201, { written: true, engram, learning })
       } catch (err) {
         // the topic check found a match: nothing written, the matches named (as since v0.19)
@@ -549,6 +853,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // === v0.4: engram API completion ===
 
+    // GET /relations?engram=<id> — the relations with that engram at either
+    // end. v0.21: the engram need not be in this brain — an agent brain holds
+    // cross-brain references to a space's engrams (relation.create
+    // source_brain / target_brain), and the cockpit host lists them from the
+    // space's side ("links from your agent brain").
+    if (url.startsWith('/relations') && method === 'GET') {
+      const q = parseQuery(req.url)
+      if (rejectUnknownParams(res, q, ALLOWED_RELATIONS_PARAMS)) return
+      if (!q.engram) return json(res, 400, { error: 'engram required' })
+      const relations = eml.engrams.relationsOf(q.engram)
+      return json(res, 200, { count: relations.length, relations })
+    }
+
     // GET /engram/:id — single-engram lookup.
     if (url.startsWith('/engram/') && method === 'GET') {
       const q = parseQuery(req.url)
@@ -580,7 +897,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       rejectNestedProperties(current.type, body.patch)
       const { fields, rest } = splitFields(current.type, body.patch)
       const patch = Object.keys(fields).length > 0 ? { ...rest, properties: fields } : rest
-      const engram = eml.apply({ name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env)
+      const engram = await applyWrite(eml, { name: 'engram.update', input: { id: body.id, patch: patch as never, ...(body.base_rev !== undefined ? { base_rev: body.base_rev } : {}) } }, env, sync, held)
       return json(res, 200, withClosedSubjectNotice(engram, body.patch.subjects))
     }
 
@@ -589,7 +906,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url.match(/^\/engram\/[^/]+\/confirm-review$/) && method === 'POST') {
       const id = url.slice('/engram/'.length, -'/confirm-review'.length)
       const body = await readBody(req)
-      const engram = eml.apply({ name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env)
+      const engram = await applyWrite(eml, { name: 'engram.confirm_review', input: { id, ...(body.text !== undefined ? { text: body.text } : {}) } }, env, sync, held)
       return json(res, 200, { engram })
     }
 
@@ -603,18 +920,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
         // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
         const wanted = id ?? q.id
-        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind })
+        // v0.21: a shared brain's users are its members (core spacePeople)
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync) })
         if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
         return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
       }
+      // v0.21: a shared brain holds no user or agent objects — its members join by invite, its agents are the ones that write in it
+      if ((object === 'user' || object === 'agent') && (method === 'POST' || method === 'PUT') && sync !== undefined) {
+        return json(res, 409, { error: `This is a shared brain: its users are its members, who join by invite, and its agents are the ones that write in it — ${object === 'user' ? 'a user' : 'an agent'} is not created or changed here.`, code: 'SHARED_BRAIN_MEMBERS' })
+      }
       if (method === 'POST' && id === undefined) {
         const body = await readBody(req)
-        const result = eml.apply({ name: 'object.create', input: { object, fields: body } }, env)
+        const result = await applyWrite(eml, { name: 'object.create', input: { object, fields: body } }, env, sync, held)
         return json(res, 201, result)
       }
       if (method === 'PUT' && id !== undefined) {
         const body = await readBody(req)
-        const result = eml.apply({ name: 'object.update', input: { object, id, patch: body } }, env)
+        const result = await applyWrite(eml, { name: 'object.update', input: { object, id, patch: body } }, env, sync, held)
         return json(res, 200, result)
       }
     }
@@ -623,14 +945,21 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // of this brain. Not an edit: updated_at and reviews stay; rev goes up so watchers see the move.
     if (url === '/rescope' && method === 'POST') {
       const body = await readBody(req)
-      return json(res, 200, eml.apply({ name: 'engram.rescope', input: body as never }, env))
+      return json(res, 200, await applyWrite(eml, { name: 'engram.rescope', input: body as never }, env, sync, held))
+    }
+
+    // POST /retag { ids, add, remove } — add and remove tags on engrams, one or
+    // many. Not an edit: updated_at and reviews stay; rev goes up so watchers see it.
+    if (url === '/retag' && method === 'POST') {
+      const body = await readBody(req)
+      return json(res, 200, await applyWrite(eml, { name: 'engram.retag', input: body as never }, env, sync, held))
     }
 
     // POST /relate — create relation between two engrams.
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
       const body = await readBody(req)
-      const { created } = eml.apply({ name: 'relation.create', input: body as never }, env)
+      const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync, held)
       return json(res, 201, { ok: true, created })
     }
 
@@ -830,6 +1159,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     json(res, 404, { error: 'Not found' })
 
   } catch (err: unknown) { const e = err as Error;
+    // v0.21: a write to a shared brain that is read-only right now
+    // v0.21: a write to a shared brain that did not happen as asked (write.ts, sync/sync.ts)
+    if (err instanceof SharedWriteError) return json(res, err.status, { error: err.message, code: err.code })
+    // v0.21: an invite or confirm that could not be done (sync/sync.ts)
+    if (err instanceof InviteError) return json(res, err.status, { error: err.message, code: err.code })
+    // v0.21: a project move the server or core refused (move.ts)
+    if (err instanceof MoveRouteError) return json(res, err.status, { error: err.message, code: err.code, ...err.data })
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
       // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev
@@ -853,14 +1189,20 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 // --- Server ---
 const server = http.createServer(handleRequest)
 
-server.listen(PORT, HOST, () => {
-  console.log(`EML API v${SERVER_VERSION} running on http://${HOST}:${PORT}`)
-  console.log(`Data dir: ${DATA_DIR}  |  Pool cap=${POOL_CAP}, idle=${POOL_IDLE_MIN}min`)
+// v0.21: libsodium first (the protocol's crypto), then each shared brain's
+// connection to its relay, then the API.
+ready().then(() => {
+  startSyncs()
+  server.listen(PORT, HOST, () => {
+    console.log(`EML API v${SERVER_VERSION} running on http://${HOST}:${PORT}`)
+    console.log(`Data dir: ${DATA_DIR}  |  Pool cap=${POOL_CAP}, idle=${POOL_IDLE_MIN}min`)
+  })
 })
 
 // Graceful shutdown — close pool + control DB; per-request EML.fromConnection
 // has ownsConnection=false, so nothing is closed twice.
 function shutdown(): void {
+  for (const sync of syncs.values()) if (sync instanceof Sync) sync.close()
   try { pool.close() } catch { /* best-effort */ }
   try { controlDb.close() } catch { /* best-effort */ }
   server.close(() => process.exit(0))

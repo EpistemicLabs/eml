@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { HttpClient } from '../http-client'
+import type { EmlApi } from '../http-client'
 import { callTool } from './_helpers'
 
 /**
@@ -47,14 +47,16 @@ const fieldShape = {
   metadata: z.record(z.string(), z.string()).nullable().optional(),
 }
 
-export function registerReadObjectTool(server: McpServer, http: HttpClient): void {
+export function registerReadObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_read_object', {
     title: 'Read Objects',
     description:
       'Without id: the objects of that kind with usage counts — check a project or entity exists before writing ' +
       'in its scope; reuse existing tags and subjects before creating. A tag is what engrams are ABOUT, a recurring ' +
       'category that never ends ("architecture", "deploy"); a subject is a strand they BELONG TO that can be done ' +
-      '("v0.14-planning"). Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
+      '("v0.14-planning"). user and agent: who works in this space — in a shared space its members and the agents ' +
+      'that have written in it, in a private one you and your agents. These handles are what assignee_ids takes. ' +
+      'Archived / closed objects only with a status filter. With id: one object with all fields. A scope\'s ' +
       'dashboard stays eml_show.',
     inputSchema: z.object({
       object: z.enum(OBJECTS).describe('project · entity · tag · subject · user · agent.'),
@@ -65,7 +67,7 @@ export function registerReadObjectTool(server: McpServer, http: HttpClient): voi
   }, async (args) => callTool(() => http.get(`/object/${args.object}`, { id: args.id, status: args.status, kind: args.kind })))
 }
 
-export function registerCreateObjectTool(server: McpServer, http: HttpClient): void {
+export function registerCreateObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_create_object', {
     title: 'Create Object',
     description:
@@ -78,7 +80,7 @@ export function registerCreateObjectTool(server: McpServer, http: HttpClient): v
   ))
 }
 
-export function registerUpdateObjectTool(server: McpServer, http: HttpClient): void {
+export function registerUpdateObjectTool(server: McpServer, http: EmlApi): void {
   server.registerTool('eml_update_object', {
     title: 'Update Object',
     description:

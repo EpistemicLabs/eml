@@ -7,6 +7,7 @@
 // banner and the columns (./GraphPanel.tsx).
 import { useState } from "react";
 import { Link } from "react-router";
+import { ArrowRightLeft } from "lucide-react";
 
 import { ApiError } from "@/lib/api";
 import { useEngramPanel } from "@/lib/engram-panel";
@@ -14,8 +15,11 @@ import { useList, useProject, useProjectEngrams, useProjects } from "@/lib/queri
 import { type Engram, type EngramType } from "@/lib/types";
 import { EngramRow, formatDate } from "@/components/engram-row";
 import { TYPE_COLORS } from "@/components/ui/badge";
-import { Input } from "@/shared/view/ui";
+import { canOfferMove, movedMarker } from "@/lib/move";
+import { switchSpace, useActiveSpace, useSpaces } from "@/stores/useSpaceStore";
+import { Button, Input } from "@/shared/view/ui";
 import BrainLink from "./BrainLink";
+import MoveProjectDialog from "./MoveProjectDialog";
 import { BackLink, useBrainNav } from "./BrainSurface";
 import GraphPanel from "./GraphPanel";
 import { BrainCard, EmptyNote, ListPanel, Pager, SectionHeader, Segmented } from "./ui";
@@ -139,6 +143,11 @@ export default function BrainProject({ projectId }: { projectId: string }) {
   });
   const allProjects = useProjects();
   const [q, setQ] = useState("");
+  // v0.21: a project moves into a shared space from here (MoveProjectDialog);
+  // a project that moved says where it went (the human's version of the eml_show line).
+  const spaces = useSpaces();
+  const activeSpace = useActiveSpace();
+  const [moving, setMoving] = useState(false);
   const searching = q.trim().length > 0;
   const searchResults = useList({ search: q, scope: `project.${id}`, limit: 50 }, searching);
   // The column queries run in parallel with the project itself; once it has
@@ -153,6 +162,9 @@ export default function BrainProject({ projectId }: { projectId: string }) {
   const reviews = useProjectEngrams(id, { review_due: "true", order_by: "created_at", limit: 50 }, live);
 
   const project = state.data?.project;
+  const moved = movedMarker(project?.metadata);
+  const movedSpace = moved ? spaces.find((s) => s.id === moved.to) ?? null : null;
+  const offerMove = Boolean(project) && project?.status !== "archived" && canOfferMove(activeSpace, spaces);
   const parentId = project?.parent_project ?? null;
   const parentName =
     (parentId && allProjects.data?.projects.find((p) => p.id === parentId)?.name) || parentId;
@@ -192,9 +204,31 @@ export default function BrainProject({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex flex-col gap-5">
+      {project && <MoveProjectDialog projectId={project.id} projectName={project.name} open={moving} onOpenChange={setMoving} />}
       <div>
         {breadcrumb}
-        <h1 className="mt-1 text-heading font-semibold text-foreground">{project?.name ?? id}</h1>
+        <div className="mt-1 flex items-start justify-between gap-3">
+          <h1 className="text-heading font-semibold text-foreground">{project?.name ?? id}</h1>
+          {offerMove && (
+            <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setMoving(true)}>
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Move to shared space…
+            </Button>
+          )}
+        </div>
+        {moved && (
+          <p className="mt-1 text-body text-muted-foreground">
+            Moved to {movedSpace?.name ?? moved.name ?? moved.to} on {formatDate(moved.at)} — its engrams live there.
+            {movedSpace && (
+              <>
+                {" "}
+                <button type="button" className="text-primary hover:underline" onClick={() => switchSpace(movedSpace)}>
+                  Open {movedSpace.name}
+                </button>
+              </>
+            )}
+          </p>
+        )}
         {project?.goal && <p className="mt-1 text-body text-muted-foreground">{project.goal}</p>}
         {project?.description && <p className="mt-1 text-caption text-muted-foreground/80">{project.description}</p>}
       </div>
