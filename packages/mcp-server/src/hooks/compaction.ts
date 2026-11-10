@@ -2,8 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 /**
- * Consolidate before the context is compacted (docs/proposals/
- * consolidate-before-compact.md). A compaction replaces the conversation with
+ * Consolidate before the context is compacted. A compaction replaces the conversation with
  * a summary written to continue the task, not to keep what belongs in the
  * brain. No hook can run a skill, and a PreCompact hook cannot put text into
  * the context — so two hooks ask the agent to run the consolidate skill:

@@ -1,6 +1,6 @@
 /**
- * What differs between the operating systems the host runs on, behind one port
- * (docs/proposals/windows-support.md, "Architecture"). Code outside the
+ * What differs between the operating systems the host runs on, behind one port.
+ * Code outside the
  * adapters asks the platform and never checks `process.platform` itself — a
  * test keeps it that way (tests/platform.test.ts).
  *
