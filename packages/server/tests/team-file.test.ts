@@ -194,3 +194,22 @@ describe('the team file', () => {
     expect(isRelayOrigin('relay.test')).toBe(false)
   })
 })
+
+describe('a local relay', () => {
+  it('is taken only with EML_LOCAL_RELAY=1: otherwise an invite link names no port on this machine', () => {
+    const before = process.env.EML_LOCAL_RELAY
+    try {
+      process.env.EML_LOCAL_RELAY = '1'
+      expect(isRelayOrigin('ws://127.0.0.1:4100')).toBe(true)
+      expect(relayOriginFor('127.0.0.1:4100')).toBe('ws://127.0.0.1:4100')
+      delete process.env.EML_LOCAL_RELAY
+      expect(isRelayOrigin('ws://127.0.0.1:4100')).toBe(false)
+      expect(isRelayOrigin('ws://localhost:4100')).toBe(false)
+      expect(relayOriginFor('127.0.0.1:4100')).toBe('wss://127.0.0.1:4100')
+      expect(isRelayOrigin('wss://relay.example')).toBe(true)
+    } finally {
+      if (before === undefined) delete process.env.EML_LOCAL_RELAY
+      else process.env.EML_LOCAL_RELAY = before
+    }
+  })
+})

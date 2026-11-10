@@ -192,14 +192,14 @@ export function removeTeamFile(dataDir: string, brain: string): void {
 /**
  * True for a relay as the team file and the create route take it: a wss://
  * origin — scheme and host, no path. ws:// only to a loopback host, for a
- * local test relay; a relay elsewhere is reached over TLS or not at all.
+ * local relay (EML_LOCAL_RELAY=1); a relay elsewhere is reached over TLS or not at all.
  */
 export function isRelayOrigin(value: string): boolean {
   if (!/^wss?:\/\/[^/?#@]+$/.test(value)) return false
   try {
     const url = new URL(value)
     if (url.origin !== value && url.href !== `${value}/`) return false
-    return url.protocol === 'wss:' || LOOPBACK.has(url.hostname)
+    return url.protocol === 'wss:' || (localRelay() && LOOPBACK.has(url.hostname))
   } catch {
     return false
   }
@@ -207,10 +207,17 @@ export function isRelayOrigin(value: string): boolean {
 
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
-/** The relay origin for the host an invite link names: wss://<host>, or ws://<host> for a loopback host (a local test relay). */
+/**
+ * ws:// to a loopback host is a local relay: only for tests and the dev
+ * cockpit (EML_LOCAL_RELAY=1). Otherwise an invite link could point the
+ * server at any port on this machine; every real relay is wss://.
+ */
+const localRelay = (): boolean => process.env.EML_LOCAL_RELAY === '1'
+
+/** The relay origin for the host an invite link names: wss://<host>, or ws://<host> for a loopback host when a local relay is allowed. */
 export function relayOriginFor(host: string): string {
   const hostname = new URL(`wss://${host}`).hostname
-  return `${LOOPBACK.has(hostname) ? 'ws' : 'wss'}://${host}`
+  return `${localRelay() && LOOPBACK.has(hostname) ? 'ws' : 'wss'}://${host}`
 }
 
 /** The rename is durable once the directory is: fsync it (Windows cannot open a directory for that). */
