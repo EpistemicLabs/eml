@@ -109,7 +109,14 @@ export type MoveOutcome =
   | { kind: 'done'; text: string; backup: string }
   | { kind: 'changed'; text: string }
   | { kind: 'pending'; text: string }
-  | { kind: 'failed'; text: string };
+  | { kind: 'failed'; text: string }
+  | { kind: 'lost'; text: string };
+
+/** The run had no answer at all (the request broke off, e.g. the host restarted): the move may have gone through. */
+export const lostOutcome = (projectName: string): MoveOutcome => ({
+  kind: 'lost',
+  text: `The connection broke off before the move answered, so it may have gone through. If it did, ${projectName} shows where it moved once you close this. If not, Move again: it picks up where it stopped.`,
+});
 
 export function moveOutcome(answer: HostAnswer<Partial<MoveDoneView> & { code?: string; error?: unknown }>, projectName: string, spaceName: string): MoveOutcome {
   const { status, body } = answer;

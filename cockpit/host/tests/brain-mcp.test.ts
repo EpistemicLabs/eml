@@ -102,17 +102,21 @@ describe('brain MCP endpoint access', () => {
     await res.text()
   })
 
-  it('refuses a missing or unknown token', async () => {
-    expect((await post({ 'x-eml-session': 'session-main' })).status).toBe(403)
-    expect((await post({ 'x-cockpit-mcp-token': 'd'.repeat(64), 'x-eml-session': 'session-main' })).status).toBe(403)
+  // A local refusal is 409, never 401/403: Claude Code keeps those as "needs
+  // authentication" for the server name eml_brain in every session it starts.
+  it('refuses a missing or unknown token (409)', async () => {
+    expect((await post({ 'x-eml-session': 'session-main' })).status).toBe(409)
+    expect((await post({ 'x-cockpit-mcp-token': 'd'.repeat(64), 'x-eml-session': 'session-main' })).status).toBe(409)
   })
 
-  it('refuses a session the ledger does not know, or one of another space', async () => {
-    expect((await post({ 'x-cockpit-mcp-token': TOKEN_A })).status).toBe(403)
-    expect((await post({ 'x-cockpit-mcp-token': TOKEN_A, 'x-eml-session': 'session-unknown' })).status).toBe(403)
+  it('refuses a session the ledger does not know, or one of another space (409)', async () => {
+    expect((await post({ 'x-cockpit-mcp-token': TOKEN_A })).status).toBe(409)
+    expect((await post({ 'x-cockpit-mcp-token': TOKEN_A, 'x-eml-session': 'session-unknown' })).status).toBe(409)
     // A session of the other space with main's token, and the reverse: never another brain.
-    expect((await post({ 'x-cockpit-mcp-token': TOKEN_A, 'x-eml-session': 'session-other' })).status).toBe(403)
-    expect((await post({ 'x-cockpit-mcp-token': TOKEN_B, 'x-eml-session': 'session-main' })).status).toBe(403)
+    const other = await post({ 'x-cockpit-mcp-token': TOKEN_A, 'x-eml-session': 'session-other' })
+    expect(other.status).toBe(409)
+    expect((await other.json()).error.message).toBe('The session belongs to another space')
+    expect((await post({ 'x-cockpit-mcp-token': TOKEN_B, 'x-eml-session': 'session-main' })).status).toBe(409)
   })
 
   it('refuses a proxied request even with a valid token and session (remote access)', async () => {

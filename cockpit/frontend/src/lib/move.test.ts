@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canOfferMove, fetchMovePlan, movedMarker, moveOutcome, planText, runMove, targetOptions, type MovePlanView } from './move';
+import { canOfferMove, fetchMovePlan, lostOutcome, movedMarker, moveOutcome, planText, runMove, targetOptions, type MovePlanView } from './move';
 import type { Team } from './team';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
@@ -89,6 +89,12 @@ describe('what the run answers', () => {
     expect(moveOutcome({ status: 409, body: { code: 'MOVE_REFUSED', error: 'move refused: a move out of this brain is under way. Nothing was moved.' } }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'move refused: a move out of this brain is under way. Nothing was moved.' });
     expect(moveOutcome({ status: 404, body: { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } } }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'No such brain space' });
     expect(moveOutcome({ status: 500, body: {} }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'The move failed (500).' });
+  });
+
+  it('no answer at all: the move may have gone through', () => {
+    expect(lostOutcome('EML')).toEqual({
+      kind: 'lost', text: 'The connection broke off before the move answered, so it may have gone through. If it did, EML shows where it moved once you close this. If not, Move again: it picks up where it stopped.',
+    });
   });
 });
 
