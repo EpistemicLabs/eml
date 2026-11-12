@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { JobStore } from '../src/job-store.js'
-import { ensureJobTokens, handleJobContract } from '../src/job-contract-api.js'
+import { ensureJobTokens, handleJobContract, jobSpaceIdsOf } from '../src/job-contract-api.js'
 import { JobRunner } from '../src/application/job-runner.js'
 import type { Job } from '../src/domain/job.js'
 
@@ -113,5 +113,17 @@ describe('job contract v1', () => {
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
     store.put(job({ endedAt: '2026-11-08T01:00:00.000Z' }))
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.refused)
+  })
+})
+
+describe('jobSpaceIdsOf', () => {
+  it('gives the bridge the main space first and the other local ones, never a shared space or one not yet asked about', () => {
+    const spaces = [
+      { id: 'local-b', main: false, shared: false },
+      { id: 'team', main: false, shared: true },
+      { id: 'unknown', main: false, shared: null },
+      { id: 'main-id', main: true, shared: null },
+    ]
+    expect(jobSpaceIdsOf(spaces)).toEqual(['main-id', 'local-b'])
   })
 })

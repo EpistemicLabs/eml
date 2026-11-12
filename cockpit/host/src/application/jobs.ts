@@ -39,6 +39,8 @@ export interface JobsDeps {
   /** A project's name as the user sees it; the id when unknown. */
   projectName?(spaceId: string | null, projectId: string): string
   providerKnown(id: string): boolean
+  /** A shared space (or one the host could not ask about): its jobs get no channel, so no mail reaches its brain's other members. */
+  sharedSpace?(spaceId: string | null): boolean
   /** The zone times read in when a job names none: the user's (from their browser), else the host's. */
   defaultTimeZone(): string
   /** A grant was stored: the job's session should pick the tool up (restart it and tell it). */
@@ -55,6 +57,7 @@ export interface JobAnswer {
 
 const str = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined
 const bad = (text: string): JobAnswer => ({ status: 400, text })
+const SHARED_NO_CHANNEL = 'a job in a shared space cannot watch mail for now; schedules work there, mail jobs only in a local space'
 
 export class Jobs {
   private readonly now: () => number
@@ -95,6 +98,7 @@ export class Jobs {
 
     const mail = mailTrigger(input.mail)
     if (typeof mail === 'string') return bad(mail)
+    if (mail && this.deps.sharedSpace?.(caller.spaceId)) return bad(SHARED_NO_CHANNEL)
     // A mail job needs no schedule; with one it is woken by both.
     const scheduled = !mail || input.cron !== undefined || input.at !== undefined
     const trigger = scheduled ? this.trigger(input, undefined) : null
@@ -165,6 +169,7 @@ export class Jobs {
     if (input.mail !== undefined) {
       const mail = mailTrigger(input.mail)
       if (typeof mail === 'string') return bad(mail)
+      if (mail && this.deps.sharedSpace?.(job.spaceId)) return bad(SHARED_NO_CHANNEL)
       next.triggers = [...next.triggers.filter((t) => t.type !== 'mail'), ...(mail ? [mail] : [])]
       if (mail) next.reply = { ...next.reply, mail: next.reply.mail ?? 'draft' }
       // Fewer addresses need nobody's OK; a new one does.

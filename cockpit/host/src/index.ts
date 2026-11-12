@@ -54,7 +54,7 @@ import { JobStore } from './job-store.js'
 import { JobRunner } from './application/job-runner.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
-import { ensureJobTokens } from './job-contract-api.js'
+import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
@@ -437,11 +437,15 @@ async function main() {
       return project ? project.customName ?? project.displayName : projectId
     },
     providerKnown: (id) => providers.get(id) !== undefined,
+    // The main space is local by construction; any other counts as shared until the brain server said otherwise.
+    sharedSpace: (spaceId) => {
+      const space = spaces.resolve(spaceId)
+      return !space.main && space.shared !== false
+    },
     onGrant, onGrantEnd,
   })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
-  // A shared space, or one the host could not ask about, gets none: channel jobs stay in local spaces for now.
-  const jobSpaceIds = () => [spaces.main.id, ...spaces.list().filter((space) => !space.main && space.shared === false).map((space) => space.id)]
+  const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())
   // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
   const channelBridge = await startChannelBridge(url, log)

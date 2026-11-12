@@ -57,7 +57,7 @@ class World {
 
 const caller: JobCaller = { sessionId: 'maker', spaceId: null, projectId: 'bp-eml', toolProfile: null }
 
-function setup() {
+function setup(opts: { sharedSpaces?: string[] } = {}) {
   const world = new World()
   const runner = new JobRunner(world.deps())
   const jobs = new Jobs({
@@ -70,6 +70,7 @@ function setup() {
     defaultTimeZone: () => 'Asia/Makassar',
     onGrant: (job, tool) => { world.granted.push(`${job.name}:${tool}`) },
     onGrantEnd: (job, tools) => { world.ended.push(`${job.name}:${tools.join(',')}`) },
+    sharedSpace: (spaceId) => !!spaceId && (opts.sharedSpaces ?? []).includes(spaceId),
   })
   return { world, runner, jobs }
 }
@@ -327,6 +328,19 @@ describe('mail jobs', () => {
     expect(world.store.get(job.id)!.pendingApproval).toBe(false)
     const grown = await jobs.handle(caller, { action: 'update', job: job.id, mail: { domains: ['acme.example', 'other.example'] } })
     expect(grown.job!.pendingApproval).toBe(true)
+  })
+
+  it('keeps mail out of a shared space: no mail job there, and none made by adding mail later; schedules still work', async () => {
+    const { jobs } = setup({ sharedSpaces: ['team'] })
+    const member: JobCaller = { ...caller, spaceId: 'team' }
+    const refused = await jobs.handle(member, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
+    expect(refused.status).toBe(400)
+    expect(refused.text).toMatch(/shared space cannot watch mail/)
+    const routine = await jobs.handle(member, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
+    expect(routine.status, routine.text).toBe(201)
+    const grown = await jobs.handle(member, { action: 'update', job: routine.job!.id, mail: { domains: ['acme.example'] } })
+    expect(grown.status).toBe(400)
+    expect((await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })).status).toBe(201)
   })
 
   it('lets only the page switch a channel to send', async () => {

@@ -27,6 +27,16 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
 const TOKEN_FILE = /^[0-9a-zA-Z-]+$/
 const MAX_TEXT = 2000
 
+/**
+ * The spaces the bridge may reach, main first: the local ones. A shared space, or one the host
+ * could not ask about, gets no token, so no mail of this cockpit's accounts reaches a brain other
+ * people read.
+ */
+export function jobSpaceIdsOf(spaces: ReadonlyArray<{ id: string; main: boolean; shared: boolean | null }>): string[] {
+  const main = spaces.find((space) => space.main)
+  return [...(main ? [main.id] : []), ...spaces.filter((space) => !space.main && space.shared === false).map((space) => space.id)]
+}
+
 /** Make a token for every space that has none. Existing ones stay as they are. */
 export function ensureJobTokens(spaceIds: string[], dir = JOB_TOKENS_DIR): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
