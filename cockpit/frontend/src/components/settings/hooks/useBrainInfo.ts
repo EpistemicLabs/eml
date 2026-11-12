@@ -1,5 +1,5 @@
 // A space's brain as the host describes it (GET /api/brain-info): file, id,
-// schema, and who is in it. Settings › Account, Agent and Brain each read it
+// schema, and who is in it. Settings › Spaces and Data each read it
 // when they open: the active space's, or in Brain the one picked there.
 import { useEffect, useState } from 'react';
 
@@ -49,10 +49,4 @@ export function useBrainInfo(spaceId?: string): { info: BrainInfo | null; failed
 export function mainAgent(info: BrainInfo | null): { id: string; name: string } | null {
   if (!info) return null;
   return info.agents.find((agent) => agent.id === info.brainName) ?? info.agents[0] ?? null;
-}
-
-/** The user behind this cockpit's token (the author handle), else the first one. */
-export function mainUser(info: BrainInfo | null): { id: string; name: string } | null {
-  if (!info) return null;
-  return info.users.find((user) => user.id === info.author) ?? info.users[0] ?? null;
 }

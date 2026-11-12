@@ -3,6 +3,7 @@ import type { AgentBrains } from './agents.js'
 import type { BrainSpaces } from './brain-space.js'
 import { readBrainInfo, revealBrainFile, type BrainInfo } from './brain-info.js'
 import { HANDLE, readCockpitConfig, updateCockpitConfig } from './config.js'
+import { homeHuman } from './provision.js'
 import { AGENT_BRAIN_ROUTES, isPageRoute, NOT_PASSED } from './page-brain-routes.js'
 
 /**
@@ -49,7 +50,7 @@ export async function handleAgentsApi(
       brainId: agent.brainId,
       spaces: deps.spaces.list().filter((s) => s.agent === agent.id).map((s) => ({ id: s.id, name: s.name })),
     }))
-    json(res, 200, { handle: config?.handle ?? null, agents })
+    json(res, 200, { handle: config?.handle ?? null, name: homeHuman(config)?.name ?? null, agents })
     return true
   }
 

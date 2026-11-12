@@ -15,7 +15,7 @@ import type { PtyBridge } from './pty-bridge.js'
 import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
-import { provisionSpace, type AgentNames, type Human } from './provision.js'
+import { homeHuman, provisionSpace, type AgentNames, type Human } from './provision.js'
 import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
@@ -479,12 +479,12 @@ function freeSpaceName(deps: HostDeps, name: string): string {
  */
 async function newSpaceBinding(deps: HostDeps): Promise<{ agent: AgentNames; human: Human } | SpaceError> {
   const agent = deps.agents.get(deps.spaces.main.agent)
-  const handle = (await readCockpitConfig())?.handle
-  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
+  const human = homeHuman(await readCockpitConfig())
+  if (!agent || !human) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
   const info = readBrainInfo(agent.token)
   return {
     agent: { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
-    human: { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
+    human,
   }
 }
 
