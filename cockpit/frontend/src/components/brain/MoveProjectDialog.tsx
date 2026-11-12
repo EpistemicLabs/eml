@@ -94,7 +94,7 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
   };
 
   const nameOf = (id: string) => allProjects.data?.projects.find((p) => p.id === id)?.name ?? id;
-  const text = plan.status === 'ready' ? planText(plan.plan, projectName, nameOf) : null;
+  const text = plan.status === 'ready' ? planText(plan.plan, projectName, nameOf, target?.name ?? 'the shared space') : null;
   const refused = plan.status === 'ready' ? plan.plan.collisions : [];
   // after a pending write the target has to be live again before the same plan is sent once more
   const targetWritable = target?.enabled ?? false;
@@ -127,6 +127,7 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
                   {text.projects.map((p) => <li key={p.id}>{p.name} · {p.engrams}</li>)}
                 </ul>
               )}
+              {text.joins && <p>{text.joins}</p>}
               <p>{text.dropped}</p>
               {text.links.length > 0 && (
                 <ul className="ml-4 max-h-40 list-disc overflow-y-auto text-muted-foreground">

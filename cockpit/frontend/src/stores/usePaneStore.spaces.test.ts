@@ -51,6 +51,15 @@ describe('opening a session of another space', () => {
     expect(store.getDesks().flatMap((desk) => desk.panes).filter((pane) => pane.sessionId === 's-1')).toHaveLength(1);
   });
 
+  it('a pane of another space that still holds the session (it moved since) is left alone: the session opens on a desk of its space', () => {
+    store.openInPane({ surface: 'terminal', projectId: 'p', sessionId: 's-moved' });
+    const stale = store.getActivePaneId();
+    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-moved' });
+    expect(store.getActiveSpaceId()).toBe(OTHER);
+    expect(store.getActivePaneId()).not.toBe(stale);
+    expect(store.getDesks().filter((desk) => desk.panes.some((pane) => pane.sessionId === 's-moved')).map((desk) => desk.spaceId)).toEqual([null, OTHER]);
+  });
+
   it('activating a pane on a desk of another space moves the active space too', () => {
     store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
     const paneId = store.getActivePaneId();

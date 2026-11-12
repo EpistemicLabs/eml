@@ -23,6 +23,10 @@ export interface MovePlanView {
   payload_bytes: number;
   /** Why the move is refused, in the server's words; empty: it goes. */
   collisions: string[];
+  /** The projects of the tree the target has already: their engrams join them. */
+  joins: string[];
+  /** The statuses that stay here: the projects they join have an active status there. */
+  kept_statuses: string[];
 }
 
 /** What a move that went through answers (core ProjectMoveResult plus the host's re-homed projects). */
@@ -82,13 +86,28 @@ export interface PlanText {
   what: string;
   /** The tree by name with its engrams, when the project has sub-projects; null otherwise. */
   projects: Array<{ id: string; name: string; engrams: number }> | null;
+  /** That the engrams join projects the target has, and which statuses stay here; null when every project is new there. */
+  joins: string | null;
   dropped: string;
   /** The dropped links as "<title> (<type>)". */
   links: string[];
   size: string;
 }
 
-export function planText(plan: MovePlanView, projectName: string, nameOf: (id: string) => string): PlanText {
+/** The projects the engrams join, by name, and what that means for the statuses. */
+function joinsText(plan: MovePlanView, nameOf: (id: string) => string, spaceName: string): string | null {
+  const joins = plan.joins ?? [];
+  if (joins.length === 0) return null;
+  const names = joins.map(nameOf);
+  const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const joined = `${listed} ${names.length === 1 ? 'is' : 'are'} in ${spaceName} already, so the engrams join ${names.length === 1 ? 'it' : 'them'}.`;
+  if ((plan.kept_statuses?.length ?? 0) === 0) return joined;
+  return names.length === 1
+    ? `${joined} Its status stays here; the one in ${spaceName} stays current.`
+    : `${joined} Where one has a status there, that one stays current and the status from here stays here.`;
+}
+
+export function planText(plan: MovePlanView, projectName: string, nameOf: (id: string) => string, spaceName: string): PlanText {
   const parts = `${count(plan.moved.engrams, 'engram')}, ${count(plan.moved.entries, 'journal entry', 'journal entries')} and ${count(plan.moved.relations, 'link')} between them`;
   const withChildren = plan.tree.length > 1;
   const what = withChildren
@@ -98,6 +117,7 @@ export function planText(plan: MovePlanView, projectName: string, nameOf: (id: s
   return {
     what,
     projects: withChildren ? plan.tree.map((t) => ({ id: t.id, name: nameOf(t.id), engrams: t.engrams })) : null,
+    joins: joinsText(plan, nameOf, spaceName),
     dropped: c === 0 ? 'Nothing links out of this project.' : `${count(c, 'link')} to things that stay behind ${c === 1 ? 'is' : 'are'} dropped. ${c === 1 ? 'It is' : 'They are'} kept in the backup.`,
     links: plan.crossing.map((r) => `${r.other.title ?? r.other.id} (${r.other.type})`),
     size: `Size: ${size(plan.payload_bytes)} of ${MOVE_LIMIT_BYTES / 1024 / 1024} MB.`,

@@ -10,7 +10,7 @@ import { uuidv5 } from '../src/log/op'
 import { verify } from '../src/log/rebuild'
 import { exportSet, legacyAuthorship, projectSet, remoteReferences } from '../src/log/move'
 import { moveEngrams, moveProject, planMove, planProjectMove, type MoveTarget } from '../src/log/move-engrams'
-import { createObject, validDecision, validNote, validTask, writes } from './fixtures'
+import { createObject, validDecision, validNote, validStatus, validTask, writes } from './fixtures'
 
 // v0.21 (spec team-brain-move-project-spec, block 1; decision
 // move-project-deterministic-ui): a project moves with its sub-projects, the
@@ -175,6 +175,27 @@ describe('planProjectMove', () => {
     shared.close(); to.close(); s.eml.close()
   })
 
+  it('a project the target has: its engrams join it; the statuses of one with an active status there stay behind, history and all', () => {
+    const s = source()
+    const old = writes(s.eml).store(validStatus({ scope: 'project.top', content: 'first' }), s.kai)
+    const current = writes(s.eml).store(validStatus({ scope: 'project.top', content: 'second' }), s.kai)
+    writes(s.eml).store(validStatus({ scope: 'project.child', content: 'child state' }), s.kai)
+    const to = target()
+    expect(planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })).toMatchObject({ joins: [], kept_statuses: [], moved: { engrams: 5 }, collisions: [] })
+
+    // the target has top with a status of its own, and child without one
+    createObject(to, 'project', { id: 'top', name: 'Top there' })
+    createObject(to, 'project', { id: 'child', name: 'Child there', parent_project: 'top' })
+    writes(to).store(validStatus({ scope: 'project.top', content: 'theirs' }))
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })
+    expect(plan).toMatchObject({ joins: ['top', 'child'], kept_statuses: [old.id, current.id], moved: { engrams: 3 }, collisions: [] })
+    // the tree counts what moves: top's two statuses stay
+    expect(plan.tree).toEqual([{ id: 'top', engrams: 1 }, { id: 'child', engrams: 2 }, { id: 'leaf', engrams: 0 }])
+    expect(plan.created.projects).toEqual([])
+    expect(plan.crossing.map(c => c.relation)).toEqual(['related_to'])
+    to.close(); s.eml.close()
+  })
+
   it('a team brain as the source is refused', () => {
     const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
     const t = sharedTarget(shared)
@@ -241,6 +262,28 @@ describe('moveProject', () => {
     to.close(); s.eml.close()
   })
 
+  it('into a project the target has: the engrams join it, its status stays the one there, the source keeps its own with the archived project', async () => {
+    const s = source()
+    const mine = writes(s.eml).store(validStatus({ scope: 'project.top', content: 'mine' }), s.kai)
+    const to = target()
+    createObject(to, 'project', { id: 'top', name: 'Top there' })
+    const theirs = writes(to).store(validStatus({ scope: 'project.top', content: 'theirs' }))
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })
+    const result = await moveProject({ source: raw(s.eml), target: { db: raw(to) }, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'source.db') }, s.kai)
+    expect(result.created.projects).toEqual(['child'])
+    expect(result.archived).toEqual(['top', 'child'])
+    expect(inSet(to, s)).toBe(2)
+    expect(to.projects.get('top')!.name).toBe('Top there')
+    const statuses = (eml: EML) => raw(eml).prepare("SELECT id, status FROM engrams WHERE type = 'status' AND scope = 'project.top'").all()
+    expect(statuses(to)).toEqual([{ id: theirs.id, status: 'active' }])
+    expect(statuses(s.eml)).toEqual([{ id: mine.id, status: 'active' }])
+    expect(s.eml.projects.get('top')!.status).toBe('archived')
+    unlocked(s.eml)
+    expect(verify(raw(s.eml))).toMatchObject({ ok: true })
+    expect(verify(raw(to))).toMatchObject({ ok: true })
+    to.close(); s.eml.close()
+  })
+
   it('refuses a plan that is not the current one, and nothing changes', async () => {
     const s = source()
     const to = target()
@@ -302,6 +345,8 @@ describe('moveProject', () => {
 
   it('a write that may still land: nothing removed, the source unlocked; the same plan again resumes without a second import', async () => {
     const s = source()
+    // a status the set carries: once imported, the target's active status is this one, which holds nothing back
+    writes(s.eml).store(validStatus({ scope: 'project.top', content: 'carried' }), s.kai)
     const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
     const t = sharedTarget(shared, { after: async () => { throw new Error('the write may still land') } })
     const plan = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
@@ -318,6 +363,7 @@ describe('moveProject', () => {
     expect(again.plan_hash).toBe(plan.plan_hash)
     expect(again.resume).toEqual({ seq: 2, op_id: expect.any(String) })
     expect(again.collisions).toEqual([])
+    expect(again).toMatchObject({ kept_statuses: [], joins: [] })
     expect(again.created).toEqual({ projects: [], entities: [], users: [], agents: [], tags: [], subjects: [] })
     const result = await moveProject({ source: raw(s.eml), target: sharedTarget(shared), project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'b.db') }, s.kai)
     expect(result.resumed).toBe(true)
