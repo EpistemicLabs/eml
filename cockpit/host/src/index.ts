@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SCHEDULE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { loadBrain } from './provision.js'
 import { readCockpitConfig, writeCockpitConfig } from './config.js'
@@ -16,7 +16,7 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
-import { ChatBridge } from './chat-bridge.js'
+import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
@@ -50,6 +50,24 @@ import { runRemoteCommand } from './remote.js'
 import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
+import { JobStore } from './job-store.js'
+import { JobRunner } from './application/job-runner.js'
+import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
+import { resolveProject } from './spawn-api.js'
+import { ensureJobTokens } from './job-contract-api.js'
+import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
+import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
+import { takeBackJobTools } from './application/take-back-job-tools.js'
+import type { GrantTool, Job } from './domain/job.js'
+import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
+import { bridgeFiles } from './channel-bridge-api.js'
+import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
+import { createCodexProvider } from './infrastructure/providers/codex/index.js'
+import type { Notifier } from './notifications.js'
+import { PushStore } from './push-store.js'
+import { PushNotifier, notifySessions } from './application/push-notifier.js'
+import { sessionFacts, withProject } from './application/session-facts.js'
+import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -97,7 +115,17 @@ async function main() {
   // wait for it. Until it is done, or if it fails, sessions say what's missing
   // (Settings › Models retries).
   const ledger = new SessionLedger()
-  const providers = new ProviderRegistry({ providerOf: (sessionId) => ledger.get(sessionId)?.provider, preferred: readDefaultProvider })
+  // A channel job's session gets the bridge's tools and its limits at every launch (channel-job-launch.ts).
+  const channelJobOf = (sessionId: string) => {
+    const jobId = ledger.get(sessionId)?.jobId
+    const job = jobId ? jobStore.get(jobId) : undefined
+    return job && isChannelJob(job) ? channelJobFacts(job, Date.now()) : null
+  }
+  const providers = new ProviderRegistry({
+    providerOf: (sessionId) => ledger.get(sessionId)?.provider,
+    preferred: readDefaultProvider,
+    providers: [withChannelTools(createClaudeProvider(), { channelJobOf, bridgeServer: bridgeServerFor }), createCodexProvider()],
+  })
   for (const provider of providers.all()) {
     const name = provider.label.toLowerCase()
     void provider.runtime.install().finally(() => {
@@ -223,6 +251,8 @@ async function main() {
     COCKPIT_MESSAGE_JS: SESSION_MESSAGE_CLI_JS,
     // Find a session by what the user calls it (session-directory-cli.ts).
     COCKPIT_SESSIONS_JS: SESSION_DIRECTORY_CLI_JS,
+    // The schedule tool for sessions without it (schedule-cli.ts, skill schedule).
+    COCKPIT_SCHEDULE_JS: SCHEDULE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,
@@ -248,7 +278,7 @@ async function main() {
     },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -273,6 +303,13 @@ async function main() {
       return { session: sessionLimits(settings), idleMs: idleMs(settings) }
     },
     overCap: (): boolean => cap() > 0 && running() > cap(),
+    // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
+    jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
+      const caller = jobCaller(sessionId)
+      if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
+      const answer: JobAnswer = await jobs.handle(caller, input)
+      return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
+    },
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -295,6 +332,119 @@ async function main() {
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
   })
+  // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
+  const jobStore = new JobStore()
+  // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
+  const pushStore = new PushStore()
+  const pushNotifier = new PushNotifier({
+    devices: () => pushStore.devices(),
+    send: (device, payload, options) => {
+      const keys = pushStore.vapid()
+      if (!keys) throw new Error('push key not stored')
+      return sendPush(device, payload, keys, vapidSubject(device.origin), { ttlSeconds: 12 * 3600, ...options })
+    },
+    forget: (endpoint) => { pushStore.unsubscribe(endpoint) },
+    log,
+    now: () => Date.now(),
+  })
+  const notifier: Notifier = pushNotifier
+  const projectName = (spaceId: string | null, projectId: string | null) =>
+    projectId ? spaces.resolve(spaceId).registry.get(projectId)?.displayName : undefined
+  // Sessions tell what the review section shows: Needs you, Check this, a new result.
+  notifySessions({ turns, notifier, facts: (sessionId) => sessionFacts({ ledger, turns, projectName }, sessionId) })
+  const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  const jobCaller = (sessionId: string): JobCaller | null => {
+    const entry = ledger.get(sessionId)
+    return entry ? { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile } : null
+  }
+  // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
+  const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)
+  const jobSessions: JobSessions = {
+    sessionsOf: (jobId) => ledger.list().filter((entry) => entry.jobId === jobId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => entry.sessionId),
+    runs: sessionRuns,
+    turnOver: (sessionId) => new Promise<void>((resolve) => {
+      const over = () => turns.get(sessionId)?.state !== 'working' || !sessionRuns(sessionId)
+      if (over()) return resolve()
+      const check = () => {
+        if (!over()) return
+        turns.off('turn', check)
+        clearInterval(timer)
+        resolve()
+      }
+      // The turn event is the signal; the look every few seconds covers a process that ended without one.
+      const timer = setInterval(check, 5_000)
+      timer.unref()
+      turns.on('turn', check)
+    }),
+    stop: (sessionId) => chat.isRunning(sessionId) ? chat.end(sessionId, IDLE_STOP) : bridge.end(sessionId),
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    timeZone: userTimeZone,
+    log,
+  }
+  const onGrant = (job: Job, tool: GrantTool) => void lendJobTool(jobSessions, job, tool)
+    .catch((err: unknown) => log(`[jobs] lending ${tool} to job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
+  const onGrantEnd = (job: Job, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
+    .catch((err: unknown) => log(`[jobs] taking ${tools.join(', ')} back from job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
+  const jobRunner = new JobRunner({
+    store: jobStore, log, timeZone: userTimeZone,
+    hasRoom: (): boolean => startWorker.hasRoom(),
+    sessionRuns,
+    onGrantEnd,
+    sessionState: (sessionId) => {
+      if (!ledger.has(sessionId)) return 'queued'
+      if (turns.get(sessionId)?.state === 'working') return 'working'
+      return chat.isRunning(sessionId) || bridge.isRunning(sessionId) ? 'idle' : 'stopped'
+    },
+    statusSince: (sessionId, since) => {
+      const entry = ledger.get(sessionId)
+      const said = [entry?.attention, entry?.lastStatus].find((status) => status && status.at >= since)
+      return said ? { kind: said.kind, reason: said.reason } : null
+    },
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    startWorker: (job, sessionId, text) => {
+      if (job.target.type === 'session') return 'not a worker job'
+      const parent = job.createdBy && ledger.has(job.createdBy) ? job.createdBy : null
+      spawns.add({
+        id: sessionId, projectId: job.target.projectId, prompt: text, title: job.name, fromSessionId: parent, origin: 'job', jobId: job.id,
+        ...(job.target.provider ? { provider: job.target.provider } : {}),
+        ...(job.toolProfile ? { toolProfile: job.toolProfile } : {}),
+        ...(job.spaceId ? { spaceId: job.spaceId } : {}),
+      })
+      return null
+    },
+    notify: (input) => {
+      log(`[jobs] tell: job=${input.jobId?.slice(0, 8) ?? '-'} kind=${input.kind}`)
+      notifier.notify(withProject({ ledger, projectName }, input))
+    },
+    // In the review section, as "Needs you": the job's own session if it has one, else whoever made it.
+    flag: (job, text) => {
+      const own = job.target.type === 'worker' ? null : job.target.sessionId
+      const sessionId = [own, job.createdBy].find((id): id is string => !!id && ledger.has(id))
+      if (!sessionId) return
+      ledger.setAttention(sessionId, { kind: 'failed', reason: text.slice(0, 300) })
+      turns.apply({ sessionId, state: 'waiting' })
+    },
+  })
+  const jobs = new Jobs({
+    store: jobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
+    resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
+    findSession: (spaceId, target) => ledger.list(undefined, spaceId)
+      .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
+    addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
+    projectName: (spaceId, projectId) => {
+      const project = spaces.resolve(spaceId).registry.get(projectId)
+      return project ? project.customName ?? project.displayName : projectId
+    },
+    providerKnown: (id) => providers.get(id) !== undefined,
+    onGrant, onGrantEnd,
+  })
+  // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
+  // A shared space, or one the host could not ask about, gets none: channel jobs stay in local spaces for now.
+  const jobSpaceIds = () => [spaces.main.id, ...spaces.list().filter((space) => !space.main && space.shared === false).map((space) => space.id)]
+  ensureJobTokens(jobSpaceIds())
+  // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
+  const channelBridge = await startChannelBridge(url, log)
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
 
@@ -304,7 +454,17 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl,
+      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
+        sessionInfo: (sessionId) => {
+          const entry = ledger.get(sessionId)
+          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk' } : null
+        },
+      },
+      channelBridge: bridgeFiles(),
+      push: { store: pushStore, notifier: pushNotifier },
+      jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
+    },
     origins,
   )
 
@@ -345,6 +505,7 @@ async function main() {
     },
   })
   workers.start()
+  jobRunner.start()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -358,6 +519,8 @@ async function main() {
   const shutdown = shutDownOnSignal({
     stop: () => {
       workers.stop()
+      jobRunner.stop()
+      channelBridge?.stop()
       try { bridge.dispose() } catch { /* best-effort */ }
       try { host.close() } catch { /* best-effort */ }
     },

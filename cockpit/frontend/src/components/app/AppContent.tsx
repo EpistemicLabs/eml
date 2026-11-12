@@ -15,6 +15,8 @@ import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import { ReviewScreen } from '../review/ReviewScreen';
+import JobsView from '../jobs/JobsView';
+import HeaderJobs from '../jobs/HeaderJobs';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
@@ -25,11 +27,12 @@ import { findProjectOwningSession, projectsOfSpace, spaceLoaded, useProjectsStat
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
-import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest } from '@/stores/useTurnStateStore';
 import { setSessionDeskMain } from '@/lib/session-actions';
 import { useSeenResults } from './useSeenResults';
+import { usePushLinks } from './usePushLinks';
 import { api } from '@/utils/api';
-import { readSettings, setHostChatView } from '@/components/settings/utils/settingsStorage';
+import { setHostChatView } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
 import type { Project, ProjectSession } from '@/types/app';
@@ -89,18 +92,24 @@ function AppContentInner() {
     refreshProjects: refreshProjectsSilently,
   });
 
+  // Scheduled jobs read their times on the user's clock, not the server's: tell the host this browser's zone.
+  useEffect(() => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) void api.setTimeZone(zone).catch(() => { /* an older host has no jobs */ });
+  }, []);
+
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
-  // The phone has no way back from the Brain tab, so it stays on the desks.
+  // The phone has no way back from the Brain tab or Jobs, so it stays on the desks.
   useEffect(() => {
-    if (compact && topView === 'brain') setTopView('desks');
+    if (compact && (topView === 'brain' || topView === 'jobs')) setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
   // Streams from the host (Claude Code hooks → /api/events). A finished
   // session counts as unseen until the user is looking at its desk with
-  // the window in front; that drives the tab badges, the title count and
-  // the opt-in browser notification.
+  // the window in front; that drives the tab badges and the title count.
+  // Notifications are web push from the host (lib/push.ts).
   const turnSnapshot = useTurnStore();
   const projectsRef = React.useRef(projects);
   projectsRef.current = projects;
@@ -133,35 +142,7 @@ function AppContentInner() {
       !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
-  // The last "Session finished" notification per session, closed when the next one comes.
-  const sessionNotifications = useRef(new Map<string, Notification>());
-
   useEffect(() => {
-    const onTurn = (event: TurnEvent) => {
-      if ((event.state !== 'done' && event.state !== 'waiting') || event.silent || event.repeated || !readSettings().notifyOnDone) return;
-      if (document.visibilityState === 'visible' && document.hasFocus()) return;
-      if (!('Notification' in window) || Notification.permission !== 'granted') return;
-      const session = projectsRef.current
-        .flatMap((project) => project.sessions ?? [])
-        .find((candidate) => candidate.id === event.sessionId);
-      try {
-        // A fresh tag per turn: a notification that reuses a tag replaces the
-        // old one without a banner, and on macOS `renotify` does not bring the
-        // banner back — so only a session's first turn alerted. Closing the
-        // session's previous notification keeps one entry per session.
-        sessionNotifications.current.get(event.sessionId)?.close();
-        const name = event.title || session?.summary;
-        const heading = event.state === 'waiting' ? 'Needs you' : event.batch && event.batch > 1 ? `All ${event.batch} workers finished` : 'Session finished';
-        const notification = new Notification(heading, {
-          body: name || (event.state === 'waiting' ? 'A session is waiting for you' : 'Claude finished a turn'),
-          tag: `${event.sessionId}:${Date.now()}`,
-        });
-        sessionNotifications.current.set(event.sessionId, notification);
-        notification.onclose = () => {
-          if (sessionNotifications.current.get(event.sessionId) === notification) sessionNotifications.current.delete(event.sessionId);
-        };
-      } catch { /* notifications unavailable */ }
-    };
     // Worker sessions requested by a session (skill spawn-session) or by the
     // host (first run: sign-in, getting started): claim each one — only one tab
     // gets it — and open its pane on the requester's desk. A project the page
@@ -186,7 +167,7 @@ function AppContentInner() {
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
         // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
-        if (request.fromSessionId && !request.open) continue;
+        if ((request.fromSessionId || request.origin === 'job') && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };
@@ -194,7 +175,7 @@ function AppContentInner() {
         }).catch(() => { /* host gone — the request is dropped with it */ });
       }
     };
-    return connectTurnEvents(onTurn, onSpawns);
+    return connectTurnEvents(onSpawns);
   }, []);
   // Note changes on the same stream → note queries + the sidebar's unseen dot.
   useNotesLiveSync();
@@ -225,6 +206,7 @@ function AppContentInner() {
   }, [desks]);
 
   useSeenResults();
+  usePushLinks();
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window
@@ -374,6 +356,8 @@ function AppContentInner() {
         >
           <DeskTabBar />
         </div>
+        {/* Scheduled jobs and what the cockpit tells the user about them. */}
+        <HeaderJobs />
       </div>
       )}
 
@@ -424,6 +408,11 @@ function AppContentInner() {
           {topView === 'brain' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
               <BrainDashboard />
+            </div>
+          )}
+          {topView === 'jobs' && (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+              <JobsView />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}

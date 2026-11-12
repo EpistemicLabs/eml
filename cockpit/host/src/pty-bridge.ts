@@ -842,6 +842,7 @@ export class PtyBridge {
       cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null, hostStarted: true,
     }, null)
     if (request.title) this.ledger.setAgentTitle(request.id, request.title)
+    if (request.jobId) this.ledger.setJobId(request.id, request.jobId)
     return null
   }
 

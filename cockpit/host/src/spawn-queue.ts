@@ -37,9 +37,10 @@ export class SpawnQueue extends EventEmitter {
     return this.tabs
   }
 
-  add(input: Omit<SpawnRequest, 'id' | 'createdAt'>): SpawnRequest {
+  /** `id`: chosen by the caller when it has to know the worker's session id first (a job's run). */
+  add(input: Omit<SpawnRequest, 'id' | 'createdAt'> & { id?: string }): SpawnRequest {
     this.prune()
-    const request: SpawnRequest = { ...input, id: randomUUID(), createdAt: new Date().toISOString() }
+    const request: SpawnRequest = { ...input, id: input.id ?? randomUUID(), createdAt: new Date().toISOString() }
     this.pending.set(request.id, request)
     this.emit('spawn', request)
     return request

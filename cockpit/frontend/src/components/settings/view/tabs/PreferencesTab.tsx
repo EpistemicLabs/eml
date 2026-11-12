@@ -15,8 +15,6 @@ import SessionLimitsRows from './SessionLimitsRows';
 type PreferencesTabProps = {
   projectSortOrder: ProjectSortOrder;
   onProjectSortOrderChange: (value: ProjectSortOrder) => void;
-  notifyOnDone: boolean;
-  onNotifyOnDoneChange: (value: boolean) => void;
   greetOnStart: boolean;
   onGreetOnStartChange: (value: boolean) => void;
 };
@@ -29,8 +27,6 @@ const inlineSelectClass =
 export default function PreferencesTab({
   projectSortOrder,
   onProjectSortOrderChange,
-  notifyOnDone,
-  onNotifyOnDoneChange,
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
@@ -97,7 +93,7 @@ export default function PreferencesTab({
         </SettingsCard>
       </SettingsSection>
 
-      <NotificationsSection notifyOnDone={notifyOnDone} onNotifyOnDoneChange={onNotifyOnDoneChange} />
+      <NotificationsSection />
     </div>
   );
 }

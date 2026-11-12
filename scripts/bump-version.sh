@@ -33,7 +33,7 @@ for dir in . cockpit/host packages/server packages/mcp-server packages/protocol;
   check "$dir" "$(node -p "require('./$dir/package.json').version")" "$VERSION"
 done
 check "mcp-server README ## Tools" "$(grep -m1 -oE '^## Tools \(v[0-9]+\.[0-9]+\.[0-9]+\)' packages/mcp-server/README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" "$VERSION"
-for dir in packages/core cockpit/frontend; do
+for dir in packages/core packages/channel-bridge cockpit/frontend; do
   check "$dir (internal)" "$(node -p "require('./$dir/package.json').version")" "0.0.0"
 done
 

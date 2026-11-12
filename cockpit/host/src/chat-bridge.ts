@@ -13,7 +13,7 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
-import type { SpawnRequest } from './domain/spawn-request.js'
+import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
@@ -129,6 +129,8 @@ export interface ChatContext {
   limits?: () => { session: SessionLimits; idleMs: number }
   /** More sessions run than the cap allows (session-limits.ts). */
   overCap?: () => boolean
+  /** The schedule tool's actions, for the session that calls it (application/jobs.ts); absent: no tool. */
+  jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
 }
 
 type ClientMessage = {
@@ -542,13 +544,14 @@ export class ChatBridge {
       try {
         provider.trustProject(path, sessionSpaceOf(space))
         // Started by hand it is the user's own session, in the mode they use: only a session's worker runs unattended.
-        const worker = request.fromSessionId !== null
+        const worker = unattended(request)
         this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, null, space.ledgerKey)
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
         if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
+        if (request.jobId) this.ctx.ledger.setJobId(sessionId, request.jobId)
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted.
         this.ctx.onTurn(sessionId, 'working')
@@ -634,9 +637,11 @@ export class ChatBridge {
       cwd: projectPath, env, address,
       files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
-      ...(space.runtime?.chrome && !launch.limits?.mcpConfig ? { chrome: true } : {}),
+      // The provider decides: a runtime's own browser control, or Chrome lent to a limited job.
+      ...(launch.chrome ? { chrome: true } : {}),
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
+      ...(this.ctx.jobs ? { jobs: (input: Record<string, unknown>) => this.ctx.jobs!(entry.sessionId, input) } : {}),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
       onSpawn: (pid) => this.placeInCeiling(entry, pid),
     })

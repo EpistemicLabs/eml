@@ -27,8 +27,6 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
     saveStatus,
     projectSortOrder,
     setProjectSortOrder,
-    notifyOnDone,
-    setNotifyOnDone,
     greetOnStart,
     setGreetOnStart,
   } = useSettingsController({ isOpen, initialTab });
@@ -108,8 +106,6 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
                 <PreferencesTab
                   projectSortOrder={projectSortOrder}
                   onProjectSortOrderChange={setProjectSortOrder}
-                  notifyOnDone={notifyOnDone}
-                  onNotifyOnDoneChange={setNotifyOnDone}
                   greetOnStart={greetOnStart}
                   onGreetOnStartChange={setGreetOnStart}
                 />

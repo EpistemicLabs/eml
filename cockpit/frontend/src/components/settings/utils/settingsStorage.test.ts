@@ -38,8 +38,8 @@ describe('the chat view setting', () => {
   });
 
   it('stores no choice of view when another setting changes', () => {
-    settings.writeSettings({ notifyOnDone: true });
-    expect(stored()).toMatchObject({ notifyOnDone: true });
+    settings.writeSettings({ greetOnStart: false });
+    expect(stored()).toMatchObject({ greetOnStart: false });
     expect(stored()).not.toHaveProperty('chatDefault');
   });
 

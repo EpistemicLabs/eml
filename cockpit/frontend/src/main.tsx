@@ -11,9 +11,12 @@ import { App } from "@/App";
 import { FirstRunGate } from "@/components/first-run/FirstRun";
 import { SingleWindowGate } from "@/components/app/SingleWindowGate";
 import { installSpaceHeader } from "@/lib/space-fetch";
+import { registerServiceWorker } from "@/lib/push";
 
 // Every host request names the active brain space (lib/space-fetch.ts).
 installSpaceHeader();
+// Push messages and taps on them (public/sw.js).
+registerServiceWorker();
 
 const queryClient = new QueryClient({
   defaultOptions: {

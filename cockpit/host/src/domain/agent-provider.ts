@@ -1,4 +1,4 @@
-import type { ToolProfile } from './tool-profile.js'
+import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
  * The agent CLI a cockpit session runs, as the host sees it (ARCHITECTURE.md,
@@ -102,6 +102,10 @@ export interface LaunchRequest {
   reachable?: boolean
   /** What the session may use. */
   toolProfile?: ToolProfile | null
+  /** Browser control lent for now (a limited job's Chrome grant), whatever its space or limits say; a provider without it ignores it. */
+  chrome?: boolean
+  /** MCP servers it gets beside its space's, by name; a provider without MCP ignores them. */
+  extraMcpServers?: Record<string, McpServerSpec>
 }
 
 /** Binary, arguments and the provider's own environment for one session process. */
@@ -115,6 +119,8 @@ export interface LaunchSpec {
    * after a host restart, until the user closes it.
    */
   keepRunning: boolean
+  /** It gets browser control (Claude in Chrome), for a runtime that doesn't use `args`. */
+  chrome?: boolean
   /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */
   limits?: { mcpConfig: string | null; deniedTools: string[] }
 }

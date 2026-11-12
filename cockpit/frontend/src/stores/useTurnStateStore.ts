@@ -9,17 +9,7 @@ import type { LLMProvider } from '@/types/app';
 
 export type TurnState = 'idle' | 'working' | 'done' | 'waiting';
 export type TurnInfo = { state: TurnState; since: string };
-export type TurnEvent = TurnInfo & {
-  sessionId: string;
-  /** What a notification calls the session (host turnNotice). */
-  title?: string | null;
-  /** A worker of a batch that is still running: the batch speaks up once, at its last. */
-  silent?: boolean;
-  /** This worker finished its batch of this many. */
-  batch?: number;
-  /** The session was in this state already: nothing new to tell. */
-  repeated?: boolean;
-};
+export type TurnEvent = TurnInfo & { sessionId: string };
 
 type Snapshot = {
   turns: Record<string, TurnInfo>;
@@ -121,12 +111,11 @@ export type SpawnRequest = {
   provider?: LLMProvider;
   /** It asked for a pane. Without one a session's worker just runs and shows under its parent. */
   open?: boolean;
+  /** 'job': a scheduled job's run; it runs on the host like a session's worker. */
+  origin?: 'job';
 };
 
-export function connectTurnEvents(
-  onTurn?: (event: TurnEvent) => void,
-  onSpawns?: (requests: SpawnRequest[]) => void,
-): () => void {
+export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {
   const source = new EventSource('/api/events');
 
   // Worker requests ride the same stream: the pending ones on (re)connect,
@@ -152,12 +141,10 @@ export function connectTurnEvents(
 
   source.addEventListener('turn', (message) => {
     const event = JSON.parse((message as MessageEvent<string>).data) as TurnEvent;
-    const repeated = snapshot.turns[event.sessionId]?.state === event.state;
     const turns = { ...snapshot.turns };
     if (event.state === 'idle') delete turns[event.sessionId];
     else turns[event.sessionId] = { state: event.state, since: event.since };
     setTurns(turns);
-    onTurn?.({ ...event, repeated });
   });
 
   return () => source.close();

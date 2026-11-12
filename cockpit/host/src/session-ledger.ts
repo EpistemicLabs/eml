@@ -85,6 +85,8 @@ export interface LedgerEntry {
   toolProfile: ToolProfile | null
   /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
   turnInFlight: { retried: boolean } | null
+  /** The job whose run started it (domain/job.ts): its channel tools act for that job on every resume. */
+  jobId: string | null
 }
 
 interface LedgerFile {
@@ -137,6 +139,7 @@ function load(): LedgerFile {
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
+          jobId: typeof entry.jobId === 'string' && entry.jobId ? entry.jobId : null,
         }
       }
     }
@@ -210,6 +213,7 @@ export class SessionLedger {
       resultAt: prev?.resultAt ?? null,
       archivedAt: prev?.archivedAt ?? null,
       toolProfile: prev?.toolProfile ?? null,
+      jobId: prev?.jobId ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
     }
     this.persist()
@@ -292,6 +296,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     entry.toolProfile = toolProfile
+    this.persist()
+  }
+
+  /** Set when a job's run starts the session; it holds on every resume. */
+  setJobId(sessionId: string, jobId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.jobId === jobId) return
+    entry.jobId = jobId
     this.persist()
   }
 

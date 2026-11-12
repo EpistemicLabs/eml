@@ -263,6 +263,49 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
   pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
+- **Jobs:** a session schedules work for later with the `schedule` tool (in the chat view's `cockpit` MCP server, next to
+  the status tool) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`): a repeating job (cron) or a one-time task (a date), read
+  in the user's time zone (the page tells the host its browser's zone). At the time the host wakes a fresh worker, the
+  job's own session, or a session that exists, with the job's prompt behind a line saying the cockpit sent it
+  (`domain/job.ts`, `application/job-runner.ts`). Jobs and their last 100 runs live in `<home>/jobs.json`, not in the
+  brain; a job runs in its maker's space with at most its maker's tools. Runs start a few at a time and only with room
+  (the worker check above); a busy target is tried again for up to an hour; a repeating run due more than 6 hours ago
+  (the cockpit was down) is recorded as missed, a one-time run still runs late; a run is skipped while the job's
+  previous one still works; three failures in a row pause the job. A schedule is one
+  trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs. It reaches the host at
+  `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
+  space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
+  decides which session that reaches and answers delivered, retry or refused.
+- **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
+  `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
+  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
+  `msg_reply` (`dist/channel-bridge-mcp.cjs`), no Bash and of its space's MCP servers only the brain
+  (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
+  skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
+  cockpit token in the host.
+- **Jobs view:** the header's **Jobs** shows every space's jobs with their next and last runs (a missed run stands
+  out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
+  run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
+  session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
+  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
+- **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
+  added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
+  subscribed device with the session's name, its project and what it said; a tap opens that session. While the user
+  works in the cockpit on a device (a click or key there within ten minutes), only that device is told and the phone
+  stays quiet. No push about a session someone has on screen, nor the same notice twice within two minutes. The host signs and encrypts each
+  message itself (`infrastructure/push/web-push.ts`, RFC 8291/8292, no library) and sends it to the browser's push
+  service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
+  devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in
+  `frontend/public/sw.js`.
+- **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
+  mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
+  clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
+  view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
+  channel tools act for that job on every resume.
+- **Limited jobs and grants:** a job with a channel trigger starts **limited** (the Jobs view's switch, the user's
+  alone): its sessions get no shell, no messages to other sessions, no schedule tool and of the space's MCP servers
+  only the brain; web tools stay. The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
+  ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
@@ -409,6 +452,7 @@ the cockpit's own Claude Code; `claude-config/` =
 the app's `CLAUDE_CONFIG_DIR`, pre-seeded with onboarding/theme and per-project trust;
 `codex/` and `codex-config/` = the cockpit's own Codex CLI and its `CODEX_HOME`, once Codex is set up;
 `spawn-inbox/` = worker requests from sandboxed sessions, read and removed at once; `tasks/` = task-run files;
+`channel-bridge/` = the channel bridge's database, tokens, address and accounts file;
 `bin/node` = a link to the host's node for the session hooks (their text names it and `app/current/…`, so it survives updates);
 `projects.json` = the project registry; `sessions.json` = the session ledger; `config` = the
 brain tokens (the spaces' and the agents'), the human's handle and the spaces' agent bindings, chmod

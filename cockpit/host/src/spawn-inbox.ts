@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { SPAWN_INBOX_DIR } from './paths.js'
 import { requestMessage, requestSessionTitle, requestSpawn, type SpawnDeps } from './spawn-api.js'
+import { requestJobs } from './jobs-api.js'
 
 /**
  * Worker requests as files. A session whose sandbox has no network (Codex)
@@ -12,7 +13,8 @@ import { requestMessage, requestSessionTitle, requestSpawn, type SpawnDeps } fro
  *
  * A request with kind 'session-title' is a session naming itself (session-title-cli.ts),
  * handled like PUT /api/session-title/<id>; kind 'session-message' a message for
- * a session (session-message-cli.ts), like POST /api/sessions/<target>/message.
+ * a session (session-message-cli.ts), like POST /api/sessions/<target>/message;
+ * kind 'schedule' the schedule tool's request (schedule-cli.ts), like POST /api/jobs.
  *
  * Same guard as the HTTP way: the request carries the per-boot spawn token
  * from the session's env. The folder is owner-only; a request file exists for
@@ -25,7 +27,9 @@ const SCAN_INTERVAL_MS = 2000
 
 const log = (line: string) => process.stderr.write(`[spawn-inbox] ${line}\n`)
 
-async function handle(deps: SpawnDeps, id: string): Promise<void> {
+type InboxDeps = SpawnDeps & { jobs?: Parameters<typeof requestJobs>[0] }
+
+async function handle(deps: InboxDeps, id: string): Promise<void> {
   const file = path.join(SPAWN_INBOX_DIR, `${id}.json`)
   let body: Record<string, unknown>
   try {
@@ -42,7 +46,9 @@ async function handle(deps: SpawnDeps, id: string): Promise<void> {
       ? requestSessionTitle(deps.ledger, body.session, body)
       : body.kind === 'session-message'
         ? await requestMessage(deps, 'session', body.target, body)
-        : await requestSpawn(deps, body)
+        : body.kind === 'schedule' && deps.jobs
+          ? await requestJobs(deps.jobs, body)
+          : await requestSpawn(deps, body)
   const result = path.join(SPAWN_INBOX_DIR, `${id}.result.json`)
   fs.writeFileSync(`${result}.tmp`, JSON.stringify(outcome), { mode: 0o600 })
   fs.renameSync(`${result}.tmp`, result)
@@ -51,7 +57,7 @@ async function handle(deps: SpawnDeps, id: string): Promise<void> {
 }
 
 /** Start taking requests from the inbox. Leftovers of an earlier boot are dropped — their token is gone. */
-export function watchSpawnInbox(deps: SpawnDeps): void {
+export function watchSpawnInbox(deps: InboxDeps): void {
   fs.mkdirSync(SPAWN_INBOX_DIR, { recursive: true, mode: 0o700 })
   fs.chmodSync(SPAWN_INBOX_DIR, 0o700)
   for (const name of fs.readdirSync(SPAWN_INBOX_DIR)) fs.rmSync(path.join(SPAWN_INBOX_DIR, name), { force: true })

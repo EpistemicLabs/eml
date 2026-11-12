@@ -39,6 +39,7 @@ installer from [INSTALL.md](INSTALL.md) instead. Details, updates and the develo
 | `packages/protocol` | The team-brain protocol, shared by the cockpit and the relay: the op log format, device keys, sealed ops, membership, brain keys, invites, relay login. Described in [`PROTOCOL.md`](packages/protocol/PROTOCOL.md), with test vectors. |
 | `packages/server` | The HTTP API over core, one SQLite file per brain, with token routing. |
 | `packages/mcp-server` | `@engramprotocol/mcp-server`: the brain as MCP tools for Claude Code, plus the session hooks and skills. |
+| `packages/channel-bridge` | The channel bridge: routes incoming mail to cockpit jobs, holds a job's replies as drafts and wakes its session ([README](packages/channel-bridge/README.md)). Gmail is its first channel. |
 
 ## Development
 

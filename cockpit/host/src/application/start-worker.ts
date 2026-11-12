@@ -1,5 +1,5 @@
 import type { SessionRuntimeKind } from '../domain/session-runtime.js'
-import type { SpawnRequest } from '../domain/spawn-request.js'
+import { unattended, type SpawnRequest } from '../domain/spawn-request.js'
 
 /** One way of running workers. Starts one under the request's id; returns why it could not, or null. */
 export interface WorkerRunner {
@@ -33,7 +33,7 @@ export class StartWorker {
   constructor(private deps: StartWorkerDeps) {}
 
   private inChat(request: SpawnRequest): boolean {
-    return request.fromSessionId !== null && this.deps.runsInChat(request)
+    return unattended(request) && this.deps.runsInChat(request)
   }
 
   /** Whether the machine has room for another worker: enough free memory, and below the cap or a quiet session made room. */

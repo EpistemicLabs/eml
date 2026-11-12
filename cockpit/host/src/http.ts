@@ -4,6 +4,10 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
+import { handlePushApi, type PushApiDeps } from './push-api.js'
+import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
+import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
@@ -117,6 +121,14 @@ export interface HostDeps {
   hooksUrl: string
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
+  /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
+  jobs?: JobsApiDeps
+  /** Web push devices, the test and what the user is looking at (push-api.ts). */
+  push?: PushApiDeps
+  /** The channel bridge's /v1 routes (job-contract-api.ts). */
+  jobContract?: JobContractDeps
+  /** The channel bridge's draft routes for the page; absent, /api/bridge is not served. */
+  channelBridge?: BridgeApiDeps
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -180,17 +192,6 @@ function trustProject(deps: HostDeps, space: BrainSpace, projectPath: string): v
 }
 
 // ── Project + session views ───────────────────────
-/** What a notification about this change says: a batch of workers speaks up once, when its last one finishes. */
-function turnNotice(deps: HostDeps, event: TurnEvent): { title: string | null; silent?: true; batch?: number } {
-  const ledger = deps.bridge.ledger
-  const entry = ledger.get(event.sessionId)
-  const title = entry?.title ?? entry?.agentTitle ?? null
-  if (event.state !== 'done' || !entry?.parentSessionId) return { title }
-  const batch = ledger.list().filter((other) => other.parentSessionId === entry.parentSessionId && !other.archivedAt)
-  if (batch.some((other) => other.sessionId !== event.sessionId && deps.turns.get(other.sessionId)?.state === 'working')) return { title, silent: true }
-  return { title, batch: batch.length }
-}
-
 /** What the sidebar and the review pane do to a session. All are the page's own: the same-origin guard holds them. */
 async function handleSessionActions(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps, resource: string | undefined, id: string | undefined, action: string | undefined, method: string): Promise<boolean> {
   if (resource !== 'sessions' || method !== 'POST' || !id) return false
@@ -290,6 +291,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     isPinned: entry.pinned,
     paneId: entry.paneId,
     taskId: entry.taskId,
+    jobId: entry.jobId ?? null,
     state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
     runtime: entry.runtime,
     attention: entry.attention,
@@ -553,6 +555,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
+  if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
+  if (deps.push && await handlePushApi(req, res, deps.push, url, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).
@@ -947,7 +951,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       res.write('retry: 2000\n\n')
       send('snapshot', deps.turns.snapshot())
-      const onTurn = (event: TurnEvent) => send('turn', { ...event, ...turnNotice(deps, event) })
+      const onTurn = (event: TurnEvent) => send('turn', event)
       deps.turns.on('turn', onTurn)
       const detachSpawns = attachSpawnEvents(deps.spawns, send)
       // Note changes of every space, each tagged with its space (null = main,
@@ -1213,12 +1217,13 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
 
 /**
  * The write routes a session reaches with its own per-boot token instead of
- * the page's Origin: /api/hook, /api/spawn, /api/session-title/<id>. Every
+ * the page's Origin: /api/hook, /api/spawn, /api/jobs (a session scheduling),
+ * /api/session-title/<id>, /api/sessions/<target>/message. Every
  * other write — a project's move into a shared space among them — needs the
  * cockpit page's Origin.
  */
 export function isTokenEndpoint(url: string): boolean {
-  return /^\/api\/(hook|spawn|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
+  return /^\/api\/(hook|spawn|jobs|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
 }
 
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {
@@ -1247,7 +1252,7 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // carry no Origin and are exempt: /api/hook (session hooks, per-boot token in
     // the x-cockpit-hook header), /api/spawn (worker spawn),
     // /api/session-title/<id> (a session naming itself) and
-    // /api/sessions/<target>/message, all X-Cockpit-Token. Reads
+    // /api/sessions/<target>/message and /api/jobs (a session scheduling), all X-Cockpit-Token. Reads
     // (GET/HEAD) are open; a cross-origin page still can't read the response.
     if (url.startsWith('/api/')) {
       const method = req.method ?? 'GET'
@@ -1256,6 +1261,16 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
         json(res, 403, { error: { code: 'FORBIDDEN', message: 'Cross-origin request refused' } })
         return
       }
+    }
+    // The channel bridge, with a space's token (job-contract-api.ts); no page calls these.
+    if (url.startsWith('/v1/') && deps.jobContract) {
+      void handleJobContract(req, res, deps.jobContract, json, readJson).catch((err) => fail(res, err))
+      return
+    }
+    // A job's drafts in the channel bridge, for the review card (channel-bridge-api.ts).
+    if (/^\/api\/bridge(\/|\?|$)/.test(url) && deps.channelBridge) {
+      void handleBridgeApi(req, res, deps.channelBridge).catch((err) => fail(res, err))
+      return
     }
     // Only /api/brain and /api/brain/… — not host routes like /api/brain-info.
     if (/^\/api\/brain(\/|\?|$)/.test(url)) { void proxyBrain(req, res, deps); return }

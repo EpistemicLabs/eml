@@ -1,3 +1,4 @@
+// The Jobs view (components/jobs) is a top view too, opened from the header's right side.
 // Cockpit addition: the header carries a fixed Brain
 // tab next to the brand label, before the desk tabs. It switches the main
 // area between the desk/pane grid and the brain dashboard. Same module-
@@ -6,11 +7,11 @@
 import { useSyncExternalStore } from 'react';
 
 /** The review screen is never restored: a reload lands on the desks, the queue is gone. */
-export type TopView = 'desks' | 'brain' | 'review';
+export type TopView = 'desks' | 'brain' | 'review' | 'jobs';
 
 const STORAGE_KEY = 'cockpit-top-view';
 
-const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain';
+const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain' || value === 'jobs';
 
 function load(): TopView {
   try {

@@ -36,7 +36,6 @@ export function readSettings(): CockpitSettings {
   const chatOverride = typeof stored.chatDefault === 'boolean' ? stored.chatDefault : undefined;
   return {
     projectSortOrder: toSortOrder(stored.projectSortOrder),
-    notifyOnDone: stored.notifyOnDone === true,
     greetOnStart: stored.greetOnStart !== false,
     chatDefault: chatOverride ?? hostChatView,
     chatOverride,

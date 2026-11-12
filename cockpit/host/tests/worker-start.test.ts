@@ -86,6 +86,14 @@ describe('worker start without a tab', () => {
     expect(spawns.list()).toHaveLength(1)
   })
 
+  it('starts a job\'s run without a requesting session, under the id the job chose', () => {
+    spawns.watch()
+    const r = spawns.add({ id: 'chosen-by-the-job', projectId: 'bp-eml', prompt: 'run', title: 'Daily brief', fromSessionId: null, origin: 'job' })
+    starter.tick()
+    expect(bridge.started.map((s) => s.id)).toEqual([r.id])
+    expect(r.id).toBe('chosen-by-the-job')
+  })
+
   it('has no cap: every due request starts while there is room', () => {
     for (let i = 0; i < 5; i += 1) request(spawns)
     new WorkerStarter({ spawns, bridge, turnOf: () => ({ state: 'idle', since: null }), log: () => {} }).tick()
