@@ -143,6 +143,8 @@ export function moveOutcome(answer: HostAnswer<Partial<MoveDoneView> & { code?: 
   if (status === 200) {
     return { kind: 'done', text: `Moved. ${projectName} is now in ${spaceName}; the copy here is archived and points there.`, backup: typeof body.backup_path === 'string' ? body.backup_path : '' };
   }
+  // the brain server went away during the run: the import may have landed, so this reads like a lost answer
+  if (status === 502 && body.code === 'BRAIN_UNAVAILABLE') return lostOutcome(projectName);
   if (status === 409 && body.code === 'PLAN_CHANGED') {
     return { kind: 'changed', text: 'The project changed since this plan was made. Here is the current one.' };
   }

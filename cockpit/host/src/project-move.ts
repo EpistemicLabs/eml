@@ -58,7 +58,10 @@ export async function moveProject(source: MoveSpace, target: MoveSpace, project:
 /**
  * The local entries of the moved projects, carried over: display name, pin,
  * hidden, folder. A folder that no longer exists is left behind (the target
- * gets the entry without it). Returns the brain project ids that had an entry.
+ * gets the entry without it). A project the target space has an entry for
+ * already (the engrams joined it) keeps that entry as it is there: its
+ * sessions run in its folder, so the moved entry only fills what it lacks.
+ * Returns the brain project ids that had an entry.
  */
 export function rehome(source: ProjectRegistry, target: ProjectRegistry, brainProjectIds: string[]): string[] {
   const moved: string[] = []
@@ -74,16 +77,25 @@ export function rehome(source: ProjectRegistry, target: ProjectRegistry, brainPr
 }
 
 function carry(target: ProjectRegistry, brainProjectId: string, entry: ProjectEntry): void {
-  target.ensureBrain(brainProjectId, entry.displayName)
   const projectId = projectIdForBrain(brainProjectId)
+  const there = target.get(projectId)
+  if (there) {
+    target.update(projectId, { ...(there.customName || !entry.customName ? {} : { displayName: entry.customName }), starred: there.starred || entry.starred })
+    if (!there.path) carryPath(target, projectId, entry.path)
+    return
+  }
+  target.ensureBrain(brainProjectId, entry.displayName)
   // the brain's name as the registry knew it is the display name's fallback when there is no custom one
   target.update(projectId, { displayName: entry.customName, brainName: entry.displayName, starred: entry.starred, hidden: entry.hidden })
-  if (entry.path) {
-    try {
-      target.update(projectId, { path: entry.path })
-    } catch (err) {
-      if (!(err instanceof ProjectPathError)) throw err
-    }
+  carryPath(target, projectId, entry.path)
+}
+
+function carryPath(target: ProjectRegistry, projectId: string, folder: string | null): void {
+  if (!folder) return
+  try {
+    target.update(projectId, { path: folder })
+  } catch (err) {
+    if (!(err instanceof ProjectPathError)) throw err
   }
 }
 

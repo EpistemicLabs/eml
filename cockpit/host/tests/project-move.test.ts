@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ProjectRegistry, projectIdForBrain } from '../src/project-registry.js'
@@ -133,6 +133,25 @@ describe('rehome', () => {
     expect(rehome(src, tgt, ['top', 'never-registered'])).toEqual(['top'])
     expect(tgt.get(projectIdForBrain('top'))).toMatchObject({ starred: true, path: null })
     expect(tgt.get(projectIdForBrain('never-registered'))).toBeUndefined()
+  })
+
+  it('a project the target space has an entry for already keeps it: its folder, name and hidden flag; the moved one fills what it lacks', () => {
+    const src = new ProjectRegistry(join(dir, 'src.json'), join(dir, 'src-folders'))
+    const tgt = new ProjectRegistry(join(dir, 'tgt.json'), join(dir, 'tgt-folders'))
+    mkdirSync(join(dir, 'mine')); mkdirSync(join(dir, 'theirs'))
+    // the registry keeps a folder resolved (/var is /private/var on macOS)
+    const mine = realpathSync(join(dir, 'mine')), theirs = realpathSync(join(dir, 'theirs'))
+    src.ensureBrain('top', 'Top')
+    src.update(projectIdForBrain('top'), { path: mine, starred: true, displayName: 'My top', hidden: true })
+    src.ensureBrain('side', 'Side')
+    src.update(projectIdForBrain('side'), { path: mine, displayName: 'My side' })
+    tgt.ensureBrain('top', 'Top')
+    tgt.update(projectIdForBrain('top'), { path: theirs, displayName: 'Top there' })
+    tgt.ensureBrain('side', 'Side')
+    expect(rehome(src, tgt, ['top', 'side'])).toEqual(['top', 'side'])
+    expect(tgt.get(projectIdForBrain('top'))).toMatchObject({ path: theirs, customName: 'Top there', starred: true, hidden: false })
+    expect(tgt.get(projectIdForBrain('side'))).toMatchObject({ path: mine, customName: 'My side' })
+    expect(src.get(projectIdForBrain('top'))).toBeUndefined()
   })
 })
 

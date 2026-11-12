@@ -376,6 +376,60 @@ describe('moveProject', () => {
     shared.close(); s.eml.close()
   })
 
+  it('a project whose only engrams are statuses the target outranks is archived with the rest', async () => {
+    const s = source()
+    const status = writes(s.eml).store(validStatus({ scope: 'project.leaf', content: 'leaf state' }), s.kai)
+    const to = target()
+    createObject(to, 'project', { id: 'leaf', name: 'Leaf there' })
+    writes(to).store(validStatus({ scope: 'project.leaf', content: 'theirs' }))
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(to), project: 'top' })
+    expect(plan.tree).toEqual([{ id: 'top', engrams: 1 }, { id: 'child', engrams: 1 }, { id: 'leaf', engrams: 0 }])
+    const result = await moveProject({ source: raw(s.eml), target: { db: raw(to) }, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'source.db') }, s.kai)
+    expect(result.archived).toEqual(['top', 'child', 'leaf'])
+    expect(s.eml.projects.get('leaf')!.status).toBe('archived')
+    expect(raw(s.eml).prepare('SELECT status FROM engrams WHERE id = ?').get(status.id)).toEqual({ status: 'active' })
+    to.close(); s.eml.close()
+  })
+
+  it('a resume keeps the set its import carried, whatever the target\'s status became since', async () => {
+    // the import carried top's status (the target had none); a teammate then writes one there
+    const s = source()
+    const mine = writes(s.eml).store(validStatus({ scope: 'project.top', content: 'mine' }), s.kai)
+    const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    expect(plan.kept_statuses).toEqual([])
+    const lost = sharedTarget(shared, { after: async () => { throw new Error('the write may still land') } })
+    await expect(moveProject({ source: raw(s.eml), target: lost, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'a.db') }, s.kai)).rejects.toThrow(/may still land/)
+    await sharedTarget(shared).write({ name: 'engram.create', input: validStatus({ scope: 'project.top', content: 'teammate' }) as never })
+    const again = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    expect(again).toMatchObject({ plan_hash: plan.plan_hash, kept_statuses: [], collisions: [], resume: { op_id: expect.any(String) } })
+    const result = await moveProject({ source: raw(s.eml), target: sharedTarget(shared), project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'b.db') }, s.kai)
+    expect(result.resumed).toBe(true)
+    expect(count(s.eml, 'engrams WHERE id = ?', mine.id)).toBe(0)
+    shared.close(); s.eml.close()
+  })
+
+  it('a resume keeps back what its import kept back, also after the target\'s status is gone', async () => {
+    // the import kept top's status back (the target had one); the target's status is then invalidated
+    const s = source()
+    const mine = writes(s.eml).store(validStatus({ scope: 'project.top', content: 'mine' }), s.kai)
+    const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
+    const t = sharedTarget(shared)
+    await t.write({ name: 'object.create', input: { object: 'project', fields: { id: 'top', name: 'Top there' } } })
+    const theirs = await t.write({ name: 'engram.create', input: validStatus({ scope: 'project.top', content: 'theirs' }) as never }) as { id: string }
+    const plan = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    expect(plan.kept_statuses).toEqual([mine.id])
+    const lost = sharedTarget(shared, { after: async () => { throw new Error('the write may still land') } })
+    await expect(moveProject({ source: raw(s.eml), target: lost, project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'a.db') }, s.kai)).rejects.toThrow(/may still land/)
+    await sharedTarget(shared).write({ name: 'engram.update', input: { id: theirs.id, patch: { status: 'invalidated' } } as never })
+    const again = planProjectMove({ source: raw(s.eml), target: raw(shared), project: 'top' })
+    expect(again).toMatchObject({ plan_hash: plan.plan_hash, kept_statuses: [mine.id], collisions: [], resume: { op_id: expect.any(String) } })
+    const result = await moveProject({ source: raw(s.eml), target: sharedTarget(shared), project: 'top', plan_hash: plan.plan_hash, backup_path: join(dir(), 'b.db') }, s.kai)
+    expect(result.resumed).toBe(true)
+    expect(raw(s.eml).prepare('SELECT status FROM engrams WHERE id = ?').get(mine.id)).toEqual({ status: 'active' })
+    shared.close(); s.eml.close()
+  })
+
   it('a rejected import in the target\'s log is not a resume', async () => {
     const s = source()
     const shared = sharedBrain('7c9e6679-7425-40de-944b-e07fc1f90ae7')
