@@ -45,6 +45,12 @@ export interface CockpitConfig {
    */
   spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
   /**
+   * The order the user gave the spaces in the header (brain-space.ts
+   * ordered): space ids, main included. A space it does not name follows in
+   * the order of the config. Absent = the config's order, main first.
+   */
+  spaceOrder?: string[]
+  /**
    * The home's agent brains (agents.ts): one brain per agent, named after the
    * agent id in control.db, with a token the host alone holds. `runtime`: the
    * agent runs in a runtime of its own (agent-runtime.ts), set by `agent
@@ -90,6 +96,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
             ...(isSpaceColor(s.color) ? { color: s.color } : {}),
           }))
       : []
+    const spaceOrder = Array.isArray(parsed.spaceOrder) ? parsed.spaceOrder.filter((id): id is string => typeof id === 'string' && !!id) : []
     const agents = Array.isArray(parsed.agents)
       ? parsed.agents
           .filter((a): a is { id: string; token: string; runtime?: true } => !!a && typeof a.id === 'string' && AGENT_ID.test(a.id) && typeof a.token === 'string' && !!a.token)
@@ -103,6 +110,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...agentOf(parsed.agent),
       ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
       ...(spaces.length ? { spaces } : {}),
+      ...(spaceOrder.length ? { spaceOrder } : {}),
       ...(agents.length ? { agents } : {}),
       ...(readHygiene(parsed.hygiene) ?? {}),
     }

@@ -573,9 +573,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   // and its team brains, sign-out. The session stays in the host (account.ts).
   if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
 
-  // Spaces: the list, and a new local one (Settings › Spaces).
+  // Spaces: the list in the user's order, the order itself (dragged in the
+  // header), and a new local one (Settings › Spaces).
   if (resource === 'spaces' && !id && method === 'GET') {
-    json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
+    json(res, 200, { spaces: deps.spaces.ordered().map(spaceView) })
+    return true
+  }
+  if (resource === 'spaces' && id === 'order' && parts.length === 3 && method === 'PUT') {
+    const { ids } = await readJson(req)
+    if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) {
+      json(res, 400, { error: { code: 'BAD_ORDER', message: 'ids must be a list of space ids' } })
+      return true
+    }
+    try {
+      await deps.spaces.setOrder(ids)
+      json(res, 200, { spaces: deps.spaces.ordered().map(spaceView) })
+    } catch (err) {
+      json(res, 500, { error: { code: 'SPACE_ORDER_FAILED', message: (err as Error).message } })
+    }
     return true
   }
   if (resource === 'spaces' && !id && method === 'POST') {

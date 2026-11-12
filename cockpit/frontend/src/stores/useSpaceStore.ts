@@ -127,6 +127,27 @@ export async function renameSpace(space: SpaceInfo, name: string): Promise<{ spa
   return { space: body.space };
 }
 
+/**
+ * Put the spaces in a new order (dragged in the header). The list takes it at
+ * once; the host keeps it in the cockpit config (PUT /api/spaces/order), and
+ * a refusal brings back the host's order.
+ */
+export async function reorderSpaces(ids: string[]): Promise<void> {
+  const rank = new Map(ids.map((id, index) => [id, index]));
+  spaces = [...spaces].sort((a, b) => (rank.get(a.id) ?? ids.length) - (rank.get(b.id) ?? ids.length));
+  notify();
+  try {
+    const res = await fetch('/api/spaces/order', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) await loadSpaces();
+  } catch {
+    await loadSpaces();
+  }
+}
+
 // The sidebar's All view: every space's sessions in one list. Only the sidebar
 // changes; the cockpit stays in its active space. Per browser, on by default.
 const ALL_VIEW_KEY = 'cockpit-sidebar-all';

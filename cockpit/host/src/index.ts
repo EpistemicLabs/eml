@@ -181,7 +181,7 @@ async function main() {
     mcpUrl,
     hooksUrl,
   })
-  const spaces = new BrainSpaces(main)
+  const spaces = new BrainSpaces(main, config?.spaceOrder)
   for (const extra of config?.spaces ?? []) {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
