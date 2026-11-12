@@ -169,7 +169,12 @@ export function describePorts(ports: ListeningPort[], deps: PluginsApiDeps): Por
   const home = deps.home ?? os.homedir()
   const sessions = deps.sessionProcesses?.() ?? new Map<number, PortSession>()
   const own = deps.ownPorts?.() ?? new Map<number, string>()
-  const atHome = (text: string) => text.split(`${home}/`).join('~/')
+  // Either separator: Windows command lines may write the home folder with / or \.
+  const atHome = (text: string) => [`${home}/`, `${home}\\`].reduce((out, prefix) => out.split(prefix).join(`~${prefix.slice(-1)}`), text)
+  const inHome = (folder: string) => {
+    const rel = path.relative(home, folder)
+    return !rel.startsWith('..') && !path.isAbsolute(rel)
+  }
   const labelOf = (port: ListeningPort) => own.get(port.port) ?? (port.pid === process.pid ? 'EML Cockpit' : ownProcess(port.commandLine ?? ''))
   // The cockpit hosts among the ports (this one, the installed app, a dev checkout): pid → their port.
   const hosts = new Map(ports.filter((port) => labelOf(port) === 'EML Cockpit').map((port) => [port.pid, port.port]))
@@ -183,7 +188,7 @@ export function describePorts(ports: ListeningPort[], deps: PluginsApiDeps): Por
       commandLine: commandLine && atHome(redactSecrets(commandLine)),
       session: owner === undefined ? null : sessions.get(owner) ?? null,
       label: labelOf(port) ?? (host === undefined ? null : `Session in EML Cockpit :${hosts.get(host)}`),
-      system: !port.cwd || !(port.cwd === home || port.cwd.startsWith(`${home}/`)),
+      system: !port.cwd || !inHome(port.cwd),
     }
   })
 }
@@ -269,6 +274,7 @@ export function parseWorktrees(output: string): Array<Pick<Worktree, 'path' | 'b
     const wtPath = field('worktree')
     if (!wtPath || lines.includes('bare')) return []
     const branch = field('branch')
-    return [{ path: wtPath, branch: branch ? branch.replace(/^refs\/heads\//, '') : null, head: field('HEAD') ?? '' }]
+    // git writes / on every OS; the system's own form matches the folders the hooks report.
+    return [{ path: path.resolve(wtPath), branch: branch ? branch.replace(/^refs\/heads\//, '') : null, head: field('HEAD') ?? '' }]
   })
 }

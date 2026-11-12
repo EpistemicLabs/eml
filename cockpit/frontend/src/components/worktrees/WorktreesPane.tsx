@@ -77,7 +77,7 @@ async function get<T>(path: string): Promise<T> {
 function worktreeOf(folder: string | null | undefined, worktrees: Worktree[]): Worktree | undefined {
   if (!folder) return undefined;
   return worktrees
-    .filter((wt) => folder === wt.path || folder.startsWith(`${wt.path}/`))
+    .filter((wt) => folder === wt.path || folder.startsWith(`${wt.path}/`) || folder.startsWith(`${wt.path}\\`))
     .sort((a, b) => b.path.length - a.path.length)[0];
 }
 
