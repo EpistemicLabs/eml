@@ -29,7 +29,7 @@ const HOST = `http://127.0.0.1:${process.env.COCKPIT_PORT || 4318}`
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), bundledModules()],
-  resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
+  resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
   server: {
     proxy: {
       // The host only accepts secret-changing writes from its own origin.
