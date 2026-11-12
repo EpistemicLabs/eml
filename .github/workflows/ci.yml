@@ -34,7 +34,10 @@ jobs:
   build-test-windows:
     runs-on: windows-latest
     steps:
-      # EXPERIMENT: temp files on the runner's D: drive instead of C:
+      # The tests write their brains and homes to os.tmpdir(), which is on C:
+      # here, where every new file is scanned; the runner's own temp dir is on
+      # D:. Same tests, 5-50x faster, within vitest's 5 s timeout.
+      # The smoke job keeps the default temp: it starts the cockpit as a user does.
       - run: |
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
