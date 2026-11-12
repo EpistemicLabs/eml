@@ -94,5 +94,12 @@ describe('provisioning a home', () => {
     expect((await readCockpitConfig())?.name).toBe('Alex')
     expect(lines).toHaveLength(1)
     expect(homeHuman({ token: 't' })).toBeNull()
+
+    // A handle without a users row: no name is written, the handle stands in, and the next start looks again.
+    await updateCockpitConfig((c) => c && (({ name: _name, ...rest }) => ({ ...rest, handle: 'sam' }))(c))
+    await fillHumanName((l) => lines.push(l))
+    expect((await readCockpitConfig())?.name).toBeUndefined()
+    expect(homeHuman(await readCockpitConfig())).toEqual({ handle: 'sam', name: 'sam' })
+    expect(lines.at(-1)).toBe('human: no users row for sam in the brain, the handle stands in for the name')
   })
 })

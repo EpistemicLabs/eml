@@ -7,6 +7,7 @@ import { readCockpitConfig, updateCockpitConfig } from './config.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
+import { isLocalRequest } from './remote-access.js'
 
 /**
  * The cockpit's own plugins (decision cockpit-builtin-plugins-first): project
@@ -148,6 +149,11 @@ export async function handlePluginsApi(
   }
   const what = pathname.slice('/api/plugins/worktrees/'.length)
   if (what === 'ports') {
+    // Every local process's command line: for this machine, not for a remote viewer.
+    if (!isLocalRequest(req)) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'The port list is shown on this machine only' } })
+      return true
+    }
     const ports = await (deps.ports ?? platform.listeningPorts)()
     json(res, 200, { ports: ports && describePorts(ports, deps) })
     return true
@@ -200,8 +206,11 @@ function ownProcess(commandLine: string): string | null {
   return null
 }
 
+// --no-optional-locks: git status would otherwise refresh the index and hold
+// index.lock for a moment, and an agent's git add or commit in that worktree
+// at the same moment would fail.
 const runGit: Git = (cwd, args) => new Promise((resolve) => {
-  execFile('git', ['-C', cwd, ...args], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => resolve(err ? null : String(out)))
+  execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => resolve(err ? null : String(out)))
 })
 
 /** The repository's worktrees, each compared with the default branch. */

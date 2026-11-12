@@ -218,8 +218,9 @@ export function homeHuman(config: CockpitConfig | null): Human | null {
 /**
  * A home from before the config kept the human's name: take it once from the
  * users row the brains were set up with — the home agent's brain, else the
- * main brain — and else the handle, and write it to the config. Runs at host
- * start, after the agent upgrade, which is what sets the handle.
+ * main brain — and write it to the config. Without such a row the config keeps
+ * no name (homeHuman shows the handle) and the next start looks again. Runs at
+ * host start, after the agent upgrade, which is what sets the handle.
  */
 export async function fillHumanName(log: (line: string) => void): Promise<void> {
   const config = await readCockpitConfig()
@@ -227,7 +228,11 @@ export async function fillHumanName(log: (line: string) => void): Promise<void> 
   const handle = config.handle
   const agentToken = config.agents?.find((a) => a.id === config.agent)?.token
   const named = (token: string | undefined) => (token ? readBrainInfo(token).users.find((u) => u.id === handle)?.name : undefined)
-  const name = named(agentToken) ?? named(config.token) ?? handle
+  const name = named(agentToken) ?? named(config.token)
+  if (!name) {
+    log(`human: no users row for ${handle} in the brain, the handle stands in for the name`)
+    return
+  }
   await updateCockpitConfig((current) => (current && !current.name ? { ...current, name } : null))
   log(`human: name taken into the config for ${handle}`)
 }

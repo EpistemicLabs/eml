@@ -40,11 +40,19 @@ const SECRETS: Array<[RegExp, string]> = [
   [/(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 <token>'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, '<token>'],
   [/\b[0-9a-f]{24,}\b/gi, '<token>'],
+  // A URL's user info (postgres://app:pw@host): before the email rule, which would take user and host.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]*:)[^\s/@'"]+@/gi, '$1<secret>@'],
   [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>'],
   [/(https?:\/\/[^\s?#'"]+)\?[^\s'"]*/g, '$1?<query>'],
   // The value of a flag or variable named like a secret: --token x, --api-key=x, PASSWORD=x.
   [/(--?[\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key|credential)[\w-]*)(=|\s+)(?!<token>)[^\s'"-][^\s'"]*/gi, '$1$2<secret>'],
   [/(\b[\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key)[\w-]*)=(?!<token>)[^\s'"]+/gi, '$1=<secret>'],
+  // A flag that ends in a short secret word: --pass x, --requirepass x, --pwd x, --auth x, --key x.
+  [/(--?[\w-]*(?:pass|pwd|auth|key))(=|\s+)(?!<(?:token|secret)>)[^\s'"-][^\s'"]*/gi, '$1$2<secret>'],
+  // A password glued to -p, as mysql takes it (-pS3cret); a port (-p8080) stays.
+  [/(\s-p)(?!\d+(?:\s|$))(?!<)[^\s'"]+/g, '$1<secret>'],
+  // A header named like a secret: X-Api-Key: x, X-Auth-Token: x (Authorization is the Bearer/Basic rule's).
+  [/(\b[\w-]*(?:token|secret|api[_-]?key)[\w-]*):\s*(?!<)[^\s'"]+/gi, '$1: <secret>'],
 ]
 
 /** Secrets only, for text shown on this machine (a process's command line): tokens, keys, credentials. */

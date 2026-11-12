@@ -95,6 +95,8 @@ export function WorktreesPane({ project }: { project: Project | null }) {
     queryKey: ['worktrees-ports'],
     queryFn: () => get<{ ports: ListeningPort[] | null }>('ports'),
     refetchInterval: REFRESH_MS,
+    // A remote viewer is refused (403): asking again gives the same answer.
+    retry: false,
   });
 
   if (!project) return <PaneMessage>Pick a project for this pane to see its worktrees.</PaneMessage>;
@@ -148,7 +150,9 @@ export function WorktreesPane({ project }: { project: Project | null }) {
             <WorktreeCard key={wt.path} worktree={wt} base={base} projectId={project.projectId} sessions={here} ports={portsOf(wt)} lastActive={at} now={now} />
           ))
         )}
-        {ports.data?.ports === null ? (
+        {ports.isError ? (
+          <p className="px-1 text-caption text-muted-foreground">{ports.error.message}</p>
+        ) : ports.data?.ports === null ? (
           <p className="px-1 text-caption text-muted-foreground">This system does not tell the cockpit which ports are in use.</p>
         ) : otherPorts.length > 0 && <OtherPorts ports={otherPorts} now={now} />}
       </div>
