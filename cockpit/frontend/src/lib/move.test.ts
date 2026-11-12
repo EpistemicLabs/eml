@@ -105,7 +105,8 @@ describe('what the run answers', () => {
     expect(moveOutcome({ status: 500, body: {} }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'The move failed (500).' });
   });
 
-  it('no answer at all: the move may have gone through', () => {
+  it('no answer at all, or the brain server gone mid-run: the move may have gone through', () => {
+    expect(moveOutcome({ status: 502, body: { code: 'BRAIN_UNAVAILABLE', error: 'Failed to reach the brain API.' } }, 'EML', 'EML team')).toEqual(lostOutcome('EML'));
     expect(lostOutcome('EML')).toEqual({
       kind: 'lost', text: 'The connection broke off before the move answered, so it may have gone through. If it did, EML shows where it moved once you close this. If not, Move again: it picks up where it stopped.',
     });
