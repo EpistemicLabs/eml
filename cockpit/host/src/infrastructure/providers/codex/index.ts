@@ -228,6 +228,9 @@ class CodexProvider implements AgentProvider {
     const options = [
       // Without it Codex leaves an app-server daemon behind that outlives the session.
       '--no-daemon',
+      // Inline, not fullscreen: in its alternate screen Codex captures the
+      // mouse, so the pane can neither scroll its scrollback nor select text.
+      '--no-alt-screen',
       ...permissions,
       ...(sandboxed && settings.sandboxNetwork ? ['--config', 'sandbox_workspace_write.network_access=true'] : []),
     ]
