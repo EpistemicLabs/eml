@@ -146,6 +146,30 @@ describe('worktrees', () => {
     expect(body.ports[3]).toMatchObject({ label: 'EML Cockpit', session: null })
     expect(body.ports[4]).toMatchObject({ label: 'Session in EML Cockpit :4317', session: null })
   })
+
+  it('shows the port list on this machine only', async () => {
+    const res = await fetch(`${base}/api/plugins/worktrees/ports`, { headers: { 'x-forwarded-for': '100.64.0.2' } })
+    expect(res.status).toBe(403)
+  })
+})
+
+describe('secrets in a command line', () => {
+  it('blacks out user info in a URL, short secret flags, -p<password> and secret headers; ports and other flags stay', async () => {
+    const { redactSecrets } = await import('../src/diagnostics/redact.js')
+    const cases: Array<[string, string]> = [
+      ['psql postgres://app:hunter2@localhost:5432/db', 'psql postgres://app:<secret>@localhost:5432/db'],
+      ['mongo mongodb://admin:pw@db.internal:27017', 'mongo mongodb://admin:<secret>@db.internal:27017'],
+      ['redis-server --requirepass s3cr3tpw', 'redis-server --requirepass <secret>'],
+      ['tool --pass x --auth y --key=z', 'tool --pass <secret> --auth <secret> --key=<secret>'],
+      ['mysqld -pS3cret', 'mysqld -p<secret>'],
+      ['curl -H X-Api-Key: abcd1234', 'curl -H X-Api-Key: <secret>'],
+      ['ssh -p 22 host', 'ssh -p 22 host'],
+      ['docker run -p8080 img', 'docker run -p8080 img'],
+      ['git commit --author me --keyboard us', 'git commit --author me --keyboard us'],
+      ['vite --port 5173 --strictPort', 'vite --port 5173 --strictPort'],
+    ]
+    for (const [line, shown] of cases) expect(redactSecrets(line)).toBe(shown)
+  })
 })
 
 describe('lsof parsing', () => {
