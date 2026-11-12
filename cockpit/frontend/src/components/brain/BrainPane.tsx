@@ -3,7 +3,8 @@
 // a live search, and type chips (click = hide/show, Shift/Cmd-click = solo).
 // In a brain project the pane is scoped to that project (project | brain
 // chip); no graph lens here (not readable at pane width). Rows open the
-// global drawer.
+// global drawer. Lens, reach and hidden types stay with the pane (pane store
+// brainView): it opens where it was left, on the timeline the first time.
 import { useMemo, useState } from "react";
 
 import { useList } from "@/lib/queries";
@@ -13,6 +14,7 @@ import { EngramRow } from "@/components/engram-row";
 import { Timeline } from "@/components/timeline/timeline";
 import { TYPE_COLORS, TYPE_ORDER, typeChipStyle } from "@/components/ui/badge";
 import { Input } from "@/shared/view/ui";
+import { updatePane, usePane, type BrainPaneView } from "@/stores/usePaneStore";
 import { EmptyNote, Segmented } from "./ui";
 
 type Lens = "timeline" | "list";
@@ -29,15 +31,20 @@ const REACH: ReadonlyArray<{ value: Reach; label: string }> = [
   { value: "brain", label: "brain" },
 ];
 
-export function BrainPane({ project = null }: { project?: Project | null }) {
-  const [lens, setLens] = useState<Lens>("list");
+const FIRST_VIEW: BrainPaneView = { lens: "timeline", reach: "project", hidden: [] };
+
+export function BrainPane({ paneId, project = null }: { paneId: string; project?: Project | null }) {
+  const view = usePane(paneId)?.brainView ?? FIRST_VIEW;
+  const setView = (patch: Partial<BrainPaneView>) => updatePane(paneId, { brainView: { ...view, ...patch } });
+  const { lens, reach } = view;
+  const setLens = (next: Lens) => setView({ lens: next });
+  const setReach = (next: Reach) => setView({ reach: next });
   const [q, setQ] = useState("");
   const searching = q.trim().length > 0;
 
   // A pane in a brain project starts scoped to that project; the chip widens
   // it to the whole brain. Folder-only projects have no brain scope.
   const brainProjectId = project?.brainProjectId ?? null;
-  const [reach, setReach] = useState<Reach>("project");
   const scope = brainProjectId && reach === "project" ? `project.${brainProjectId}` : undefined;
 
   // Recent engrams (newest first); a search swaps in its matches.
@@ -52,18 +59,14 @@ export function BrainPane({ project = null }: { project?: Project | null }) {
     for (const e of all) seen.add(e.type);
     return TYPE_ORDER.filter((t) => seen.has(t));
   }, [all]);
-  const [selected, setSelected] = useState<Set<EngramType> | null>(null);
-  const activeTypes = selected ?? new Set(presentTypes);
+  const activeTypes = useMemo(() => new Set(presentTypes.filter((t) => !view.hidden.includes(t))), [presentTypes, view.hidden]);
   function pick(t: EngramType, additive: boolean) {
     if (additive) {
       const isSolo = activeTypes.size === 1 && activeTypes.has(t);
-      setSelected(isSolo ? new Set(presentTypes) : new Set([t]));
+      setView({ hidden: isSolo ? [] : presentTypes.filter((p) => p !== t) });
       return;
     }
-    const next = new Set(activeTypes);
-    if (next.has(t)) next.delete(t);
-    else next.add(t);
-    setSelected(next);
+    setView({ hidden: view.hidden.includes(t) ? view.hidden.filter((h) => h !== t) : [...view.hidden, t] });
   }
 
   const engrams = useMemo(() => all.filter((e) => activeTypes.has(e.type)), [all, activeTypes]);

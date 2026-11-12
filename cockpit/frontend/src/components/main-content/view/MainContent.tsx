@@ -178,7 +178,7 @@ function MainContent({
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : (
-              <BrainPane project={selectedProject} />
+              <BrainPane paneId={paneId} project={selectedProject} />
             )}
           </ErrorBoundary>
         </div>

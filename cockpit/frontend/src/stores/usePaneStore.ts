@@ -24,6 +24,7 @@
  * localStorage. If the persisted blob is corrupt or empty we fall back to a
  * single default desk with one pane — never leave the user with zero panes.
  */
+import type { EngramType } from '@/lib/types';
 import type { LLMProvider } from '@/types/app';
 import { useCallback, useSyncExternalStore } from 'react';
 import { startsInChat } from '@/components/chat/chat-default';
@@ -84,6 +85,12 @@ export interface PaneState {
    */
   noteId?: string;
   /**
+   * How the brain view of this pane was left (BrainPane): lens, reach and the
+   * types hidden. Kept with the layout, so the pane opens where it was after a
+   * desk switch or a reload; unset → timeline, project reach, every type.
+   */
+  brainView?: BrainPaneView;
+  /**
    * v0.17: the brain task this pane's session advances (a task run, skill
    * task-run). Sent with the terminal's init so the host ledger records it.
    */
@@ -96,6 +103,23 @@ export interface PaneState {
    */
   provider?: LLMProvider;
 }
+
+export interface BrainPaneView {
+  lens: 'timeline' | 'list';
+  reach: 'project' | 'brain';
+  /** Types switched off; a type the brain gains later shows. */
+  hidden: EngramType[];
+}
+
+const parseBrainView = (raw: unknown): BrainPaneView | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const v = raw as Record<string, unknown>;
+  return {
+    lens: v.lens === 'list' ? 'list' : 'timeline',
+    reach: v.reach === 'brain' ? 'brain' : 'project',
+    hidden: Array.isArray(v.hidden) ? (v.hidden.filter((t) => typeof t === 'string') as EngramType[]) : [],
+  };
+};
 
 export interface DeskState {
   id: string;
@@ -261,6 +285,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     title: typeof e.title === 'string' && e.title.trim() ? e.title : undefined,
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
+    brainView: parseBrainView(e.brainView),
     taskId: typeof e.taskId === 'string' && e.taskId ? e.taskId : undefined,
     provider: e.provider === 'claude' || e.provider === 'codex' ? e.provider : undefined,
   };
@@ -856,6 +881,7 @@ export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): v
       next.label === pane.label &&
       next.title === pane.title &&
       next.noteId === pane.noteId &&
+      next.brainView === pane.brainView &&
       next.provider === pane.provider
     ) {
       return pane;
