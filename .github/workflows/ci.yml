@@ -29,7 +29,7 @@ jobs:
       - run: pnpm -F @engramprotocol/cockpit-frontend build
       - run: pnpm -F eml-cockpit build
 
-  # Native Windows (docs/proposals/windows-support.md): the same build, tests
+  # Native Windows: the same build, tests
   # and bundles. No one on the team runs Windows, so this job is how we know.
   build-test-windows:
     runs-on: windows-latest
