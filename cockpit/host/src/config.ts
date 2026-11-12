@@ -35,6 +35,13 @@ export interface CockpitConfig {
    * agent upgrade; absent before the upgrade.
    */
   handle?: string
+  /**
+   * The home's human as people read it (Settings, an agent's profile of
+   * them): set with the handle at first run; a home made before it existed
+   * gets it once at host start (provision.ts fillHumanName). One home is one
+   * human, so every space shows this one (decision person-lives-in-the-home).
+   */
+  name?: string
   /** The agent the main space binds (an id of `agents`); absent = none bound. */
   agent?: string
   /**
@@ -107,6 +114,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(typeof parsed.handle === 'string' && HANDLE.test(parsed.handle) ? { handle: parsed.handle } : {}),
+      ...(typeof parsed.name === 'string' && parsed.name.trim() ? { name: parsed.name.trim() } : {}),
       ...agentOf(parsed.agent),
       ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
       ...(spaces.length ? { spaces } : {}),

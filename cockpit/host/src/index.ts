@@ -6,7 +6,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
-import { loadBrain } from './provision.js'
+import { fillHumanName, loadBrain } from './provision.js'
 import { readCockpitConfig, writeCockpitConfig } from './config.js'
 import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
@@ -195,6 +195,8 @@ async function main() {
   }
   // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
   await loadSharedFlags(spaces.list())
+  // The human's name moves into the config once (after the agent upgrade, which sets the handle).
+  await fillHumanName(log).catch((err: Error) => log(`human: ${err.message}`))
   log(`agents: ${agents.list().map((a) => a.id).join(', ') || 'none'}${config?.handle ? ` (handle ${config.handle})` : ''}`)
   log(`spaces: ${spaces.list().map((s) => `${s.name}${s.shared ? ' (shared)' : s.shared === null ? ' (shared?)' : ''} → ${s.agent ?? 'no agent'} (${s.registry.list().length} local projects)`).join(', ')}`)
   // A brain no token of the config belongs to is one a shared-space creation

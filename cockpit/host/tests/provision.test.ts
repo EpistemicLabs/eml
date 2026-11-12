@@ -27,7 +27,7 @@ describe('provisioning a home', () => {
     expect(main).toMatchObject({ reused: false, onboarding: 'pending' })
 
     const config = await readCockpitConfig()
-    expect(config).toMatchObject({ token: main.token, onboarding: 'pending', handle: 'alex', agent: 'juno' })
+    expect(config).toMatchObject({ token: main.token, onboarding: 'pending', handle: 'alex', name: 'Alex Doe', agent: 'juno' })
     expect(config?.agents).toHaveLength(1)
     expect(config?.agents?.[0].id).toBe('juno')
     expect(config?.agents?.[0].token).not.toBe(main.token)
@@ -74,5 +74,25 @@ describe('provisioning a home', () => {
     const wrong = loadAgentBrains({ token: 't', agents: [{ id: 'juno', token: main.token }, { id: 'ghost', token: 'eml_nope' }] }, 'http://127.0.0.1:1', (l) => lines.push(l))
     expect(wrong.list()).toEqual([])
     expect(lines).toEqual(['agent juno: its token belongs to brain "Main" — skipped', 'agent ghost: the configured token matches no brain — skipped'])
+  })
+
+  it('gives a home from before the name its human\'s name once, from the agent brain, and leaves a set name alone', async () => {
+    const { fillHumanName, homeHuman } = await import('../src/provision.js')
+    const { readCockpitConfig, updateCockpitConfig } = await import('../src/config.js')
+    // The home the first test made, as a home from before the config kept the name.
+    await updateCockpitConfig((c) => c && (({ name: _name, ...rest }) => rest)(c))
+    expect(homeHuman(await readCockpitConfig())).toEqual({ handle: 'alex', name: 'alex' })
+
+    const lines: string[] = []
+    await fillHumanName((l) => lines.push(l))
+    expect((await readCockpitConfig())?.name).toBe('Alex Doe')
+    expect(homeHuman(await readCockpitConfig())).toEqual({ handle: 'alex', name: 'Alex Doe' })
+    expect(lines).toEqual(['human: name taken into the config for alex'])
+
+    await updateCockpitConfig((c) => c && { ...c, name: 'Alex' })
+    await fillHumanName((l) => lines.push(l))
+    expect((await readCockpitConfig())?.name).toBe('Alex')
+    expect(lines).toHaveLength(1)
+    expect(homeHuman({ token: 't' })).toBeNull()
   })
 })

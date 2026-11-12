@@ -2,7 +2,8 @@ import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CORE_INDEX, DATA_DIR } from './paths.js'
-import { readCockpitConfig, updateCockpitConfig, writeCockpitConfig } from './config.js'
+import { readCockpitConfig, updateCockpitConfig, writeCockpitConfig, type CockpitConfig } from './config.js'
+import { readBrainInfo } from './brain-info.js'
 
 /**
  * Load or provision the home's brains.
@@ -197,8 +198,36 @@ export async function provisionBrain(identity: BrainIdentity, core: Core = bundl
     token: main.token,
     onboarding: 'pending',
     handle: human.handle,
+    name: human.name,
     agent: agent.id,
     agents: [{ id: agent.id, token: agentBrain.token }],
   })
   return { token: main.token, brainId: main.brainId, reused: false, onboarding: 'pending' }
+}
+
+/**
+ * The home's human with the name to show: the config's, else the handle (a
+ * home whose name fillHumanName has not set yet). Null before the handle is
+ * known (a home the agent upgrade has not reached).
+ */
+export function homeHuman(config: CockpitConfig | null): Human | null {
+  if (!config?.handle) return null
+  return { handle: config.handle, name: config.name ?? config.handle }
+}
+
+/**
+ * A home from before the config kept the human's name: take it once from the
+ * users row the brains were set up with — the home agent's brain, else the
+ * main brain — and else the handle, and write it to the config. Runs at host
+ * start, after the agent upgrade, which is what sets the handle.
+ */
+export async function fillHumanName(log: (line: string) => void): Promise<void> {
+  const config = await readCockpitConfig()
+  if (!config?.handle || config.name) return
+  const handle = config.handle
+  const agentToken = config.agents?.find((a) => a.id === config.agent)?.token
+  const named = (token: string | undefined) => (token ? readBrainInfo(token).users.find((u) => u.id === handle)?.name : undefined)
+  const name = named(agentToken) ?? named(config.token) ?? handle
+  await updateCockpitConfig((current) => (current && !current.name ? { ...current, name } : null))
+  log(`human: name taken into the config for ${handle}`)
 }
