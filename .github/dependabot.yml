@@ -12,6 +12,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    # xterm and its addons are pinned as one matched set of betas (the set a
+    # stable VS Code ships); a single addon bumped alone breaks the set, so
+    # xterm is updated as a whole, by hand.
+    ignore:
+      - dependency-name: "@xterm/*"
 
   # The workflows pin actions to commit SHAs; this keeps the pins current.
   - package-ecosystem: github-actions
