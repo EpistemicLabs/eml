@@ -106,6 +106,8 @@ interface ChatEntry {
   ceiling: { limits: SessionLimits; kills: number } | null
   /** A ceiling notice the agent has not seen yet: it goes with its next prompt. */
   ceilingNote: string | null
+  /** The agent's process; null until it started. */
+  pid: number | null
 }
 
 export interface ChatContext {
@@ -207,6 +209,11 @@ export class ChatBridge {
 
   consumeNonce(nonce: string): boolean {
     return this.nonces.delete(nonce)
+  }
+
+  /** The running sessions' agent processes, pid → session id (the Worktrees plugin: who started a port). */
+  processes(): Map<number, string> {
+    return new Map([...this.entries.values()].flatMap((entry) => (entry.pid ? [[entry.pid, entry.sessionId] as const] : [])))
   }
 
   // ── The chat side of the handoff ─────────────────────────────────────
@@ -469,7 +476,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -537,7 +544,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -589,7 +596,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -640,7 +647,7 @@ export class ChatBridge {
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
-      onSpawn: (pid) => this.placeInCeiling(entry, pid),
+      onSpawn: (pid) => { entry.pid = pid; this.placeInCeiling(entry, pid) },
     })
     // Over the cap: a session someone opens starts anyway, and the quietest one at rest makes room.
     if (this.ctx.overCap?.()) this.stopOneForRoom(sessionId)

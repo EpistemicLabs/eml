@@ -345,6 +345,11 @@ export class PtyBridge {
     this.sessions.clear()
   }
 
+  /** The running sessions' terminal processes, pid → session id (the Worktrees plugin: who started a port). */
+  processes(): Map<number, string> {
+    return new Map([...this.sessions.values()].map((session) => [session.pty.pid, session.sessionId] as const))
+  }
+
   /** Live state of a session across all panes: running (client attached) / detached / ended. */
   sessionState(sessionId: string): SessionState {
     let state: SessionState = 'ended'

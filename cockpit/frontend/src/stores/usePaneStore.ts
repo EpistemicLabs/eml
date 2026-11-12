@@ -38,10 +38,12 @@ import { setTopView } from './useTopViewStore';
  * the host's pty-bridge resumes against the pane's session id. Brain mode
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
+ * Worktrees mode shows the project's worktrees, sessions and ports. Labels,
+ * icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -932,7 +934,7 @@ export function getSessionView(sessionId: string): PaneView | undefined {
 
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
 // A pane is an area for one project holding at most one item per surface
-// (terminal → session, note → note, brain → the project's brain view) and
+// (terminal → session, note → note, brain / worktrees → the project's view) and
 // showing one of them. Each item lives in at most one pane across all desks.
 // Every user action that opens or focuses something goes through openInPane;
 // background worker spawns (addWorkerPane) deliberately do not.
@@ -941,7 +943,7 @@ export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
   | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
-  | { surface: 'brain'; projectId: string | null };
+  | { surface: 'brain' | 'worktrees'; projectId: string | null };
 
 /**
  * Whether a pane is the empty "Choose Your Project" pane. Needs the known
@@ -984,8 +986,9 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
     case 'note':
       return panes.find(p => p.noteId === target.noteId);
     case 'brain':
-      // The brain view is not a unique item: only a pane showing it right now.
-      return panes.find(p => p.paneView === 'brain' && p.projectId === target.projectId);
+    case 'worktrees':
+      // A project view is not a unique item: only a pane showing it right now.
+      return panes.find(p => p.paneView === target.surface && p.projectId === target.projectId);
   }
 }
 

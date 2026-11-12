@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import {
   ChevronRight,
   Brain,
+  FolderGit2,
   Folder,
   MessageSquare,
   MessageSquarePlus,
@@ -28,6 +29,7 @@ import {
   DialogTitle,
 } from '@/shared/view/ui';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useViewEnabled } from '@/lib/pane-views';
 import { useProviders } from '@/lib/providers';
 import { useList } from '@/lib/queries';
 import { useEngramPanel } from '@/lib/engram-panel';
@@ -81,6 +83,7 @@ const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: Lucide
   { label: 'Go to Terminal', keywords: 'terminal shell console claude', icon: SquareTerminal, view: 'terminal' },
   { label: 'Go to Brain', keywords: 'brain engrams timeline graph', icon: Brain, view: 'brain' },
   { label: 'Go to Notes', keywords: 'note notes todo checklist', icon: NotebookPen, view: 'note' },
+  { label: 'Go to Worktrees', keywords: 'worktrees worktree branch git ports', icon: FolderGit2, view: 'worktrees' },
 ];
 
 const IS_MAC = detectMac();
@@ -136,6 +139,7 @@ export default function CommandPalette({
 
   const { toggleDarkMode } = useTheme();
   const { data: providers } = useProviders();
+  const viewEnabled = useViewEnabled();
   const engramPanel = useEngramPanel();
 
   const page: PalettePage | null = pages.length > 0 ? pages[pages.length - 1] : null;
@@ -313,7 +317,7 @@ export default function CommandPalette({
     );
   }
   const shownActions = actions.filter((a) => matchesWords(words, a.label));
-  const shownNav = page === null ? NAV_ENTRIES.filter((n) => matchesWords(words, n.label, n.keywords)) : [];
+  const shownNav = page === null ? NAV_ENTRIES.filter((n) => viewEnabled(n.view) && matchesWords(words, n.label, n.keywords)) : [];
   const shownSettings =
     page === null ? SETTINGS_MAIN_TABS.filter((t) => matchesWords(words, 'Settings', t.label, t.keywords)) : [];
 
