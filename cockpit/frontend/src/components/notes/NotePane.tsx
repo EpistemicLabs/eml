@@ -131,7 +131,10 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   const flush = useCallback(async (force = false) => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     const editor = editorRef.current;
-    if (!editor || !dirtyRef.current || savingRef.current) return;
+    // An editor that never got the note's content has nothing of the note to
+    // save: writing it would replace the note (StrictMode's extra unmount in
+    // development, a pane closed or switched while the note loads).
+    if (!editor || !dirtyRef.current || savingRef.current || baseRef.current === null) return;
     savingRef.current = true;
     dirtyRef.current = false;
     setSaveState('saving');
@@ -178,6 +181,14 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   });
   editorRef.current = editor;
   useEffect(() => { editor?.setEditable(brain.writable); }, [editor, brain.writable]);
+
+  // What was loaded and typed belongs to one editor instance. A new one
+  // (StrictMode builds it again in development) starts empty: the note is
+  // loaded into it again, and nothing of the old one is pending.
+  useEffect(() => {
+    baseRef.current = null;
+    dirtyRef.current = false;
+  }, [editor]);
 
   // First load and every change from outside (agent edit, another tab).
   const note = query.data;
