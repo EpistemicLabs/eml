@@ -3,7 +3,8 @@
 // empty "Choose Your Project" state, the pending-shell-command consume once
 // the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
 // brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
-// cockpit-notes-pane). Trimmed: ChatInterface,
+// cockpit-notes-pane), worktrees → WorktreesPane; a plugin switched off in
+// Settings › EML Plugins shows the brain instead. Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
 import { heldCommandAfter, shouldOpenInChat } from '@/components/chat/chat-default';
@@ -15,12 +16,14 @@ import React, { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
+import { WorktreesPane } from '../../worktrees/WorktreesPane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
+import { useViewEnabled } from '@/lib/pane-views';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
 import TerminalStatusBar from './subcomponents/TerminalStatusBar';
@@ -34,7 +37,7 @@ function MainContent({
   selectedProject,
   selectedSession,
   sessionId,
-  paneView,
+  paneView: chosenView,
   onSetPaneView,
   onClosePane,
   isMainPane,
@@ -46,6 +49,12 @@ function MainContent({
   // here yet. Read during render, removed from the (persisted) queue only
   // after mount, so a reload before the space is opened keeps it. Held in a
   // ref until the first turn is done: re-renders and reconnects until then reuse it.
+  // A pane left on a plugin that was switched off moves to the brain view.
+  const viewEnabled = useViewEnabled();
+  const paneView = viewEnabled(chosenView) ? chosenView : 'brain';
+  useEffect(() => {
+    if (paneView !== chosenView) onSetPaneView(paneView);
+  }, [paneView, chosenView, onSetPaneView]);
   const heldShellCommand = useRef<string | null | undefined>(undefined);
   if (heldShellCommand.current === undefined && (paneView !== 'terminal' || selectedProject)) {
     heldShellCommand.current = peekPendingShellCommand(paneId);
@@ -102,7 +111,7 @@ function MainContent({
   const toolbarReveal = !isActive &&
     'opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:hidden';
 
-  // Brain and note panes don't need a project here; terminal and chat panes do.
+  // Plugin panes don't need a project here; terminal and chat panes do.
   if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {
     return (
       <div className="relative flex h-full flex-col">
@@ -177,6 +186,8 @@ function MainContent({
               <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} whenIdle={chatDefault} isActive={isActive} />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
+            ) : paneView === 'worktrees' ? (
+              <WorktreesPane project={selectedProject} />
             ) : (
               <BrainPane project={selectedProject} />
             )}

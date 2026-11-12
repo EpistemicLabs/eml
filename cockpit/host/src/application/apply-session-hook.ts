@@ -38,6 +38,8 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   const known = deps.ledger.get(sessionId)?.providerSessionId ?? (provider.adoptsSessionId ? sessionId : null)
   if (known && known !== signal.providerSessionId) return
   deps.ledger.bindProviderSession(sessionId, signal.providerSessionId)
+  // Claude Code and Codex send the folder the agent works in with every hook: the Worktrees plugin's session ↔ worktree.
+  if (typeof payload.cwd === 'string' && payload.cwd) deps.ledger.setWorkdir(sessionId, payload.cwd)
   // A terminal process dies with the host without a word, so its hooks are all there is to go by.
   if (signal.state === 'working' || signal.state === 'done') deps.ledger.setTurnInFlight(sessionId, signal.state === 'working')
   // A chat session's result comes from its own turn end (chat-bridge.ts); only a terminal has its hooks to go by.

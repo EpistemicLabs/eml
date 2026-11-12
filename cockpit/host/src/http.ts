@@ -46,6 +46,7 @@ import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
+import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
@@ -299,6 +300,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     readAt: entry.readAt,
     resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
+    workdir: entry.workdir,
     backgroundTasks: deps.chat.backgroundTasks(entry.sessionId),
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
@@ -356,6 +358,28 @@ function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
     limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : SEARCH_LIMIT,
   }
   return searchResult(searchSessions(entries, query), query)
+}
+
+/** What the cockpit's own plugins read from the host (plugins-api.ts). */
+function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
+  return {
+    projectFolder: (projectId) => space.registry.get(projectId)?.path ?? null,
+    sessionProcesses: () => {
+      const owners = new Map<number, PortSession>()
+      for (const [pid, sessionId] of [...deps.bridge.processes(), ...deps.chat.processes()]) {
+        const entry = deps.bridge.ledger.get(sessionId)
+        const project = entry?.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+        // The name the sidebar shows (sessionView's summary).
+        const name = entry ? sessionView(deps, project, { ...entry, sessionId }).summary || null : null
+        owners.set(pid, { id: sessionId, name, projectId: entry?.projectId ?? null })
+      }
+      return owners
+    },
+    ownPorts: () => new Map(deps.spaces.list().flatMap((s) => {
+      const port = Number(new URL(s.url).port)
+      return port ? [[port, 'EML brain server'] as const] : []
+    })),
+  }
 }
 
 /** Where a project's folder comes from: linked by the user, made by the cockpit, or none yet. */
@@ -709,6 +733,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (!space) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
 
   try {
+    // The cockpit's own plugins: their switches, Worktrees' reads, and Notes refused while off (plugins-api.ts).
+    if (await handlePluginsApi(req, res, pluginsDeps(deps, space), url, method, json, readJson)) return true
     if (await handleNotesApi(req, res, { loopbackUrl: space.url, brainToken: space.token }, url, method, json, readJson, space.notes)) return true
 
     // The first-run setup server answers { needed: true } (setup.ts). Here:

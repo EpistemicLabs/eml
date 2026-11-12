@@ -64,9 +64,9 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'plugins',
     label: 'EML Plugins',
-    keywords: 'plugins extensions community install ports localhost',
+    keywords: 'plugins extensions notes worktrees worktree branch git ports localhost',
     icon: Puzzle,
-    blurb: 'Community plugins: install, enable and manage extensions for the cockpit.',
+    blurb: 'The cockpit\'s own plugins: views a pane can show next to its sessions, switched on or off.',
   },
   {
     id: 'data',

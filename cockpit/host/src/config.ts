@@ -59,6 +59,8 @@ export interface CockpitConfig {
   agents?: Array<{ id: string; token: string; runtime?: true }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
   hygiene?: Record<string, HygieneState>
+  /** The cockpit's own plugins the user switched on or off (plugins-api.ts); absent = the plugin's default. */
+  plugins?: Record<string, boolean>
 }
 
 /** When the hygiene banner was last started for one brain. */
@@ -113,11 +115,18 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(spaceOrder.length ? { spaceOrder } : {}),
       ...(agents.length ? { agents } : {}),
       ...(readHygiene(parsed.hygiene) ?? {}),
+      ...(readPlugins(parsed.plugins) ?? {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
+}
+
+function readPlugins(raw: unknown): { plugins: Record<string, boolean> } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const plugins = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter((e): e is [string, boolean] => typeof e[1] === 'boolean'))
+  return Object.keys(plugins).length ? { plugins } : null
 }
 
 function readHygiene(raw: unknown): { hygiene: Record<string, HygieneState> } | null {

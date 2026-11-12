@@ -85,6 +85,8 @@ export interface LedgerEntry {
   toolProfile: ToolProfile | null
   /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
   turnInFlight: { retried: boolean } | null
+  /** The folder the agent last worked in, as its hooks report it (a worktree, say); null before the first. */
+  workdir: string | null
 }
 
 interface LedgerFile {
@@ -137,6 +139,7 @@ function load(): LedgerFile {
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
+          workdir: typeof entry.workdir === 'string' && entry.workdir ? entry.workdir : null,
         }
       }
     }
@@ -211,6 +214,7 @@ export class SessionLedger {
       archivedAt: prev?.archivedAt ?? null,
       toolProfile: prev?.toolProfile ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
+      workdir: prev?.workdir ?? null,
     }
     this.persist()
   }
@@ -307,6 +311,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry?.turnInFlight) return
     entry.turnInFlight.retried = true
+    this.persist()
+  }
+
+  /** Where the agent works now: the cwd of its latest hook. */
+  setWorkdir(sessionId: string, workdir: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.workdir === workdir) return
+    entry.workdir = workdir
     this.persist()
   }
 

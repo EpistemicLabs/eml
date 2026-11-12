@@ -39,6 +39,8 @@ export interface ProjectSession {
   /** A turn ended and nobody has seen the result. */
   resultAt?: string | null;
   archivedAt?: string | null;
+  /** The folder its agent last worked in (a worktree, say), as its hooks report it. */
+  workdir?: string | null;
   /** Background tasks of its own still running (chat sessions); archiving would kill them. */
   backgroundTasks?: number;
   __provider?: LLMProvider;

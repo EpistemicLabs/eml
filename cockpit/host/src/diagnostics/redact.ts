@@ -33,6 +33,27 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** Both separator styles of a path, for logs that print Windows paths either way. */
 const variants = (p: string) => [...new Set([p, p.replace(/\\/g, '/'), p.replace(/\//g, '\\')])]
 
+const SECRETS: Array<[RegExp, string]> = [
+  [/\beml_[A-Za-z0-9_-]{8,}/g, '<token>'],
+  [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, '<token>'],
+  [/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{16,}/g, '<token>'],
+  [/(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 <token>'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, '<token>'],
+  [/\b[0-9a-f]{24,}\b/gi, '<token>'],
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>'],
+  [/(https?:\/\/[^\s?#'"]+)\?[^\s'"]*/g, '$1?<query>'],
+  // The value of a flag or variable named like a secret: --token x, --api-key=x, PASSWORD=x.
+  [/(--?[\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key|credential)[\w-]*)(=|\s+)(?!<token>)[^\s'"-][^\s'"]*/gi, '$1$2<secret>'],
+  [/(\b[\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key)[\w-]*)=(?!<token>)[^\s'"]+/gi, '$1=<secret>'],
+]
+
+/** Secrets only, for text shown on this machine (a process's command line): tokens, keys, credentials. */
+export function redactSecrets(text: string): string {
+  let out = text
+  for (const [re, to] of SECRETS) out = out.replace(re, to)
+  return out
+}
+
 export function createRedactor(ctx: RedactionContext): (text: string) => string {
   const byLength = (a: string, b: string) => b.length - a.length
   const paths = [...new Set(ctx.paths.filter((p) => p && p.length > 3))].sort(byLength)
@@ -47,16 +68,6 @@ export function createRedactor(ctx: RedactionContext): (text: string) => string 
   if (ctx.home) for (const v of variants(ctx.home)) replacements.push([new RegExp(escape(v), 'gi'), '~'])
   names.forEach((n, i) => replacements.push([new RegExp(`(?<![\\w-])${escape(n)}(?![\\w-])`, 'gi'), `<name-${i + 1}>`]))
 
-  const secrets: Array<[RegExp, string]> = [
-    [/\beml_[A-Za-z0-9_-]{8,}/g, '<token>'],
-    [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, '<token>'],
-    [/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{16,}/g, '<token>'],
-    [/(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 <token>'],
-    [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, '<token>'],
-    [/\b[0-9a-f]{24,}\b/gi, '<token>'],
-    [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>'],
-    [/(https?:\/\/[^\s?#'"]+)\?[^\s'"]*/g, '$1?<query>'],
-  ]
 
   return (text: string) => {
     let out = text
@@ -64,7 +75,7 @@ export function createRedactor(ctx: RedactionContext): (text: string) => string 
     // Whatever else lives below the home folder: the folder names are the user's.
     out = out.replace(/~[\\/][^\s'"()<>,;]+/g, (m) => `~/<path-${short(m)}>`)
     out = out.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, (m) => `<id-${short(m.toLowerCase())}>`)
-    for (const [re, to] of secrets) out = out.replace(re, to)
+    out = redactSecrets(out)
     if (ctx.user && ctx.user.length >= 3) out = out.replace(new RegExp(`(?<![\\w-])${escape(ctx.user)}(?![\\w-])`, 'gi'), '<user>')
     return out
   }

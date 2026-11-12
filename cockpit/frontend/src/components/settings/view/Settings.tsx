@@ -1,19 +1,19 @@
 // Kept: backdrop + frosted window (90vh, max-w-4xl), header with title,
 // "saved" flash and close, sidebar + fading content, Escape to close.
 // Trimmed: provider login modal, web-push wiring, the tabs the cockpit
-// has no substrate for (Plugins/Data render a placeholder until they do).
+// has no substrate for (Data renders a placeholder until it does).
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
 import { Button } from '@/shared/view/ui';
 import SettingsSidebar from './SettingsSidebar';
-import SettingsPlaceholder from './SettingsPlaceholder';
 import PreferencesTab from './tabs/PreferencesTab';
 import AboutTab from './tabs/AboutTab';
 import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
 import DataTab from './tabs/DataTab';
+import PluginsTab from './tabs/PluginsTab';
 import SettingsHeading from './SettingsHeading';
 import SpacesTab from './tabs/SpacesTab';
 import { useSettingsController } from '../hooks/useSettingsController';
@@ -119,7 +119,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'data' && <DataTab tab={activeMeta} />}
 
-              {activeTab === 'plugins' && <SettingsPlaceholder tab={activeMeta} />}
+              {activeTab === 'plugins' && <PluginsTab />}
             </div>
           </main>
         </div>
