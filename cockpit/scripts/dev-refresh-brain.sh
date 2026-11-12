@@ -6,9 +6,10 @@
 # anything written in the dev cockpit is lost on the next refresh.
 #
 # It reads each home's brain file from its own control.db (no hard-coded UUIDs),
-# so it keeps working across versions and machines. The dev control.db + token
-# stay untouched — only the brain FILE content is swapped. On the next dev-cockpit
-# start the bundled server migrates the copy forward through the safety pipeline.
+# so it keeps working across versions and machines. The dev token stays; the brain
+# FILE content is swapped, and from schema 21 on the dev main brain takes the id the
+# copy's log names (see step 2b). On the next dev-cockpit start the bundled server
+# migrates the copy forward through the safety pipeline.
 #
 # Usage (worktree root):
 #   bash cockpit/scripts/dev-refresh-brain.sh
@@ -62,6 +63,35 @@ sqlite3 "$PROD_DB" "VACUUM INTO '$DEV_DB'"
 # or the runner would re-run their migration and the preflight would take them offline.
 SV=$(sqlite3 "$DEV_DB" "SELECT MAX(version) FROM _eml_migrations")
 sqlite3 "$DEV_HOME/data/control.db" "UPDATE brains SET schema_version = $SV WHERE brain_file = '$DEV_REL'"
+
+# 2b) v0.21: a brain carries its id in its log's genesis, and the server sets a
+#     control row naming another id to needs_intervention. The copy names the
+#     production brain, so the dev main brain takes that id: its control rows, its
+#     file, and what the dev cockpit keys by it (config, project registry, per-space
+#     folders). A brain without a log (schema < 21) keeps the dev id.
+NEW_ID=$(sqlite3 "$DEV_DB" "SELECT json_extract(payload, '\$.args.brain') FROM op_log WHERE seq = 1" 2>/dev/null || true)
+OLD_ID=$(sqlite3 "$DEV_HOME/data/control.db" "SELECT id FROM brains WHERE brain_file = '$DEV_REL'")
+if [ -n "$NEW_ID" ] && [ "$NEW_ID" != "$OLD_ID" ]; then
+  if [ -n "$(sqlite3 "$DEV_HOME/data/control.db" "SELECT 1 FROM brains WHERE id = '$NEW_ID'")" ]; then
+    echo "the dev control.db has another brain with id $NEW_ID already" >&2; exit 1
+  fi
+  NEW_REL="brains/$NEW_ID.db"
+  mv "$DEV_DB" "$DEV_HOME/data/$NEW_REL"
+  sqlite3 "$DEV_HOME/data/control.db" "PRAGMA foreign_keys = OFF; BEGIN;
+    UPDATE brains SET id = '$NEW_ID', brain_file = '$NEW_REL', status = 'ok' WHERE id = '$OLD_ID';
+    UPDATE tokens SET brain_id = '$NEW_ID' WHERE brain_id = '$OLD_ID';
+    UPDATE brain_members SET brain_id = '$NEW_ID' WHERE brain_id = '$OLD_ID';
+    UPDATE brain_migrations SET brain_id = '$NEW_ID' WHERE brain_id = '$OLD_ID';
+    COMMIT;"
+  for f in config projects.json; do
+    [ -f "$DEV_HOME/$f" ] && perl -pi -e "s/\Q$OLD_ID\E/$NEW_ID/g" "$DEV_HOME/$f"
+  done
+  for d in brain-hygiene eml/spaces claude-config/spaces; do
+    if [ -e "$DEV_HOME/$d/$OLD_ID" ] && [ ! -e "$DEV_HOME/$d/$NEW_ID" ]; then mv "$DEV_HOME/$d/$OLD_ID" "$DEV_HOME/$d/$NEW_ID"; fi
+  done
+  DEV_DB="$DEV_HOME/data/$NEW_REL"
+  echo "dev main brain now has the id its copy names: $OLD_ID → $NEW_ID"
+fi
 echo "copied: $(sqlite3 "$DEV_DB" 'SELECT count(*) FROM engrams') engrams, schema $SV, integrity $(sqlite3 "$DEV_DB" 'PRAGMA integrity_check' | head -1)"
 
 if [ "${NO_RESTART:-0}" = "1" ]; then
