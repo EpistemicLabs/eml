@@ -107,7 +107,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
-    spaces: { get: () => space, main: space, resolve: () => space },
+    spaces: { get: () => space, main: space, resolve: () => space, movedAway: (ledgerSpaceId?: string | null) => (ledgerSpaceId ? `This session moved to ${ledgerSpaceId}. Open it there.` : null) },
     sessionEnv: { COCKPIT_URL: 'http://host' },
     runtimes: factory,
     events: new InMemoryEventStore(),
@@ -790,6 +790,15 @@ describe('ChatBridge', () => {
     bridge.attach(ws as unknown as WebSocket)
     ws.client({ type: 'init', paneId: 'pane', projectId: 'p1', sessionId: 'bad id!' })
     expect(ws.frames[0]).toMatchObject({ type: 'error' })
+  })
+
+  it('refuses a session the ledger keeps in another space, and starts nothing', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true })
+    ledgerEntries.set('s1', { runtime: 'terminal', keepRunning: false, spaceId: 'team' } as never)
+    const ws = connect(bridge)
+    await flush()
+    expect(ws.frames[0]).toEqual({ type: 'error', message: 'This session moved to team. Open it there.' })
+    expect(runtimes).toEqual([])
   })
 })
 

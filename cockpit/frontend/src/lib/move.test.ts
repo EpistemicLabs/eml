@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canOfferMove, fetchMovePlan, movedMarker, moveOutcome, planText, runMove, targetOptions, type MovePlanView } from './move';
+import { canOfferMove, fetchMovePlan, lostOutcome, movedMarker, moveOutcome, planText, runMove, targetOptions, type MovePlanView } from './move';
 import type { Team } from './team';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
@@ -19,6 +19,8 @@ const plan = (extra: Partial<MovePlanView> = {}): MovePlanView => ({
   crossing: [],
   payload_bytes: 4.2 * 1024 * 1024,
   collisions: [],
+  joins: [],
+  kept_statuses: [],
   ...extra,
 });
 
@@ -43,9 +45,10 @@ describe('the target chooser', () => {
 
 describe('the plan as the dialog says it', () => {
   it('one project: the counts, nothing dropped, the size', () => {
-    expect(planText(plan(), 'EML', (id) => id)).toEqual({
+    expect(planText(plan(), 'EML', (id) => id, 'EML team')).toEqual({
       what: 'This moves EML: 2 engrams, 1 journal entry and 1 link between them.',
       projects: null,
+      joins: null,
       dropped: 'Nothing links out of this project.',
       links: [],
       size: 'Size: 4.2 MB of 16 MB.',
@@ -61,15 +64,26 @@ describe('the plan as the dialog says it', () => {
         { id: 'r2', relation: 'refines', direction: 'in', other: { id: 'n1', type: 'note', title: null } },
       ],
     });
-    const text = planText(p, 'EML', (id) => ({ top: 'EML', child: 'EML app' })[id] ?? id);
+    const text = planText(p, 'EML', (id) => ({ top: 'EML', child: 'EML app' })[id] ?? id, 'EML team');
     expect(text.what).toBe('This moves EML with its sub-projects: 2 engrams, 0 journal entries and 0 links between them, in 2 projects.');
     expect(text.projects).toEqual([{ id: 'top', name: 'EML', engrams: 2 }, { id: 'child', name: 'EML app', engrams: 0 }]);
     expect(text.dropped).toBe('2 links to things that stay behind are dropped. They are kept in the backup.');
     expect(text.links).toEqual(['Keep the relay stateless (decision)', 'n1 (note)']);
-    expect(planText(plan({ crossing: [p.crossing[0]] }), 'EML', (id) => id).dropped).toBe('1 link to things that stay behind is dropped. It is kept in the backup.');
+    expect(planText(plan({ crossing: [p.crossing[0]] }), 'EML', (id) => id, 'EML team').dropped).toBe('1 link to things that stay behind is dropped. It is kept in the backup.');
     // a small set reads in whole KB, never "0.0 MB"
-    expect(planText(plan({ payload_bytes: 3_900 }), 'EML', (id) => id).size).toBe('Size: 4 KB of 16 MB.');
-    expect(planText(plan({ payload_bytes: 10 }), 'EML', (id) => id).size).toBe('Size: 1 KB of 16 MB.');
+    expect(planText(plan({ payload_bytes: 3_900 }), 'EML', (id) => id, 'EML team').size).toBe('Size: 4 KB of 16 MB.');
+    expect(planText(plan({ payload_bytes: 10 }), 'EML', (id) => id, 'EML team').size).toBe('Size: 1 KB of 16 MB.');
+  });
+});
+
+describe('a project the shared space has already', () => {
+  it('says the engrams join it, and that its status stays here when there is one there', () => {
+    const names = (id: string) => ({ top: 'EML', child: 'EML app' })[id] ?? id;
+    expect(planText(plan({ joins: ['top'] }), 'EML', names, 'EML team').joins).toBe('EML is in EML team already, so the engrams join it.');
+    expect(planText(plan({ joins: ['top'], kept_statuses: ['s1', 's2'] }), 'EML', names, 'EML team').joins)
+      .toBe('EML is in EML team already, so the engrams join it. Its status stays here; the one in EML team stays current.');
+    expect(planText(plan({ joins: ['top', 'child'], kept_statuses: ['s1'] }), 'EML', names, 'EML team').joins)
+      .toBe('EML and EML app are in EML team already, so the engrams join them. Where one has a status there, that one stays current and the status from here stays here.');
   });
 });
 
@@ -89,6 +103,12 @@ describe('what the run answers', () => {
     expect(moveOutcome({ status: 409, body: { code: 'MOVE_REFUSED', error: 'move refused: a move out of this brain is under way. Nothing was moved.' } }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'move refused: a move out of this brain is under way. Nothing was moved.' });
     expect(moveOutcome({ status: 404, body: { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } } }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'No such brain space' });
     expect(moveOutcome({ status: 500, body: {} }, 'EML', 'EML team')).toEqual({ kind: 'failed', text: 'The move failed (500).' });
+  });
+
+  it('no answer at all: the move may have gone through', () => {
+    expect(lostOutcome('EML')).toEqual({
+      kind: 'lost', text: 'The connection broke off before the move answered, so it may have gone through. If it did, EML shows where it moved once you close this. If not, Move again: it picks up where it stopped.',
+    });
   });
 });
 

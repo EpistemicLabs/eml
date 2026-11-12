@@ -68,7 +68,7 @@ const header = (req: http.IncomingMessage, name: string): string | undefined => 
 export const noAgentMessage = (space: Pick<BrainSpace, 'name' | 'upgrade'>) =>
   `Space "${space.name}" has no agent bound — its sessions get no brain until an agent is bound to it.${space.upgrade ? ` Agent upgrade: ${space.upgrade.reason}` : ''}`
 
-/** A refusal and the HTTP status it answers with: 403 for who may not call, 503 for a space that has no brain to offer. */
+/** A refusal and the HTTP status it answers with: 403 for who may not call (409 on /mcp for a local caller: mcpStatus), 503 for a space that has no brain to offer. */
 export interface Refusal {
   refused: string
   status: 403 | 503
@@ -120,6 +120,19 @@ function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: h
   return { space, agent, sessionId: sessionId ?? null }
 }
 
+/**
+ * The status /mcp answers a refusal with. Claude Code keeps a 401 or 403 from
+ * an MCP server as "needs authentication" under the server's name and skips
+ * that server in every session it starts afterwards; all sessions of a cockpit
+ * share one config dir and the name eml_brain, so one refused session (a stale
+ * token, a session the ledger puts in another space) would cut every new
+ * session of every space off its brain. A local caller's 403 is answered as
+ * 409, which fails only that connection; a request from another machine keeps
+ * its 403 (no session of this cockpit makes it).
+ */
+const mcpStatus = (req: http.IncomingMessage, refusal: Refusal): number =>
+  refusal.status === 403 && isLocalRequest(req) ? 409 : refusal.status
+
 const refuse = (res: http.ServerResponse, status: number, message: string) => {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message }, id: null }))
@@ -166,7 +179,7 @@ export function createBrainMcpHandler(deps: BrainMcpDeps) {
 
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const who = caller(deps, req, header(req, MCP_TOKEN_HEADER), header(req, MCP_SESSION_HEADER))
-    if ('refused' in who) return refuse(res, who.status, who.refused)
+    if ('refused' in who) return refuse(res, mcpStatus(req, who), who.refused)
     try {
       await endpoint.handle(req, res, { owner: who.space.id, sessionId: who.sessionId as string })
     } catch (err) {

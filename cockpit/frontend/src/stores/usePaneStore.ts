@@ -944,9 +944,14 @@ export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
   return startsInChat({ chatDefault: readSettings().chatDefault, provider: provider ?? defaultProvider }) ? 'chat' : 'terminal';
 }
 
-/** The pane that already holds the target's item, on any desk. */
+/**
+ * The pane that already holds the target's item, on a desk of the active
+ * space. Not on another space's desk: a pane there starts its session with
+ * that space's token, and one left from before the session moved to this
+ * space the host refuses.
+ */
 function findPaneHolding(target: OpenTarget): PaneState | undefined {
-  const panes = snapshot.desks.flatMap(s => s.panes);
+  const panes = getSpaceDesks(snapshot.activeSpaceId).flatMap(s => s.panes);
   switch (target.surface) {
     case 'terminal':
       return target.sessionId ? panes.find(p => p.sessionId === target.sessionId) : undefined;

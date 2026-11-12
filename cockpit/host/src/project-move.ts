@@ -1,3 +1,4 @@
+import * as http from 'node:http'
 import { brainIdFromProjectId, projectIdForBrain, ProjectPathError, type ProjectEntry, type ProjectRegistry } from './project-registry.js'
 import type { BrainProjectsClient } from './brain-projects.js'
 
@@ -87,18 +88,37 @@ function carry(target: ProjectRegistry, brainProjectId: string, entry: ProjectEn
 }
 
 async function call(source: MoveSpace, route: string, body: Record<string, unknown>): Promise<MoveAnswer> {
-  let upstream: Response
+  let upstream: { status: number; text: string }
   try {
-    upstream = await fetch(`${source.url}${route}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${source.token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    upstream = await post(`${source.url}${route}`, source.token, JSON.stringify(body))
   } catch {
     return { status: 502, body: { error: 'Failed to reach the brain API.', code: 'BRAIN_UNAVAILABLE' } }
   }
-  const text = await upstream.text()
   let parsed: unknown
-  try { parsed = JSON.parse(text) } catch { parsed = { error: text } }
+  try { parsed = JSON.parse(upstream.text) } catch { parsed = { error: upstream.text } }
   return { status: upstream.status, body: parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : { error: String(parsed) } }
+}
+
+/**
+ * A POST to the (local) brain server with no time limit of its own: a move
+ * waits on the relay up to the server's deadline (EML_MOVE_DEADLINE_MS, five
+ * minutes) and then answers 504 SHARED_WRITE_PENDING. Node's fetch gives up
+ * waiting for a response after 300 s (undici's headersTimeout) — the same
+ * moment — and the move would read as "Failed to reach the brain API" while
+ * it may still land.
+ */
+function post(url: string, token: string, body: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      res.on('end', () => resolve({ status: res.statusCode ?? 502, text: Buffer.concat(chunks).toString('utf8') }))
+      res.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
 }

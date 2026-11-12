@@ -219,6 +219,20 @@ export class BrainSpaces {
   }
 
   /**
+   * Why a pane of `space` may not start a session the ledger keeps under
+   * another space (`ledgerSpaceId`, the entry's spaceId; undefined for a new
+   * session), or null when it may. The ledger says where a session belongs:
+   * moving sessions rewrites it, while a pane's desk is kept in the browser and
+   * still names the old space. Started there, the session would run on the old
+   * space's MCP token, and its spawn would write the old space back.
+   */
+  movedAway(ledgerSpaceId: string | null | undefined, space: BrainSpace): string | null {
+    if (ledgerSpaceId === undefined || (ledgerSpaceId ?? null) === space.ledgerKey) return null
+    const home = ledgerSpaceId ? this.byId.get(ledgerSpaceId) : this.main
+    return home ? `This session moved to ${home.name}. Open it there.` : 'This session belongs to a brain space this cockpit no longer has.'
+  }
+
+  /**
    * v0.21: a shared space the brain server discarded (team-space.ts) leaves
    * the registry and the cockpit config, with its session files (they carry
    * the per-boot MCP token) and its local state under spaces/<id>. The
