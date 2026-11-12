@@ -264,7 +264,7 @@ describe('schedule tool', () => {
   it('keeps jobs in their space', async () => {
     const { jobs } = setup()
     await jobs.handle(caller, { action: 'create', name: 'Main job', prompt: 'p', cron: '0 8 * * *' })
-    const other: JobCaller = { sessionId: 'sachi', spaceId: 'space-b', projectId: 'bp-x', toolProfile: null }
+    const other: JobCaller = { sessionId: 'other-caller', spaceId: 'space-b', projectId: 'bp-x', toolProfile: null }
     expect((await jobs.handle(other, { action: 'list' })).text).toBe('No jobs in this space.')
     expect((await jobs.handle(other, { action: 'delete', job: 'Main job' })).status).toBe(404)
     expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/Main job/)
