@@ -34,6 +34,10 @@ jobs:
   build-test-windows:
     runs-on: windows-latest
     steps:
+      # EXPERIMENT: temp files on the runner's D: drive instead of C:
+      - run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       # Keep LF line endings: tests compare file contents byte for byte.
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
