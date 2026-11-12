@@ -941,6 +941,11 @@ export class PtyBridge {
             sendJson(ws, { type: 'error', message: 'Invalid project ID' })
             return
           }
+          const moved = this.ctx.spaces.movedAway(this.ledger.get(sessionId)?.spaceId, space)
+          if (moved) {
+            sendJson(ws, { type: 'error', message: moved })
+            return
+          }
           const project = this.projectFor(space, projectId)
           if (!project) {
             sendJson(ws, { type: 'error', message: 'Unknown project — add it in the sidebar first' })

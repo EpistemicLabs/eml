@@ -165,6 +165,27 @@ describe('brain spaces', () => {
     expect(spaces.resolve('no-such-space')).toBe(main)
   })
 
+  it('lets a pane start a session only in the space the ledger keeps it in, and names where it moved', () => {
+    const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
+    const open = (id: string, name: string, main: boolean) => mods.openBrainSpace({
+      id, name, agent: null, main, url: 'http://127.0.0.1:60000', token: TOKEN,
+      turnHookConfig: isolation.turnHookConfig, mcpUrl: MCP_URL, hooksUrl: HOOKS_URL,
+    })
+    const main = open(SPACE_ID, 'Main', true)
+    const team = open(KEPT_ID, 'Team', false)
+    const spaces = new mods.BrainSpaces(main)
+    spaces.add(team)
+
+    // a new session, and one in the pane's own space
+    expect(spaces.movedAway(undefined, team)).toBeNull()
+    expect(spaces.movedAway(KEPT_ID, team)).toBeNull()
+    expect(spaces.movedAway(null, main)).toBeNull()
+    // moved since the pane's desk was saved: into the team space, and back to main
+    expect(spaces.movedAway(KEPT_ID, main)).toBe('This session moved to Team. Open it there.')
+    expect(spaces.movedAway(null, team)).toBe('This session moved to Main. Open it there.')
+    expect(spaces.movedAway(GONE_ID, team)).toBe('This session belongs to a brain space this cockpit no longer has.')
+  })
+
   it('v0.21: a removed space leaves the registry, the config, and takes its session files and local state with it', async () => {
     const isolation = mods.writeIsolationFiles(HOOK_URL, HOOK_TOKEN)
     const open = (id: string, name: string, main: boolean, token: string) => mods.openBrainSpace({

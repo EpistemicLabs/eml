@@ -400,6 +400,8 @@ export class ChatBridge {
     const refuse = (message: string) => { send(ws, { type: 'error', message }); return null }
     if (!space) return refuse('This desk belongs to a brain space this cockpit no longer has')
     if (!SAFE_ID.test(sessionId) || !SAFE_ID.test(projectId) || (paneId && !SAFE_ID.test(paneId))) return refuse('Invalid session')
+    const moved = this.ctx.spaces.movedAway(this.ctx.ledger.get(sessionId)?.spaceId, space)
+    if (moved) return refuse(moved)
     const project = this.projectFor(space, projectId)
     if (!project?.path) return refuse('Unknown project, or it has no folder')
     const provider = this.ctx.ledger.has(sessionId) ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
