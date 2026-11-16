@@ -245,14 +245,20 @@ export class Jobs {
   }
 
   private async withJob(caller: JobCaller, input: Record<string, unknown>, act: (job: Job) => JobAnswer | Promise<JobAnswer>): Promise<JobAnswer> {
-    const key = str(input.job)
+    const found = this.findJob(caller.spaceId, input.job)
+    return 'status' in found ? found : act(found)
+  }
+
+  /** The job a key names in a space: its id (or at least its first 6 characters), else its exact name. */
+  private findJob(spaceId: string | null, input: unknown): Job | JobAnswer {
+    const key = str(input)
     if (!key) return bad('job is required: its id (or the first 8 characters) or its exact name')
-    const jobs = this.jobsOf(caller.spaceId)
+    const jobs = this.jobsOf(spaceId)
     const byId = jobs.filter((job) => job.id === key || (key.length >= 6 && job.id.startsWith(key)))
     const matches = byId.length ? byId : jobs.filter((job) => job.name.toLowerCase() === key.toLowerCase())
     if (matches.length === 0) return { status: 404, text: `No job "${key}" in this space. The list action shows them.` }
     if (matches.length > 1) return bad(`"${key}" fits ${matches.length} jobs; use the id`)
-    return act(matches[0])
+    return matches[0]
   }
 
   /** The schedule trigger from the input; `current` fills in what an update leaves out. */
