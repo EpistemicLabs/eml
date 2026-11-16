@@ -2,7 +2,10 @@
 import * as paneStore from '@/stores/usePaneStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
-export type RunOutcome = 'done' | 'review' | 'question' | 'failed';
+import type { RunOutcome } from '@/lib/job-run-label';
+
+export type { RunOutcome };
+export { runLabel } from '@/lib/job-run-label';
 
 export type SessionInfo = { projectId: string | null; chat: boolean } | null;
 
@@ -70,20 +73,4 @@ export function openSession(spaceId: string | null, sessionId: string, session: 
   paneStore.openSessionInSpace(spaceId, {
     surface: 'terminal', projectId: session?.projectId ?? null, sessionId, chat: session?.chat ?? true,
   });
-}
-
-/** How a run ended, in a word, and its tone. */
-export function runLabel(run: JobRun): { text: string; tone: 'ok' | 'attention' | 'bad' | 'muted' } {
-  if (run.status === 'finished') {
-    if (run.outcome === 'review') return { text: 'check this', tone: 'attention' };
-    if (run.outcome === 'question') return { text: 'needs you', tone: 'attention' };
-    if (run.outcome === 'failed') return { text: 'failed', tone: 'bad' };
-    return { text: run.outcome ?? 'ended', tone: 'ok' };
-  }
-  if (run.status === 'failed') return { text: 'failed', tone: 'bad' };
-  // A missed run shows only here (the cockpit was down): it stands out.
-  if (run.status === 'missed') return { text: 'missed', tone: 'attention' };
-  if (run.status === 'skipped') return { text: 'skipped', tone: 'muted' };
-  if (run.status === 'waiting') return { text: 'waiting for room', tone: 'muted' };
-  return { text: 'running', tone: 'ok' };
 }
