@@ -89,9 +89,10 @@ export interface Job {
    */
   pendingApproval?: boolean
   /**
-   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, no
-   * schedule tool and of the space's MCP servers only the brain; web tools stay. A job starts
-   * free; only the user limits it, never a session.
+   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, of the
+   * space's MCP servers only the brain, and the schedule tool for their own job only
+   * (application/limited-job-scope.ts); web tools stay. A job starts free; only the user limits
+   * it, never a session.
    */
   limited?: boolean
   /** Tools the user lent a limited job for a while; a grant ends at `until` or when its session reports done. */

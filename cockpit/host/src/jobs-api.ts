@@ -11,9 +11,10 @@ import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
  *   POST /api/jobs            from a session (schedule-cli.ts); X-Cockpit-Token = the
  *                             per-boot spawn token. Body: fromSession plus the schedule
  *                             tool's input. Answer: { text, job? }.
- *   GET  /api/jobs            the page: every space's jobs with their runs.
+ *   GET  /api/jobs            the page: every space's jobs (with their goal) and runs; each run's
+ *                             session as it stands now, with its attention (Needs you, Check this).
  *   PUT  /api/jobs/time-zone  the page: the user's time zone, from their browser.
- *   POST /api/jobs/<id>/<pause|resume|delete|run_now>   the page (Jobs view).
+ *   POST /api/jobs/<id>/<pause|resume|delete|run_now|finish>   the page (Jobs view).
  *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
  *                             for new channel addresses, and send vs draft per channel.
  *   POST /api/jobs/<id>/limited { limited }, /grant { tool, minutes?, reason? }, /revoke { tool }
