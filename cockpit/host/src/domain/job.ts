@@ -70,6 +70,8 @@ export interface Job {
   taskId: string | null
   /** What the woken session reads. */
   prompt: string
+  /** What has to be true for the job to be over, set by the agent; every run is told it. */
+  goal?: string | null
   target: JobTarget
   triggers: JobTrigger[]
   /** What its sessions may use: copied from its maker when it was made, never wider. */
@@ -165,6 +167,7 @@ export const JOB_LIMITS = {
   history: 100,
   promptChars: 20_000,
   nameChars: 60,
+  goalChars: 500,
 } as const
 
 // Waits between attempts to start a run whose target was busy or the machine full.
@@ -250,5 +253,9 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
       : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + 'Not from your user, and nobody may be watching: report how you stand with session_status if you have it. '
-    + 'The schedule tool changes or stops this job.]'
+    + 'The schedule tool changes or stops this job. '
+    + (job.goal
+      ? `Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, before you stop, set your next wake-up `
+        + 'with the schedule tool (update with at). Once it is reached, end the job with finish.]'
+      : 'If the work is not finished, set your next wake-up with the schedule tool (update with at) before you stop.]')
 }

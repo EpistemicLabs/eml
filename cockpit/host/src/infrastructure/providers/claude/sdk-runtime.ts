@@ -440,6 +440,7 @@ const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a 
   + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
   + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then wakes its own session when such mail arrives. '
   + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
+  + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
   + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
   + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
   + 'A job runs in this space with at most this session\'s tools. The answer shows the next run times in words: check them against what the user asked.'
@@ -458,6 +459,7 @@ const SCHEDULE_TOOL_INPUT = {
   max_runs: z.number().int().optional(),
   ends_at: z.string().optional(),
   task_id: z.string().optional(),
+  goal: z.string().optional().describe('What has to be true for the job to be over; every run is told it.'),
   deny_tools: z.array(z.string()).optional(),
   notify: z.enum(['needs-me', 'always', 'never']).optional(),
   mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()

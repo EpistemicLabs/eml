@@ -90,6 +90,26 @@ describe('job runner', () => {
     return answer.job!
   }
 
+  it('keeps the goal the agent set and puts it in every run, with what to do while it is not reached', async () => {
+    expect((await jobs.handle(caller, { action: 'create', name: 'Long', prompt: 'p', cron: '0 8 * * *', goal: 'x'.repeat(501) })).status).toBe(400)
+    const job = await create({ cron: '0 8 * * 1-5', goal: 'Refund received' })
+    expect(job.goal).toBe('Refund received')
+    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/goal: Refund received/)
+    const updated = await jobs.handle(caller, { action: 'update', job: job.id, goal: 'Refund on the card' })
+    expect(updated.job!.goal).toBe('Refund on the card')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    const header = world.started[0].text.split('\n')[0]
+    expect(header).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, before you stop, set your next wake-up with the schedule tool \(update with at\)\. Once it is reached, end the job with finish\.\]$/)
+  })
+
+  it('tells a run without a goal to set its next wake-up while the work is not finished', async () => {
+    await create({ cron: '0 8 * * 1-5' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started[0].text.split('\n')[0]).toMatch(/If the work is not finished, set your next wake-up with the schedule tool \(update with at\) before you stop\.\]$/)
+  })
+
   it('starts a worker with the job’s prompt when a schedule is due, and not again for the same time', async () => {
     const job = await create({ cron: '0 8 * * 1-5' })
     expect(job.nextRunAt).toBe('2026-11-10T00:00:00.000Z') // created exactly at 08:00: next is tomorrow

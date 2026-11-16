@@ -112,11 +112,13 @@ export class Jobs {
     if (notify === null) return bad('notify must be needs-me, always or never')
     const toolProfile = narrowed(caller.toolProfile, input.deny_tools)
     if (toolProfile === 'invalid') return bad('deny_tools is a list of tool names')
+    const goal = str(input.goal)
+    if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
 
     const at = new Date(this.now()).toISOString()
     const draft: Job = {
       id: randomUUID(), name, kind: mail && !trigger ? 'standing' : 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
-      taskId: str(input.task_id) ?? null, prompt, target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
+      taskId: str(input.task_id) ?? null, prompt, ...(goal ? { goal } : {}), target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
       // Drafts until the user switches a channel to send in the Jobs view; a session never can.
       reply: mail ? { mail: 'draft' } : {}, end, notify,
       paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
@@ -146,6 +148,11 @@ export class Jobs {
     if (prompt !== undefined) {
       if (prompt.length > JOB_LIMITS.promptChars) return bad(`prompt: at most ${JOB_LIMITS.promptChars} characters`)
       next.prompt = prompt
+    }
+    if (input.goal !== undefined) {
+      const goal = str(input.goal)
+      if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
+      next.goal = goal ?? null
     }
     const current = job.triggers.find((t): t is ScheduleTrigger => t.type === 'schedule')
     const scheduleChanged = input.cron !== undefined || input.at !== undefined || input.timezone !== undefined
@@ -355,6 +362,7 @@ export class Jobs {
       : job.pendingApproval ? "waiting for the user's OK in the Jobs view"
         : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
     if (state) lines.push(`  state: ${state}`)
+    if (job.goal) lines.push(`  goal: ${job.goal}`)
     if (job.limited) {
       const lent = activeGrants(job, this.now()).map((g) => g.tool)
       lines.push(`  limited: no shell, no messages to sessions, no schedule tool, only the brain MCP${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
