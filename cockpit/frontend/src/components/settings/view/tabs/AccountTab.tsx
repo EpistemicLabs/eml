@@ -1,13 +1,12 @@
 // Settings › Account: your EML account (sign-in by email and a mailed code, the
-// team-brain beta), who you are in this brain (from GET /api/brain-info) and
-// your plan. Everyone runs the free
-// open-source build from GitHub; Team is in a closed beta, Pro is announced.
-// Changing the name comes later — the name is also in the identity engrams of
-// every space's brain.
+// team-brain beta), who you are in this cockpit — the home's human, the same
+// in every space (GET /api/agents; decision person-lives-in-the-home) — and
+// your plan. Everyone runs the free open-source build from GitHub; Team is in
+// a closed beta, Pro is announced. Changing the name comes later.
 import { useState } from 'react';
 
 import { useAccount, type AccountStatus } from '../../hooks/useAccount';
-import { mainUser, useBrainInfo } from '../../hooks/useBrainInfo';
+import { useAgents } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -16,9 +15,8 @@ const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium 
 const input = 'rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-foreground/40';
 
 export default function AccountTab() {
-  const { info, failed } = useBrainInfo();
+  const { handle, name, loaded, failed } = useAgents();
   const fallback = failed ? 'unavailable' : '…';
-  const user = mainUser(info);
   const account = useAccount();
   const beta = account.status?.signedIn === true && account.status.beta;
 
@@ -33,10 +31,10 @@ export default function AccountTab() {
       <SettingsSection title="You">
         <SettingsCard divided>
           <SettingsRow label="Name" description="How your agent knows you">
-            <span className="text-sm text-foreground">{info ? user?.name ?? '—' : fallback}</span>
+            <span className="text-sm text-foreground">{loaded ? name ?? '—' : fallback}</span>
           </SettingsRow>
           <SettingsRow label="Writes as" description="The handle stamped on every engram your sessions write">
-            <Mono>{info ? info.author ?? '—' : fallback}</Mono>
+            <Mono>{loaded ? handle ?? '—' : fallback}</Mono>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>

@@ -178,9 +178,12 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
 export class BrainSpaces {
   private readonly byId = new Map<string, BrainSpace>()
   private readonly addListeners = new Set<(space: BrainSpace) => void>()
+  /** The header order the user gave the spaces (cockpit config spaceOrder). */
+  private order: string[]
 
-  constructor(readonly main: BrainSpace) {
+  constructor(readonly main: BrainSpace, order: string[] = []) {
     this.byId.set(main.id, main)
+    this.order = order
   }
 
   add(space: BrainSpace): void {
@@ -196,6 +199,29 @@ export class BrainSpaces {
 
   list(): BrainSpace[] {
     return [...this.byId.values()]
+  }
+
+  /**
+   * The spaces in the order the user gave them in the header; a space the
+   * order does not name follows in list order. Only for showing them: list()
+   * keeps the config's order, which isAgentMain relies on.
+   */
+  ordered(): BrainSpace[] {
+    const rank = (space: BrainSpace) => {
+      const at = this.order.indexOf(space.id)
+      return at === -1 ? this.order.length : at
+    }
+    return this.list().sort((a, b) => rank(a) - rank(b))
+  }
+
+  /** Persist the header order (space ids; unknown ones are dropped) in the cockpit config. */
+  async setOrder(ids: string[]): Promise<void> {
+    const order = [...new Set(ids)].filter((id) => this.byId.has(id))
+    await updateCockpitConfig((config) => {
+      if (!config) throw new Error('no cockpit config')
+      return { ...config, spaceOrder: order }
+    })
+    this.order = order
   }
 
   get(id: string): BrainSpace | undefined {
@@ -219,6 +245,20 @@ export class BrainSpaces {
   }
 
   /**
+   * Why a pane of `space` may not start a session the ledger keeps under
+   * another space (`ledgerSpaceId`, the entry's spaceId; undefined for a new
+   * session), or null when it may. The ledger says where a session belongs:
+   * moving sessions rewrites it, while a pane's desk is kept in the browser and
+   * still names the old space. Started there, the session would run on the old
+   * space's MCP token, and its spawn would write the old space back.
+   */
+  movedAway(ledgerSpaceId: string | null | undefined, space: BrainSpace): string | null {
+    if (ledgerSpaceId === undefined || (ledgerSpaceId ?? null) === space.ledgerKey) return null
+    const home = ledgerSpaceId ? this.byId.get(ledgerSpaceId) : this.main
+    return home ? `This session moved to ${home.name}. Open it there.` : 'This session belongs to a brain space this cockpit no longer has.'
+  }
+
+  /**
    * v0.21: a shared space the brain server discarded (team-space.ts) leaves
    * the registry and the cockpit config, with its session files (they carry
    * the per-boot MCP token) and its local state under spaces/<id>. The
@@ -229,9 +269,11 @@ export class BrainSpaces {
     if (space.main) throw new Error('the main space is not removed')
     await updateCockpitConfig((config) => {
       if (!config) throw new Error('no cockpit config')
-      return { ...config, spaces: (config.spaces ?? []).filter((s) => s.token !== space.token) }
+      const spaceOrder = config.spaceOrder?.filter((id) => id !== space.id)
+      return { ...config, spaces: (config.spaces ?? []).filter((s) => s.token !== space.token), ...(spaceOrder ? { spaceOrder } : {}) }
     })
     this.byId.delete(space.id)
+    this.order = this.order.filter((id) => id !== space.id)
     removeSpaceFiles(space.id, space.runtime?.configDirs.claude)
     fs.rmSync(spaceStateDir(space.id), { recursive: true, force: true })
   }

@@ -345,6 +345,11 @@ export class PtyBridge {
     this.sessions.clear()
   }
 
+  /** The running sessions' terminal processes, pid → session id (the Worktrees plugin: who started a port). */
+  processes(): Map<number, string> {
+    return new Map([...this.sessions.values()].map((session) => [session.pty.pid, session.sessionId] as const))
+  }
+
   /** Live state of a session across all panes: running (client attached) / detached / ended. */
   sessionState(sessionId: string): SessionState {
     let state: SessionState = 'ended'
@@ -940,6 +945,11 @@ export class PtyBridge {
           }
           if (!SAFE_PROJECT_ID.test(projectId)) {
             sendJson(ws, { type: 'error', message: 'Invalid project ID' })
+            return
+          }
+          const moved = this.ctx.spaces.movedAway(this.ledger.get(sessionId)?.spaceId, space)
+          if (moved) {
+            sendJson(ws, { type: 'error', message: moved })
             return
           }
           const project = this.projectFor(space, projectId)

@@ -11,7 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 
 import { keys, useProjects } from '@/lib/queries';
-import { fetchMovePlan, moveOutcome, planText, runMove, targetOptions, type MoveOutcome, type MovePlanView } from '@/lib/move';
+import { fetchMovePlan, lostOutcome, moveOutcome, planText, runMove, targetOptions, type MoveOutcome, type MovePlanView } from '@/lib/move';
 import { errorText } from '@/lib/team';
 import { PROJECTS_CHANGED_EVENT } from '@/hooks/useProjectsState';
 import { useSpaces } from '@/stores/useSpaceStore';
@@ -51,7 +51,13 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
 
   const loadPlan = useCallback(async (space: string) => {
     setPlan({ status: 'loading' });
-    const answer = await fetchMovePlan(projectId, space);
+    let answer: Awaited<ReturnType<typeof fetchMovePlan>>;
+    try {
+      answer = await fetchMovePlan(projectId, space);
+    } catch {
+      setPlan({ status: 'error', text: 'Could not reach the cockpit to work out the move. Close this and try again.' });
+      return;
+    }
     if (answer.status !== 200 || typeof answer.body.plan_hash !== 'string') {
       setPlan({ status: 'error', text: errorText(answer.body, `Could not work out the move (${answer.status}).`) });
       return;
@@ -64,24 +70,31 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
     void loadPlan(targetId);
   }, [open, targetId, loadPlan]);
 
+  // the project is archived here and lives there: the Brain views and the sidebar read again
+  const readAgain = () => {
+    void qc.invalidateQueries({ queryKey: ['project'] });
+    void qc.invalidateQueries({ queryKey: keys.projects() });
+    window.dispatchEvent(new CustomEvent(PROJECTS_CHANGED_EVENT));
+    void refreshTeams();
+  };
+
   const move = async () => {
     if (plan.status !== 'ready' || !target) return;
     setRun({ status: 'running' });
-    const answer = await runMove(projectId, target.id, plan.plan.plan_hash);
-    const outcome = moveOutcome(answer, projectName, target.name);
+    let outcome: MoveOutcome;
+    try {
+      outcome = moveOutcome(await runMove(projectId, target.id, plan.plan.plan_hash), projectName, target.name);
+    } catch {
+      // no answer at all: without this the dialog stayed on "Moving…" with Cancel disabled
+      outcome = lostOutcome(projectName);
+    }
     setRun({ status: 'answered', outcome });
     if (outcome.kind === 'changed') void loadPlan(target.id);
-    if (outcome.kind === 'done') {
-      // the project is archived here and lives there: the Brain views and the sidebar read again
-      void qc.invalidateQueries({ queryKey: ['project'] });
-      void qc.invalidateQueries({ queryKey: keys.projects() });
-      window.dispatchEvent(new CustomEvent(PROJECTS_CHANGED_EVENT));
-      void refreshTeams();
-    }
+    if (outcome.kind === 'done' || outcome.kind === 'lost') readAgain();
   };
 
   const nameOf = (id: string) => allProjects.data?.projects.find((p) => p.id === id)?.name ?? id;
-  const text = plan.status === 'ready' ? planText(plan.plan, projectName, nameOf) : null;
+  const text = plan.status === 'ready' ? planText(plan.plan, projectName, nameOf, target?.name ?? 'the shared space') : null;
   const refused = plan.status === 'ready' ? plan.plan.collisions : [];
   // after a pending write the target has to be live again before the same plan is sent once more
   const targetWritable = target?.enabled ?? false;
@@ -114,6 +127,7 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
                   {text.projects.map((p) => <li key={p.id}>{p.name} · {p.engrams}</li>)}
                 </ul>
               )}
+              {text.joins && <p>{text.joins}</p>}
               <p>{text.dropped}</p>
               {text.links.length > 0 && (
                 <ul className="ml-4 max-h-40 list-disc overflow-y-auto text-muted-foreground">

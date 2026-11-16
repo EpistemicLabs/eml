@@ -58,7 +58,7 @@ function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView:
   const title =
     state === 'working' ? 'Claude is working' : state === 'waiting' ? 'Waiting for your input' : 'Finished — not seen yet';
   return (
-    <span title={title} className="absolute top-1/2 -left-1.5 z-10 flex -translate-y-1/2 items-center">
+    <span title={title} className="absolute top-1/2 left-1 z-10 flex -translate-y-1/2 items-center">
       <span
         className={cn('block h-1.5 w-1.5 rounded-full', state === 'working' ? 'animate-pulse bg-foreground' : 'bg-primary')}
       />
@@ -97,6 +97,7 @@ export function SidebarSessionRow({
   const rowRef = useRef<HTMLDivElement>(null);
   const openMenu = () => menu?.open({ kind: 'session', session, projectId }, rowRef.current);
   const longPress = useLongPress(openMenu);
+  const statusDot = !mark && running === undefined;
   const unread = Boolean(mark) && (!session.attention || !isRead(session));
   const noSummary = session.attention && mark !== 'result' ? ': no summary' : '';
   const reason = session.attention?.reason?.replace(/\s+/g, ' ').trim();
@@ -106,13 +107,14 @@ export function SidebarSessionRow({
 
   return (
     <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
-      {!mark && running === undefined && <StatusDot session={session} inAllView={Boolean(agent)} />}
+      {statusDot && <StatusDot session={session} inAllView={Boolean(agent)} />}
       <Button
         variant="ghost"
         className={cn(
           'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
           secondLine ? (menu ? 'h-13 pr-10' : 'h-11') : menu ? 'h-10 pr-10' : 'h-7.5',
-          nested && 'pl-6',
+          // The status dot sits in the left padding, inside the row's highlight.
+          nested ? 'pl-6' : statusDot && 'pl-3.5',
           isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}

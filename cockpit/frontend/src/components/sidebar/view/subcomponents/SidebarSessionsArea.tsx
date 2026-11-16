@@ -8,6 +8,7 @@ import type { SidebarController } from '../../useSidebarController';
 import { useRowMenu } from '../rowMenuContext';
 import { isSessionRecent, readShowOlderIds, storeShowOlder } from '../../utils';
 import { SidebarProjectActions } from './SidebarProjectActions';
+import { useViewEnabled } from '@/lib/pane-views';
 import { NewPaneButton, SidebarGroupLabel, SidebarProjectNotes, isRecentNote } from './SidebarProjectNotes';
 import { SidebarSessionRow } from './SidebarSessionRow';
 
@@ -49,8 +50,10 @@ export function SidebarSessionsArea({ project, controller }: { project: Project;
     storeShowOlder(project.projectId, next);
   };
 
-  const notesQuery = useNotes(project.projectId, Boolean(project.brainProjectId));
-  const notes = useMemo(() => notesQuery.data ?? [], [notesQuery.data]);
+  // Notes switched off (Settings › EML Plugins): the project lists none.
+  const notesOn = useViewEnabled()('note');
+  const notesQuery = useNotes(project.projectId, notesOn && Boolean(project.brainProjectId));
+  const notes = useMemo(() => (notesOn ? notesQuery.data ?? [] : []), [notesOn, notesQuery.data]);
   const unseenNotes = useUnseenNotes();
 
   const sessions = controller.sessionsOf(project);

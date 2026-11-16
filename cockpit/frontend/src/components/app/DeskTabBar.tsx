@@ -8,7 +8,7 @@ import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
 import * as paneStore from '@/stores/usePaneStore';
 import type { DeskState } from '@/stores/usePaneStore';
-import { loadSpaces, paneSpaceKey, renameSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
+import { loadSpaces, paneSpaceKey, renameSpace, reorderSpaces, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { setTopView, useTopView } from '@/stores/useTopViewStore';
 import { countNeedsYou, useTurnStore } from '@/stores/useTurnStateStore';
 import { endPaneDrag, getDraggedPane } from './paneDrag';
@@ -30,6 +30,7 @@ import { endPaneDrag, getDraggedPane } from './paneDrag';
  *                         if the desk still holds a live session)
  *  • + (per section)    → create a new desk in that space, straight into rename
  *  • drag a tab         → reorder it among the desks of its space
+ *  • drag a Brain tab   → reorder the spaces (kept by the host, cockpit config)
  *  • drop a pane title  → move that pane to the desk (same space only; pinned and main panes stay)
  *  • ⌘/Ctrl 1–9         → the Nth desk in bar order
  */
@@ -62,6 +63,10 @@ export default function DeskTabBar() {
   const [dropTarget, setDropTarget] = useState<{ id: string; place: 'before' | 'after' } | null>(null);
   // A pane dragged by its title (paneDrag) over a desk that would take it.
   const [paneDropId, setPaneDropId] = useState<string | null>(null);
+  // Drag a space by its Brain tab: the space being dragged and where it would
+  // land — before or after the section under the pointer.
+  const [draggingSpace, setDraggingSpace] = useState<string | null>(null);
+  const [spaceDrop, setSpaceDrop] = useState<{ id: string; place: 'before' | 'after' } | null>(null);
 
   // The header needs the space list on its own: the sidebar's space switch,
   // the other loader, is only mounted in the projects view.
@@ -175,7 +180,35 @@ export default function DeskTabBar() {
     setDragging(null);
     setDropTarget(null);
     setPaneDropId(null);
+    setDraggingSpace(null);
+    setSpaceDrop(null);
   };
+
+  /** Drag handlers for a section: its Brain tab starts the drag, the whole section takes the drop. */
+  const spaceDragProps = (space: SpaceInfo) => ({
+    onDragOver: (event: React.DragEvent<HTMLDivElement>) => {
+      if (!draggingSpace || draggingSpace === space.id) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      const rect = event.currentTarget.getBoundingClientRect();
+      const place = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+      if (spaceDrop?.id !== space.id || spaceDrop.place !== place) setSpaceDrop({ id: space.id, place });
+    },
+    onDragLeave: (event: React.DragEvent<HTMLDivElement>) => {
+      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+      if (spaceDrop?.id === space.id) setSpaceDrop(null);
+    },
+    onDrop: (event: React.DragEvent<HTMLDivElement>) => {
+      if (!draggingSpace) return;
+      event.preventDefault();
+      if (spaceDrop?.id === space.id) {
+        const ids = spaces.map((s) => s.id).filter((id) => id !== draggingSpace);
+        ids.splice(ids.indexOf(space.id) + (spaceDrop.place === 'after' ? 1 : 0), 0, draggingSpace);
+        void reorderSpaces(ids);
+      }
+      endDrag();
+    },
+  });
 
   /** Drag handlers for one desk tab; a drop is only accepted within the dragged desk's space. */
   const dragProps = (desk: DeskState, spaceKey: string | null) => ({
@@ -233,6 +266,7 @@ export default function DeskTabBar() {
         const count = isActiveSpace ? pendingReviews : 0;
         const brainLabel = section.space?.name ?? 'Brain';
         const tone = spaceTone(section.space);
+        const spaceDropPlace = section.space && spaceDrop?.id === section.space.id ? spaceDrop.place : null;
         return (
           // One section per brain: a soft surface in the space's colour holds its
           // Brain tab and desks, so the colour — not lines — tells the brains apart.
@@ -241,9 +275,20 @@ export default function DeskTabBar() {
             key={section.space?.id ?? 'all'}
             ref={isActiveSpace ? activeSectionRef : undefined}
             data-active={isActiveSpace || undefined}
-            className="space-band flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5"
+            {...(section.space ? spaceDragProps(section.space) : {})}
+            className={cn(
+              'space-band relative flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5',
+              section.space && draggingSpace === section.space.id && 'opacity-50',
+            )}
             style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
           >
+            {/* Where the dragged space would land: a line in the gap before or after this section. */}
+            {spaceDropPlace && (
+              <span
+                aria-hidden
+                className={cn('pointer-events-none absolute inset-y-1 w-[2px] rounded-full bg-primary', spaceDropPlace === 'before' ? '-left-[5px]' : '-right-[5px]')}
+              />
+            )}
             {/* The section's Brain tab: this brain's dashboard. Same underline
                 idiom as the desks, in the space's colour. */}
             {section.space && editingId === spaceEditId(section.space) ? (
@@ -260,8 +305,18 @@ export default function DeskTabBar() {
                 setTopView('brain');
               }}
               onDoubleClick={() => { if (section.space) startEditing(spaceEditId(section.space), section.space.name); }}
+              draggable={Boolean(section.space)}
+              onDragStart={(event) => {
+                if (!section.space) return;
+                event.dataTransfer.effectAllowed = 'move';
+                // Firefox only starts a drag that carries data.
+                event.dataTransfer.setData('text/plain', section.space.name);
+                endPaneDrag();
+                setDraggingSpace(section.space.id);
+              }}
+              onDragEnd={endDrag}
               aria-pressed={brainActive}
-              title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename' : ''}`}
+              title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename, drag to reorder the spaces' : ''}`}
               className={cn(
                 'flex h-full items-center gap-1.5 rounded-md px-2 text-body font-semibold transition-colors',
                 isActiveSpace ? 'text-foreground' : 'text-foreground/70 hover:text-foreground',

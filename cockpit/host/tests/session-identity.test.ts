@@ -98,6 +98,16 @@ describe('session identity', () => {
     expect(turns.get('s-nested')?.state).toBe('working')
   })
 
+  it('keeps the folder the agent works in from its hooks, not from another conversation\'s', () => {
+    const { ledger, hook } = setup(false)
+    ledger.recordSpawn('s-cwd', null, 'p1', 'claude')
+    expect(ledger.get('s-cwd')?.workdir).toBeNull()
+    hook('s-cwd', { id: 'outer', state: 'working', cwd: '/repo' })
+    hook('s-cwd', { id: 'outer', state: 'done', cwd: '/repo-wt-feature' })
+    hook('s-cwd', { id: 'inner', state: 'done', cwd: '/elsewhere' })
+    expect(new SessionLedger().get('s-cwd')?.workdir).toBe('/repo-wt-feature')
+  })
+
   it('accepts only the cockpit id from a provider that adopts it', () => {
     const { ledger, turns, hook } = setup(true)
     ledger.recordSpawn('s-adopt', null, 'p1', 'claude')

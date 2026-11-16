@@ -3,14 +3,14 @@
 // saved in place 1.2s after the last keystroke. Agent edits arrive through the
 // host's `notes` event: applied at once when nothing local is unsaved, else a
 // conflict bar lets the user pick a version. Without a noteId the pane lists
-// the project's notes to pick from.
+// the project's notes to pick from; "All notes" in an open note goes back there.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Markdown } from '@tiptap/markdown';
-import { Archive, Bold, Italic, List, ListChecks, ListOrdered, Loader2, NotebookPen, Plus, Strikethrough, type LucideIcon } from 'lucide-react';
+import { Archive, Bold, ChevronLeft, Italic, List, ListChecks, ListOrdered, Loader2, NotebookPen, Plus, Strikethrough, type LucideIcon } from 'lucide-react';
 import { useWritable } from '@/stores/useTeamStore';
 
 import { ApiError } from '@/lib/api';
@@ -131,7 +131,10 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   const flush = useCallback(async (force = false) => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     const editor = editorRef.current;
-    if (!editor || !dirtyRef.current || savingRef.current) return;
+    // An editor that never got the note's content has nothing of the note to
+    // save: writing it would replace the note (StrictMode's extra unmount in
+    // development, a pane closed or switched while the note loads).
+    if (!editor || !dirtyRef.current || savingRef.current || baseRef.current === null) return;
     savingRef.current = true;
     dirtyRef.current = false;
     setSaveState('saving');
@@ -178,6 +181,14 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   });
   editorRef.current = editor;
   useEffect(() => { editor?.setEditable(brain.writable); }, [editor, brain.writable]);
+
+  // What was loaded and typed belongs to one editor instance. A new one
+  // (StrictMode builds it again in development) starts empty: the note is
+  // loaded into it again, and nothing of the old one is pending.
+  useEffect(() => {
+    baseRef.current = null;
+    dirtyRef.current = false;
+  }, [editor]);
 
   // First load and every change from outside (agent edit, another tab).
   const note = query.data;
@@ -237,6 +248,16 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 text-caption text-muted-foreground">
+        {/* Back to the project's notes; leaving the editor saves what is pending. */}
+        <button
+          type="button"
+          title="All notes of this project"
+          className="-ml-1 flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-foreground/5 hover:text-foreground"
+          onClick={() => updatePane(paneId, { noteId: undefined })}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          All notes
+        </button>
         <span>
           {note.lastEditor === 'agent' ? 'Edited by the agent' : 'Edited by you'} · {noteAge(note.updatedAt)}
         </span>

@@ -15,6 +15,8 @@ export const TERMINAL_OPTIONS: ITerminalOptions = {
   smoothScrollDuration: 0,
   scrollSensitivity: 3,
   fastScrollSensitivity: 8,
+  // xterm's default is 14 px; a thin bar still marks the scrollback.
+  scrollbar: { width: 6 },
   tabStopWidth: 4,
   macOptionIsMeta: true,
   macOptionClickForcesSelection: true,

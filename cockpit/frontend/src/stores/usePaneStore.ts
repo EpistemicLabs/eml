@@ -24,6 +24,7 @@
  * localStorage. If the persisted blob is corrupt or empty we fall back to a
  * single default desk with one pane — never leave the user with zero panes.
  */
+import type { EngramType } from '@/lib/types';
 import type { LLMProvider } from '@/types/app';
 import { useCallback, useSyncExternalStore } from 'react';
 import { startsInChat } from '@/components/chat/chat-default';
@@ -37,10 +38,12 @@ import { setTopView } from './useTopViewStore';
  * the host's pty-bridge resumes against the pane's session id. Brain mode
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
+ * Worktrees mode shows the project's worktrees, sessions and ports. Labels,
+ * icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -84,6 +87,12 @@ export interface PaneState {
    */
   noteId?: string;
   /**
+   * How the brain view of this pane was left (BrainPane): lens, reach and the
+   * types hidden. Kept with the layout, so the pane opens where it was after a
+   * desk switch or a reload; unset → timeline, project reach, every type.
+   */
+  brainView?: BrainPaneView;
+  /**
    * v0.17: the brain task this pane's session advances (a task run, skill
    * task-run). Sent with the terminal's init so the host ledger records it.
    */
@@ -96,6 +105,23 @@ export interface PaneState {
    */
   provider?: LLMProvider;
 }
+
+export interface BrainPaneView {
+  lens: 'timeline' | 'list';
+  reach: 'project' | 'brain';
+  /** Types switched off; a type the brain gains later shows. */
+  hidden: EngramType[];
+}
+
+const parseBrainView = (raw: unknown): BrainPaneView | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const v = raw as Record<string, unknown>;
+  return {
+    lens: v.lens === 'list' ? 'list' : 'timeline',
+    reach: v.reach === 'brain' ? 'brain' : 'project',
+    hidden: Array.isArray(v.hidden) ? (v.hidden.filter((t) => typeof t === 'string') as EngramType[]) : [],
+  };
+};
 
 export interface DeskState {
   id: string;
@@ -261,6 +287,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     title: typeof e.title === 'string' && e.title.trim() ? e.title : undefined,
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
+    brainView: parseBrainView(e.brainView),
     taskId: typeof e.taskId === 'string' && e.taskId ? e.taskId : undefined,
     provider: e.provider === 'claude' || e.provider === 'codex' ? e.provider : undefined,
   };
@@ -856,6 +883,7 @@ export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): v
       next.label === pane.label &&
       next.title === pane.title &&
       next.noteId === pane.noteId &&
+      next.brainView === pane.brainView &&
       next.provider === pane.provider
     ) {
       return pane;
@@ -906,7 +934,7 @@ export function getSessionView(sessionId: string): PaneView | undefined {
 
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
 // A pane is an area for one project holding at most one item per surface
-// (terminal → session, note → note, brain → the project's brain view) and
+// (terminal → session, note → note, brain / worktrees → the project's view) and
 // showing one of them. Each item lives in at most one pane across all desks.
 // Every user action that opens or focuses something goes through openInPane;
 // background worker spawns (addWorkerPane) deliberately do not.
@@ -915,7 +943,7 @@ export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
   | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
-  | { surface: 'brain'; projectId: string | null };
+  | { surface: 'brain' | 'worktrees'; projectId: string | null };
 
 /**
  * Whether a pane is the empty "Choose Your Project" pane. Needs the known
@@ -944,17 +972,23 @@ export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
   return startsInChat({ chatDefault: readSettings().chatDefault, provider: provider ?? defaultProvider }) ? 'chat' : 'terminal';
 }
 
-/** The pane that already holds the target's item, on any desk. */
+/**
+ * The pane that already holds the target's item, on a desk of the active
+ * space. Not on another space's desk: a pane there starts its session with
+ * that space's token, and one left from before the session moved to this
+ * space the host refuses.
+ */
 function findPaneHolding(target: OpenTarget): PaneState | undefined {
-  const panes = snapshot.desks.flatMap(s => s.panes);
+  const panes = getSpaceDesks(snapshot.activeSpaceId).flatMap(s => s.panes);
   switch (target.surface) {
     case 'terminal':
       return target.sessionId ? panes.find(p => p.sessionId === target.sessionId) : undefined;
     case 'note':
       return panes.find(p => p.noteId === target.noteId);
     case 'brain':
-      // The brain view is not a unique item: only a pane showing it right now.
-      return panes.find(p => p.paneView === 'brain' && p.projectId === target.projectId);
+    case 'worktrees':
+      // A project view is not a unique item: only a pane showing it right now.
+      return panes.find(p => p.paneView === target.surface && p.projectId === target.projectId);
   }
 }
 

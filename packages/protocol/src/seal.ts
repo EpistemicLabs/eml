@@ -83,7 +83,10 @@ export function sealOpWith(nonce: Uint8Array, envelope: TeamOp, device: KeyPair,
   if (key.key.length !== KEY_BYTES) throw new ProtocolError(`a brain key is ${KEY_BYTES} bytes`)
   const { payload, sig } = signed(envelope, device)
   const header = { v: PROTOCOL_VERSION, kind: 'op' as const, brain: envelope.team.brain, op_id: envelope.op_id, epoch: key.epoch, nonce: toBase64url(nonce) }
-  const plaintext = new Uint8Array([...fromBase64url(sig, SIG_BYTES, 'the signature'), ...sodium.from_string(payload)])
+  const body = sodium.from_string(payload)
+  const plaintext = new Uint8Array(SIG_BYTES + body.length)
+  plaintext.set(fromBase64url(sig, SIG_BYTES, 'the signature'))
+  plaintext.set(body, SIG_BYTES)
   const { ct } = sealBox(plaintext, canonicalJson(header), nonce, key.key)
   return { record: { ...header, ct }, envelope: JSON.parse(payload) as TeamOp, payload, sig, epoch: key.epoch }
 }

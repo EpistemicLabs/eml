@@ -12,6 +12,7 @@ import { useWritable } from '@/stores/useTeamStore';
 
 import { usePaletteOps } from '@/contexts/PaletteOpsContext';
 import { useNote, useRenameNote } from '@/lib/notes';
+import { paneViewDef } from '@/lib/pane-views';
 import { useProviders } from '@/lib/providers';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { isPaneProtected, usePane, renamePane } from '@/stores/usePaneStore';
@@ -54,13 +55,15 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   const overrideTitle = pane?.title;
   // Note panes are named after their note's first line.
   const isNoteView = pane?.paneView === 'note';
+  // Brain and worktrees show the project, not one item of it.
+  const projectView = pane?.paneView === 'brain' || pane?.paneView === 'worktrees' ? paneViewDef(pane.paneView).label : null;
   const { data: note } = useNote(isNoteView ? pane.noteId : null);
   const renameNote = useRenameNote();
   // The pane's own title belongs to its session (terminal) or to a pure brain
-  // pane; a session pane in brain view stays "Brain" and is not renamed.
+  // or worktrees pane; a session pane in such a view keeps its name ("Brain") and is not renamed.
   // A note's title lives in the brain; a shared brain that is not live takes no write (useTeamStore).
   const brain = useWritable();
-  const canRename = isNoteView ? Boolean(note) && brain.writable : !(pane?.paneView === 'brain' && pane.sessionId);
+  const canRename = isNoteView ? Boolean(note) && brain.writable : !(projectView && pane?.sessionId);
   const sessionId = selectedSession?.id ?? pane?.sessionId ?? null;
   // Promote a pending local override to the host at most once per
   // (sessionId, name) pair, so the effect can't loop on refreshProjects.
@@ -111,15 +114,15 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   }, [pane?.paneView, selectedSession, overrideTitle, refreshProjects]);
 
   // Displayed pane name: user override → session summary → auto label.
-  const title = pane?.paneView === 'brain'
-    ? (pane.sessionId ? 'Brain' : (overrideTitle ?? 'Brain'))
+  const title = projectView
+    ? (pane?.sessionId ? projectView : (overrideTitle ?? projectView))
     : isNoteView
     ? (note?.title ?? 'Notes')
     : (overrideTitle ?? (selectedSession ? getSessionTitle(selectedSession, paneLabel) : (paneLabel || 'New Session')));
   // Brain panes show the project they are scoped to, like terminal panes do;
   // a brain-wide pane (no project) names the instance — for now there is only
   // one ("Main"), hosted/other instances come later.
-  const subtitle = pane?.paneView === 'brain'
+  const subtitle = projectView
     ? selectedProject?.displayName ?? 'Main'
     : selectedProject?.displayName ?? '';
 

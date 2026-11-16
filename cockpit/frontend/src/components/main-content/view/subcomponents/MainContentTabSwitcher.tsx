@@ -1,10 +1,12 @@
-// Adapted: VIEW_MODES = terminal | brain (decision cockpit-pane-types).
+// Adapted: the views come from lib/pane-views.ts, in two groups — the
+// session's (Terminal, Chat) and the plugins (Brain and the ones switched on).
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
-import { useEffect, useRef, useState } from 'react';
-import { Brain, MessageSquare, NotebookPen, PanelLeft, Plus, Terminal, X, type LucideIcon } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import Tooltip from '@/shared/view/ui/Tooltip';
+import { PANE_VIEW_DEFS, useViewEnabled, type PaneViewDef } from '@/lib/pane-views';
 import { newSessionEntries, useProviders } from '@/lib/providers';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { LLMProvider } from '@/types/app';
@@ -29,29 +31,16 @@ type MainContentTabSwitcherProps = {
   switchBlocked?: string | null;
 };
 
-type ViewModeDef = {
-  view: PaneView;
-  label: string;
-  icon: LucideIcon;
-};
-
-// Mutually exclusive: Terminal ↔ Chat ↔ Brain ↔ Note swap the pane's body.
-const VIEW_MODES: ViewModeDef[] = [
-  { view: 'terminal', label: 'Terminal', icon: Terminal },
-  { view: 'chat', label: 'Chat', icon: MessageSquare },
-  { view: 'brain', label: 'Brain', icon: Brain },
-  { view: 'note', label: 'Note', icon: NotebookPen },
-];
-
-// Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
-// terminal entries come from newSessionEntries.
-const NEW_LABEL: Record<Exclude<PaneView, 'terminal'>, string> = { chat: 'New chat session', brain: 'New brain view', note: 'New note' };
+const GROUPS = [
+  { group: 'session', title: 'Sessions' },
+  { group: 'plugin', title: 'Plugins' },
+] as const;
 
 const TO_TERMINAL_HINT = 'Terminal: stops a running turn; background tasks and session grants do not carry over';
 
 /**
  * Apple-style toolbar: a Segmented Control for the pane's view mode
- * (Terminal or Brain — mutually exclusive). Active segment gets a subtle
+ * (mutually exclusive, grouped: session views │ plugins). Active segment gets a subtle
  * frosted background highlight on top of a shared pill. A dezenter divider
  * separates it from the pane-level close action.
  */
@@ -68,14 +57,19 @@ export default function MainContentTabSwitcher({
   const addLabel = 'New pane next to this one';
   const [addOpen, setAddOpen] = useState(false);
   const sessionEntries = newSessionEntries(useProviders().data ?? []);
+  const enabled = useViewEnabled();
+  // Mutually exclusive: each view swaps the pane's body.
+  const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view));
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
-  const addItems: AddItem[] =
-    VIEW_MODES.flatMap((mode): AddItem[] =>
+  // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
+  // terminal entries come from newSessionEntries, one per ready agent CLI.
+  const addItems = (group: PaneViewDef['group']): AddItem[] =>
+    modes.filter((mode) => mode.group === group).flatMap((mode): AddItem[] =>
       mode.view === 'terminal'
         ? sessionEntries.map(({ label, provider }) => ({
             key: provider ? `terminal-${provider}` : 'terminal', label, icon: mode.icon, view: mode.view, provider,
           }))
-        : [{ key: mode.view, label: NEW_LABEL[mode.view], icon: mode.icon, view: mode.view }]);
+        : [{ key: mode.view, label: mode.newLabel, icon: mode.icon, view: mode.view }]);
   const addRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!addOpen) return;
@@ -93,35 +87,36 @@ export default function MainContentTabSwitcher({
 
   return (
     <div className="flex items-center gap-2">
-      {/* View-mode segmented control: Terminal / Brain */}
-      <div
-        role="radiogroup"
-        className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10"
-      >
-        {VIEW_MODES.map((mode) => {
-          const isActive = paneView === mode.view;
-          const blocked = !isActive && !!switchBlocked && (mode.view === 'terminal' || mode.view === 'chat');
-          return (
-            <Tooltip key={mode.view} content={blocked ? switchBlocked : paneView === 'chat' && mode.view === 'terminal' ? TO_TERMINAL_HINT : mode.label} position="bottom">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={isActive}
-                aria-label={mode.label}
-                disabled={blocked}
-                onClick={() => onSetPaneView(mode.view)}
-                className={cn(
-                  'flex h-6 w-7 items-center justify-center rounded transition-colors duration-150 disabled:opacity-40',
-                  isActive
-                    ? 'bg-foreground/20 text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <mode.icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
-              </button>
-            </Tooltip>
-          );
-        })}
+      {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
+      <div role="radiogroup" className="flex items-center gap-1.5">
+        {GROUPS.map(({ group }) => (
+          <div key={group} className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10">
+            {modes.filter((mode) => mode.group === group).map((mode) => {
+              const isActive = paneView === mode.view;
+              const blocked = !isActive && !!switchBlocked && mode.group === 'session';
+              return (
+                <Tooltip key={mode.view} content={blocked ? switchBlocked : paneView === 'chat' && mode.view === 'terminal' ? TO_TERMINAL_HINT : mode.label} position="bottom">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={isActive}
+                    aria-label={mode.label}
+                    disabled={blocked}
+                    onClick={() => onSetPaneView(mode.view)}
+                    className={cn(
+                      'flex h-6 w-7 items-center justify-center rounded transition-colors duration-150 disabled:opacity-40',
+                      isActive
+                        ? 'bg-foreground/20 text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <mode.icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {(onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
@@ -164,17 +159,24 @@ export default function MainContentTabSwitcher({
               role="menu"
               className="absolute top-full right-0 z-40 mt-1 min-w-[10rem] rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
             >
-              {addItems.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider); }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui whitespace-nowrap text-foreground transition-colors hover:bg-foreground/10"
-                >
-                  <item.icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
-                  {item.label}
-                </button>
+              {GROUPS.map(({ group, title }, index) => (
+                <Fragment key={group}>
+                  <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
+                    {title}
+                  </div>
+                  {addItems(group).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider); }}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui whitespace-nowrap text-foreground transition-colors hover:bg-foreground/10"
+                    >
+                      <item.icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
+                      {item.label}
+                    </button>
+                  ))}
+                </Fragment>
               ))}
             </div>
           )}

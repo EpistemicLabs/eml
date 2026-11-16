@@ -19,7 +19,7 @@ import type { PtyBridge } from './pty-bridge.js'
 import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
-import { provisionSpace, type AgentNames, type Human } from './provision.js'
+import { homeHuman, provisionSpace, type AgentNames, type Human } from './provision.js'
 import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
@@ -50,6 +50,7 @@ import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
+import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
@@ -301,6 +302,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     readAt: entry.readAt,
     resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
+    workdir: entry.workdir,
     backgroundTasks: deps.chat.backgroundTasks(entry.sessionId),
     turnState: deps.turns.get(entry.sessionId)?.state ?? 'idle',
     turnSince: deps.turns.get(entry.sessionId)?.since ?? null,
@@ -358,6 +360,28 @@ function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
     limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : SEARCH_LIMIT,
   }
   return searchResult(searchSessions(entries, query), query)
+}
+
+/** What the cockpit's own plugins read from the host (plugins-api.ts). */
+function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
+  return {
+    projectFolder: (projectId) => space.registry.get(projectId)?.path ?? null,
+    sessionProcesses: () => {
+      const owners = new Map<number, PortSession>()
+      for (const [pid, sessionId] of [...deps.bridge.processes(), ...deps.chat.processes()]) {
+        const entry = deps.bridge.ledger.get(sessionId)
+        const project = entry?.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+        // The name the sidebar shows (sessionView's summary).
+        const name = entry ? sessionView(deps, project, { ...entry, sessionId }).summary || null : null
+        owners.set(pid, { id: sessionId, name, projectId: entry?.projectId ?? null })
+      }
+      return owners
+    },
+    ownPorts: () => new Map(deps.spaces.list().flatMap((s) => {
+      const port = Number(new URL(s.url).port)
+      return port ? [[port, 'EML brain server'] as const] : []
+    })),
+  }
 }
 
 /** Where a project's folder comes from: linked by the user, made by the cockpit, or none yet. */
@@ -481,12 +505,12 @@ function freeSpaceName(deps: HostDeps, name: string): string {
  */
 async function newSpaceBinding(deps: HostDeps): Promise<{ agent: AgentNames; human: Human } | SpaceError> {
   const agent = deps.agents.get(deps.spaces.main.agent)
-  const handle = (await readCockpitConfig())?.handle
-  if (!agent || !handle) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
+  const human = homeHuman(await readCockpitConfig())
+  if (!agent || !human) return { error: { code: 'NO_AGENT', message: 'The main space has no agent bound; a new space needs one.' } }
   const info = readBrainInfo(agent.token)
   return {
     agent: { id: agent.id, name: info.agents.find((a) => a.id === agent.id)?.name ?? agent.id },
-    human: { handle, name: info.users.find((u) => u.id === handle)?.name ?? handle },
+    human,
   }
 }
 
@@ -577,9 +601,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   // and its team brains, sign-out. The session stays in the host (account.ts).
   if (resource === 'account' && await handleAccountApi(req, res, url, method, json, readJson)) return true
 
-  // Spaces: the list, and a new local one (Settings › Spaces).
+  // Spaces: the list in the user's order, the order itself (dragged in the
+  // header), and a new local one (Settings › Spaces).
   if (resource === 'spaces' && !id && method === 'GET') {
-    json(res, 200, { spaces: deps.spaces.list().map(spaceView) })
+    json(res, 200, { spaces: deps.spaces.ordered().map(spaceView) })
+    return true
+  }
+  if (resource === 'spaces' && id === 'order' && parts.length === 3 && method === 'PUT') {
+    const { ids } = await readJson(req)
+    if (!Array.isArray(ids) || !ids.every((x) => typeof x === 'string')) {
+      json(res, 400, { error: { code: 'BAD_ORDER', message: 'ids must be a list of space ids' } })
+      return true
+    }
+    try {
+      await deps.spaces.setOrder(ids)
+      json(res, 200, { spaces: deps.spaces.ordered().map(spaceView) })
+    } catch (err) {
+      json(res, 500, { error: { code: 'SPACE_ORDER_FAILED', message: (err as Error).message } })
+    }
     return true
   }
   if (resource === 'spaces' && !id && method === 'POST') {
@@ -698,6 +737,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (!space) { json(res, 404, { error: { code: 'NO_SUCH_SPACE', message: 'No such brain space' } }); return true }
 
   try {
+    // The cockpit's own plugins: their switches, Worktrees' reads, and Notes refused while off (plugins-api.ts).
+    if (await handlePluginsApi(req, res, pluginsDeps(deps, space), url, method, json, readJson)) return true
     if (await handleNotesApi(req, res, { loopbackUrl: space.url, brainToken: space.token }, url, method, json, readJson, space.notes)) return true
 
     // The first-run setup server answers { needed: true } (setup.ts). Here:

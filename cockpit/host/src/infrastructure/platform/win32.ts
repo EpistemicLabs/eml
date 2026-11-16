@@ -6,6 +6,8 @@ import { noSessionMemory } from '../../domain/session-memory.js'
 import { archKey, detached, runFile } from './common.js'
 
 export const win32: Platform = {
+  // No lsof; netstat/Get-NetTCPConnection would be the way once Windows hosts need it.
+  listeningPorts: async () => null,
   freeMemory: () => os.freemem(),
   sessionMemory: () => noSessionMemory('not on Windows'),
   os: 'win32',

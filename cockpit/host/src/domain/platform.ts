@@ -1,6 +1,6 @@
 /**
- * What differs between the operating systems the host runs on, behind one port
- * (docs/proposals/windows-support.md, "Architecture"). Code outside the
+ * What differs between the operating systems the host runs on, behind one port.
+ * Code outside the
  * adapters asks the platform and never checks `process.platform` itself — a
  * test keeps it that way (tests/platform.test.ts).
  *
@@ -61,4 +61,25 @@ export interface Platform {
 
   /** Check a downloaded binary's code signature, where the OS has one; elsewhere the checksum is the check. */
   verifyCodeSignature(bin: string, teamId: string, publisher: string): Promise<void>
+
+  /** The TCP ports the user's processes listen on (the Worktrees plugin); null where the host cannot tell. */
+  listeningPorts(): Promise<ListeningPort[] | null>
+}
+
+export interface ListeningPort {
+  port: number
+  /** The address it listens on: 127.0.0.1, ::1, * … */
+  address: string
+  pid: number
+  command: string
+  /** The process's working folder; null when it could not be read. */
+  cwd: string | null
+  /** When the process started; null when it could not be read. */
+  startedAt: string | null
+  /** The full command line, as the OS reports it (may hold secrets: redact before showing it). */
+  commandLine: string | null
+  /** Resident memory in bytes; null when it could not be read. */
+  memory: number | null
+  /** Its parent, the parent's parent … up to the first process; empty when unknown. */
+  ancestors: number[]
 }

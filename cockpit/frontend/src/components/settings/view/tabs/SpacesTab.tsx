@@ -251,86 +251,84 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
       </SettingsSection>
 
       {listed.length > 0 && (
-        <SettingsSection title="Details">
-          <div>
-            <SettingsPicker
-              items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
-              value={shownId}
-              onChange={pick}
-              ariaLabel="Spaces"
-            />
-            {shown && (
-              <SettingsCard divided className="rounded-tl-none border-foreground/10">
-                  <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
-                  {shown.ownRuntime && (
-                    <SettingsRow
-                      label="Login and tools"
-                      description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
-                    >
-                      <span className="text-sm text-foreground">Own</span>
-                    </SettingsRow>
-                  )}
-                  {!shown.shared && brainRows}
+        <div>
+          <SettingsPicker
+            items={listed.map((space) => ({ id: space.id, label: spaceLabel(space) }))}
+            value={shownId}
+            onChange={pick}
+            ariaLabel="Spaces"
+          />
+          {shown && (
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
+            <SettingsSection title="Details">
+              <SettingsCard divided>
+                <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
+                {shown.ownRuntime && (
+                  <SettingsRow
+                    label="Login and tools"
+                    description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
+                  >
+                    <span className="text-sm text-foreground">Own</span>
+                  </SettingsRow>
+                )}
+                {!shown.shared && brainRows}
               </SettingsCard>
+            </SettingsSection>
+
+            {shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
+
+            <SettingsSection
+              title={`Backups of ${shown.name}`}
+              description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
+            >
+              <SettingsCard divided>
+                <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
+                  <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
+                    {backingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
+                    {backingUp ? 'Backing up…' : 'Back up now'}
+                  </Button>
+                </SettingsRow>
+                {backups.length === 0 ? (
+                  <div className="px-4 py-4 text-sm text-muted-foreground">No backups yet.</div>
+                ) : (
+                  backups.map((b) => (
+                    <div key={b.name} className="flex items-center justify-between gap-4 px-4 py-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Mono className="min-w-0 truncate">{b.name}</Mono>
+                        {b.kind === 'pre-migration' && (
+                          <span className="flex-shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">before update</span>
+                        )}
+                      </span>
+                      <span className="flex-shrink-0 text-xs text-muted-foreground">
+                        {formatDate(b.createdAt)} · {formatBytes(b.sizeBytes)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </SettingsCard>
+            </SettingsSection>
+
+            {shown.shared && (
+              <details className="group">
+                <summary className="cursor-pointer list-none text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+                  <span className="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
+                  Technical details
+                </summary>
+                <SettingsCard divided className="mt-3">
+                  {shownTeam?.shared && <TeamDetailRows team={shownTeam} />}
+                  {brainRows}
+                </SettingsCard>
+              </details>
+            )}
+
+            {shown.shared === false && (
+              isMainSpace(shown, spaces)
+                ? <SettingsSection title={`Delete ${shown.name}`}><SettingsCard><div className="px-4 py-4 text-sm text-muted-foreground">{mainSpaceNote(shown)}</div></SettingsCard></SettingsSection>
+                : <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
             )}
           </div>
-        </SettingsSection>
-      )}
-
-      {shown && shownTeam?.shared && <TeamSections spaceId={shown.id} team={shownTeam} />}
-
-      {shown && (
-        <>
-        <SettingsSection
-          title={`Backups of ${shown.name}`}
-          description="Consistent copies of the brain file, even while sessions write — kept in the backups folder (see Settings › Data). A copy is also taken automatically before every brain update; the newest 3 are kept."
-        >
-          <SettingsCard divided>
-            <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
-              <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
-                {backingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
-                {backingUp ? 'Backing up…' : 'Back up now'}
-              </Button>
-            </SettingsRow>
-            {backups.length === 0 ? (
-              <div className="px-4 py-4 text-sm text-muted-foreground">No backups yet.</div>
-            ) : (
-              backups.map((b) => (
-                <div key={b.name} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Mono className="min-w-0 truncate">{b.name}</Mono>
-                    {b.kind === 'pre-migration' && (
-                      <span className="flex-shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">before update</span>
-                    )}
-                  </span>
-                  <span className="flex-shrink-0 text-xs text-muted-foreground">
-                    {formatDate(b.createdAt)} · {formatBytes(b.sizeBytes)}
-                  </span>
-                </div>
-              ))
-            )}
-          </SettingsCard>
-        </SettingsSection>
-        </>
-      )}
-
-      {shown?.shared && (
-        <details className="group">
-          <summary className="cursor-pointer list-none text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-            <span className="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
-            Technical details
-          </summary>
-          <SettingsCard divided className="mt-3">
-            {shownTeam?.shared && <TeamDetailRows team={shownTeam} />}
-            {brainRows}
-          </SettingsCard>
-        </details>
-      )}
-
-      {shown && shown.shared === false && (
-        isMainSpace(shown, spaces)
-          ? <SettingsSection title={`Delete ${shown.name}`}><SettingsCard><div className="px-4 py-4 text-sm text-muted-foreground">{mainSpaceNote(shown)}</div></SettingsCard></SettingsSection>
-          : <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
+          )}
+        </div>
       )}
     </div>
   );

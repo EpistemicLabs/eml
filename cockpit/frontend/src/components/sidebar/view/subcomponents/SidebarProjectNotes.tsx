@@ -3,21 +3,23 @@
 // to the active one (never over a running terminal); the dot marks an agent
 // edit not seen yet. Rows rename (rewrites the first line) and delete (archives
 // the engram) like session rows; old notes fold behind the History toggle.
-import { useEffect, useRef, useState } from 'react';
-import { Brain, Check, Edit2, MoreHorizontal, NotebookPen, Plus, Terminal, Trash2, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Check, Edit2, MoreHorizontal, NotebookPen, Plus, Trash2, X, type LucideIcon } from 'lucide-react';
 import { useWritable } from '@/stores/useTeamStore';
 
 import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
 import { newSessionEntries, useProviders } from '@/lib/providers';
+import { paneViewDef, useViewEnabled } from '@/lib/pane-views';
 import { noteAge, parseBrainDate, useArchiveNote, useCreateNote, useRenameNote, useUnseenNotes, type Note } from '@/lib/notes';
 import { Button } from '@/shared/view/ui';
 import { forgetNoteInPanes, openInPane, openNote, useActivePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
 import { useRowMenu } from '../rowMenuContext';
 
-// The project's one "+" (0.15.1): a small menu — new session / note / brain —
-// like the pane toolbar's "+", because a terminal pane starts an agent
+// The project's one "+" (0.15.1): a small menu — the new sessions, then the
+// plugins (brain view, and note / worktrees while on) — like the pane
+// toolbar's "+", because a terminal pane starts an agent
 // session the moment it mounts. ⌥-click skips the menu and starts a session.
 // With more than one agent CLI ready, the menu offers a session per CLI
 // instead of the one entry for the default (newSessionEntries).
@@ -42,27 +44,37 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
 
   // A shared brain that is not live takes no write (useTeamStore).
   const brain = useWritable(project.__spaceId);
-  const terminals: Array<{ label: string; Icon: typeof Terminal; disabled?: string; run: () => void }> =
-    newSessionEntries(useProviders().data ?? []).map(({ label, provider }) => ({
-      label,
-      Icon: Terminal,
-      run: provider
-        ? () => openInPane({ surface: 'terminal', projectId: project.projectId, provider })
-        : () => onNewSession(project),
-    }));
-  const items: Array<{ label: string; Icon: typeof Terminal; disabled?: string; run: () => void }> = [
-    ...terminals,
+  const enabled = useViewEnabled();
+  type Item = { label: string; Icon: LucideIcon; disabled?: string; run: () => void };
+  const item = (view: 'brain' | 'note' | 'worktrees', rest: Omit<Item, 'label' | 'Icon'>): Item[] =>
+    enabled(view) ? [{ label: paneViewDef(view).newLabel, Icon: paneViewDef(view).icon, ...rest }] : [];
+  const sections: Array<{ title: string; items: Item[] }> = [
     {
-      label: 'New brain view',
-      Icon: Brain,
-      disabled: inBrain ? undefined : 'This project exists only as a folder — it has no brain view',
-      run: () => openInPane({ surface: 'brain', projectId: project.projectId }),
+      title: 'Sessions',
+      items: newSessionEntries(useProviders().data ?? []).map(({ label, provider }) => ({
+        label,
+        Icon: paneViewDef('terminal').icon,
+        run: provider
+          ? () => openInPane({ surface: 'terminal', projectId: project.projectId, provider })
+          : () => onNewSession(project),
+      })),
     },
     {
-      label: 'New note',
-      Icon: NotebookPen,
-      disabled: inBrain ? brain.reason ?? undefined : 'Notes need a brain project — this project exists only as a folder',
-      run: () => create.mutate(project.projectId, { onSuccess: (note) => openNote(note.id, project.projectId) }),
+      title: 'Plugins',
+      items: [
+        ...item('brain', {
+          disabled: inBrain ? undefined : 'This project exists only as a folder — it has no brain view',
+          run: () => openInPane({ surface: 'brain', projectId: project.projectId }),
+        }),
+        ...item('note', {
+          disabled: inBrain ? brain.reason ?? undefined : 'Notes need a brain project — this project exists only as a folder',
+          run: () => create.mutate(project.projectId, { onSuccess: (note) => openNote(note.id, project.projectId) }),
+        }),
+        ...item('worktrees', {
+          disabled: project.path ? undefined : 'Worktrees need the project\'s folder — this project has none',
+          run: () => openInPane({ surface: 'worktrees', projectId: project.projectId }),
+        }),
+      ],
     },
   ];
 
@@ -95,23 +107,30 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
           role="menu"
           className="absolute top-full left-0 z-40 mt-1 min-w-[10rem] whitespace-nowrap rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
         >
-          {items.map(({ label, Icon, disabled, run }) => (
-            <button
-              key={label}
-              type="button"
-              role="menuitem"
-              disabled={Boolean(disabled)}
-              title={disabled}
-              onClick={(event) => {
-                event.stopPropagation();
-                setOpen(false);
-                run();
-              }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui text-foreground transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              <Icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
-              {label}
-            </button>
+          {sections.map(({ title, items }, index) => (
+            <Fragment key={title}>
+              <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
+                {title}
+              </div>
+              {items.map(({ label, Icon, disabled, run }) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="menuitem"
+                  disabled={Boolean(disabled)}
+                  title={disabled}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpen(false);
+                    run();
+                  }}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui text-foreground transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <Icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
+                  {label}
+                </button>
+              ))}
+            </Fragment>
           ))}
         </div>
       )}

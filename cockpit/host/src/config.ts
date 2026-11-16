@@ -35,6 +35,13 @@ export interface CockpitConfig {
    * agent upgrade; absent before the upgrade.
    */
   handle?: string
+  /**
+   * The home's human as people read it (Settings, an agent's profile of
+   * them): set with the handle at first run; a home made before it existed
+   * gets it once at host start (provision.ts fillHumanName). One home is one
+   * human, so every space shows this one (decision person-lives-in-the-home).
+   */
+  name?: string
   /** The agent the main space binds (an id of `agents`); absent = none bound. */
   agent?: string
   /**
@@ -45,6 +52,12 @@ export interface CockpitConfig {
    */
   spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
   /**
+   * The order the user gave the spaces in the header (brain-space.ts
+   * ordered): space ids, main included. A space it does not name follows in
+   * the order of the config. Absent = the config's order, main first.
+   */
+  spaceOrder?: string[]
+  /**
    * The home's agent brains (agents.ts): one brain per agent, named after the
    * agent id in control.db, with a token the host alone holds. `runtime`: the
    * agent runs in a runtime of its own (agent-runtime.ts), set by `agent
@@ -53,6 +66,8 @@ export interface CockpitConfig {
   agents?: Array<{ id: string; token: string; runtime?: true }>
   /** What brain hygiene has offered per brain (brain id → state; brain-hygiene.ts). */
   hygiene?: Record<string, HygieneState>
+  /** The cockpit's own plugins the user switched on or off (plugins-api.ts); absent = the plugin's default. */
+  plugins?: Record<string, boolean>
 }
 
 /** When the hygiene banner was last started for one brain. */
@@ -90,6 +105,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
             ...(isSpaceColor(s.color) ? { color: s.color } : {}),
           }))
       : []
+    const spaceOrder = Array.isArray(parsed.spaceOrder) ? parsed.spaceOrder.filter((id): id is string => typeof id === 'string' && !!id) : []
     const agents = Array.isArray(parsed.agents)
       ? parsed.agents
           .filter((a): a is { id: string; token: string; runtime?: true } => !!a && typeof a.id === 'string' && AGENT_ID.test(a.id) && typeof a.token === 'string' && !!a.token)
@@ -100,16 +116,25 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(parsed.onboarding === 'pending' || parsed.onboarding === 'done' ? { onboarding: parsed.onboarding } : {}),
       ...(typeof parsed.mainName === 'string' && parsed.mainName.trim() ? { mainName: parsed.mainName.trim() } : {}),
       ...(typeof parsed.handle === 'string' && HANDLE.test(parsed.handle) ? { handle: parsed.handle } : {}),
+      ...(typeof parsed.name === 'string' && parsed.name.trim() ? { name: parsed.name.trim() } : {}),
       ...agentOf(parsed.agent),
       ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
       ...(spaces.length ? { spaces } : {}),
+      ...(spaceOrder.length ? { spaceOrder } : {}),
       ...(agents.length ? { agents } : {}),
       ...(readHygiene(parsed.hygiene) ?? {}),
+      ...(readPlugins(parsed.plugins) ?? {}),
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
+}
+
+function readPlugins(raw: unknown): { plugins: Record<string, boolean> } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const plugins = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter((e): e is [string, boolean] => typeof e[1] === 'boolean'))
+  return Object.keys(plugins).length ? { plugins } : null
 }
 
 function readHygiene(raw: unknown): { hygiene: Record<string, HygieneState> } | null {

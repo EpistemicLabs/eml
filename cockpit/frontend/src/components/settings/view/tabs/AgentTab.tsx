@@ -1,8 +1,9 @@
 // Settings › Agents: the home's agents, and the picked one read from its own
 // brain (host GET /api/agents, GET /api/agents/:id/brain/…), the active space's
-// until another is picked: where it works, its persona (the core profile in agent.<id>), the rules that load in
-// every session (applies: always, in agent.<id> and in user.<handle> — the
-// ones about the person are marked), and what it knows about the people it
+// until another is picked: where it works, its persona (the core profile in agent.<id>), its rules (in
+// agent.<id> and in user.<handle> — the ones about the person are marked):
+// those that load in every session (applies: always), then the situational
+// ones with their trigger, collapsed as a whole — and what it knows about the people it
 // works with (the core profiles in user.*). Read-only: the agent keeps these
 // engrams itself when you ask it to. An entry written before the short format
 // (rule over 200, profile over 400 characters) loads by title only — the boot
@@ -19,7 +20,7 @@ import type { SettingsMainTabMeta } from '../../constants/constants';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
-type AgentEngrams = { persona: Engram | null; rules: Engram[]; people: Engram[] };
+type AgentEngrams = { persona: Engram | null; rules: Engram[]; situational: Engram[]; people: Engram[] };
 
 // The short format's limits (core validate.ts).
 const RULE_MAX_CHARS = 200;
@@ -49,11 +50,12 @@ function useAgentEngrams(agentId: string | null, handle: string | null): { data:
       ([profiles, ownRules, userRules]) => {
         if (cancelled) return;
         const core = profiles.engrams.filter((e) => e.properties?.core === true);
+        // By the shown label: the agent's own titles carry its id as a prefix.
+        const rules = [...ownRules.engrams, ...userRules.engrams].sort((a, b) => ruleLabel(a, agentId).localeCompare(ruleLabel(b, agentId)));
         setData({
           persona: core.find((e) => e.scope === own) ?? null,
-          rules: [...ownRules.engrams, ...userRules.engrams]
-            .filter((e) => e.properties?.applies === 'always')
-            .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? '')),
+          rules: rules.filter((e) => e.properties?.applies === 'always'),
+          situational: rules.filter((e) => e.properties?.applies !== 'always'),
           people: core.filter((e) => e.scope.startsWith('user.')).sort((a, b) => a.scope.localeCompare(b.scope)),
         });
       },
@@ -129,23 +131,33 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
             <SettingsSection
               title="Always-on rules"
-              description={`How ${name} works with you. Loaded in every session; situational rules apply when their trigger occurs.`}
+              description={`How ${name} works with you. Loaded in every session.`}
             >
               <SettingsCard divided>
                 {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
                 {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
-                {data?.rules.map((rule) => (
-                  <details key={rule.id} className="group px-4 py-3">
-                    <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-                      <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
-                      {ruleLabel(rule, agent?.id ?? '')}
+                {data?.rules.map((rule) => <RuleRow key={rule.id} rule={rule} agentId={agent.id} />)}
+              </SettingsCard>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Situational rules"
+              description={`Listed by title in every session; ${name} reads one in full when its trigger applies.`}
+            >
+              <SettingsCard>
+                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
+                {data && data.situational.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No situational rules.</div>}
+                {data && data.situational.length > 0 && (
+                  <details className="group/all">
+                    <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground">
+                      <span className="mr-2 inline-block text-muted-foreground transition-transform group-open/all:rotate-90">›</span>
+                      {data.situational.length} situational {data.situational.length === 1 ? 'rule' : 'rules'}
                     </summary>
-                    <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
-                    {rule.content.length > RULE_MAX_CHARS && (
-                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
-                    )}
+                    <div className="divide-y divide-foreground/8 border-t border-foreground/8">
+                      {data.situational.map((rule) => <RuleRow key={rule.id} rule={rule} agentId={agent.id} />)}
+                    </div>
                   </details>
-                ))}
+                )}
               </SettingsCard>
             </SettingsSection>
 
@@ -169,6 +181,24 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** One rule: its label (and trigger, for a situational one), the content on opening. */
+function RuleRow({ rule, agentId }: { rule: Engram; agentId: string }) {
+  const trigger = typeof rule.properties?.trigger === 'string' ? rule.properties.trigger : null;
+  return (
+    <details className="group px-4 py-3">
+      <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
+        <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
+        {ruleLabel(rule, agentId)}
+        {trigger && <div className="mt-0.5 pl-4 text-xs font-normal text-muted-foreground">When: {trigger}</div>}
+      </summary>
+      <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
+      {rule.content.length > RULE_MAX_CHARS && (
+        <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
+      )}
+    </details>
   );
 }
 

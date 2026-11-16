@@ -1,3 +1,4 @@
+import * as http from 'node:http'
 import { brainIdFromProjectId, projectIdForBrain, ProjectPathError, type ProjectEntry, type ProjectRegistry } from './project-registry.js'
 import type { BrainProjectsClient } from './brain-projects.js'
 
@@ -57,7 +58,10 @@ export async function moveProject(source: MoveSpace, target: MoveSpace, project:
 /**
  * The local entries of the moved projects, carried over: display name, pin,
  * hidden, folder. A folder that no longer exists is left behind (the target
- * gets the entry without it). Returns the brain project ids that had an entry.
+ * gets the entry without it). A project the target space has an entry for
+ * already (the engrams joined it) keeps that entry as it is there: its
+ * sessions run in its folder, so the moved entry only fills what it lacks.
+ * Returns the brain project ids that had an entry.
  */
 export function rehome(source: ProjectRegistry, target: ProjectRegistry, brainProjectIds: string[]): string[] {
   const moved: string[] = []
@@ -73,32 +77,60 @@ export function rehome(source: ProjectRegistry, target: ProjectRegistry, brainPr
 }
 
 function carry(target: ProjectRegistry, brainProjectId: string, entry: ProjectEntry): void {
-  target.ensureBrain(brainProjectId, entry.displayName)
   const projectId = projectIdForBrain(brainProjectId)
+  const there = target.get(projectId)
+  if (there) {
+    target.update(projectId, { ...(there.customName || !entry.customName ? {} : { displayName: entry.customName }), starred: there.starred || entry.starred })
+    if (!there.path) carryPath(target, projectId, entry.path)
+    return
+  }
+  target.ensureBrain(brainProjectId, entry.displayName)
   // the brain's name as the registry knew it is the display name's fallback when there is no custom one
   target.update(projectId, { displayName: entry.customName, brainName: entry.displayName, starred: entry.starred, hidden: entry.hidden })
-  if (entry.path) {
-    try {
-      target.update(projectId, { path: entry.path })
-    } catch (err) {
-      if (!(err instanceof ProjectPathError)) throw err
-    }
+  carryPath(target, projectId, entry.path)
+}
+
+function carryPath(target: ProjectRegistry, projectId: string, folder: string | null): void {
+  if (!folder) return
+  try {
+    target.update(projectId, { path: folder })
+  } catch (err) {
+    if (!(err instanceof ProjectPathError)) throw err
   }
 }
 
 async function call(source: MoveSpace, route: string, body: Record<string, unknown>): Promise<MoveAnswer> {
-  let upstream: Response
+  let upstream: { status: number; text: string }
   try {
-    upstream = await fetch(`${source.url}${route}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${source.token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    upstream = await post(`${source.url}${route}`, source.token, JSON.stringify(body))
   } catch {
     return { status: 502, body: { error: 'Failed to reach the brain API.', code: 'BRAIN_UNAVAILABLE' } }
   }
-  const text = await upstream.text()
   let parsed: unknown
-  try { parsed = JSON.parse(text) } catch { parsed = { error: text } }
+  try { parsed = JSON.parse(upstream.text) } catch { parsed = { error: upstream.text } }
   return { status: upstream.status, body: parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : { error: String(parsed) } }
+}
+
+/**
+ * A POST to the (local) brain server with no time limit of its own: a move
+ * waits on the relay up to the server's deadline (EML_MOVE_DEADLINE_MS, five
+ * minutes) and then answers 504 SHARED_WRITE_PENDING. Node's fetch gives up
+ * waiting for a response after 300 s (undici's headersTimeout) — the same
+ * moment — and the move would read as "Failed to reach the brain API" while
+ * it may still land.
+ */
+function post(url: string, token: string, body: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      res.on('end', () => resolve({ status: res.statusCode ?? 502, text: Buffer.concat(chunks).toString('utf8') }))
+      res.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
 }

@@ -3,8 +3,7 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
 import { readCockpitConfig, updateCockpitConfig, type CockpitConfig } from './config.js'
-import { readBrainInfo } from './brain-info.js'
-import { provisionAgent, type Core as ProvisionCore } from './provision.js'
+import { homeHuman, provisionAgent, type Core as ProvisionCore } from './provision.js'
 import {
   AGENT_ID, BRAIN_MCP_SERVER, agentDir, agentMcpFile, agentRuntimeFile, allowedMcpServers, readAgentRuntime,
   writeAgentRuntime, type AgentRuntime,
@@ -121,9 +120,9 @@ async function createAgent(argv: string[], core: Core & ProvisionCore): Promise<
   const spaceName = space.name ?? opts.spaceName
 
   // A new id gets its agent brain first: a failure leaves no runtime behind, and the next run finds the brain.
-  if (config.handle && !config.agents?.some((a) => a.id === opts.agentId)) {
-    const human = readBrainInfo(config.token).users.find((u) => u.id === config.handle)?.name ?? config.handle
-    await provisionAgent({ id: opts.agentId, name: opts.agentId }, { handle: config.handle, name: human }, core)
+  const human = homeHuman(config)
+  if (human && !config.agents?.some((a) => a.id === opts.agentId)) {
+    await provisionAgent({ id: opts.agentId, name: opts.agentId }, human, core)
   }
 
   const dir = agentDir(opts.agentId)

@@ -87,6 +87,8 @@ export interface LedgerEntry {
   turnInFlight: { retried: boolean } | null
   /** The job whose run started it (domain/job.ts): its channel tools act for that job on every resume. */
   jobId: string | null
+  /** The folder the agent last worked in, as its hooks report it (a worktree, say); null before the first. */
+  workdir: string | null
 }
 
 interface LedgerFile {
@@ -140,6 +142,7 @@ function load(): LedgerFile {
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
           jobId: typeof entry.jobId === 'string' && entry.jobId ? entry.jobId : null,
+          workdir: typeof entry.workdir === 'string' && entry.workdir ? entry.workdir : null,
         }
       }
     }
@@ -215,6 +218,7 @@ export class SessionLedger {
       toolProfile: prev?.toolProfile ?? null,
       jobId: prev?.jobId ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
+      workdir: prev?.workdir ?? null,
     }
     this.persist()
   }
@@ -319,6 +323,14 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry?.turnInFlight) return
     entry.turnInFlight.retried = true
+    this.persist()
+  }
+
+  /** Where the agent works now: the cwd of its latest hook. */
+  setWorkdir(sessionId: string, workdir: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.workdir === workdir) return
+    entry.workdir = workdir
     this.persist()
   }
 

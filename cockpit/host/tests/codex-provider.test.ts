@@ -168,11 +168,11 @@ describe('Codex provider', () => {
   const launchArgs = (unattended: boolean, initialPrompt: string | null = null) =>
     provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt, unattended }).args
 
-  it('launches the cockpit\'s own binary in the isolated home, without a daemon, sandboxed with the reviewer', () => {
+  it('launches the cockpit\'s own binary in the isolated home, without a daemon, inline, sandboxed with the reviewer', () => {
     const launch = provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
     expect(launch.bin).toBe(platform.linksFiles ? join(home, 'codex', 'bin', 'codex') : join(home, 'codex', 'current', 'bin', 'codex.exe'))
     expect(launch.args).toEqual([
-      '--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write',
+      '--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write',
       '--config', 'approvals_reviewer="auto_review"', 'hello',
     ])
     expect(launch.env.CODEX_HOME).toBe(codexHome)
@@ -189,14 +189,14 @@ describe('Codex provider', () => {
     expect(env.EML_API_TOKEN).toBeUndefined()
   })
 
-  const unattended = ['--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write', '--config', 'approvals_reviewer="auto_review"']
+  const unattended = ['--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write', '--config', 'approvals_reviewer="auto_review"']
 
   it('runs an unattended session in the sandbox with the reviewer', () => {
     expect(launchArgs(true)).toEqual(unattended)
   })
 
   it('follows the user\'s permission settings — except where nobody is watching', () => {
-    const sandboxed = ['--no-daemon', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write']
+    const sandboxed = ['--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write']
     const network = ['--config', 'sandbox_workspace_write.network_access=true']
     expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false })
 
@@ -207,7 +207,7 @@ describe('Codex provider', () => {
     expect(launchArgs(false)).toEqual([...sandboxed, '--config', 'approvals_reviewer="auto_review"', ...network])
 
     expect(provider.settings?.write({ permissionMode: 'off' })).toBeNull()
-    expect(launchArgs(false)).toEqual(['--no-daemon', '--dangerously-bypass-approvals-and-sandbox'])
+    expect(launchArgs(false)).toEqual(['--no-daemon', '--no-alt-screen', '--dangerously-bypass-approvals-and-sandbox'])
     // A worker keeps the sandbox and the reviewer whatever the user chose for their own sessions.
     expect(launchArgs(true)).toEqual([...unattended, ...network])
 

@@ -261,10 +261,38 @@ function rowProblems(rows: MovedRows): string[] | undefined {
 
 export interface ProjectMovePlan extends MovePlan {
   project: string
-  /** The project and its sub-projects, parents first, each with the engrams it holds. */
+  /** The project and its sub-projects, parents first, each with the engrams that move (kept_statuses stay). */
   tree: ProjectTreeEntry[]
   /** Rows still written under an agent's name — the move refuses them (collisions says so). */
   legacy: LegacyAuthorship
+  /** The projects of the tree the target has already: their engrams join that project. */
+  joins: string[]
+  /** The statuses that stay in the source: those of a project whose namesake in the target has an active status (keptStatuses). */
+  kept_statuses: string[]
+}
+
+/**
+ * The statuses of the tree that stay behind: every status (the active one and
+ * the history it superseded) of a project whose namesake in the target has an
+ * active status of its own. A scope has one active status, and the target's
+ * is the current word on the project the engrams join; the source keeps its
+ * own with the archived project. Once an import of the tree is in the target
+ * (a move to resume), the import decided: what it carried moves, the rest
+ * stays — whatever the target's status is by now, so the set stays the one
+ * imported.
+ */
+function keptStatuses(source: Database.Database, target: Database.Database, tree: ProjectTreeEntry[], ids: string[]): Array<{ id: string, scope: string }> {
+  const scopes = JSON.stringify(tree.map(t => `project.${t.id}`))
+  const statuses = source.prepare(`SELECT id, scope FROM engrams WHERE type = 'status' AND scope IN (SELECT value FROM json_each(?)) ORDER BY ord`)
+    .all(scopes) as Array<{ id: string, scope: string }>
+  const imported = new Set((target.prepare('SELECT id FROM engrams WHERE id IN (SELECT value FROM json_each(?))')
+    .all(JSON.stringify(ids)) as Array<{ id: string }>).map(r => r.id))
+  if (imported.size > 0) return statuses.filter(s => !imported.has(s.id))
+  const held = new Set((target.prepare(`
+    SELECT DISTINCT scope FROM engrams
+    WHERE type = 'status' AND status = 'active' AND scope IN (SELECT value FROM json_each(?))
+  `).all(scopes) as Array<{ scope: string }>).map(r => r.scope))
+  return statuses.filter(s => held.has(s.scope))
 }
 
 /**
@@ -277,15 +305,22 @@ export function planProjectMove(args: { source: Database.Database, target: Datab
   return projectPlanned(args.source, args.target, args.project).plan
 }
 
-function projectPlanned(source: Database.Database, target: Database.Database, project: string): { plan: ProjectMovePlan, set: ExportedSet, ids: string[] } {
-  const { tree, ids } = projectSet(source, project)
+function projectPlanned(source: Database.Database, target: Database.Database, project: string): { plan: ProjectMovePlan, set: ExportedSet, ids: string[], held: ProjectTreeEntry[] } {
+  const { tree: held, ids: all } = projectSet(source, project)
+  const kept = keptStatuses(source, target, held, all)
+  const kept_statuses = kept.map(s => s.id)
+  const ids = all.filter(id => !kept_statuses.includes(id))
+  // the tree counts what moves: a kept status stays with its project
+  const tree = held.map(t => ({ ...t, engrams: t.engrams - kept.filter(s => s.scope === `project.${t.id}`).length }))
   if (ids.length === 0) throw new CommandError('INVALID', `Invalid move: project ${project} has no engrams to move.`)
   const { plan, set } = planned(source, target, ids)
   const legacy = legacyAuthorship(source, ids)
   if (legacy.engrams + legacy.entries > 0) {
     plan.collisions.unshift(`${legacy.engrams} engrams and ${legacy.entries} journal entries are written under an agent's name (${legacy.agents.join(', ')}); run the agent upgrade first`)
   }
-  return { plan: { ...plan, project, tree, legacy }, set, ids }
+  // on a resume the import made the projects it created: they are not joined
+  const joins = plan.resume ? [] : tree.map(t => t.id).filter(id => target.prepare('SELECT 1 FROM projects WHERE id = ?').get(id) !== undefined)
+  return { plan: { ...plan, project, tree, legacy, joins, kept_statuses }, set, ids, held }
 }
 
 /** Legacy authorship refuses a project move whatever else the plan says, a resume included. */
@@ -327,12 +362,13 @@ export async function moveProject(args: ProjectMoveArgs, env: Env): Promise<Proj
   refusalOf({ plan: first.plan, plan_hash })
   backupBrain(source, backup_path)
   return locked(source, async () => {
-    const { plan, set, ids } = projectPlanned(source, target.db, project)
+    const { plan, set, ids, held } = projectPlanned(source, target.db, project)
     refuseLegacy(plan)
     const result = await runMove({ source, target, ids, plan, set, plan_hash, backup_path, from, to }, env)
     const stores = commandStores(EML.fromConnection(source, 'move'), source)
     const archived: string[] = []
-    for (const entry of plan.tree) {
+    // every project the move took engrams out of, also one whose only engrams are kept statuses
+    for (const entry of held) {
       if (entry.engrams === 0) continue
       const row = source.prepare('SELECT metadata FROM projects WHERE id = ?').get(entry.id) as { metadata: string | null }
       // metadata is a flat map of text: where it went, under which name, and when; the move_out op in the log names the import
