@@ -88,8 +88,8 @@ export interface Job {
   pendingApproval?: boolean
   /**
    * Limited (the user's switch): its sessions get no shell, no messages to other sessions, no
-   * schedule tool and of the space's MCP servers only the brain; web tools stay. Set for a job
-   * with a channel trigger when it is made; only the user changes it, never a session.
+   * schedule tool and of the space's MCP servers only the brain; web tools stay. A job starts
+   * free; only the user limits it, never a session.
    */
   limited?: boolean
   /** Tools the user lent a limited job for a while; a grant ends at `until` or when its session reports done. */

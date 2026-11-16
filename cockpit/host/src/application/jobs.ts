@@ -119,7 +119,7 @@ export class Jobs {
       taskId: str(input.task_id) ?? null, prompt, target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
       // Drafts until the user switches a channel to send in the Jobs view; a session never can.
       reply: mail ? { mail: 'draft' } : {}, end, notify,
-      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true, limited: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
+      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
     }
     const next = nextDue(draft, this.now())
     if (next === null && trigger) return bad('that schedule has no run before its end')

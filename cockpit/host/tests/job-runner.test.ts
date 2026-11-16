@@ -353,21 +353,25 @@ describe('mail jobs', () => {
 })
 
 describe('limited jobs and grants', () => {
-  it('limits a mail job from the start; a schedule-only job is not', async () => {
+  it('starts every job, mail jobs too, with its maker\'s tools; only the user limits one', async () => {
     const { jobs } = setup()
     const mail = await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
-    expect(mail.job!.limited).toBe(true)
+    expect(mail.job!.limited).toBeUndefined()
     const routine = await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
     expect(routine.job!.limited).toBeUndefined()
-    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: false, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
-      .toMatchObject({ limited: true })
-    expect(jobs.setLimited(mail.job!, false).job!.limited).toBe(false)
+    // A session cannot set its limits or lend itself a tool.
+    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: true, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
+      .not.toHaveProperty('grants')
+    const limited = jobs.setLimited(mail.job!, true).job!
+    expect(limited.limited).toBe(true)
+    expect(jobs.setLimited(limited, false).job!.limited).toBe(false)
   })
 
   it('lends a tool for a while, tells the host, and takes it back when the session is done', async () => {
     const { world, runner, jobs } = setup()
     const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
     jobs.approve(world.store.get(job.id)!)
+    jobs.setLimited(world.store.get(job.id)!, true)
     expect(jobs.grant(world.store.get(job.id)!, 'chrome', 2, null).status).toBe(400)
     const lent = jobs.grant(world.store.get(job.id)!, 'chrome', 60, 'submit the return form')
     expect(lent.job!.grants).toEqual([{ tool: 'chrome', until: new Date(world.now + HOUR).toISOString(), reason: 'submit the return form' }])

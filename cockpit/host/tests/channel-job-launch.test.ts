@@ -79,8 +79,8 @@ describe('channelJobFacts', () => {
   const now = Date.parse('2026-11-08T10:00:00.000Z')
   const job = { id: 'job-1', triggers: [{ type: 'mail' as const, match: [] }] }
 
-  it('counts a channel job as limited unless the user took the limits off', () => {
-    expect(channelJobFacts(job, now).limited).toBe(true)
+  it('counts a channel job as limited only once the user limited it', () => {
+    expect(channelJobFacts(job, now).limited).toBe(false)
     expect(channelJobFacts({ ...job, limited: true }, now).limited).toBe(true)
     expect(channelJobFacts({ ...job, limited: false }, now).limited).toBe(false)
   })
