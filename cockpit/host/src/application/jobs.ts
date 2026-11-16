@@ -75,8 +75,9 @@ export class Jobs {
     const action = input.action
     if (caller.limited) {
       const own = caller.jobId ? this.deps.store.get(caller.jobId) : undefined
+      // The same lookup the action uses, so a key reaches its own job or nothing.
       const refusal = own
-        ? limitedJobRefusal(input, (key) => key === own.id || (key.length >= 6 && own.id.startsWith(key)) || key.toLowerCase() === own.name.toLowerCase())
+        ? limitedJobRefusal(input, (key) => { const found = this.findJob(caller.spaceId, key); return !('status' in found) && found.id === own.id })
         : 'this session\'s job no longer exists'
       if (refusal) return { status: 403, text: refusal }
       if (action === 'list') return { status: 200, text: `- ${this.describe(own!)}` }

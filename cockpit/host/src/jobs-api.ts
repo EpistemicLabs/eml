@@ -39,9 +39,11 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
 
 /** A session's request — the one rule for both ways it arrives. The caller has checked the token. */
 export async function requestJobs(deps: { jobs: Pick<Jobs, 'handle'>; callerOf: JobsApiDeps['callerOf'] }, body: Record<string, unknown>): Promise<{ status: number; payload: unknown }> {
-  const caller = typeof body.fromSession === 'string' ? deps.callerOf(body.fromSession) : null
+  // The envelope says who asks and how it came; the job tool gets only the tool's own fields.
+  const { fromSession, kind: _kind, token: _token, ...input } = body
+  const caller = typeof fromSession === 'string' ? deps.callerOf(fromSession) : null
   if (!caller) return { status: 403, payload: { error: { code: 'UNKNOWN_SESSION', message: 'Only a cockpit session can schedule jobs' } } }
-  const answer = await deps.jobs.handle(caller, body)
+  const answer = await deps.jobs.handle(caller, input)
   return { status: answer.status, payload: { text: answer.text, ...(answer.job ? { job: answer.job } : {}) } }
 }
 

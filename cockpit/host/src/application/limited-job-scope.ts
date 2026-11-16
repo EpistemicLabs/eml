@@ -20,3 +20,13 @@ export function limitedJobRefusal(input: Record<string, unknown>, matches: (key:
   const other = Object.keys(input).filter((key) => input[key] !== undefined && !OWN_JOB_FIELDS.has(key))
   return other.length ? `${REFUSED}; it cannot change ${other.join(', ')}` : null
 }
+
+/**
+ * A session's job and whether that job is limited, for the schedule tool's caller. A session whose
+ * job can no longer be found counts as limited, so the limit fails closed: it is then refused
+ * everything instead of reaching every job with its maker's tools.
+ */
+export function sessionJobFacts(jobId: string | null, job: { limited?: boolean } | undefined): { jobId: string | null; limited: boolean } {
+  if (!jobId) return { jobId: null, limited: false }
+  return { jobId, limited: job ? job.limited === true : true }
+}

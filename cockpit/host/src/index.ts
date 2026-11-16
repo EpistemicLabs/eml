@@ -58,6 +58,7 @@ import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
+import { sessionJobFacts } from './application/limited-job-scope.js'
 import type { GrantTool, Job } from './domain/job.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
@@ -358,12 +359,9 @@ async function main() {
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
     if (!entry) return null
-    // A limited job's session reaches only its own job (limited-job-scope.ts).
-    const job = entry.jobId ? jobStore.get(entry.jobId) : undefined
-    return {
-      sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile,
-      jobId: entry.jobId ?? null, limited: job?.limited === true,
-    }
+    // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
+    const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
+    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
   const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)

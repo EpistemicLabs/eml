@@ -426,6 +426,35 @@ describe('a job that ends itself and a limited job looking after its own job', (
     expect((await jobs.handle(session, { action: 'finish', job: own.id })).status).toBe(200)
     expect(world.store.get(own.id)!.endedAt).not.toBeNull()
   })
+
+  it('acts only on the job its own lookup finds: a name that is also another job\'s id prefix does not reach that job', async () => {
+    const { world, jobs } = setup()
+    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
+    const own = (await jobs.handle(caller, { action: 'create', name: other.id.slice(0, 8), prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.setLimited(world.store.get(own.id)!, true)
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
+    const answer = await jobs.handle(session, { action: 'update', job: own.name, at: '2026-11-11T09:00' })
+    expect(answer.status).toBe(403)
+    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
+  })
+
+  it('refuses everything to a limited job\'s session whose job is gone', async () => {
+    const { jobs } = setup()
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: 'deleted-job', limited: true }
+    const answer = await jobs.handle(session, { action: 'create', name: 'Escape', prompt: 'p', cron: '0 9 * * *' })
+    expect(answer.status).toBe(403)
+    expect(answer.text).toMatch(/no longer exists/)
+  })
+
+  it('takes lent tools back when a job finishes', async () => {
+    const { world, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.setLimited(world.store.get(job.id)!, true)
+    jobs.grant(world.store.get(job.id)!, 'chrome', 60, null)
+    expect((await jobs.handle(caller, { action: 'finish', job: job.id })).status).toBe(200)
+    expect(world.store.get(job.id)!.grants).toEqual([])
+    expect(world.ended).toEqual(['Returns:chrome'])
+  })
 })
 
 describe('limited jobs and grants', () => {
