@@ -470,7 +470,7 @@ async function main() {
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
-          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk' } : null
+          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk', attention: entry.attention?.kind ?? null } : null
         },
       },
       channelBridge: bridgeFiles(),

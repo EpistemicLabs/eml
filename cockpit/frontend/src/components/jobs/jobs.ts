@@ -2,12 +2,12 @@
 import * as paneStore from '@/stores/usePaneStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
-import type { RunOutcome } from '@/lib/job-run-label';
+import { runLabel as label, type RunOutcome } from '@/lib/job-run-label';
 
 export type { RunOutcome };
-export { runLabel } from '@/lib/job-run-label';
 
-export type SessionInfo = { projectId: string | null; chat: boolean } | null;
+/** The run's session as it stands now; attention: what it waits for from the user. */
+export type SessionInfo = { projectId: string | null; chat: boolean; attention?: RunOutcome | null } | null;
 
 export type JobRun = {
   id: string;
@@ -29,6 +29,8 @@ export type Job = {
   spaceId: string | null;
   spaceName: string;
   prompt: string;
+  /** What has to be true for the job to be over, set by its agent. */
+  goal?: string | null;
   paused: boolean;
   pausedReason: string | null;
   /** New channel addresses wait for the user's OK (Approve). */
@@ -73,4 +75,9 @@ export function openSession(spaceId: string | null, sessionId: string, session: 
   paneStore.openSessionInSpace(spaceId, {
     surface: 'terminal', projectId: session?.projectId ?? null, sessionId, chat: session?.chat ?? true,
   });
+}
+
+/** A run in a word and its tone; `current`: the job's last run, read as its session stands now. */
+export function runLabel(run: JobRun, current = false): ReturnType<typeof label> {
+  return label({ status: run.status, outcome: run.outcome, attention: run.session?.attention ?? null, sessionKnown: !!run.session }, current);
 }

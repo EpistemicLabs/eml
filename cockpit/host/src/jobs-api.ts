@@ -2,6 +2,7 @@ import type * as http from 'node:http'
 import type { JobCaller, Jobs } from './application/jobs.js'
 import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
+import type { WorkerStatus } from './domain/session-attention.js'
 import { JOB_ACTIONS } from './application/jobs.js'
 import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 
@@ -29,7 +30,8 @@ export interface JobsApiDeps {
   /** A space's name for the page; null = main. */
   spaceName(spaceId: string | null): string
   /** Where the page opens a session: its project and whether it runs in the chat view; null when unknown. */
-  sessionInfo(sessionId: string): { projectId: string | null; chat: boolean } | null
+  /** The run's session as it stands now; attention: what it waits for from the user (Needs you, Check this). */
+  sessionInfo(sessionId: string): { projectId: string | null; chat: boolean; attention: WorkerStatus | null } | null
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
