@@ -197,18 +197,18 @@ importers:
   packages/channel-bridge:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.32.1
+        specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
       zod:
-        specifier: ^4.4.3
+        specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
       '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
+        specifier: ^9.6.0
+        version: 9.6.0
 
   packages/core:
     dependencies:
@@ -1177,9 +1177,6 @@ packages:
 
   '@types/aria-query@5.0.4':
     resolution: {integrity: sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==}
-
-  '@types/better-sqlite3@7.6.13':
-    resolution: {integrity: sha512-NMv9ASNARoKksWtsq/SHakpYAYnhBrQgGD8zkLYk/jaK8jUGn08CfEdTRgYhMypUQAfzSP8W6gNLe0q19/t4VA==}
 
   '@types/better-sqlite3@9.6.0':
     resolution: {integrity: sha512-ZEEwBSgMu7GYJOynoagg5X9JbxfL6dTJDsgViJIqh67jV44kyOr9RXfmFjLK5rzC4MWssP06t9hu/JwGDnUbCg==}
@@ -3462,10 +3459,6 @@ snapshots:
     optional: true
 
   '@types/aria-query@5.0.4': {}
-
-  '@types/better-sqlite3@7.6.13':
-    dependencies:
-      '@types/node': 22.19.17
 
   '@types/better-sqlite3@9.6.0':
     dependencies:
