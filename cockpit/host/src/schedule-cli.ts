@@ -14,7 +14,7 @@
 import { fail, requestHost } from './host-request.js'
 
 const CLI = 'cockpit-schedule'
-const USAGE = `usage: node "$COCKPIT_SCHEDULE_JS" <create|list|update|pause|resume|delete|run_now> [--field value …] — or one JSON object`
+const USAGE = `usage: node "$COCKPIT_SCHEDULE_JS" <create|list|update|pause|resume|delete|run_now|finish> [--field value …] — or one JSON object`
 
 function parse(argv: string[]): Record<string, unknown> {
   if (argv.length === 1 && argv[0].trim().startsWith('{')) {

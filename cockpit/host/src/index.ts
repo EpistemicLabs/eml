@@ -357,7 +357,13 @@ async function main() {
   const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
-    return entry ? { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile } : null
+    if (!entry) return null
+    // A limited job's session reaches only its own job (limited-job-scope.ts).
+    const job = entry.jobId ? jobStore.get(entry.jobId) : undefined
+    return {
+      sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile,
+      jobId: entry.jobId ?? null, limited: job?.limited === true,
+    }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
   const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)

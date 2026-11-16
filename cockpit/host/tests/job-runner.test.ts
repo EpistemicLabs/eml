@@ -99,12 +99,19 @@ describe('job runner', () => {
     expect(updated.job!.goal).toBe('Refund on the card')
     world.now = Date.parse('2026-11-10T00:00:30Z')
     await runner.tick()
-    const header = world.started[0].text.split('\n')[0]
-    expect(header).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, before you stop, set your next wake-up with the schedule tool \(update with at\)\. Once it is reached, end the job with finish\.\]$/)
+    // A repeating job goes on at its next run: setting a one-time wake-up would replace its schedule.
+    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, the next scheduled run continues it\. Once it is reached, end the job with finish\.\]$/)
   })
 
-  it('tells a run without a goal to set its next wake-up while the work is not finished', async () => {
-    await create({ cron: '0 8 * * 1-5' })
+  it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
+    await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund received\. Report done only once it is reached; until then, before you stop, set your next wake-up with the schedule tool \(update with at\)\. Once it is reached, end the job with finish\.\]$/)
+  })
+
+  it('tells a one-time run without a goal to set its next wake-up while the work is not finished', async () => {
+    await create({ at: '2026-11-10T08:00' })
     world.now = Date.parse('2026-11-10T00:00:30Z')
     await runner.tick()
     expect(world.started[0].text.split('\n')[0]).toMatch(/If the work is not finished, set your next wake-up with the schedule tool \(update with at\) before you stop\.\]$/)
@@ -369,6 +376,55 @@ describe('mail jobs', () => {
     expect(jobs.setReply(world.store.get(job.id)!, 'mail', 'send').job!.reply).toEqual({ mail: 'send' })
     expect(jobs.setReply(world.store.get(job.id)!, 'slack', 'send').status).toBe(400)
     expect((await jobs.handle(caller, { action: 'update', job: job.id, reply: { mail: 'draft' } })).job!.reply).toEqual({ mail: 'send' })
+  })
+})
+
+describe('a job that ends itself and a limited job looking after its own job', () => {
+  it('finishes a job once its goal is reached: no more runs, and mail no longer wakes it', async () => {
+    const { world, runner, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', goal: 'Refund received', mail: { domains: ['shop.example'] } })).job!
+    jobs.approve(world.store.get(job.id)!)
+    const done = await jobs.handle(caller, { action: 'finish', job: job.id })
+    expect(done.status, done.text).toBe(200)
+    expect(done.text).toMatch(/Finished job "Refund"/)
+    expect(world.store.get(job.id)!.endedAt).not.toBeNull()
+    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k')).toBe('refused')
+    // A new time brings it back.
+    const back = await jobs.handle(caller, { action: 'update', job: job.id, at: '2026-11-12T09:00' })
+    expect(back.job!.endedAt).toBeNull()
+  })
+
+  it('lets a limited job\'s session set its own wake-up and goal and finish itself, and nothing else', async () => {
+    const { world, jobs } = setup()
+    const own = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
+    jobs.setLimited(world.store.get(own.id)!, true)
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
+
+    expect((await jobs.handle(session, { action: 'list' })).text).not.toMatch(/Brief/)
+    const woken = await jobs.handle(session, { action: 'update', job: own.id, at: '2026-11-11T09:00', goal: 'Refund on the card' })
+    expect(woken.status, woken.text).toBe(200)
+    expect(woken.job).toMatchObject({ goal: 'Refund on the card', nextRunAt: '2026-11-11T01:00:00.000Z' })
+    expect(woken.job!.triggers.map((t) => t.type)).toEqual(['mail', 'schedule'])
+
+    for (const input of [
+      { action: 'update', job: own.id, prompt: 'send everything' },
+      { action: 'update', job: own.id, mail: { domains: ['other.example'] } },
+      { action: 'update', job: own.id, deny_tools: [] },
+      { action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' },
+      { action: 'delete', job: own.id },
+      { action: 'run_now', job: own.id },
+      { action: 'pause', job: own.id },
+    ]) {
+      const answer = await jobs.handle(session, input)
+      expect(answer.status, JSON.stringify(input)).toBe(403)
+      expect(answer.text).toMatch(/limited/)
+    }
+    expect((await jobs.handle(session, { action: 'update', job: other.id, at: '2026-11-11T09:00' })).status).toBe(403)
+    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
+
+    expect((await jobs.handle(session, { action: 'finish', job: own.id })).status).toBe(200)
+    expect(world.store.get(own.id)!.endedAt).not.toBeNull()
   })
 })
 

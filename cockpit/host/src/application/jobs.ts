@@ -7,6 +7,7 @@ import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../do
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
 import type { JobRunner } from './job-runner.js'
+import { limitedJobRefusal } from './limited-job-scope.js'
 
 /**
  * What a session (the schedule tool, its CLI) or the user (the page) does with
@@ -15,7 +16,7 @@ import type { JobRunner } from './job-runner.js'
  * most the tools the session has. Answers are text the agent reads.
  */
 
-export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now'] as const
+export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'] as const
 export type JobAction = typeof JOB_ACTIONS[number]
 
 export interface JobCaller {
@@ -25,6 +26,10 @@ export interface JobCaller {
   /** The caller's project: a worker job runs there unless it names another. */
   projectId: string | null
   toolProfile: ToolProfile | null
+  /** The job whose run started the caller's session, if any. */
+  jobId?: string | null
+  /** That job is limited: the caller reaches only it (limited-job-scope.ts). */
+  limited?: boolean
 }
 
 export interface JobsDeps {
@@ -68,6 +73,14 @@ export class Jobs {
 
   async handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
     const action = input.action
+    if (caller.limited) {
+      const own = caller.jobId ? this.deps.store.get(caller.jobId) : undefined
+      const refusal = own
+        ? limitedJobRefusal(input, (key) => key === own.id || (key.length >= 6 && own.id.startsWith(key)) || key.toLowerCase() === own.name.toLowerCase())
+        : 'this session\'s job no longer exists'
+      if (refusal) return { status: 403, text: refusal }
+      if (action === 'list') return { status: 200, text: `- ${this.describe(own!)}` }
+    }
     switch (action) {
       case 'create': return this.create(caller, input)
       case 'list': return this.list(caller)
@@ -76,6 +89,7 @@ export class Jobs {
       case 'resume': return this.withJob(caller, input, (job) => this.setPaused(job, false))
       case 'delete': return this.withJob(caller, input, (job) => this.remove(job))
       case 'run_now': return this.withJob(caller, input, (job) => this.runNow(job))
+      case 'finish': return this.withJob(caller, input, (job) => this.finish(job))
       default: return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
     }
   }
@@ -210,6 +224,16 @@ export class Jobs {
   private remove(job: Job): JobAnswer {
     this.deps.store.remove(job.id)
     return { status: 200, text: `Deleted job "${job.name}" and its history.` }
+  }
+
+  /** Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. */
+  private finish(job: Job): JobAnswer {
+    const at = new Date(this.now()).toISOString()
+    const lent = activeGrants(job, this.now()).map((g) => g.tool)
+    const next: Job = { ...job, endedAt: job.endedAt ?? at, nextRunAt: null, grants: [], updatedAt: at }
+    this.deps.store.put(next)
+    if (lent.length) this.deps.onGrantEnd?.(next, lent)
+    return { status: 200, job: next, text: `Finished job "${job.name}": it wakes no more. A new time (update with at) brings it back.` }
   }
 
   private runNow(job: Job): JobAnswer {
@@ -365,7 +389,7 @@ export class Jobs {
     if (job.goal) lines.push(`  goal: ${job.goal}`)
     if (job.limited) {
       const lent = activeGrants(job, this.now()).map((g) => g.tool)
-      lines.push(`  limited: no shell, no messages to sessions, no schedule tool, only the brain MCP${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
+      lines.push(`  limited: no shell, no messages to sessions, only the brain MCP; the schedule tool reaches only this job${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
     }
     else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
     lines.push(`  wakes: ${this.describeTarget(job)}`)

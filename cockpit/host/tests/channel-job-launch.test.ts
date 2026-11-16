@@ -30,7 +30,7 @@ describe('withChannelTools', () => {
       channelJobOf: (id) => (id === 's-job' ? { jobId: 'job-1', limited: true, granted: [] } : null), bridgeServer: server,
     })
     wrapped.launch(request('s-job'))
-    expect(launches[0]?.toolProfile).toEqual({ deniedTools: ['WebFetch', 'Bash', 'SendMessage', 'mcp__cockpit__schedule'], mcpServers: [] })
+    expect(launches[0]?.toolProfile).toEqual({ deniedTools: ['WebFetch', 'Bash', 'SendMessage'], mcpServers: [] })
     expect(launches[0]?.extraMcpServers).toEqual({ channel_bridge: { type: 'stdio', ...server('job-1') } })
   })
 

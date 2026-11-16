@@ -37,6 +37,8 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Check Acme reply' \
   - `session`: another session of this space (`--session <address>`).
 - **The prompt is all the woken session gets.** Write it so it stands alone:
   what to do, where, and what to report.
+- **Goal (`--goal`):** for work toward an outcome ("refund received"), say
+  what has to be true for the job to be over. Every run is told it.
 - **Optional:** `--max-runs`, `--ends-at`, `--task-id` (the brain task it
   belongs to), `--deny-tools a,b`, `--notify needs-me|always|never`
   (default needs-me: the user hears of runs that need them).
@@ -66,6 +68,20 @@ node "$COCKPIT_SCHEDULE_JS" pause --job 'Daily brief'     # resume, delete, run_
 ```
 
 `--job` takes the id (or its first 8 characters) or the exact name.
+
+### Keep going until the goal is reached
+
+A woken run reports done only once the job's goal is reached. Until then,
+before it stops, it sets its next wake-up (a repeating job goes on at its
+next run instead):
+
+```bash
+node "$COCKPIT_SCHEDULE_JS" update --job 'Refund' --at '2026-11-18T09:00'
+node "$COCKPIT_SCHEDULE_JS" finish --job 'Refund'   # the goal is reached: it wakes no more
+```
+
+A limited job's session reaches only its own job: `update` with `--at`,
+`--timezone` or `--goal`, `list` and `finish`.
 
 ## Limits
 

@@ -253,9 +253,20 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
       : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + 'Not from your user, and nobody may be watching: report how you stand with session_status if you have it. '
-    + 'The schedule tool changes or stops this job. '
-    + (job.goal
-      ? `Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, before you stop, set your next wake-up `
-        + 'with the schedule tool (update with at). Once it is reached, end the job with finish.]'
-      : 'If the work is not finished, set your next wake-up with the schedule tool (update with at) before you stop.]')
+    + 'The schedule tool changes or stops this job.'
+    + continuation(job) + ']'
+}
+
+/**
+ * How a run goes on with unfinished work. A repeating job goes on at its next run; any other one
+ * sets its own next wake-up, since a one-time wake-up would replace a repeating schedule.
+ */
+function continuation(job: Job): string {
+  const repeating = job.triggers.some((trigger) => isScheduleTrigger(trigger) && trigger.cron !== undefined)
+  const next = 'set your next wake-up with the schedule tool (update with at)'
+  if (job.goal) {
+    return ` Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, `
+      + `${repeating ? 'the next scheduled run continues it' : `before you stop, ${next}`}. Once it is reached, end the job with finish.`
+  }
+  return repeating ? '' : ` If the work is not finished, ${next} before you stop.`
 }

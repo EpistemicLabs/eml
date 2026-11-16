@@ -33,7 +33,7 @@ export type Job = {
   /** Per channel: send freely or draft for review. */
   reply: Partial<Record<'mail' | 'slack' | 'whatsapp', 'send' | 'draft'>>;
   triggers: Array<{ type: string }>;
-  /** No shell, no messages to sessions, no schedule tool, only the brain MCP — unless lent (grants). */
+  /** No shell, no messages to sessions, only the brain MCP, the schedule tool for its own job only — unless lent (grants). */
   limited?: boolean;
   grants?: Array<{ tool: 'chrome' | 'SendMessage'; until: string; reason: string | null }>;
   endedAt: string | null;
