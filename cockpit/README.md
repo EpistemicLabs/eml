@@ -342,10 +342,12 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
 plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell. The tab bar and the "+" menus (pane and sidebar)
-show both groups. Brain is fixed; Note, Worktrees, Repository and Shell are the cockpit's own plugins, switched on or off
+show both groups. All five are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
 `host/src/plugins-api.ts`). A plugin switched off leaves the menus, its routes answer 404 (Notes:
-`/api/notes`), and a pane showing it moves to the brain; what it holds stays — notes stay engrams.
+`/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
+holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
+agents' brain stay. With every plugin off, the tab bar shows only the session's views.
 
 **Worktrees** (`components/worktrees/WorktreesPane.tsx`) shows the project folder's git worktrees
 against the default branch — changes, commits ahead/behind, when it was added, the sessions working

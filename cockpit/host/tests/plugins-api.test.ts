@@ -87,11 +87,11 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('lists every plugin as on until it is switched off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }] })
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
-    expect((await patch({ id: 'brain', enabled: false })).status).toBe(400)
+    expect((await patch({ id: 'terminal', enabled: false })).status).toBe(400)
     expect((await patch({ id: 'note', enabled: 'no' })).status).toBe(400)
   })
 

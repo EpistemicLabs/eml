@@ -1,7 +1,7 @@
 // Settings › EML Plugins: the cockpit's own plugins (decision
-// cockpit-builtin-plugins-first) — project views next to the brain, switched
-// on or off for the whole cockpit. Brain is listed as fixed.
-import { PLUGIN_DEFS, paneViewDef, usePluginStates, useSetPluginEnabled } from '@/lib/pane-views';
+// cockpit-builtin-plugins-first) — the project's views, switched on or off for
+// the whole cockpit.
+import { PLUGIN_DEFS, usePluginStates, useSetPluginEnabled } from '@/lib/pane-views';
 
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
@@ -11,18 +11,14 @@ import SettingsToggle from '../SettingsToggle';
 export default function PluginsTab() {
   const states = usePluginStates();
   const setEnabled = useSetPluginEnabled();
-  const brain = paneViewDef('brain');
 
   return (
     <div className="space-y-8">
       <SettingsSection
         title="Cockpit plugins"
-        description="Views a pane can show next to its sessions. A plugin switched off leaves the tab bar and the + menus; what it holds stays — notes stay in the brain."
+        description="Views a pane can show next to its sessions. A plugin switched off leaves the tab bar and the + menus; what it holds stays — notes stay in the brain. With every plugin off, a pane shows only its session."
       >
         <SettingsCard divided>
-          <SettingsRow label={<Label icon={brain.icon} text={brain.label} />} description="The project's brain: timeline, graph, tasks. Always on.">
-            <SettingsToggle checked disabled onChange={() => {}} ariaLabel="Brain is always on" />
-          </SettingsRow>
           {PLUGIN_DEFS.map((def) => (
             <SettingsRow key={def.plugin} label={<Label icon={def.icon} text={def.label} />} description={def.description}>
               <SettingsToggle

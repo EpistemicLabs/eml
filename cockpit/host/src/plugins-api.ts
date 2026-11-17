@@ -11,10 +11,10 @@ import { handleRepositoryApi } from './plugins-repository.js'
 import { isLocalRequest } from './remote-access.js'
 
 /**
- * The cockpit's own plugins (decision cockpit-builtin-plugins-first): project
- * views next to the brain that Settings › EML Plugins switches on or off, for
- * the whole cockpit — every browser of it sees the same. Brain is no plugin
- * here: it can't be switched off.
+ * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
+ * project's views, Brain among them, that Settings › EML Plugins switches on
+ * or off, for the whole cockpit — every browser of it sees the same. Brain off
+ * hides only the pane view; the brain itself and the header's Brain tab stay.
  *
  *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
@@ -30,7 +30,7 @@ import { isLocalRequest } from './remote-access.js'
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['note', 'worktrees', 'repository', 'shell'] as const
+export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell'] as const
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)

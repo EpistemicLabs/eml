@@ -111,7 +111,7 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
           role="menu"
           className="absolute top-full left-0 z-40 mt-1 min-w-[10rem] whitespace-nowrap rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
         >
-          {sections.map(({ title, items }, index) => (
+          {sections.filter(({ items }) => items.length > 0).map(({ title, items }, index) => (
             <Fragment key={title}>
               <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
                 {title}
