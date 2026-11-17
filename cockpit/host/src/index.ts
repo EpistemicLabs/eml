@@ -204,6 +204,7 @@ async function main() {
     upgrade: upgradeStateOf(row?.id ?? 'main', config?.agent),
     main: true,
     color: config?.mainColor,
+    taskSystem: config?.mainTaskSystem === true,
     url: server.baseUrl,
     token: config?.token ?? brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
@@ -215,7 +216,7 @@ async function main() {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color,
+      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color, taskSystem: extra.taskSystem === true,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl, ownRuntime: agents.expectsRuntime(extra.agent),
     }))
     const runtime = spaces.get(extraRow.id)?.runtime
