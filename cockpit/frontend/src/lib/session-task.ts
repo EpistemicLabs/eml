@@ -42,7 +42,8 @@ function load(taskId: string, space: SpaceInfo): Promise<SessionTask | null> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < FRESH_MS) return hit.task;
   const task = fetch(`/api/brain/engram/${encodeURIComponent(taskId)}`, {
-    headers: { Accept: 'application/json', ...(space.main ? {} : { [SPACE_HEADER]: space.id }) },
+    // Always named: without it the page's fetch would send the active space instead of the session's.
+    headers: { Accept: 'application/json', [SPACE_HEADER]: space.id },
   })
     .then((res) => (res.ok ? res.json() as Promise<Raw> : null))
     .then((raw) => (raw ? toSessionTask(raw) : null))

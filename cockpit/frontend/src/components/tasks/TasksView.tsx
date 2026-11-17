@@ -24,7 +24,8 @@ import { api } from '@/utils/api';
 type Loaded = { open: OverviewTask[]; resolved: OverviewTask[]; jobs: TaskJob[] };
 
 async function brainList<T>(space: SpaceInfo, path: string): Promise<T> {
-  const res = await fetch(`/api/brain${path}`, { headers: { Accept: 'application/json', ...(space.main ? {} : { [SPACE_HEADER]: space.id }) } });
+  // Always named: without it the page's fetch would send the active space, and Main would list another space's tasks.
+  const res = await fetch(`/api/brain${path}`, { headers: { Accept: 'application/json', [SPACE_HEADER]: space.id } });
   if (!res.ok) throw new Error(`${space.name}: HTTP ${res.status}`);
   return res.json() as Promise<T>;
 }
