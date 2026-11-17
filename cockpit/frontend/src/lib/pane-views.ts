@@ -4,12 +4,12 @@
 // which Settings › EML Plugins switches on or off (host: /api/plugins). The
 // tab bar, the "+" menus and the command palette are built from this list.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, FolderGit2, MessageSquare, NotebookPen, Terminal, type LucideIcon } from 'lucide-react';
+import { Brain, FileDiff, FolderGit2, MessageSquare, NotebookPen, Terminal, type LucideIcon } from 'lucide-react';
 
 import type { PaneView } from '@/stores/usePaneStore';
 
 /** A plugin the user can switch off; the host knows the same ids. */
-export type PluginId = 'note' | 'worktrees';
+export type PluginId = 'note' | 'worktrees' | 'repository';
 
 export interface PaneViewDef {
   view: PaneView;
@@ -35,6 +35,10 @@ export const PANE_VIEW_DEFS: ReadonlyArray<PaneViewDef> = [
   {
     view: 'worktrees', label: 'Worktrees', icon: FolderGit2, group: 'plugin', plugin: 'worktrees', newLabel: 'New worktrees view',
     description: "The project's git worktrees and branches, the sessions working in them and the local ports in use.",
+  },
+  {
+    view: 'repository', label: 'Repository', icon: FileDiff, group: 'plugin', plugin: 'repository', newLabel: 'New repository view',
+    description: "What changed in a checkout of the project — uncommitted, on its branch, per commit — and all its files, read-only.",
   },
 ];
 

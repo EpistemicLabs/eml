@@ -7,6 +7,7 @@ import { readCockpitConfig, updateCockpitConfig } from './config.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
+import { handleRepositoryApi } from './plugins-repository.js'
 import { isLocalRequest } from './remote-access.js'
 
 /**
@@ -19,6 +20,7 @@ import { isLocalRequest } from './remote-access.js'
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
  *   GET   /api/plugins/worktrees/git?projectId= → the project folder's worktrees
  *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
+ *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
  *
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
@@ -27,7 +29,7 @@ import { isLocalRequest } from './remote-access.js'
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['note', 'worktrees'] as const
+export const PLUGIN_IDS = ['note', 'worktrees', 'repository'] as const
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
@@ -106,11 +108,11 @@ export interface PortView extends Omit<ListeningPort, 'commandLine' | 'ancestors
   system: boolean
 }
 
-type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
+export type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
 type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
-type Git = (cwd: string, args: string[]) => Promise<string | null>
+export type Git = (cwd: string, args: string[]) => Promise<string | null>
 
-const notFound = (json: Json, res: http.ServerResponse, message: string) =>
+export const notFound = (json: Json, res: http.ServerResponse, message: string) =>
   json(res, 404, { error: { code: 'NOT_FOUND', message } })
 
 export async function handlePluginsApi(
@@ -141,6 +143,13 @@ export async function handlePluginsApi(
     const states = await pluginStates()
     json(res, 200, { plugins: PLUGIN_IDS.map((id) => ({ id, enabled: states[id] })) })
     return true
+  }
+  if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
+    if (!(await pluginStates()).repository) {
+      notFound(json, res, 'Repository is switched off (Settings › EML Plugins)')
+      return true
+    }
+    return handleRepositoryApi(res, deps, url, json)
   }
   if (!pathname.startsWith('/api/plugins/worktrees/') || method !== 'GET') return false
   if (!(await pluginStates()).worktrees) {
@@ -209,9 +218,11 @@ function ownProcess(commandLine: string): string | null {
 // --no-optional-locks: git status would otherwise refresh the index and hold
 // index.lock for a moment, and an agent's git add or commit in that worktree
 // at the same moment would fail.
-const runGit: Git = (cwd, args) => new Promise((resolve) => {
-  execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => resolve(err ? null : String(out)))
+export const gitRunner = (maxBuffer: number): Git => (cwd, args) => new Promise((resolve) => {
+  execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 10_000, maxBuffer }, (err, out) => resolve(err ? null : String(out)))
 })
+
+const runGit = gitRunner(4 * 1024 * 1024)
 
 /** The repository's worktrees, each compared with the default branch. */
 export async function worktreesGit(folder: string, git: Git): Promise<WorktreesGit> {
@@ -266,7 +277,7 @@ async function worktreeAdded(gitDir: string): Promise<string | null> {
 }
 
 /** origin's default branch when there is a remote, else a local main or master. */
-async function defaultBranch(folder: string, git: Git): Promise<string | null> {
+export async function defaultBranch(folder: string, git: Git): Promise<string | null> {
   const remote = (await git(folder, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']))?.trim()
   if (remote) return remote
   for (const name of ['main', 'master']) {

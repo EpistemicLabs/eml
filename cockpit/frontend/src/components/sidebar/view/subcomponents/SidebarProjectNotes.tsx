@@ -18,7 +18,7 @@ import type { Project } from '@/types/app';
 import { useRowMenu } from '../rowMenuContext';
 
 // The project's one "+" (0.15.1): a small menu — the new sessions, then the
-// plugins (brain view, and note / worktrees while on) — like the pane
+// plugins (brain view, and note / worktrees / repository while on) — like the pane
 // toolbar's "+", because a terminal pane starts an agent
 // session the moment it mounts. ⌥-click skips the menu and starts a session.
 // With more than one agent CLI ready, the menu offers a session per CLI
@@ -46,7 +46,7 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
   const brain = useWritable(project.__spaceId);
   const enabled = useViewEnabled();
   type Item = { label: string; Icon: LucideIcon; disabled?: string; run: () => void };
-  const item = (view: 'brain' | 'note' | 'worktrees', rest: Omit<Item, 'label' | 'Icon'>): Item[] =>
+  const item = (view: 'brain' | 'note' | 'worktrees' | 'repository', rest: Omit<Item, 'label' | 'Icon'>): Item[] =>
     enabled(view) ? [{ label: paneViewDef(view).newLabel, Icon: paneViewDef(view).icon, ...rest }] : [];
   const sections: Array<{ title: string; items: Item[] }> = [
     {
@@ -73,6 +73,10 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
         ...item('worktrees', {
           disabled: project.path ? undefined : 'Worktrees need the project\'s folder — this project has none',
           run: () => openInPane({ surface: 'worktrees', projectId: project.projectId }),
+        }),
+        ...item('repository', {
+          disabled: project.path ? undefined : 'The repository view needs the project\'s folder — this project has none',
+          run: () => openInPane({ surface: 'repository', projectId: project.projectId }),
         }),
       ],
     },

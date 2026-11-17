@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import {
   ChevronRight,
   Brain,
+  FileDiff,
   FolderGit2,
   Folder,
   MessageSquare,
@@ -84,6 +85,7 @@ const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: Lucide
   { label: 'Go to Brain', keywords: 'brain engrams timeline graph', icon: Brain, view: 'brain' },
   { label: 'Go to Notes', keywords: 'note notes todo checklist', icon: NotebookPen, view: 'note' },
   { label: 'Go to Worktrees', keywords: 'worktrees worktree branch git ports', icon: FolderGit2, view: 'worktrees' },
+  { label: 'Go to Repository', keywords: 'repository repo changes diff code files commits review git', icon: FileDiff, view: 'repository' },
 ];
 
 const IS_MAC = detectMac();
