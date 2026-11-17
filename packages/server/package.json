@@ -1,6 +1,6 @@
 {
   "name": "@engramprotocol/server",
-  "version": "0.21.111",
+  "version": "0.21.112",
   "private": true,
   "description": "EML HTTP API server",
   "license": "AGPL-3.0-only",
