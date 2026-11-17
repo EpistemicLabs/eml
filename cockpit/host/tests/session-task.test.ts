@@ -143,6 +143,20 @@ describe('session task', () => {
     expect(text).not.toContain('takes the session\'s name')
   })
 
+  it('asks only an attended session for its handoff before an idle stop, and tells it not to end every reply with one', async () => {
+    const { ledger, tasks } = setup({ taskSystem: true, shared: false })
+    ledger.recordSpawn(id(9), null, 'bp-eml', 'claude')
+    ledger.recordSpawn('worker-1', null, 'bp-eml', 'claude', true)
+    const own = await tasks.context(id(9))
+    const worker = await tasks.context('worker-1')
+    expect(own).toContain('Do not end every reply with it')
+    expect(worker).toContain('When you stop (done, or waiting for someone)')
+    expect(tasks.handoffBeforeStop(id(9))).toContain('write your handoff block now')
+    expect(tasks.handoffBeforeStop('worker-1')).toBeNull()
+    ledger.recordSpawn('no-task', null, 'bp-eml', 'claude')
+    expect(tasks.handoffBeforeStop('no-task')).toBeNull()
+  })
+
   it('turns a title into a kebab-case anchor', () => {
     expect(mods.kebabTitle('Task system: M1 — hooks!')).toBe('task-system-m1-hooks')
     expect(mods.kebabTitle('✨')).toBeNull()

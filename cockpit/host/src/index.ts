@@ -347,6 +347,7 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     turnDone: turnEnded,
+    handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
     onExit: (sessionId) => turns.forget(sessionId),
     memory,
     limits: () => {

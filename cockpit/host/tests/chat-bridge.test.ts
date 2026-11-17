@@ -62,7 +62,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: (id: string, text: string) => void } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -113,6 +113,8 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: string) => turns.push([id, state]),
     terminalBusy: opts.busy,
+    handoffBeforeStop: opts.handoffBeforeStop,
+    turnDone: opts.turnDone,
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -169,6 +171,39 @@ describe('ChatBridge', () => {
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect(bridge.sweepIdle(Date.now() + 59 * 60 * 1000)).toBe(0)
     expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(1)
+    await flush()
+    expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('task system: an idle session that worked is asked for its handoff first, then stops once that turn is over', async () => {
+    const done: string[] = []
+    const { bridge, runtimes } = setup({ handoffBeforeStop: () => 'write your handoff', turnDone: (_id, text) => done.push(text) })
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'text', text: 'worked on it' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    ws.emit('close')
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(0)
+    expect(runtimes[0].sent.at(-1)).toBe('write your handoff')
+    expect(runtimes[0].closed).toBe(false)
+    // Still writing it: no stop.
+    expect(bridge.sweepIdle(Date.now() + 3 * 60 * 60 * 1000)).toBe(0)
+    runtimes[0].emit({ kind: 'text', text: '### Handoff\nResult: done' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    await flush()
+    expect(done.at(-1)).toBe('### Handoff\nResult: done')
+    expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('task system: a session with nothing new to hand off, or none to give, stops without asking', async () => {
+    const asked: string[] = []
+    const { bridge, runtimes } = setup({ handoffBeforeStop: (id) => { asked.push(id); return null } })
+    const ws = connect(bridge)
+    await flush()
+    ws.emit('close')
+    // No turn since it started: nothing to hand off, the rule is not even asked.
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(1)
+    expect(asked).toEqual([])
     await flush()
     expect(runtimes[0].closed).toBe(true)
   })

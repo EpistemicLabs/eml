@@ -53,7 +53,7 @@ export function kebabTitle(title: string): string | null {
 }
 
 /** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
-export function taskContext(task: Task, placeholder: boolean): string {
+export function taskContext(task: Task, placeholder: boolean, unattended = false): string {
   const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
@@ -73,7 +73,9 @@ export function taskContext(task: Task, placeholder: boolean): string {
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
     '',
     '## Handoff',
-    'When you stop — done, or waiting for someone — end your last message with this block (leave out lines that are empty):',
+    unattended
+      ? 'When you stop (done, or waiting for someone), end your last message with this block (leave out lines that are empty):'
+      : 'Do not end every reply with it: the user reads along. Write it only when you close the task, or when the cockpit asks for it before it stops the session (leave out lines that are empty):',
     '```',
     '### Handoff',
     'Result: <what came out, in one or two sentences>',
@@ -92,7 +94,11 @@ export interface SessionTask {
   context(sessionId: string): Promise<string>
   /** The session named itself: a placeholder task takes the name. */
   named(sessionId: string, title: string): Promise<void>
+  /** Before an idle stop: the prompt asking for the handoff, or null (task system off, no task, or unattended: it hands off every turn). */
+  handoffBeforeStop(sessionId: string): string | null
 }
+
+export const HANDOFF_BEFORE_STOP = 'The cockpit is about to stop this session because nobody has used it for a while. Before it does, write your handoff block now (### Handoff with Result, Checked · Claimed, Decided, Next, Questions). Put anything only the user can answer under Questions as [lasse]. Nothing else; the session stops after this reply.'
 
 export function createSessionTask(deps: SessionTaskDeps): SessionTask {
   const now = () => deps.now?.() ?? new Date()
@@ -132,6 +138,12 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
   }
 
   return {
+    handoffBeforeStop(sessionId) {
+      const t = target(sessionId)
+      if (!t?.entry.taskId || t.entry.worker) return null
+      return HANDOFF_BEFORE_STOP
+    },
+
     async context(sessionId) {
       const t = target(sessionId)
       if (!t) return ''
@@ -154,7 +166,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
         await rename(task, name, sessionId, t.brain)
         task = await t.brain.get(`/engram/${taskId}`) as Task
       }
-      return taskContext(task, task.title !== null && PLACEHOLDER.test(task.title))
+      return taskContext(task, task.title !== null && PLACEHOLDER.test(task.title), deps.ledger.get(sessionId)?.worker === true)
     },
 
     async named(sessionId, title) {
