@@ -737,6 +737,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     return true
   }
 
+  // A task run without a desk (task-run.tsx, "No desk"): the page asks, the host starts it unattended
+  // like a runner step; it shows next to its task and in Your turn when it asks. Page Origin only.
+  if (resource === 'tasks' && id === 'run' && method === 'POST') {
+    const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
+    const body = await readJson(req)
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+    const projectId = str(body.projectId), prompt = str(body.prompt), taskId = str(body.taskId)
+    if (!space || !projectId || !prompt || !taskId) { json(res, 400, { error: { code: 'INVALID_RUN', message: 'projectId, prompt and taskId are required' } }); return true }
+    if (!space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } }); return true }
+    const request = deps.spawns.add({
+      projectId, prompt, title: str(body.title), fromSessionId: null, origin: 'runner', taskId,
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    json(res, 202, { id: request.id })
+    return true
+  }
+
   // A session's task at start, from its task hook (task-hook.ts); empty where the task system is off.
   if (resource === 'session-task' && !id && method === 'POST') {
     const caller = req.headers['x-cockpit-session']

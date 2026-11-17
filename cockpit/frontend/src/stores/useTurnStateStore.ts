@@ -111,8 +111,8 @@ export type SpawnRequest = {
   provider?: LLMProvider;
   /** It asked for a pane. Without one a session's worker just runs and shows under its parent. */
   open?: boolean;
-  /** 'job': a scheduled job's run; it runs on the host like a session's worker. */
-  origin?: 'job';
+  /** 'job': a scheduled job's run; 'runner': a task step or a task run started in the background. Both run on the host like a session's worker. */
+  origin?: 'job' | 'runner';
 };
 
 export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {

@@ -167,8 +167,8 @@ function AppContentInner() {
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
-        // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
-        if ((request.fromSessionId || request.origin === 'job') && !request.open) continue;
+        // A session's worker, a job's run and a background task run stay on the host and show in the sidebar, unless they asked for a pane.
+        if ((request.fromSessionId || request.origin === 'job' || request.origin === 'runner') && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };

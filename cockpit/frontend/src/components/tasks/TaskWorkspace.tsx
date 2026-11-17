@@ -57,7 +57,7 @@ export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          <EngramDetail id={task.id} relationHref={hrefFor} projects={projects} />
+          <EngramDetail id={task.id} relationHref={hrefFor} projects={projects} runInBackground />
         </div>
       </section>
       <section aria-label="Session" className="flex min-w-0 flex-1 flex-col border-l border-border">

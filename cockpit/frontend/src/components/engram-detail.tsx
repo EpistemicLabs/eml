@@ -173,6 +173,7 @@ export function EngramDetail({
   relationHref,
   projects,
   onLeave,
+  runInBackground = false,
 }: {
   id: string;
   relationHref: (otherId: string) => string;
@@ -180,6 +181,8 @@ export function EngramDetail({
   projects?: Project[];
   /** Called when an action moves the user away from the drawer (a task run opens). */
   onLeave?: () => void;
+  /** A task run starts without a desk by default (the Tasks view). */
+  runInBackground?: boolean;
 }) {
   const { data: engram, isLoading, error } = useEngram(id);
   const subjectsQuery = useSubjects();
@@ -247,7 +250,7 @@ export function EngramDetail({
       {isTask && <WaitingOnCard engram={engram} />}
       {isTask && <TaskOutcome engram={engram} />}
       {isTask && <TaskStageCard engram={engram} />}
-      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} />}
+      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} background={runInBackground} />}
 
       <BrainCard className="px-4 py-3">
         <div className="text-body leading-relaxed whitespace-pre-wrap text-foreground">{engram.content}</div>
