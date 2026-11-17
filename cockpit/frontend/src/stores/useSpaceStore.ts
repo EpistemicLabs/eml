@@ -60,6 +60,7 @@ export async function loadSpaces(): Promise<SpaceInfo[]> {
         agentName: typeof s.agentName === 'string' ? s.agentName : null,
         ownRuntime: s.ownRuntime === true,
         ...(typeof s.color === 'string' ? { color: s.color } : {}),
+        ...(s.taskSystem === true ? { taskSystem: true } : {}),
       }));
     // A persisted active space the host no longer knows → back to main.
     const active = paneStore.getActiveSpaceId();
