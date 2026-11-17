@@ -24,6 +24,8 @@ export interface SpaceInfo {
   ownRuntime?: boolean;
   /** What tells it apart: a name from the palette (lib/space-color.ts). */
   color?: string;
+  /** Task system on: every session works on a brain task, and Your turn shows it (host brain-space.ts taskSystemOn). */
+  taskSystem?: boolean;
 }
 
 let spaces: SpaceInfo[] = [];

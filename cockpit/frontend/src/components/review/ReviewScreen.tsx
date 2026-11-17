@@ -3,11 +3,13 @@ import { Archive, Check, ChevronLeft, ChevronRight, ExternalLink, MessageSquareR
 
 import { ChatPane } from '@/components/chat/ChatPane';
 import { DraftsPanel } from '@/components/review/DraftsPanel';
+import { YourTurnList } from '@/components/review/YourTurnList';
 import { MARK_WORD, agentLabel, allSessionState, sessionMark, type AllSession, type SessionMark } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
-import { endReview, finishCurrent, liveQueue, stepReview } from '@/lib/review-flow';
+import { endReview, finishCurrent, jumpReview, liveQueue, stepReview } from '@/lib/review-flow';
+import { useSessionTask } from '@/lib/session-task';
 import { cn } from '@/lib/utils';
 import { openSessionInSpace } from '@/stores/usePaneStore';
 import { REVIEW_PANE_ID, reclaimTerminal, setReviewBarFocus, useReview } from '@/stores/useReviewStore';
@@ -66,6 +68,9 @@ export function ReviewScreen() {
   const current = known.find((session) => session.id === currentId);
   const space = spaces.find((candidate) => candidate.id === current?.spaceId);
   const mark = current ? sessionMark(current, turns[current.id]) : null;
+  // Task system: the session's task, and the list of all that waits next to it.
+  const task = useSessionTask(current?.taskId, space);
+  const yourTurn = spaces.some((candidate) => candidate.taskSystem);
   const asks = mark !== null && ASKS.includes(mark);
   // Why Archive can't, or null: a pin is kept on purpose, and running work would be cut off.
   const archiveBlock = !current ? null
@@ -214,6 +219,13 @@ export function ReviewScreen() {
         {current && (
           <div className="mt-1.5 min-w-0 space-y-0.5">
             <p className="truncate text-sm font-medium text-foreground">{sessionDisplayName(current)}</p>
+            {task && (
+              <p className="truncate text-[11px] text-muted-foreground" title={task.waitingOn?.why || undefined}>
+                <span className="font-medium text-foreground">Task {task.title}</span>
+                {` · ${[task.status, task.stage, task.checkpoint && `checkpoint ${task.checkpoint}`].filter(Boolean).join(' · ')}`}
+                {task.waitingOn && <span className="text-primary">{` · waiting on ${task.waitingOn.who}: ${task.waitingOn.why}`}</span>}
+              </p>
+            )}
             <p className="truncate text-[11px] text-muted-foreground" title={current.attention?.reason ?? undefined}>
               {word && (
                 <span className={cn('font-medium', mark === 'failed' ? 'text-destructive' : mark && NEEDS_YOU.includes(mark) ? 'text-primary' : 'text-foreground')}>
@@ -228,6 +240,10 @@ export function ReviewScreen() {
         {error && <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p>}
       </div>
       {current?.jobId && <DraftsPanel key={current.id} jobId={current.jobId} />}
+      <div className="flex min-h-0 flex-1">
+      {yourTurn && rest.length > 1 && (
+        <YourTurnList items={rest} currentId={currentId} spaces={spaces} turns={turns} onPick={(id) => jumpReview(id, known)} />
+      )}
       <div ref={bodyRef} className="relative min-h-0 flex-1">
         {!current ? (
           <p className="p-4 text-xs text-muted-foreground">Loading…</p>
@@ -254,6 +270,7 @@ export function ReviewScreen() {
             spaceId={space ? paneSpaceKey(space) : null}
           />
         )}
+      </div>
       </div>
     </div>
   );
