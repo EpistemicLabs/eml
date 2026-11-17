@@ -2,16 +2,18 @@
 // project folder's git worktrees, each with its branch, changes, distance to
 // the default branch, last commit, the cockpit sessions working in it and the
 // local ports its processes listen on; a worktree opens to its changed files
-// and its commits ahead. Read-only; a session opens on click. Data:
+// and its commits ahead. Read-only; a session opens on click, a worktree's
+// changes and files in the Repository view (while that plugin is on). Data:
 // /api/plugins/worktrees/git and /ports (host plugins-api.ts), the sessions
 // from the project list (their workdir, from the agent's hooks). Drawn with
 // the brain surface's cards (../brain/ui.tsx).
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, ExternalLink, GitBranch, Loader2, RefreshCw, Terminal } from 'lucide-react';
+import { ChevronRight, ExternalLink, FileDiff, GitBranch, Loader2, RefreshCw, Terminal } from 'lucide-react';
 
 import { BrainCard, SectionHeader } from '@/components/brain/ui';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
+import { useViewEnabled } from '@/lib/pane-views';
 import { cn } from '@/lib/utils';
 import { openInPane } from '@/stores/usePaneStore';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
@@ -170,17 +172,19 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
   now: Date;
 }) {
   const [open, setOpen] = useState(false);
+  const repositoryOn = useViewEnabled()('repository');
   const { branch, dirty, ahead, behind, lastCommit, changes, commits } = worktree;
   const accent = dirty > 0 ? CHANGED : ahead ? AHEAD : 'var(--color-muted-foreground)';
 
   return (
     <BrainCard className="border-l-[3px] px-2.5 py-2" style={{ borderLeftColor: accent }}>
       {/* Folded: one line to scan — branch, its state, who works there, what runs there. */}
+      <div className="flex min-w-0 items-center gap-1">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
         <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
@@ -206,6 +210,18 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
           </span>
         </span>
       </button>
+      {repositoryOn && (
+        <button
+          type="button"
+          onClick={() => openInPane({ surface: 'repository', projectId, worktree: worktree.path })}
+          title="Show its changes and files"
+          aria-label="Show its changes and files"
+          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+        >
+          <FileDiff className="h-3 w-3" />
+        </button>
+      )}
+      </div>
 
       {open && (
         <div className="mt-2 space-y-2.5 pl-[22px]">

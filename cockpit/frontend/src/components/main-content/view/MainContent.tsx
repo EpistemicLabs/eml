@@ -3,7 +3,8 @@
 // empty "Choose Your Project" state, the pending-shell-command consume once
 // the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
 // brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
-// cockpit-notes-pane), worktrees → WorktreesPane; a plugin switched off in
+// cockpit-notes-pane), worktrees → WorktreesPane, repository → RepositoryPane (loaded
+// on first use: it brings the code editor); a plugin switched off in
 // Settings › EML Plugins shows the brain instead. Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
@@ -11,7 +12,7 @@ import { heldCommandAfter, shouldOpenInChat } from '@/components/chat/chat-defau
 import { readSettings, subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
-import React, { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
+import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
 import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
@@ -30,6 +31,9 @@ import TerminalStatusBar from './subcomponents/TerminalStatusBar';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
+
+// The repository view brings CodeMirror: its own chunk, fetched when a pane first shows it.
+const RepositoryPane = lazy(() => import('../../repository/RepositoryPane').then((m) => ({ default: m.RepositoryPane })));
 
 function MainContent({
   isActive = true,
@@ -188,6 +192,10 @@ function MainContent({
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : paneView === 'worktrees' ? (
               <WorktreesPane project={selectedProject} />
+            ) : paneView === 'repository' ? (
+              <Suspense fallback={null}>
+                <RepositoryPane paneId={paneId} project={selectedProject} />
+              </Suspense>
             ) : (
               <BrainPane paneId={paneId} project={selectedProject} />
             )}

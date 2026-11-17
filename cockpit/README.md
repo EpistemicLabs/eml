@@ -80,7 +80,7 @@ node.
 
 Three layers, one local process:
 
-- **`frontend/`** — Vite + React SPA: desks (top tabs) with pane grids — sessions (terminal, chat) and plugins (brain, notes, worktrees) —
+- **`frontend/`** — Vite + React SPA: desks (top tabs) with pane grids — sessions (terminal, chat) and plugins (brain, notes, worktrees, repository) —
   the sidebar with projects and sessions, the brain views. Talks only HTTP + WebSocket to the host.
 - **`host/`** — owns the node-pty session spawns (isolated `claude`) in a persistent PTY registry,
   bundles and launches the brain server (`packages/server`) on loopback, and proxies `/api/brain/*`
@@ -341,8 +341,8 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 ## Cockpit plugins
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
-plugins, the project's views — Brain, Note, Worktrees. The tab bar and the "+" menus (pane and sidebar)
-show both groups. Brain is fixed; Note and Worktrees are the cockpit's own plugins, switched on or off
+plugins, the project's views — Brain, Note, Worktrees, Repository. The tab bar and the "+" menus (pane and sidebar)
+show both groups. Brain is fixed; Note, Worktrees and Repository are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
 `host/src/plugins-api.ts`). A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the brain; what it holds stays — notes stay engrams.
@@ -354,6 +354,15 @@ a cockpit session, another cockpit, the system). Read-only: `GET /api/plugins/wo
 takes the folder from the project registry, never from the request; `…/ports` lists the user's
 listening TCP ports (`lsof` + `ps` on macOS and Linux, none on Windows yet) with command lines whose
 secrets are blacked out. A session's worktree is the cwd its agent's hooks report (ledger `workdir`).
+
+**Repository** (`components/repository/`, loaded on first use: it brings CodeMirror) is a read-only code view of
+one checkout — the project folder or one of its worktrees (a worktree row opens it there): what is
+uncommitted and what the branch committed since the default branch as GitHub-style diffs, the whole tree
+with a file search and any file in it, the commits and each one's diff. `GET /api/plugins/repository/*`
+(`host/src/plugins-repository.ts`) takes the folder from the registry, a checkout only from its
+`git worktree list`, and a path only when it resolves inside the checkout (symlinks too); files that
+look like they hold secrets (`.env`, keys) show only on an explicit reveal. A folder that is no
+repository shows as plain files.
 Community plugins (sandboxed, from a catalog) are a later step.
 
 ## Claude Code
@@ -443,7 +452,8 @@ of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_
 cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
 hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills
 (`consolidate`, `checkpoint`, `getting-started`) from the bundled `@engramprotocol/mcp-server` — nothing is read from `~/.claude`
-or `~/.eml`. The Worktrees plugin runs `git` in the projects' folders and `lsof`/`ps` over the user's own
+or `~/.eml`. The Worktrees and Repository plugins run `git` in the projects' folders (Repository without
+external diff tools or textconv filters, so a repository's config can't make a read run a program), Worktrees also `lsof`/`ps` over the user's own
 processes, all read-only. The agent's environment is built from an allowlist (PATH, HOME, locale, proxy/
 cert vars) plus the injected isolation vars — nothing else the host inherited reaches a
 session. Real `~/.claude` is never written. The PTY WS is guarded by a same-origin check + a

@@ -2,20 +2,23 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 // The cockpit's own plugins (plugins-api.ts): the switches, kept in the
 // config for every browser; a plugin that is off answers 404 on its routes,
 // Notes included; Worktrees reads the project's folder from the registry
-// only, and lists its worktrees against the default branch.
+// only, and lists its worktrees against the default branch; Repository reads a
+// checkout of that folder only, and nothing outside it.
 
 const home = mkdtempSync(join(tmpdir(), 'cockpit-plugins-api-test-'))
 process.env.EML_COCKPIT_HOME = home
 const repo = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-repo-')))
 // A worktree next to the checkout, as the repo's own worktrees are.
 const wtX = `${repo}-x`
+// A project folder that is no repository.
+const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-plain-')))
 
 let host: http.Server
 let base: string
@@ -38,7 +41,7 @@ beforeAll(async () => {
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
   const { handlePluginsApi } = await import('../src/plugins-api.js')
-  const folders: Record<string, string> = { p1: repo }
+  const folders: Record<string, string> = { p1: repo, p2: plain }
   const deps = {
     projectFolder: (id: string) => folders[id] ?? null,
     ports: async () => [
@@ -72,6 +75,7 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true })
   rmSync(repo, { recursive: true, force: true })
   rmSync(wtX, { recursive: true, force: true })
+  rmSync(plain, { recursive: true, force: true })
 })
 
 const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -79,7 +83,7 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('lists every plugin as on until it is switched off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }] })
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
@@ -103,6 +107,13 @@ describe('plugin switches', () => {
     await patch({ id: 'worktrees', enabled: false })
     expect((await fetch(`${base}/api/plugins/worktrees/ports`)).status).toBe(404)
     await patch({ id: 'worktrees', enabled: true })
+  })
+
+  it('answers 404 on Repository routes while it is off', async () => {
+    await patch({ id: 'repository', enabled: false })
+    expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(404)
+    await patch({ id: 'repository', enabled: true })
+    expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(200)
   })
 })
 
@@ -150,6 +161,109 @@ describe('worktrees', () => {
   it('shows the port list on this machine only', async () => {
     const res = await fetch(`${base}/api/plugins/worktrees/ports`, { headers: { 'x-forwarded-for': '100.64.0.2' } })
     expect(res.status).toBe(403)
+  })
+})
+
+describe('repository', () => {
+  const get = async (route: string, query: Record<string, string>) => {
+    const res = await fetch(`${base}/api/plugins/repository/${route}?${new URLSearchParams(query)}`)
+    return { status: res.status, body: await res.json() }
+  }
+  const inX = (extra: Record<string, string> = {}) => ({ projectId: 'p1', worktree: wtX, ...extra })
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-outside-')))
+
+  beforeAll(() => {
+    // feat/x: a.txt changed, a new file, a secret, an ignored build folder, a link out of the checkout.
+    writeFileSync(join(wtX, 'a.txt'), 'a\nmore\n')
+    writeFileSync(join(wtX, 'new.txt'), 'one\ntwo\n')
+    writeFileSync(join(wtX, '.env'), 'API_KEY=secret\n')
+    writeFileSync(join(wtX, '.gitignore'), 'build/\n')
+    mkdirSync(join(wtX, 'build'))
+    writeFileSync(join(wtX, 'build', 'out.js'), 'x\n')
+    writeFileSync(join(outside, 'private.txt'), 'private\n')
+    symlinkSync(join(outside, 'private.txt'), join(wtX, 'link.txt'))
+    writeFileSync(join(plain, 'readme.md'), '# plain\n')
+  })
+  afterAll(() => rmSync(outside, { recursive: true, force: true }))
+
+  it('lists the project\'s checkouts, the project folder marked', async () => {
+    const { body } = await get('repo', { projectId: 'p1' })
+    expect(body.base).toBe('main')
+    expect(body.worktrees).toEqual([
+      expect.objectContaining({ path: repo, branch: 'main', isProjectFolder: true }),
+      expect.objectContaining({ path: wtX, branch: 'feat/x', isProjectFolder: false }),
+    ])
+  })
+
+  it('lists the uncommitted changes with new files, the branch\'s and a commit\'s', async () => {
+    const uncommitted = (await get('files', inX({ scope: 'uncommitted' }))).body.files
+    expect(uncommitted).toContainEqual({ path: 'a.txt', oldPath: null, status: 'M', additions: 1, deletions: 0 })
+    expect(uncommitted).toContainEqual({ path: 'new.txt', oldPath: null, status: '?', additions: 2, deletions: 0 })
+    expect(uncommitted.map((f: { path: string }) => f.path)).not.toContain('build/out.js')
+    expect((await get('files', inX({ scope: 'branch' }))).body.files).toEqual([{ path: 'b.txt', oldPath: null, status: 'A', additions: 1, deletions: 0 }])
+    const { body: log } = await get('commits', inX())
+    expect(log).toMatchObject({ base: 'main', onBranch: true, commits: [{ subject: 'second', author: 't' }] })
+    const commit = (await get('files', inX({ scope: 'commit', commit: log.commits[0].hash }))).body.files
+    expect(commit.map((f: { path: string }) => f.path)).toEqual(['b.txt'])
+    // The first commit has no parent: compared with nothing.
+    const first = git('rev-parse', '--short', 'main').trim()
+    expect((await get('files', inX({ scope: 'commit', commit: first }))).body.files.map((f: { path: string }) => f.path)).toEqual(['a.txt'])
+    expect((await get('files', inX({ scope: 'commit', commit: 'zz' }))).status).toBe(400)
+  })
+
+  it('shows a file\'s patch, a new file\'s whole, a secret only on reveal', async () => {
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'a.txt' }))).body.patch).toContain('\n+more\n')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'new.txt', status: '?' }))).body.patch).toBe('@@ -0,0 +1,2 @@\n+one\n+two\n')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '.env', status: '?' }))).body).toEqual({ patch: null, truncated: false, secret: true })
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '.env', status: '?', reveal: '1' }))).body.patch).toContain('+API_KEY=secret')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '../x' }))).status).toBe(400)
+  })
+
+  it('reads files inside the checkout only', async () => {
+    expect((await get('file', inX({ path: 'new.txt' }))).body).toMatchObject({ content: 'one\ntwo\n', secret: false, binary: false })
+    expect((await get('file', inX({ path: '.env' }))).body).toMatchObject({ content: null, secret: true })
+    expect((await get('file', inX({ path: '.env', reveal: '1' }))).body.content).toBe('API_KEY=secret\n')
+    for (const path of ['link.txt', '../' + 'x/a.txt', join(outside, 'private.txt'), '']) {
+      expect((await get('file', inX({ path }))).status).toBe(404)
+    }
+  })
+
+  it('reads only checkouts of the project folder', async () => {
+    expect((await get('tree', { projectId: 'p1', worktree: outside })).status).toBe(404)
+    expect((await get('tree', { projectId: 'p1', worktree: dirname(repo) })).status).toBe(404)
+    expect((await get('file', { projectId: 'p1', path: 'a.txt' })).body.content).toBe('a\n')
+  })
+
+  it('lists the tree with the ignored folders apart, and a folder\'s entries', async () => {
+    const { body } = await get('tree', inX())
+    expect(body.paths).toEqual(expect.arrayContaining(['a.txt', 'b.txt', 'new.txt', '.gitignore']))
+    expect(body.ignored).toEqual(['build/'])
+    expect((await get('dir', inX({ path: 'build' }))).body.entries).toEqual([{ name: 'out.js', dir: false }])
+    const root = (await get('dir', inX())).body.entries.map((e: { name: string }) => e.name)
+    expect(root).toContain('build')
+    expect(root).not.toContain('.git')
+    expect((await get('dir', inX({ path: '..' }))).status).toBe(404)
+  })
+
+  it('shows a folder that is no repository as files only', async () => {
+    expect((await get('repo', { projectId: 'p2' })).body).toEqual({ folder: plain, base: null, worktrees: null })
+    expect((await get('dir', { projectId: 'p2' })).body.entries).toEqual([{ name: 'readme.md', dir: false }])
+    expect((await get('file', { projectId: 'p2', path: 'readme.md' })).body.content).toBe('# plain\n')
+    expect((await get('tree', { projectId: 'p2' })).status).toBe(404)
+    expect((await get('dir', { projectId: 'p2', worktree: repo })).status).toBe(404)
+  })
+
+  it('parses renames in name-status and numstat', async () => {
+    const { parseNameStatus, parseNumstat } = await import('../src/plugins-repository.js')
+    expect(parseNameStatus('M\0a.txt\0R087\0old.txt\0new.txt\0')).toEqual([
+      { path: 'a.txt', oldPath: null, status: 'M', additions: null, deletions: null },
+      { path: 'new.txt', oldPath: 'old.txt', status: 'R', additions: null, deletions: null },
+    ])
+    expect([...parseNumstat('1\t0\ta.txt\0' + '2\t3\t\0old.txt\0new.txt\0' + '-\t-\timg.png\0')]).toEqual([
+      ['a.txt', { additions: 1, deletions: 0 }],
+      ['new.txt', { additions: 2, deletions: 3 }],
+      ['img.png', { additions: null, deletions: null }],
+    ])
   })
 })
 

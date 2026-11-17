@@ -38,12 +38,13 @@ import { setTopView } from './useTopViewStore';
  * the host's pty-bridge resumes against the pane's session id. Brain mode
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
- * Worktrees mode shows the project's worktrees, sessions and ports. Labels,
+ * Worktrees mode shows the project's worktrees, sessions and ports. Changes
+ * mode shows a checkout's diffs, files and commits, read-only. Labels,
  * icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -93,6 +94,12 @@ export interface PaneState {
    */
   brainView?: BrainPaneView;
   /**
+   * Where the repository view of this pane was left (RepositoryPane): the checkout,
+   * the tab, the open file. Kept with the layout like brainView; unset → the
+   * project folder's changes.
+   */
+  repositoryView?: RepositoryPaneView;
+  /**
    * v0.17: the brain task this pane's session advances (a task run, skill
    * task-run). Sent with the terminal's init so the host ledger records it.
    */
@@ -112,6 +119,28 @@ export interface BrainPaneView {
   /** Types switched off; a type the brain gains later shows. */
   hidden: EngramType[];
 }
+
+export interface RepositoryPaneView {
+  /** The worktree's folder; unset → the project folder's checkout. */
+  worktree?: string;
+  tab: 'changes' | 'files' | 'commits';
+  /** The file open in the Files tab. */
+  file?: string;
+  /** The commit open in the Commits tab. */
+  commit?: string;
+}
+
+const parseRepositoryView = (raw: unknown): RepositoryPaneView | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const v = raw as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+  return {
+    worktree: text(v.worktree),
+    tab: v.tab === 'files' || v.tab === 'commits' ? v.tab : 'changes',
+    file: text(v.file),
+    commit: text(v.commit),
+  };
+};
 
 const parseBrainView = (raw: unknown): BrainPaneView | undefined => {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -288,6 +317,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
     brainView: parseBrainView(e.brainView),
+    repositoryView: parseRepositoryView(e.repositoryView),
     taskId: typeof e.taskId === 'string' && e.taskId ? e.taskId : undefined,
     provider: e.provider === 'claude' || e.provider === 'codex' ? e.provider : undefined,
   };
@@ -884,6 +914,7 @@ export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): v
       next.title === pane.title &&
       next.noteId === pane.noteId &&
       next.brainView === pane.brainView &&
+      next.repositoryView === pane.repositoryView &&
       next.provider === pane.provider
     ) {
       return pane;
@@ -934,7 +965,7 @@ export function getSessionView(sessionId: string): PaneView | undefined {
 
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
 // A pane is an area for one project holding at most one item per surface
-// (terminal → session, note → note, brain / worktrees → the project's view) and
+// (terminal → session, note → note, brain / worktrees / repository → the project's view) and
 // showing one of them. Each item lives in at most one pane across all desks.
 // Every user action that opens or focuses something goes through openInPane;
 // background worker spawns (addWorkerPane) deliberately do not.
@@ -943,7 +974,9 @@ export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
   | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
-  | { surface: 'brain' | 'worktrees'; projectId: string | null };
+  | { surface: 'brain' | 'worktrees'; projectId: string | null }
+  /** With `worktree`: that checkout's changes. */
+  | { surface: 'repository'; projectId: string | null; worktree?: string };
 
 /**
  * Whether a pane is the empty "Choose Your Project" pane. Needs the known
@@ -987,6 +1020,7 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
       return panes.find(p => p.noteId === target.noteId);
     case 'brain':
     case 'worktrees':
+    case 'repository':
       // A project view is not a unique item: only a pane showing it right now.
       return panes.find(p => p.paneView === target.surface && p.projectId === target.projectId);
   }
@@ -1024,10 +1058,13 @@ export function openInPane(target: OpenTarget): string {
     : !target.sessionId
       ? newSessionView(target.provider)
       : target.chat || snapshot.sessionViews[target.sessionId] === 'chat' ? 'chat' : 'terminal';
+  // A checkout named: the repository view turns to it, in a pane that shows the project's repository already too.
+  const checkout: Partial<PaneState> =
+    target.surface === 'repository' && target.worktree ? { repositoryView: { worktree: target.worktree, tab: 'changes' } } : {};
   if (existing) {
     activatePane(existing.id);
-    if (existing.paneView !== shownView) {
-      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: shownView }));
+    if (existing.paneView !== shownView || checkout.repositoryView) {
+      const { desks } = mapPaneInDesks(existing.id, (pane) => ({ ...pane, paneView: shownView, ...checkout }));
       setSnapshot({ ...snapshot, desks });
     }
     return existing.id;
@@ -1038,7 +1075,7 @@ export function openInPane(target: OpenTarget): string {
       ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.sessionId ? undefined : target.provider }
       : target.surface === 'note'
         ? { noteId: target.noteId }
-        : {};
+        : checkout;
   const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: shownView, ...items };
 
   const active = getActivePane();
