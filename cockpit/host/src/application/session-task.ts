@@ -125,6 +125,12 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
     return task.id
   }
 
+  const rename = async (task: Task, title: string, sessionId: string, brain: Pick<EmlApi, 'post'>) => {
+    const name = kebabTitle(title)
+    if (!name) return
+    await brain.post(`/task/${task.id}/track`, { title: name, content: `${title} (cockpit session ${sessionId}).` })
+  }
+
   return {
     async context(sessionId) {
       const t = target(sessionId)
@@ -141,19 +147,23 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
         taskId = await running
       }
       if (!taskId) return ''
-      const task = await t.brain.get(`/engram/${taskId}`) as Task
+      let task = await t.brain.get(`/engram/${taskId}`) as Task
+      // A session that has a name already (it named itself before the task system was on) lends it now.
+      const name = t.entry.title ?? t.entry.agentTitle
+      if (name && task.title && PLACEHOLDER.test(task.title) && deps.ledger.get(sessionId)?.taskAuto) {
+        await rename(task, name, sessionId, t.brain)
+        task = await t.brain.get(`/engram/${taskId}`) as Task
+      }
       return taskContext(task, task.title !== null && PLACEHOLDER.test(task.title))
     },
 
     async named(sessionId, title) {
       const t = target(sessionId)
       if (!t?.entry.taskId || !t.entry.taskAuto) return
-      const name = kebabTitle(title)
-      if (!name) return
       const task = await t.brain.get(`/engram/${t.entry.taskId}`) as Task
       // The session or the user renamed it already: theirs stays.
       if (!task.title || !PLACEHOLDER.test(task.title)) return
-      await t.brain.post(`/task/${task.id}/track`, { title: name, content: `${title} (cockpit session ${sessionId}).` })
+      await rename(task, title, sessionId, t.brain)
     },
   }
 }

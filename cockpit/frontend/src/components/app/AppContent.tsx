@@ -418,7 +418,7 @@ function AppContentInner() {
           )}
           {topView === 'tasks' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
-              <TasksView />
+              <TasksView projects={projects} />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}

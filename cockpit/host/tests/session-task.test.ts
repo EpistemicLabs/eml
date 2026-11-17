@@ -133,6 +133,16 @@ describe('session task', () => {
     expect(ledger.get(id(6))!.taskAuto).toBe(true)
   })
 
+  it('names the placeholder at start when the session had its name before its task', async () => {
+    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false })
+    ledger.recordSpawn(id(8), null, 'bp-eml', 'claude')
+    ledger.setAgentTitle(id(8), 'Email Lord')
+    const text = await tasks.context(id(8))
+    expect(brain.tasks.get('t1')!.title).toBe('email-lord')
+    expect(text).toContain('**email-lord** · t1')
+    expect(text).not.toContain('takes the session\'s name')
+  })
+
   it('turns a title into a kebab-case anchor', () => {
     expect(mods.kebabTitle('Task system: M1 — hooks!')).toBe('task-system-m1-hooks')
     expect(mods.kebabTitle('✨')).toBeNull()

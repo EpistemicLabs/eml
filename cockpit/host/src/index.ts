@@ -321,6 +321,13 @@ async function main() {
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
   }
+  // Sessions that had their name before their placeholder task: the task takes it now (once the brain answers).
+  setTimeout(() => {
+    for (const entry of ledger.list()) {
+      const name = entry.title ?? entry.agentTitle
+      if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
+    }
+  }, 15_000).unref?.()
   watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff

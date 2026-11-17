@@ -21,6 +21,7 @@ import { getActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { api } from '@/utils/api';
+import type { Project } from '@/types/app';
 
 type Loaded = { open: OverviewTask[]; resolved: OverviewTask[]; jobs: TaskJob[] };
 
@@ -51,7 +52,7 @@ async function loadJobs(): Promise<TaskJob[]> {
 
 const SELECT = 'h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground';
 
-export default function TasksView() {
+export default function TasksView({ projects: cockpitProjects }: { projects?: Project[] }) {
   const spaces = useSpaces();
   const { sessions } = useAllSessions(true);
   const { turns } = useTurnStore();
@@ -93,9 +94,9 @@ export default function TasksView() {
     setSelected(task);
   };
   // Its steps' sessions are the task's too.
-  const stepIds = useMemo(() => {
+  const steps = useMemo(() => {
     if (!selected || !loaded) return [];
-    return [...loaded.open, ...loaded.resolved].filter((t) => t.parentId === selected.id && t.spaceId === selected.spaceId).map((t) => t.id);
+    return [...loaded.open, ...loaded.resolved].filter((t) => t.parentId === selected.id && t.spaceId === selected.spaceId);
   }, [selected, loaded]);
 
   const yourTurn = overview ? keep(overview.yourTurn) : [];
@@ -153,7 +154,7 @@ export default function TasksView() {
       </div>
     </div>
     {selected && (
-      <TaskWorkspace key={`${selected.spaceId}:${selected.id}`} task={selected} stepIds={stepIds} sessions={sessions ?? []} spaces={spaces} onClose={() => setSelected(null)} />
+      <TaskWorkspace key={`${selected.spaceId}:${selected.id}`} task={selected} steps={steps} sessions={sessions ?? []} spaces={spaces} projects={cockpitProjects} onClose={() => setSelected(null)} />
     )}
     </div>
   );
