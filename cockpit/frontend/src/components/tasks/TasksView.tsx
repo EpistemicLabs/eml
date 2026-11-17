@@ -1,7 +1,8 @@
 // The Tasks view (header › Tasks): every open brain task of every space, in the
 // order the user works through them (lib/tasks-overview.ts). It only reads:
-// tasks change through the agents. A click on a task opens its panel, the one
-// the Brain tab uses; a task with steps unfolds its plan in place.
+// tasks change through the agents. A click on a task opens its panel (the one
+// the Brain tab uses) with the chat of its session next to it, the list narrow
+// on the left (TaskWorkspace); a task with steps unfolds its plan in place.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -9,7 +10,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { allSessionState } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { formatAgo, formatWhen } from '@/components/jobs/jobs';
-import { useEngramPanel } from '@/lib/engram-panel';
+import { TaskWorkspace } from '@/components/tasks/TaskWorkspace';
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
   buildOverview, matches, toOverviewTask,
@@ -84,18 +85,24 @@ export default function TasksView() {
   const keep = (items: OverviewItem[]) => items.filter((i) => matches(i.task, filter));
   const projects = useMemo(() => [...new Set((loaded?.open ?? []).map((t) => t.project).filter((p): p is string => !!p))].sort(), [loaded]);
 
-  const { go } = useEngramPanel();
+  const [selected, setSelected] = useState<OverviewTask | null>(null);
   const openTask = (task: OverviewTask) => {
     const space = spaces.find((s) => s.id === task.spaceId);
     // The panel reads the active space's brain: a task of another space opens there.
     if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
-    go(task.id);
+    setSelected(task);
   };
+  // Its steps' sessions are the task's too.
+  const stepIds = useMemo(() => {
+    if (!selected || !loaded) return [];
+    return [...loaded.open, ...loaded.resolved].filter((t) => t.parentId === selected.id && t.spaceId === selected.spaceId).map((t) => t.id);
+  }, [selected, loaded]);
 
   const yourTurn = overview ? keep(overview.yourTurn) : [];
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
-      <div className="mx-auto w-full max-w-4xl">
+    <div className="flex min-h-0 flex-1">
+    <div className={cn('flex min-h-0 flex-col overflow-y-auto py-5', selected ? 'w-[26rem] flex-shrink-0 px-4' : 'flex-1 px-6')}>
+      <div className={cn('w-full', !selected && 'mx-auto max-w-4xl')}>
         <h1 className="text-lg font-semibold text-foreground">Tasks</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {overview ? `${overview.openCount} open tasks across spaces, your turn first` : 'Loading…'}
@@ -144,6 +151,10 @@ export default function TasksView() {
           <Group title="Done" hint="closed in the last 7 days" items={keep(overview.done)} tone="done" onOpen={openTask} />
         )}
       </div>
+    </div>
+    {selected && (
+      <TaskWorkspace key={`${selected.spaceId}:${selected.id}`} task={selected} stepIds={stepIds} sessions={sessions ?? []} spaces={spaces} onClose={() => setSelected(null)} />
+    )}
     </div>
   );
 }
