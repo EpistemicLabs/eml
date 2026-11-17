@@ -41,11 +41,13 @@ import { setTopView } from './useTopViewStore';
  * Worktrees mode shows the project's worktrees, sessions and ports. Repository
  * mode shows a checkout's diffs, files and commits, read-only. Shell mode is
  * a terminal on this computer, the user's own shell in the home folder, not
- * tied to the project. Labels, icons and groups of the views: lib/pane-views.ts.
+ * tied to the project. Time mode shows the work time across projects. Labels, icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell', 'time'];
+/** Views that show something of their own, not the pane's session: never remembered as a session's view. */
+const OWN_VIEWS: ReadonlySet<PaneView> = new Set(['note', 'shell', 'time']);
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -393,7 +395,7 @@ const parseSessionViews = (raw: unknown): Record<string, PaneView> => {
   const sessionViews: Record<string, PaneView> = {};
   if (raw && typeof raw === 'object') {
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof key === 'string' && isPaneView(value) && value !== 'note' && value !== 'shell') sessionViews[key] = value;
+      if (typeof key === 'string' && isPaneView(value) && !OWN_VIEWS.has(value)) sessionViews[key] = value;
     }
   }
   return sessionViews;
@@ -954,8 +956,8 @@ export function setPaneView(paneId: string, view: PaneView): void {
   const loc = findPaneLocation(paneId);
   if (!loc || loc.pane.paneView === view) return;
   let sessionViews = snapshot.sessionViews;
-  // A note or the shell is not a view of the session, so it is never remembered for it.
-  if (loc.pane.sessionId && view !== 'note' && view !== 'shell') {
+  // A note, the shell or the time is not a view of the session, so it is never remembered for it.
+  if (loc.pane.sessionId && !OWN_VIEWS.has(view)) {
     sessionViews = { ...sessionViews, [loc.pane.sessionId]: view };
   }
   // A pane opened as a note or brain view has no session yet; the terminal and

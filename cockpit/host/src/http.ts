@@ -46,6 +46,7 @@ import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
+import type { TimeTracker } from './time-tracking.js'
 import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
@@ -92,6 +93,8 @@ export interface HostDeps {
   spaces: BrainSpaces
   bridge: PtyBridge
   turns: TurnTracker
+  /** The Time plugin's clocks (time-tracking.ts). */
+  time?: TimeTracker
   /** Why sessions run without a memory ceiling here; null when they get one (session-memory.ts). */
   memoryUnavailable?: string | null
   /** The agent CLIs sessions run with. */
@@ -380,6 +383,13 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
       return port ? [[port, 'EML brain server'] as const] : []
     })),
     endShell: (id) => deps.bridge.endShell(id),
+    time: deps.time,
+    sessionName: (sessionId) => {
+      const entry = deps.bridge.ledger.get(sessionId)
+      if (!entry) return null
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+      return sessionView(deps, project, { ...entry, sessionId }).summary || null
+    },
   }
 }
 

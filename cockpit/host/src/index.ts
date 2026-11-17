@@ -33,7 +33,8 @@ import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
 import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
-import { TurnTracker } from './turn-state.js'
+import { TurnTracker, type TurnEvent } from './turn-state.js'
+import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
@@ -307,6 +308,12 @@ async function main() {
   })
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
+  // The Time plugin's clocks: the agent's from the turns, the user's from the browser's beats.
+  const time = new TimeTracker((sessionId) => {
+    const entry = ledger.get(sessionId)
+    return entry ? { projectId: entry.projectId, taskId: entry.taskId } : null
+  }, async () => (await pluginStates()).time)
+  turns.on('turn', (event: TurnEvent) => { void time.turn(event) })
 
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
@@ -314,7 +321,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
     origins,
   )
 

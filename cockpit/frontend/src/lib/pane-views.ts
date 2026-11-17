@@ -3,12 +3,12 @@
 // views, which Settings › EML Plugins switches on or off (host: /api/plugins). The
 // tab bar, the "+" menus and the command palette are built from this list.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, FileDiff, FolderGit2, MessageSquare, NotebookPen, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
+import { Brain, Clock, FileDiff, FolderGit2, MessageSquare, NotebookPen, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
 
 import type { PaneView } from '@/stores/usePaneStore';
 
 /** A plugin the user can switch off; the host knows the same ids. */
-export type PluginId = 'brain' | 'note' | 'worktrees' | 'repository' | 'shell';
+export type PluginId = 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time';
 
 export interface PaneViewDef {
   view: PaneView;
@@ -45,6 +45,10 @@ export const PANE_VIEW_DEFS: ReadonlyArray<PaneViewDef> = [
   {
     view: 'shell', label: 'Shell', icon: SquareTerminal, group: 'plugin', plugin: 'shell', newLabel: 'New shell',
     description: 'A terminal on this computer: your own shell in your home folder, as in the Terminal app. Remote users only get it after `eml-cockpit remote shell on`.',
+  },
+  {
+    view: 'time', label: 'Time', icon: Clock, group: 'plugin', plugin: 'time', newLabel: 'New time view',
+    description: 'Your time at the cockpit per project, counted on its own (5 minutes without input pause it), and the time your agents ran, per session and task.',
   },
 ];
 

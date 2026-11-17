@@ -341,8 +341,8 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 ## Cockpit plugins
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
-plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell. The tab bar and the "+" menus (pane and sidebar)
-show both groups. All five are the cockpit's own plugins, switched on or off
+plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
+show both groups. All six are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
 `host/src/plugins-api.ts`). A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
@@ -372,6 +372,15 @@ bridge (`init` with kind `shell`), with the common variables only — none of th
 agent config) — and no ledger entry; a reload reattaches, closing the pane ends it
 (`DELETE /api/plugins/shell/<id>`), and once it exited Enter starts a new one. It opens for a client on this
 machine; remote users get it only after `eml-cockpit remote shell on` (remote.json `shell`), never from the browser.
+
+**Time** (`components/time-plugin/`, `host/src/time-tracking.ts`) counts work time on its own, with no
+start or stop. The user's clock: while a cockpit tab is visible and had input in the last 5 minutes, it
+posts a beat every 30 seconds (`POST /api/plugins/time/beat`) naming the active pane's session or project;
+the host credits the time between two beats to the earlier one, so several tabs feed one clock and a gap
+over 90 seconds counts nothing. The agents' clock: the time a session's turn runs (turn state `working` until
+any other). Both go to the project, the session and the session's task (task runs), per local day in
+`time/<YYYY-MM-DD>.json` under the cockpit home: ids and seconds only, nothing while the plugin is off. The
+view (`GET /api/plugins/time?days=`) shows today or the last 7 days per project, the agents in their own column.
 Community plugins (sandboxed, from a catalog) are a later step.
 
 ## Claude Code

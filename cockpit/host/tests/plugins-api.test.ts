@@ -44,6 +44,7 @@ beforeAll(async () => {
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
   const { handlePluginsApi } = await import('../src/plugins-api.js')
+  const { TimeTracker } = await import('../src/time-tracking.js')
   const folders: Record<string, string> = { p1: repo, p2: plain }
   const deps = {
     projectFolder: (id: string) => folders[id] ?? null,
@@ -57,6 +58,8 @@ beforeAll(async () => {
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
     endShell: (id: string) => shells.delete(id),
+    time: new TimeTracker(() => ({ projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
+    sessionName: (id: string) => (id === 's1' ? 'Dev server session' : null),
     // The user's home folder: the temp folder the repo lies in.
     home: dirname(repo),
   }
@@ -87,7 +90,7 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('lists every plugin as on until it is switched off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }, { id: 'time', enabled: true }] })
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
@@ -314,5 +317,25 @@ describe('lsof parsing', () => {
     expect(processes.get(50)?.elapsed).toBe(93784)
     expect(ancestorsOf(101, processes)).toEqual([50])
     expect(parseLsofCwd('p101\nfcwd\nn/Users/x/eml\np202\nfcwd\nn/tmp\n')).toEqual(new Map([[101, '/Users/x/eml'], [202, '/tmp']]))
+  })
+})
+
+describe('time', () => {
+  it('takes beats and answers the days with the sessions\' names', async () => {
+    const beat = () => fetch(`${base}/api/plugins/time/beat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 's1' }) })
+    expect((await beat()).status).toBe(200)
+    // A moment later: the time between the two goes to the session.
+    await new Promise((r) => setTimeout(r, 20))
+    expect((await beat()).status).toBe(200)
+    const body = await (await fetch(`${base}/api/plugins/time?days=3`)).json()
+    expect(body.days).toHaveLength(3)
+    expect(body.days[2].sessions.s1.projectId).toBe('p1')
+    expect(body.sessions).toEqual({ s1: 'Dev server session' })
+  })
+
+  it('answers 404 while it is off', async () => {
+    await patch({ id: 'time', enabled: false })
+    expect((await fetch(`${base}/api/plugins/time`)).status).toBe(404)
+    await patch({ id: 'time', enabled: true })
   })
 })

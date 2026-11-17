@@ -9,6 +9,7 @@ import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
 import { handleRepositoryApi } from './plugins-repository.js'
 import { isLocalRequest } from './remote-access.js'
+import type { TimeTracker } from './time-tracking.js'
 
 /**
  * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
@@ -22,6 +23,8 @@ import { isLocalRequest } from './remote-access.js'
  *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
  *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
  *   DELETE /api/plugins/shell/<id>              → end a Shell plugin terminal (its pane closed)
+ *   POST  /api/plugins/time/beat { projectId, sessionId } → the user is at the cockpit (time-tracking.ts)
+ *   GET   /api/plugins/time?days=              → the last days' times, today last, and the sessions' names
  *
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
@@ -30,7 +33,7 @@ import { isLocalRequest } from './remote-access.js'
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell'] as const
+export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell', 'time'] as const
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
@@ -88,6 +91,9 @@ export interface PluginsApiDeps {
   ports?: () => Promise<ListeningPort[] | null>
   /** End the Shell plugin's terminal `id` (pty-bridge.ts); whether one ran. */
   endShell?: (id: string) => boolean
+  time?: TimeTracker
+  /** What the sidebar calls a session; null when it has no name yet. */
+  sessionName?: (sessionId: string) => string | null
   git?: Git
   home?: string
 }
@@ -151,6 +157,26 @@ export async function handlePluginsApi(
   const shellId = /^\/api\/plugins\/shell\/([a-zA-Z0-9_.\-:]+)$/.exec(pathname)?.[1]
   if (shellId && method === 'DELETE') {
     json(res, 200, { ended: deps.endShell?.(shellId) ?? false })
+    return true
+  }
+  if (pathname === '/api/plugins/time' || pathname === '/api/plugins/time/beat') {
+    if (!deps.time) return false
+    if (!(await pluginStates()).time) {
+      notFound(json, res, 'Time is switched off (Settings › EML Plugins)')
+      return true
+    }
+    if (pathname === '/api/plugins/time/beat' && method === 'POST') {
+      const body = await readJson(req)
+      const id = (value: unknown) => (typeof value === 'string' && value ? value : null)
+      await deps.time.beat({ projectId: id(body.projectId), sessionId: id(body.sessionId) })
+      json(res, 200, { ok: true })
+      return true
+    }
+    if (pathname !== '/api/plugins/time' || method !== 'GET') return false
+    const days = deps.time.days(Math.min(Math.max(Number(url.searchParams.get('days')) || 7, 1), 31))
+    const ids = new Set(days.flatMap((day) => Object.keys(day.sessions)))
+    const sessions = Object.fromEntries([...ids].map((sid) => [sid, deps.sessionName?.(sid) ?? null]))
+    json(res, 200, { days, sessions })
     return true
   }
   if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
