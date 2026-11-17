@@ -5,7 +5,7 @@ import { unattended } from './domain/spawn-request.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { MessageRequest } from './application/deliver-message.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { projectIdForBrain } from './project-registry.js'
+import { brainIdFromProjectId, projectIdForBrain } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
 import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space.js'
 import { parseToolProfile } from './domain/tool-profile.js'
@@ -17,7 +17,9 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *   POST /api/spawn              from a session; X-Cockpit-Token = the per-boot
  *                                spawn token the host puts into every session's env.
  *                                Body: project, prompt, title?, provider?, fromSession?,
- *                                task? (the brain task it works on) or step? (its task is a new step of the requester's)
+ *                                task? (the brain task it works on), step? (its task is a new step of the requester's)
+ *                                or newTask? { title, in?, text? } (the host creates that task first, in project `in`
+ *                                or else the worker's)
  *   <home>/spawn-inbox           the same request as a file, for sessions whose
  *                                sandbox has no network (spawn-inbox.ts)
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
@@ -44,6 +46,8 @@ export interface SpawnDeps {
   deliver: (request: MessageRequest) => Promise<DeliveryOutcome>
   /** A session named itself: its placeholder task takes the name (application/session-task.ts). */
   sessionNamed?: (sessionId: string, title: string) => void
+  /** Task system: create a brain task in the space (spawn newTask); its id, or an error text. */
+  createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string }) => Promise<{ id: string } | { error: string }>
 }
 
 const MAX_PROMPT = 50_000
@@ -70,7 +74,7 @@ export async function resolveProject(space: BrainSpace, input: string): Promise<
 export interface SpawnOutcome {
   status: number
   /** `address`: the worker's address for SendMessage (session-address.ts) — absent when its provider has no such messaging. */
-  payload: { id: string; projectId: string; queued: true; address?: string } | { error: { code: string; message: string } }
+  payload: { id: string; projectId: string; queued: true; address?: string; taskId?: string } | { error: { code: string; message: string } }
 }
 
 /**
@@ -100,12 +104,29 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   const taskId = typeof body.task === 'string' && body.task.trim() ? body.task.trim() : null
   const stepOf = body.step === true ? (fromSessionId ? deps.ledger.get(fromSessionId)?.taskId ?? null : null) : null
   if (body.step === true && !stepOf) return fail(400, 'NO_TASK_FOR_STEP', 'step needs a requesting session that works on a task')
-  if (taskId && stepOf) return fail(400, 'TASK_OR_STEP', 'Give task or step, not both')
+  const newTask = body.newTask && typeof body.newTask === 'object' ? body.newTask as Record<string, unknown> : null
+  if ([taskId, stepOf, newTask].filter(Boolean).length > 1) return fail(400, 'TASK_OR_STEP', 'Give one of task, step and newTask')
   const toolProfile = parseToolProfile(body)
   if (toolProfile === 'invalid') return fail(400, 'INVALID_TOOLS', 'deniedTools and mcpServers are lists of names')
   const chosen = provider ?? deps.providers.default()
   if (toolProfile && !chosen.workerRunsInChat(sessionSpaceOf(space))) {
     return fail(400, 'TOOLS_NEED_CHAT', 'Tool limits need the chat runtime, which this provider or sign-in does not use')
+  }
+  // newTask: the task is made before the worker is queued, so it starts on it.
+  let givenTask = taskId
+  if (newTask) {
+    const title = typeof newTask.title === 'string' ? newTask.title.trim() : ''
+    if (!title) return fail(400, 'INVALID_NEW_TASK', 'newTask needs a title')
+    if (!deps.createTask) return fail(400, 'NO_TASK_SYSTEM', 'This cockpit cannot create tasks')
+    const inProject = typeof newTask.in === 'string' && newTask.in.trim() ? await resolveProject(space, newTask.in.trim()) : projectId
+    if (!inProject) return fail(404, 'UNKNOWN_PROJECT', `Unknown project "${String(newTask.in)}" for the new task`)
+    const brainId = brainIdFromProjectId(inProject)
+    const requester = fromSessionId ? deps.ledger.get(fromSessionId) : undefined
+    const from = fromSessionId ? ` Started by session ${requester?.title ?? requester?.agentTitle ?? fromSessionId}.` : ''
+    const text = typeof newTask.text === 'string' && newTask.text.trim() ? newTask.text.trim() : title
+    const created = await deps.createTask(space, { title, content: `${text}${from}`, scope: brainId ? `project.${brainId}` : 'global' })
+    if ('error' in created) return fail(400, 'NEW_TASK_FAILED', `The task could not be created: ${created.error}`)
+    givenTask = created.id
   }
   const request = deps.spawns.add({
     projectId,
@@ -116,7 +137,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     ...(body.open === true ? { open: true } : {}),
     ...(body.wakeable === true ? { wakeable: true } : {}),
     ...(toolProfile ? { toolProfile } : {}),
-    ...(taskId ? { taskId } : {}),
+    ...(givenTask ? { taskId: givenTask } : {}),
     // Named for a further space only; main is the default on both sides.
     ...(space.main ? {} : { spaceId: space.id }),
   })
@@ -124,7 +145,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
   const messaging = (provider ?? deps.providers.default()).messaging
-  return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}) } }
+  return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}), ...(givenTask ? { taskId: givenTask } : {}) } }
 }
 
 /**

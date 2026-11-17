@@ -28,14 +28,16 @@ describe('spawning a worker with a task', () => {
   const setup = () => {
     const ledger = new mods.SessionLedger()
     const spawns = new mods.SpawnQueue()
-    const space = { main: true, id: 'main', registry: { get: () => ({ projectId: 'bp-eml' }), list: () => [] }, projects: { list: async () => [] } }
+    const space = { main: true, id: 'main', registry: { get: (id: string) => (id.startsWith('bp-') ? { projectId: id } : undefined), list: () => [] }, projects: { list: async () => [{ id: 'lohmann', name: 'Lohmann' }] } }
+    const created: Array<{ title: string; content: string; scope: string }> = []
     const provider = { id: 'claude', messaging: true, workerRunsInChat: () => true }
     const deps = {
       ledger, spawns, spawnToken: 't', deliver: async () => 'delivered' as const,
       spaces: { resolve: () => space }, providers: { get: () => undefined, default: () => provider, all: () => [provider] },
+      createTask: async (_space: unknown, input: { title: string; content: string; scope: string }) => { created.push(input); return { id: 'new-task' } },
     } as unknown as Parameters<typeof mods.requestSpawn>[0]
     ledger.recordSpawn('lord', null, 'bp-eml', 'claude', false, 'inbox-task')
-    return { ledger, spawns, deps }
+    return { ledger, spawns, deps, created }
   }
 
   it('carries the task it is given', async () => {
@@ -43,6 +45,21 @@ describe('spawning a worker with a task', () => {
     const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'reply to Lohmann', fromSession: 'lord', task: 'lohmann-task' })
     expect(out.status).toBe(202)
     expect(spawns.list()[0].taskId).toBe('lohmann-task')
+  })
+
+  it('creates a new task in the named project and puts the worker on it', async () => {
+    const { ledger, spawns, deps, created } = setup()
+    ledger.setAgentTitle('lord', 'Email Lord')
+    const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'reply', fromSession: 'lord', newTask: { title: 'Lohmann custom tracking', in: 'Lohmann', text: 'Answer the custom tracking request.' } })
+    expect(out.status).toBe(202)
+    expect((out.payload as { taskId?: string }).taskId).toBe('new-task')
+    expect(created).toEqual([{ title: 'Lohmann custom tracking', content: 'Answer the custom tracking request. Started by session Email Lord.', scope: 'project.lohmann' }])
+    expect(spawns.list()[0].taskId).toBe('new-task')
+    // Without --in the worker's project; one of task, step and newTask only.
+    await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'Other' } })
+    expect(created.at(-1)!.scope).toBe('project.eml')
+    expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'A' }, task: 't' })).status).toBe(400)
+    expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: '' } })).status).toBe(400)
   })
 
   it('makes its task a step of the requester\'s only with step, and refuses step without a task or with task', async () => {

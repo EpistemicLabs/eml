@@ -35,7 +35,7 @@ import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
-import { createSessionTask } from './application/session-task.js'
+import { createSessionTask, kebabTitle } from './application/session-task.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { loadAgentBrains } from './agents.js'
@@ -328,7 +328,18 @@ async function main() {
       if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
     }
   }, 15_000).unref?.()
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
+  // The spawn API's newTask: the task is created as the space's agent, like a session's own write.
+  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
+    const brain = taskBrain(space)
+    if (!brain) return { error: `space ${space.name} has no agent` }
+    const post = (scope: string) => brain.post('/engram/task', { title: kebabTitle(input.title) ?? input.title, content: input.content, scope, status: 'active' }) as Promise<{ id: string }>
+    try {
+      return await post(input.scope).catch(() => post('global'))
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  }
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -513,7 +524,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded,
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, createTask,
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

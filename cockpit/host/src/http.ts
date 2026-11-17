@@ -127,6 +127,7 @@ export interface HostDeps {
   /** Task system: a session's task at start, and its name (application/session-task.ts). */
   sessionTask?: SessionTask
   sessionNamed?: SpawnDeps['sessionNamed']
+  createTask?: SpawnDeps['createTask']
   /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
   turnEnded?: (sessionId: string, text: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
@@ -583,7 +584,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
