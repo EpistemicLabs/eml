@@ -16,7 +16,8 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  * Worker spawns (skill spawn-session → cockpit-spawn → here):
  *   POST /api/spawn              from a session; X-Cockpit-Token = the per-boot
  *                                spawn token the host puts into every session's env.
- *                                Body: project, prompt, title?, provider?, fromSession?
+ *                                Body: project, prompt, title?, provider?, fromSession?,
+ *                                task? (the brain task it works on) or step? (its task is a new step of the requester's)
  *   <home>/spawn-inbox           the same request as a file, for sessions whose
  *                                sandbox has no network (spawn-inbox.ts)
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
@@ -95,6 +96,11 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   if (typeof body.provider === 'string' && body.provider && !provider) {
     return fail(400, 'UNKNOWN_PROVIDER', `Unknown provider "${body.provider}". Known: ${deps.providers.all().map((p) => p.id).join(', ')}`)
   }
+  // Task system: an existing task to work on, or a new step of the requester's task; neither = a task of its own.
+  const taskId = typeof body.task === 'string' && body.task.trim() ? body.task.trim() : null
+  const stepOf = body.step === true ? (fromSessionId ? deps.ledger.get(fromSessionId)?.taskId ?? null : null) : null
+  if (body.step === true && !stepOf) return fail(400, 'NO_TASK_FOR_STEP', 'step needs a requesting session that works on a task')
+  if (taskId && stepOf) return fail(400, 'TASK_OR_STEP', 'Give task or step, not both')
   const toolProfile = parseToolProfile(body)
   if (toolProfile === 'invalid') return fail(400, 'INVALID_TOOLS', 'deniedTools and mcpServers are lists of names')
   const chosen = provider ?? deps.providers.default()
@@ -110,9 +116,11 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     ...(body.open === true ? { open: true } : {}),
     ...(body.wakeable === true ? { wakeable: true } : {}),
     ...(toolProfile ? { toolProfile } : {}),
+    ...(taskId ? { taskId } : {}),
     // Named for a further space only; main is the default on both sides.
     ...(space.main ? {} : { spaceId: space.id }),
   })
+  if (stepOf) deps.ledger.expectTaskParent(request.id, stepOf)
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
   const messaging = (provider ?? deps.providers.default()).messaging

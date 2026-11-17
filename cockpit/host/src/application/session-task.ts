@@ -8,8 +8,9 @@ import type { SessionLedger } from '../session-ledger.js'
  * a space that switched it on works on a brain task.
  *
  *   - At session start (task-hook.ts → POST /api/session-task) a session
- *     without a task gets one: a placeholder named after the session, a
- *     sub-task of its parent session's task when another session opened it.
+ *     without a task gets one: a placeholder named after the session. A
+ *     worker's task is its own; it is a step of the requester's task only when
+ *     the requester asked for that (spawn --step). Who started it is noted.
  *     A job's session works on the job's task instead.
  *   - When the session names itself (session-title-cli.ts), the placeholder
  *     takes that name, unless the session already renamed the task.
@@ -20,7 +21,7 @@ import type { SessionLedger } from '../session-ledger.js'
  */
 
 export interface SessionTaskDeps {
-  ledger: Pick<SessionLedger, 'get' | 'setTask'>
+  ledger: Pick<SessionLedger, 'get' | 'setTask' | 'expectedTaskParent'>
   spaces: Pick<BrainSpaces, 'resolve'>
   /** The brain as the space's sessions see it (brain-mcp.ts sessionClient); null when the space has no agent. */
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
@@ -67,7 +68,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '',
     '## Rules',
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
-    '- Work for another session is a step of this task: eml_create_task with parent_id, depends_on and checkpoint (before · after · none). Do not start sessions for work that has no task.',
+    '- A worker you start gets a task of its own by default. Name its task when it has one: spawn with --task <id> (an existing task, e.g. the customer\'s open task) or --step (a new step of this task, only when it is part of this task\'s own work).',
+    '- Handing out work (an inbox, a triage): find the open task it belongs to (eml_list, eml_recall) or create it in the right project first, then start the worker with --task on it.',
+    '- Planned steps of this task: eml_create_task with parent_id, depends_on and checkpoint (before · after · none); the runner starts them.',
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
@@ -116,11 +119,16 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
 
   const create = async (sessionId: string, brain: Pick<EmlApi, 'post'>): Promise<string | null> => {
     const entry = deps.ledger.get(sessionId)!
-    const parentTask = entry.parentSessionId ? deps.ledger.get(entry.parentSessionId)?.taskId ?? null : null
+    const parentTask = deps.ledger.expectedTaskParent(sessionId)
+    const requester = entry.parentSessionId ? deps.ledger.get(entry.parentSessionId) : undefined
     const brainId = entry.projectId ? brainIdFromProjectId(entry.projectId) : null
+    // Where it came from is history, not structure: noted, not a parent task.
+    const from = entry.parentSessionId
+      ? ` Started by session ${requester?.title ?? requester?.agentTitle ?? entry.parentSessionId}${requester?.taskId ? ` (its task ${requester.taskId})` : ''}.`
+      : ''
     const body = {
       title: placeholderTitle(sessionId, now()),
-      content: `The work of cockpit session ${sessionId}; the task takes the session's name once it has one.`,
+      content: `The work of cockpit session ${sessionId}; the task takes the session's name once it has one.${from}`,
       status: 'active',
       ...(parentTask ? { parent_id: parentTask } : {}),
     }

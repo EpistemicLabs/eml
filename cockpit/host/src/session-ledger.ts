@@ -159,6 +159,7 @@ export class SessionLedger {
   private data: LedgerFile = load()
   /** Who asked for a worker that has no entry yet: its first spawn takes it. */
   private expectedParents = new Map<string, string>()
+  private expectedTaskParents = new Map<string, string>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -255,6 +256,15 @@ export class SessionLedger {
   /** A worker was asked for by this session; recorded when it starts, however it starts. */
   expectParent(sessionId: string, parentSessionId: string): void {
     this.expectedParents.set(sessionId, parentSessionId)
+  }
+
+  /** Task system: the worker's task is to be a step of this task (spawn --step); read when its task is created. */
+  expectTaskParent(sessionId: string, taskId: string): void {
+    this.expectedTaskParents.set(sessionId, taskId)
+  }
+
+  expectedTaskParent(sessionId: string): string | null {
+    return this.expectedTaskParents.get(sessionId) ?? null
   }
 
   markRead(sessionId: string): void {

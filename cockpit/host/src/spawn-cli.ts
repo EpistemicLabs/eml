@@ -4,7 +4,7 @@
  *   node "$COCKPIT_SPAWN_JS" --project <brain project id | name | folder path>
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
  *        [--provider <claude | codex>] [--open] [--wakeable]
- *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
+ *        [--deny-tools <a,b>] [--mcp-servers <a,b>] [--task <task id> | --step]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which
  * the host puts into every session's env; without network (a sandboxed
@@ -16,7 +16,9 @@
  * worker runs with; without it the worker uses the cockpit's default. For a
  * worker that can message other sessions, the CLI prints its address. --wakeable
  * lets an outside service message it; --deny-tools and --mcp-servers limit what it
- * may use, for its whole life.
+ * may use, for its whole life. Task system: --task makes the worker work on that
+ * brain task; --step makes its task a new step of this session's task. Without
+ * either it gets a task of its own.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -50,6 +52,8 @@ async function main(): Promise<void> {
     ...(process.argv.includes('--wakeable') ? { wakeable: true } : {}),
     ...(list('deny-tools') ? { deniedTools: list('deny-tools') } : {}),
     ...(list('mcp-servers') ? { mcpServers: list('mcp-servers') } : {}),
+    ...(arg('task') ? { task: arg('task') } : {}),
+    ...(process.argv.includes('--step') ? { step: true } : {}),
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)

@@ -74,27 +74,36 @@ describe('session task', () => {
     expect(first).toContain('- [lasse]')
   })
 
-  it('makes a worker\'s task a sub-task of its parent\'s, and falls back to global for a project the brain does not know', async () => {
-    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false }, fakeBrain(['global']))
+  it('gives a worker a task of its own that notes who started it, a step only when asked, and global for a project the brain does not know', async () => {
+    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false }, fakeBrain(['global', 'project.eml']))
     ledger.recordSpawn(id(2), null, 'bp-eml', 'claude', false, 'parent-task')
+    ledger.setAgentTitle(id(2), 'Email Lord')
     ledger.expectParent(id(3), id(2))
     ledger.recordSpawn(id(3), null, 'bp-unknown', 'claude', true)
     await tasks.context(id(3))
-    const created = brain.posts.filter((p) => p.path === '/engram/task')
+    let created = brain.posts.filter((p) => p.path === '/engram/task')
     expect(created.map((p) => p.body.scope)).toEqual(['project.unknown', 'global'])
-    expect(created[1].body.parent_id).toBe('parent-task')
+    expect(created[1].body).not.toHaveProperty('parent_id')
+    expect(created[1].body.content).toContain('Started by session Email Lord (its task parent-task)')
+
+    ledger.expectParent(id(4), id(2))
+    ledger.expectTaskParent(id(4), 'parent-task')
+    ledger.recordSpawn(id(4), null, 'bp-eml', 'claude', true)
+    await tasks.context(id(4))
+    created = brain.posts.filter((p) => p.path === '/engram/task')
+    expect(created.at(-1)!.body.parent_id).toBe('parent-task')
   })
 
   it('keeps a task the session was started with, and does not mark it as created by the cockpit', async () => {
     const brain = fakeBrain()
     brain.tasks.set('given', { id: 'given', title: 'homepage-v4b', content: 'Build it.', status: 'active', properties: { stage: 'implementation' } })
     const { ledger, tasks } = setup({ taskSystem: true, shared: false }, brain)
-    ledger.recordSpawn(id(4), null, 'bp-eml', 'claude', false, 'given')
-    const text = await tasks.context(id(4))
+    ledger.recordSpawn(id(14), null, 'bp-eml', 'claude', false, 'given')
+    const text = await tasks.context(id(14))
     expect(brain.posts).toHaveLength(0)
     expect(text).toContain('**homepage-v4b** · given [active · implementation]')
     expect(text).not.toContain('takes the session\'s name')
-    expect(ledger.get(id(4))!.taskAuto).toBeUndefined()
+    expect(ledger.get(id(14))!.taskAuto).toBeUndefined()
   })
 
   it('gives a job\'s session the job\'s task', async () => {
