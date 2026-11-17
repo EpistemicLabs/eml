@@ -367,6 +367,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'stage',    // v0.15: filter tasks by stage
   'binding', 'task_id', 'origin', 'session_id', // v0.19
   'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
+  'waiting_on', // v0.22: tasks whose turn it is for this handle (task system)
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -847,6 +848,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         origin: q.origin,
         session_id: q.session_id,
         learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
+        waiting_on: q.waiting_on,
       })
       return json(res, 200, { count: results.length, engrams: results })
     }
