@@ -124,6 +124,22 @@ describe('task router', () => {
     expect(after.brain.posts[0].body.waiting_on).toMatchObject({ why: 'Review: draft written' })
   })
 
+  it('finishes a session that closed its task and asks nothing, and keeps one that still asks', async () => {
+    const finished: string[] = []
+    const ledger = new SessionLedger()
+    const brain = fakeBrain({ id: 't9', status: 'resolved', properties: {} })
+    const r = router.createTaskRouter({
+      ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, owner: 'lasse',
+      waiting: () => {}, finished: (id) => finished.push(id), log: () => {},
+    })
+    ledger.recordSpawn('s10', null, 'bp-eml', 'claude', true, 't9')
+    ledger.recordSpawn('s11', null, 'bp-eml', 'claude', true, 't9')
+    await r.turnEnded('s10', '### Handoff\nResult: step done')
+    await r.turnEnded('s11', HANDOFF)
+    expect(finished).toEqual(['s10'])
+    expect(brain.posts).toHaveLength(0)
+  })
+
   it('changes nothing without a handoff or status, for a closed task, or where the task system is off', async () => {
     const plain = setup({ id: 't5', status: 'active', properties: {} })
     plain.ledger.recordSpawn('s6', null, 'bp-eml', 'claude', false, 't5')

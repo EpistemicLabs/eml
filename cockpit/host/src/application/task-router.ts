@@ -17,6 +17,8 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - A step with checkpoint "after" that handed over a result waits for the
  *     user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
+ *   - A session that closed its task and asks nothing is finished: its
+ *     handoff and outcome are in the task, so it leaves the lists (finished).
  *
  * The session never sets waiting_on itself (it is not among its tools); a job's
  * session is routed like any other, so a job needs no notify setting of its own.
@@ -32,6 +34,8 @@ export interface TaskRouterDeps {
   owner: string
   /** The session now waits for the user: its turn state shows it (turn-state.ts). */
   waiting(sessionId: string): void
+  /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
+  finished?(sessionId: string): void
   log(line: string): void
   now?: () => Date
 }
@@ -92,7 +96,15 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     if (lastRouted.get(sessionId) === key) return
 
     const task = await brain.get(`/engram/${entry.taskId}`) as Task
-    if (task.status !== 'planned' && task.status !== 'active') return
+    if (task.status !== 'planned' && task.status !== 'active') {
+      lastRouted.set(sessionId, key)
+      const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))
+      if (!asks) {
+        deps.finished?.(sessionId)
+        deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} closed, finished`)
+      }
+      return
+    }
     const waiting = decideWaiting({ handoff, attention, checkpoint: task.properties?.checkpoint, owner: deps.owner, sessionId, now: now() })
     const current = task.properties?.waiting_on
     // Another session's wait stays until that session or the user moves on.
