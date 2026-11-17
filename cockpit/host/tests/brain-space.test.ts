@@ -131,9 +131,11 @@ describe('brain spaces', () => {
     expect(line(hooks.Stop[0].hooks[0])).toContain(quoted(isolation.turnHookConfig))
     // The project block: a second SessionStart command for every source (no matcher);
     // the reminder then drops its working-directory guess.
-    expect(hooks.SessionStart).toHaveLength(2)
+    expect(hooks.SessionStart).toHaveLength(3)
     expect(hooks.SessionStart[1].matcher).toBeUndefined()
     expect(line(hooks.SessionStart[1].hooks[0])).toContain(`hook project-block --config ${quoted(space.files.emlConfig)}`)
+    // The task system's hook (task-hook.ts): the host decides per space, so every space names it.
+    expect(line(hooks.SessionStart[2].hooks[0])).toContain('task-hook.js')
     expect(hooks.UserPromptSubmit).toHaveLength(2)
     // SendMessage asks the host first, and waits for the answer (send-message-hook.ts).
     expect(hooks.PreToolUse).toHaveLength(1)

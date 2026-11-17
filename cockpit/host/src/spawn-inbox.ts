@@ -43,7 +43,7 @@ async function handle(deps: InboxDeps, id: string): Promise<void> {
   const outcome = body.token !== deps.spawnToken
     ? { status: 403, payload: { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can send requests' } } }
     : body.kind === 'session-title'
-      ? requestSessionTitle(deps.ledger, body.session, body)
+      ? requestSessionTitle(deps, body.session, body)
       : body.kind === 'session-message'
         ? await requestMessage(deps, 'session', body.target, body)
         : body.kind === 'schedule' && deps.jobs

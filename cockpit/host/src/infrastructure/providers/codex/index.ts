@@ -6,8 +6,8 @@ import type {
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
-  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
+  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
@@ -187,6 +187,8 @@ class CodexProvider implements AgentProvider {
           SessionStart: [
             eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
             eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+            // The session's task, in a space with the task system on (task-hook.ts).
+            entry(taskHookCommand(), { ...TASK_HOOK_OPTIONS, additionalContextLimit: BOOT_CONTEXT_LIMIT }),
           ],
           UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],
           PermissionRequest: [turn],

@@ -41,6 +41,8 @@ export interface SpawnDeps {
   ledger: SessionLedger
   /** The message endpoint's use case (application/deliver-message.ts). */
   deliver: (request: MessageRequest) => Promise<DeliveryOutcome>
+  /** A session named itself: its placeholder task takes the name (application/session-task.ts). */
+  sessionNamed?: (sessionId: string, title: string) => void
 }
 
 const MAX_PROMPT = 50_000
@@ -124,15 +126,16 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
  */
 const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g
 
-export function requestSessionTitle(ledger: SessionLedger, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string } } {
+export function requestSessionTitle(deps: Pick<SpawnDeps, 'ledger' | 'sessionNamed'>, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string } } {
   const fail = (status: number, code: string, message: string): SpawnOutcome => ({ status, payload: { error: { code, message } } })
   // Control characters and bidi overrides would let a title disguise itself in the sidebar.
   const title = typeof body.title === 'string'
     ? body.title.replace(/\s+/g, ' ').replace(INVISIBLE, '').trim()
     : ''
   if (!title || title.length > MAX_TITLE) return fail(400, 'INVALID_TITLE', `title is required (max ${MAX_TITLE} chars)`)
-  const entry = typeof sessionId === 'string' && sessionId ? ledger.setAgentTitle(sessionId, title) : undefined
+  const entry = typeof sessionId === 'string' && sessionId ? deps.ledger.setAgentTitle(sessionId, title) : undefined
   if (!entry) return fail(404, 'NOT_FOUND', 'Session not found')
+  deps.sessionNamed?.(sessionId as string, title)
   return { status: 200, payload: { title } }
 }
 
@@ -191,7 +194,7 @@ export async function handleSpawnApi(
       json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can name itself' } })
       return true
     }
-    const result = requestSessionTitle(deps.ledger, named[1], await readJson(req))
+    const result = requestSessionTitle(deps, named[1], await readJson(req))
     json(res, result.status, result.payload)
     return true
   }

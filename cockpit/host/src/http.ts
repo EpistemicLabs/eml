@@ -9,6 +9,7 @@ import { handlePushApi, type PushApiDeps } from './push-api.js'
 import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
+import type { SessionTask } from './application/session-task.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
@@ -122,6 +123,9 @@ export interface HostDeps {
   hooksUrl: string
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
+  /** Task system: a session's task at start, and its name (application/session-task.ts). */
+  sessionTask?: SessionTask
+  sessionNamed?: SpawnDeps['sessionNamed']
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
   /** Web push devices, the test and what the user is looking at (push-api.ts). */
@@ -576,7 +580,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
@@ -727,6 +731,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
     json(res, 200, { text: directoryAnswer(deps, caller, url) })
+    return true
+  }
+
+  // A session's task at start, from its task hook (task-hook.ts); empty where the task system is off.
+  if (resource === 'session-task' && !id && method === 'POST') {
+    const caller = req.headers['x-cockpit-session']
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken || typeof caller !== 'string') {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can ask for its task' } })
+      return true
+    }
+    try {
+      json(res, 200, { text: deps.sessionTask ? await deps.sessionTask.context(caller) : '' })
+    } catch (err) {
+      json(res, 502, { error: { code: 'TASK_FAILED', message: (err as Error).message } })
+    }
     return true
   }
 
@@ -1259,12 +1278,12 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
 /**
  * The write routes a session reaches with its own per-boot token instead of
  * the page's Origin: /api/hook, /api/spawn, /api/jobs (a session scheduling),
- * /api/session-title/<id>, /api/sessions/<target>/message. Every
+ * /api/session-task, /api/session-title/<id>, /api/sessions/<target>/message. Every
  * other write — a project's move into a shared space among them — needs the
  * cockpit page's Origin.
  */
 export function isTokenEndpoint(url: string): boolean {
-  return /^\/api\/(hook|spawn|jobs|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
+  return /^\/api\/(hook|spawn|jobs|session-task|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
 }
 
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {

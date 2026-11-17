@@ -52,6 +52,8 @@ export interface LedgerEntry {
   worker: boolean
   /** v0.17: a task run — the brain task this session advances (skill task-run). */
   taskId: string | null
+  /** Task system: the cockpit created the task for this session (application/session-task.ts). */
+  taskAuto?: true
   /** The brain space the session runs in (brain-space.ts); null = the main space (pre-spaces entries). */
   spaceId: string | null
   /**
@@ -122,6 +124,7 @@ function load(): LedgerFile {
           pinned: entry.pinned === true,
           worker: entry.worker === true,
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
+          ...(entry.taskAuto === true ? { taskAuto: true as const } : {}),
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
@@ -202,6 +205,7 @@ export class SessionLedger {
       pinned: prev?.pinned ?? false,
       worker: worker || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
+      ...(prev?.taskAuto && (taskId === null || taskId === prev.taskId) ? { taskAuto: true as const } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
@@ -304,6 +308,16 @@ export class SessionLedger {
   }
 
   /** Set when a job's run starts the session; it holds on every resume. */
+  /** Task system: the brain task the session works on; `auto` when the cockpit created it (application/session-task.ts). */
+  setTask(sessionId: string, taskId: string, auto = false): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.taskId = taskId
+    if (auto) entry.taskAuto = true
+    else delete entry.taskAuto
+    this.persist()
+  }
+
   setJobId(sessionId: string, jobId: string): void {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.jobId === jobId) return

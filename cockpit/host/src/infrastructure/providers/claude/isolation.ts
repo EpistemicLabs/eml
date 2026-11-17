@@ -6,8 +6,8 @@ import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
 import { readAgentMcpDefinitions, allowedMcpServers, type SpaceRuntime } from '../../../agent-runtime.js'
 import {
-  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
-  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
+  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
+  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, taskHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 
@@ -180,13 +180,14 @@ export function writeSpaceFiles(
   // The project block (mcp-server hooks/project-block.ts): a second SessionStart
   // command, so its own output limit, on every source (startup, resume,
   // compact, clear). It brings the session's project, so the reminder drops
-  // its guess from the working directory.
+  // its guess from the working directory. The task hook (task-hook.ts) a third:
+  // the session's task, in a space with the task system on.
   fs.writeFileSync(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
       hooks: {
-        SessionStart: [eml('session-start'), eml('project-block')],
+        SessionStart: [eml('session-start'), eml('project-block'), entry(taskHookCommand(), TASK_HOOK_OPTIONS)],
         UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
         // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
         Stop: [turn, eml('stop')],
