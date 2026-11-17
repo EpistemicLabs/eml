@@ -1,0 +1,167 @@
+// The Tasks view's model (components/tasks/TasksView.tsx): every open brain
+// task of every space, grouped the way the user works through them — whose
+// turn it is first, then what runs, what is scheduled, what is active and what
+// is planned — and what was done in the last seven days. A task with steps
+// (sub-tasks) shows once, with its progress; its steps lend it their state: a
+// step waiting on the user puts the task in Your turn. Pure, for the tests.
+
+export type OverviewTask = {
+  id: string;
+  title: string;
+  content: string;
+  status: string;
+  scope: string;
+  updatedAt: string;
+  parentId: string | null;
+  priority: string | null;
+  stage: string | null;
+  checkpoint: string | null;
+  dependsOn: string[];
+  waitingOn: { who: string; why: string; since: string } | null;
+  dueDate: string | null;
+  spaceId: string;
+  spaceName: string;
+  /** The brain project's name, or null for a task outside a project. */
+  project: string | null;
+};
+
+export type RawTask = {
+  id: string; title: string | null; content: string; status: string; scope: string; updated_at: string;
+  parent_id?: string | null;
+  properties?: {
+    priority?: string; stage?: string; checkpoint?: string; depends_on?: string[]; due_date?: string;
+    waiting_on?: { who?: string; why?: string; since?: string };
+  };
+};
+
+export function toOverviewTask(raw: RawTask, space: { id: string; name: string }, projects: ReadonlyMap<string, string>): OverviewTask {
+  const p = raw.properties ?? {};
+  const projectId = raw.scope.startsWith('project.') ? raw.scope.slice('project.'.length) : null;
+  return {
+    id: raw.id,
+    title: raw.title ?? raw.content.split('\n')[0].slice(0, 80),
+    content: raw.content,
+    status: raw.status,
+    scope: raw.scope,
+    updatedAt: raw.updated_at,
+    parentId: raw.parent_id ?? null,
+    priority: p.priority ?? null,
+    stage: p.stage ?? null,
+    checkpoint: p.checkpoint ?? null,
+    dependsOn: Array.isArray(p.depends_on) ? p.depends_on : [],
+    waitingOn: p.waiting_on?.who ? { who: p.waiting_on.who, why: p.waiting_on.why ?? '', since: p.waiting_on.since ?? '' } : null,
+    dueDate: p.due_date ?? null,
+    spaceId: space.id,
+    spaceName: space.name,
+    project: projectId ? projects.get(projectId) ?? projectId : null,
+  };
+}
+
+/** A session working on a task right now. */
+export type TaskSession = { taskId: string; sessionId: string; name: string; working: boolean };
+
+/** A job attached to a task (its next run). */
+export type TaskJob = { id: string; name: string; taskId: string | null; nextRun: string | null; paused: boolean; ended: boolean };
+
+export type OverviewItem = {
+  task: OverviewTask;
+  /** Its steps, open and done (as far as the lists reach). */
+  steps: OverviewTask[];
+  done: number;
+  /** Whose turn it is and why: the task's own wait, else a step's (stepTitle says which). */
+  waiting: { who: string; why: string; since: string; stepTitle: string | null } | null;
+  /** The step (or the task itself) a session works on now. */
+  running: { title: string; sessionName: string } | null;
+  jobs: TaskJob[];
+};
+
+export type Overview = {
+  yourTurn: OverviewItem[];
+  running: OverviewItem[];
+  scheduled: Array<{ job: TaskJob; item: OverviewItem | null }>;
+  active: OverviewItem[];
+  planned: OverviewItem[];
+  done: OverviewItem[];
+  openCount: number;
+};
+
+const PRIORITY: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+const rank = (task: OverviewTask) => PRIORITY[task.priority ?? 'normal'] ?? 2;
+const OPEN = new Set(['planned', 'active']);
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function buildOverview(input: {
+  open: OverviewTask[];
+  resolved: OverviewTask[];
+  sessions: TaskSession[];
+  jobs: TaskJob[];
+  now: Date;
+}): Overview {
+  const all = new Map<string, OverviewTask>();
+  for (const task of [...input.resolved, ...input.open]) all.set(task.id, task);
+  const stepsOf = new Map<string, OverviewTask[]>();
+  for (const task of all.values()) {
+    if (!task.parentId || !all.has(task.parentId)) continue;
+    stepsOf.set(task.parentId, [...(stepsOf.get(task.parentId) ?? []), task]);
+  }
+  // A step shows on its parent; one whose parent is not in the lists stands on its own.
+  const isTop = (task: OverviewTask) => !task.parentId || !all.has(task.parentId);
+  const working = new Map(input.sessions.filter((s) => s.working).map((s) => [s.taskId, s]));
+
+  const item = (task: OverviewTask): OverviewItem => {
+    const steps = stepsOf.get(task.id) ?? [];
+    const waitingStep = steps.find((s) => OPEN.has(s.status) && s.waitingOn);
+    const waiting = task.waitingOn
+      ? { ...task.waitingOn, stepTitle: null }
+      : waitingStep ? { ...waitingStep.waitingOn!, stepTitle: waitingStep.title } : null;
+    const runningTask = [task, ...steps].find((t) => working.has(t.id));
+    return {
+      task, steps,
+      done: steps.filter((s) => s.status === 'resolved').length,
+      waiting,
+      running: runningTask ? { title: runningTask.title, sessionName: working.get(runningTask.id)!.name } : null,
+      jobs: input.jobs.filter((job) => job.taskId === task.id && !job.ended),
+    };
+  };
+
+  const byPriority = (a: OverviewItem, b: OverviewItem) => rank(a.task) - rank(b.task) || b.task.updatedAt.localeCompare(a.task.updatedAt);
+  const open = input.open.filter(isTop).map(item);
+  const yourTurn = open.filter((i) => i.waiting)
+    .sort((a, b) => rank(a.task) - rank(b.task) || a.waiting!.since.localeCompare(b.waiting!.since));
+  const rest = open.filter((i) => !i.waiting);
+  const running = rest.filter((i) => i.running).sort(byPriority);
+  const idle = rest.filter((i) => !i.running);
+
+  const items = new Map(open.map((i) => [i.task.id, i]));
+  const scheduled = input.jobs
+    .filter((job) => !job.ended)
+    .map((job) => ({ job, item: job.taskId ? items.get(job.taskId) ?? null : null }))
+    .sort((a, b) => (a.job.nextRun ?? '9').localeCompare(b.job.nextRun ?? '9'));
+
+  const done = input.resolved
+    .filter((task) => isTop(task) && input.now.getTime() - new Date(task.updatedAt).getTime() < WEEK_MS)
+    .map(item)
+    .sort((a, b) => b.task.updatedAt.localeCompare(a.task.updatedAt));
+
+  return {
+    yourTurn,
+    running,
+    scheduled,
+    active: idle.filter((i) => i.task.status === 'active').sort(byPriority),
+    planned: idle.filter((i) => i.task.status === 'planned').sort(byPriority),
+    done,
+    openCount: open.length,
+  };
+}
+
+/** The filters of the view: space, project, priority and words in the title or text. */
+export type OverviewFilter = { spaceId: string | null; project: string | null; priority: string | null; words: string };
+
+export function matches(task: OverviewTask, filter: OverviewFilter): boolean {
+  if (filter.spaceId && task.spaceId !== filter.spaceId) return false;
+  if (filter.project && task.project !== filter.project) return false;
+  if (filter.priority && (task.priority ?? 'normal') !== filter.priority) return false;
+  const words = filter.words.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = `${task.title} ${task.content}`.toLowerCase();
+  return words.every((word) => text.includes(word));
+}

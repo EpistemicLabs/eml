@@ -16,6 +16,7 @@ import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import { ReviewScreen } from '../review/ReviewScreen';
 import JobsView from '../jobs/JobsView';
+import TasksView from '../tasks/TasksView';
 import HeaderJobs from '../jobs/HeaderJobs';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
@@ -102,7 +103,7 @@ function AppContentInner() {
   const topView = useTopView();
   // The phone has no way back from the Brain tab or Jobs, so it stays on the desks.
   useEffect(() => {
-    if (compact && (topView === 'brain' || topView === 'jobs')) setTopView('desks');
+    if (compact && (topView === 'brain' || topView === 'jobs' || topView === 'tasks')) setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
@@ -413,6 +414,11 @@ function AppContentInner() {
           {topView === 'jobs' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
               <JobsView />
+            </div>
+          )}
+          {topView === 'tasks' && (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+              <TasksView />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}

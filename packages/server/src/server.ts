@@ -368,6 +368,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'binding', 'task_id', 'origin', 'session_id', // v0.19
   'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
   'waiting_on', // v0.22: tasks whose turn it is for this handle (task system)
+  'with_parent', // v0.22: each task with its parent's id (part_of), for the cockpit's Tasks view
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -850,6 +851,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
         waiting_on: q.waiting_on,
       })
+      // with_parent=true: a task names its parent task (parent_id), so a list shows plans without a call per task.
+      if (q.with_parent === 'true') {
+        const withParent = results.map((e) => e.type !== 'task' ? e : {
+          ...e,
+          parent_id: eml.engrams.relationsOf(e.id).find((r) => r.relation === 'part_of' && r.source_id === e.id)?.target_id ?? null,
+        })
+        return json(res, 200, { count: withParent.length, engrams: withParent })
+      }
       return json(res, 200, { count: results.length, engrams: results })
     }
 

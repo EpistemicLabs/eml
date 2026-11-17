@@ -390,6 +390,16 @@ describe('v0.19 REST', () => {
       expect((await get('/list?type=task&binding=task')).status).toBe(200)
     })
 
+    it('v0.22: with_parent names each task\'s parent, and only when asked', async () => {
+      const parent = (await create(validTask({ title: 'plan-parent' }))).body as { id: string }
+      const child = (await post('/engram/task', { ...flat(validTask({ title: 'plan-child' })).body, parent_id: parent.id })).body as { id: string }
+      const rows = ((await get('/list?type=task&with_parent=true&limit=500')).body as { engrams: Array<{ id: string; parent_id?: string | null }> }).engrams
+      expect(rows.find((r) => r.id === child.id)?.parent_id).toBe(parent.id)
+      expect(rows.find((r) => r.id === parent.id)?.parent_id).toBeNull()
+      const plain = ((await get('/list?type=task&limit=500')).body as { engrams: Array<{ id: string; parent_id?: unknown }> }).engrams
+      expect(plain.find((r) => r.id === child.id)).not.toHaveProperty('parent_id')
+    })
+
     it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {
       const stale = await create(validDecision({ title: 'rest-stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
       const fresh = await create(validDecision({ title: 'rest-fresh' }))
