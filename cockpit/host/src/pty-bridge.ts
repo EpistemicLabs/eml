@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { WebSocket, type RawData } from 'ws'
 import type { SessionLimits, SessionMemory } from './domain/session-memory.js'
@@ -47,6 +48,13 @@ import type { SessionHandoff } from './application/session-handoff.js'
  * present it (+ same-origin) — loopback binding alone is not enough, any local
  * page can reach the port. The session identity travels in `init`, not the
  * URL, so the same pane reattaches to its running PTY across reconnects.
+ *
+ * The Shell plugin's terminal runs here too (`init` with kind 'shell', its id
+ * in sessionId): the user's login shell in the home folder, with the same
+ * mirror, reattach and flow control, but no agent — no ledger entry, no brain,
+ * none of the cockpit's env. It opens for a local client, and for a remote one
+ * only when remote access allows it (SpawnContext.shellRefusal). Once it has
+ * exited, Enter in the pane starts a new one.
  */
 
 const require = createRequire(import.meta.url)
@@ -74,6 +82,8 @@ type ShellIncomingMessage = {
   spaceId?: string
   /** Settings › Preferences › Sessions: open a fresh session with a greeting. */
   greet?: boolean
+  /** 'shell': the Shell plugin's terminal, not an agent session. */
+  kind?: string
 }
 
 type PendingResize = {
@@ -138,6 +148,8 @@ type PtySessionEntry = {
   replayToken: object | null
   // Reattach wiggle: restores the real rows once the TUI answered the shrink.
   wiggleRestore: (() => void) | null
+  /** The Shell plugin's terminal: the user's shell, no agent and no ledger entry. */
+  shell: boolean
 }
 
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000
@@ -302,6 +314,8 @@ export interface SpawnContext {
   /** Memory ceilings per session (session-memory.ts), and the one a session starts with; absent: none. */
   memory?: SessionMemory
   sessionLimits?: () => SessionLimits
+  /** Why the Shell plugin's terminal can't open for this client (plugin off, remote without the opt-in); null: it may. Absent: local clients only. */
+  shellRefusal?: (local: boolean) => Promise<string | null>
 }
 
 interface PendingNonce {
@@ -347,7 +361,7 @@ export class PtyBridge {
 
   /** The running sessions' terminal processes, pid → session id (the Worktrees plugin: who started a port). */
   processes(): Map<number, string> {
-    return new Map([...this.sessions.values()].map((session) => [session.pty.pid, session.sessionId] as const))
+    return new Map([...this.sessions.values()].filter((session) => !session.shell).map((session) => [session.pty.pid, session.sessionId] as const))
   }
 
   /** Live state of a session across all panes: running (client attached) / detached / ended. */
@@ -363,7 +377,7 @@ export class PtyBridge {
 
   /** Sessions with a live PTY. */
   runningCount(): number {
-    return new Set([...this.sessions.values()].map((session) => session.sessionId)).size
+    return new Set([...this.sessions.values()].filter((session) => !session.shell).map((session) => session.sessionId)).size
   }
 
   /** Whether a PTY of this session is alive, client attached or not. */
@@ -618,6 +632,10 @@ export class PtyBridge {
     proc.onExit(({ exitCode, signal }) => {
       const session = this.sessions.get(key)
       if (!session || session.pty !== proc) return
+      if (session.shell) {
+        this.closeOut(key, session, `\r\n\x1b[2mShell exited${exitCode ? ` with code ${exitCode}` : ''} — press Enter for a new one\x1b[0m\r\n`)
+        return
+      }
       const kills = this.ctx.memory?.oomKills(session.sessionId) ?? 0
       if (kills > 0) this.log(`session ${session.sessionId}: the kernel stopped ${kills} of its process(es) at the memory ceiling`)
       this.ctx.memory?.release(session.sessionId)
@@ -654,23 +672,25 @@ export class PtyBridge {
         return
       }
 
-      // Flush any tail buffered for coalescing before the exit notice.
-      if (session.flushTimer) { clearTimeout(session.flushTimer); session.flushTimer = null }
-      if (session.pendingOutput && session.ws && session.ws.readyState === WebSocket.OPEN) {
-        try { sendOutputBinary(session.ws, session.pendingOutput) } catch { /* mid-close */ }
-        session.pendingOutput = ''
-      }
-      sendJson(session.ws, {
-        type: 'output',
-        data: `\r\n\x1b[33mProcess exited with code ${exitCode}${signal != null ? ` (${signal})` : ''}\x1b[0m\r\n`,
-      })
-      this.teardown(key, session)
-      this.sessions.delete(key)
+      this.closeOut(key, session, `\r\n\x1b[33mProcess exited with code ${exitCode}${signal != null ? ` (${signal})` : ''}\x1b[0m\r\n`)
       // The process ended on its own (/exit, a crash): nothing to bring back
       // on the next host start. A host shutdown removes the entry first.
       this.ledger.setKeepRunning(session.sessionId, false)
       this.forgetIfEmpty(session.sessionId)
     })
+  }
+
+  /** A process that exited on its own: the tail of its output and `notice` to the client, then the entry goes. */
+  private closeOut(key: string, session: PtySessionEntry, notice: string): void {
+    // Flush any tail buffered for coalescing before the exit notice.
+    if (session.flushTimer) { clearTimeout(session.flushTimer); session.flushTimer = null }
+    if (session.pendingOutput && session.ws && session.ws.readyState === WebSocket.OPEN) {
+      try { sendOutputBinary(session.ws, session.pendingOutput) } catch { /* mid-close */ }
+      session.pendingOutput = ''
+    }
+    sendJson(session.ws, { type: 'output', data: notice })
+    this.teardown(key, session)
+    this.sessions.delete(key)
   }
 
   private teardown(key: string, session: PtySessionEntry): void {
@@ -708,7 +728,24 @@ export class PtyBridge {
       provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
       opts.hostStarted === true,
     )
+    this.track(key, proc, ws, cols, rows, {
+      sessionId, paneId, projectId, projectPath, spaceId: space.id, keepRunning,
+      hostStarted: opts.hostStarted === true,
+      promptAt: initialPrompt !== null ? Date.now() : null,
+      spawnedWithResume: resume,
+      shell: false,
+    })
+    this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
+    this.ledger.setKeepRunning(sessionId, keepRunning)
+    this.ledger.setRuntime(sessionId, 'terminal')
+    this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
+  }
 
+  /** Register a spawned process under `key` with a fresh headless mirror, and wire its output and exit. */
+  private track(
+    key: string, proc: IPty, ws: WebSocket | null, cols: number, rows: number,
+    fields: Pick<PtySessionEntry, 'sessionId' | 'paneId' | 'projectId' | 'projectPath' | 'spaceId' | 'keepRunning' | 'hostStarted' | 'promptAt' | 'spawnedWithResume' | 'shell'>,
+  ): void {
     const headless = new HeadlessTerminal({
       cols, rows, scrollback: HEADLESS_SCROLLBACK, allowProposedApi: true,
     })
@@ -718,16 +755,9 @@ export class PtyBridge {
     headless.loadAddon(serializeAddon as unknown as IHeadlessAddon)
 
     this.sessions.set(key, {
+      ...fields,
       pty: proc,
       ws,
-      sessionId,
-      paneId,
-      projectId,
-      projectPath,
-      spaceId: space.id,
-      keepRunning,
-      hostStarted: opts.hostStarted === true,
-      promptAt: initialPrompt !== null ? Date.now() : null,
       lastClientAt: Date.now(),
       headless,
       serializeAddon,
@@ -739,18 +769,69 @@ export class PtyBridge {
       flushTimer: null,
       lastReportedSize: { cols, rows },
       hasResentInitialSize: false,
-      spawnedWithResume: resume,
       spawnedAt: Date.now(),
       inputSeen: false,
       earlyOutput: '',
       replayToken: null,
       wiggleRestore: null,
     })
-    this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
-    this.ledger.setKeepRunning(sessionId, keepRunning)
-    this.ledger.setRuntime(sessionId, 'terminal')
     this.wireProcess(key, proc)
-    this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
+  }
+
+  /**
+   * The Shell plugin's terminal `id`, or a new one: the user's login shell in
+   * the home folder (Platform.userShell), with the common variables only —
+   * none of the cockpit's (spawn token, brain, agent config). Its profile sets
+   * the rest, as in the user's own terminal app.
+   */
+  private openShell(ws: WebSocket, id: string, paneId: string | null, cols: number, rows: number, isDarkMode: boolean): string {
+    const key = `shell_${id}`
+    const existing = this.sessions.get(key)
+    if (existing) {
+      existing.paneId = paneId
+      this.reattach(key, existing, ws, cols, rows)
+      return key
+    }
+    const pty = require('node-pty') as typeof import('node-pty')
+    const shell = platform.userShell()
+    const home = os.homedir()
+    const proc = pty.spawn(shell.bin, shell.args, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: home,
+      env: { ...baseAgentEnv(), TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: isDarkMode ? '15;0' : '0;15' },
+    })
+    this.track(key, proc, ws, cols, rows, {
+      sessionId: id, paneId, projectId: '', projectPath: home, spaceId: '', keepRunning: false,
+      hostStarted: false, promptAt: null, spawnedWithResume: false, shell: true,
+    })
+    this.log(`starting shell ${id} (${shell.bin}) in ${home} (pane ${paneId ?? '-'})`)
+    return key
+  }
+
+  /** Set a running entry's size at once (the pty and its mirror), as the coalesced resize would. */
+  private applySize(key: string, cols: number, rows: number): void {
+    const session = this.sessions.get(key)
+    if (!session) return
+    session.lastReportedSize = { cols, rows }
+    try {
+      session.pty.resize(cols, rows)
+      session.headless.resize(cols, rows)
+    } catch { /* exited meanwhile */ }
+  }
+
+  /** End the Shell plugin's terminal `id` (its pane was closed). Returns whether one ran. */
+  endShell(id: string): boolean {
+    const key = `shell_${id}`
+    const session = this.sessions.get(key)
+    if (!session?.shell) return false
+    try { session.ws?.close(1000, 'closed') } catch { /* closing */ }
+    this.teardown(key, session)
+    try { session.pty.kill() } catch { /* already gone */ }
+    this.sessions.delete(key)
+    this.log(`ended shell ${id}`)
+    return true
   }
 
   /**
@@ -912,17 +993,50 @@ export class PtyBridge {
   }
 
   // ── Connection handling ──────────────────────────────────────────────
-  /** Attach a nonce-validated WS; the `init` frame binds it to a session. */
-  attach(ws: WebSocket): void {
+  /** Attach a nonce-validated WS; the `init` frame binds it to a session. `local`: the client is on this machine. */
+  attach(ws: WebSocket, local = false): void {
     let key: string | null = null
+    // A shell socket: what starts the shell again once it has exited (Enter).
+    let shell: { id: string; paneId: string | null; cols: number; rows: number; isDarkMode: boolean } | null = null
+    // The client's size while its process is still being started (the shell's
+    // check, a session's handoff): the pane fits itself right after `init`, and
+    // a resize dropped then leaves the process wider or narrower than the pane.
+    let early: { cols: number; rows: number } | null = null
+    const opened = (next: string | null) => {
+      key = next
+      if (key && early) this.applySize(key, early.cols, early.rows)
+      early = null
+    }
 
     ws.on('message', (raw: RawData, isBinary: boolean) => {
       const data = parseShellMessage(raw, isBinary)
       if (!data?.type) return
 
       try {
+        if (data.type === 'init' && data.kind === 'shell') {
+          if (key || shell) return // one init per socket
+          const id = readString(data.sessionId)
+          const paneId = readString(data.paneId) || null
+          if (!SAFE_SESSION_ID.test(id) || (paneId && !SAFE_PANE_ID.test(paneId))) {
+            sendJson(ws, { type: 'error', message: 'Invalid shell or pane ID' })
+            return
+          }
+          const opening = { id, paneId, cols: readNumber(data.cols, 80), rows: readNumber(data.rows, 24), isDarkMode: readBoolean(data.isDarkMode, true) }
+          shell = opening
+          const refusal = this.ctx.shellRefusal ? this.ctx.shellRefusal(local) : Promise.resolve(local ? null : 'The shell opens on this machine only')
+          refusal.then((refused) => {
+            if (refused) { sendJson(ws, { type: 'error', message: refused }); shell = null; return }
+            if (ws.readyState !== WebSocket.OPEN) return
+            opened(this.openShell(ws, opening.id, opening.paneId, opening.cols, opening.rows, opening.isDarkMode))
+          }).catch((error: Error) => {
+            this.log(`error: ${error.message}`)
+            sendJson(ws, { type: 'output', data: `\r\n\x1b[31mError: ${error.message}\x1b[0m\r\n` })
+          })
+          return
+        }
+
         if (data.type === 'init') {
-          if (key) return // one init per socket
+          if (key || shell) return // one init per socket
           const sessionId = readString(data.sessionId)
           const paneId = readString(data.paneId) || null
           const projectId = readString(data.projectId)
@@ -965,7 +1079,7 @@ export class PtyBridge {
           // (session-handoff.ts); until then the socket has no session.
           const open = () => {
             if (ws.readyState !== WebSocket.OPEN) return
-            key = this.openFromInit(ws, data, space, sessionId, paneId, projectId, projectPath)
+            opened(this.openFromInit(ws, data, space, sessionId, paneId, projectId, projectPath))
           }
           if (!this.ctx.handoff) { open(); return }
           const handoff = this.ctx.handoff()
@@ -979,9 +1093,23 @@ export class PtyBridge {
           return
         }
 
-        if (!key) return
+        if (shell && data.type === 'resize') {
+          shell.cols = readNumber(data.cols, shell.cols)
+          shell.rows = readNumber(data.rows, shell.rows)
+        }
+        if (!key) {
+          if (data.type === 'resize') early = { cols: readNumber(data.cols, 80), rows: readNumber(data.rows, 24) }
+          return
+        }
         const session = this.sessions.get(key)
-        if (!session) return
+        if (!session) {
+          // The shell exited: Enter starts a new one in the same pane.
+          if (shell && data.type === 'input' && readString(data.data).includes('\r')) {
+            sendJson(ws, { type: 'output', data: '\x1bc' })
+            key = this.openShell(ws, shell.id, shell.paneId, shell.cols, shell.rows, shell.isDarkMode)
+          }
+          return
+        }
 
         if (data.type === 'input') {
           const input = readString(data.data)

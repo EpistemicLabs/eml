@@ -4,7 +4,7 @@
 // the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
 // brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
 // cockpit-notes-pane), worktrees → WorktreesPane, repository → RepositoryPane (loaded
-// on first use: it brings the code editor); a plugin switched off in
+// on first use: it brings the code editor), shell → ShellPluginPane; a plugin switched off in
 // Settings › EML Plugins shows the brain instead. Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
@@ -18,13 +18,14 @@ import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
 import { WorktreesPane } from '../../worktrees/WorktreesPane';
+import { ShellPluginPane } from '../../shell-plugin/ShellPluginPane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
-import { useViewEnabled } from '@/lib/pane-views';
+import { PLUGIN_DEFS, useViewEnabled } from '@/lib/pane-views';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
 import TerminalStatusBar from './subcomponents/TerminalStatusBar';
@@ -53,9 +54,12 @@ function MainContent({
   // here yet. Read during render, removed from the (persisted) queue only
   // after mount, so a reload before the space is opened keeps it. Held in a
   // ref until the first turn is done: re-renders and reconnects until then reuse it.
-  // A pane left on a plugin that was switched off moves to the brain view.
+  // A pane left on a plugin that was switched off moves to the first plugin
+  // still on, or with none on to the terminal.
   const viewEnabled = useViewEnabled();
-  const paneView = viewEnabled(chosenView) ? chosenView : 'brain';
+  const paneView = viewEnabled(chosenView)
+    ? chosenView
+    : PLUGIN_DEFS.find((def) => viewEnabled(def.view))?.view ?? 'terminal';
   useEffect(() => {
     if (paneView !== chosenView) onSetPaneView(paneView);
   }, [paneView, chosenView, onSetPaneView]);
@@ -192,6 +196,8 @@ function MainContent({
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : paneView === 'worktrees' ? (
               <WorktreesPane project={selectedProject} />
+            ) : paneView === 'shell' ? (
+              <ShellPluginPane paneId={paneId} isActive={isActive} />
             ) : paneView === 'repository' ? (
               <Suspense fallback={null}>
                 <RepositoryPane paneId={paneId} project={selectedProject} />

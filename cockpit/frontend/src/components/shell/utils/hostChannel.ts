@@ -16,8 +16,21 @@ export interface InitFrame {
   isDarkMode: boolean;
 }
 
+/** The Shell plugin's terminal: the user's shell on the host, no agent session (host pty-bridge.ts). */
+export interface ShellInitFrame {
+  type: 'init';
+  kind: 'shell';
+  paneId: string | null;
+  /** The pane's shell id. */
+  sessionId: string;
+  cols: number;
+  rows: number;
+  isDarkMode: boolean;
+}
+
 export type ClientFrame =
   | InitFrame
+  | ShellInitFrame
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number };
 

@@ -38,7 +38,7 @@ import { readLimits, writeLimits } from './session-limits.js'
 // through /api/providers.
 import { claudeVersion } from './infrastructure/providers/claude/isolation.js'
 import type { TurnEvent, TurnTracker } from './turn-state.js'
-import { requestGate } from './remote-access.js'
+import { isLocalRequest, requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
@@ -379,6 +379,7 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
       const port = Number(new URL(s.url).port)
       return port ? [[port, 'EML brain server'] as const] : []
     })),
+    endShell: (id) => deps.bridge.endShell(id),
   }
 }
 
@@ -1322,11 +1323,14 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     const nonce = searchParams.get('nonce') ?? ''
     const side = pathname === '/ws/chat' ? deps.chat : deps.bridge
     if (!side.consumeNonce(nonce)) { socket.destroy(); return }
+    // Whether the client is on this machine: the Shell plugin's terminal opens for it alone, unless remote access allows more.
+    const local = isLocalRequest(req)
     wss.handleUpgrade(req, socket, head, (ws) => {
       // Disable Nagle on loopback — it only delays small frames.
       const tcp = (ws as unknown as { _socket?: { setNoDelay?: (f: boolean) => void } })._socket
       tcp?.setNoDelay?.(true)
-      side.attach(ws)
+      if (side === deps.bridge) deps.bridge.attach(ws, local)
+      else deps.chat.attach(ws)
     })
   })
 

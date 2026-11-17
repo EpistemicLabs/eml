@@ -38,13 +38,14 @@ import { setTopView } from './useTopViewStore';
  * the host's pty-bridge resumes against the pane's session id. Brain mode
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
- * Worktrees mode shows the project's worktrees, sessions and ports. Changes
- * mode shows a checkout's diffs, files and commits, read-only. Labels,
- * icons and groups of the views: lib/pane-views.ts.
+ * Worktrees mode shows the project's worktrees, sessions and ports. Repository
+ * mode shows a checkout's diffs, files and commits, read-only. Shell mode is
+ * a terminal on this computer, the user's own shell in the home folder, not
+ * tied to the project. Labels, icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -99,6 +100,11 @@ export interface PaneState {
    * project folder's changes.
    */
   repositoryView?: RepositoryPaneView;
+  /**
+   * The shell this pane's Shell view runs (host pty-bridge.ts): minted when the
+   * view first shows, kept so a reload reattaches to it; it ends with the pane.
+   */
+  shellId?: string;
   /**
    * v0.17: the brain task this pane's session advances (a task run, skill
    * task-run). Sent with the terminal's init so the host ledger records it.
@@ -318,6 +324,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
     brainView: parseBrainView(e.brainView),
     repositoryView: parseRepositoryView(e.repositoryView),
+    shellId: typeof e.shellId === 'string' && e.shellId ? e.shellId : undefined,
     taskId: typeof e.taskId === 'string' && e.taskId ? e.taskId : undefined,
     provider: e.provider === 'claude' || e.provider === 'codex' ? e.provider : undefined,
   };
@@ -386,7 +393,7 @@ const parseSessionViews = (raw: unknown): Record<string, PaneView> => {
   const sessionViews: Record<string, PaneView> = {};
   if (raw && typeof raw === 'object') {
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof key === 'string' && isPaneView(value) && value !== 'note') sessionViews[key] = value;
+      if (typeof key === 'string' && isPaneView(value) && value !== 'note' && value !== 'shell') sessionViews[key] = value;
     }
   }
   return sessionViews;
@@ -915,6 +922,7 @@ export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): v
       next.noteId === pane.noteId &&
       next.brainView === pane.brainView &&
       next.repositoryView === pane.repositoryView &&
+      next.shellId === pane.shellId &&
       next.provider === pane.provider
     ) {
       return pane;
@@ -946,8 +954,8 @@ export function setPaneView(paneId: string, view: PaneView): void {
   const loc = findPaneLocation(paneId);
   if (!loc || loc.pane.paneView === view) return;
   let sessionViews = snapshot.sessionViews;
-  // A note is not a view of the session, so it is never remembered for it.
-  if (loc.pane.sessionId && view !== 'note') {
+  // A note or the shell is not a view of the session, so it is never remembered for it.
+  if (loc.pane.sessionId && view !== 'note' && view !== 'shell') {
     sessionViews = { ...sessionViews, [loc.pane.sessionId]: view };
   }
   // A pane opened as a note or brain view has no session yet; the terminal and

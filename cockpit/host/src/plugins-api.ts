@@ -11,16 +11,17 @@ import { handleRepositoryApi } from './plugins-repository.js'
 import { isLocalRequest } from './remote-access.js'
 
 /**
- * The cockpit's own plugins (decision cockpit-builtin-plugins-first): project
- * views next to the brain that Settings › EML Plugins switches on or off, for
- * the whole cockpit — every browser of it sees the same. Brain is no plugin
- * here: it can't be switched off.
+ * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
+ * project's views, Brain among them, that Settings › EML Plugins switches on
+ * or off, for the whole cockpit — every browser of it sees the same. Brain off
+ * hides only the pane view; the brain itself and the header's Brain tab stay.
  *
  *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
  *   GET   /api/plugins/worktrees/git?projectId= → the project folder's worktrees
  *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
  *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
+ *   DELETE /api/plugins/shell/<id>              → end a Shell plugin terminal (its pane closed)
  *
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
@@ -29,7 +30,7 @@ import { isLocalRequest } from './remote-access.js'
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['note', 'worktrees', 'repository'] as const
+export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell'] as const
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
@@ -85,6 +86,8 @@ export interface PluginsApiDeps {
   /** Ports the cockpit itself serves, port → what they are ("EML brain server"). */
   ownPorts?: () => Map<number, string>
   ports?: () => Promise<ListeningPort[] | null>
+  /** End the Shell plugin's terminal `id` (pty-bridge.ts); whether one ran. */
+  endShell?: (id: string) => boolean
   git?: Git
   home?: string
 }
@@ -142,6 +145,12 @@ export async function handlePluginsApi(
     } else if (method !== 'GET') return false
     const states = await pluginStates()
     json(res, 200, { plugins: PLUGIN_IDS.map((id) => ({ id, enabled: states[id] })) })
+    return true
+  }
+  // The Shell plugin's terminal runs over the terminal socket (pty-bridge.ts); its pane closed, it ends here.
+  const shellId = /^\/api\/plugins\/shell\/([a-zA-Z0-9_.\-:]+)$/.exec(pathname)?.[1]
+  if (shellId && method === 'DELETE') {
+    json(res, 200, { ended: deps.endShell?.(shellId) ?? false })
     return true
   }
   if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {

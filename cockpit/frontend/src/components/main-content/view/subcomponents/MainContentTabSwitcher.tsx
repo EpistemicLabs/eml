@@ -1,5 +1,5 @@
 // Adapted: the views come from lib/pane-views.ts, in two groups — the
-// session's (Terminal, Chat) and the plugins (Brain and the ones switched on).
+// session's (Terminal, Chat) and the plugins switched on; a group with none shows no pill.
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
@@ -60,6 +60,7 @@ export default function MainContentTabSwitcher({
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
   const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view));
+  const groups = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
   // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
   // terminal entries come from newSessionEntries, one per ready agent CLI.
@@ -89,7 +90,7 @@ export default function MainContentTabSwitcher({
     <div className="flex items-center gap-2">
       {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
       <div role="radiogroup" className="flex items-center gap-1.5">
-        {GROUPS.map(({ group }) => (
+        {groups.map(({ group }) => (
           <div key={group} className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10">
             {modes.filter((mode) => mode.group === group).map((mode) => {
               const isActive = paneView === mode.view;
@@ -159,7 +160,7 @@ export default function MainContentTabSwitcher({
               role="menu"
               className="absolute top-full right-0 z-40 mt-1 min-w-[10rem] rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
             >
-              {GROUPS.map(({ group, title }, index) => (
+              {groups.map(({ group, title }, index) => (
                 <Fragment key={group}>
                   <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
                     {title}

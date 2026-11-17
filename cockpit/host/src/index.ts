@@ -16,6 +16,8 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
+import { pluginStates } from './plugins-api.js'
+import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
@@ -256,6 +258,12 @@ async function main() {
   const bridge = new PtyBridge({
     ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
     memory, sessionLimits: () => sessionLimits(readLimits()),
+    // The Shell plugin's terminal: while the plugin is on, on this machine, and remotely only after `eml-cockpit remote shell on`.
+    shellRefusal: async (local) => {
+      if (!(await pluginStates()).shell) return 'Shell is switched off (Settings › EML Plugins)'
+      if (!local && !readRemoteAccess().shell) return 'The shell opens on this machine only (eml-cockpit remote shell on lets remote users open it)'
+      return null
+    },
   })
   // The cap on running sessions (Settings › Preferences › Sessions); 0: none.
   const running = (): number => chat.runningCount() + bridge.runningCount()

@@ -86,6 +86,7 @@ const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: Lucide
   { label: 'Go to Notes', keywords: 'note notes todo checklist', icon: NotebookPen, view: 'note' },
   { label: 'Go to Worktrees', keywords: 'worktrees worktree branch git ports', icon: FolderGit2, view: 'worktrees' },
   { label: 'Go to Repository', keywords: 'repository repo changes diff code files commits review git', icon: FileDiff, view: 'repository' },
+  { label: 'Go to Shell', keywords: 'shell terminal console zsh bash command line', icon: SquareTerminal, view: 'shell' },
 ];
 
 const IS_MAC = detectMac();

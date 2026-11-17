@@ -34,6 +34,8 @@ export interface Platform {
   readonly sessionEnvKeys: readonly string[]
   /** The LANG a session gets when the host has no locale at all; null: none needed. */
   readonly fallbackLang: string | null
+  /** The user's own shell as their terminal app starts it (the Shell plugin). */
+  userShell(): { bin: string; args: string[] }
 
   /** Open a URL in the user's browser, best-effort (no browser: nothing happens). */
   openUrl(url: string): void
