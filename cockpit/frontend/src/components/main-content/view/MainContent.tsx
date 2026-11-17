@@ -4,7 +4,7 @@
 // the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
 // brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
 // cockpit-notes-pane), worktrees → WorktreesPane, repository → RepositoryPane (loaded
-// on first use: it brings the code editor); a plugin switched off in
+// on first use: it brings the code editor), shell → ShellPluginPane; a plugin switched off in
 // Settings › EML Plugins shows the brain instead. Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
@@ -18,6 +18,7 @@ import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
 import { WorktreesPane } from '../../worktrees/WorktreesPane';
+import { ShellPluginPane } from '../../shell-plugin/ShellPluginPane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
@@ -192,6 +193,8 @@ function MainContent({
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : paneView === 'worktrees' ? (
               <WorktreesPane project={selectedProject} />
+            ) : paneView === 'shell' ? (
+              <ShellPluginPane paneId={paneId} isActive={isActive} />
             ) : paneView === 'repository' ? (
               <Suspense fallback={null}>
                 <RepositoryPane paneId={paneId} project={selectedProject} />

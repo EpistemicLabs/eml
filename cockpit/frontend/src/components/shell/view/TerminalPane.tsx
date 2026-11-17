@@ -15,6 +15,8 @@ interface TerminalPaneProps {
   autoConnect: boolean;
   /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
+  /** 'shell': the Shell plugin's terminal (sessionId is its shell id). */
+  kind?: 'session' | 'shell';
 }
 
 export default function TerminalPane({ sessionTitle, ...runtimeOptions }: TerminalPaneProps) {

@@ -11,6 +11,8 @@ import { COCKPIT_HOME, REMOTE_FILE } from './paths.js'
  *
  *   origins  the https origins the cockpit's page may be served from
  *   users    the Tailscale logins let in; empty = every user of the tailnet
+ *   shell    whether they may open the Shell plugin's terminal on this
+ *            machine too; off unless turned on (eml-cockpit remote shell on)
  *
  * Off by default: no file, no remote request. It changes only from the command
  * line or the file, never from the browser, so nobody who is already in can
@@ -21,9 +23,10 @@ import { COCKPIT_HOME, REMOTE_FILE } from './paths.js'
 export interface RemoteAccess {
   origins: string[]
   users: string[]
+  shell: boolean
 }
 
-const EMPTY: RemoteAccess = { origins: [], users: [] }
+const EMPTY: RemoteAccess = { origins: [], users: [], shell: false }
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 /** The non-empty strings of a list, trimmed, normalized, each once. */
@@ -38,11 +41,12 @@ export function readRemoteAccess(file = REMOTE_FILE): RemoteAccess {
   if (cache && cache.mtimeMs === mtimeMs && file === REMOTE_FILE) return cache.value
   let value = EMPTY
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { origins?: unknown; users?: unknown }
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { origins?: unknown; users?: unknown; shell?: unknown }
     value = {
       // An origin is scheme://host[:port], lowercase, nothing after it.
       origins: strings(raw.origins, (o) => o.toLowerCase().replace(/\/+$/, '')).filter((o) => /^https:\/\/[^/\s]+$/.test(o)),
       users: strings(raw.users, (u) => u.toLowerCase()),
+      shell: raw.shell === true,
     }
   } catch { /* unreadable or broken: nothing comes in */ }
   if (file === REMOTE_FILE) cache = { mtimeMs, value }

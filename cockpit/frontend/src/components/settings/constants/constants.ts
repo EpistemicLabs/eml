@@ -64,7 +64,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'plugins',
     label: 'EML Plugins',
-    keywords: 'plugins extensions notes worktrees worktree branch git ports localhost repository repo changes diff code files commits',
+    keywords: 'plugins extensions notes worktrees worktree branch git ports localhost repository repo changes diff code files commits shell terminal console',
     icon: Puzzle,
     blurb: 'The cockpit\'s own plugins: views a pane can show next to its sessions, switched on or off.',
   },

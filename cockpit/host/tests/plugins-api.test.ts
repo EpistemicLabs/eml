@@ -23,6 +23,9 @@ const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-plain-'))
 let host: http.Server
 let base: string
 
+// The Shell plugin's running terminals, as the bridge would hold them.
+const shells = new Set(['sh-1'])
+
 const listen = (server: http.Server) =>
   new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)))
 
@@ -53,6 +56,7 @@ beforeAll(async () => {
     ],
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
+    endShell: (id: string) => shells.delete(id),
     // The user's home folder: the temp folder the repo lies in.
     home: dirname(repo),
   }
@@ -83,7 +87,7 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('lists every plugin as on until it is switched off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }] })
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
@@ -114,6 +118,15 @@ describe('plugin switches', () => {
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(404)
     await patch({ id: 'repository', enabled: true })
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(200)
+  })
+})
+
+describe('shell', () => {
+  it('ends a shell whose pane was closed, once', async () => {
+    const end = () => fetch(`${base}/api/plugins/shell/sh-1`, { method: 'DELETE' }).then((r) => r.json())
+    expect(await end()).toEqual({ ended: true })
+    expect(await end()).toEqual({ ended: false })
+    expect((await fetch(`${base}/api/plugins/shell/..%2Fx`, { method: 'DELETE' })).status).toBe(418)
   })
 })
 
