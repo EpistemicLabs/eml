@@ -101,6 +101,8 @@ interface ChatEntry {
   /** The status said this turn, and the visible text written after it: the closing summary. */
   status: WorkerStatus | null
   textAfterStatus: string
+  /** Everything the agent wrote this turn: the task router reads the handoff at its end. */
+  turnText: string
   askedSummary: boolean
   /** The memory ceiling its process started with, and the kills at it already reported; null: none. */
   ceiling: { limits: SessionLimits; kills: number } | null
@@ -119,6 +121,8 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** A turn finished with this text: the task router reads its handoff (application/task-router.ts). */
+  turnDone?: (sessionId: string, text: string) => void
   /** The session's process died on its own: whatever its turn state said no longer holds. */
   onExit?: (sessionId: string) => void
   /** Whether a terminal process holds this session: a read-only view can't take it from there. */
@@ -478,7 +482,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -546,7 +550,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -599,7 +603,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -724,6 +728,7 @@ export class ChatBridge {
         break
       case 'text':
         if (entry.status) entry.textAfterStatus += event.text
+        entry.turnText += event.text
         break
       case 'turn_end': {
         entry.active = false
@@ -738,7 +743,11 @@ export class ChatBridge {
           if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         // An interrupted turn left nothing to look at, and a host going down is not its end.
-        if (!entry.closing && event.reason !== 'interrupted') this.ctx.ledger.setResult(entry.sessionId, true)
+        if (!entry.closing && event.reason !== 'interrupted') {
+          this.ctx.ledger.setResult(entry.sessionId, true)
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText)
+        }
+        entry.turnText = ''
         break
       }
       case 'runtime_exit':

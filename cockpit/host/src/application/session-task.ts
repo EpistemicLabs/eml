@@ -10,6 +10,7 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - At session start (task-hook.ts → POST /api/session-task) a session
  *     without a task gets one: a placeholder named after the session, a
  *     sub-task of its parent session's task when another session opened it.
+ *     A job's session works on the job's task instead.
  *   - When the session names itself (session-title-cli.ts), the placeholder
  *     takes that name, unless the session already renamed the task.
  *   - Every start, the session reads its task and the handoff it ends with.
@@ -23,6 +24,8 @@ export interface SessionTaskDeps {
   spaces: Pick<BrainSpaces, 'resolve'>
   /** The brain as the space's sessions see it (brain-mcp.ts sessionClient); null when the space has no agent. */
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
+  /** The task a job is attached to (domain/job.ts taskId): a run of the job works on it. */
+  jobTask?: (jobId: string) => string | null
   now?: () => Date
 }
 
@@ -126,6 +129,11 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       const t = target(sessionId)
       if (!t) return ''
       let taskId = t.entry.taskId
+      const jobTask = !taskId && t.entry.jobId ? deps.jobTask?.(t.entry.jobId) ?? null : null
+      if (jobTask) {
+        deps.ledger.setTask(sessionId, jobTask)
+        taskId = jobTask
+      }
       if (!taskId) {
         const running = creating.get(sessionId) ?? create(sessionId, t.brain).finally(() => creating.delete(sessionId))
         creating.set(sessionId, running)

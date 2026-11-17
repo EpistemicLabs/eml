@@ -33,9 +33,10 @@ import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask } from './application/session-task.js'
+import { createTaskRouter } from './application/task-router.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
@@ -284,12 +285,15 @@ async function main() {
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
   // Task system: every session of a space that switched it on works on a brain task (application/session-task.ts).
-  const sessionTask = createSessionTask({
-    ledger, spaces,
-    brain: (space) => {
-      const agent = boundAgent({ agents }, space)
-      return 'refused' in agent ? null : sessionClient(space, agent)
-    },
+  const taskBrain = (space: BrainSpace) => {
+    const agent = boundAgent({ agents }, space)
+    return 'refused' in agent ? null : sessionClient(space, agent)
+  }
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
+  // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
+  const taskRouter = createTaskRouter({
+    ledger, spaces, brain: taskBrain, owner: config?.handle ?? 'user', log,
+    waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
   })
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
@@ -312,6 +316,7 @@ async function main() {
     runtimes: createClaudeSdkRuntimes(),
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+    turnDone: (sessionId, text) => { void taskRouter.turnEnded(sessionId, text) },
     onExit: (sessionId) => turns.forget(sessionId),
     memory,
     limits: () => {
@@ -477,7 +482,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed,
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, taskRouter,
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

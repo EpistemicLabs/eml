@@ -97,6 +97,18 @@ describe('session task', () => {
     expect(ledger.get(id(4))!.taskAuto).toBeUndefined()
   })
 
+  it('gives a job\'s session the job\'s task', async () => {
+    const brain = fakeBrain()
+    brain.tasks.set('weekly', { id: 'weekly', title: 'weekly-report', content: 'Write it.', status: 'active', properties: {} })
+    const ledger = new mods.SessionLedger()
+    const tasks = mods.createSessionTask({ ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, jobTask: (jobId) => (jobId === 'job-1' ? 'weekly' : null) })
+    ledger.recordSpawn(id(7), null, 'bp-eml', 'claude', true)
+    ledger.setJobId(id(7), 'job-1')
+    expect(await tasks.context(id(7))).toContain('**weekly-report** · weekly')
+    expect(brain.posts).toHaveLength(0)
+    expect(ledger.get(id(7))!.taskId).toBe('weekly')
+  })
+
   it('does nothing in a shared, an unconfirmed or a switched-off space', async () => {
     for (const space of [{ taskSystem: true, shared: true }, { taskSystem: true, shared: null }, { taskSystem: false, shared: false }]) {
       const { ledger, brain, tasks } = setup(space)

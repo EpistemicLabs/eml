@@ -7,6 +7,8 @@ export interface SessionHookDeps {
   providers: ProviderRegistry
   ledger: SessionLedger
   turns: TurnTracker
+  /** A turn finished: the task router reads its handoff (application/task-router.ts). */
+  turnDone?: (sessionId: string, payload: Record<string, unknown>) => void
 }
 
 /**
@@ -56,4 +58,5 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   const attention = deps.ledger.get(sessionId)?.attention
   const state = signal.state === 'done' && attention && needsAnswer(attention.kind) ? 'waiting' : signal.state
   deps.turns.apply({ sessionId, state, settleMs: signal.settleMs })
+  if (signal.state === 'done' && terminal) deps.turnDone?.(sessionId, payload)
 }
