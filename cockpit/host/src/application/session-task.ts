@@ -68,6 +68,7 @@ export function taskContext(task: Task, placeholder: boolean): string {
     '## Rules',
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
     '- Work for another session is a step of this task: eml_create_task with parent_id, depends_on and checkpoint (before · after · none). Do not start sessions for work that has no task.',
+    '- A step is done when you close it: eml_track_task with status resolved and the outcome. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
     '',

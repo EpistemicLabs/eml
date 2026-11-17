@@ -844,7 +844,7 @@ export class PtyBridge {
       key: `${space.id}_${project.projectId}_${request.id}`,
       sessionId: request.id, paneId: null, projectId: project.projectId, projectPath: project.path,
       space, provider, resume: false, initialPrompt: request.prompt, greeting: null,
-      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null, hostStarted: true,
+      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: request.taskId ?? null, hostStarted: true,
     }, null)
     if (request.title) this.ledger.setAgentTitle(request.id, request.title)
     if (request.jobId) this.ledger.setJobId(request.id, request.jobId)

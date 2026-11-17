@@ -37,6 +37,7 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask } from './application/session-task.js'
 import { createTaskRouter } from './application/task-router.js'
+import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
@@ -291,10 +292,26 @@ async function main() {
   }
   const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
+  const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
-    ledger, spaces, brain: taskBrain, owner: config?.handle ?? 'user', log,
+    ledger, spaces, brain: taskBrain, owner, log,
     waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
   })
+  // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
+  const taskRunner = createTaskRunner({
+    spaces, brain: taskBrain, people: () => [owner], log,
+    start: (space, step) => {
+      if (!space.registry.get(step.projectId)) return `project ${step.projectId} is not in space ${space.name}`
+      spawns.add({
+        projectId: step.projectId, prompt: stepPrompt(step, step.checkpoint), title: step.title, fromSessionId: null,
+        origin: 'runner', taskId: step.id, ...(space.main ? {} : { spaceId: space.id }),
+      })
+      return null
+    },
+  })
+  taskRunner.every(RUNNER_TICK_MS)
+  // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
+  const turnEnded = (sessionId: string, text: string) => { void taskRouter.turnEnded(sessionId, text).then(() => taskRunner.tick()) }
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
   }
@@ -316,7 +333,7 @@ async function main() {
     runtimes: createClaudeSdkRuntimes(),
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
-    turnDone: (sessionId, text) => { void taskRouter.turnEnded(sessionId, text) },
+    turnDone: turnEnded,
     onExit: (sessionId) => turns.forget(sessionId),
     memory,
     limits: () => {
@@ -482,7 +499,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, taskRouter,
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded,
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
@@ -562,6 +579,8 @@ async function main() {
 }
 
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
+// How often the task runner looks for plan steps that are ready, besides after every turn.
+const RUNNER_TICK_MS = 60_000
 const RECOVERY_GAP_MS = 10_000
 // Waiting longer than this for room, the worker goes anyway: a full machine must not hold it forever.
 const RECOVERY_WAIT_MS = 10 * 60_000

@@ -10,7 +10,7 @@ import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { SessionTask } from './application/session-task.js'
-import { replyFromStopHook, type TaskRouter } from './application/task-router.js'
+import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
@@ -127,8 +127,8 @@ export interface HostDeps {
   /** Task system: a session's task at start, and its name (application/session-task.ts). */
   sessionTask?: SessionTask
   sessionNamed?: SpawnDeps['sessionNamed']
-  /** Task system: whose turn it is after a terminal session's turn (application/task-router.ts). */
-  taskRouter?: TaskRouter
+  /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
+  turnEnded?: (sessionId: string, text: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
   /** Web push devices, the test and what the user is looking at (push-api.ts). */
@@ -997,7 +997,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       applySessionHook(
         {
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
-          ...(deps.taskRouter ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => { void deps.taskRouter!.turnEnded(sessionId, replyFromStopHook(payload)) } } : {}),
+          ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
         },
         typeof named === 'string' && named ? named : null,
         await readJson(req),
