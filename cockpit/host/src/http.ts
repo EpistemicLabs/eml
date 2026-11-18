@@ -383,6 +383,7 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
       return port ? [[port, 'EML brain server'] as const] : []
     })),
     endShell: (id) => deps.bridge.endShell(id),
+    endShells: () => deps.bridge.endShells(),
     time: deps.time,
     sessionName: (sessionId) => {
       const entry = deps.bridge.ledger.get(sessionId)

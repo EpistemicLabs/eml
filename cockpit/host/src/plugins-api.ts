@@ -8,7 +8,7 @@ import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
 import { handleRepositoryApi } from './plugins-repository.js'
-import { isLocalRequest } from './remote-access.js'
+import { isLocalRequest, readRemoteAccess } from './remote-access.js'
 import type { Place, TimeTracker } from './time-tracking.js'
 
 /** Names by space id ('' for the main space), by projectKey and by task id; null when unknown. */
@@ -106,6 +106,7 @@ export interface PluginsApiDeps {
   ports?: () => Promise<ListeningPort[] | null>
   /** End the Shell plugin's terminal `id` (pty-bridge.ts); whether one ran. */
   endShell?: (id: string) => boolean
+  endShells?: () => number
   time?: TimeTracker
   /** What the sidebar calls a session; null when it has no name yet. */
   sessionName?: (sessionId: string) => string | null
@@ -165,6 +166,8 @@ export async function handlePluginsApi(
       }
       const { id, enabled } = body
       await updateCockpitConfig((config) => config && { ...config, plugins: { ...config.plugins, [id]: enabled } })
+      // A shell switched off ends with it, not only at its detach timeout.
+      if (id === 'shell' && !enabled) deps.endShells?.()
     } else if (method !== 'GET') return false
     const states = await pluginStates()
     json(res, 200, { plugins: PLUGIN_IDS.map((id) => ({ id, enabled: states[id] })) })
@@ -173,6 +176,11 @@ export async function handlePluginsApi(
   // The Shell plugin's terminal runs over the terminal socket (pty-bridge.ts); its pane closed, it ends here.
   const shellId = /^\/api\/plugins\/shell\/([a-zA-Z0-9_.\-:]+)$/.exec(pathname)?.[1]
   if (shellId && method === 'DELETE') {
+    // Who may open a shell may end one: this machine, remotely only with `eml-cockpit remote shell on`.
+    if (!isLocalRequest(req) && !readRemoteAccess().shell) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'The shell is ended on this machine only' } })
+      return true
+    }
     json(res, 200, { ended: deps.endShell?.(shellId) ?? false })
     return true
   }
@@ -184,7 +192,8 @@ export async function handlePluginsApi(
     }
     if (pathname === '/api/plugins/time/beat' && method === 'POST') {
       const body = await readJson(req)
-      const id = (value: unknown) => (typeof value === 'string' && value ? value : null)
+      // Ids as the cockpit makes them; anything else counts as none.
+      const id = (value: unknown) => (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null)
       await deps.time.beat({ spaceId: id(body.spaceId), projectId: id(body.projectId), sessionId: id(body.sessionId) }, body.fresh === true)
       json(res, 200, { ok: true })
       return true

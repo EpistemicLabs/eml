@@ -211,6 +211,8 @@ describe('repository', () => {
     writeFileSync(join(wtX, 'build', 'out.js'), 'x\n')
     writeFileSync(join(outside, 'private.txt'), 'private\n')
     symlinkSync(join(outside, 'private.txt'), join(wtX, 'link.txt'))
+    // A link inside the checkout to the secret: named like a plain file.
+    symlinkSync('.env', join(wtX, 'notes.txt'))
     writeFileSync(join(plain, 'readme.md'), '# plain\n')
   })
   afterAll(() => rmSync(outside, { recursive: true, force: true }))
@@ -255,6 +257,14 @@ describe('repository', () => {
     for (const path of ['link.txt', '../' + 'x/a.txt', join(outside, 'private.txt'), '']) {
       expect((await get('file', inX({ path }))).status).toBe(404)
     }
+  })
+
+  it('keeps a secret behind a link a secret, and the .git folder closed', async () => {
+    expect((await get('file', inX({ path: 'notes.txt' }))).body).toMatchObject({ content: null, secret: true })
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'notes.txt', status: '?' }))).body).toEqual({ patch: null, truncated: false, secret: true })
+    expect((await get('file', inX({ path: 'notes.txt', reveal: '1' }))).body.content).toBe('API_KEY=secret\n')
+    // .git/config can hold a token in a remote URL.
+    expect((await get('file', { projectId: 'p1', worktree: repo, path: '.git/config' })).status).toBe(404)
   })
 
   it('reads only checkouts of the project folder', async () => {

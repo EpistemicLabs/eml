@@ -95,7 +95,7 @@ export async function handleRepositoryApi(res: http.ServerResponse, deps: Plugin
     return true
   }
   if (what === 'file') {
-    const file = relPath && await insideRoot(root, relPath)
+    const file = relPath && await checkoutFile(root, relPath)
     if (!file) {
       notFound(json, res, 'No such file in this checkout')
       return true
@@ -140,8 +140,9 @@ export async function handleRepositoryApi(res: http.ServerResponse, deps: Plugin
       return true
     }
     if (param('status') === '?' && scope.kind === 'uncommitted') {
-      const file = await insideRoot(root, relPath)
-      json(res, 200, file ? await untrackedPatch(file) : { patch: null, truncated: false, secret: false })
+      const file = await checkoutFile(root, relPath)
+      if (file && isSecretPath(file) && !reveal) json(res, 200, { patch: null, truncated: false, secret: true })
+      else json(res, 200, file ? await untrackedPatch(file) : { patch: null, truncated: false, secret: false })
       return true
     }
     const out = await git(root, [...DIFF, ...range, '--', `:(literal)${relPath}`, ...(oldPath ? [`:(literal)${oldPath}`] : [])])
@@ -188,6 +189,17 @@ export async function insideRoot(root: string, rel: string): Promise<string | nu
   } catch {
     return null
   }
+}
+
+/**
+ * A file of the checkout the view may read: inside it (insideRoot), and not
+ * in a .git folder — its config can hold a token in a remote URL.
+ */
+async function checkoutFile(root: string, rel: string): Promise<string | null> {
+  const real = await insideRoot(root, rel)
+  if (!real) return null
+  const inside = path.relative(await fs.realpath(root), real)
+  return inside.split(path.sep).includes('.git') ? null : real
 }
 
 const within = (root: string, target: string) => {
@@ -349,7 +361,8 @@ async function listDir(dir: string) {
 
 async function readFile(file: string, rel: string, reveal: boolean) {
   const stat = await fs.stat(file)
-  const secret = isSecretPath(rel)
+  // A link's name and its target's: notes.txt → .env is a secret too.
+  const secret = isSecretPath(rel) || isSecretPath(file)
   const shown = { size: stat.size, secret, binary: false, tooLarge: false, content: null as string | null }
   if (!stat.isFile()) return shown
   if (stat.size > MAX_FILE_BYTES) return { ...shown, tooLarge: true }

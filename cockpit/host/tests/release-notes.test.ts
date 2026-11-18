@@ -28,6 +28,12 @@ describe('release notes after an update', () => {
     ])
   })
 
+  it('keeps underscores and stars inside words', () => {
+    expect(mod.extractReleaseHighlights(body('QWEN_HOME and snake_case, 2 * 3, ~/.cache, __bold__ and ~~gone~~'))).toEqual([
+      'QWEN_HOME and snake_case, 2 * 3, ~/.cache, bold and gone',
+    ])
+  })
+
   it('accepts a typographic apostrophe and finds nothing without the section', () => {
     expect(mod.extractReleaseHighlights('### What’s new\n* one\n')).toEqual(['one'])
     expect(mod.extractReleaseHighlights('### Cockpit\n- one\n')).toEqual([])
