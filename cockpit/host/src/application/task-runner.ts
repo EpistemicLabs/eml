@@ -7,13 +7,16 @@ import { projectIdForBrain } from '../project-registry.js'
  * task system on, it starts the plan steps that are ready, each in a session
  * of its own.
  *
- * A step is ready when:
- *   - it is a planned sub-task with a checkpoint (before · after · none), so
- *     plain sub-tasks and legacy tasks are never started;
- *   - its parent task is active (a parked plan does not run);
+ * A task is ready when:
+ *   - it is planned and has a checkpoint (before · after · none), so plain
+ *     tasks and legacy tasks are never started;
+ *   - as a step (a sub-task), its parent task is active (a parked plan does
+ *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
  *   - nobody is assigned to it as a person (a person's step waits for them);
- *   - its parent has fewer than MAX_RUNNING steps active.
+ *   - no session works on it already (a worker someone started on it);
+ *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
+ *     run at most MAX_RUNNING at a time per space.
  * Starting it marks it active, so it starts once. Its session gets the task
  * from its first hook: checkpoint before prepares and asks before it acts,
  * after acts and hands the result over for review, none runs to the end.
@@ -21,12 +24,16 @@ import { projectIdForBrain } from '../project-registry.js'
  */
 
 export const MAX_RUNNING = 3
+/** The cap group of the standalone tasks with a checkpoint (steps count per parent). */
+const STANDALONE = '(standalone)'
 
 export interface TaskRunnerDeps {
   spaces: { list(): BrainSpace[] }
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** Handles of people: a step assigned to one of them is theirs, not a session's. */
   people(space: BrainSpace): string[]
+  /** A session works on this task already (a worker started on it by hand or by a session). */
+  busy?(taskId: string): boolean
   /** Start a session on the step; an error text when it cannot. */
   start(space: BrainSpace, step: { id: string; title: string; content: string; projectId: string; checkpoint: string }): string | null
   log(line: string): void
@@ -53,11 +60,11 @@ export function stepPrompt(step: { id: string; title: string; content: string },
       ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review.'
       : 'No checkpoint: do the step to the end on your own; ask only when you cannot go on.'
   return [
-    `The task runner started you for the step "${step.title}" (task ${step.id}).`,
+    `The task runner started you for "${step.title}" (task ${step.id}).`,
     step.content,
     '',
     how,
-    `When the step is done, close it with eml_track_task (status resolved, outcome) and end with the handoff.`,
+    `When it is done, close it with eml_track_task (status resolved, outcome) and end with the handoff.`,
   ].join('\n')
 }
 
@@ -84,17 +91,24 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
       if ((step.properties?.assignee_ids ?? []).some((who) => people.has(who))) continue
+      if (deps.busy?.(step.id)) continue
       const parentId = parentOf(step)
-      if (!parentId) continue
-      const parent = await get(parentId)
-      if (!parent || parent.status !== 'active') continue
+      // A standalone task with a checkpoint runs on its own; its cap is per space.
+      const group = parentId ?? STANDALONE
+      if (parentId) {
+        const parent = await get(parentId)
+        if (!parent || parent.status !== 'active') continue
+        if (!started.has(group)) {
+          const siblings = await Promise.all(childrenOf(parent).map(get))
+          started.set(group, siblings.filter((s) => s?.status === 'active').length)
+        }
+      } else if (!started.has(group)) {
+        const running = await brain.get('/list', { type: 'task', status: 'active', with_parent: 'true', limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Array<Task & { parent_id?: string | null }> }
+        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && !t.parent_id).length)
+      }
       const deps_ = await Promise.all((step.properties?.depends_on ?? []).map(get))
       if (deps_.some((d) => !d || d.status !== 'resolved')) continue
-      if (!started.has(parentId)) {
-        const siblings = await Promise.all(childrenOf(parent).map(get))
-        started.set(parentId, siblings.filter((s) => s?.status === 'active').length)
-      }
-      if (started.get(parentId)! >= MAX_RUNNING) continue
+      if (started.get(group)! >= MAX_RUNNING) continue
       const brainProject = step.scope.startsWith('project.') ? step.scope.slice('project.'.length) : null
       if (!brainProject) {
         deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
@@ -107,7 +121,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         continue
       }
       await brain.post(`/task/${step.id}/track`, { status: 'active', text: 'Started by the task runner.' })
-      started.set(parentId, started.get(parentId)! + 1)
+      started.set(group, started.get(group)! + 1)
       deps.log(`[runner] started step ${step.id.slice(0, 8)} ${title} (checkpoint ${step.properties?.checkpoint})`)
     }
   }

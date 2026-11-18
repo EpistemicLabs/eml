@@ -301,7 +301,8 @@ export function agentTasks(input: {
   for (const j of input.jobs) if (j.taskId && !j.ended) set(j.taskId, 'scheduled');
   for (const s of input.agentSessions) set(s.taskId, 'running');
   for (const t of input.tasks) {
-    if (t.parentId && t.checkpoint && t.status === 'planned') set(t.id, 'step');
+    // A planned task with a checkpoint and nobody but agents on it: the runner will start it (a step or a standalone task).
+    if (t.checkpoint && t.status === 'planned' && t.assignees.every((a) => input.agents.includes(a))) set(t.id, 'step');
     else if (t.assignees.some((a) => input.agents.includes(a))) set(t.id, 'assigned');
   }
   return reasons;

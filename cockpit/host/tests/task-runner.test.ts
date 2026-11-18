@@ -15,7 +15,7 @@ type T = { id: string; status: string; title?: string; scope?: string; checkpoin
 function brainOf(list: T[]) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
-    id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml',
+    id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null,
     properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
@@ -44,12 +44,12 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space = { taskSystem: true, shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null) => {
+  const run = async (list: T[], space = { taskSystem: true, shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false) => {
     const brain = brainOf(list)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
     const runner = mod.createTaskRunner({
-      spaces: { list: () => [space as never] }, brain: () => brain, people: () => ['lasse'], log: (l) => logs.push(l),
+      spaces: { list: () => [space as never] }, brain: () => brain, people: () => ['lasse'], log: (l) => logs.push(l), busy,
       start: (_space, step) => { const problem = start(step); if (!problem) started.push(step); return problem },
     })
     await runner.tick()
@@ -79,10 +79,22 @@ describe('task runner', () => {
       { id: 'waits', status: 'planned', parent: 'plan', checkpoint: 'none', depends_on: ['a'] },
       { id: 'mine', status: 'planned', parent: 'plan', checkpoint: 'none', assignee_ids: ['lasse'] },
       { id: 'plain', status: 'planned', parent: 'plan' },
-      { id: 'top', status: 'planned', checkpoint: 'none' },
       { id: 'idle', status: 'planned', parent: 'parked', checkpoint: 'none' },
     ])
     expect(started).toEqual([])
+  })
+
+  it('starts a standalone task with a checkpoint, at most three at a time, and none a session already works on', async () => {
+    const { started } = await run([
+      { id: 'running-1', status: 'active', checkpoint: 'after' },
+      { id: 'running-2', status: 'active', checkpoint: 'after' },
+      { id: 'mine', status: 'planned', checkpoint: 'after', assignee_ids: ['lasse'] },
+      { id: 'plain', status: 'planned' },
+      { id: 'taken', status: 'planned', checkpoint: 'after' },
+      { id: 'free-1', status: 'planned', checkpoint: 'after' },
+      { id: 'free-2', status: 'planned', checkpoint: 'none' },
+    ], undefined, () => null, (id) => id === 'taken')
+    expect(started.map((s) => s.id)).toEqual(['free-1'])
   })
 
   it('runs at most three steps of one task at a time', async () => {

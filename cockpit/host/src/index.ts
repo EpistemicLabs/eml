@@ -36,6 +36,7 @@ import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, kebabTitle } from './application/session-task.js'
+import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createTriage, TriageStore } from './application/triage.js'
@@ -309,8 +310,13 @@ async function main() {
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, people: () => [owner], log,
+    busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
     start: (space, step) => {
+      // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
+      const brainId = brainIdFromProjectId(step.projectId)
+      if (!space.registry.get(step.projectId) && brainId) space.registry.ensureBrain(brainId, brainId)
       if (!space.registry.get(step.projectId)) return `project ${step.projectId} is not in space ${space.name}`
+      if (!space.registry.get(step.projectId)!.path) space.registry.ensureCockpitFolder(step.projectId)
       spawns.add({
         projectId: step.projectId, prompt: stepPrompt(step, step.checkpoint), title: step.title, fromSessionId: null,
         origin: 'runner', taskId: step.id, ...(space.main ? {} : { spaceId: space.id }),
