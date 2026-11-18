@@ -149,3 +149,21 @@ describe('needs you follows the sessions', () => {
     expect(f.needsYou.find((i) => i.task.id === 'stale')).toBeUndefined();
   });
 });
+
+describe('tasks handled by agents', () => {
+  it('counts running and stopped agent sessions, jobs, runner steps and agent assignees, not the user\'s tasks', async () => {
+    const { agentTasks } = await import('./tasks-overview');
+    const reasons = agentTasks({
+      tasks: [
+        task({ id: 'step', parent_id: 'p', status: 'planned', properties: { checkpoint: 'after' } }),
+        task({ id: 'started-step', parent_id: 'p', status: 'active', properties: { checkpoint: 'after' } }),
+        task({ id: 'atlas', properties: { assignee_ids: ['atlas'] } }),
+        task({ id: 'mine', properties: { assignee_ids: ['lasse'] } }),
+      ],
+      jobs: [{ id: 'j', name: 'Weekly', taskId: 'weekly', nextRun: null, paused: false, ended: false }, { id: 'old', name: 'Old', taskId: 'gone', nextRun: null, paused: false, ended: true }],
+      agentSessions: [{ taskId: 'busy', working: true }, { taskId: 'weekly', working: true }, { taskId: 'idle-worker', working: false }],
+      agents: ['atlas'],
+    });
+    expect(Object.fromEntries(reasons)).toEqual({ busy: 'running', weekly: 'running', 'idle-worker': 'running', step: 'step', atlas: 'assigned' });
+  });
+});

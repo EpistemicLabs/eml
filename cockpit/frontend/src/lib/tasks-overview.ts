@@ -25,6 +25,8 @@ export type OverviewTask = {
   project: string | null;
   /** Its subjects; a cycle is one (cycle-<year>-w<week>). */
   subjects: string[];
+  /** Who should act on it: users or agents (handles). */
+  assignees: string[];
 };
 
 export type RawTask = {
@@ -32,7 +34,7 @@ export type RawTask = {
   parent_id?: string | null;
   subjects?: string[];
   properties?: {
-    priority?: string; stage?: string; checkpoint?: string; depends_on?: string[]; due_date?: string;
+    priority?: string; stage?: string; checkpoint?: string; depends_on?: string[]; due_date?: string; assignee_ids?: string[];
     waiting_on?: { who?: string; why?: string; since?: string };
   };
 };
@@ -58,6 +60,7 @@ export function toOverviewTask(raw: RawTask, space: { id: string; name: string }
     spaceName: space.name,
     project: projectId ? projects.get(projectId) ?? projectId : null,
     subjects: Array.isArray(raw.subjects) ? raw.subjects : [],
+    assignees: Array.isArray(p.assignee_ids) ? p.assignee_ids : [],
   };
 }
 
@@ -272,4 +275,34 @@ export function cycleProgress(open: OverviewTask[], resolved: OverviewTask[], cy
   const done = resolved.filter(inCycle).length;
   const openIn = open.filter(inCycle);
   return { done, total: done + openIn.length, inProgress: openIn.filter((t) => t.status === 'active').length };
+}
+
+
+/** Why a task counts as an agent's: the most telling reason first. */
+export type AgentReason = 'running' | 'scheduled' | 'step' | 'assigned';
+
+/**
+ * Tasks handled by agents (Linear's delegate): a session started by a session,
+ * a job or the runner works on it now, a job is attached to it, the runner will
+ * start it (a planned step with a checkpoint), or an agent is assigned. The
+ * user stays the owner; such a task shows in My tasks only while it needs him.
+ */
+export function agentTasks(input: {
+  tasks: OverviewTask[];
+  jobs: TaskJob[];
+  /** Agent sessions (workers) and the task each works on, and whether it works now. */
+  agentSessions: Array<{ taskId: string; working: boolean }>;
+  /** Agent handles (e.g. atlas): a task assigned to one is an agent's. */
+  agents: string[];
+}): Map<string, AgentReason> {
+  const reasons = new Map<string, AgentReason>();
+  const set = (id: string, reason: AgentReason) => { if (!reasons.has(id)) reasons.set(id, reason); };
+  for (const s of input.agentSessions) if (s.working) set(s.taskId, 'running');
+  for (const j of input.jobs) if (j.taskId && !j.ended) set(j.taskId, 'scheduled');
+  for (const s of input.agentSessions) set(s.taskId, 'running');
+  for (const t of input.tasks) {
+    if (t.parentId && t.checkpoint && t.status === 'planned') set(t.id, 'step');
+    else if (t.assignees.some((a) => input.agents.includes(a))) set(t.id, 'assigned');
+  }
+  return reasons;
 }

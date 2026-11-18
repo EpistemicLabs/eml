@@ -18,9 +18,11 @@ import { openCyclePlanner, openProjectLead, projectIdOfBrain } from '@/lib/proje
 import { clearSession } from '@/lib/session-actions';
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
-  buildOverview, carried, cycleProgress, focusGroups, groupByProject, matches, toOverviewTask,
-  type OverviewFilter, type OverviewItem, type OverviewTask, type ProjectGroup, type RawTask, type TaskSession,
+  agentTasks, buildOverview, carried, cycleProgress, focusGroups, groupByProject, matches, toOverviewTask,
+  type AgentReason, type OverviewFilter, type OverviewItem, type OverviewTask, type ProjectGroup, type RawTask, type TaskJob, type TaskSession,
 } from '@/lib/tasks-overview';
+import { formatWhen } from '@/components/jobs/jobs';
+import { api } from '@/utils/api';
 import { cn } from '@/lib/utils';
 import { getActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -29,7 +31,7 @@ import type { Project } from '@/types/app';
 
 type Loaded = { open: OverviewTask[]; resolved: OverviewTask[] };
 type Cycle = { id: string; week: number; from: string; to: string };
-type View = 'inbox' | 'mine' | 'triage' | 'projects' | 'cycles';
+type View = 'inbox' | 'mine' | 'agents' | 'triage' | 'projects' | 'cycles';
 /** What an agent on the task is doing, from its sessions. */
 export type AgentState = 'needs input' | 'error' | 'working' | 'done';
 
@@ -38,6 +40,13 @@ async function brainList<T>(space: SpaceInfo, path: string): Promise<T> {
   const res = await fetch(`/api/brain${path}`, { headers: { Accept: 'application/json', [SPACE_HEADER]: space.id } });
   if (!res.ok) throw new Error(`${space.name}: HTTP ${res.status}`);
   return res.json() as Promise<T>;
+}
+
+async function loadJobs(): Promise<TaskJob[]> {
+  const res = await api.jobs().catch(() => null);
+  if (!res?.ok) return [];
+  const body = await res.json() as { jobs: Array<{ id: string; name: string; taskId?: string | null; nextRuns: string[]; paused: boolean; endedAt: string | null }> };
+  return body.jobs.map((j) => ({ id: j.id, name: j.name, taskId: j.taskId ?? null, nextRun: j.nextRuns[0] ?? null, paused: j.paused, ended: j.endedAt !== null }));
 }
 
 async function loadSpace(space: SpaceInfo): Promise<Loaded> {
@@ -73,7 +82,7 @@ function useFold(title: string, fallback: boolean): [boolean, (open: boolean) =>
 const readView = (): View => {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === 'inbox' || v === 'mine' || v === 'triage' || v === 'projects' || v === 'cycles' ? v : 'mine';
+    return v === 'inbox' || v === 'mine' || v === 'agents' || v === 'triage' || v === 'projects' || v === 'cycles' ? v : 'mine';
   } catch { return 'mine'; }
 };
 
@@ -116,13 +125,15 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const [filter, setFilterState] = useState<OverviewFilter>(() => remembered(FILTER_KEY, NO_FILTER));
   const setFilter = (next: OverviewFilter) => { setFilterState(next); remember(FILTER_KEY, next); };
   const [cycle, setCycle] = useState<{ current: Cycle; next: Cycle } | null>(null);
+  const [jobs, setJobs] = useState<TaskJob[]>([]);
   const [leadError, setLeadError] = useState<string | null>(null);
   const triage = useTriage();
 
   const load = useCallback(async () => {
     try {
-      const perSpace = await Promise.all(spaces.map(loadSpace));
+      const [perSpace, jobList] = await Promise.all([Promise.all(spaces.map(loadSpace)), loadJobs()]);
       setLoaded({ open: perSpace.flatMap((s) => s.open), resolved: perSpace.flatMap((s) => s.resolved) });
+      setJobs(jobList);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'could not load the tasks');
@@ -145,6 +156,13 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const overview = useMemo(() => loaded && buildOverview({ ...loaded, jobs: [], sessions: taskSessions, now: new Date() }), [loaded, taskSessions]);
   const keep = (items: OverviewItem[]) => items.filter((i) => matches(i.task, filter));
   const inbox = useMemo(() => inboxItems(all, turns as never, new Date()), [all, turns]);
+  // Tasks handled by agents (Linear's delegate): shown in Agents; in My tasks only while they need the user.
+  const agentReasons = useMemo(() => agentTasks({
+    tasks: [...(loaded?.open ?? []), ...(loaded?.resolved ?? [])],
+    jobs,
+    agentSessions: all.filter((s) => s.worker && s.taskId && !s.archivedAt).map((s) => ({ taskId: s.taskId!, working: allSessionState(s, turns[s.id]) === 'working' })),
+    agents: spaces.map((s) => s.agent).filter((a): a is string => Boolean(a)),
+  }), [loaded, jobs, all, turns, spaces]);
 
   const [selected, setSelected] = useState<{ task: OverviewTask; sessionId?: string } | null>(null);
   const [loose, setLoose] = useState<AllSession | null>(null);
@@ -176,6 +194,7 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const nav: Array<{ id: View; label: string; count?: number; hot?: boolean }> = [
     { id: 'inbox', label: 'Inbox', count: inbox.length, hot: inbox.length > 0 },
     { id: 'mine', label: 'My tasks' },
+    { id: 'agents', label: 'Agents' },
     { id: 'triage', label: 'Triage', count: triage.items.length, hot: triage.items.length > 0 },
     { id: 'projects', label: 'Projects' },
     { id: 'cycles', label: 'Cycles' },
@@ -199,7 +218,7 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
               <button key={n.id} type="button" onClick={() => setView(n.id)} className={cn('rounded px-2 py-1 text-sm', view === n.id ? 'bg-accent text-foreground' : 'text-muted-foreground')}>{n.label}</button>
             ))}
           </div>
-          {(view === 'mine' || view === 'projects' || view === 'cycles') && (
+          {(view === 'mine' || view === 'agents' || view === 'projects' || view === 'cycles') && (
             <div className="mb-4 flex flex-wrap items-center gap-2">
               {spaces.length > 1 && (
                 <select aria-label="Space" className={SELECT} value={filter.spaceId ?? ''} onChange={(e) => setFilter({ ...filter, spaceId: e.target.value || null })}>
@@ -219,7 +238,10 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
 
           {view === 'inbox' && <InboxView items={inbox} tasks={loaded?.open ?? []} onOpen={openInboxItem} onChanged={refresh} />}
           {view === 'mine' && overview && (
-            <MyTasks overview={overview} loaded={loaded!} cycle={cycle?.current ?? null} keep={keep} agents={agents} onOpen={openTask} />
+            <MyTasks overview={overview} loaded={loaded!} cycle={cycle?.current ?? null} keep={keep} agents={agents} agentReasons={agentReasons} onOpen={openTask} onAgents={() => setView('agents')} />
+          )}
+          {view === 'agents' && overview && loaded && (
+            <AgentsView overview={overview} loaded={loaded} jobs={jobs} agentReasons={agentReasons} agents={agents} keep={keep} onOpen={openTask} />
           )}
           {view === 'triage' && <TriageView items={triage.items} reload={triage.reload} />}
           {view === 'projects' && overview && (
@@ -245,6 +267,57 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
         </section>
       )}
     </div>
+  );
+}
+
+/** What agents work on: needs you, running now, scheduled, waiting for their turn, done recently. */
+function AgentsView({ overview, loaded, jobs, agentReasons, agents, keep, onOpen }: {
+  overview: NonNullable<ReturnType<typeof buildOverview>>; loaded: Loaded; jobs: TaskJob[]; agentReasons: Map<string, AgentReason>;
+  agents: Map<string, AgentState>; keep: (items: OverviewItem[]) => OverviewItem[]; onOpen: (task: OverviewTask) => void;
+}) {
+  const open = [...overview.yourTurn, ...overview.running, ...overview.active, ...overview.planned];
+  const isAgent = (i: OverviewItem) => agentReasons.has(i.task.id) || i.steps.some((s) => agentReasons.has(s.id));
+  const theirs = keep(open.filter(isAgent));
+  const stateOf = (i: OverviewItem) => [i.task, ...i.steps].map((t) => agents.get(t.id)).find(Boolean);
+  const needsYou = theirs.filter((i) => { const s = stateOf(i); return s === 'needs input' || s === 'error'; });
+  const rest = theirs.filter((i) => !needsYou.includes(i));
+  const running = rest.filter((i) => i.running || stateOf(i) === 'working');
+  const idle = rest.filter((i) => !running.includes(i));
+  const scheduled = idle.filter((i) => agentReasons.get(i.task.id) === 'scheduled');
+  const waiting = idle.filter((i) => !scheduled.includes(i));
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const done = keep(overview.done.filter((i) => agentReasons.has(i.task.id) && Date.parse(i.task.updatedAt) > weekAgo));
+  const nextRun = (taskId: string) => jobs.filter((j) => j.taskId === taskId && !j.ended).sort((a, b) => (a.nextRun ?? '9').localeCompare(b.nextRun ?? '9'))[0];
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-foreground">Agents</h2>
+      <p className="mt-1 text-sm text-muted-foreground">Tasks agents work on for you: running, scheduled, or waiting for their turn. You stay the owner; what needs you is also in the Inbox.</p>
+      <Group title="Needs you" hint="also in the Inbox; answer in the session's chat" items={needsYou} tone="you" agents={agents} onOpen={onOpen} />
+      <Group title="Running now" hint="an agent works on it" items={running} tone="running" agents={agents} onOpen={onOpen} />
+      {scheduled.length > 0 && (
+        <section className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Scheduled · {scheduled.length} <span className="text-xs font-normal text-muted-foreground">next run first; the schedules are managed in Jobs</span></h3>
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            {[...scheduled].sort((a, b) => (nextRun(a.task.id)?.nextRun ?? '9').localeCompare(nextRun(b.task.id)?.nextRun ?? '9')).map((i) => {
+              const job = nextRun(i.task.id);
+              return (
+                <li key={`${i.task.spaceId}:${i.task.id}`} className="flex items-start gap-3 bg-background px-3 py-2.5">
+                  <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full border border-foreground/40" />
+                  <div className="min-w-0 flex-1">
+                    <button type="button" onClick={() => onOpen(i.task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline">{i.task.title}</button>
+                    <p className="truncate text-xs text-muted-foreground">{[job?.name, i.task.project].filter(Boolean).join(' · ')}</p>
+                  </div>
+                  <span className="flex-shrink-0 text-[11px] text-muted-foreground">{job?.paused ? 'paused' : job?.nextRun ? formatWhen(job.nextRun) : 'no next run'}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+      <Group title="Waiting for their turn" hint="planned steps the runner starts, and tasks assigned to an agent" items={waiting} tone="planned" agents={agents} onOpen={onOpen} />
+      <Group title="Done · 7 days" hint="what agents finished" items={done} tone="done" agents={agents} onOpen={onOpen} folded />
+      {theirs.length === 0 && done.length === 0 && <p className="mt-6 text-sm text-muted-foreground">No agent works on a task right now.</p>}
+    </section>
   );
 }
 
@@ -302,25 +375,33 @@ function InboxView({ items, tasks, onOpen, onChanged }: {
   );
 }
 
-function MyTasks({ overview, loaded, cycle, keep, agents, onOpen }: {
+function MyTasks({ overview, loaded, cycle, keep, agents, agentReasons, onOpen, onAgents }: {
   overview: NonNullable<ReturnType<typeof buildOverview>>; loaded: Loaded; cycle: Cycle | null;
-  keep: (items: OverviewItem[]) => OverviewItem[]; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void;
+  keep: (items: OverviewItem[]) => OverviewItem[]; agents: Map<string, AgentState>; agentReasons: Map<string, AgentReason>;
+  onOpen: (task: OverviewTask) => void; onAgents: () => void;
 }) {
-  const focus = focusGroups(overview, cycle?.id ?? null, new Date(), (id) => {
-    const state = agents.get(id);
-    return state === 'needs input' || state === 'error';
-  });
+  const waitsNow = (id: string) => { const state = agents.get(id); return state === 'needs input' || state === 'error'; };
+  const all = focusGroups(overview, cycle?.id ?? null, new Date(), waitsNow);
+  // An agent's task stays here only while it needs the user (Needs you); otherwise it is in Agents.
+  const mine = (items: OverviewItem[]) => keep(items.filter((i) => !agentReasons.has(i.task.id)));
+  const focus = { ...all, urgentDue: mine(all.urgentDue), blocking: mine(all.blocking), thisCycle: mine(all.thisCycle), inProgress: mine(all.inProgress), backlog: mine(all.backlog) };
+  const handled = [...all.urgentDue, ...all.blocking, ...all.thisCycle, ...all.inProgress, ...all.backlog].filter((i) => agentReasons.has(i.task.id)).length;
   const progress = cycle ? cycleProgress(loaded.open, loaded.resolved, cycle.id) : null;
   return (
     <section>
       <h2 className="text-lg font-semibold text-foreground">My tasks</h2>
       {cycle && progress && <CycleBar cycle={cycle} progress={progress} />}
       <Group title="Needs you" hint="answer in the session's chat" items={keep(focus.needsYou)} tone="you" agents={agents} onOpen={onOpen} />
-      <Group title="Urgent and due" hint="urgent, or due today or earlier" items={keep(focus.urgentDue)} tone="active" agents={agents} onOpen={onOpen} />
-      <Group title="Blocking others" hint="other tasks wait for these" items={keep(focus.blocking)} tone="active" agents={agents} onOpen={onOpen} />
-      <Group title="This cycle" hint="this week's commitment" items={keep(focus.thisCycle)} tone="planned" agents={agents} onOpen={onOpen} />
-      <Group title="In progress" hint="started and touched this week, or an agent on it now" items={keep(focus.inProgress)} tone="running" agents={agents} onOpen={onOpen} />
-      <Group title="Backlog" hint="not in this cycle; pulled in at the planning" items={keep(focus.backlog)} tone="planned" agents={agents} onOpen={onOpen} folded />
+      <Group title="Urgent and due" hint="urgent, or due today or earlier" items={focus.urgentDue} tone="active" agents={agents} onOpen={onOpen} />
+      <Group title="Blocking others" hint="other tasks wait for these" items={focus.blocking} tone="active" agents={agents} onOpen={onOpen} />
+      <Group title="This cycle" hint="this week's commitment" items={focus.thisCycle} tone="planned" agents={agents} onOpen={onOpen} />
+      <Group title="In progress" hint="started and touched this week" items={focus.inProgress} tone="running" agents={agents} onOpen={onOpen} />
+      <Group title="Backlog" hint="not in this cycle; pulled in at the planning" items={focus.backlog} tone="planned" agents={agents} onOpen={onOpen} folded />
+      {handled > 0 && (
+        <button type="button" onClick={onAgents} className="mt-6 text-left text-xs text-muted-foreground hover:text-foreground">
+          {handled} task{handled === 1 ? '' : 's'} handled by agents · see Agents
+        </button>
+      )}
       <Group title="Done · 7 days" hint="closed this week and last" items={keep(overview.done)} tone="done" agents={agents} onOpen={onOpen} folded />
     </section>
   );
