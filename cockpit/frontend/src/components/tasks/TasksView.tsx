@@ -52,6 +52,24 @@ async function loadSpace(space: SpaceInfo): Promise<Loaded> {
 }
 
 const VIEW_KEY = 'cockpit-tasks-view';
+const FILTER_KEY = 'cockpit-tasks-filter';
+const FOLDS_KEY = 'cockpit-tasks-folds';
+const NO_FILTER: OverviewFilter = { spaceId: null, project: null, priority: null, words: '' };
+
+/** Per-browser settings of the view; the page works without them (private windows, blocked storage). */
+function remembered<T>(key: string, fallback: T): T {
+  try { const raw = localStorage.getItem(key); return raw ? { ...fallback, ...JSON.parse(raw) } as T : fallback; } catch { return fallback; }
+}
+function remember(key: string, value: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* per-viewer only */ }
+}
+
+/** Whether a group is open, remembered per group title; `fallback` until the user folds or opens it. */
+function useFold(title: string, fallback: boolean): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState<boolean>(() => remembered<Record<string, boolean>>(FOLDS_KEY, {})[title] ?? fallback);
+  const set = (next: boolean) => { setOpen(next); remember(FOLDS_KEY, { ...remembered<Record<string, boolean>>(FOLDS_KEY, {}), [title]: next }); };
+  return [open, set];
+}
 const readView = (): View => {
   try {
     const v = localStorage.getItem(VIEW_KEY);
@@ -95,7 +113,8 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const [error, setError] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(readView);
   const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-viewer only */ } };
-  const [filter, setFilter] = useState<OverviewFilter>({ spaceId: null, project: null, priority: null, words: '' });
+  const [filter, setFilterState] = useState<OverviewFilter>(() => remembered(FILTER_KEY, NO_FILTER));
+  const setFilter = (next: OverviewFilter) => { setFilterState(next); remember(FILTER_KEY, next); };
   const [cycle, setCycle] = useState<{ current: Cycle; next: Cycle } | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
   const triage = useTriage();
@@ -322,7 +341,7 @@ function CycleBar({ cycle, progress }: { cycle: Cycle; progress: { done: number;
 function ProjectsView({ groups, cycleId, agents, onOpen, onWork }: {
   groups: ProjectGroup[]; cycleId: string | null; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; onWork: (g: ProjectGroup) => void;
 }) {
-  const [showQuiet, setShowQuiet] = useState(false);
+  const [showQuiet, setShowQuiet] = useFold('Quiet projects', false);
   const active = groups.filter((g) => g.active);
   const quiet = groups.filter((g) => !g.active);
   return (
@@ -388,8 +407,6 @@ function CyclesView({ loaded, cycle, keep, spaces, projects, onOpen, onPlanner }
   loaded: Loaded; cycle: { current: Cycle; next: Cycle }; keep: (ts: OverviewTask[]) => OverviewTask[]; spaces: SpaceInfo[];
   projects: Project[]; onOpen: (t: OverviewTask) => void; onPlanner: (problem: string | null) => void;
 }) {
-  const brainProjects = projects.filter((p) => p.brainProjectId);
-  const [runIn, setRunIn] = useState<string>(brainProjects[0]?.projectId ?? '');
   const tasksOf = (id: string) => ({
     open: keep(loaded.open.filter((t) => t.subjects.includes(id))),
     done: keep(loaded.resolved.filter((t) => t.subjects.includes(id))),
@@ -399,9 +416,9 @@ function CyclesView({ loaded, cycle, keep, spaces, projects, onOpen, onPlanner }
   const progress = cycleProgress(loaded.open, loaded.resolved, cycle.current.id);
   const plan = () => {
     const space = spaces.find((s) => s.main) ?? spaces[0];
-    if (!space || !runIn) { onPlanner('Pick a project folder for the planner to run in.'); return; }
+    if (!space) return;
     onPlanner(null);
-    void openCyclePlanner(space, runIn).then(onPlanner);
+    void openCyclePlanner(space).then(onPlanner);
   };
   const row = (t: OverviewTask) => (
     <li key={`${t.spaceId}:${t.id}`} className="flex items-baseline gap-3 bg-background px-3 py-2">
@@ -420,12 +437,7 @@ function CyclesView({ loaded, cycle, keep, spaces, projects, onOpen, onPlanner }
         <button type="button" onClick={plan} className="flex items-center gap-1 rounded-md bg-foreground px-3 py-1.5 text-sm text-background hover:opacity-90">
           <Play className="h-3.5 w-3.5" /> Plan with the planner
         </button>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          runs in
-          <select aria-label="Planner project" className={SELECT} value={runIn} onChange={(e) => setRunIn(e.target.value)}>
-            {brainProjects.map((p) => <option key={p.projectId} value={p.projectId}>{p.displayName}</option>)}
-          </select>
-        </label>
+        <span className="text-xs text-muted-foreground">reads all projects of Main; opens on its own desk</span>
       </div>
       <h3 className="mt-6 text-sm font-semibold text-foreground">This week · {now.open.length + now.done.length}</h3>
       {now.open.length + now.done.length === 0 ? <p className="mt-1 text-sm text-muted-foreground">Nothing planned yet. The planner proposes the week; you agree in its chat.</p> : (
@@ -450,7 +462,7 @@ const AGENT_STYLE: Record<AgentState, string> = {
 function Group({ title, hint, items, tone, agents, onOpen, folded = false }: {
   title: string; hint: string; items: OverviewItem[]; tone: Tone; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; folded?: boolean;
 }) {
-  const [open, setOpen] = useState(!folded);
+  const [open, setOpen] = useFold(title, !folded);
   if (items.length === 0) return null;
   return (
     <section className="mt-6">

@@ -1,3 +1,4 @@
+import { COCKPIT_HOME } from './paths.js'
 import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -766,20 +767,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
     if (id === 'planner' && method === 'POST') {
-      const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
-      const body = await readJson(req)
-      const projectId = typeof body.projectId === 'string' ? body.projectId : ''
-      if (!space || !space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: 'The planner needs a project folder to run in' } }); return true }
+      // The planner works across projects, in the main space, from a folder of its own (made once, hidden).
+      const space = deps.spaces.resolve(null)
+      const dir = path.join(COCKPIT_HOME, 'planning')
+      fs.mkdirSync(dir, { recursive: true })
+      const made = space.registry.create(dir, 'Cycle planning')
+      if (made.created) space.registry.update(made.project.projectId, { hidden: true })
+      const projectId = made.project.projectId
       const ledger = deps.bridge.ledger
       const current = deps.cycles.current()
       const key = `cycle:${current.id}`
       const existing = ledger.leadFor(key, current.id, space.ledgerKey)
-      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}` }); return true }
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId }); return true }
       const sessionId = randomUUID()
       ledger.expectLead(sessionId, { projectId: key, day: current.id })
       const now = new Date()
       const zone = deps.timeZone?.() ?? 'UTC'
-      json(res, 200, { sessionId, existing: false, title: `Planner · ${current.id}`, prompt: plannerPrompt(current, deps.cycles.next(), cycleOf(now, zone, -1)) })
+      json(res, 200, { sessionId, existing: false, title: `Planner · ${current.id}`, projectId, prompt: plannerPrompt(current, deps.cycles.next(), cycleOf(now, zone, -1)) })
       return true
     }
   }
