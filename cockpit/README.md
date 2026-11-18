@@ -341,10 +341,11 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 ## Cockpit plugins
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
-plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell. The tab bar and the "+" menus (pane and sidebar)
-show both groups. All five are the cockpit's own plugins, switched on or off
+plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
+show both groups. All six are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
-`host/src/plugins-api.ts`). A plugin switched off leaves the menus, its routes answer 404 (Notes:
+`host/src/plugins-api.ts`). Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
+the user set is kept. A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
 holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
 agents' brain stay. With every plugin off, the tab bar shows only the session's views.
@@ -372,6 +373,18 @@ bridge (`init` with kind `shell`), with the common variables only — none of th
 agent config) — and no ledger entry; a reload reattaches, closing the pane ends it
 (`DELETE /api/plugins/shell/<id>`), and once it exited Enter starts a new one. It opens for a client on this
 machine; remote users get it only after `eml-cockpit remote shell on` (remote.json `shell`), never from the browser.
+
+**Time** (`components/time-plugin/`, `host/src/time-tracking.ts`) counts work time on its own, with no
+start or stop. The user's clock: while a cockpit tab had input in the last 5 minutes, it posts a beat every
+30 seconds (`POST /api/plugins/time/beat`) naming the active pane's session or project; a hidden tab goes on
+for 2 minutes (a look elsewhere still counts), then pauses. The host credits the time between two beats to
+the earlier one, so several tabs feed one clock; a gap over 90 seconds, or a beat marked `fresh` (back after a
+pause), counts nothing. The agents' clock: the time a session's turn runs (turn state `working` until
+any other). One clock per cockpit, across its spaces: a beat names the open space, a session counts in the
+space the ledger keeps it under. Both go to the project, the session and the session's task (task runs), per local day in
+`time/<YYYY-MM-DD>.json` under the cockpit home: ids and seconds only, nothing while the plugin is off. The
+view (`GET /api/plugins/time?days=`) shows today or the last 7 days per space and project, the agents in their own
+column; the host names the spaces, projects and tasks, each in its own space's brain.
 Community plugins (sandboxed, from a catalog) are a later step.
 
 ## Claude Code

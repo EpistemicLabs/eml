@@ -19,6 +19,7 @@ import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
 import { WorktreesPane } from '../../worktrees/WorktreesPane';
 import { ShellPluginPane } from '../../shell-plugin/ShellPluginPane';
+import { TimePane } from '../../time-plugin/TimePane';
 import { ChatPane } from '../../chat/ChatPane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
@@ -196,6 +197,8 @@ function MainContent({
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : paneView === 'worktrees' ? (
               <WorktreesPane project={selectedProject} />
+            ) : paneView === 'time' ? (
+              <TimePane />
             ) : paneView === 'shell' ? (
               <ShellPluginPane paneId={paneId} isActive={isActive} />
             ) : paneView === 'repository' ? (

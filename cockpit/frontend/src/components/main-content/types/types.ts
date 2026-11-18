@@ -14,6 +14,8 @@ export type MainContentProps = {
   paneId: string;
   /** The host-registered project resolved for this pane (null → empty state). */
   selectedProject: Project | null;
+  /** The open space's projects: the Time view names its rows by them. */
+  projects?: Project[];
   /** The pane's session record from the host (null until listed). */
   selectedSession: ProjectSession | null;
   /** The pane's pre-minted session id (null for brain panes). */

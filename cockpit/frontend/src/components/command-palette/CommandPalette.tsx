@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import {
   ChevronRight,
   Brain,
+  Clock,
   FileDiff,
   FolderGit2,
   Folder,
@@ -86,6 +87,7 @@ const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: Lucide
   { label: 'Go to Notes', keywords: 'note notes todo checklist', icon: NotebookPen, view: 'note' },
   { label: 'Go to Worktrees', keywords: 'worktrees worktree branch git ports', icon: FolderGit2, view: 'worktrees' },
   { label: 'Go to Repository', keywords: 'repository repo changes diff code files commits review git', icon: FileDiff, view: 'repository' },
+  { label: 'Go to Time', keywords: 'time tracking clock hours work timesheet', icon: Clock, view: 'time' },
   { label: 'Go to Shell', keywords: 'shell terminal console zsh bash command line', icon: SquareTerminal, view: 'shell' },
 ];
 
