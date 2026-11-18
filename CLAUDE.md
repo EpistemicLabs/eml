@@ -47,7 +47,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
    and must pass. A release that changes how the brain behaves for an agent is also measured:
    `node packages/bench/dist/cli.js release --eml .` writes `packages/bench/results/X.Y.Z.json`
    (commit it) and prints the change from the previous release for the release notes.
-3. Add `docs/release-notes/vX.Y.Z.md` with a concise, user-facing `### What's new` bullet section and the detailed notes below it. PR `vX.Y.Z` → `main` with those notes as description; CI green; merge with a merge commit.
+3. Write `docs/release-notes/vX.Y.Z.md`: a `### What's new` section of short user-facing bullets (the cockpit
+   shows them after an update; CI checks it), the detailed notes below. PR `vX.Y.Z` → `main` with those
+   notes as description; CI green; merge with a merge commit.
 4. Tag the merge commit on `main`: `git tag vX.Y.Z && git push origin refs/tags/vX.Y.Z` (the branch
    has the same name, so push the tag by its full ref).
 5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file docs/release-notes/vX.Y.Z.md`.

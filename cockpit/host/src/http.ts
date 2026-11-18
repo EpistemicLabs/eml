@@ -43,8 +43,7 @@ import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgent
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
-import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
-import { acknowledgeCurrentReleasePreview, readReleasePreview } from './release-preview.js'
+import { applyUpdate, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
@@ -844,26 +843,20 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
-    // Release notes shown after the cockpit updates itself. The acknowledgement
-    // is cockpit-local, not tied to whichever brain/space made this request.
-    if (resource === 'release-preview' && !id && method === 'GET') {
-      try { json(res, 200, await readReleasePreview()) }
-      catch (err) { json(res, 503, { error: { code: 'RELEASE_NOTES_UNAVAILABLE', message: (err as Error).message } }) }
-      return true
-    }
-    if (resource === 'release-preview' && id === 'ack' && method === 'POST') {
-      try {
-        if (acknowledgeCurrentReleasePreview()) json(res, 200, { success: true })
-        else json(res, 409, { error: { code: 'NO_PREVIEW', message: 'There is no successful update preview to acknowledge.' } })
-      } catch (err) { json(res, 500, { error: { code: 'ACK_FAILED', message: (err as Error).message } }) }
-      return true
-    }
-
     // App updates (Settings › About › Updates, the update banner): status, a
     // check against GitHub Releases, install + restart, go back, and the GitHub
-    // token — write-only from the browser (GET reports only its source).
+    // token — write-only from the browser (GET reports only its source). The
+    // banner after an update reads the "What's new" of the releases it brought.
     if (resource === 'app-update') {
       if (!id && method === 'GET') { json(res, 200, readAppUpdateStatus()); return true }
+      if (id === 'notes' && method === 'GET') {
+        try {
+          json(res, 200, await releaseNotesBetween(url.searchParams.get('from') ?? '', url.searchParams.get('to') ?? ''))
+        } catch (err) {
+          json(res, 502, { error: { code: 'NOTES_UNAVAILABLE', message: (err as Error).message } })
+        }
+        return true
+      }
       if (id === 'check' && method === 'POST') { json(res, 200, await checkForUpdate()); return true }
       if ((id === 'apply' || id === 'rollback') && method === 'POST') {
         try {

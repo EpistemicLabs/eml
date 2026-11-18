@@ -1,35 +1,27 @@
 #!/usr/bin/env node
+// A release's notes, docs/release-notes/v<version>.md, need a "### What's new"
+// section with at least one bullet: the cockpit shows those bullets after an
+// update (extractReleaseHighlights in cockpit/host/src/app-update.ts reads the
+// same heading). Run by CI on a release branch and by pack-release.sh.
+// Usage: node scripts/check-release-notes.mjs [version]  (default: package.json's)
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 
 const version = process.argv[2] ?? JSON.parse(readFileSync('package.json', 'utf8')).version
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
-  console.error(`[release notes] invalid version: ${version}`)
-  process.exit(1)
-}
-
-const file = resolve(`docs/release-notes/v${version}.md`)
+const file = `docs/release-notes/v${version}.md`
 let notes
 try {
   notes = readFileSync(file, 'utf8')
 } catch {
-  console.error(`[release notes] required file is missing: docs/release-notes/v${version}.md`)
+  console.error(`[release notes] ${file} is missing`)
   process.exit(1)
 }
 
 const lines = notes.split(/\r?\n/)
-const headingIndex = lines.findIndex((line) => /^#{3}\s+what's new\s*#*\s*$/i.test(line.trim()))
-if (headingIndex < 0) {
-  console.error(`[release notes] docs/release-notes/v${version}.md must contain a "What's new" section`)
+const start = lines.findIndex((line) => /^###\s+what['’]s new\s*$/i.test(line.trim()))
+const end = lines.findIndex((line, i) => start >= 0 && i > start && /^#{1,3}\s/.test(line.trim()))
+const bullets = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end).filter((line) => /^\s*[-*+]\s+\S/.test(line))
+if (bullets.length === 0) {
+  console.error(`[release notes] ${file} needs a "### What's new" section with at least one bullet`)
   process.exit(1)
 }
-
-const headingLevel = (lines[headingIndex].match(/^#+/)?.[0].length ?? 3)
-const nextHeading = lines.findIndex((line, index) => index > headingIndex && new RegExp(`^#{1,${headingLevel}}\\s+`).test(line.trim()))
-const section = lines.slice(headingIndex + 1, nextHeading < 0 ? lines.length : nextHeading)
-if (!section.some((line) => /^\s*[-*+]\s+\S/.test(line))) {
-  console.error(`[release notes] the "What's new" section in docs/release-notes/v${version}.md must contain at least one bullet`)
-  process.exit(1)
-}
-
-console.log(`[release notes] v${version} has user-facing highlights`)
+console.log(`[release notes] ${file}: ${bullets.length} highlights`)
