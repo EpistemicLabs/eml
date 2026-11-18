@@ -15,10 +15,10 @@ import * as path from 'path'
  *   - compactionNote (SessionStart, source "compact"): right after a
  *     compaction, pointing at the transcript that still holds everything.
  *
- * Claude Code and Codex both let a Stop hook block with
+ * Claude Code, Codex and Qwen Code all let a Stop hook block with
  * {"decision":"block","reason"} and mark the continued turn with
  * stop_hook_active. The context size comes from the transcript the agent CLI
- * names in the hook input: the usage of the last response. Neither CLI
+ * names in the hook input: the usage of the last response. No CLI
  * documents that format as a contract — when it does not parse, the hook stays
  * silent and nothing else changes.
  */
@@ -51,18 +51,21 @@ const count = (usage: Usage, keys: string[]) =>
  * The context size one transcript line records, or null. Claude Code: an
  * assistant response of the main conversation with its usage (cache reads
  * and writes are part of the context). Codex: a token_count event, whose
- * input_tokens already include the cached ones.
+ * input_tokens already include the cached ones. Qwen Code: an assistant
+ * record with usageMetadata, whose promptTokenCount includes the cached ones.
  */
 function lineTokens(line: string): number | null {
   const entry = JSON.parse(line) as {
     type?: string
     isSidechain?: boolean
     message?: { usage?: Usage }
+    usageMetadata?: Usage
     payload?: { type?: string; info?: { last_token_usage?: Usage } | null }
   }
   if (entry.type === 'assistant' && entry.isSidechain !== true && entry.message?.usage) {
     return count(entry.message.usage, ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens'])
   }
+  if (entry.type === 'assistant' && entry.usageMetadata) return count(entry.usageMetadata, ['promptTokenCount', 'candidatesTokenCount'])
   const codex = entry.type === 'event_msg' && entry.payload?.type === 'token_count' ? entry.payload.info?.last_token_usage : undefined
   return codex ? count(codex, ['input_tokens', 'output_tokens']) : null
 }
@@ -88,7 +91,7 @@ export function contextTokens(transcriptPath: string): number | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
     // Cheap filter first; the first line of the tail may be cut and fails to parse.
-    if (!line.includes('usage"')) continue
+    if (!line.includes('usage"') && !line.includes('usageMetadata"')) continue
     try {
       const tokens = lineTokens(line)
       if (tokens) return tokens

@@ -3,7 +3,7 @@
  *
  *   node "$COCKPIT_SPAWN_JS" --project <brain project id | name | folder path>
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
- *        [--provider <claude | codex>] [--open] [--wakeable]
+ *        [--provider <claude | codex | qwen>] [--open] [--wakeable]
  *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which

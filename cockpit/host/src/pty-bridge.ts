@@ -115,6 +115,13 @@ type PtySessionEntry = {
   // the raw chunk stream — no ANSI artifacts, instant resume.
   headless: HeadlessTerminalType
   serializeAddon: SerializeAddonType
+  /**
+   * The mouse report encoding the program set (`CSI ? 1006 h` and the like),
+   * which the serialized snapshot leaves out: without it a replayed client
+   * reports mouse events in the default encoding a program in SGR mode does
+   * not read — no wheel scrolling, no selection after a reattach.
+   */
+  mouse: { encoding: string }
   // Flow-control state. When the WS send buffer crosses HIGH watermark we
   // pause the pty so the upstream process blocks on write() instead of
   // growing our server-side buffer unboundedly. Resume below LOW watermark.
@@ -255,6 +262,27 @@ export function baseAgentEnv(source: NodeJS.ProcessEnv = process.env, os: Platfo
   }
   if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE && os.fallbackLang) env.LANG = os.fallbackLang
   return env
+}
+
+/**
+ * The mouse report encoding a program sets on the terminal (1005 UTF-8, 1006
+ * SGR, 1015 urxvt), as the sequence that sets it again; '' for the default.
+ * The handlers only watch: returning false lets xterm apply the mode as usual.
+ */
+export function watchMouseEncoding(terminal: Pick<HeadlessTerminalType, 'parser'>): { encoding: string } {
+  const mouse = { encoding: '' }
+  for (const final of ['h', 'l'] as const) {
+    terminal.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
+      for (const param of params) {
+        if (param !== 1005 && param !== 1006 && param !== 1015) continue
+        const set = `\x1b[?${param}h`
+        if (final === 'h') mouse.encoding = set
+        else if (mouse.encoding === set) mouse.encoding = ''
+      }
+      return false
+    })
+  }
+  return mouse
 }
 
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_.\-:]+$/
@@ -753,6 +781,7 @@ export class PtyBridge {
     // SerializeAddon is typed against the DOM xterm, but only touches
     // buffer state which @xterm/headless exposes identically.
     headless.loadAddon(serializeAddon as unknown as IHeadlessAddon)
+    const mouse = watchMouseEncoding(headless)
 
     this.sessions.set(key, {
       ...fields,
@@ -761,6 +790,7 @@ export class PtyBridge {
       lastClientAt: Date.now(),
       headless,
       serializeAddon,
+      mouse,
       ptyPaused: false,
       drainInterval: null,
       timeoutId: null,
@@ -1323,7 +1353,7 @@ export class PtyBridge {
       // Replay the rendered terminal state as a single frame. Prepend a hard
       // reset so the client xterm starts from a known baseline.
       const snapshot = current.serializeAddon.serialize()
-      sendJson(ws, { type: 'output', data: `\x1bc${snapshot}` })
+      sendJson(ws, { type: 'output', data: `\x1bc${snapshot}${current.mouse.encoding}` })
       this.flushPendingOutput(key)
 
       // SIGWINCH wiggle (tmux's client-attach trick): a full-screen TUI only

@@ -9,7 +9,7 @@ import type { ToolProfile } from './tool-profile.js'
  * Domain layer: types and constants, no I/O. Adapters live in infrastructure/providers/.
  */
 
-export const PROVIDER_IDS = ['claude', 'codex'] as const
+export const PROVIDER_IDS = ['claude', 'codex', 'qwen'] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
 /** Header a session hook sends next to its payload: the cockpit's id of the session it runs in. */

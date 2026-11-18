@@ -68,6 +68,11 @@ export const AGENTS_DIR = path.join(COCKPIT_HOME, 'agents')
 export const CODEX_CONFIG_DIR = path.join(COCKPIT_HOME, 'codex-config') // isolated CODEX_HOME
 // The cockpit's own Codex CLI + its versions (providers/codex/runtime.ts).
 export const CODEX_RUNTIME_DIR = path.join(COCKPIT_HOME, 'codex')
+export const QWEN_CONFIG_DIR = path.join(COCKPIT_HOME, 'qwen-config') // isolated QWEN_HOME
+// The cockpit's own Qwen Code + its versions (providers/qwen/runtime.ts).
+export const QWEN_RUNTIME_DIR = path.join(COCKPIT_HOME, 'qwen')
+// The API key of the Qwen Code endpoint (providers/qwen/settings.ts): owner-only, outside QWEN_HOME.
+export const QWEN_API_KEY_FILE = path.join(COCKPIT_HOME, 'qwen-api-key')
 // The cockpit's own Claude Code binary + its versions (providers/claude/runtime.ts).
 export const CLAUDE_RUNTIME_DIR = path.join(COCKPIT_HOME, 'claude')
 // The installed app (app-update.ts): app/versions/<v>/node_modules/eml-cockpit

@@ -70,7 +70,7 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
 - `--title`: optional, a few words — shown as the session's name.
 - `--open`: optional — opens a pane next to this session. Use it for a fresh-session
   handoff, or when the user asked to watch this worker.
-- `--provider`: optional, `claude` or `codex` — the agent CLI the worker runs with. Leave it out
+- `--provider`: optional, `claude`, `codex` or `qwen` — the agent CLI the worker runs with. Leave it out
   unless the user asked for a specific one; the worker then uses the cockpit's default.
 
 For a worker that can message, the output ends with `Worker address: <address>`.
