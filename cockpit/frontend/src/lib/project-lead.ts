@@ -4,12 +4,12 @@
 // own (made once, reused), and the lead's pane is put there or found again.
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
-  activateDesk, activatePane, addWorkerPane, ensureDeskBySlug, getActiveSpaceId, getDesks, isEmptyPane,
+  activateDesk, activatePane, addWorkerPane, ensureDeskBySlug, getActiveSpaceId, getDesks, newSessionView, removePane,
 } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, type SpaceInfo } from '@/stores/useSpaceStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
-type Lead = { sessionId: string; existing: boolean; title: string; prompt?: string; projectId?: string };
+type Lead = { sessionId: string; existing: boolean; title: string; prompt?: string; projectId?: string; runtime?: 'sdk' | 'terminal' };
 
 /** The cockpit's id of a brain project (host project-registry.ts BRAIN_ID_PREFIX). */
 export const projectIdOfBrain = (brainId: string) => `bp-${brainId}`;
@@ -25,10 +25,12 @@ export function openCyclePlanner(space: SpaceInfo): Promise<string | null> {
 
 async function openLead(space: SpaceInfo, endpoint: string, askedProject: string | null, deskSlug: string, deskName: string): Promise<string | null> {
   if (paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
+  // A new lead opens where the user's new sessions open: in chat the host starts it, the pane only joins.
+  const chat = newSessionView() === 'chat';
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', [SPACE_HEADER]: space.id },
-    body: JSON.stringify(askedProject ? { projectId: askedProject } : {}),
+    body: JSON.stringify({ ...(askedProject ? { projectId: askedProject } : {}), chat }),
   }).catch(() => null);
   if (!res) return 'The cockpit did not answer.';
   const body = await res.json().catch(() => ({})) as Lead & { error?: { message?: string } };
@@ -36,6 +38,7 @@ async function openLead(space: SpaceInfo, endpoint: string, askedProject: string
   const projectId = body.projectId ?? askedProject;
   if (!projectId) return 'The cockpit named no folder to run in.';
 
+  const before = new Set(getDesks().map((d) => d.id));
   const deskId = ensureDeskBySlug(deskSlug, { name: deskName, defaultProjectId: projectId });
   const desk = getDesks().find((d) => d.id === deskId);
   const holding = desk?.panes.find((pane) => pane.sessionId === body.sessionId);
@@ -45,13 +48,15 @@ async function openLead(space: SpaceInfo, endpoint: string, askedProject: string
     setTopView('desks');
     return null;
   }
-  // A new desk comes with an empty starter pane: the lead takes its place.
-  const starter = desk && desk.panes.length === 1 && isEmptyPane(desk.panes[0]) ? desk.panes[0].id : null;
+  // A desk made just now comes with a starter pane: the lead takes its place.
+  const starter = !before.has(deskId) && desk?.panes.length === 1 ? desk.panes[0].id : null;
+  const inChat = body.runtime === 'sdk';
   addWorkerPane({
-    fromSessionId: null, projectId, title: body.title, deskId, sessionId: body.sessionId,
-    // Today's lead that runs already only joins; a new one starts with its brief.
-    prompt: body.existing ? '' : body.prompt ?? '', replacePaneId: starter,
+    fromSessionId: null, projectId, title: body.title, deskId, sessionId: body.sessionId, inChat,
+    // In a terminal a new lead starts with its brief; one running already, or one in chat, only joins.
+    prompt: body.existing || inChat ? '' : body.prompt ?? '',
   });
+  if (starter) removePane(starter);
   activateDesk(deskId);
   setTopView('desks');
   return null;

@@ -289,6 +289,25 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   return true
 }
 
+/**
+ * A new lead or planner: started here in the chat runtime when the page asks for chat (the user's new
+ * sessions open there), the pane then only joins; else the page starts it in a terminal with the prompt.
+ */
+function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string; chat: boolean }) {
+  const answer = { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId }
+  if (lead.chat) {
+    const problem = deps.chat.startWorker({
+      id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
+      createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
+    })
+    if (!problem) {
+      deps.bridge.ledger.claimLead(lead.sessionId)
+      return { ...answer, runtime: 'sdk' }
+    }
+  }
+  return { ...answer, runtime: 'terminal', prompt: lead.prompt }
+}
+
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
   const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null))
   // The last real message, not the last reattach: a reload or a click on a
@@ -778,12 +797,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const current = deps.cycles.current()
       const key = `cycle:${current.id}`
       const existing = ledger.leadFor(key, current.id, space.ledgerKey)
-      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId }); return true }
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
       const sessionId = randomUUID()
       ledger.expectLead(sessionId, { projectId: key, day: current.id })
-      const now = new Date()
-      const zone = deps.timeZone?.() ?? 'UTC'
-      json(res, 200, { sessionId, existing: false, title: `Planner · ${current.id}`, projectId, prompt: plannerPrompt(current, deps.cycles.next(), cycleOf(now, zone, -1)) })
+      const body = await readJson(req)
+      const prompt = plannerPrompt(current, deps.cycles.next(), cycleOf(new Date(), deps.timeZone?.() ?? 'UTC', -1))
+      json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt, chat: body.chat === true }))
       return true
     }
   }
@@ -823,10 +842,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const day = leadDay(new Date(), deps.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
     const name = project.customName ?? project.displayName
     const existing = ledger.leadFor(projectId, day, space.ledgerKey)
-    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day }); return true }
+    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
     const sessionId = randomUUID()
     ledger.expectLead(sessionId, { projectId, day })
-    json(res, 200, { sessionId, existing: false, title: `Lead · ${name}`, day, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day) })
+    json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day), chat: body.chat === true }))
     return true
   }
 
