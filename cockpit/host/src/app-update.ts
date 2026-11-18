@@ -260,7 +260,6 @@ export function extractReleaseHighlights(body: string): string[] {
     const plain = bullet[1]
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/<[^>]*>/g, '')
       .replace(/[*_~`]/g, '')
       .trim()
     return plain ? [plain] : []
