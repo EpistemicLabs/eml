@@ -63,7 +63,14 @@ export interface SessionInfo extends Place {
 /** A project's key in DayTime.projects: the same project id may be in two spaces. */
 export const projectKey = (place: Place): string => `${place.spaceId ?? ''}/${place.projectId ?? ''}`
 
-const emptyDay = (date: string): DayTime => ({ date, user: 0, projects: {}, tasks: {}, sessions: {} })
+/**
+ * A table of records by id, without a prototype: the ids come from the
+ * browser, and `table['__proto__']` must name a record, not Object.prototype.
+ */
+const table = <T>(from?: unknown): Record<string, T> =>
+  Object.assign(Object.create(null) as Record<string, T>, from && typeof from === 'object' ? from : {})
+
+const emptyDay = (date: string): DayTime => ({ date, user: 0, projects: table(), tasks: table(), sessions: table() })
 
 /** The local calendar day of a moment, as the user reads it. */
 export function localDate(at: Date): string {
@@ -151,7 +158,7 @@ export class TimeTracker {
   private read(date: string): DayTime {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file(date), 'utf8')) as Partial<DayTime>
-      return { ...emptyDay(date), ...raw, date }
+      return { ...emptyDay(date), ...raw, date, projects: table(raw.projects), tasks: table(raw.tasks), sessions: table(raw.sessions) }
     } catch {
       return emptyDay(date)
     }

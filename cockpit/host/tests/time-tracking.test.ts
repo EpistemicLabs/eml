@@ -44,6 +44,19 @@ describe('the user clock', () => {
     expect(day.sessions.s1.user).toBe(30)
   })
 
+  it('keeps an id like __proto__ a record of its own', async () => {
+    const t = tracker()
+    const odd = { spaceId: '__proto__', projectId: 'constructor', sessionId: '__proto__' }
+    await t.beat(odd)
+    now += 30_000
+    await t.beat(odd)
+    expect(({} as Record<string, unknown>).user).toBeUndefined()
+    expect(Object.prototype).not.toHaveProperty('user')
+    expect(today(t).sessions['__proto__']).toMatchObject({ user: 30 })
+    // And so it stays after the day file is read back.
+    expect(tracker().days(1)[0].sessions['__proto__']).toMatchObject({ user: 30 })
+  })
+
   it('counts nothing across a gap, and keeps time on no project apart', async () => {
     const t = tracker()
     await t.beat({ spaceId: null, projectId: null, sessionId: null })

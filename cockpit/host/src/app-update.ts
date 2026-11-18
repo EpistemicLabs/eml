@@ -251,8 +251,14 @@ export function extractReleaseHighlights(body: string): string[] {
   const end = lines.findIndex((line, i) => i > start && /^#{1,3}\s/.test(line.trim()))
   return lines.slice(start + 1, end < 0 ? undefined : end).flatMap((line) => {
     const bullet = line.match(/^\s*[-*+]\s+(.+)$/)
-    // Markdown links and images keep their text; emphasis and code marks go.
-    const plain = bullet?.[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_~`]/g, '').trim()
+    // Markdown links and images keep their text; paired emphasis and code marks go, QWEN_HOME stays.
+    const plain = bullet?.[1]
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/(\*\*|~~)(.+?)\1/g, '$2')
+      .replace(/\*(\S(?:.*?\S)?)\*/g, '$1')
+      .replace(/(?<!\w)__?(\S(?:.*?\S)?)__?(?!\w)/g, '$1')
+      .trim()
     return plain ? [plain] : []
   })
 }

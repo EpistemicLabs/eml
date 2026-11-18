@@ -86,4 +86,29 @@ describe('shell', () => {
     ws.frame({ type: 'input', data: '\r' })
     await until(() => ws.text().split('run').length - 1 === 2)
   })
+
+  it('asks again before a new shell on Enter: one switched off meanwhile does not start', async () => {
+    vi.spyOn(platform, 'userShell').mockReturnValue({ bin: process.execPath, args: ['-e', "console.log('run')"] })
+    let refusal: string | null = null
+    const ws = new FakeSocket()
+    bridge({ shellRefusal: async () => refusal }).attach(ws as unknown as WebSocket, true)
+    ws.frame(init)
+    await until(() => ws.text().includes('press Enter for a new one'))
+    refusal = 'Shell is switched off'
+    ws.frame({ type: 'input', data: '\r' })
+    await until(() => ws.text().includes('Shell is switched off'))
+    expect(ws.text().split('run').length - 1).toBe(1)
+  })
+
+  it('ends every shell when the plugin is switched off', async () => {
+    vi.spyOn(platform, 'userShell').mockReturnValue({ bin: process.execPath, args: ['-e', "console.log('up'); setTimeout(() => {}, 10000)"] })
+    const b = bridge()
+    const ws = new FakeSocket()
+    b.attach(ws as unknown as WebSocket, true)
+    ws.frame(init)
+    await until(() => ws.text().includes('up'))
+    expect(b.endShells()).toBe(1)
+    expect(ws.closed).toBe('closed')
+    expect(b.endShells()).toBe(0)
+  })
 })

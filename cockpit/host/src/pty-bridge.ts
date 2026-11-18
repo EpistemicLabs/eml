@@ -851,6 +851,12 @@ export class PtyBridge {
     } catch { /* exited meanwhile */ }
   }
 
+  /** End every Shell plugin terminal (the plugin was switched off). Returns how many ran. */
+  endShells(): number {
+    const ids = [...this.sessions.entries()].filter(([, session]) => session.shell).map(([key]) => key.slice('shell_'.length))
+    return ids.filter((id) => this.endShell(id)).length
+  }
+
   /** End the Shell plugin's terminal `id` (its pane was closed). Returns whether one ran. */
   endShell(id: string): boolean {
     const key = `shell_${id}`
@@ -1037,6 +1043,9 @@ export class PtyBridge {
       if (key && early) this.applySize(key, early.cols, early.rows)
       early = null
     }
+    // Asked at every start of a shell, the first and each one after `exit`: the plugin or remote access may have changed.
+    const shellRefusal = () => this.ctx.shellRefusal ? this.ctx.shellRefusal(local) : Promise.resolve(local ? null : 'The shell opens on this machine only')
+    let restarting = false
 
     ws.on('message', (raw: RawData, isBinary: boolean) => {
       const data = parseShellMessage(raw, isBinary)
@@ -1053,8 +1062,7 @@ export class PtyBridge {
           }
           const opening = { id, paneId, cols: readNumber(data.cols, 80), rows: readNumber(data.rows, 24), isDarkMode: readBoolean(data.isDarkMode, true) }
           shell = opening
-          const refusal = this.ctx.shellRefusal ? this.ctx.shellRefusal(local) : Promise.resolve(local ? null : 'The shell opens on this machine only')
-          refusal.then((refused) => {
+          shellRefusal().then((refused) => {
             if (refused) { sendJson(ws, { type: 'error', message: refused }); shell = null; return }
             if (ws.readyState !== WebSocket.OPEN) return
             opened(this.openShell(ws, opening.id, opening.paneId, opening.cols, opening.rows, opening.isDarkMode))
@@ -1133,10 +1141,16 @@ export class PtyBridge {
         }
         const session = this.sessions.get(key)
         if (!session) {
-          // The shell exited: Enter starts a new one in the same pane.
-          if (shell && data.type === 'input' && readString(data.data).includes('\r')) {
-            sendJson(ws, { type: 'output', data: '\x1bc' })
-            key = this.openShell(ws, shell.id, shell.paneId, shell.cols, shell.rows, shell.isDarkMode)
+          // The shell exited: Enter starts a new one in the same pane, if a shell may still open here.
+          if (shell && !restarting && data.type === 'input' && readString(data.data).includes('\r')) {
+            const exited = shell
+            restarting = true
+            shellRefusal().then((refused) => {
+              if (refused) { sendJson(ws, { type: 'output', data: `\r\n\x1b[31m${refused}\x1b[0m\r\n` }); return }
+              if (ws.readyState !== WebSocket.OPEN) return
+              sendJson(ws, { type: 'output', data: '\x1bc' })
+              opened(this.openShell(ws, exited.id, exited.paneId, exited.cols, exited.rows, exited.isDarkMode))
+            }).catch((error: Error) => this.log(`error: ${error.message}`)).finally(() => { restarting = false })
           }
           return
         }
