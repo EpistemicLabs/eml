@@ -23,7 +23,7 @@ export interface TimeNames {
  * project's views, Brain among them, that Settings › EML Plugins switches on
  * or off, for the whole cockpit — every browser of it sees the same. Brain off
  * hides only the pane view; the brain itself and the header's Brain tab stay.
- * Brain starts on, the others off (PLUGIN_DEFAULTS); the user's own switch wins.
+ * Brain, Note and Worktrees start on, the others off (PLUGIN_DEFAULTS); the user's own switch wins.
  *
  *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
@@ -46,8 +46,12 @@ export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
 
-/** A plugin's state until the user switches it: Brain on, every other plugin off. */
-export const PLUGIN_DEFAULTS: Record<PluginId, boolean> = { brain: true, note: false, worktrees: false, repository: false, shell: false, time: false }
+/**
+ * A plugin's state until the user switches it. The plugins released on by
+ * default stay so, for the cockpits that never touched them; every plugin
+ * after them starts off.
+ */
+export const PLUGIN_DEFAULTS: Record<PluginId, boolean> = { brain: true, note: true, worktrees: true, repository: false, shell: false, time: false }
 
 /** What the user chose, else the plugin's default. */
 export async function pluginStates(): Promise<Record<PluginId, boolean>> {

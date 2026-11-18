@@ -344,8 +344,8 @@ A pane's views come in two groups (`lib/pane-views.ts`): the session's — Termi
 plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
 show both groups. All six are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
-`host/src/plugins-api.ts`). Brain starts on, the others off, until the user switches them; a switch the
-user set is kept. A plugin switched off leaves the menus, its routes answer 404 (Notes:
+`host/src/plugins-api.ts`). Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
+the user set is kept. A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
 holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
 agents' brain stay. With every plugin off, the tab bar shows only the session's views.

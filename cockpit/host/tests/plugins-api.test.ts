@@ -93,9 +93,9 @@ afterAll(async () => {
 const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('plugin switches', () => {
-  it('starts with Brain on and every other plugin off', async () => {
+  it('starts with Brain, Note and Worktrees on and the later plugins off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: false }, { id: 'worktrees', enabled: false }, { id: 'repository', enabled: false }, { id: 'shell', enabled: false }, { id: 'time', enabled: false }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: false }, { id: 'shell', enabled: false }, { id: 'time', enabled: false }] })
   })
 
   // Switches every plugin on for the tests below.
