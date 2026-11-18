@@ -1,5 +1,5 @@
 /** Agent-CLI provider ids the host knows. */
-export type LLMProvider = 'claude' | 'codex';
+export type LLMProvider = 'claude' | 'codex' | 'qwen';
 
 /** Live PTY state of a session in the host registry. */
 export type SessionState = 'running' | 'detached' | 'ended';

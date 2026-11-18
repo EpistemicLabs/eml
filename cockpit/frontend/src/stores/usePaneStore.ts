@@ -326,7 +326,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     repositoryView: parseRepositoryView(e.repositoryView),
     shellId: typeof e.shellId === 'string' && e.shellId ? e.shellId : undefined,
     taskId: typeof e.taskId === 'string' && e.taskId ? e.taskId : undefined,
-    provider: e.provider === 'claude' || e.provider === 'codex' ? e.provider : undefined,
+    provider: e.provider === 'claude' || e.provider === 'codex' || e.provider === 'qwen' ? e.provider : undefined,
   };
 };
 

@@ -43,9 +43,9 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'models',
     label: 'Models',
-    keywords: 'models claude codex login sign in subscription permissions version update setup-token default',
+    keywords: 'models claude codex qwen openrouter endpoint api key login sign in subscription permissions version update setup-token default',
     icon: Cpu,
-    blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code and Codex (beta).',
+    blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code, Codex (beta) and Qwen Code (beta).',
   },
   {
     id: 'spaces',

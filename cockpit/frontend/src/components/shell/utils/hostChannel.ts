@@ -11,7 +11,7 @@ export interface InitFrame {
   /** Settings › Preferences › Sessions; the host greets only a plain new session. */
   greet: boolean;
   taskId: string | null;
-  provider: 'claude' | 'codex' | null;
+  provider: 'claude' | 'codex' | 'qwen' | null;
   spaceId: string | null;
   isDarkMode: boolean;
 }

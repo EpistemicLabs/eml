@@ -13,9 +13,10 @@ import SettingsSection from '../SettingsSection';
 import SettingsSegmented from '../SettingsSegmented';
 import ClaudeSettings from './ClaudeSettings';
 import CodexSettings from './CodexSettings';
+import QwenSettings from './QwenSettings';
 
-/** Codex is still beta in the cockpit — its label says so everywhere here. */
-const providerLabel = (provider: AgentProviderInfo) => (provider.id === 'codex' ? `${provider.label} (beta)` : provider.label);
+/** Codex and Qwen Code are still beta in the cockpit — their labels say so everywhere here. */
+const providerLabel = (provider: AgentProviderInfo) => (provider.id === 'claude' ? provider.label : `${provider.label} (beta)`);
 
 export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () => void }) {
   const { data: providers, isError } = useProviders({ refresh: true });
@@ -34,6 +35,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
   const current = providers.find((provider) => provider.id === shown) ?? defaultProvider;
   const claude = current.id === 'claude' ? current : null;
   const codex = current.id === 'codex' ? current : null;
+  const qwen = current.id === 'qwen' ? current : null;
 
   return (
     <div className="space-y-8">
@@ -65,6 +67,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
           <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
             {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
             {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
+            {qwen && <QwenSettings qwen={qwen} />}
           </div>
         </div>
       </SettingsSection>

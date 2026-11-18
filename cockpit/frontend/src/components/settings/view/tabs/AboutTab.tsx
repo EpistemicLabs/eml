@@ -1,6 +1,6 @@
 // Settings › About: logo and name, then every version in one
 // read-only list with a Copy button for bug reports — cockpit, Claude Code and
-// Node from the host (GET /api/about), Codex from the providers. Managing the
+// Node from the host (GET /api/about), Codex and Qwen Code from the providers. Managing the
 // agent CLIs stays in Settings › Models. The License section carries the AGPL
 // §5(d) legal notice.
 import { Brain } from 'lucide-react';
@@ -23,11 +23,13 @@ export default function AboutTab() {
   const [copied, setCopied] = useState(false);
 
   const codexVersion = providers?.find((provider) => provider.id === 'codex')?.version ?? null;
+  const qwenVersion = providers?.find((provider) => provider.id === 'qwen')?.version ?? null;
   const versions: Array<[string, string]> = info
     ? [
         ['EML Cockpit', `${info.version}${info.runMode === 'dev' ? ' (dev)' : ''}`],
         ['Claude Code', info.claudeVersion || '—'],
         ...(codexVersion ? [['Codex', codexVersion] as [string, string]] : []),
+        ...(qwenVersion ? [['Qwen Code', qwenVersion] as [string, string]] : []),
         ['Node', info.node],
         ['OS', navigator.platform || '—'],
       ]

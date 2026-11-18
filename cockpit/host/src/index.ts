@@ -151,7 +151,7 @@ async function main() {
   for (const provider of providers.all()) {
     provider.prepare({ hookUrl, hookToken, mcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
   }
-  log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME)')
+  log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME, QWEN_HOME)')
 
   // The agent brains (agents.ts) and the brain spaces (brain-space.ts): the
   // local brain this home was provisioned with (main) plus the further local
