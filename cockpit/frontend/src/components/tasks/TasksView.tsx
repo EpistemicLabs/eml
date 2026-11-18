@@ -18,7 +18,7 @@ import { openCyclePlanner, openProjectLead, projectIdOfBrain } from '@/lib/proje
 import { clearSession } from '@/lib/session-actions';
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
-  agentTasks, buildOverview, carried, cycleProgress, focusGroups, groupByProject, matches, toOverviewTask,
+  agentTasks, buildOverview, readableTitle, carried, cycleProgress, focusGroups, groupByProject, matches, toOverviewTask,
   type AgentReason, type OverviewFilter, type OverviewItem, type OverviewTask, type ProjectGroup, type RawTask, type TaskJob, type TaskSession,
 } from '@/lib/tasks-overview';
 import { formatWhen } from '@/components/jobs/jobs';
@@ -304,7 +304,7 @@ function AgentsView({ overview, loaded, jobs, agentReasons, agents, keep, onOpen
                 <li key={`${i.task.spaceId}:${i.task.id}`} className="flex items-start gap-3 bg-background px-3 py-2.5">
                   <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full border border-foreground/40" />
                   <div className="min-w-0 flex-1">
-                    <button type="button" onClick={() => onOpen(i.task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline">{i.task.title}</button>
+                    <button type="button" onClick={() => onOpen(i.task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline" title={i.task.title}>{readableTitle(i.task.title)}</button>
                     <p className="truncate text-xs text-muted-foreground">{[job?.name, i.task.project].filter(Boolean).join(' · ')}</p>
                   </div>
                   <span className="flex-shrink-0 text-[11px] text-muted-foreground">{job?.paused ? 'paused' : job?.nextRun ? formatWhen(job.nextRun) : 'no next run'}</span>
@@ -354,7 +354,7 @@ function InboxView({ items, tasks, onOpen, onChanged }: {
               <li key={s.id} className="flex items-start gap-3 bg-background px-3 py-2.5">
                 <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', mark === 'failed' ? 'bg-destructive' : 'bg-primary')} />
                 <button type="button" onClick={() => onOpen(s)} className="min-w-0 flex-1 text-left">
-                  <span className="block truncate text-sm text-foreground">{task?.title ?? sessionDisplayName(s)}</span>
+                  <span className="block truncate text-sm text-foreground">{task ? readableTitle(task.title) : sessionDisplayName(s)}</span>
                   <span className="block truncate text-xs text-primary">{s.attention?.reason ?? MARK_WORD[mark]}</span>
                   <span className="block truncate text-[11px] text-muted-foreground">{[task?.project, sessionDisplayName(s)].filter(Boolean).join(' · ')}</span>
                 </button>
@@ -507,7 +507,7 @@ function CyclesView({ loaded, cycle, keep, spaces, projects, onOpen, onPlanner }
   const row = (t: OverviewTask) => (
     <li key={`${t.spaceId}:${t.id}`} className="flex items-baseline gap-3 bg-background px-3 py-2">
       <span className={cn('w-16 flex-shrink-0 text-[11px]', t.status === 'resolved' ? 'text-muted-foreground line-through' : t.status === 'active' ? 'text-warning' : 'text-muted-foreground')}>{t.status === 'resolved' ? 'done' : t.status === 'active' ? 'in progress' : 'to do'}</span>
-      <button type="button" onClick={() => onOpen(t)} className="min-w-0 flex-1 truncate text-left text-sm text-foreground hover:underline">{t.title}</button>
+      <button type="button" onClick={() => onOpen(t)} className="min-w-0 flex-1 truncate text-left text-sm text-foreground hover:underline" title={t.title}>{readableTitle(t.title)}</button>
       <span className="flex-shrink-0 text-xs text-muted-foreground">{t.project}</span>
       {carried(t) > 0 && <span className="flex-shrink-0 text-xs text-warning">carried {carried(t)}×</span>}
     </li>
@@ -578,7 +578,7 @@ function TaskRow({ item, tone, agent, onOpen }: { item: OverviewItem; tone: Tone
       <div className="flex items-start gap-3 px-3 py-2.5">
         <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', DOT[tone])} />
         <div className="min-w-0 flex-1">
-          <button type="button" onClick={() => onOpen(task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline">{task.title}</button>
+          <button type="button" onClick={() => onOpen(task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline" title={task.title}>{readableTitle(task.title)}</button>
           <p className="truncate text-xs text-muted-foreground">{[meta, task.spaceName].filter(Boolean).join(' · ')}</p>
           {line && <p className={cn('truncate text-xs', tone === 'you' ? 'text-primary' : 'text-muted-foreground')} title={line}>{line}</p>}
         </div>
@@ -614,7 +614,7 @@ function Plan({ steps, onOpen }: { steps: OverviewTask[]; onOpen: (task: Overvie
         return (
           <li key={step.id} className="flex items-baseline gap-2 py-1">
             <span className={cn('w-16 flex-shrink-0 text-[11px]', step.status === 'resolved' ? 'text-muted-foreground line-through' : step.status === 'active' ? 'text-foreground' : 'text-muted-foreground')}>{step.status}</span>
-            <button type="button" onClick={() => onOpen(step)} className={cn('min-w-0 truncate text-left text-xs hover:underline', step.status === 'resolved' ? 'text-muted-foreground' : 'text-foreground')}>{step.title}</button>
+            <button type="button" onClick={() => onOpen(step)} className={cn('min-w-0 truncate text-left text-xs hover:underline', step.status === 'resolved' ? 'text-muted-foreground' : 'text-foreground')} title={step.title}>{readableTitle(step.title)}</button>
             {facts && <span className={cn('min-w-0 truncate text-[11px]', step.waitingOn ? 'text-primary' : 'text-muted-foreground')}>{facts}</span>}
           </li>
         );

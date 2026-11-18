@@ -25,7 +25,7 @@ describe('the Your turn list', () => {
     vi.stubGlobal('fetch', fetch);
     const onPick = vi.fn();
     render(<YourTurnList items={[asks, other]} currentId="q" spaces={[main]} turns={{}} onPick={onPick} />);
-    await waitFor(() => expect(screen.getByText('homepage-v4b')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Homepage v4b')).toBeTruthy());
     expect(screen.getByText('Ship the shorter headline?')).toBeTruthy();
     expect(screen.getByText('Report')).toBeTruthy();
     expect(screen.getByText('Draft ready')).toBeTruthy();

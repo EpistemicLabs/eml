@@ -21,7 +21,7 @@ describe('the triage view', () => {
     vi.stubGlobal('fetch', fetch);
     const reload = vi.fn(async () => {});
     render(<TriageView items={[item()]} reload={reload} />);
-    expect(screen.getAllByText('lohmann-custom-tracking').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Lohmann custom tracking').length).toBeGreaterThan(0);
     expect(screen.getByText('lohmann-onboarding-tracking')).toBeTruthy();
     fireEvent.click(screen.getByText('Merge into it'));
     await waitFor(() => expect(reload).toHaveBeenCalled());

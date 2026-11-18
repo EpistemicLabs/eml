@@ -7,7 +7,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
 import { useEngramPanel } from '@/lib/engram-panel';
-import type { OverviewTask } from '@/lib/tasks-overview';
+import { readableTitle, type OverviewTask } from '@/lib/tasks-overview';
 import { cn } from '@/lib/utils';
 import { reclaimTerminal } from '@/stores/useReviewStore';
 import type { Project } from '@/types/app';
@@ -68,7 +68,7 @@ export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose
             {own.map(({ session: s, step }) => (
               <button key={s.id} type="button" onClick={() => setPick(s.id)}
                 className={cn('max-w-56 flex-shrink-0 truncate rounded px-2 py-1 text-xs', s.id === current?.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                {step ? `step: ${step.title}` : sessionDisplayName(s)}
+                {step ? `step: ${readableTitle(step.title)}` : sessionDisplayName(s)}
                 {s.lastActivity && <span className="pl-1.5 text-muted-foreground">{compactAge(String(s.lastActivity), new Date())}</span>}
               </button>
             ))}

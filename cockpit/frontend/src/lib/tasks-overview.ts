@@ -306,3 +306,19 @@ export function agentTasks(input: {
   }
   return reasons;
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A task's title as people read it. The brain keeps a kebab-case anchor for
+ * agents (wikilinks, lookups); the views show it as words:
+ * "aktivdog-conversation-history-missing-after-move" → "Aktivdog conversation
+ * history missing after move", a session placeholder → "Session 18 Nov · fa1d29c3".
+ */
+export function readableTitle(title: string): string {
+  const placeholder = /^session-(\d{4})-(\d{2})-(\d{2})-([0-9a-f]{8})$/.exec(title);
+  if (placeholder) return `Session ${Number(placeholder[3])} ${MONTHS[Number(placeholder[2]) - 1] ?? placeholder[2]} · ${placeholder[4]}`;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(title)) return title;
+  const words = title.split('-').join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}

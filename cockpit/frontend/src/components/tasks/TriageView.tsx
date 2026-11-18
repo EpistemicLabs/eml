@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { formatAgo } from '@/components/jobs/jobs';
+import { readableTitle } from '@/lib/tasks-overview';
 import { cn } from '@/lib/utils';
 
 export type PendingTask = {
@@ -76,7 +77,7 @@ export function TriageView({ items, reload }: { items: PendingTask[]; reload: ()
               className={cn('flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-accent', item.id === selected?.id && 'bg-accent')}>
               <span className="mt-1.5 h-2.5 w-2.5 flex-shrink-0 rounded-full border border-dashed border-foreground/50" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground">{item.title}</span>
+                <span className="block truncate text-sm text-foreground" title={item.title}>{readableTitle(item.title)}</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {item.source.kind === 'worker' ? 'for a worker' : 'from a session'}{item.source.sessionName ? ` · ${item.source.sessionName}` : ''} · {where(item)}{item.spaceName ? ` · ${item.spaceName}` : ''}
                 </span>
@@ -90,7 +91,7 @@ export function TriageView({ items, reload }: { items: PendingTask[]; reload: ()
         <section aria-label="Triage decision" className="flex flex-col gap-3 border-t border-border p-4 md:border-l md:border-t-0">
           <div>
             <p className="text-[11px] text-muted-foreground">{selected.source.sessionName ?? (selected.source.kind === 'worker' ? 'a worker' : 'a session')} · {formatAgo(selected.createdAt)}</p>
-            <h3 className="mt-1 text-sm font-semibold text-foreground">{selected.title}</h3>
+            <h3 className="mt-1 text-sm font-semibold text-foreground">{readableTitle(selected.title)}</h3>
             <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{selected.content}</p>
             {selected.entries.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">{selected.entries.length} update{selected.entries.length === 1 ? '' : 's'} kept for the task it becomes.</p>}
           </div>

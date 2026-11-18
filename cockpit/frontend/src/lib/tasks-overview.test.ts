@@ -167,3 +167,13 @@ describe('tasks handled by agents', () => {
     expect(Object.fromEntries(reasons)).toEqual({ busy: 'running', weekly: 'running', 'idle-worker': 'running', step: 'step', atlas: 'assigned' });
   });
 });
+
+describe('readable titles', () => {
+  it('shows kebab anchors as words and session placeholders as a date', async () => {
+    const { readableTitle } = await import('./tasks-overview');
+    expect(readableTitle('aktivdog-conversation-history-missing-after-move')).toBe('Aktivdog conversation history missing after move');
+    expect(readableTitle('session-2026-11-18-fa1d29c3')).toBe('Session 18 Nov · fa1d29c3');
+    expect(readableTitle('Already a sentence')).toBe('Already a sentence');
+    expect(readableTitle('single')).toBe('single');
+  });
+});
