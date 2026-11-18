@@ -40,6 +40,7 @@ import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
+import ReleasePreviewDialog from './ReleasePreviewDialog';
 import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import TeamBanner from './TeamBanner';
@@ -381,6 +382,7 @@ function AppContentInner() {
           a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
       <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
         <UpdateBanner />
+        <ReleasePreviewDialog />
         <AgentUpgradeBanner />
         <TeamBanner />
         <BrainHygieneBanner />

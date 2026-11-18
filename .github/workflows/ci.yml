@@ -20,6 +20,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Validate release notes
+        if: startsWith(github.head_ref, 'v')
+        run: node scripts/check-release-notes.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
