@@ -23,7 +23,7 @@ export const TASKS_PANE_ID = 'tasks';
  * first, then those of its open steps (a done step's session is left out),
  * the most recent first in each; tabs switch between them.
  */
-export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose }: {
+export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose, sessionId }: {
   task: OverviewTask;
   /** The task's steps: the sessions of the open ones belong to it too. */
   steps: OverviewTask[];
@@ -32,6 +32,8 @@ export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose
   /** The cockpit's projects: the panel offers a task run with them (Advance task). */
   projects?: Project[];
   onClose: () => void;
+  /** Open on this session (the Inbox item that asked), not the task's newest. */
+  sessionId?: string;
 }) {
   const { hrefFor } = useEngramPanel();
   const own = useMemo(() => {
@@ -43,8 +45,8 @@ export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose
       ...live.filter((s) => openSteps.has(s.taskId!)).sort(recent).map((s) => ({ session: s, step: openSteps.get(s.taskId!)! })),
     ];
   }, [task.id, steps, sessions]);
-  const [pick, setPick] = useState<string | null>(null);
-  useEffect(() => setPick(null), [task.id]);
+  const [pick, setPick] = useState<string | null>(sessionId ?? null);
+  useEffect(() => setPick(sessionId ?? null), [task.id, sessionId]);
   const current = (own.find((o) => o.session.id === pick) ?? own[0])?.session;
 
   return (
@@ -84,7 +86,7 @@ export function TaskWorkspace({ task, steps, sessions, spaces, projects, onClose
   );
 }
 
-function SessionView({ session, space }: { session: AllSession; space: SpaceInfo | undefined }) {
+export function SessionView({ session, space }: { session: AllSession; space: SpaceInfo | undefined }) {
   // A terminal session has one viewer: the view borrows it from its pane and gives it back when it moves on.
   const terminal = session.runtime !== 'sdk';
   useEffect(() => {

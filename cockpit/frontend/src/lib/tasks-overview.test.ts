@@ -93,3 +93,41 @@ describe('projects in the Tasks view', () => {
     expect(groups.find((g) => g.brainId === null)!.name).toBe('No project');
   });
 });
+
+describe('my tasks and cycles', () => {
+  it('puts each task in the first Focus group it fits', async () => {
+    const { focusGroups } = await import('./tasks-overview');
+    const o = buildOverview({
+      now, resolved: [], jobs: [], sessions: [{ taskId: 'run', sessionId: 's', name: 'S', working: true }],
+      open: [
+        task({ id: 'ask', properties: { waiting_on: { who: 'lasse', why: 'go?', since: 's' }, priority: 'urgent' } }),
+        task({ id: 'urgent', properties: { priority: 'urgent' } }),
+        task({ id: 'due', status: 'planned', properties: { due_date: '2026-11-17' } }),
+        task({ id: 'blocker', status: 'planned' }),
+        task({ id: 'waits', status: 'planned', properties: { depends_on: ['blocker'] } }),
+        task({ id: 'cycle', status: 'planned', subjects: ['cycle-2026-w47'] }),
+        task({ id: 'run' }),
+        task({ id: 'fresh', updated_at: '2026-11-16T00:00:00Z' }),
+        task({ id: 'stale', updated_at: '2026-09-01T00:00:00Z' }),
+        task({ id: 'idea', status: 'planned' }),
+      ],
+    });
+    const f = focusGroups(o, 'cycle-2026-w47', now);
+    const ids = (list: { task: { id: string } }[]) => list.map((i) => i.task.id).sort();
+    expect(ids(f.needsYou)).toEqual(['ask']);
+    expect(ids(f.urgentDue)).toEqual(['due', 'urgent']);
+    expect(ids(f.blocking)).toEqual(['blocker']);
+    expect(ids(f.thisCycle)).toEqual(['cycle']);
+    expect(ids(f.inProgress)).toEqual(['fresh', 'run']);
+    expect(ids(f.backlog)).toEqual(['idea', 'stale', 'waits']);
+  });
+
+  it('counts a cycle\'s done of all, and how often a task was carried', async () => {
+    const { cycleProgress, carried } = await import('./tasks-overview');
+    const open = [task({ id: 'a', subjects: ['cycle-2026-w46', 'cycle-2026-w47'] }), task({ id: 'b', status: 'planned', subjects: ['cycle-2026-w47'] }), task({ id: 'c' })];
+    const resolved = [task({ id: 'd', status: 'resolved', subjects: ['cycle-2026-w47'] })];
+    expect(cycleProgress(open, resolved, 'cycle-2026-w47')).toEqual({ done: 1, total: 3, inProgress: 1 });
+    expect(carried(open[0])).toBe(1);
+    expect(carried(open[1])).toBe(0);
+  });
+});

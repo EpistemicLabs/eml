@@ -14,9 +14,18 @@ type Lead = { sessionId: string; existing: boolean; title: string; prompt?: stri
 /** The cockpit's id of a brain project (host project-registry.ts BRAIN_ID_PREFIX). */
 export const projectIdOfBrain = (brainId: string) => `bp-${brainId}`;
 
-export async function openProjectLead(space: SpaceInfo, projectId: string, name: string): Promise<string | null> {
+export function openProjectLead(space: SpaceInfo, projectId: string, name: string): Promise<string | null> {
+  return openLead(space, '/api/projects/lead', projectId, `project-${projectId}`, name);
+}
+
+/** The cycle planner (host application/cycles.ts), on a desk of its own, running in the given project's folder. */
+export function openCyclePlanner(space: SpaceInfo, projectId: string): Promise<string | null> {
+  return openLead(space, '/api/cycles/planner', projectId, 'cycle-planning', 'Cycle planning');
+}
+
+async function openLead(space: SpaceInfo, endpoint: string, projectId: string, deskSlug: string, deskName: string): Promise<string | null> {
   if (paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
-  const res = await fetch('/api/projects/lead', {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', [SPACE_HEADER]: space.id },
     body: JSON.stringify({ projectId }),
@@ -25,7 +34,7 @@ export async function openProjectLead(space: SpaceInfo, projectId: string, name:
   const body = await res.json().catch(() => ({})) as Lead & { error?: { message?: string } };
   if (!res.ok) return body.error?.message ?? `HTTP ${res.status}`;
 
-  const deskId = ensureDeskBySlug(`project-${projectId}`, { name, defaultProjectId: projectId });
+  const deskId = ensureDeskBySlug(deskSlug, { name: deskName, defaultProjectId: projectId });
   const desk = getDesks().find((d) => d.id === deskId);
   const holding = desk?.panes.find((pane) => pane.sessionId === body.sessionId);
   if (holding) {

@@ -23,11 +23,14 @@ export type OverviewTask = {
   spaceName: string;
   /** The brain project's name, or null for a task outside a project. */
   project: string | null;
+  /** Its subjects; a cycle is one (cycle-<year>-w<week>). */
+  subjects: string[];
 };
 
 export type RawTask = {
   id: string; title: string | null; content: string; status: string; scope: string; updated_at: string;
   parent_id?: string | null;
+  subjects?: string[];
   properties?: {
     priority?: string; stage?: string; checkpoint?: string; depends_on?: string[]; due_date?: string;
     waiting_on?: { who?: string; why?: string; since?: string };
@@ -54,6 +57,7 @@ export function toOverviewTask(raw: RawTask, space: { id: string; name: string }
     spaceId: space.id,
     spaceName: space.name,
     project: projectId ? projects.get(projectId) ?? projectId : null,
+    subjects: Array.isArray(raw.subjects) ? raw.subjects : [],
   };
 }
 
@@ -219,4 +223,47 @@ export function groupByProject(overview: Overview, now: Date): ProjectGroup[] {
       items: g.items.sort((a, b) => order(a) - order(b) || rank(a.task) - rank(b.task) || b.task.updatedAt.localeCompare(a.task.updatedAt)),
     }))
     .sort((a, b) => b.waiting - a.waiting || b.running - a.running || b.due - a.due || b.lastUpdate.localeCompare(a.lastUpdate));
+}
+
+
+/** How many cycles a task was carried through: its cycle subjects but one. */
+export const carried = (task: OverviewTask) => Math.max(0, task.subjects.filter((s) => s.startsWith('cycle-')).length - 1);
+
+/** My tasks in Linear's Focus order; each task in the first group it fits. */
+export type Focus = {
+  needsYou: OverviewItem[];
+  urgentDue: OverviewItem[];
+  blocking: OverviewItem[];
+  thisCycle: OverviewItem[];
+  inProgress: OverviewItem[];
+  backlog: OverviewItem[];
+};
+
+export function focusGroups(overview: Overview, cycleId: string | null, now: Date): Focus {
+  const today = now.toLocaleDateString('en-CA');
+  const weekAgo = new Date(now.getTime() - WEEK_MS).toISOString();
+  const items = [...overview.yourTurn, ...overview.running, ...overview.active, ...overview.planned];
+  const blockers = new Set(items.flatMap((i) => [i.task, ...i.steps]).filter((t) => OPEN.has(t.status)).flatMap((t) => t.dependsOn));
+  const focus: Focus = { needsYou: [], urgentDue: [], blocking: [], thisCycle: [], inProgress: [], backlog: [] };
+  for (const item of items) {
+    const t = item.task;
+    if (item.waiting) focus.needsYou.push(item);
+    else if (t.priority === 'urgent' || isDue(t, today)) focus.urgentDue.push(item);
+    else if (blockers.has(t.id)) focus.blocking.push(item);
+    else if (cycleId && t.subjects.includes(cycleId) && !item.running) focus.thisCycle.push(item);
+    // Active and touched this week, or a session on it now; an old "active" is backlog in all but name.
+    else if (item.running || (t.status === 'active' && t.updatedAt >= weekAgo)) focus.inProgress.push(item);
+    else focus.backlog.push(item);
+  }
+  const byRank = (a: OverviewItem, b: OverviewItem) => rank(a.task) - rank(b.task) || b.task.updatedAt.localeCompare(a.task.updatedAt);
+  for (const list of Object.values(focus)) list.sort(byRank);
+  return focus;
+}
+
+/** A cycle's tasks: done of all, from the open and the closed lists. */
+export function cycleProgress(open: OverviewTask[], resolved: OverviewTask[], cycleId: string) {
+  const inCycle = (t: OverviewTask) => t.subjects.includes(cycleId);
+  const done = resolved.filter(inCycle).length;
+  const openIn = open.filter(inCycle);
+  return { done, total: done + openIn.length, inProgress: openIn.filter((t) => t.status === 'active').length };
 }

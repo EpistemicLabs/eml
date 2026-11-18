@@ -82,6 +82,8 @@ export interface LedgerEntry {
   parentSessionId: string | null
   /** When someone last saw it, on any device. */
   readAt: string | null
+  /** Inbox: snoozed until then (the Tasks view's Inbox hides it); null when not snoozed. */
+  snoozedUntil?: string
   /** A turn ended and nobody has seen the result; null once someone has. */
   resultAt: string | null
   /** Out of the lists since then; the conversation stays and a new message brings it back. */
@@ -144,6 +146,7 @@ function load(): LedgerFile {
           deskMain: entry.deskMain === true,
           parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
           readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
+          ...(typeof entry.snoozedUntil === 'string' ? { snoozedUntil: entry.snoozedUntil } : {}),
           resultAt: typeof entry.resultAt === 'string' ? entry.resultAt : null,
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
@@ -213,6 +216,7 @@ export class SessionLedger {
       taskId: taskId ?? prev?.taskId ?? null,
       ...(prev?.taskAuto && (taskId === null || taskId === prev.taskId) ? { taskAuto: true as const } : {}),
       ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
+      ...(prev?.snoozedUntil ? { snoozedUntil: prev.snoozedUntil } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
@@ -297,6 +301,15 @@ export class SessionLedger {
     this.expectedLeads.delete(sessionId)
     this.persist()
     return expected
+  }
+
+  /** Inbox snooze: hidden until then; null wakes it. */
+  setSnooze(sessionId: string, until: string | null): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    if (until) entry.snoozedUntil = until
+    else delete entry.snoozedUntil
+    this.persist()
   }
 
   markRead(sessionId: string): void {

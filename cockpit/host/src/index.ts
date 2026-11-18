@@ -39,6 +39,7 @@ import { createSessionTask, kebabTitle } from './application/session-task.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createTriage, TriageStore } from './application/triage.js'
+import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
@@ -318,6 +319,8 @@ async function main() {
     },
   })
   taskRunner.every(RUNNER_TICK_MS)
+  // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
+  const cycles = createCycles({ spaces, log, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => { void taskRouter.turnEnded(sessionId, text).then(() => taskRunner.tick()) }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -535,7 +538,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version, triage: { triage, store: triageStore } })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, createTask, timeZone: () => userTimeZone(), triage, triageStore,
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, createTask, timeZone: () => userTimeZone(), triage, triageStore, cycles,
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
@@ -554,6 +557,8 @@ async function main() {
     host.listen(hostPort, '127.0.0.1', resolve)
   })
   log(`cockpit: ${url}`)
+  // The week's cycle in each task-system space; checked hourly, the week turns at the user's midnight.
+  cycles.every(60 * 60_000)
   // Sessions kept running for Remote Control come back without a browser,
   // once the host answers their hooks.
   const kept = bridge.resumeKeptSessions()

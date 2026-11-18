@@ -151,8 +151,9 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
 
   return {
     handoffBeforeStop(sessionId) {
-      // A project lead leaves the project's status, in any space.
-      if (deps.ledger.claimLead(sessionId)) return LEAD_HANDOFF
+      // A project lead leaves the project's status, in any space; the cycle planner's work is in the tasks already.
+      const lead = deps.ledger.claimLead(sessionId)
+      if (lead) return lead.projectId.startsWith('cycle:') ? null : LEAD_HANDOFF
       const t = target(sessionId)
       if (!t?.entry.taskId || t.entry.worker) return null
       return HANDOFF_BEFORE_STOP

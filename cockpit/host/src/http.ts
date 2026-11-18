@@ -11,6 +11,7 @@ import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { SessionTask } from './application/session-task.js'
 import type { Triage, TriageStore } from './application/triage.js'
+import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
@@ -135,6 +136,8 @@ export interface HostDeps {
   /** Tasks sessions created that wait for the user's triage (application/triage.ts). */
   triage?: Triage
   triageStore?: TriageStore
+  /** Weekly cycles (application/cycles.ts). */
+  cycles?: Cycles
   /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
   turnEnded?: (sessionId: string, text: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
@@ -315,6 +318,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,
     readAt: entry.readAt,
+    snoozedUntil: entry.snoozedUntil ?? null,
     resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
     workdir: entry.workdir,
@@ -743,6 +747,41 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     json(res, 200, { text: directoryAnswer(deps, caller, url) })
     return true
+  }
+
+  // Inbox snooze: the session leaves the Inbox until then ({ until: ISO } or null). Page Origin only.
+  if (resource === 'sessions' && id && parts[3] === 'snooze' && method === 'POST') {
+    const body = await readJson(req)
+    const until = typeof body.until === 'string' && !Number.isNaN(Date.parse(body.until)) ? body.until : null
+    if (!deps.bridge.ledger.get(id)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such session' } }); return true }
+    deps.bridge.ledger.setSnooze(id, until)
+    json(res, 200, { snoozedUntil: until })
+    return true
+  }
+
+  // Cycles (application/cycles.ts): this week's and next week's cycle; the planner session for them.
+  if (resource === 'cycles' && deps.cycles) {
+    if (!id && method === 'GET') {
+      json(res, 200, { current: deps.cycles.current(), next: deps.cycles.next() })
+      return true
+    }
+    if (id === 'planner' && method === 'POST') {
+      const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
+      const body = await readJson(req)
+      const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+      if (!space || !space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: 'The planner needs a project folder to run in' } }); return true }
+      const ledger = deps.bridge.ledger
+      const current = deps.cycles.current()
+      const key = `cycle:${current.id}`
+      const existing = ledger.leadFor(key, current.id, space.ledgerKey)
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}` }); return true }
+      const sessionId = randomUUID()
+      ledger.expectLead(sessionId, { projectId: key, day: current.id })
+      const now = new Date()
+      const zone = deps.timeZone?.() ?? 'UTC'
+      json(res, 200, { sessionId, existing: false, title: `Planner · ${current.id}`, prompt: plannerPrompt(current, deps.cycles.next(), cycleOf(now, zone, -1)) })
+      return true
+    }
   }
 
   // Triage (application/triage.ts): what waits, and the user's accept, merge or close (page Origin only for the writes).

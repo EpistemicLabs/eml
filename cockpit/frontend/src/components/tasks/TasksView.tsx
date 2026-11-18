@@ -1,23 +1,24 @@
-// The Tasks view (header › Tasks): today across all spaces — whose turn it is,
-// what runs, what is due — and then the projects with their open tasks, the
-// ones with something going on first; quiet projects fold away (decision
-// tasks-view-by-project-with-daily-project-lead). Scheduled jobs live in the
-// Jobs tab. It only reads: tasks change through the agents. A click on a task
-// opens its panel with its session's chat (TaskWorkspace); "Work on it today"
-// opens the project's desk with today's project lead (lib/project-lead.ts).
+// The Tasks tab, organised like Linear (decision cockpit-task-views-follow-linear-model):
+// Inbox (what needs the user), My tasks (Linear's Focus order with the week's
+// cycle), Triage (tasks sessions made on their own, before they reach the brain),
+// Projects (one row each, the way into its lead) and Cycles (this week's
+// commitment and the planner). Scheduled jobs live in Jobs. The views read;
+// tasks change through the agents, except triage's and the Inbox's own taps.
+// A click on a task opens its panel with its session's chat (TaskWorkspace).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Play } from 'lucide-react';
 
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
-import { allSessionState } from '@/components/sidebar/allSessions';
+import { allSessionState, sessionMark, MARK_WORD, type AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { formatAgo } from '@/components/jobs/jobs';
-import { TaskWorkspace } from '@/components/tasks/TaskWorkspace';
+import { SessionView, TaskWorkspace } from '@/components/tasks/TaskWorkspace';
 import { TriageView, useTriage } from '@/components/tasks/TriageView';
-import { openProjectLead, projectIdOfBrain } from '@/lib/project-lead';
+import { openCyclePlanner, openProjectLead, projectIdOfBrain } from '@/lib/project-lead';
+import { clearSession } from '@/lib/session-actions';
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
-  buildOverview, groupByProject, isDue, matches, toOverviewTask,
+  buildOverview, carried, cycleProgress, focusGroups, groupByProject, matches, toOverviewTask,
   type OverviewFilter, type OverviewItem, type OverviewTask, type ProjectGroup, type RawTask, type TaskSession,
 } from '@/lib/tasks-overview';
 import { cn } from '@/lib/utils';
@@ -27,6 +28,10 @@ import { useTurnStore } from '@/stores/useTurnStateStore';
 import type { Project } from '@/types/app';
 
 type Loaded = { open: OverviewTask[]; resolved: OverviewTask[] };
+type Cycle = { id: string; week: number; from: string; to: string };
+type View = 'inbox' | 'mine' | 'triage' | 'projects' | 'cycles';
+/** What an agent on the task is doing, from its sessions. */
+export type AgentState = 'needs input' | 'error' | 'working' | 'done';
 
 async function brainList<T>(space: SpaceInfo, path: string): Promise<T> {
   // Always named: without it the page's fetch would send the active space, and Main would list another space's tasks.
@@ -46,19 +51,54 @@ async function loadSpace(space: SpaceInfo): Promise<Loaded> {
   return { open: [...planned.engrams, ...active.engrams].map(to), resolved: resolved.engrams.map(to) };
 }
 
+const VIEW_KEY = 'cockpit-tasks-view';
+const readView = (): View => {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'inbox' || v === 'mine' || v === 'triage' || v === 'projects' || v === 'cycles' ? v : 'mine';
+  } catch { return 'mine'; }
+};
+
+/** The Inbox: sessions that need the user, without the snoozed ones. */
+export function inboxItems(sessions: AllSession[], turns: Record<string, { state: string; since: string } | undefined>, now: Date): AllSession[] {
+  return sessions
+    .filter((s) => !s.archivedAt && !(s.snoozedUntil && Date.parse(s.snoozedUntil) > now.getTime()))
+    .filter((s) => { const mark = sessionMark(s, turns[s.id] as never); return mark === 'question' || mark === 'failed' || mark === 'waiting' || mark === 'review'; })
+    .sort((a, b) => String(a.attention?.at ?? '').localeCompare(String(b.attention?.at ?? '')));
+}
+
+/** Per task, what its sessions' agents are doing: needs input before error before working before done. */
+export function agentStates(sessions: AllSession[], turns: Record<string, { state: string; since: string } | undefined>): Map<string, AgentState> {
+  const order: AgentState[] = ['needs input', 'error', 'working', 'done'];
+  const states = new Map<string, AgentState>();
+  for (const s of sessions) {
+    if (!s.taskId || s.archivedAt) continue;
+    const mark = sessionMark(s, turns[s.id] as never);
+    const state: AgentState | null = mark === 'question' || mark === 'waiting' ? 'needs input'
+      : mark === 'failed' ? 'error'
+      : allSessionState(s, turns[s.id] as never) === 'working' ? 'working'
+      : s.attention?.kind === 'done' ? 'done' : null;
+    if (!state) continue;
+    const had = states.get(s.taskId);
+    if (!had || order.indexOf(state) < order.indexOf(had)) states.set(s.taskId, state);
+  }
+  return states;
+}
+
 const SELECT = 'h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground';
 
 export default function TasksView({ projects: cockpitProjects }: { projects?: Project[] }) {
   const spaces = useSpaces();
-  const { sessions } = useAllSessions(true);
+  const { sessions, refresh } = useAllSessions(true);
   const { turns } = useTurnStore();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'open' | 'done' | 'triage'>('open');
-  const triage = useTriage();
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-viewer only */ } };
   const [filter, setFilter] = useState<OverviewFilter>({ spaceId: null, project: null, priority: null, words: '' });
-  const [showQuiet, setShowQuiet] = useState(false);
+  const [cycle, setCycle] = useState<{ current: Cycle; next: Cycle } | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
+  const triage = useTriage();
 
   const load = useCallback(async () => {
     try {
@@ -73,30 +113,33 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   useEffect(() => {
     if (spaces.length === 0) return;
     void load();
+    void fetch('/api/cycles').then((r) => (r.ok ? r.json() : null)).then((c) => c && setCycle(c)).catch(() => {});
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
   }, [load, spaces.length]);
 
-  const taskSessions = useMemo<TaskSession[]>(() => (sessions ?? [])
+  const all = useMemo(() => sessions ?? [], [sessions]);
+  const taskSessions = useMemo<TaskSession[]>(() => all
     .filter((s) => s.taskId && !s.archivedAt)
-    .map((s) => ({ taskId: s.taskId!, sessionId: s.id, name: sessionDisplayName(s), working: allSessionState(s, turns[s.id]) === 'working' })), [sessions, turns]);
-
+    .map((s) => ({ taskId: s.taskId!, sessionId: s.id, name: sessionDisplayName(s), working: allSessionState(s, turns[s.id]) === 'working' })), [all, turns]);
+  const agents = useMemo(() => agentStates(all, turns as never), [all, turns]);
   const overview = useMemo(() => loaded && buildOverview({ ...loaded, jobs: [], sessions: taskSessions, now: new Date() }), [loaded, taskSessions]);
   const keep = (items: OverviewItem[]) => items.filter((i) => matches(i.task, filter));
-  const groups = useMemo(() => {
-    if (!overview) return [];
-    return groupByProject(overview, new Date())
-      .map((g) => ({ ...g, items: g.items.filter((i) => matches(i.task, filter)) }))
-      .filter((g) => g.items.length > 0);
-  }, [overview, filter]);
-  const today = new Date().toLocaleDateString('en-CA');
+  const inbox = useMemo(() => inboxItems(all, turns as never, new Date()), [all, turns]);
 
-  const [selected, setSelected] = useState<OverviewTask | null>(null);
-  const openTask = (task: OverviewTask) => {
+  const [selected, setSelected] = useState<{ task: OverviewTask; sessionId?: string } | null>(null);
+  const [loose, setLoose] = useState<AllSession | null>(null);
+  const openTask = (task: OverviewTask, sessionId?: string) => {
     const space = spaces.find((s) => s.id === task.spaceId);
     // The panel reads the active space's brain: a task of another space opens there.
     if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
-    setSelected(task);
+    setLoose(null);
+    setSelected({ task, sessionId });
+  };
+  const openInboxItem = (session: AllSession) => {
+    const task = loaded?.open.find((t) => t.id === session.taskId && t.spaceId === session.spaceId);
+    if (task) openTask(task, session.id);
+    else { setSelected(null); setLoose(session); }
   };
   const workOnToday = (group: ProjectGroup) => {
     const space = spaces.find((s) => s.id === group.spaceId);
@@ -107,125 +150,290 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   // Its steps' sessions are the task's too.
   const steps = useMemo(() => {
     if (!selected || !loaded) return [];
-    return [...loaded.open, ...loaded.resolved].filter((t) => t.parentId === selected.id && t.spaceId === selected.spaceId);
+    return [...loaded.open, ...loaded.resolved].filter((t) => t.parentId === selected.task.id && t.spaceId === selected.task.spaceId);
   }, [selected, loaded]);
 
-  const yourTurn = overview ? keep(overview.yourTurn) : [];
-  const running = overview ? keep(overview.running) : [];
-  const due = overview ? keep([...overview.active, ...overview.planned]).filter((i) => isDue(i.task, today)) : [];
-  const activeGroups = groups.filter((g) => g.active);
-  const quietGroups = groups.filter((g) => !g.active);
+  const narrow = Boolean(selected || loose);
+  const nav: Array<{ id: View; label: string; count?: number; hot?: boolean }> = [
+    { id: 'inbox', label: 'Inbox', count: inbox.length, hot: inbox.length > 0 },
+    { id: 'mine', label: 'My tasks' },
+    { id: 'triage', label: 'Triage', count: triage.items.length, hot: triage.items.length > 0 },
+    { id: 'projects', label: 'Projects' },
+    { id: 'cycles', label: 'Cycles' },
+  ];
+
   return (
     <div className="flex min-h-0 flex-1">
-    <div className={cn('flex min-h-0 flex-col overflow-y-auto py-5', selected ? 'w-[26rem] flex-shrink-0 px-4' : 'flex-1 px-6')}>
-      <div className={cn('w-full', !selected && 'mx-auto max-w-4xl')}>
-        <h1 className="text-lg font-semibold text-foreground">Today</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {overview ? `${overview.openCount} open tasks in ${groups.length} projects` : 'Loading…'}
-          {yourTurn.length > 0 && <span className="text-primary"> · {yourTurn.length} need{yourTurn.length === 1 ? 's' : ''} you</span>}
-          <span className="block text-xs">The view only reads: ask an agent to change a task. Scheduled jobs are in Jobs.</span>
-        </p>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md border border-border p-0.5">
-            {(['open', 'triage', 'done'] as const).map((t) => (
-              <button key={t} type="button" onClick={() => setTab(t)}
-                className={cn('rounded px-2.5 py-1 text-sm', tab === t ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                {t === 'open' ? 'Open' : t === 'done' ? 'Done · 7 days' : (
-                  <>Triage{triage.items.length > 0 && <span className="pl-1.5 text-primary">{triage.items.length}</span>}</>
-                )}
-              </button>
+      <nav aria-label="Task views" className="hidden w-44 flex-shrink-0 flex-col gap-0.5 border-r border-border p-2 md:flex">
+        {nav.map((n) => (
+          <button key={n.id} type="button" onClick={() => setView(n.id)} aria-current={view === n.id ? 'page' : undefined}
+            className={cn('flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', view === n.id ? 'bg-accent font-medium text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground')}>
+            {n.label}
+            {n.count !== undefined && n.count > 0 && <span className={cn('ml-auto text-xs', n.hot ? 'text-primary' : 'text-muted-foreground')}>{n.count}</span>}
+          </button>
+        ))}
+      </nav>
+      <div className={cn('flex min-h-0 flex-col overflow-y-auto py-5', narrow ? 'w-[26rem] flex-shrink-0 px-4' : 'flex-1 px-6')}>
+        <div className={cn('w-full', !narrow && 'mx-auto max-w-4xl')}>
+          <div className="mb-3 flex gap-1 overflow-x-auto md:hidden">
+            {nav.map((n) => (
+              <button key={n.id} type="button" onClick={() => setView(n.id)} className={cn('rounded px-2 py-1 text-sm', view === n.id ? 'bg-accent text-foreground' : 'text-muted-foreground')}>{n.label}</button>
             ))}
           </div>
-          {spaces.length > 1 && (
-            <select aria-label="Space" className={SELECT} value={filter.spaceId ?? ''} onChange={(e) => setFilter({ ...filter, spaceId: e.target.value || null })}>
-              <option value="">All spaces</option>
-              {spaces.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+          {(view === 'mine' || view === 'projects' || view === 'cycles') && (
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              {spaces.length > 1 && (
+                <select aria-label="Space" className={SELECT} value={filter.spaceId ?? ''} onChange={(e) => setFilter({ ...filter, spaceId: e.target.value || null })}>
+                  <option value="">All spaces</option>
+                  {spaces.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+              <select aria-label="Priority" className={SELECT} value={filter.priority ?? ''} onChange={(e) => setFilter({ ...filter, priority: e.target.value || null })}>
+                <option value="">Any priority</option>
+                {['urgent', 'high', 'normal', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input aria-label="Search" placeholder="Search" className={cn(SELECT, 'min-w-40 flex-1')} value={filter.words} onChange={(e) => setFilter({ ...filter, words: e.target.value })} />
+            </div>
           )}
-          <select aria-label="Priority" className={SELECT} value={filter.priority ?? ''} onChange={(e) => setFilter({ ...filter, priority: e.target.value || null })}>
-            <option value="">Any priority</option>
-            {['urgent', 'high', 'normal', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <input aria-label="Search" placeholder="Search" className={cn(SELECT, 'min-w-40 flex-1')} value={filter.words} onChange={(e) => setFilter({ ...filter, words: e.target.value })} />
+          {error && <p className="mb-4 text-sm text-destructive">Tasks could not be loaded: {error}</p>}
+          {leadError && <p role="alert" className="mb-4 text-sm text-destructive">The session could not open: {leadError}</p>}
+
+          {view === 'inbox' && <InboxView items={inbox} tasks={loaded?.open ?? []} onOpen={openInboxItem} onChanged={refresh} />}
+          {view === 'mine' && overview && (
+            <MyTasks overview={overview} loaded={loaded!} cycle={cycle?.current ?? null} keep={keep} agents={agents} onOpen={openTask} />
+          )}
+          {view === 'triage' && <TriageView items={triage.items} reload={triage.reload} />}
+          {view === 'projects' && overview && (
+            <ProjectsView groups={groupByProject(overview, new Date()).map((g) => ({ ...g, items: keep(g.items) })).filter((g) => g.items.length > 0)}
+              cycleId={cycle?.current.id ?? null} agents={agents} onOpen={openTask} onWork={workOnToday} />
+          )}
+          {view === 'cycles' && loaded && cycle && (
+            <CyclesView loaded={loaded} cycle={cycle} keep={(ts) => ts.filter((t) => matches(t, filter))} spaces={spaces} projects={cockpitProjects ?? []}
+              onOpen={(t) => openTask(t)} onPlanner={(problem) => setLeadError(problem)} />
+          )}
         </div>
-
-        {error && <p className="mt-4 text-sm text-destructive">Tasks could not be loaded: {error}</p>}
-        {leadError && <p role="alert" className="mt-4 text-sm text-destructive">The project lead could not open: {leadError}</p>}
-
-        {overview && tab === 'open' && (
-          <>
-            <Group title="Your turn" hint="a session or step waits for you" items={yourTurn} tone="you" onOpen={openTask} />
-            <Group title="Running" hint="a session works on it now" items={running} tone="running" onOpen={openTask} />
-            <Group title="Due" hint="today or earlier" items={due} tone="active" onOpen={openTask} />
-
-            <h2 className="mt-8 text-sm font-semibold text-foreground">Projects · {activeGroups.length}</h2>
-            <p className="text-xs text-muted-foreground">Something waits, runs, is due, or changed in the last 7 days.</p>
-            {activeGroups.map((g) => <ProjectCard key={g.key} group={g} today={today} onOpen={openTask} onWork={workOnToday} />)}
-
-            {quietGroups.length > 0 && (
-              <section className="mt-6">
-                <button type="button" onClick={() => setShowQuiet(!showQuiet)} className="flex items-baseline gap-2 text-left">
-                  {showQuiet ? <ChevronDown className="h-3.5 w-3.5 self-center text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 self-center text-muted-foreground" />}
-                  <h2 className="text-sm font-semibold text-foreground">Quiet · {quietGroups.length}</h2>
-                  <span className="text-xs text-muted-foreground">nothing moved in 7 days</span>
-                </button>
-                {showQuiet && quietGroups.map((g) => <ProjectCard key={g.key} group={g} today={today} onOpen={openTask} onWork={workOnToday} folded />)}
-              </section>
-            )}
-          </>
-        )}
-        {tab === 'triage' && <TriageView items={triage.items} reload={triage.reload} />}
-        {overview && tab === 'done' && (
-          <Group title="Done" hint="closed in the last 7 days" items={keep(overview.done)} tone="done" onOpen={openTask} />
-        )}
       </div>
-    </div>
-    {selected && (
-      <TaskWorkspace key={`${selected.spaceId}:${selected.id}`} task={selected} steps={steps} sessions={sessions ?? []} spaces={spaces} projects={cockpitProjects} onClose={() => setSelected(null)} />
-    )}
+      {selected && (
+        <TaskWorkspace key={`${selected.task.spaceId}:${selected.task.id}:${selected.sessionId ?? ''}`} task={selected.task} sessionId={selected.sessionId} steps={steps} sessions={all} spaces={spaces} projects={cockpitProjects} onClose={() => setSelected(null)} />
+      )}
+      {loose && !selected && (
+        <section aria-label="Session" className="flex min-w-0 flex-1 flex-col border-l border-border">
+          <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
+            <span className="truncate">{sessionDisplayName(loose)} · no task</span>
+            <button type="button" onClick={() => setLoose(null)} className="rounded px-2 py-1 hover:bg-accent">Close</button>
+          </div>
+          <SessionView session={loose} space={spaces.find((s) => s.id === loose.spaceId)} />
+        </section>
+      )}
     </div>
   );
 }
 
-/** A project with its open tasks: what waits, runs and is due, and the way into today's work on it. */
-function ProjectCard({ group, today, onOpen, onWork, folded = false }: {
-  group: ProjectGroup; today: string; onOpen: (task: OverviewTask) => void; onWork: (group: ProjectGroup) => void; folded?: boolean;
+/** The next morning at 9, and the next Monday at 9, in this browser's zone. */
+export function snoozeTimes(now: Date): { tomorrow: string; monday: string } {
+  const at9 = (d: Date) => { const x = new Date(d); x.setHours(9, 0, 0, 0); return x; };
+  const tomorrow = at9(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  const monday = at9(new Date(now.getTime() + (((8 - now.getDay()) % 7) || 7) * 24 * 60 * 60 * 1000));
+  return { tomorrow: tomorrow.toISOString(), monday: monday.toISOString() };
+}
+
+function InboxView({ items, tasks, onOpen, onChanged }: {
+  items: AllSession[]; tasks: OverviewTask[]; onOpen: (s: AllSession) => void; onChanged: () => void | Promise<void>;
 }) {
-  const [open, setOpen] = useState(!folded);
-  const [all, setAll] = useState(false);
-  const shown = all ? group.items : group.items.slice(0, 5);
-  const counts = [
-    group.waiting > 0 && <span key="w" className="text-primary">{group.waiting} your turn</span>,
-    group.running > 0 && <span key="r">{group.running} running</span>,
-    group.due > 0 && <span key="d">{group.due} due</span>,
-    <span key="o">{group.items.length} open</span>,
-  ].filter(Boolean);
+  const [busy, setBusy] = useState<string | null>(null);
+  const done = async (s: AllSession) => { setBusy(s.id); await clearSession(s.id); setBusy(null); await onChanged(); };
+  const snooze = async (s: AllSession, until: string) => {
+    setBusy(s.id);
+    await fetch(`/api/sessions/${encodeURIComponent(s.id)}/snooze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until }) }).catch(() => null);
+    setBusy(null);
+    await onChanged();
+  };
+  const times = snoozeTimes(new Date());
   return (
-    <section className="mt-3 overflow-hidden rounded-lg border border-border">
-      <div className="flex items-center gap-3 bg-muted/30 px-3 py-2">
-        <button type="button" onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-baseline gap-2 text-left" aria-expanded={open}>
+    <section>
+      <h2 className="text-lg font-semibold text-foreground">Inbox</h2>
+      <p className="mt-1 text-sm text-muted-foreground">What needs you: a question, a go, a review, a session that failed. Answer in its chat.</p>
+      {items.length === 0 ? <p className="mt-6 text-sm text-muted-foreground">Nothing needs you right now.</p> : (
+        <ul className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border">
+          {items.map((s) => {
+            const task = tasks.find((t) => t.id === s.taskId);
+            const mark = s.attention?.kind === 'failed' ? 'failed' : s.attention?.kind === 'review' ? 'review' : 'question';
+            return (
+              <li key={s.id} className="flex items-start gap-3 bg-background px-3 py-2.5">
+                <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', mark === 'failed' ? 'bg-destructive' : 'bg-primary')} />
+                <button type="button" onClick={() => onOpen(s)} className="min-w-0 flex-1 text-left">
+                  <span className="block truncate text-sm text-foreground">{task?.title ?? sessionDisplayName(s)}</span>
+                  <span className="block truncate text-xs text-primary">{s.attention?.reason ?? MARK_WORD[mark]}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{[task?.project, sessionDisplayName(s)].filter(Boolean).join(' · ')}</span>
+                </button>
+                <span className="flex flex-shrink-0 flex-col items-end gap-1 text-[11px] text-muted-foreground">
+                  {s.attention?.at && <span>{formatAgo(s.attention.at)}</span>}
+                  <span className="flex gap-1">
+                    <button type="button" disabled={busy === s.id} onClick={() => void done(s)} className="rounded border border-border px-1.5 py-0.5 hover:bg-accent" title="Done: it leaves the Inbox">Done</button>
+                    <button type="button" disabled={busy === s.id} onClick={() => void snooze(s, times.tomorrow)} className="rounded border border-border px-1.5 py-0.5 hover:bg-accent" title="Back tomorrow at 9:00">Tomorrow</button>
+                    <button type="button" disabled={busy === s.id} onClick={() => void snooze(s, times.monday)} className="rounded border border-border px-1.5 py-0.5 hover:bg-accent" title="Back on Monday at 9:00">Monday</button>
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function MyTasks({ overview, loaded, cycle, keep, agents, onOpen }: {
+  overview: NonNullable<ReturnType<typeof buildOverview>>; loaded: Loaded; cycle: Cycle | null;
+  keep: (items: OverviewItem[]) => OverviewItem[]; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void;
+}) {
+  const focus = focusGroups(overview, cycle?.id ?? null, new Date());
+  const progress = cycle ? cycleProgress(loaded.open, loaded.resolved, cycle.id) : null;
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-foreground">My tasks</h2>
+      {cycle && progress && <CycleBar cycle={cycle} progress={progress} />}
+      <Group title="Needs you" hint="answer in the session's chat" items={keep(focus.needsYou)} tone="you" agents={agents} onOpen={onOpen} />
+      <Group title="Urgent and due" hint="urgent, or due today or earlier" items={keep(focus.urgentDue)} tone="active" agents={agents} onOpen={onOpen} />
+      <Group title="Blocking others" hint="other tasks wait for these" items={keep(focus.blocking)} tone="active" agents={agents} onOpen={onOpen} />
+      <Group title="This cycle" hint="this week's commitment" items={keep(focus.thisCycle)} tone="planned" agents={agents} onOpen={onOpen} />
+      <Group title="In progress" hint="started and touched this week, or an agent on it now" items={keep(focus.inProgress)} tone="running" agents={agents} onOpen={onOpen} />
+      <Group title="Backlog" hint="not in this cycle; pulled in at the planning" items={keep(focus.backlog)} tone="planned" agents={agents} onOpen={onOpen} folded />
+      <Group title="Done · 7 days" hint="closed this week and last" items={keep(overview.done)} tone="done" agents={agents} onOpen={onOpen} folded />
+    </section>
+  );
+}
+
+function CycleBar({ cycle, progress }: { cycle: Cycle; progress: { done: number; total: number; inProgress: number } }) {
+  const pct = (n: number) => (progress.total ? `${(n / progress.total) * 100}%` : '0%');
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border px-3 py-2 text-sm">
+      <span className="font-semibold text-foreground">Cycle {cycle.week}</span>
+      <span className="text-muted-foreground">{cycle.from} to {cycle.to}</span>
+      <span className="flex h-1.5 min-w-32 flex-1 overflow-hidden rounded-full bg-muted" aria-label={`${progress.done} of ${progress.total} done`}>
+        <span className="h-full bg-success" style={{ width: pct(progress.done) }} />
+        <span className="h-full bg-warning" style={{ width: pct(progress.inProgress) }} />
+      </span>
+      <span className="text-muted-foreground">{progress.total === 0 ? 'nothing planned yet' : `${progress.done} of ${progress.total} done`}</span>
+    </div>
+  );
+}
+
+function ProjectsView({ groups, cycleId, agents, onOpen, onWork }: {
+  groups: ProjectGroup[]; cycleId: string | null; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; onWork: (g: ProjectGroup) => void;
+}) {
+  const [showQuiet, setShowQuiet] = useState(false);
+  const active = groups.filter((g) => g.active);
+  const quiet = groups.filter((g) => !g.active);
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-foreground">Projects</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{active.length} active · {quiet.length} quiet. "Work on it today" opens the project's desk with its lead.</p>
+      <ul className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border">
+        {active.map((g) => <ProjectRow key={g.key} group={g} cycleId={cycleId} agents={agents} onOpen={onOpen} onWork={onWork} />)}
+      </ul>
+      {quiet.length > 0 && (
+        <section className="mt-6">
+          <button type="button" onClick={() => setShowQuiet(!showQuiet)} className="flex items-baseline gap-2 text-left">
+            {showQuiet ? <ChevronDown className="h-3.5 w-3.5 self-center text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 self-center text-muted-foreground" />}
+            <h3 className="text-sm font-semibold text-foreground">Quiet · {quiet.length}</h3>
+            <span className="text-xs text-muted-foreground">nothing moved in 7 days</span>
+          </button>
+          {showQuiet && (
+            <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
+              {quiet.map((g) => <ProjectRow key={g.key} group={g} cycleId={cycleId} agents={agents} onOpen={onOpen} onWork={onWork} />)}
+            </ul>
+          )}
+        </section>
+      )}
+    </section>
+  );
+}
+
+function ProjectRow({ group, cycleId, agents, onOpen, onWork }: {
+  group: ProjectGroup; cycleId: string | null; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; onWork: (g: ProjectGroup) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const inCycle = cycleId ? group.items.filter((i) => i.task.subjects.includes(cycleId)).length : 0;
+  return (
+    <li className="bg-background">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           {open ? <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 self-center text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 self-center text-muted-foreground" />}
-          <span className="truncate text-sm font-semibold text-foreground">{group.name}</span>
+          <span className="truncate text-sm font-medium text-foreground">{group.name}</span>
           <span className="flex-shrink-0 text-xs text-muted-foreground">{group.spaceName}</span>
-          <span className="flex min-w-0 gap-2 truncate text-xs text-muted-foreground">{counts.flatMap((c, i) => (i > 0 ? [<span key={`s${i}`}>·</span>, c] : [c]))}</span>
         </button>
+        <span className="flex flex-shrink-0 gap-2 text-xs text-muted-foreground">
+          {group.waiting > 0 && <span className="text-primary">{group.waiting} need you</span>}
+          {inCycle > 0 && <span>{inCycle} this cycle</span>}
+          <span>{group.items.length} open</span>
+        </span>
         {group.brainId && (
           <button type="button" onClick={() => onWork(group)} title="Open the project's desk with today's project lead"
-            className="flex flex-shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent">
+            className="flex flex-shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-accent">
             <Play className="h-3 w-3" /> Work on it today
           </button>
         )}
       </div>
       {open && (
         <ul className="divide-y divide-border border-t border-border">
-          {shown.map((item) => (
-            <TaskRow key={item.task.id} item={item} tone={item.waiting ? 'you' : item.running ? 'running' : isDue(item.task, today) || item.task.status === 'active' ? 'active' : 'planned'} onOpen={onOpen} />
-          ))}
-          {group.items.length > shown.length && (
-            <li><button type="button" onClick={() => setAll(true)} className="w-full px-3 py-2 text-left text-xs text-muted-foreground hover:text-foreground">Show all {group.items.length}</button></li>
-          )}
+          {group.items.map((item) => <TaskRow key={item.task.id} item={item} tone={item.waiting ? 'you' : item.running ? 'running' : 'planned'} agent={agents.get(item.task.id)} onOpen={onOpen} />)}
         </ul>
+      )}
+    </li>
+  );
+}
+
+function CyclesView({ loaded, cycle, keep, spaces, projects, onOpen, onPlanner }: {
+  loaded: Loaded; cycle: { current: Cycle; next: Cycle }; keep: (ts: OverviewTask[]) => OverviewTask[]; spaces: SpaceInfo[];
+  projects: Project[]; onOpen: (t: OverviewTask) => void; onPlanner: (problem: string | null) => void;
+}) {
+  const brainProjects = projects.filter((p) => p.brainProjectId);
+  const [runIn, setRunIn] = useState<string>(brainProjects[0]?.projectId ?? '');
+  const tasksOf = (id: string) => ({
+    open: keep(loaded.open.filter((t) => t.subjects.includes(id))),
+    done: keep(loaded.resolved.filter((t) => t.subjects.includes(id))),
+  });
+  const now = tasksOf(cycle.current.id);
+  const next = tasksOf(cycle.next.id);
+  const progress = cycleProgress(loaded.open, loaded.resolved, cycle.current.id);
+  const plan = () => {
+    const space = spaces.find((s) => s.main) ?? spaces[0];
+    if (!space || !runIn) { onPlanner('Pick a project folder for the planner to run in.'); return; }
+    onPlanner(null);
+    void openCyclePlanner(space, runIn).then(onPlanner);
+  };
+  const row = (t: OverviewTask) => (
+    <li key={`${t.spaceId}:${t.id}`} className="flex items-baseline gap-3 bg-background px-3 py-2">
+      <span className={cn('w-16 flex-shrink-0 text-[11px]', t.status === 'resolved' ? 'text-muted-foreground line-through' : t.status === 'active' ? 'text-warning' : 'text-muted-foreground')}>{t.status === 'resolved' ? 'done' : t.status === 'active' ? 'in progress' : 'to do'}</span>
+      <button type="button" onClick={() => onOpen(t)} className="min-w-0 flex-1 truncate text-left text-sm text-foreground hover:underline">{t.title}</button>
+      <span className="flex-shrink-0 text-xs text-muted-foreground">{t.project}</span>
+      {carried(t) > 0 && <span className="flex-shrink-0 text-xs text-warning">carried {carried(t)}×</span>}
+    </li>
+  );
+  return (
+    <section>
+      <h2 className="text-lg font-semibold text-foreground">Cycles</h2>
+      <p className="mt-1 text-sm text-muted-foreground">One cycle per week across your projects: what you commit to. Open work rolls into the next cycle on Monday.</p>
+      <CycleBar cycle={cycle.current} progress={progress} />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" onClick={plan} className="flex items-center gap-1 rounded-md bg-foreground px-3 py-1.5 text-sm text-background hover:opacity-90">
+          <Play className="h-3.5 w-3.5" /> Plan with the planner
+        </button>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          runs in
+          <select aria-label="Planner project" className={SELECT} value={runIn} onChange={(e) => setRunIn(e.target.value)}>
+            {brainProjects.map((p) => <option key={p.projectId} value={p.projectId}>{p.displayName}</option>)}
+          </select>
+        </label>
+      </div>
+      <h3 className="mt-6 text-sm font-semibold text-foreground">This week · {now.open.length + now.done.length}</h3>
+      {now.open.length + now.done.length === 0 ? <p className="mt-1 text-sm text-muted-foreground">Nothing planned yet. The planner proposes the week; you agree in its chat.</p> : (
+        <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">{[...now.open, ...now.done].map(row)}</ul>
+      )}
+      <h3 className="mt-6 text-sm font-semibold text-foreground">Next week · {next.open.length}</h3>
+      {next.open.length === 0 ? <p className="mt-1 text-sm text-muted-foreground">Nothing yet. Open work from this week rolls in on Monday.</p> : (
+        <ul className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">{next.open.map(row)}</ul>
       )}
     </section>
   );
@@ -235,9 +443,12 @@ type Tone = 'you' | 'running' | 'active' | 'planned' | 'done';
 const DOT: Record<Tone, string> = {
   you: 'bg-primary', running: 'bg-success', active: 'bg-foreground/50', planned: 'bg-foreground/20', done: 'bg-foreground/20',
 };
+const AGENT_STYLE: Record<AgentState, string> = {
+  'needs input': 'text-primary', error: 'text-destructive', working: 'text-success', done: 'text-muted-foreground',
+};
 
-function Group({ title, hint, items, tone, onOpen, folded = false }: {
-  title: string; hint: string; items: OverviewItem[]; tone: Tone; onOpen: (task: OverviewTask) => void; folded?: boolean;
+function Group({ title, hint, items, tone, agents, onOpen, folded = false }: {
+  title: string; hint: string; items: OverviewItem[]; tone: Tone; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; folded?: boolean;
 }) {
   const [open, setOpen] = useState(!folded);
   if (items.length === 0) return null;
@@ -245,26 +456,25 @@ function Group({ title, hint, items, tone, onOpen, folded = false }: {
     <section className="mt-6">
       <button type="button" onClick={() => setOpen(!open)} className="mb-2 flex items-baseline gap-2 text-left">
         {open ? <ChevronDown className="h-3.5 w-3.5 self-center text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 self-center text-muted-foreground" />}
-        <h2 className={cn('text-sm font-semibold', tone === 'you' ? 'text-primary' : 'text-foreground')}>{title} · {items.length}</h2>
+        <h3 className={cn('text-sm font-semibold', tone === 'you' ? 'text-primary' : 'text-foreground')}>{title} · {items.length}</h3>
         <span className="text-xs text-muted-foreground">{hint}</span>
       </button>
       {open && (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-          {items.map((item) => <TaskRow key={`${item.task.spaceId}:${item.task.id}`} item={item} tone={tone} onOpen={onOpen} />)}
+          {items.map((item) => <TaskRow key={`${item.task.spaceId}:${item.task.id}`} item={item} tone={tone} agent={agents.get(item.task.id)} onOpen={onOpen} />)}
         </ul>
       )}
     </section>
   );
 }
 
-function TaskRow({ item, tone, onOpen }: { item: OverviewItem; tone: Tone; onOpen: (task: OverviewTask) => void }) {
+function TaskRow({ item, tone, agent, onOpen }: { item: OverviewItem; tone: Tone; agent?: AgentState; onOpen: (task: OverviewTask) => void }) {
   const [expanded, setExpanded] = useState(false);
   const { task, steps } = item;
   const meta = [task.project, task.priority && task.priority !== 'normal' ? task.priority : null, task.stage].filter(Boolean).join(' · ');
   const line = item.waiting
     ? `${item.waiting.stepTitle ? `${item.waiting.stepTitle}: ` : ''}${item.waiting.why}`
     : item.running ? `${item.running.title === task.title ? 'working' : `step: ${item.running.title}`} · ${item.running.sessionName}`
-    : item.jobs.length > 0 ? `${item.jobs.length} job${item.jobs.length === 1 ? '' : 's'} attached`
     : null;
   const age = item.waiting?.since || task.updatedAt;
   return (
@@ -276,6 +486,8 @@ function TaskRow({ item, tone, onOpen }: { item: OverviewItem; tone: Tone; onOpe
           <p className="truncate text-xs text-muted-foreground">{[meta, task.spaceName].filter(Boolean).join(' · ')}</p>
           {line && <p className={cn('truncate text-xs', tone === 'you' ? 'text-primary' : 'text-muted-foreground')} title={line}>{line}</p>}
         </div>
+        {agent && <span className={cn('flex-shrink-0 text-[11px]', AGENT_STYLE[agent])}>agent {agent}</span>}
+        {carried(task) > 0 && <span className="flex-shrink-0 text-[11px] text-warning">carried {carried(task)}×</span>}
         {steps.length > 0 && (
           <button type="button" onClick={() => setExpanded(!expanded)} className="flex flex-shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={expanded}>
             {item.done} of {steps.length}
