@@ -58,8 +58,13 @@ beforeAll(async () => {
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
     endShell: (id: string) => shells.delete(id),
-    time: new TimeTracker(() => ({ projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
+    time: new TimeTracker(() => ({ spaceId: null, projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
     sessionName: (id: string) => (id === 's1' ? 'Dev server session' : null),
+    timeNames: async ({ projects }: { projects: Array<{ spaceId: string | null; projectId: string | null }> }) => ({
+      spaces: { '': 'Main' },
+      projects: Object.fromEntries(projects.map((p) => [`${p.spaceId ?? ''}/${p.projectId ?? ''}`, 'Project one'])),
+      tasks: {},
+    }),
     // The user's home folder: the temp folder the repo lies in.
     home: dirname(repo),
   }
@@ -88,9 +93,17 @@ afterAll(async () => {
 const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('plugin switches', () => {
-  it('lists every plugin as on until it is switched off', async () => {
+  it('starts with Brain on and every other plugin off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: true }, { id: 'shell', enabled: true }, { id: 'time', enabled: true }] })
+    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: false }, { id: 'worktrees', enabled: false }, { id: 'repository', enabled: false }, { id: 'shell', enabled: false }, { id: 'time', enabled: false }] })
+  })
+
+  // Switches every plugin on for the tests below.
+  it('keeps what the user chose over the default', async () => {
+    await patch({ id: 'brain', enabled: false })
+    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time']) await patch({ id, enabled: true })
+    const res = await patch({ id: 'brain', enabled: true })
+    expect((await res.json()).plugins.every((p: { enabled: boolean }) => p.enabled)).toBe(true)
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
@@ -101,7 +114,7 @@ describe('plugin switches', () => {
   it('keeps a switch in the config and refuses the plugin\'s routes while off', async () => {
     const res = await patch({ id: 'note', enabled: false })
     expect((await res.json()).plugins).toContainEqual({ id: 'note', enabled: false })
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toEqual({ note: false })
+    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ note: false })
     expect((await fetch(`${base}/api/notes?projectId=p1`)).status).toBe(404)
     expect((await fetch(`${base}/api/notes/abc`)).status).toBe(404)
 
@@ -321,7 +334,7 @@ describe('lsof parsing', () => {
 })
 
 describe('time', () => {
-  it('takes beats and answers the days with the sessions\' names', async () => {
+  it('takes beats and answers the days with the names', async () => {
     const beat = () => fetch(`${base}/api/plugins/time/beat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 's1' }) })
     expect((await beat()).status).toBe(200)
     // A moment later: the time between the two goes to the session.
@@ -330,7 +343,7 @@ describe('time', () => {
     const body = await (await fetch(`${base}/api/plugins/time?days=3`)).json()
     expect(body.days).toHaveLength(3)
     expect(body.days[2].sessions.s1.projectId).toBe('p1')
-    expect(body.sessions).toEqual({ s1: 'Dev server session' })
+    expect(body.names).toEqual({ spaces: { '': 'Main' }, projects: { '/p1': 'Project one' }, tasks: {}, sessions: { s1: 'Dev server session' } })
   })
 
   it('answers 404 while it is off', async () => {

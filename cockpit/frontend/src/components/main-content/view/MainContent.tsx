@@ -41,7 +41,6 @@ function MainContent({
   isActive = true,
   paneId,
   selectedProject,
-  projects,
   selectedSession,
   sessionId,
   paneView: chosenView,
@@ -199,7 +198,7 @@ function MainContent({
             ) : paneView === 'worktrees' ? (
               <WorktreesPane project={selectedProject} />
             ) : paneView === 'time' ? (
-              <TimePane projects={projects ?? []} />
+              <TimePane />
             ) : paneView === 'shell' ? (
               <ShellPluginPane paneId={paneId} isActive={isActive} />
             ) : paneView === 'repository' ? (

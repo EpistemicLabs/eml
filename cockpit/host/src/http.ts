@@ -46,8 +46,8 @@ import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
-import type { TimeTracker } from './time-tracking.js'
-import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
+import { projectKey, type TimeTracker } from './time-tracking.js'
+import { handlePluginsApi, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
@@ -390,6 +390,7 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       return sessionView(deps, project, { ...entry, sessionId }).summary || null
     },
+    timeNames: (refs) => timeNames(deps, refs),
   }
 }
 
@@ -424,6 +425,40 @@ function projectView(deps: HostDeps, space: BrainSpace, project: ProjectEntry, b
     sessions,
     sessionMeta: { total: sessions.length, hasMore: false },
   }
+}
+
+/**
+ * The Time view's names (plugins-api.ts), each in its own space: a project as
+ * the sidebar names it (renamed, else the brain's name, else the registry's),
+ * a task by its brain title. One brain read per space; what can't be read stays null.
+ */
+async function timeNames(
+  deps: HostDeps,
+  refs: { projects: Array<{ spaceId: string | null; projectId: string | null }>; tasks: Array<{ spaceId: string | null; taskId: string }> },
+): Promise<TimeNames> {
+  const names: TimeNames = { spaces: {}, projects: {}, tasks: {} }
+  const spaceIds = new Set([...refs.projects, ...refs.tasks].map((ref) => ref.spaceId ?? ''))
+  await Promise.all([...spaceIds].map(async (spaceId) => {
+    const space = deps.spaces.resolve(spaceId || null)
+    names.spaces[spaceId] = space.name
+    const inSpace = <T extends { spaceId: string | null }>(list: T[]) => list.filter((ref) => (ref.spaceId ?? '') === spaceId)
+    const projects = inSpace(refs.projects).filter((ref) => ref.projectId)
+    const brain: BrainProject[] = projects.length > 0 ? await space.projects.list().catch(() => []) : []
+    for (const ref of projects) {
+      const entry = space.registry.get(ref.projectId!)
+      const live = brain.find((bp) => projectIdForBrain(bp.id) === ref.projectId)
+      names.projects[projectKey(ref)] = entry?.customName ?? live?.name ?? entry?.displayName ?? null
+    }
+    await Promise.all(inSpace(refs.tasks).map(async ({ taskId }) => {
+      try {
+        const res = await fetch(`${space.url}/engram/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${space.token}`, Accept: 'application/json' } })
+        names.tasks[taskId] = res.ok ? ((await res.json()) as { title?: string }).title ?? null : null
+      } catch {
+        names.tasks[taskId] = null
+      }
+    }))
+  }))
+  return names
 }
 
 /** A brain project the registry hasn't touched yet: listed, not persisted. */

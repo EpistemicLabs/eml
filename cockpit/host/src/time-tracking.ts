@@ -17,6 +17,9 @@ import type { TurnEvent } from './turn-state.js'
  *           session and task. Agents run side by side, so it is no part of
  *           the user's total.
  *
+ * One clock per cockpit, across its spaces: every figure carries its space,
+ * whose names the route looks up (http.ts timeNames).
+ *
  * Kept per local day as COCKPIT_HOME/time/<YYYY-MM-DD>.json: ids and seconds,
  * no content. Not in the brain: it is measurement, not knowledge. While the
  * plugin is off nothing is written.
@@ -32,26 +35,33 @@ export interface TimeSplit {
   agent: number
 }
 
-export interface DayTime {
-  date: string
-  /** Seconds at the cockpit, all projects together. */
-  user: number
-  /** By project id; '' holds the time on no project (the shell, settings). */
-  projects: Record<string, TimeSplit>
-  tasks: Record<string, TimeSplit & { projectId: string | null }>
-  sessions: Record<string, TimeSplit & { projectId: string | null; taskId: string | null }>
+/** Where a figure belongs: its space (null: the main space) and project (null: none, as the shell). */
+export interface Place {
+  spaceId: string | null
+  projectId: string | null
 }
 
-/** What a beat says is in front of the user: the active pane's session or project. */
-export interface Focus {
-  projectId: string | null
+export interface DayTime {
+  date: string
+  /** Seconds at the cockpit, all spaces and projects together. */
+  user: number
+  /** By projectKey. */
+  projects: Record<string, TimeSplit & Place>
+  tasks: Record<string, TimeSplit & Place>
+  sessions: Record<string, TimeSplit & Place & { taskId: string | null }>
+}
+
+/** What a beat says is in front of the user: the open space, the active pane's session or project. */
+export interface Focus extends Place {
   sessionId: string | null
 }
 
-export interface SessionInfo {
-  projectId: string | null
+export interface SessionInfo extends Place {
   taskId: string | null
 }
+
+/** A project's key in DayTime.projects: the same project id may be in two spaces. */
+export const projectKey = (place: Place): string => `${place.spaceId ?? ''}/${place.projectId ?? ''}`
 
 const emptyDay = (date: string): DayTime => ({ date, user: 0, projects: {}, tasks: {}, sessions: {} })
 
@@ -74,12 +84,16 @@ export class TimeTracker {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** A browser's beat: credits the time since the last one to what was in front then. */
-  beat(focus: Focus): Promise<void> {
+  /**
+   * A browser's beat: credits the time since the last one to what was in front
+   * then. `fresh`: the user is back after a pause the browser saw (useTimeBeat's
+   * AWAY_MS), so the time since the last beat does not count.
+   */
+  beat(focus: Focus, fresh = false): Promise<void> {
     const at = this.now()
     const last = this.lastBeat
     this.lastBeat = { at, focus }
-    if (!last || at - last.at > BEAT_GAP_MS || at <= last.at) return Promise.resolve()
+    if (fresh || !last || at - last.at > BEAT_GAP_MS || at <= last.at) return Promise.resolve()
     return this.credit('user', (at - last.at) / 1000, this.resolve(last.focus), at)
   }
 
@@ -93,7 +107,7 @@ export class TimeTracker {
     }
     if (started === undefined) return Promise.resolve()
     this.running.delete(event.sessionId)
-    return this.credit('agent', (at - started) / 1000, this.resolve({ projectId: null, sessionId: event.sessionId }), at)
+    return this.credit('agent', (at - started) / 1000, this.resolve({ spaceId: null, projectId: null, sessionId: event.sessionId }), at)
   }
 
   /** The recorded days, oldest first, today with the turns still running. */
@@ -106,14 +120,16 @@ export class TimeTracker {
     }
     const live = days[days.length - 1]
     for (const [sessionId, started] of this.running) {
-      add(live, 'agent', (this.now() - started) / 1000, this.resolve({ projectId: null, sessionId }))
+      add(live, 'agent', (this.now() - started) / 1000, this.resolve({ spaceId: null, projectId: null, sessionId }))
     }
     return days
   }
 
   private resolve(focus: Focus): Focus & { taskId: string | null } {
     const info = focus.sessionId ? this.session(focus.sessionId) : null
+    // A session's own space and project win: the ledger knows where it runs.
     return {
+      spaceId: info ? info.spaceId : focus.spaceId,
       projectId: info?.projectId ?? focus.projectId,
       sessionId: focus.sessionId,
       taskId: info?.taskId ?? null,
@@ -156,14 +172,15 @@ export class TimeTracker {
 function add(day: DayTime, clock: keyof TimeSplit, seconds: number, to: Focus & { taskId: string | null }): void {
   if (!(seconds > 0)) return
   if (clock === 'user') day.user += seconds
-  const project = (day.projects[to.projectId ?? ''] ??= { user: 0, agent: 0 })
+  const place = { spaceId: to.spaceId, projectId: to.projectId }
+  const project = (day.projects[projectKey(place)] ??= { user: 0, agent: 0, ...place })
   project[clock] += seconds
   if (to.taskId) {
-    const task = (day.tasks[to.taskId] ??= { user: 0, agent: 0, projectId: to.projectId })
+    const task = (day.tasks[to.taskId] ??= { user: 0, agent: 0, ...place })
     task[clock] += seconds
   }
   if (to.sessionId) {
-    const session = (day.sessions[to.sessionId] ??= { user: 0, agent: 0, projectId: to.projectId, taskId: to.taskId })
+    const session = (day.sessions[to.sessionId] ??= { user: 0, agent: 0, ...place, taskId: to.taskId })
     session[clock] += seconds
   }
 }

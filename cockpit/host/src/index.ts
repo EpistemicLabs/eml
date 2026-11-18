@@ -311,7 +311,7 @@ async function main() {
   // The Time plugin's clocks: the agent's from the turns, the user's from the browser's beats.
   const time = new TimeTracker((sessionId) => {
     const entry = ledger.get(sessionId)
-    return entry ? { projectId: entry.projectId, taskId: entry.taskId } : null
+    return entry ? { spaceId: entry.spaceId, projectId: entry.projectId, taskId: entry.taskId } : null
   }, async () => (await pluginStates()).time)
   turns.on('turn', (event: TurnEvent) => { void time.turn(event) })
 

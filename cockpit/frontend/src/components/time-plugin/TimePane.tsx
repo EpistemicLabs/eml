@@ -1,5 +1,6 @@
 // The `time` pane view (task cockpit-plugin-time-tracking): the user's time at
-// the cockpit, today and over the week, per project; under a project the
+// the cockpit, today and over the week, across its spaces — per space, when
+// there are several, then per project; under a project the
 // sessions and tasks it went to, and next to it the time the agents ran (their
 // own column: agents run side by side, so it is no part of the user's total).
 // Data: GET /api/plugins/time (host time-tracking.ts), fed by useTimeBeat.
@@ -8,27 +9,42 @@ import { useQuery } from '@tanstack/react-query';
 import { Bot, ChevronRight, ListTodo, Loader2, Terminal } from 'lucide-react';
 
 import { BrainCard, SectionHeader } from '@/components/brain/ui';
-import { useEngram } from '@/lib/queries';
 import { cn } from '@/lib/utils';
-import type { Project } from '@/types/app';
 
 interface Split {
   user: number;
   agent: number;
 }
 
+/** Where a figure belongs (host time-tracking.ts Place); null: the main space, no project. */
+interface Place {
+  spaceId: string | null;
+  projectId: string | null;
+}
+
 interface DayTime {
   date: string;
   user: number;
-  projects: Record<string, Split>;
-  tasks: Record<string, Split & { projectId: string | null }>;
-  sessions: Record<string, Split & { projectId: string | null; taskId: string | null }>;
+  /** By "<spaceId>/<projectId>". */
+  projects: Record<string, Split & Place>;
+  tasks: Record<string, Split & Place>;
+  sessions: Record<string, Split & Place & { taskId: string | null }>;
+}
+
+/** Names as the host found them, each in its own space; '' is the main space. */
+interface TimeNames {
+  spaces: Record<string, string>;
+  projects: Record<string, string | null>;
+  tasks: Record<string, string | null>;
+  sessions: Record<string, string | null>;
 }
 
 interface TimeAnswer {
   days: DayTime[];
-  sessions: Record<string, string | null>;
+  names: TimeNames;
 }
+
+const samePlace = (a: Place, b: Place) => (a.spaceId ?? '') === (b.spaceId ?? '') && a.projectId === b.projectId;
 
 const DAYS = 7;
 
@@ -59,7 +75,7 @@ export function sumDays(days: DayTime[]): DayTime {
   return total;
 }
 
-export function TimePane({ projects }: { projects: Project[] }) {
+export function TimePane() {
   const time = useQuery({
     queryKey: ['plugin-time', DAYS],
     queryFn: async (): Promise<TimeAnswer> => {
@@ -79,12 +95,14 @@ export function TimePane({ projects }: { projects: Project[] }) {
       </div>
     );
   }
-  const { days, sessions: sessionNames } = time.data;
+  const { days, names } = time.data;
   const shown = range === 'today' ? days[days.length - 1] : sumDays(days);
-  const projectName = (id: string) =>
-    id ? projects.find((p) => p.projectId === id)?.displayName ?? id : 'No project';
   const agentTotal = Object.values(shown.projects).reduce((sum, p) => sum + p.agent, 0);
   const rows = Object.entries(shown.projects).sort(([, a], [, b]) => b.user - a.user || b.agent - a.agent);
+  // One card per space, the most time first; with a single space the card is just "Projects".
+  const spaces = [...new Set(rows.map(([, p]) => p.spaceId ?? ''))]
+    .map((spaceId) => ({ spaceId, rows: rows.filter(([, p]) => (p.spaceId ?? '') === spaceId) }))
+    .sort((a, b) => b.rows.reduce((n, [, p]) => n + p.user, 0) - a.rows.reduce((n, [, p]) => n + p.user, 0));
 
   return (
     <div className="h-full overflow-y-auto">
@@ -114,17 +132,27 @@ export function TimePane({ projects }: { projects: Project[] }) {
           {range === 'week' && <WeekBars days={days} />}
         </BrainCard>
 
-        <BrainCard className="p-3">
-          <SectionHeader
-            title="Projects"
-            right={<span className="flex gap-4 text-[11px] text-muted-foreground"><span className="w-16 text-right">You</span><span className="w-16 text-right">Agents</span></span>}
-            className="mb-1.5"
-          />
-          {rows.length === 0 && <div className="px-1 py-2 text-sm text-muted-foreground">Nothing counted yet. The clock runs while you work in the cockpit.</div>}
-          {rows.map(([id, split]) => (
-            <ProjectRow key={id || 'none'} name={projectName(id)} split={split} day={shown} projectId={id || null} sessionNames={sessionNames} />
-          ))}
-        </BrainCard>
+        {spaces.length === 0 && (
+          <BrainCard className="p-3 text-sm text-muted-foreground">Nothing counted yet. The clock runs while you work in the cockpit.</BrainCard>
+        )}
+        {spaces.map((space) => (
+          <BrainCard key={space.spaceId} className="p-3">
+            <SectionHeader
+              title={spaces.length > 1 ? names.spaces[space.spaceId] ?? 'Space' : 'Projects'}
+              right={<span className="flex gap-4 text-[11px] text-muted-foreground"><span className="w-16 text-right">You</span><span className="w-16 text-right">Agents</span></span>}
+              className="mb-1.5"
+            />
+            {space.rows.map(([key, split]) => (
+              <ProjectRow
+                key={key}
+                name={split.projectId ? names.projects[key] ?? split.projectId : 'No project'}
+                split={split}
+                day={shown}
+                names={names}
+              />
+            ))}
+          </BrainCard>
+        ))}
       </div>
     </div>
   );
@@ -157,17 +185,16 @@ function Figures({ split }: { split: Split }) {
   );
 }
 
-function ProjectRow({ name, split, day, projectId, sessionNames }: {
+function ProjectRow({ name, split, day, names }: {
   name: string;
-  split: Split;
+  split: Split & Place;
   day: DayTime;
-  projectId: string | null;
-  sessionNames: Record<string, string | null>;
+  names: TimeNames;
 }) {
   const [open, setOpen] = useState(false);
   const byTime = <T extends Split>(rows: Array<[string, T]>) => rows.sort(([, a], [, b]) => b.user + b.agent - (a.user + a.agent));
-  const tasks = byTime(Object.entries(day.tasks).filter(([, t]) => t.projectId === projectId));
-  const sessions = byTime(Object.entries(day.sessions).filter(([, s]) => s.projectId === projectId));
+  const tasks = byTime(Object.entries(day.tasks).filter(([, t]) => samePlace(t, split)));
+  const sessions = byTime(Object.entries(day.sessions).filter(([, s]) => samePlace(s, split)));
   const hasDetail = tasks.length > 0 || sessions.length > 0;
   return (
     <div>
@@ -183,19 +210,14 @@ function ProjectRow({ name, split, day, projectId, sessionNames }: {
       </button>
       {open && (
         <div className="mb-1 ml-6 space-y-0.5">
-          {tasks.map(([id, task]) => <TaskRow key={id} id={id} split={task} />)}
+          {tasks.map(([id, task]) => <DetailRow key={id} icon={ListTodo} label={names.tasks[id] ?? 'Task'} split={task} />)}
           {sessions.map(([id, session]) => (
-            <DetailRow key={id} icon={Terminal} label={sessionNames[id] ?? 'Session'} split={session} />
+            <DetailRow key={id} icon={Terminal} label={names.sessions[id] ?? 'Session'} split={session} />
           ))}
         </div>
       )}
     </div>
   );
-}
-
-function TaskRow({ id, split }: { id: string; split: Split }) {
-  const task = useEngram(id);
-  return <DetailRow icon={ListTodo} label={task.data?.title ?? 'Task'} split={split} />;
 }
 
 function DetailRow({ icon: Icon, label, split }: { icon: typeof Terminal; label: string; split: Split }) {

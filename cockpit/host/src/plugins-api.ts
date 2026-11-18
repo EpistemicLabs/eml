@@ -9,13 +9,21 @@ import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
 import { handleRepositoryApi } from './plugins-repository.js'
 import { isLocalRequest } from './remote-access.js'
-import type { TimeTracker } from './time-tracking.js'
+import type { Place, TimeTracker } from './time-tracking.js'
+
+/** Names by space id ('' for the main space), by projectKey and by task id; null when unknown. */
+export interface TimeNames {
+  spaces: Record<string, string>
+  projects: Record<string, string | null>
+  tasks: Record<string, string | null>
+}
 
 /**
  * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
  * project's views, Brain among them, that Settings › EML Plugins switches on
  * or off, for the whole cockpit — every browser of it sees the same. Brain off
  * hides only the pane view; the brain itself and the header's Brain tab stay.
+ * Brain starts on, the others off (PLUGIN_DEFAULTS); the user's own switch wins.
  *
  *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
@@ -23,7 +31,7 @@ import type { TimeTracker } from './time-tracking.js'
  *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
  *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
  *   DELETE /api/plugins/shell/<id>              → end a Shell plugin terminal (its pane closed)
- *   POST  /api/plugins/time/beat { projectId, sessionId } → the user is at the cockpit (time-tracking.ts)
+ *   POST  /api/plugins/time/beat { spaceId, projectId, sessionId, fresh? } → the user is at the cockpit (time-tracking.ts)
  *   GET   /api/plugins/time?days=              → the last days' times, today last, and the sessions' names
  *
  * The Worktrees routes read only: the folder comes from the project registry,
@@ -38,10 +46,13 @@ export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
 
-/** Every plugin is on until the user switches it off. */
+/** A plugin's state until the user switches it: Brain on, every other plugin off. */
+export const PLUGIN_DEFAULTS: Record<PluginId, boolean> = { brain: true, note: false, worktrees: false, repository: false, shell: false, time: false }
+
+/** What the user chose, else the plugin's default. */
 export async function pluginStates(): Promise<Record<PluginId, boolean>> {
   const chosen = (await readCockpitConfig())?.plugins ?? {}
-  return Object.fromEntries(PLUGIN_IDS.map((id) => [id, chosen[id] !== false])) as Record<PluginId, boolean>
+  return Object.fromEntries(PLUGIN_IDS.map((id) => [id, chosen[id] ?? PLUGIN_DEFAULTS[id]])) as Record<PluginId, boolean>
 }
 
 export interface Worktree {
@@ -94,6 +105,8 @@ export interface PluginsApiDeps {
   time?: TimeTracker
   /** What the sidebar calls a session; null when it has no name yet. */
   sessionName?: (sessionId: string) => string | null
+  /** The names of the Time view's spaces, projects and tasks, each looked up in its own space. */
+  timeNames?: (refs: { projects: Place[]; tasks: Array<{ spaceId: string | null; taskId: string }> }) => Promise<TimeNames>
   git?: Git
   home?: string
 }
@@ -168,7 +181,7 @@ export async function handlePluginsApi(
     if (pathname === '/api/plugins/time/beat' && method === 'POST') {
       const body = await readJson(req)
       const id = (value: unknown) => (typeof value === 'string' && value ? value : null)
-      await deps.time.beat({ projectId: id(body.projectId), sessionId: id(body.sessionId) })
+      await deps.time.beat({ spaceId: id(body.spaceId), projectId: id(body.projectId), sessionId: id(body.sessionId) }, body.fresh === true)
       json(res, 200, { ok: true })
       return true
     }
@@ -176,7 +189,10 @@ export async function handlePluginsApi(
     const days = deps.time.days(Math.min(Math.max(Number(url.searchParams.get('days')) || 7, 1), 31))
     const ids = new Set(days.flatMap((day) => Object.keys(day.sessions)))
     const sessions = Object.fromEntries([...ids].map((sid) => [sid, deps.sessionName?.(sid) ?? null]))
-    json(res, 200, { days, sessions })
+    const projects = [...new Map(days.flatMap((day) => Object.entries(day.projects))).values()]
+    const tasks = [...new Map(days.flatMap((day) => Object.entries(day.tasks))).entries()].map(([taskId, t]) => ({ spaceId: t.spaceId, taskId }))
+    const names = (await deps.timeNames?.({ projects, tasks })) ?? { spaces: {}, projects: {}, tasks: {} }
+    json(res, 200, { days, names: { ...names, sessions } })
     return true
   }
   if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
