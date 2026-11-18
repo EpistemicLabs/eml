@@ -120,6 +120,8 @@ describe('task runner', () => {
     const step = { id: 't', title: 'Deploy', content: 'Deploy the page.' }
     expect(mod.stepPrompt(step, 'before')).toContain('do not act yet')
     expect(mod.stepPrompt(step, 'after')).toContain('for review')
+    expect(mod.stepPrompt(step, 'after')).toContain('Do NOT close the task yourself')
+    expect(mod.stepPrompt(step, 'none')).toContain('close it')
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
   })
 })

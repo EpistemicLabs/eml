@@ -55,16 +55,16 @@ const childrenOf = (task: Task) => (task.relations ?? []).filter((r) => r.relati
 /** The prompt a step's session starts with; its task and the rules come with its start hook. */
 export function stepPrompt(step: { id: string; title: string; content: string }, checkpoint: string): string {
   const how = checkpoint === 'before'
-    ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question.'
+    ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it and the work is done, close the task.'
     : checkpoint === 'after'
-      ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review.'
-      : 'No checkpoint: do the step to the end on your own; ask only when you cannot go on.'
+      ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review, with a [lasse] question asking him to review it. Do NOT close the task yourself: it stays open until the user has reviewed the result and told you it is done; then close it.'
+      : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   return [
     `The task runner started you for "${step.title}" (task ${step.id}).`,
     step.content,
     '',
     how,
-    `When it is done, close it with eml_track_task (status resolved, outcome) and end with the handoff.`,
+    'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
   ].join('\n')
 }
 
