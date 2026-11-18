@@ -188,7 +188,10 @@ export function writeGithubToken(token: unknown): string | null {
 }
 
 interface ReleaseAsset { name: string; url: string; size: number }
-interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[] }
+interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[]; body: string }
+
+/** One release's "What's new" bullets, for the notes shown after an update. */
+export interface ReleaseNotes { version: string; url: string; highlights: string[] }
 
 function githubApiGet(pathname: string, token: string | null): Promise<Response> {
   return fetch(`${API}${pathname}`, {
@@ -202,13 +205,13 @@ function githubApiGet(pathname: string, token: string | null): Promise<Response>
   })
 }
 
-async function githubJson(pathname: string, token: string | null): Promise<unknown> {
+async function githubResponse(pathname: string, token: string | null): Promise<Response> {
   const res = await githubApiGet(pathname, token)
   // A public repository needs no token: an expired or revoked one must not
   // block updates, so a rejected token gets one retry without it.
   if (res.status === 401 && token) {
     const anonymous = await githubApiGet(pathname, null)
-    if (anonymous.ok) return anonymous.json()
+    if (anonymous.ok) return anonymous
   }
   if (res.status === 401) throw new Error('GitHub rejected the token (expired or revoked) — replace it in Settings › About › Updates.')
   if (res.status === 404) {
@@ -217,11 +220,15 @@ async function githubJson(pathname: string, token: string | null): Promise<unkno
       : `No release found for ${REPO}.`)
   }
   if (!res.ok) throw new Error(`GitHub API ${pathname} → HTTP ${res.status}`)
-  return res.json()
+  return res
+}
+
+async function githubJson(pathname: string, token: string | null): Promise<unknown> {
+  return (await githubResponse(pathname, token)).json()
 }
 
 function parseRelease(raw: unknown): Release {
-  const r = raw as { tag_name?: string; html_url?: string; published_at?: string | null; assets?: Array<{ name: string; url: string; size: number }> }
+  const r = raw as { tag_name?: string; html_url?: string; published_at?: string | null; assets?: Array<{ name: string; url: string; size: number }>; body?: string | null }
   const version = (r.tag_name ?? '').replace(/^v/, '')
   if (!VERSION_RE.test(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z`)
   return {
@@ -229,7 +236,51 @@ function parseRelease(raw: unknown): Release {
     url: r.html_url ?? '',
     publishedAt: r.published_at ?? null,
     assets: (r.assets ?? []).map((a) => ({ name: a.name, url: a.url, size: a.size })),
+    body: r.body ?? '',
   }
+}
+
+/**
+ * The bullets of a release body's "### What's new" section, as plain text.
+ * scripts/check-release-notes.mjs requires that section with the same heading.
+ */
+export function extractReleaseHighlights(body: string): string[] {
+  const lines = body.split(/\r?\n/)
+  const start = lines.findIndex((line) => /^###\s+what['’]s new\s*$/i.test(line.trim()))
+  if (start < 0) return []
+  const end = lines.findIndex((line, i) => i > start && /^#{1,3}\s/.test(line.trim()))
+  return lines.slice(start + 1, end < 0 ? undefined : end).flatMap((line) => {
+    const bullet = line.match(/^\s*[-*+]\s+(.+)$/)
+    // Markdown links and images keep their text; emphasis and code marks go.
+    const plain = bullet?.[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_~`]/g, '').trim()
+    return plain ? [plain] : []
+  })
+}
+
+/**
+ * The notes of the releases an update went through: after `from`, up to and
+ * including `to`, newest first. Read on demand when the user opens them after
+ * an update; nothing is stored. Releases are listed newest first, so the pages
+ * stop at the first one at or below `from`.
+ */
+export async function releaseNotesBetween(from: string, to: string): Promise<ReleaseNotes[]> {
+  if (!VERSION_RE.test(from) || !VERSION_RE.test(to)) throw new Error('from and to must be X.Y.Z')
+  const { token } = await githubToken()
+  const notes: ReleaseNotes[] = []
+  for (let page = 1; ; page++) {
+    const res = await githubResponse(`/repos/${REPO}/releases?per_page=100&page=${page}`, token)
+    const list = await res.json() as Array<{ draft?: boolean; prerelease?: boolean }>
+    let reachedFrom = false
+    for (const raw of list) {
+      if (raw.draft || raw.prerelease) continue
+      let release: Release
+      try { release = parseRelease(raw) } catch { continue /* not a vX.Y.Z tag */ }
+      if (compareVersions(release.version, from) <= 0) reachedFrom = true
+      else if (compareVersions(release.version, to) <= 0) notes.push({ version: release.version, url: release.url, highlights: extractReleaseHighlights(release.body) })
+    }
+    if (reachedFrom || !/rel="next"/.test(res.headers.get('link') ?? '')) break
+  }
+  return notes.sort((a, b) => compareVersions(b.version, a.version))
 }
 
 async function download(asset: ReleaseAsset, dest: string, token: string | null): Promise<void> {
