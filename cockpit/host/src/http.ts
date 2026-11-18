@@ -141,6 +141,8 @@ export interface HostDeps {
   cycles?: Cycles
   /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
   turnEnded?: (sessionId: string, text: string) => void
+  /** Task system: the user answered a session, or it was archived — its wait on the task is over. */
+  answered?: (sessionId: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
   /** Web push devices, the test and what the user is looking at (push-api.ts). */
@@ -274,6 +276,7 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     for (const sessionId of plan.archive) {
       await stop(sessionId, 'archived')
       ledger.archive(sessionId)
+      deps.answered?.(sessionId)
     }
     json(res, 200, { success: true, archived: plan.archive })
     return true
@@ -1127,6 +1130,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         {
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
           ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
+          ...(deps.answered ? { answered: deps.answered } : {}),
         },
         typeof named === 'string' && named ? named : null,
         await readJson(req),

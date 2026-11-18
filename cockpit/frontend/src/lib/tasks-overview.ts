@@ -239,7 +239,12 @@ export type Focus = {
   backlog: OverviewItem[];
 };
 
-export function focusGroups(overview: Overview, cycleId: string | null, now: Date): Focus {
+/**
+ * `waitsNow`: whether a session on this task is waiting for the user right now. With it, the live
+ * state decides "needs you" and a task's waiting_on only gives the question; a wait no session
+ * holds any more (an old handoff) no longer counts.
+ */
+export function focusGroups(overview: Overview, cycleId: string | null, now: Date, waitsNow?: (taskId: string) => boolean): Focus {
   const today = now.toLocaleDateString('en-CA');
   const weekAgo = new Date(now.getTime() - WEEK_MS).toISOString();
   const items = [...overview.yourTurn, ...overview.running, ...overview.active, ...overview.planned];
@@ -247,7 +252,8 @@ export function focusGroups(overview: Overview, cycleId: string | null, now: Dat
   const focus: Focus = { needsYou: [], urgentDue: [], blocking: [], thisCycle: [], inProgress: [], backlog: [] };
   for (const item of items) {
     const t = item.task;
-    if (item.waiting) focus.needsYou.push(item);
+    const needsYou = waitsNow ? [t, ...item.steps].some((x) => waitsNow(x.id)) : Boolean(item.waiting);
+    if (needsYou) focus.needsYou.push(item);
     else if (t.priority === 'urgent' || isDue(t, today)) focus.urgentDue.push(item);
     else if (blockers.has(t.id)) focus.blocking.push(item);
     else if (cycleId && t.subjects.includes(cycleId) && !item.running) focus.thisCycle.push(item);

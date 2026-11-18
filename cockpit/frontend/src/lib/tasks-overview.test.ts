@@ -131,3 +131,21 @@ describe('my tasks and cycles', () => {
     expect(carried(open[1])).toBe(0);
   });
 });
+
+describe('needs you follows the sessions', () => {
+  it('counts a task only while a session on it or its steps waits, whatever an old handoff left', async () => {
+    const { focusGroups } = await import('./tasks-overview');
+    const o = buildOverview({
+      now, resolved: [], jobs: [], sessions: [],
+      open: [
+        task({ id: 'stale', properties: { waiting_on: { who: 'lasse', why: 'old question?', since: 's' } } }),
+        task({ id: 'live' }),
+        task({ id: 'parent' }),
+        task({ id: 'step', parent_id: 'parent', status: 'planned' }),
+      ],
+    });
+    const f = focusGroups(o, null, now, (id) => id === 'live' || id === 'step');
+    expect(f.needsYou.map((i) => i.task.id).sort()).toEqual(['live', 'parent']);
+    expect(f.needsYou.find((i) => i.task.id === 'stale')).toBeUndefined();
+  });
+});

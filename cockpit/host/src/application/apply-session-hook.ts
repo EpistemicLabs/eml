@@ -9,6 +9,8 @@ export interface SessionHookDeps {
   turns: TurnTracker
   /** A turn finished: the task router reads its handoff (application/task-router.ts). */
   turnDone?: (sessionId: string, payload: Record<string, unknown>) => void
+  /** The user typed into the session: whatever it waited for is answered (task router). */
+  answered?: (sessionId: string) => void
 }
 
 /**
@@ -51,6 +53,7 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   // A prompt typed into a terminal is a new turn, as a chat message is (chat-bridge.ts sendMessage):
   // whoever it waited for has answered, and an archived session is back in the lists.
   if (signal.state === 'working' && terminal) {
+    if (deps.ledger.get(sessionId)?.attention) deps.answered?.(sessionId)
     deps.ledger.setAttention(sessionId, null)
     deps.ledger.unarchive(sessionId)
   }

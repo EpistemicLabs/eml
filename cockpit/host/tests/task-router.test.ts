@@ -177,6 +177,25 @@ describe('task router', () => {
     expect(waited).toEqual(['w1'])
   })
 
+  it('keeps only the question, and clears a wait when the user answers the session that set it', async () => {
+    expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The flairmax task was')).toBe('Close the task despite the open mails?')
+    const { ledger, brain, r } = setup({ id: 't20', status: 'active', properties: {} })
+    ledger.recordSpawn('s20', null, 'bp-eml', 'claude', false, 't20')
+    ledger.recordSpawn('s21', null, 'bp-eml', 'claude', false, 't20')
+    await r.turnEnded('s20', HANDOFF)
+    await r.answered('s21')
+    expect(brain.posts.filter((p) => 'waiting_on' in p.body && p.body.waiting_on === null)).toHaveLength(0)
+    await r.answered('s20')
+    expect(brain.posts.at(-1)!.body).toEqual({ waiting_on: null })
+  })
+
+  it('clears the wait of a task that was closed', async () => {
+    const { ledger, brain, r } = setup({ id: 't21', status: 'resolved', properties: { waiting_on: { who: 'lasse', why: 'x', since: 's', session_id: 'other' } } })
+    ledger.recordSpawn('s22', null, 'bp-eml', 'claude', false, 't21')
+    await r.turnEnded('s22', '### Handoff\nResult: done')
+    expect(brain.posts).toEqual([{ path: '/task/t21/track', body: { waiting_on: null } }])
+  })
+
   it('logs instead of throwing when the brain fails', async () => {
     const { ledger, brain, r, logs } = setup({ id: 't8', status: 'active', properties: {} })
     brain.get = async () => { throw new Error('brain down') }

@@ -134,7 +134,7 @@ describe('session task', () => {
     ledger.recordSpawn(id(6), null, 'bp-eml', 'claude')
     await tasks.context(id(6))
     await tasks.named(id(6), 'Größe der Seite prüfen')
-    expect(brain.tasks.get('t1')).toMatchObject({ title: 'grosse-der-seite-prufen', content: `Größe der Seite prüfen (cockpit session ${id(6)}).` })
+    expect(brain.tasks.get('t1')).toMatchObject({ title: 'grosse-der-seite-prufen', content: `Größe der Seite prüfen (cockpit session ${id(6)}).`, text: 'Named after its session.' })
     await tasks.named(id(6), 'Another name')
     expect(brain.tasks.get('t1')!.title).toBe('grosse-der-seite-prufen')
     // The task survives a respawn as the cockpit's own.

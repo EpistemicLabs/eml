@@ -306,7 +306,10 @@ function MyTasks({ overview, loaded, cycle, keep, agents, onOpen }: {
   overview: NonNullable<ReturnType<typeof buildOverview>>; loaded: Loaded; cycle: Cycle | null;
   keep: (items: OverviewItem[]) => OverviewItem[]; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void;
 }) {
-  const focus = focusGroups(overview, cycle?.id ?? null, new Date());
+  const focus = focusGroups(overview, cycle?.id ?? null, new Date(), (id) => {
+    const state = agents.get(id);
+    return state === 'needs input' || state === 'error';
+  });
   const progress = cycle ? cycleProgress(loaded.open, loaded.resolved, cycle.id) : null;
   return (
     <section>

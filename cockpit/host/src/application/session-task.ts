@@ -146,7 +146,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
   const rename = async (task: Task, title: string, sessionId: string, brain: Pick<EmlApi, 'post'>) => {
     const name = kebabTitle(title)
     if (!name) return
-    await brain.post(`/task/${task.id}/track`, { title: name, content: `${title} (cockpit session ${sessionId}).` })
+    await brain.post(`/task/${task.id}/track`, { title: name, content: `${title} (cockpit session ${sessionId}).`, text: 'Named after its session.' })
   }
 
   return {

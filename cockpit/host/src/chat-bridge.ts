@@ -127,6 +127,8 @@ export interface ChatContext {
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
   /** A turn finished with this text: the task router reads its handoff (application/task-router.ts). */
   turnDone?: (sessionId: string, text: string) => void
+  /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
+  answered?: (sessionId: string) => void
   /**
    * Before an idle stop: the prompt that asks this session for its handoff
    * (application/session-task.ts), or null when it needs none. Asked once per
@@ -824,6 +826,7 @@ export class ChatBridge {
     entry.status = null
     entry.textAfterStatus = ''
     entry.askedSummary = false
+    if (this.ctx.ledger.get(entry.sessionId)?.attention) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)

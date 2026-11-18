@@ -58,6 +58,14 @@ export interface WaitingOn {
   session_id: string
 }
 
+/** A question as the Inbox shows it: up to its first question mark, at most 160 characters. */
+export function shortQuestion(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const mark = flat.indexOf('?')
+  const cut = mark >= 0 ? flat.slice(0, mark + 1) : flat
+  return cut.length > 160 ? `${cut.slice(0, 159)}…` : cut
+}
+
 /** Whose turn it is after this turn; null when nobody waits. Pure, for the tests. */
 export function decideWaiting(facts: {
   handoff: Handoff | null
@@ -69,7 +77,7 @@ export function decideWaiting(facts: {
 }): WaitingOn | null {
   const { handoff, attention } = facts
   const wait = (why: string): WaitingOn => ({ who: facts.owner, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
-  if (handoff && handoff.forUser.length > 0) return wait(handoff.forUser.join(' · '))
+  if (handoff && handoff.forUser.length > 0) return wait(handoff.forUser.map(shortQuestion).join(' · '))
   if (attention && needsAnswer(attention.kind as never)) return wait(attention.reason ?? (attention.kind === 'failed' ? 'The session failed' : 'The session has a question'))
   if (facts.checkpoint === 'after' && (handoff?.result || attention?.kind === 'review')) return wait(`Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
   return null
@@ -78,6 +86,8 @@ export function decideWaiting(facts: {
 export interface TaskRouter {
   /** A session's turn ended; `message` is its last reply. Never throws. */
   turnEnded(sessionId: string, message: string): Promise<void>
+  /** The user answered the session, or it was put away: a wait it set on its task is over. Never throws. */
+  answered(sessionId: string): Promise<void>
 }
 
 export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
@@ -118,6 +128,8 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
+      // A closed task waits on nobody.
+      if (task.properties?.waiting_on) await brain.post(`/task/${task.id}/track`, { waiting_on: null }).catch(() => {})
       const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))
       if (!asks) {
         deps.finished?.(sessionId)
@@ -145,6 +157,24 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
   }
 
   return {
+    async answered(sessionId) {
+      try {
+        const entry = deps.ledger.get(sessionId)
+        if (!entry?.taskId || entry.taskId.startsWith('pending-')) return
+        const space = deps.spaces.resolve(entry.spaceId)
+        if (!taskSystemOn(space)) return
+        const brain = deps.brain(space)
+        if (!brain) return
+        const task = await brain.get(`/engram/${entry.taskId}`) as Task
+        if (task.properties?.waiting_on?.session_id !== sessionId) return
+        await brain.post(`/task/${task.id}/track`, { waiting_on: null })
+        lastRouted.delete(sessionId)
+        deps.log(`[router] ${sessionId.slice(0, 8)} answered: wait on task ${task.id.slice(0, 8)} cleared`)
+      } catch (err) {
+        deps.log(`[router] ${sessionId.slice(0, 8)} answered failed: ${(err as Error).message}`)
+      }
+    },
+
     async turnEnded(sessionId, message) {
       try {
         await route(sessionId, message)
