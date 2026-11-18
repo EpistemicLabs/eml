@@ -27,6 +27,8 @@ export interface ProvenanceEnv {
   CLAUDE_CONFIG_DIR?: string
 }
 
+/** What Qwen Code puts between its own name and the server's in its MCP client name. */
+const PER_SERVER_SUFFIX = '-mcp-client-'
 const MODEL_CACHE_MS = 15_000
 const HOST_TIMEOUT_MS = 800
 /** Only the tail of a transcript is read for the last assistant message. */
@@ -56,7 +58,10 @@ export class Provenance {
   /** Set from the MCP client's name once the handshake is done. */
   setHarness(name: string | undefined | null): void {
     const trimmed = name?.trim()
-    if (trimmed) this.harnessName = trimmed.replace(/^(.+)-mcp-client-.+$/, '$1')
+    if (!trimmed) return
+    // A plain search, no regex: the name comes from the client.
+    const suffix = trimmed.indexOf(PER_SERVER_SUFFIX)
+    this.harnessName = suffix > 0 && suffix + PER_SERVER_SUFFIX.length < trimmed.length ? trimmed.slice(0, suffix) : trimmed
   }
 
   get harness(): string | null {
