@@ -55,8 +55,8 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   const overrideTitle = pane?.title;
   // Note panes are named after their note's first line.
   const isNoteView = pane?.paneView === 'note';
-  // Brain, worktrees and repository show the project, not one item of it; the shell is this computer's, of no project.
-  const shellView = pane?.paneView === 'shell';
+  // Brain, worktrees and repository show the project, not one item of it; the shell and the time are this computer's, of no project.
+  const shellView = pane?.paneView === 'shell' || pane?.paneView === 'time';
   const projectView = pane?.paneView === 'brain' || pane?.paneView === 'worktrees' || pane?.paneView === 'repository' || shellView ? paneViewDef(pane.paneView).label : null;
   const { data: note } = useNote(isNoteView ? pane.noteId : null);
   const renameNote = useRenameNote();
@@ -124,7 +124,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   // a brain-wide pane (no project) names the instance — for now there is only
   // one ("Main"), hosted/other instances come later.
   const subtitle = shellView
-    ? '~'
+    ? (pane?.paneView === 'time' ? 'All projects' : '~')
     : projectView
     ? selectedProject?.displayName ?? 'Main'
     : selectedProject?.displayName ?? '';

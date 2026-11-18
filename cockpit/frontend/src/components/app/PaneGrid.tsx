@@ -286,6 +286,7 @@ function PaneSlot({
         isActive={isActive}
         paneId={paneId}
         selectedProject={ctx.project}
+        projects={slotDeps.projects}
         selectedSession={ctx.session}
         sessionId={ctx.pane.sessionId}
         paneView={ctx.pane.paneView}

@@ -32,6 +32,7 @@ import { api } from '@/utils/api';
 import { readSettings, setHostChatView } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
+import { useTimeBeat } from '@/components/time-plugin/useTimeBeat';
 import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
@@ -198,6 +199,8 @@ function AppContentInner() {
   }, []);
   // Note changes on the same stream → note queries + the sidebar's unseen dot.
   useNotesLiveSync();
+  // The Time plugin's clock: beats while someone works here (time-plugin/useTimeBeat.ts).
+  useTimeBeat();
 
   // A space change — from the desk bar, the sidebar menu or Settings — means
   // another brain: drop what the brain views cached and refetch the projects.
