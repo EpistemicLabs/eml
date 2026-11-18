@@ -67,3 +67,29 @@ describe('the tasks overview', () => {
     expect(matches(t, { spaceId: null, project: null, priority: null, words: 'pricing' })).toBe(false);
   });
 });
+
+describe('projects in the Tasks view', () => {
+  it('groups open tasks by project, the busy ones first, and folds the quiet ones', async () => {
+    const { groupByProject } = await import('./tasks-overview');
+    const t = (id: string, scope: string, extra: Partial<RawTask> = {}) => task({ id, scope, ...extra });
+    const o = buildOverview({
+      now, resolved: [], jobs: [],
+      sessions: [{ taskId: 'run', sessionId: 's', name: 'S', working: true }],
+      open: [
+        t('old', 'project.archive', { updated_at: '2026-10-01T00:00:00Z' }),
+        t('run', 'project.shop', { updated_at: '2026-10-01T00:00:00Z' }),
+        t('ask', 'project.website', { updated_at: '2026-10-01T00:00:00Z', properties: { waiting_on: { who: 'lasse', why: 'go?', since: 's' } } }),
+        t('due', 'project.ops', { updated_at: '2026-10-01T00:00:00Z', properties: { due_date: '2026-11-17' } }),
+        t('fresh', 'project.website', { updated_at: '2026-11-16T00:00:00Z' }),
+        t('loose', 'global', { updated_at: '2026-11-16T00:00:00Z' }),
+      ],
+    });
+    const groups = groupByProject(o, now);
+    expect(groups.map((g) => [g.brainId, g.active])).toEqual([
+      ['website', true], ['shop', true], ['ops', true], [null, true], ['archive', false],
+    ]);
+    expect(groups[0]).toMatchObject({ name: 'Qualimero website', waiting: 1, running: 0 });
+    expect(groups[0].items.map((i) => i.task.id)).toEqual(['ask', 'fresh']);
+    expect(groups.find((g) => g.brainId === null)!.name).toBe('No project');
+  });
+});

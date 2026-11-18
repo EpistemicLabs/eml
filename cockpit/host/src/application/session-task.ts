@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.js'
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
+import { LEAD_HANDOFF } from '../domain/project-lead.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session in
@@ -21,7 +22,7 @@ import type { SessionLedger } from '../session-ledger.js'
  */
 
 export interface SessionTaskDeps {
-  ledger: Pick<SessionLedger, 'get' | 'setTask' | 'expectedTaskParent'>
+  ledger: Pick<SessionLedger, 'get' | 'setTask' | 'expectedTaskParent' | 'claimLead'>
   spaces: Pick<BrainSpaces, 'resolve'>
   /** The brain as the space's sessions see it (brain-mcp.ts sessionClient); null when the space has no agent. */
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
@@ -147,12 +148,16 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
 
   return {
     handoffBeforeStop(sessionId) {
+      // A project lead leaves the project's status, in any space.
+      if (deps.ledger.claimLead(sessionId)) return LEAD_HANDOFF
       const t = target(sessionId)
       if (!t?.entry.taskId || t.entry.worker) return null
       return HANDOFF_BEFORE_STOP
     },
 
     async context(sessionId) {
+      // A project lead works on no task of its own: its first message says what it does.
+      if (deps.ledger.claimLead(sessionId)) return ''
       const t = target(sessionId)
       if (!t) return ''
       let taskId = t.entry.taskId

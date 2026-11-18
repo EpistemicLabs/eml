@@ -1,3 +1,4 @@
+import type { ProjectLead } from './domain/project-lead.js'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
@@ -54,6 +55,8 @@ export interface LedgerEntry {
   taskId: string | null
   /** Task system: the cockpit created the task for this session (application/session-task.ts). */
   taskAuto?: true
+  /** The project it leads, and the day (domain/project-lead.ts); it has no task of its own. */
+  leadOf?: ProjectLead
   /** The brain space the session runs in (brain-space.ts); null = the main space (pre-spaces entries). */
   spaceId: string | null
   /**
@@ -125,6 +128,7 @@ function load(): LedgerFile {
           worker: entry.worker === true,
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
           ...(entry.taskAuto === true ? { taskAuto: true as const } : {}),
+          ...(entry.leadOf && typeof entry.leadOf.projectId === 'string' && typeof entry.leadOf.day === 'string' ? { leadOf: { projectId: entry.leadOf.projectId, day: entry.leadOf.day } } : {}),
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
@@ -160,6 +164,7 @@ export class SessionLedger {
   /** Who asked for a worker that has no entry yet: its first spawn takes it. */
   private expectedParents = new Map<string, string>()
   private expectedTaskParents = new Map<string, string>()
+  private expectedLeads = new Map<string, ProjectLead>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -207,6 +212,7 @@ export class SessionLedger {
       worker: worker || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
       ...(prev?.taskAuto && (taskId === null || taskId === prev.taskId) ? { taskAuto: true as const } : {}),
+      ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
@@ -265,6 +271,32 @@ export class SessionLedger {
 
   expectedTaskParent(sessionId: string): string | null {
     return this.expectedTaskParents.get(sessionId) ?? null
+  }
+
+  /** A project lead the page is about to open (POST /api/projects/lead); recorded on the session at its first hook. */
+  expectLead(sessionId: string, lead: ProjectLead): void {
+    this.expectedLeads.set(sessionId, lead)
+  }
+
+  /** The lead of a project for a day: a session that is one, or one about to start; null when there is none. */
+  leadFor(projectId: string, day: string, spaceId: string | null): string | null {
+    for (const [sessionId, lead] of this.expectedLeads) if (lead.projectId === projectId && lead.day === day && !this.data.sessions[sessionId]?.leadOf) return sessionId
+    const found = Object.entries(this.data.sessions)
+      .find(([, e]) => e.leadOf?.projectId === projectId && e.leadOf.day === day && !e.archivedAt && (e.spaceId ?? null) === spaceId)
+    return found?.[0] ?? null
+  }
+
+  /** The session's lead record, persisting an expected one on first use. */
+  claimLead(sessionId: string): ProjectLead | null {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return null
+    if (entry.leadOf) return entry.leadOf
+    const expected = this.expectedLeads.get(sessionId)
+    if (!expected) return null
+    entry.leadOf = expected
+    this.expectedLeads.delete(sessionId)
+    this.persist()
+    return expected
   }
 
   markRead(sessionId: string): void {

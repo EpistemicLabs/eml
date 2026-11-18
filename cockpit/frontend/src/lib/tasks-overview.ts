@@ -165,3 +165,58 @@ export function matches(task: OverviewTask, filter: OverviewFilter): boolean {
   const text = `${task.title} ${task.content}`.toLowerCase();
   return words.every((word) => text.includes(word));
 }
+
+/** A project and its open tasks, as the Tasks view shows it. */
+export type ProjectGroup = {
+  key: string;
+  spaceId: string;
+  spaceName: string;
+  /** The brain project id, or null for tasks outside a project. */
+  brainId: string | null;
+  name: string;
+  items: OverviewItem[];
+  waiting: number;
+  running: number;
+  due: number;
+  /** Something waits, runs, is due, or changed in the last seven days. */
+  active: boolean;
+  lastUpdate: string;
+};
+
+/** Due today or earlier, in the browser's day. */
+export const isDue = (task: OverviewTask, today: string) => Boolean(task.dueDate && task.dueDate.slice(0, 10) <= today);
+
+/**
+ * The open tasks by project, the projects with something going on first:
+ * waiting on the user, then running, then due, then the latest change. Within a
+ * project: whose turn first, then running, then by priority and change.
+ */
+export function groupByProject(overview: Overview, now: Date): ProjectGroup[] {
+  const today = now.toLocaleDateString('en-CA');
+  const items = [...overview.yourTurn, ...overview.running, ...overview.active, ...overview.planned];
+  const groups = new Map<string, ProjectGroup>();
+  for (const item of items) {
+    const t = item.task;
+    const brainId = t.scope.startsWith('project.') ? t.scope.slice('project.'.length) : null;
+    const key = `${t.spaceId}|${brainId ?? ''}`;
+    const group = groups.get(key) ?? {
+      key, spaceId: t.spaceId, spaceName: t.spaceName, brainId, name: t.project ?? 'No project',
+      items: [], waiting: 0, running: 0, due: 0, active: false, lastUpdate: '',
+    };
+    group.items.push(item);
+    if (item.waiting) group.waiting += 1;
+    if (item.running) group.running += 1;
+    if (isDue(t, today)) group.due += 1;
+    if (t.updatedAt > group.lastUpdate) group.lastUpdate = t.updatedAt;
+    groups.set(key, group);
+  }
+  const weekAgo = new Date(now.getTime() - WEEK_MS).toISOString();
+  const order = (i: OverviewItem) => (i.waiting ? 0 : i.running ? 1 : 2);
+  return [...groups.values()]
+    .map((g) => ({
+      ...g,
+      active: g.waiting > 0 || g.running > 0 || g.due > 0 || g.lastUpdate >= weekAgo,
+      items: g.items.sort((a, b) => order(a) - order(b) || rank(a.task) - rank(b.task) || b.task.updatedAt.localeCompare(a.task.updatedAt)),
+    }))
+    .sort((a, b) => b.waiting - a.waiting || b.running - a.running || b.due - a.due || b.lastUpdate.localeCompare(a.lastUpdate));
+}

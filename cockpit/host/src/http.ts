@@ -10,6 +10,7 @@ import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { SessionTask } from './application/session-task.js'
+import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
@@ -128,6 +129,8 @@ export interface HostDeps {
   sessionTask?: SessionTask
   sessionNamed?: SpawnDeps['sessionNamed']
   createTask?: SpawnDeps['createTask']
+  /** The user's time zone (jobs): a project lead's day. */
+  timeZone?: () => string
   /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
   turnEnded?: (sessionId: string, text: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
@@ -735,6 +738,25 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
     json(res, 200, { text: directoryAnswer(deps, caller, url) })
+    return true
+  }
+
+  // The project lead of today (domain/project-lead.ts): the one of today if there is one, else the id and
+  // first message of a new one, which the page opens on the project's desk. Page Origin only.
+  if (resource === 'projects' && id === 'lead' && method === 'POST') {
+    const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
+    const body = await readJson(req)
+    const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+    const project = space?.registry.get(projectId)
+    if (!space || !project) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: 'This project has no folder in the cockpit, so a lead cannot run in it' } }); return true }
+    const ledger = deps.bridge.ledger
+    const day = leadDay(new Date(), deps.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
+    const name = project.customName ?? project.displayName
+    const existing = ledger.leadFor(projectId, day, space.ledgerKey)
+    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day }); return true }
+    const sessionId = randomUUID()
+    ledger.expectLead(sessionId, { projectId, day })
+    json(res, 200, { sessionId, existing: false, title: `Lead · ${name}`, day, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day) })
     return true
   }
 
