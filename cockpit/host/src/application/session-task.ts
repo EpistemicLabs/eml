@@ -74,7 +74,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- A worker you start gets a task of its own by default. Name its task when it has one: spawn with --task <id> (an existing task, e.g. the customer\'s open task) or --step (a new step of this task, only when it is part of this task\'s own work).',
     '- Handing out work (an inbox, a triage): find the open task it belongs to (eml_list, eml_recall) and start the worker with --task on it; when there is none, start it with --new-task "<title>" --in <the customer\'s or topic\'s project> --task-text "<what needs doing>".',
     '- Planned steps of this task: eml_create_task with parent_id, depends_on and checkpoint (before · after · none); the runner starts them.',
-    '- A new standalone task you create (eml_create_task without parent_id, or --new-task) waits for the user\'s triage in the cockpit: you get a pending id to work and track on. Set approved_by_user only when the user asked for that task in this conversation; then it goes straight in.',
+    '- A new standalone task you create (eml_create_task without parent_id, or --new-task) waits for the user\'s triage in the cockpit: you get a pending id to work and track on. Set approved_by_user (or --approved with --new-task) only when the user asked for that task in this conversation; then it goes straight in.',
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',

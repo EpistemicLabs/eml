@@ -341,9 +341,9 @@ async function main() {
     retarget: (from, to) => { for (const e of ledger.list()) if (e.taskId === from) ledger.setTask(e.sessionId, to) },
   })
   // The spawn API's newTask: in a space with the task system on it waits for triage like a session's own task.
-  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
+  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string; approved?: boolean }) => {
     const fields = { title: kebabTitle(input.title) ?? input.title, content: input.content, scope: input.scope, status: 'active' }
-    if (taskSystemOn(space)) return { id: (await triage.add(space.id, fields, { kind: 'worker', sessionId: null, sessionName: null })).id }
+    if (taskSystemOn(space) && !input.approved) return { id: (await triage.add(space.id, fields, { kind: 'worker', sessionId: null, sessionName: null })).id }
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
     const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>

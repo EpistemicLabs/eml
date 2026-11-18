@@ -5,7 +5,7 @@
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
  *        [--provider <claude | codex>] [--open] [--wakeable]
  *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
- *        [--task <task id> | --step | --new-task <title> [--in <project>] [--task-text <what to do>]]
+ *        [--task <task id> | --step | --new-task <title> [--in <project>] [--task-text <what to do>] [--approved]]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which
  * the host puts into every session's env; without network (a sandboxed
@@ -20,7 +20,8 @@
  * may use, for its whole life. Task system: --task makes the worker work on that
  * brain task; --step makes its task a new step of this session's task;
  * --new-task creates that task first (in --in, else the worker's project) and
- * puts the worker on it. Without any, it gets a task of its own.
+ * puts the worker on it; --approved (only when the user asked for that task)
+ * lets it skip the cockpit's triage. Without any, it gets a task of its own.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
     ...(list('mcp-servers') ? { mcpServers: list('mcp-servers') } : {}),
     ...(arg('task') ? { task: arg('task') } : {}),
     ...(process.argv.includes('--step') ? { step: true } : {}),
-    ...(arg('new-task') ? { newTask: { title: arg('new-task'), ...(arg('in') ? { in: arg('in') } : {}), ...(arg('task-text') ? { text: arg('task-text') } : {}) } } : {}),
+    ...(arg('new-task') ? { newTask: { title: arg('new-task'), ...(arg('in') ? { in: arg('in') } : {}), ...(arg('task-text') ? { text: arg('task-text') } : {}), ...(process.argv.includes('--approved') ? { approved: true } : {}) } } : {}),
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
