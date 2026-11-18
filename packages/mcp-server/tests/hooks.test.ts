@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { sessionStart, shouldRemind, reminderFor, userPromptSubmit, REMINDER_TEXT, formatHookOutput, BOOT_BUDGET_CHARS } from '../src/hooks/index'
+import { sessionStart, shouldRemind, reminderFor, userPromptSubmit, isContinuation, REMINDER_TEXT, formatHookOutput, BOOT_BUDGET_CHARS } from '../src/hooks/index'
 
 const CFG = { EML_URL: 'http://127.0.0.1:1', EML_API_TOKEN: 'eml_test' }
 
@@ -93,6 +93,13 @@ describe('hook user-prompt-submit', () => {
   it('names the project from cwd, but not for the home dir', () => {
     expect(reminderFor('/work/eml', '/home/u')).toMatch(/eml_show project\.eml/)
     expect(reminderFor('/home/u', '/home/u')).toBe(REMINDER_TEXT)
+  })
+
+  it('tells Qwen Code\'s continuation after a tool batch (an empty prompt) from a prompt of the user', () => {
+    expect(isContinuation({ prompt: '' })).toBe(true)
+    expect(isContinuation({ prompt: 'Fix the bug' })).toBe(false)
+    // Claude Code and Codex: a prompt of the user is never empty; an envelope without one is not a continuation.
+    expect(isContinuation({})).toBe(false)
   })
 
   it('drops the cwd nudge when the host delivers the project block', () => {

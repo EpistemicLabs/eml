@@ -10,7 +10,9 @@ import * as path from 'node:path'
  *   else Claude Code's (CLAUDE_CODE_SESSION_ID); both are inherited by this
  *   stdio process. Without either, one id per server process, so "one log per
  *   session" still holds per process.
- * - harness: the MCP client's name from the initialize handshake.
+ * - harness: the MCP client's name from the initialize handshake. Qwen Code
+ *   names its client per server ("qwen-cli-mcp-client-eml_brain"); that suffix
+ *   names this server, not the harness, and is dropped ("qwen-cli").
  * - model: asked per write (/model can switch mid-session) — in the cockpit
  *   from the host, which reads it from the session transcript; outside from
  *   Claude Code's transcript (CLAUDE_CONFIG_DIR). Unknown stays unknown: the
@@ -53,7 +55,8 @@ export class Provenance {
 
   /** Set from the MCP client's name once the handshake is done. */
   setHarness(name: string | undefined | null): void {
-    if (name && name.trim()) this.harnessName = name.trim()
+    const trimmed = name?.trim()
+    if (trimmed) this.harnessName = trimmed.replace(/^(.+)-mcp-client-.+$/, '$1')
   }
 
   get harness(): string | null {
