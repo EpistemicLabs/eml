@@ -36,6 +36,11 @@ export interface TaskRouterDeps {
   waiting(sessionId: string): void
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
+  /**
+   * A task still in triage (application/triage.ts): keep the handoff and whose turn it is for the task
+   * it becomes; the real task's id once it is resolved, else null.
+   */
+  keepPending?(taskId: string, text: string | null, waitingOn: WaitingOn | null): string | null
   log(line: string): void
   now?: () => Date
 }
@@ -95,7 +100,22 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const key = handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
     if (lastRouted.get(sessionId) === key) return
 
-    const task = await brain.get(`/engram/${entry.taskId}`) as Task
+    let taskId = entry.taskId
+    if (taskId.startsWith('pending-')) {
+      const waiting = decideWaiting({ handoff, attention, checkpoint: undefined, owner: deps.owner, sessionId, now: now() })
+      const resolved = deps.keepPending?.(taskId, handoff?.text ?? null, waiting) ?? null
+      if (!resolved) {
+        lastRouted.set(sessionId, key)
+        if (waiting && !(attention && needsAnswer(attention.kind))) {
+          deps.ledger.setAttention(sessionId, { kind: 'question', reason: waiting.why })
+          deps.waiting(sessionId)
+        }
+        deps.log(`[router] ${sessionId.slice(0, 8)} task in triage: handoff kept`)
+        return
+      }
+      taskId = resolved
+    }
+    const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
       const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))

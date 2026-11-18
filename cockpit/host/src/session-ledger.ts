@@ -351,7 +351,7 @@ export class SessionLedger {
 
   /** Set when a job's run starts the session; it holds on every resume. */
   /** Task system: the brain task the session works on; `auto` when the cockpit created it (application/session-task.ts). */
-  setTask(sessionId: string, taskId: string, auto = false): void {
+  setTask(sessionId: string, taskId: string | null, auto = false): void {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     entry.taskId = taskId

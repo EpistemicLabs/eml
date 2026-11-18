@@ -13,6 +13,7 @@ import { allSessionState } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { formatAgo } from '@/components/jobs/jobs';
 import { TaskWorkspace } from '@/components/tasks/TaskWorkspace';
+import { TriageView, useTriage } from '@/components/tasks/TriageView';
 import { openProjectLead, projectIdOfBrain } from '@/lib/project-lead';
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
@@ -53,7 +54,8 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const { turns } = useTurnStore();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'open' | 'done'>('open');
+  const [tab, setTab] = useState<'open' | 'done' | 'triage'>('open');
+  const triage = useTriage();
   const [filter, setFilter] = useState<OverviewFilter>({ spaceId: null, project: null, priority: null, words: '' });
   const [showQuiet, setShowQuiet] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
@@ -126,10 +128,12 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <div className="flex rounded-md border border-border p-0.5">
-            {(['open', 'done'] as const).map((t) => (
+            {(['open', 'triage', 'done'] as const).map((t) => (
               <button key={t} type="button" onClick={() => setTab(t)}
                 className={cn('rounded px-2.5 py-1 text-sm', tab === t ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                {t === 'open' ? 'Open' : 'Done · 7 days'}
+                {t === 'open' ? 'Open' : t === 'done' ? 'Done · 7 days' : (
+                  <>Triage{triage.items.length > 0 && <span className="pl-1.5 text-primary">{triage.items.length}</span>}</>
+                )}
               </button>
             ))}
           </div>
@@ -171,6 +175,7 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
             )}
           </>
         )}
+        {tab === 'triage' && <TriageView items={triage.items} reload={triage.reload} />}
         {overview && tab === 'done' && (
           <Group title="Done" hint="closed in the last 7 days" items={keep(overview.done)} tone="done" onOpen={openTask} />
         )}

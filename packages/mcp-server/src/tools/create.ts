@@ -99,6 +99,7 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),
+      approved_by_user: z.boolean().optional().describe('Set only when the user asked for this task in the conversation. In the EML cockpit a standalone task you create waits for the user\'s triage; with this it goes straight in.'),
         checkpoint: z.enum(CHECKPOINTS).optional().describe('Task system: where this step stops for its person — before (prepares, then asks before acting) · after (acts, then waits for review) · none (runs alone). Leave out for tasks outside a plan.'),
         depends_on: z.array(z.string()).optional().describe('Task system: ids of the steps that must be done before this one starts. Steps without dependencies on each other can run at the same time.'),
       supersedes: supersedes('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),

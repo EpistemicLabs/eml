@@ -33,11 +33,12 @@ import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker } from './turn-state.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, kebabTitle } from './application/session-task.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
+import { createTriage, TriageStore } from './application/triage.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
@@ -290,12 +291,13 @@ async function main() {
     const agent = boundAgent({ agents }, space)
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, pendingTask: (id) => triageStore.get(id) })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
     ledger, spaces, brain: taskBrain, owner, log,
     waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
+    keepPending: (taskId, text, waitingOn) => triage.keep(taskId, text, waitingOn ? { ...waitingOn } : null),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -328,11 +330,20 @@ async function main() {
       if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
     }
   }, 15_000).unref?.()
-  // The spawn API's newTask: the task is created as the space's agent, like a session's own write.
+  // Triage (application/triage.ts): a session's new standalone tasks wait in the cockpit until the user approves them.
+  const triageStore = new TriageStore()
+  const triage = createTriage({
+    store: triageStore, log,
+    brain: (spaceId) => { const space = spaces.get(spaceId); return space ? taskBrain(space) : null },
+    retarget: (from, to) => { for (const e of ledger.list()) if (e.taskId === from) ledger.setTask(e.sessionId, to) },
+  })
+  // The spawn API's newTask: in a space with the task system on it waits for triage like a session's own task.
   const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
+    const fields = { title: kebabTitle(input.title) ?? input.title, content: input.content, scope: input.scope, status: 'active' }
+    if (taskSystemOn(space)) return { id: (await triage.add(space.id, fields, { kind: 'worker', sessionId: null, sessionName: null })).id }
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
-    const post = (scope: string) => brain.post('/engram/task', { title: kebabTitle(input.title) ?? input.title, content: input.content, scope, status: 'active' }) as Promise<{ id: string }>
+    const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>
     try {
       return await post(input.scope).catch(() => post('global'))
     } catch (err) {
@@ -521,10 +532,10 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
-  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
+  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version, triage: { triage, store: triageStore } })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, createTask, timeZone: () => userTimeZone(),
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, createTask, timeZone: () => userTimeZone(), triage, triageStore,
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

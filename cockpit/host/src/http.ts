@@ -10,6 +10,7 @@ import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
 import type { SessionTask } from './application/session-task.js'
+import type { Triage, TriageStore } from './application/triage.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
@@ -131,6 +132,9 @@ export interface HostDeps {
   createTask?: SpawnDeps['createTask']
   /** The user's time zone (jobs): a project lead's day. */
   timeZone?: () => string
+  /** Tasks sessions created that wait for the user's triage (application/triage.ts). */
+  triage?: Triage
+  triageStore?: TriageStore
   /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
   turnEnded?: (sessionId: string, text: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
@@ -739,6 +743,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     json(res, 200, { text: directoryAnswer(deps, caller, url) })
     return true
+  }
+
+  // Triage (application/triage.ts): what waits, and the user's accept, merge or close (page Origin only for the writes).
+  if (resource === 'triage' && deps.triage && deps.triageStore) {
+    if (!id && method === 'GET') {
+      const items = deps.triageStore.pending().map((item) => ({ ...item, spaceName: deps.spaces.get(item.spaceId)?.name ?? null }))
+      json(res, 200, { items })
+      return true
+    }
+    if (id && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        const item = body.action === 'accept' ? await deps.triage.accept(id, typeof body.scope === 'string' && body.scope ? body.scope : undefined)
+          : body.action === 'merge' && typeof body.taskId === 'string' ? await deps.triage.merge(id, body.taskId)
+          : body.action === 'close' ? deps.triage.close(id)
+          : null
+        if (!item) { json(res, 400, { error: { code: 'INVALID_ACTION', message: 'action is accept, merge (with taskId) or close' } }); return true }
+        json(res, 200, { item })
+      } catch (err) {
+        json(res, 409, { error: { code: 'TRIAGE_FAILED', message: (err as Error).message } })
+      }
+      return true
+    }
   }
 
   // The project lead of today (domain/project-lead.ts): the one of today if there is one, else the id and
