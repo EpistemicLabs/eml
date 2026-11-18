@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
-import { agentStates, inboxItems, snoozeTimes } from './TasksView';
+import { agentStates, inboxItems, snoozeTimes, waitReason } from './TasksView';
+import { buildOverview, toOverviewTask, type RawTask } from '@/lib/tasks-overview';
 
 // The Inbox shows what needs the user, without the snoozed ones; each task
 // shows what its agent is doing.
@@ -39,5 +40,28 @@ describe('the Inbox and agent states', () => {
     expect(new Date(t.tomorrow).getHours()).toBe(9);
     expect(new Date(t.monday).getDay()).toBe(1);
     expect(new Date(t.monday).getDate()).toBe(23);
+  });
+});
+
+
+describe('why an agent task waits', () => {
+  const t = (raw: Partial<RawTask> & { id: string }) => toOverviewTask({ title: raw.id, content: '', status: 'planned', scope: 'project.x', updated_at: '2026-11-18T00:00:00Z', ...raw }, { id: 'main', name: 'Main' }, new Map());
+  it('names the runner\'s reason: parent not active, dependency, no project, stopped worker', () => {
+    const tasks = [
+      t({ id: 'chatgpt-ads', status: 'planned' }),
+      t({ id: 'research', parent_id: 'chatgpt-ads', properties: { checkpoint: 'after' } }),
+      t({ id: 'trial', scope: 'entity.online-pen', properties: { checkpoint: 'before' } }),
+      t({ id: 'bill', parent_id: 'trial', properties: { checkpoint: 'before', depends_on: ['trial'] } }),
+      t({ id: 'kit-v4', status: 'active' }),
+      t({ id: 'ready', properties: { checkpoint: 'after' } }),
+    ];
+    const o = buildOverview({ open: tasks, resolved: [], jobs: [], sessions: [], now: new Date('2026-11-18T12:00:00Z') });
+    const all = [...o.yourTurn, ...o.running, ...o.active, ...o.planned];
+    const byId = new Map(tasks.map((x) => [x.id, x]));
+    const why = (id: string) => waitReason(all.find((i) => i.task.id === id)!, byId, new Set(['kit-v4']));
+    expect(why('chatgpt-ads')).toBe('Step research: Waits for its parent task to be active (now planned)');
+    expect(why('trial')).toBe('No project (entity.online-pen): the runner cannot start it');
+    expect(why('kit-v4')).toBe('Worker stopped without finishing: continue its session');
+    expect(why('ready')).toBe('Starts within a minute (at most 3 run at a time)');
   });
 });

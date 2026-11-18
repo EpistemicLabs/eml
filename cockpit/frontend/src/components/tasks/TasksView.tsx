@@ -160,7 +160,9 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
   const agentReasons = useMemo(() => agentTasks({
     tasks: [...(loaded?.open ?? []), ...(loaded?.resolved ?? [])],
     jobs,
-    agentSessions: all.filter((s) => s.worker && s.taskId && !s.archivedAt).map((s) => ({ taskId: s.taskId!, working: allSessionState(s, turns[s.id]) === 'working' })),
+    // A worker of a closed task is history: only the open tasks' agent sessions count.
+    agentSessions: all.filter((s) => s.worker && s.taskId && !s.archivedAt && (loaded?.open ?? []).some((t) => t.id === s.taskId))
+      .map((s) => ({ taskId: s.taskId!, working: allSessionState(s, turns[s.id]) === 'working' })),
     agents: spaces.map((s) => s.agent).filter((a): a is string => Boolean(a)),
   }), [loaded, jobs, all, turns, spaces]);
 
@@ -241,7 +243,8 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
             <MyTasks overview={overview} loaded={loaded!} cycle={cycle?.current ?? null} keep={keep} agents={agents} agentReasons={agentReasons} onOpen={openTask} onAgents={() => setView('agents')} />
           )}
           {view === 'agents' && overview && loaded && (
-            <AgentsView overview={overview} loaded={loaded} jobs={jobs} agentReasons={agentReasons} agents={agents} keep={keep} onOpen={openTask} />
+            <AgentsView overview={overview} loaded={loaded} jobs={jobs} agentReasons={agentReasons} agents={agents} keep={keep} onOpen={openTask}
+              stoppedWorkers={new Set(all.filter((s) => s.worker && s.taskId && !s.archivedAt && allSessionState(s, turns[s.id]) !== 'working').map((s) => s.taskId!))} />
           )}
           {view === 'triage' && <TriageView items={triage.items} reload={triage.reload} />}
           {view === 'projects' && overview && (
@@ -271,12 +274,16 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
 }
 
 /** What agents work on: needs you, running now, scheduled, waiting for their turn, done recently. */
-function AgentsView({ overview, loaded, jobs, agentReasons, agents, keep, onOpen }: {
+function AgentsView({ overview, loaded, jobs, agentReasons, agents, keep, onOpen, stoppedWorkers }: {
   overview: NonNullable<ReturnType<typeof buildOverview>>; loaded: Loaded; jobs: TaskJob[]; agentReasons: Map<string, AgentReason>;
   agents: Map<string, AgentState>; keep: (items: OverviewItem[]) => OverviewItem[]; onOpen: (task: OverviewTask) => void;
+  stoppedWorkers: Set<string>;
 }) {
+  const byId = new Map([...loaded.open, ...loaded.resolved].map((t) => [t.id, t]));
+  const note = (i: OverviewItem) => waitReason(i, byId, stoppedWorkers);
   const open = [...overview.yourTurn, ...overview.running, ...overview.active, ...overview.planned];
-  const isAgent = (i: OverviewItem) => agentReasons.has(i.task.id) || i.steps.some((s) => agentReasons.has(s.id));
+  const isOpen = (t: OverviewTask) => t.status === 'planned' || t.status === 'active';
+  const isAgent = (i: OverviewItem) => agentReasons.has(i.task.id) || i.steps.some((s) => isOpen(s) && agentReasons.has(s.id));
   const theirs = keep(open.filter(isAgent));
   const stateOf = (i: OverviewItem) => [i.task, ...i.steps].map((t) => agents.get(t.id)).find(Boolean);
   const needsYou = theirs.filter((i) => { const s = stateOf(i); return s === 'needs input' || s === 'error'; });
@@ -314,11 +321,37 @@ function AgentsView({ overview, loaded, jobs, agentReasons, agents, keep, onOpen
           </ul>
         </section>
       )}
-      <Group title="Waiting for their turn" hint="planned steps the runner starts, and tasks assigned to an agent" items={waiting} tone="planned" agents={agents} onOpen={onOpen} />
+      <Group title="Waiting for their turn" hint="what each one waits for is on its row" items={waiting} tone="planned" agents={agents} onOpen={onOpen} note={note} />
       <Group title="Done · 7 days" hint="what agents finished" items={done} tone="done" agents={agents} onOpen={onOpen} folded />
       {theirs.length === 0 && done.length === 0 && <p className="mt-6 text-sm text-muted-foreground">No agent works on a task right now.</p>}
     </section>
   );
+}
+
+/**
+ * Why a task of an agent has not started, in the runner's own terms
+ * (host application/task-runner.ts): the first reason that holds, for the task
+ * or, for a task with steps, its first open agent step.
+ */
+export function waitReason(item: OverviewItem, byId: Map<string, OverviewTask>, stoppedWorkers: Set<string>): string | null {
+  const open = (t?: OverviewTask) => Boolean(t && (t.status === 'planned' || t.status === 'active'));
+  const titleOf = (id: string) => readableTitle(byId.get(id)?.title ?? id);
+  const one = (t: OverviewTask): string | null => {
+    if (stoppedWorkers.has(t.id)) return 'Worker stopped without finishing: continue its session';
+    if (!t.checkpoint) return t.assignees.length ? 'Assigned to an agent but no checkpoint: the runner does not start it' : null;
+    if (t.status !== 'planned') return null;
+    if (t.parentId && byId.get(t.parentId)?.status !== 'active') return `Waits for its parent task to be active (now ${byId.get(t.parentId)?.status ?? 'unknown'})`;
+    const blocking = t.dependsOn.filter((id) => byId.get(id)?.status !== 'resolved');
+    if (blocking.length) return `Waits for: ${blocking.map(titleOf).join(', ')}`;
+    if (!t.scope.startsWith('project.')) return `No project (${t.scope}): the runner cannot start it`;
+    return 'Starts within a minute (at most 3 run at a time)';
+  };
+  const own = one(item.task);
+  if (own) return own;
+  const step = item.steps.find((s) => open(s) && (s.checkpoint || stoppedWorkers.has(s.id)));
+  if (!step) return null;
+  const why = one(step);
+  return why ? `Step ${readableTitle(step.title)}: ${why}` : null;
 }
 
 /** The next morning at 9, and the next Monday at 9, in this browser's zone. */
@@ -543,8 +576,10 @@ const AGENT_STYLE: Record<AgentState, string> = {
   'needs input': 'text-primary', error: 'text-destructive', working: 'text-success', done: 'text-muted-foreground',
 };
 
-function Group({ title, hint, items, tone, agents, onOpen, folded = false }: {
+function Group({ title, hint, items, tone, agents, onOpen, folded = false, note }: {
   title: string; hint: string; items: OverviewItem[]; tone: Tone; agents: Map<string, AgentState>; onOpen: (task: OverviewTask) => void; folded?: boolean;
+  /** A line under each row (Agents: what it waits for). */
+  note?: (item: OverviewItem) => string | null;
 }) {
   const [open, setOpen] = useFold(title, !folded);
   if (items.length === 0) return null;
@@ -557,14 +592,14 @@ function Group({ title, hint, items, tone, agents, onOpen, folded = false }: {
       </button>
       {open && (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-          {items.map((item) => <TaskRow key={`${item.task.spaceId}:${item.task.id}`} item={item} tone={tone} agent={agents.get(item.task.id)} onOpen={onOpen} />)}
+          {items.map((item) => <TaskRow key={`${item.task.spaceId}:${item.task.id}`} item={item} tone={tone} agent={agents.get(item.task.id)} onOpen={onOpen} note={note?.(item) ?? null} />)}
         </ul>
       )}
     </section>
   );
 }
 
-function TaskRow({ item, tone, agent, onOpen }: { item: OverviewItem; tone: Tone; agent?: AgentState; onOpen: (task: OverviewTask) => void }) {
+function TaskRow({ item, tone, agent, onOpen, note = null }: { item: OverviewItem; tone: Tone; agent?: AgentState; onOpen: (task: OverviewTask) => void; note?: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const { task, steps } = item;
   const meta = [task.project, task.priority && task.priority !== 'normal' ? task.priority : null, task.stage].filter(Boolean).join(' · ');
@@ -581,6 +616,7 @@ function TaskRow({ item, tone, agent, onOpen }: { item: OverviewItem; tone: Tone
           <button type="button" onClick={() => onOpen(task)} className="block max-w-full truncate text-left text-sm text-foreground hover:underline" title={task.title}>{readableTitle(task.title)}</button>
           <p className="truncate text-xs text-muted-foreground">{[meta, task.spaceName].filter(Boolean).join(' · ')}</p>
           {line && <p className={cn('truncate text-xs', tone === 'you' ? 'text-primary' : 'text-muted-foreground')} title={line}>{line}</p>}
+          {!line && note && <p className="truncate text-xs text-warning" title={note}>{note}</p>}
         </div>
         {agent && <span className={cn('flex-shrink-0 text-[11px]', AGENT_STYLE[agent])}>agent {agent}</span>}
         {carried(task) > 0 && <span className="flex-shrink-0 text-[11px] text-warning">carried {carried(task)}×</span>}
