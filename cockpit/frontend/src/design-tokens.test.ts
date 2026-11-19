@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -21,7 +22,7 @@ const COLOUR_EXCEPTIONS: Record<string, string> = {
 const MIX_STEPS = new Set(['8', '10', '12', '20', '40', '60']);
 
 function sourceFiles(dir = SRC): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e): string[] => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return e.name === 'node_modules' ? [] : sourceFiles(p);
     return /\.(tsx?)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
@@ -144,7 +145,8 @@ describe('tokens v2 scope', () => {
 });
 
 // ---- literal values: a ratchet over existing code, zero in v2 directories ----
-const ARBITRARY = /\b[\w:-]+-\[(?:\d|#|rgb|hsl|calc\(\s*\d)[^\]]*\]|\/\[\d?\.?\d+\]/g;
+// A literal in brackets: starting with a number, colour or calc, or holding a number with a unit anywhere (inset_2px_…).
+const ARBITRARY = /\b[\w:-]+-\[(?:\d|#|rgb|hsl|calc\(\s*\d|[^\]]*?\d(?:px|rem|em|ms|s|vh|vw|dvh|%|deg)\b)[^\]]*\]|\/\[\d?\.?\d+\]/g;
 const COLOUR = /#[0-9a-fA-F]{3,8}\b(?![\w-])|\brgba?\(|\bhsla?\(/g;
 const RAW_SCALE = /\b(?:text-(?:xs|sm|base|lg|xl)|z-\d+)\b/g;
 const OPACITY = /\b(?:bg|text|border|ring|outline|fill|stroke|shadow|from|to|via)-[\w-]+\/(\d+)\b/g;
@@ -167,7 +169,7 @@ function cssLiterals(): number {
       }
     }
   }
-  return rest.split('\n').filter((l) => /\d+(?:px|ms|s)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)).length;
+  return rest.split('\n').filter((l: string) => /\d+(?:px|ms|s)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)).length;
 }
 
 function measure(): Record<string, number> {
