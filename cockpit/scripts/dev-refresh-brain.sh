@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Refresh the DEV cockpit with a fresh WAL-safe copy of the PRODUCTION brain, so
-# the release worktree's dev cockpit can be exercised against real data + volume.
+# Refresh dev cockpit a (cockpit/scripts/dev-home.sh) with a fresh WAL-safe copy of
+# the PRODUCTION brain, so a release can be exercised against real data + volume.
 # Disposable-viewer model (rule cockpit-release-gating): the copy goes ONE way,
 # prod → dev, and overwrites whatever was in dev. Real work stays on prod (4317);
 # anything written in the dev cockpit is lost on the next refresh.
 #
-# It reads each home's brain file from its own control.db (no hard-coded UUIDs),
-# so it keeps working across versions and machines. The dev token stays; the brain
+# It finds each home's main brain through the brain token of its cockpit config (no
+# hard-coded UUIDs), so it keeps working across versions and machines. The dev token stays; the brain
 # FILE content is swapped, and from schema 21 on the dev main brain takes the id the
 # copy's log names (see step 2b). On the next dev-cockpit start the bundled server
 # migrates the copy forward through the safety pipeline.
@@ -14,22 +14,23 @@
 # Usage (worktree root):
 #   bash cockpit/scripts/dev-refresh-brain.sh
 # Env overrides:
-#   PROD_HOME (default ~/.eml-cockpit)  DEV_HOME (default ~/.eml-cockpit-dev)
-#   DEV_PORT  (default 4318)            DEV_SESSION (tmux session, default eml-dev)    
+#   PROD_HOME (default ~/.eml-cockpit)
 #   NO_RESTART=1  → only swap the brain, don't (re)start the dev cockpit
+# Afterwards `dev-home.sh snapshot a` keeps the migrated copy as the state a reset returns to.
 set -euo pipefail
 
 PROD_HOME=${PROD_HOME:-$HOME/.eml-cockpit}
-DEV_HOME=${DEV_HOME:-$HOME/.eml-cockpit-dev}
-DEV_PORT=${DEV_PORT:-4318}
-DEV_SESSION=${DEV_SESSION:-eml-dev}
-WORKTREE=$(cd "$(dirname "$0")/../.." && pwd)
+DEV_HOME=$HOME/.eml-cockpit-dev   # profile a of dev-home.sh
+DEV_HOME_SH="$(dirname "$0")/dev-home.sh"
 
-brain_file() { # $1 = home dir → absolute path of its first brain file (the main space), per control.db
-  local home="$1" ctl="$1/data/control.db" rel
+brain_file() { # $1 = home dir → absolute path of its main space's brain file
+  local home="$1" ctl="$1/data/control.db" prefix rel
   [ -f "$ctl" ] || { echo "no control.db at $ctl" >&2; exit 1; }
-  rel=$(sqlite3 "$ctl" "SELECT brain_file FROM brains ORDER BY rowid LIMIT 1")
-  [ -n "$rel" ] || { echo "no brain row in $ctl" >&2; exit 1; }
+  # The cockpit config's token is the main space's (eml_<8-char prefix><secret>);
+  # its prefix finds the token row and so the brain. Only the prefix leaves python.
+  prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"][4:12])' "$home/config")
+  rel=$(sqlite3 "$ctl" "SELECT b.brain_file FROM tokens t JOIN brains b ON b.id = t.brain_id WHERE t.prefix = '$prefix' AND t.revoked_at IS NULL")
+  [ -n "$rel" ] || { echo "no main brain for the config token in $ctl" >&2; exit 1; }
   echo "$home/data/$rel"
 }
 
@@ -40,13 +41,8 @@ DEV_REL=${DEV_DB#"$DEV_HOME/data/"}   # as control.db names it
 echo "prod brain: $PROD_DB ($(sqlite3 "$PROD_DB" 'SELECT count(*) FROM engrams') engrams, schema $(sqlite3 "$PROD_DB" 'SELECT MAX(version) FROM _eml_migrations'))"
 echo "dev  brain: $DEV_DB"
 
-# 1) Stop the dev cockpit so the brain file is free (kill listeners on DEV_PORT +
-#    the bundled brain server for this dev home; the tmux session, if any, closes).
-echo "stopping dev cockpit on :$DEV_PORT …"
-lsof -ti "tcp:$DEV_PORT" -sTCP:LISTEN 2>/dev/null | xargs -r kill 2>/dev/null || true
-pgrep -f "server.cjs.*$(basename "$DEV_HOME")/data" 2>/dev/null | xargs -r kill 2>/dev/null || true
-tmux kill-session -t "$DEV_SESSION" 2>/dev/null || true
-sleep 2
+# 1) Stop the dev cockpit so the brain file is free.
+bash "$DEV_HOME_SH" stop a
 
 # 2) Back up the current dev brain (disposable, but keep the latest one), then
 #    WAL-safe copy. VACUUM INTO refuses an existing target, so the previous backup
@@ -99,14 +95,6 @@ if [ "${NO_RESTART:-0}" = "1" ]; then
   exit 0
 fi
 
-# 3) Restart the dev cockpit → the bundled server migrates the copy forward.
-echo "starting dev cockpit (tmux $DEV_SESSION) …"
-tmux new-session -d -s "$DEV_SESSION" -c "$WORKTREE" \
-  "zsh -lc 'pnpm cockpit:dev 2>&1 | tee -a $DEV_HOME/host-dev.log'"
-
-for i in $(seq 1 60); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DEV_PORT/" 2>/dev/null)" = "200" ] && break
-  sleep 1
-done
-echo "dev cockpit http://127.0.0.1:$DEV_PORT → $(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DEV_PORT/") after ${i}s"
+# 3) Restart the dev cockpit from this worktree → the bundled server migrates the copy forward.
+bash "$DEV_HOME_SH" start a
 echo "dev brain now: $(sqlite3 "$DEV_DB" 'SELECT count(*) FROM engrams') engrams, schema $(sqlite3 "$DEV_DB" 'SELECT MAX(version) FROM _eml_migrations')"

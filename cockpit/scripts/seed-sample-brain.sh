@@ -3,18 +3,24 @@
 # Lighthouse and Orchard — incl. statuses (one superseded), tasks, decisions
 # (one past its review date), references, rules, logs, tags and relations.
 # Idempotent enough for a fresh brain; re-running on a seeded brain adds
-# duplicates (the brain has no upsert). Runs against the host proxy:
-#   COCKPIT_URL=http://127.0.0.1:4318 bash cockpit/scripts/seed-sample-brain.sh
+# duplicates (the brain has no upsert). Writes to the main space of a running
+# dev cockpit (cockpit/scripts/dev-home.sh), straight to its brain server — the
+# host's /api/brain passes only the routes the page uses:
+#   DEV_HOME=~/.eml-cockpit-dev-b bash cockpit/scripts/seed-sample-brain.sh
 # A rejected write stops the script with the server's error (pipefail: a failed
 # post fails its `| head` pipeline too, instead of printing a truncated error).
 set -eo pipefail
-ORIGIN=${COCKPIT_URL:-http://127.0.0.1:4318}
-B=$ORIGIN/api/brain
-# The host refuses writes without its own Origin (CSRF guard in host/src/http.ts);
-# this script writes on the cockpit page's behalf, so it sends that Origin.
+DEV_HOME=${DEV_HOME:-$HOME/.eml-cockpit-dev-b}
+# The brain server's URL from the host's last start, the main space's token from
+# the cockpit config; the token goes to curl in a header file, not on its command line.
+B=$(sed -n 's/^.*brain server: \(http[^ ]*\) (healthy).*$/\1/p' "$DEV_HOME/host-dev.log" | tail -1)
+[ -n "$B" ] || { echo "seed: no brain server in $DEV_HOME/host-dev.log — is the dev cockpit running?" >&2; exit 1; }
+AUTH=$(mktemp); trap 'rm -f "$AUTH"' EXIT
+python3 -c 'import json,sys; print("Authorization: Bearer " + json.load(open(sys.argv[1]))["token"])' "$DEV_HOME/config" > "$AUTH"
+get() { curl -s -H @"$AUTH" "$B$1"; }
 post() {
   local r
-  r=$(curl -s --fail-with-body -X POST -H 'Content-Type: application/json' -H "Origin: $ORIGIN" "$B$1" -d "$2") \
+  r=$(curl -s --fail-with-body -X POST -H 'Content-Type: application/json' -H @"$AUTH" "$B$1" -d "$2") \
     || { echo "seed: POST $1 failed: $r" >&2; return 1; }
   printf '%s' "$r"
 }
@@ -24,12 +30,18 @@ post() {
 eng() { post "/engram/$1" "$2" | head -c 90; echo; }
 AGREED='"agreed":"sample brain seed"'
 
-post /object/project '{"id":"lighthouse","name":"Lighthouse","goal":"Ship the v1 of the coastal weather dashboard for the harbour office.","status":"active","status_tracks":"release phase"}' | head -c 120; echo
-post /object/project '{"id":"orchard","name":"Orchard","goal":"Plan and plant the community orchard: 40 trees, irrigation, volunteer schedule.","status":"active"}' | head -c 120; echo
+# A project left by an earlier, interrupted run is kept.
+project() {
+  local r
+  r=$(curl -s -X POST -H 'Content-Type: application/json' -H @"$AUTH" "$B/object/project" -d "$1")
+  case "$r" in *'"object"'*|*'already exists'*) printf '%s\n' "${r:0:100}" ;; *) echo "seed: project failed: $r" >&2; return 1 ;; esac
+}
+project '{"id":"lighthouse","name":"Lighthouse","goal":"Ship the v1 of the coastal weather dashboard for the harbour office.","status":"active","status_tracks":"release phase"}'
+project '{"id":"orchard","name":"Orchard","goal":"Plan and plant the community orchard: 40 trees, irrigation, volunteer schedule.","status":"active"}'
 # ── Lighthouse ──
 eng status '{"scope":"project.lighthouse","content":"Prototype demoed to the harbour master; tide widget works, wind widget shows stale data after 20 minutes.","state":"prototype demoed","next_step":"fix wind data staleness"}'
 eng status '{"scope":"project.lighthouse","content":"Wind staleness fixed (cache TTL 2m). Now integrating the buoy feed; go-live target end of month.","state":"buoy feed integration","next_step":"buoy feed parser + go-live checklist"}'
-eng task '{"scope":"project.lighthouse","title":"buoy-feed-parser","content":"Write the buoy feed parser (NMEA over HTTP) and map it onto the wind/wave widgets.","status":"active","priority":"high","assignee_ids":["assistant"]}'
+eng task '{"scope":"project.lighthouse","title":"buoy-feed-parser","content":"Write the buoy feed parser (NMEA over HTTP) and map it onto the wind/wave widgets.","status":"active","priority":"high"}'
 eng task '{"scope":"project.lighthouse","title":"go-live-checklist","content":"Prepare the go-live checklist with the harbour office (accounts, kiosk mode, fallback page).","status":"planned","priority":"normal"}'
 eng task '{"scope":"project.lighthouse","title":"kiosk-autostart","content":"Set up kiosk auto-start on the office display (systemd unit + Chromium flags).","status":"planned","priority":"low"}'
 eng decision '{"scope":"project.lighthouse","title":"lighthouse-stack","content":"Build the dashboard as a static Vite app fed by a small Node poller, not a full backend — the office display only needs read access and the data sources are public feeds.","rationale":"No auth, no writes, one screen. A poller that writes JSON files keeps the display working even when the poller is down.","alternatives":["Next.js app with API routes","Grafana dashboard"],"review_due_at":"2026-11-20T00:00:00.000Z"}'
@@ -48,12 +60,12 @@ eng reference '{"scope":"project.orchard","title":"county-nursery-catalogue","co
 eng rule '{"scope":"project.orchard","title":"orchard-volunteer-safety","content":"Volunteer days always have one first-aid trained lead on site; tools are counted out and in.","applies":"always","why":"Volunteers handle sharp tools on uneven ground.",'"$AGREED"'}'
 eng log '{"scope":"project.orchard","title":"session-2026-09-18-orchard-survey","what":"Site survey.","landed":"Walked the site with the council officer, marked the tree grid, took 6 soil samples.","next":"Wait for the soil results.","content":""}'
 
-idof() { curl -s "$B/list?title=$1&limit=1" | python3 -c "import sys,json;e=json.load(sys.stdin)['engrams'];print(e[0]['id'] if e else '')"; }
+idof() { get "/list?title=$1&limit=1" | python3 -c "import sys,json;e=json.load(sys.stdin)['engrams'];print(e[0]['id'] if e else '')"; }
 
 for t in weather hardware community planting; do post /object/tag "{\"name\":\"$t\"}" >/dev/null; done
 tag() {
   local id; id=$(idof "$1")
-  if [[ $(curl -s "$B/engram/$id" | python3 -c "import sys,json;print(json.load(sys.stdin)['type'])") == task ]]; then
+  if [[ $(get "/engram/$id" | python3 -c "import sys,json;print(json.load(sys.stdin)['type'])") == task ]]; then
     post "/task/$id/track" "{\"tags\":[$2]}" | head -c 60
   else
     post /update "{\"id\":\"$id\",\"patch\":{\"tags\":[$2]}}" | head -c 60

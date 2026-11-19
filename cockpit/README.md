@@ -109,6 +109,12 @@ pnpm run cockpit:dev                                              # terminal 1: 
 pnpm -F @engramprotocol/cockpit-frontend dev                      # terminal 2 (HMR; proxies /api + /ws to the host)
 ```
 
+For checks that need a second member of a shared space, `cockpit/scripts/dev-home.sh` keeps two
+fixed dev cockpits — a (`~/.eml-cockpit-dev`, 4318) and b (`~/.eml-cockpit-dev-b`, 4319), each its
+own person — and serves either from the worktree it is run in (`start a|b`, in tmux). `snapshot`
+and `reset` keep and restore a profile's local brains; a shared space is never part of it, since
+its replica follows the relay. Each home is served by one host at a time.
+
 The real cockpit runs from the default home `~/.eml-cockpit` (`pnpm run cockpit`, or
 `COCKPIT_PORT=4317 pnpm -F eml-cockpit start` after a build). A host started without
 `EML_COCKPIT_HOME` always opens `~/.eml-cockpit`, so dev work goes through `cockpit:dev`.

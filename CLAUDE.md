@@ -24,7 +24,9 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
   there; what needs judgement becomes a check in `packages/core/src/hygiene.ts` with `since_schema`.
 - English everywhere in the repo (code, comments, docs, commits).
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
-- Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.
+- Develop against the dev cockpits, never the production home: `bash cockpit/scripts/dev-home.sh start a|b`
+  serves dev cockpit a (`~/.eml-cockpit-dev`, 4318) or b (`~/.eml-cockpit-dev-b`, 4319) from the current worktree;
+  `snapshot` / `reset` keep and restore their local brains (see the script's header).
 - Agent-facing texts (MCP tool descriptions, system rules, hook output) are product surface — review changes deliberately.
 - Changes reach `main` through a pull request: one branch per topic, as many commits as it takes. Its author
   merges it with a merge commit once CI is green; an outside PR may be squashed. Read an outside PR's diff
@@ -41,8 +43,8 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 ## Releases (maintainers)
 
 1. Branch `vX.Y.Z` from `main`; `bash scripts/bump-version.sh X.Y.Z`.
-2. Test the release on the dev cockpit; `cockpit/scripts/dev-refresh-brain.sh` loads a copy of the
-   production brain into it first. A release whose migration updates data is audited before that:
+2. Test the release on dev cockpit a; `cockpit/scripts/dev-refresh-brain.sh` loads a copy of the
+   production brain into it first (then `dev-home.sh snapshot a`). A release whose migration updates data is audited before that:
    `node scripts/audit-brain-migration.mjs <copy of the production brain>` migrates its own copy
    and must pass. A release that changes how the brain behaves for an agent is also measured:
    `node packages/bench/dist/cli.js release --eml .` writes `packages/bench/results/X.Y.Z.json`
