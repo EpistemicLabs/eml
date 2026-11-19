@@ -6,7 +6,7 @@ const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', s
 
 describe('planning a hand-over', () => {
   it('delegate now: sets delegate and checkpoint, keeps the owner, journals it', () => {
-    const r = planHandOver(task(), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
+    const r = planHandOver(task({ status: 'planned' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.patch).toEqual({ delegate: 'atlas', checkpoint: 'after' })
@@ -14,6 +14,15 @@ describe('planning a hand-over', () => {
     expect(r.plan.journal).toBe('Handed to atlas with checkpoint after; the owner stays.')
     expect(r.plan.job).toBeUndefined()
     expect(r.plan.session).toBeUndefined()
+  })
+
+  it('delegate now on an active task puts it back to planned, so the runner starts it', () => {
+    const r = planHandOver(task({ status: 'active' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
+    if (!r.ok) throw new Error(r.refusal)
+    expect(r.plan.patch.status).toBe('planned')
+    const planned = planHandOver(task({ status: 'planned' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
+    if (!planned.ok) throw new Error(planned.refusal)
+    expect(planned.plan.patch).not.toHaveProperty('status')
   })
 
   it('an open question is never dropped: it goes into the journal and the brief before waiting_on clears', () => {
@@ -83,9 +92,9 @@ describe('planning the undo', () => {
   it('puts delegate, checkpoint and the open question back and journals it', () => {
     const before = task({ checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'question', why: 'Which list?' } })
     expect(planUndo(before)).toEqual({
-      patch: { delegate: null, checkpoint: 'before', waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } },
+      patch: { delegate: null, checkpoint: 'before', waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'active' },
       journal: 'Hand-over undone; the task is back as it was.',
     })
-    expect(planUndo(task({ delegate: 'motti' })).patch).toEqual({ delegate: 'motti', checkpoint: null, waiting_on: null })
+    expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegate: 'motti', checkpoint: null, waiting_on: null, status: 'planned' })
   })
 })

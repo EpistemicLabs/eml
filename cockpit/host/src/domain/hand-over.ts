@@ -41,6 +41,7 @@ export type HandOverRefusal =
   | 'desk_required'
 
 export interface TaskPatch {
+  status?: string
   delegate?: string | null
   checkpoint?: string | null
   waiting_on?: WaitingOn | null
@@ -74,6 +75,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (req.mode === 'together' && !req.desk) return { ok: false, refusal: 'desk_required' }
 
   const patch: TaskPatch = { delegate: req.delegate, checkpoint: req.checkpoint }
+  // The runner starts planned tasks: an active one handed over now goes back to planned.
+  if (req.mode === 'now' && task.status === 'active') patch.status = 'planned'
   const lines: string[] = []
   if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.`)
   if (req.mode === 'schedule') {
@@ -100,7 +103,7 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
 /** The change that puts a task back as it was before a hand-over. */
 export function planUndo(before: HandOverTask): { patch: Required<TaskPatch>; journal: string } {
   return {
-    patch: { delegate: before.delegate ?? null, checkpoint: before.checkpoint ?? null, waiting_on: before.waitingOn ?? null },
+    patch: { delegate: before.delegate ?? null, checkpoint: before.checkpoint ?? null, waiting_on: before.waitingOn ?? null, status: before.status },
     journal: 'Hand-over undone; the task is back as it was.',
   }
 }
