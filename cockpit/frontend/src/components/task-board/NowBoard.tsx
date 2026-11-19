@@ -38,7 +38,7 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
               <section key={col.turn} aria-label={meta.name} className="flex min-w-0 flex-col gap-2">
                 <div className={cn('sticky top-0 z-(--z-raised) flex items-center gap-2 border-b-2 bg-background px-0.5 pb-1.5 pt-2', HUE[meta.hue].rule)}>
                   <Dot hue={meta.hue} live={col.turn === 'agent_working' && col.tasks.length > 0} />
-                  <h2 className="m-0 text-body font-semibold">{meta.name}</h2>
+                  <h2 title={meta.name} className="m-0 min-w-0 truncate text-body font-semibold">{meta.name}</h2>
                   <span className="ml-auto font-data text-ui tabular-nums text-muted-foreground">{col.tasks.length}</span>
                 </div>
                 {col.tasks.length > 0 && <p className="m-0 mx-0.5 text-ui text-muted-foreground">{meta.rule}</p>}

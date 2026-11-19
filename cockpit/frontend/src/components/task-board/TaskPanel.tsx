@@ -101,8 +101,10 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
                 <div className={cn(LABEL, 'mb-1', HUE.you.ink)}>Needs you · {agentName(task.delegate)} asks</div>
                 <div className="text-heading">{task.waitingOn?.why}</div>
                 {task.waitingOn?.since && <div className="mt-1 font-data text-caption text-muted-foreground">asked {when(task.waitingOn.since, now)}</div>}
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  <button type="button" className={PRIMARY} onClick={focusReply} disabled={!current}>Reply…</button>
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  {current
+                    ? <button type="button" className={PRIMARY} onClick={focusReply}>Reply…</button>
+                    : <span className="text-ui text-muted-foreground">Its session is gone: hand the task over or work on it now to answer.</span>}
                 </div>
               </div>
             ) : task.group !== 'own' ? (

@@ -75,7 +75,8 @@ describe('the task board', () => {
     const sheet = await screen.findByRole('dialog');
     await waitFor(() => expect(document.activeElement?.id).toBe('task-board-title'));
     expect(within(sheet).getByText('Needs you · Atlas asks')).toBeTruthy();
-    expect(within(sheet).getAllByRole('button', { name: 'Reply…' }).length).toBeGreaterThan(0);
+    // No session on it in this fixture: the box says how to answer instead of offering Reply.
+    expect(within(sheet).getByText(/Its session is gone/)).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
