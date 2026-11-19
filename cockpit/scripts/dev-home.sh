@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# The two fixed dev cockpits, started from any worktree. Each profile is its own
-# home on its own port — one person each, both members of the same shared space,
-# so sync between two members can be checked locally:
-#   a  ~/.eml-cockpit-dev    port 4318   (main: a copy of the production brain, dev-refresh-brain.sh)
-#   b  ~/.eml-cockpit-dev-b  port 4319   (main: the sample brain, seed-sample-brain.sh)
+# Two fixed dev cockpits, each served from any worktree. Each profile is its own
+# home on its own port; set each up as a different person, and with both as members
+# of one shared space, sync between two members can be checked locally:
+#   a  ~/.eml-cockpit-dev    port 4318   (the home `pnpm run cockpit:dev` uses)
+#   b  ~/.eml-cockpit-dev-b  port 4319   (a second member, e.g. with seed-sample-brain.sh)
 # One home is served by one host at a time: two hosts on one home would run two
 # brain servers on the same files and one device identity on the relay twice.
+# Needs tmux, lsof and sqlite3; the host runs in your login shell ($SHELL).
 #
 # Usage (from the root of any worktree):
 #   bash cockpit/scripts/dev-home.sh start [a|b] [--build]   stop a running host of the profile, serve it from this worktree
@@ -37,7 +38,6 @@ up() { [ -n "$(lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null)" ]; }
 
 stop_host() {
   tmux kill-session -t "=$SESSION" 2>/dev/null || true
-  [ "$PROFILE" = a ] && tmux kill-session -t =eml-dev 2>/dev/null || true   # the session dev-refresh-brain.sh used to start
   lsof -ti "tcp:$DEV_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
   pgrep -f "server.cjs.*$(basename "$DEV_HOME")/data" 2>/dev/null | xargs kill 2>/dev/null || true
   for _ in $(seq 1 20); do up "$DEV_PORT" || break; sleep 0.5; done
@@ -63,7 +63,7 @@ start_host() {
   stop_host
   mkdir -p "$DEV_HOME"
   tmux new-session -d -s "$SESSION" -c "$WORKTREE" \
-    "zsh -lc 'EML_COCKPIT_HOME=$DEV_HOME COCKPIT_PORT=$DEV_PORT pnpm cockpit:dev 2>&1 | tee -a $LOG'"
+    "${SHELL:-bash} -lc 'EML_COCKPIT_HOME=$DEV_HOME COCKPIT_PORT=$DEV_PORT pnpm cockpit:dev 2>&1 | tee -a $LOG'"
   for _ in $(seq 1 60); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$DEV_PORT/" 2>/dev/null)" = "200" ] && break
     sleep 1
@@ -139,5 +139,5 @@ case "$CMD" in
   snapshot) snapshot ;;
   reset) reset ;;
   log) tail -f "$LOG" ;;
-  *) sed -n '2,20p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d' >&2; exit 2 ;;
 esac
