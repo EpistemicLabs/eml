@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Archive, Check, ChevronLeft, ChevronRight, ExternalLink, MessageSquareReply, X } from 'lucide-react';
 
-import { ChatPane } from '@/components/chat/ChatPane';
 import { DraftsPanel } from '@/components/review/DraftsPanel';
 import { YourTurnList } from '@/components/review/YourTurnList';
 import { MARK_WORD, agentLabel, allSessionState, sessionMark, type AllSession, type SessionMark } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
-import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
+import { SessionChat } from '@/components/ui/session-chat';
 import { endReview, finishCurrent, jumpReview, liveQueue, stepReview } from '@/lib/review-flow';
 import { useSessionTask } from '@/lib/session-task';
 import { cn } from '@/lib/utils';
 import { openSessionInSpace } from '@/stores/usePaneStore';
-import { REVIEW_PANE_ID, reclaimTerminal, setReviewBarFocus, useReview } from '@/stores/useReviewStore';
+import { REVIEW_PANE_ID, setReviewBarFocus, useReview } from '@/stores/useReviewStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -95,12 +94,6 @@ export function ReviewScreen() {
     setReviewBarFocus(focusBar);
     return () => setReviewBarFocus(null);
   }, []);
-  // A terminal session was borrowed from its pane: the pane takes it back once the screen moves on.
-  const terminal = current?.runtime !== 'sdk';
-  useEffect(() => {
-    if (!currentId || !terminal) return;
-    return () => reclaimTerminal(currentId);
-  }, [currentId, terminal]);
 
   const move = (step: 1 | -1) => stepReview(step, known);
   const finish = (how: 'archive' | 'clear') => {
@@ -247,28 +240,8 @@ export function ReviewScreen() {
       <div ref={bodyRef} className="relative min-h-0 flex-1">
         {!current ? (
           <p className="p-4 text-xs text-muted-foreground">Loading…</p>
-        ) : !current.__projectId ? (
-          <p className="p-4 text-xs text-muted-foreground">This session has no project to open it in.</p>
-        ) : current.runtime === 'sdk' ? (
-          <ChatPane
-            key={current.id}
-            paneId={REVIEW_PANE_ID}
-            projectId={current.__projectId}
-            sessionId={current.id}
-            session={current}
-            isActive
-            spaceId={space ? paneSpaceKey(space) : null}
-          />
         ) : (
-          <StandaloneShell
-            key={current.id}
-            paneId={REVIEW_PANE_ID}
-            projectId={current.__projectId}
-            sessionId={current.id}
-            sessionTitle={sessionDisplayName(current)}
-            isActive={false}
-            spaceId={space ? paneSpaceKey(space) : null}
-          />
+          <div className="absolute inset-0 flex min-h-0 flex-col"><SessionChat key={current.id} session={current} space={space} paneId={REVIEW_PANE_ID} /></div>
         )}
       </div>
       </div>

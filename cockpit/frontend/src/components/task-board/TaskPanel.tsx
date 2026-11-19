@@ -2,7 +2,7 @@
 // the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions.
 import { useState } from 'react';
 
-import { SessionView } from '@/components/tasks/TaskWorkspace';
+import { SessionChat } from '@/components/ui/session-chat';
 import { TaskJournal } from '@/components/task-sections';
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
@@ -18,6 +18,8 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 import { AgentBadge, BUTTON, Chip, Dot, FOCUS, LABEL, MINI, PRIMARY } from './parts';
 
 export const TASK_TITLE_ID = 'task-board-title';
+/** The surface id the board's chat goes by (scroll and draft are kept per surface). */
+const TASK_BOARD_PANE_ID = 'tasks';
 const CHAT_ID = 'task-board-chat';
 
 /** Put the cursor in the chat's composer: answering is typing to the session. */
@@ -147,7 +149,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
             </div>
           )}
           {current ? (
-            <SessionView key={current.id} session={current} space={spaces.find((s) => s.id === current.spaceId)} />
+            <SessionChat key={current.id} session={current} space={spaces.find((s) => s.id === current.spaceId)} paneId={TASK_BOARD_PANE_ID} />
           ) : (
             <div className="m-auto flex max-w-dialog flex-col items-center gap-3 px-5 py-10 text-center text-body text-muted-foreground">
               <b className="text-foreground">No session on this task yet.</b>
