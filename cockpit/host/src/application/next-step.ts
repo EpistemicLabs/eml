@@ -184,7 +184,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       if (arrived) return
     }
     nudged.delete(sessionId)
-    await brain.post(`/task/${task.id}/track`, { waiting_on: { who: deps.owner, why: NO_NEXT_STEP, since: now().toISOString(), session_id: sessionId } })
+    await brain.post(`/task/${task.id}/track`, { waiting_on: { who: deps.owner, kind: 'stopped', why: NO_NEXT_STEP, since: now().toISOString(), session_id: sessionId } })
     deps.ledger.setAttention(sessionId, { kind: 'question', reason: NO_NEXT_STEP })
     deps.waiting(sessionId)
     deps.log(`[next-step] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} waits on ${deps.owner}: ${NO_NEXT_STEP}`)

@@ -95,7 +95,7 @@ describe('task router', () => {
     expect(brain.posts).toHaveLength(1)
     expect(brain.posts[0].path).toBe('/task/t1/track')
     expect(brain.posts[0].body.text).toContain('Result: Homepage v4b hero')
-    expect(brain.posts[0].body.waiting_on).toEqual({ who: 'lasse', why: 'Ship the shorter headline?', since: '2026-11-17T09:00:00.000Z', session_id: 's1' })
+    expect(brain.posts[0].body.waiting_on).toEqual({ who: 'lasse', kind: 'question', why: 'Ship the shorter headline?', since: '2026-11-17T09:00:00.000Z', session_id: 's1' })
     expect(ledger.get('s1')!.attention).toMatchObject({ kind: 'question', reason: 'Ship the shorter headline?' })
     expect(waited).toEqual(['s1'])
   })
@@ -115,13 +115,20 @@ describe('task router', () => {
     failed.ledger.recordSpawn('s4', null, 'bp-eml', 'claude', true, 't3')
     failed.ledger.setAttention('s4', { kind: 'failed', reason: 'Build broke' })
     await failed.r.turnEnded('s4', 'No block')
-    expect(failed.brain.posts[0].body).toEqual({ waiting_on: expect.objectContaining({ why: 'Build broke' }) })
+    expect(failed.brain.posts[0].body).toEqual({ waiting_on: expect.objectContaining({ kind: 'stopped', why: 'Build broke' }) })
     expect(failed.waited).toEqual([])
 
     const after = setup({ id: 't4', status: 'active', properties: { checkpoint: 'after' } })
     after.ledger.recordSpawn('s5', null, 'bp-eml', 'claude', false, 't4')
     await after.r.turnEnded('s5', '### Handoff\nResult: draft written')
-    expect(after.brain.posts[0].body.waiting_on).toMatchObject({ why: 'Review: draft written' })
+    expect(after.brain.posts[0].body.waiting_on).toMatchObject({ kind: 'review', why: 'Review: draft written' })
+  })
+
+  it('a question from a step with checkpoint before is a go', async () => {
+    const { ledger, brain, r } = setup({ id: 't-go', status: 'active', properties: { checkpoint: 'before' } })
+    ledger.recordSpawn('s-go', null, 'bp-eml', 'claude', false, 't-go')
+    await r.turnEnded('s-go', HANDOFF)
+    expect(brain.posts[0].body.waiting_on).toMatchObject({ kind: 'go', why: 'Ship the shorter headline?' })
   })
 
   it('puts a task on review when its session said review, whatever the checkpoint', async () => {
@@ -129,7 +136,7 @@ describe('task router', () => {
     ledger.recordSpawn('s-rv', null, 'bp-eml', 'claude', true, 't-rv')
     ledger.setAttention('s-rv', { kind: 'review', reason: 'Max withdrew the cancellation' })
     await r.turnEnded('s-rv', '### Handoff\nResult: Max withdrew the cancellation')
-    expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', why: 'Review: Max withdrew the cancellation' })
+    expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', kind: 'review', why: 'Review: Max withdrew the cancellation' })
   })
 
   it('leaves a quiet reschedule off the user: the handoff goes to the journal, nobody waits', async () => {

@@ -111,7 +111,7 @@ describe('next-step check', () => {
     expect(brain.posts).toEqual([])
     await check.turnEnded('w1-1')
     expect(delivered).toHaveLength(1)
-    expect(brain.posts[0]).toEqual({ path: '/task/t1/track', body: { waiting_on: { who: 'lasse', why: mod.NO_NEXT_STEP, since: '2026-11-19T10:00:00.000Z', session_id: 'w1-1' } } })
+    expect(brain.posts[0]).toEqual({ path: '/task/t1/track', body: { waiting_on: { who: 'lasse', kind: 'stopped', why: mod.NO_NEXT_STEP, since: '2026-11-19T10:00:00.000Z', session_id: 'w1-1' } } })
     expect(ledger.get('w1-1')!.attention).toMatchObject({ kind: 'question', reason: mod.NO_NEXT_STEP })
     expect(waited).toEqual(['w1-1'])
   })

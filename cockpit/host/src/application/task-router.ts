@@ -3,6 +3,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.js'
 import { parseHandoff, type Handoff } from '../domain/handoff.js'
 import { needsAnswer } from '../domain/session-attention.js'
+import type { WaitKind } from '../domain/task-turn.js'
 import type { SessionLedger } from '../session-ledger.js'
 
 /**
@@ -53,6 +54,8 @@ interface Task {
 
 export interface WaitingOn {
   who: string
+  /** question · go · review · stopped (domain/task-turn.ts WaitKind). */
+  kind: WaitKind
   why: string
   since: string
   session_id: string
@@ -76,11 +79,14 @@ export function decideWaiting(facts: {
   now: Date
 }): WaitingOn | null {
   const { handoff, attention } = facts
-  const wait = (why: string): WaitingOn => ({ who: facts.owner, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
-  if (handoff && handoff.forUser.length > 0) return wait(handoff.forUser.map(shortQuestion).join(' · '))
-  if (attention && needsAnswer(attention.kind as never)) return wait(attention.reason ?? (attention.kind === 'failed' ? 'The session failed' : 'The session has a question'))
+  const wait = (kind: WaitKind, why: string): WaitingOn => ({ who: facts.owner, kind, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
+  // A step with checkpoint before asks before it acts: its question is the go.
+  if (handoff && handoff.forUser.length > 0) return wait(facts.checkpoint === 'before' ? 'go' : 'question', handoff.forUser.map(shortQuestion).join(' · '))
+  if (attention && needsAnswer(attention.kind as never)) {
+    return attention.kind === 'failed' ? wait('stopped', attention.reason ?? 'The session failed') : wait('question', attention.reason ?? 'The session has a question')
+  }
   // A session that says review hands a result over (its goal is reached), whatever the checkpoint.
-  if (attention?.kind === 'review' || (facts.checkpoint === 'after' && handoff?.result)) return wait(`Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
+  if (attention?.kind === 'review' || (facts.checkpoint === 'after' && handoff?.result)) return wait('review', `Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
   return null
 }
 
