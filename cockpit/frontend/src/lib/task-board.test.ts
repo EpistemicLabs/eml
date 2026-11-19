@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, projectRows, readable, snoozeTimes, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, snoozeTimes, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -94,5 +94,18 @@ describe('Plan', () => {
     expect(rows[0]).toMatchObject({ name: 'Verapur', open: 2 });
     expect(rows[0].tasks.map((r) => [r.task.id, r.step])).toEqual([['p', false], ['s', true]]);
     expect(rows[1].name).toBe('Eml code');
+  });
+
+  it('lists the projects the table leaves out, by name, in the chosen space', () => {
+    const rows = projectRows([task({ id: 'p' })], []);
+    const projects = [
+      { spaceId: 'main', id: 'verapur', name: 'Verapur', goal: null },
+      { spaceId: 'main', id: 'flairmax', name: 'flairmax', goal: null },
+      { spaceId: 'main', id: 'aktivdog', name: 'AktivDog', goal: 'dogs' },
+      { spaceId: 'main', id: 'global', name: 'Global', goal: null },
+      { spaceId: 'ebisu', id: 'portfolio', name: 'Portfolio', goal: null },
+    ];
+    expect(quietProjects(rows, projects, { everyone: false, spaceId: null }).map((p) => p.name)).toEqual(['AktivDog', 'flairmax', 'Portfolio']);
+    expect(quietProjects(rows, projects, { everyone: false, spaceId: 'ebisu' }).map((p) => p.name)).toEqual(['Portfolio']);
   });
 });

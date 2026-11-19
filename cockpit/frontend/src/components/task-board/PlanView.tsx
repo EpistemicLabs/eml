@@ -3,7 +3,7 @@
 import { useState } from 'react';
 
 import {
-  COVERAGE_META, coverageText, dueLabel, focus, HUE, hueOf, projectRows, readable, TURN_META, visibleInPlan,
+  COVERAGE_META, coverageText, dueLabel, focus, HUE, hueOf, projectRows, quietProjects, readable, TURN_META, visibleInPlan,
   type Board, type BoardTask, type PlanFilter,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
@@ -16,10 +16,12 @@ const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2'
 export function PlanView({ board, now, onOpen }: { board: Board; now: number; onOpen: (task: BoardTask) => void }) {
   const [filter, setFilter] = useState<PlanFilter>({ everyone: false, spaceId: null });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showQuiet, setShowQuiet] = useState(false);
   const open = board.tasks.filter((t) => visibleInPlan(t, board.viewer, filter));
   const hidden = board.tasks.filter((t) => t.status !== 'resolved' && t.owner && t.owner !== board.viewer && (!filter.spaceId || t.spaceId === filter.spaceId)).length;
   const { act, actCount, covered } = focus(open);
   const rows = projectRows(open, board.projects);
+  const quiet = quietProjects(rows, board.projects, filter);
   const toggle = (key: string) => setExpanded((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const segment = (label: string, pressed: boolean, onClick: () => void) => (
     <button key={label} type="button" aria-pressed={pressed} onClick={onClick} className={SEGMENT}>{label}</button>
@@ -63,9 +65,16 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
         </section>
       </div>
 
-      <div className="text-ui text-muted-foreground">
-        Showing <b className="font-semibold text-foreground">{open.length} open tasks</b> in <b className="font-semibold text-foreground">{rows.length} projects</b>
-        {!filter.everyone && hidden > 0 && <> · <b className="font-semibold text-foreground">{hidden}</b> owned by others hidden</>}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 text-ui text-muted-foreground">
+        <span>
+          Showing <b className="font-semibold text-foreground">{open.length} open tasks</b> in <b className="font-semibold text-foreground">{rows.length} projects</b>
+          {!filter.everyone && hidden > 0 && <> · <b className="font-semibold text-foreground">{hidden}</b> owned by others hidden</>}
+          {' · '}<b className="font-semibold text-foreground">{quiet.length}</b> projects without an open task of {filter.everyone ? 'anyone' : 'yours'}
+        </span>
+        <label className="inline-flex min-h-(--target-min) cursor-pointer items-center gap-1.5">
+          <input type="checkbox" checked={showQuiet} onChange={(e) => setShowQuiet(e.target.checked)} />
+          Show projects without open tasks
+        </label>
       </div>
       <div className="overflow-x-auto">
         <div className="min-w-plan-table overflow-hidden rounded-xl border border-border bg-card">
@@ -91,6 +100,20 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
               </div>
             );
           })}
+          {showQuiet && quiet.length > 0 && (
+            <>
+              <div className={cn(PLAN_ROW, LABEL, 'border-t border-border bg-background')}>
+                <span /><span>Without an open task · {quiet.length}</span>
+              </div>
+              {quiet.map((p) => (
+                <div key={`${p.spaceId}/${p.id}`} className={cn(PLAN_ROW, 'border-t border-border text-body text-muted-foreground')}>
+                  <span />
+                  <span className="min-w-0 truncate font-medium">{p.name}{p.goal && <span className="block truncate text-ui font-normal">{p.goal}</span>}</span>
+                  <Chip>{board.spaces.find((s) => s.id === p.spaceId)?.name ?? ''}</Chip>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>

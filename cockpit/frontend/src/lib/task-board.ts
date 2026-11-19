@@ -386,6 +386,17 @@ export function projectRows(tasks: BoardTask[], projects: Board['projects']): Pr
   }).sort((a, b) => b.urgency - a.urgency || b.open - a.open);
 }
 
+/**
+ * The projects Plan's table leaves out: those without an open task the filter shows (none at all,
+ * or only someone else's), in the chosen space, by name. The global scope is not a project.
+ */
+export function quietProjects(rows: ProjectRow[], projects: Board['projects'], f: PlanFilter): Board['projects'] {
+  const shown = new Set(rows.map((r) => r.key));
+  return projects
+    .filter((p) => p.id !== 'global' && (!f.spaceId || p.spaceId === f.spaceId) && !shown.has(`${p.spaceId}/${p.id}`))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Results that needed nobody: done in the last day, delegated with checkpoint none. */
 export const fyi = (tasks: BoardTask[]) => tasks.filter((t) => t.turn === 'done' && t.delegate && t.checkpoint === 'none');
 
