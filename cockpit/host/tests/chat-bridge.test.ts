@@ -369,7 +369,9 @@ describe('ChatBridge', () => {
     expect(entry.attention ?? null).toBeNull()
     expect(entry.result).toBe(true)
     reporting?.report('question', 'A or B?')
-    expect(own.turns).toContainEqual(['s1', 'waiting'])
+    // The flag holds the question; the session is not set to waiting (only a live prompt is).
+    expect(entry.attention).toMatchObject({ kind: 'question', reason: 'A or B?' })
+    expect(own.turns).not.toContainEqual(['s1', 'waiting'])
   })
 
   it('an interrupted turn leaves no result', async () => {

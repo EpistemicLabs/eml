@@ -103,7 +103,7 @@ export interface NextStepDeps {
   watched(sessionId: string): boolean
   /** Send the session a message (wakes a stopped one); false when it did not arrive. */
   deliver(sessionId: string, text: string): Promise<boolean>
-  /** The session now waits for the user: its turn state shows it. */
+  /** The session is flagged for the user: it shows as a new result until seen (decision desk-dot-until-seen). */
   waiting(sessionId: string): void
   /** A job's worker that only rescheduled: it leaves the lists. */
   quiet?(sessionId: string): void

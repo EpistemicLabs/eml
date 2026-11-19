@@ -160,6 +160,17 @@ describe('session identity', () => {
     expect(ledger.get('s-chat')?.archivedAt).not.toBeNull()
   })
 
+  it('a turn that ends with a question ends as done; only a live prompt is waiting', () => {
+    const { ledger, turns, hook } = setup(false)
+    ledger.recordSpawn('s-ask', null, 'p1', 'claude')
+    ledger.setAttention('s-ask', { kind: 'question', reason: 'A or B?' })
+    hook('s-ask', { id: 'ask-id', state: 'done' })
+    expect(turns.get('s-ask')?.state).toBe('done')
+    expect(ledger.get('s-ask')?.attention?.kind).toBe('question')
+    hook('s-ask', { id: 'ask-id', state: 'waiting' })
+    expect(turns.get('s-ask')?.state).toBe('waiting')
+  })
+
   it('a prompt typed into a task session counts as an answer, flagged or not', () => {
     const ledger = new SessionLedger()
     const providers = new ProviderRegistry({ providerOf: (id) => ledger.get(id)?.provider, providers: [fakeProvider(false)] })

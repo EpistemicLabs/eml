@@ -22,7 +22,6 @@ import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
 import { shutDownOnSignal } from './application/shut-down.js'
-import { needsAnswer } from './domain/session-attention.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { loadMessageToken } from './message-token.js'
 import { sessionAddress } from './session-address.js'
@@ -352,7 +351,7 @@ async function main() {
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
-    waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
+    waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
     quiet: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -403,6 +402,9 @@ async function main() {
   const swept = bridge.sweepEmptySessions()
   if (swept > 0) process.stderr.write(`[pty] forgot ${swept} session(s) that never ran a turn\n`)
   const turns = new TurnTracker()
+  // A session flagged for the user (a question, a failure) shows as a new result: its desk dot
+  // clears once seen; the flag keeps it in Your turn (decision desk-dot-until-seen).
+  const flagged = (sessionId: string) => { if (turns.get(sessionId)?.state !== 'working') turns.apply({ sessionId, state: 'done' }) }
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
     runtimes: createClaudeSdkRuntimes(),
@@ -436,8 +438,9 @@ async function main() {
     },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
-  // Turn state starts empty; what a session waits for someone about is saved.
-  for (const { sessionId, attention } of ledger.list()) if (attention && needsAnswer(attention.kind)) turns.apply({ sessionId, state: 'waiting' })
+  // Turn state starts empty. A saved question or failure is not turned back into waiting: the desk dot
+  // shows what is new until it is seen, the Inbox and Your turn hold what needs an answer, and only a
+  // live prompt keeps a session waiting (decision desk-dot-until-seen).
   spawns.on('spawn', (request: SpawnRequest) => { if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId) })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
@@ -543,7 +546,7 @@ async function main() {
       const sessionId = [own, job.createdBy].find((id): id is string => !!id && ledger.has(id))
       if (!sessionId) return
       ledger.setAttention(sessionId, { kind: 'failed', reason: text.slice(0, 300) })
-      turns.apply({ sessionId, state: 'waiting' })
+      flagged(sessionId)
     },
   })
   const jobs = new Jobs({
@@ -653,7 +656,7 @@ async function main() {
     giveUp: (sessionId, kind, reason) => {
       ledger.setTurnInFlight(sessionId, false)
       ledger.setAttention(sessionId, { kind, reason })
-      turns.apply({ sessionId, state: 'waiting' })
+      flagged(sessionId)
     },
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     waitForRoom: () => waitForRoom(() => startWorker.hasRoom()),

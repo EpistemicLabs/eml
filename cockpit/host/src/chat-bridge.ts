@@ -17,7 +17,7 @@ import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -703,8 +703,8 @@ export class ChatBridge {
         entry.declared = true
         entry.status = status
         entry.textAfterStatus = ''
+        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
-        if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
@@ -760,7 +760,6 @@ export class ChatBridge {
         })
         if (attention) {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
-          if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
