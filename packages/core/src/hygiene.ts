@@ -440,7 +440,7 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
             // One finding per pair: the newer active engram carries it (a planned
             // candidate is never a sweep subject, so the active side owns it).
             const cNewer = c.status === 'active' && (String(c.created_at) > String(e.created_at)
-              || (String(c.created_at) === String(e.created_at) && String(c.id) > String(e.id)))
+              || (String(c.created_at) === String(e.created_at) && (c as EngramRow).ord > e.ord)) // one time, two writes: insertion order
             pairs.set(key, {
               owner: cNewer ? c : e,
               other: cNewer ? e : c,
