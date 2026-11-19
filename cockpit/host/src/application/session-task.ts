@@ -38,7 +38,7 @@ interface Task {
   title: string | null
   content: string
   status: string
-  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string }
+  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string; delegate?: string }
 }
 
 /** The name a task gets before its session has one. */
@@ -58,7 +58,7 @@ export function kebabTitle(title: string): string | null {
 
 /** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
 export function taskContext(task: Task, placeholder: boolean, unattended = false): string {
-  const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null].filter(Boolean).join(' · ')
+  const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null, task.properties?.delegate ? `delegate ${task.properties.delegate}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
     `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
@@ -76,8 +76,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
     '- A worker you start gets a task of its own by default. Name its task when it has one: spawn with --task <id> (an existing task, e.g. the customer\'s open task) or --step (a new step of this task, only when it is part of this task\'s own work).',
     '- Handing out work (an inbox, a triage): find the open task it belongs to (eml_list, eml_recall) and start the worker with --task on it; when there is none, start it with --new-task "<title>" --in <the customer\'s or topic\'s project> --task-text "<what needs doing>".',
-    '- Planned steps of this task: eml_create_task with parent_id, depends_on and checkpoint (before · after · none); the runner starts them.',
-    '- A task you create that an agent can do gets a checkpoint (default after; before when it needs the user\'s OK first) and no person assigned: the runner starts it, also as a standalone task. Leave the checkpoint out only when a person is assigned or the user says so. Name the checkpoint you set in your reply.',
+    '- A task has an owner and may have a delegate: assignee_ids names the person who owns it (Lasse for his work), delegate the one agent that works on it. Handing work to an agent sets delegate; the owner stays. Never put an agent into assignee_ids.',
+    '- Planned steps of this task: eml_create_task with parent_id, depends_on, checkpoint (before · after · none) and delegate (your agent handle); the runner starts them.',
+    '- A task you create that an agent can do gets a checkpoint (default after; before when it needs the user\'s OK first) and a delegate: the runner starts it, also as a standalone task. Leave both out only when the person does it themselves or the user says so. Name the checkpoint and delegate you set in your reply.',
     '- A new standalone task you create (eml_create_task without parent_id, or --new-task) waits for the user\'s triage in the cockpit: you get a pending id to work and track on. Set approved_by_user (or --approved with --new-task) only when the user asked for that task in this conversation; then it goes straight in.',
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. A task with checkpoint after you only close once the user has reviewed the result. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
