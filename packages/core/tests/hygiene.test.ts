@@ -210,10 +210,23 @@ describe('hygieneCheck()', () => {
       expect(check('conflict-scan').findings).toEqual([])
     })
 
-    it('excludes the same-task thread (task-bound siblings with overlapping vocabulary)', () => {
-      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'qf-task', content: 'the quantumflux work', status: 'active' })
+    it('excludes the same-task thread (planned task, task-bound siblings with overlapping vocabulary)', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'qf-task', content: 'the quantumflux work' })
       writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-task-a', content, task_id: task.id, properties: { binding: 'task' } })
       writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-task-b', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('excludes the same-task thread across scopes (the bound task sits in another scope)', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'global', title: 'qf-xscope-task', content: 'the quantumflux work' })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-xscope-a', content, task_id: task.id, properties: { binding: 'task' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-xscope-b', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('never takes a log or learning as a sweep subject (the write-time scan leaves them out)', () => {
+      writes(eml).store({ type: 'log', scope: 'project.demo', title: 'qf-log', content, properties: { what: 'w', landed: 'l', next: 'n' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-note', content: 'quantumflux pipeline sweep threshold gate' })
       expect(check('conflict-scan').findings).toEqual([])
     })
 

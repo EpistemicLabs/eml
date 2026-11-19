@@ -2,7 +2,7 @@ import type { EML } from './index'
 import { REVIEWABLE_TYPES } from './review-due'
 import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { formatProblems, PROFILE_SCOPE, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
-import { extractSalientTerms, CONFLICT_CANDIDATE_LIMIT } from './engrams'
+import { extractSalientTerms, CONFLICT_CANDIDATE_LIMIT, CONFLICT_TYPES } from './engrams'
 import { filterConflictCandidates } from './write/conflicts'
 import type { Engram } from './types'
 
@@ -363,6 +363,7 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
 // surfaces the rest.
 
 const CONFLICT_SCAN_MAX_FINDINGS = 20
+const EMPTY_SET = new Set<string>()
 
 interface ConflictPair {
   owner: EngramRow
@@ -397,19 +398,24 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
       }
       const pairs = new Map<string, ConflictPair>() // pairKey → the pair, once
       for (const [scope, engrams] of byScope) {
-        const taskIds = new Set(engrams.filter(e => e.type === 'task').map(e => e.id))
         const rels = eml.engrams.relationsInScope(scope)
-        // Any typed edge to the engram is a prior verdict about that pair.
-        const linkedOf = (id: string) => new Set(
-          rels
-            .filter(r => r.source_id === id || r.target_id === id)
-            .map(r => (r.source_id === id ? r.target_id : r.source_id)),
-        )
-        const boundTask = new Map<string, string>()
+        // Any typed edge to the engram is a prior verdict about that pair —
+        // built once per scope (not per engram).
+        const linkedOf = new Map<string, Set<string>>()
         for (const r of rels) {
-          if ((r.relation === 'derived_from' || r.relation === 'refines') && taskIds.has(r.target_id)) boundTask.set(r.source_id, r.target_id)
+          for (const [a, b] of [[r.source_id, r.target_id], [r.target_id, r.source_id]] as const) {
+            let set = linkedOf.get(a)
+            if (!set) linkedOf.set(a, set = new Set())
+            set.add(b)
+          }
         }
+        // Mirrors the write-time boundTaskOf: the bound task of any status,
+        // also in another scope.
+        const boundTask = new Map(eml.engrams.taskBindings(scope).map(b => [b.id, b.task]))
         for (const e of engrams) {
+          // The write-time scan runs for CONFLICT_TYPES only — log and learning
+          // are never sweep subjects either (they stay candidates, never owners).
+          if (!CONFLICT_TYPES.has(e.type)) continue
           const salient = extractSalientTerms(e.title, e.content)
           if (salient.length === 0) continue
           const candidates = eml.engrams.query({
@@ -422,7 +428,7 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
             now: now.toISOString(),
           })
           const rawBy = new Map(candidates.map(c => [c.id, c]))
-          for (const cand of filterConflictCandidates({ engram: e as Engram, linked: linkedOf(e.id), boundTask: id => boundTask.get(id) }, candidates)) {
+          for (const cand of filterConflictCandidates({ engram: e as Engram, linked: linkedOf.get(e.id) ?? EMPTY_SET, boundTask: id => boundTask.get(id) }, candidates)) {
             const c = rawBy.get(cand.id)! // the filter's view drops status/created_at
             const key = [e.id, c.id].sort().join('|')
             const prev = pairs.get(key)

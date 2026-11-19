@@ -117,8 +117,8 @@ export function registerNoteTool(server: McpServer, http: EmlApi): void {
       'something that happened → eml_event.\n\n' +
       'A task\'s plan or spec → pass task_id and binding (does the note still hold once the task is done? yes → ' +
       'standing, no → task; it closes with the task). A later update of a still-valid note (e.g. the next research ' +
-      'round) → a new note with the same title to thread the series; the note itself is replaced → supersedes; a ' +
-      'small correction → eml_update(content).\n\n' +
+      'round) → a new note with the same title, linked to the previous one with eml_relate (refines) to thread ' +
+      'the series; the note itself is replaced → supersedes; a small correction → eml_update(content).\n\n' +
       'Cross-reference with [[title-or-id]] wikilinks instead of pasting ids; an id prefix of ≥ 8 chars works, ' +
       'unresolved links come back as unresolved_links.',
     inputSchema: z.object({
