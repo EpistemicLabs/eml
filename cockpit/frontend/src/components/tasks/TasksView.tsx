@@ -82,7 +82,7 @@ function useFold(title: string, fallback: boolean): [boolean, (open: boolean) =>
 const readView = (): View => {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === 'inbox' || v === 'mine' || v === 'agents' || v === 'triage' || v === 'projects' || v === 'cycles' ? v : 'mine';
+    return v === 'inbox' || v === 'mine' || v === 'agents' || v === 'projects' || v === 'cycles' ? v : 'mine';
   } catch { return 'mine'; }
 };
 
@@ -197,7 +197,6 @@ export default function TasksView({ projects: cockpitProjects }: { projects?: Pr
     { id: 'inbox', label: 'Inbox', count: inbox.length, hot: inbox.length > 0 },
     { id: 'mine', label: 'My tasks' },
     { id: 'agents', label: 'Agents' },
-    { id: 'triage', label: 'Triage', count: triage.items.length, hot: triage.items.length > 0 },
     { id: 'projects', label: 'Projects' },
     { id: 'cycles', label: 'Cycles' },
   ];

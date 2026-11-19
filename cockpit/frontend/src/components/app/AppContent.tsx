@@ -16,7 +16,7 @@ import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import { ReviewScreen } from '../review/ReviewScreen';
 import JobsView from '../jobs/JobsView';
-import TasksView from '../tasks/TasksView';
+import { TasksScreen } from '../task-board/TasksScreen';
 import HeaderJobs from '../jobs/HeaderJobs';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
@@ -418,7 +418,7 @@ function AppContentInner() {
           )}
           {topView === 'tasks' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
-              <TasksView projects={projects} />
+              <TasksScreen projects={projects} />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}
