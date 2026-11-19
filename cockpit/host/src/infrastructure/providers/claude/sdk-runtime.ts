@@ -437,6 +437,7 @@ const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a 
   + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own; pass it when the user names another. '
   + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
   + 'self (this session, to continue here later), or session (another session of this space, by address). '
+  + 'A job made earlier with its own session moves to a worker with update and target worker. '
   + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
   + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
   + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '

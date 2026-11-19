@@ -190,6 +190,12 @@ export class Jobs {
       next.notify = notify
     }
     if (input.task_id !== undefined) next.taskId = str(input.task_id) ?? null
+    // The one target change: a job-session job moves to a fresh worker per run in the same project.
+    if (input.target !== undefined) {
+      if (str(input.target) !== 'worker' || job.target.type !== 'job-session') return bad('target only moves a job-session job to a worker; make a new job for another target')
+      const { projectId, provider } = job.target
+      next.target = { type: 'worker', projectId, ...(provider ? { provider } : {}) }
+    }
     let waits = ''
     if (input.mail !== undefined) {
       const mail = mailTrigger(input.mail)

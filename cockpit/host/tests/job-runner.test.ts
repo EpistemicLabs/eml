@@ -210,6 +210,15 @@ describe('job runner', () => {
     expect(world.alerts).toEqual([])
   })
 
+  it('moves a job-session job to a worker per run with update target=worker', async () => {
+    const made = await create({ cron: '0 9 * * *' })
+    world.store.put({ ...made, target: { type: 'job-session', projectId: 'bp-eml', sessionId: 'old-session' } })
+    const moved = await jobs.handle(caller, { action: 'update', job: made.id, target: 'worker' })
+    expect(moved.status, moved.text).toBe(200)
+    expect(world.store.get(made.id)!.target).toEqual({ type: 'worker', projectId: 'bp-eml' })
+    expect((await jobs.handle(caller, { action: 'update', job: made.id, target: 'self' })).text).toMatch(/only moves a job-session job to a worker/)
+  })
+
   it('an existing job-session job still wakes its own session again on later runs', async () => {
     // job-session can no longer be created; the ones made before keep running until they move to a worker and a task.
     const made = await create({ cron: '0 9 * * *' })
