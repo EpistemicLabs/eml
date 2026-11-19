@@ -826,7 +826,8 @@ export class ChatBridge {
     entry.status = null
     entry.textAfterStatus = ''
     entry.askedSummary = false
-    if (this.ctx.ledger.get(entry.sessionId)?.attention) this.ctx.answered?.(entry.sessionId)
+    const asked = this.ctx.ledger.get(entry.sessionId)
+    if (asked?.attention || asked?.taskId) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)

@@ -160,6 +160,18 @@ describe('session identity', () => {
     expect(ledger.get('s-chat')?.archivedAt).not.toBeNull()
   })
 
+  it('a prompt typed into a task session counts as an answer, flagged or not', () => {
+    const ledger = new SessionLedger()
+    const providers = new ProviderRegistry({ providerOf: (id) => ledger.get(id)?.provider, providers: [fakeProvider(false)] })
+    const answered: string[] = []
+    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns: new TurnTracker(), answered: (id) => answered.push(id) }, named, payload)
+    ledger.recordSpawn('s-task', null, 'p1', 'claude', false, 't1')
+    ledger.recordSpawn('s-free', null, 'p1', 'claude')
+    hook('s-task', { id: 'task-id', state: 'working' })
+    hook('s-free', { id: 'free-id', state: 'working' })
+    expect(answered).toEqual(['s-task'])
+  })
+
   it('passes hooks without a turn state on as notes', () => {
     const { turns, hook } = setup(true)
     const notes: string[] = []

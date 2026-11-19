@@ -6,7 +6,14 @@ import { MemoryRouter } from 'react-router';
 
 import type { Board, BoardTask } from '@/lib/task-board';
 
-vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: [], queued: [], refresh: () => {} }) }));
+const live = vi.hoisted(() => ({ sessions: [] as unknown[], seen: [] as string[][] }));
+vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: live.sessions, queued: [], refresh: () => {} }) }));
+vi.mock('@/components/ui/session-chat', () => ({ SessionChat: ({ sessionId }: { sessionId: string }) => <div data-testid="session-chat">{sessionId}</div> }));
+vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useTurnStore: () => ({ turns: { s1: { state: 'done', since: 'x' } }, seen: {} }),
+  markSeen: (ids: string[]) => { live.seen.push(ids); },
+}));
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
 
 import { TaskBoard } from './TaskBoard';
@@ -33,6 +40,8 @@ const board = (): Board => ({
 let posts: Array<{ url: string; body: Record<string, unknown> }>;
 beforeEach(() => {
   posts = [];
+  live.sessions = [];
+  live.seen = [];
   try { localStorage.setItem('cockpit-task-board-view', 'now'); } catch { /* jsdom */ }
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
@@ -114,6 +123,18 @@ describe('the task board', () => {
     const until = new Date(String(posts[0].body.until));
     expect([until.getHours(), until.getMinutes()]).toEqual([9, 0]);
     expect(posts[0].body.key).toBe('task:asked@x');
+  });
+
+  it('counts a session shown in the task panel as seen, as on its desk', async () => {
+    live.sessions = [{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: iso(1) }];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, sessionIds: ['s1'] } : t)) }), { status: 200 });
+      return new Response('{}', { status: 404 });
+    }));
+    mount();
+    fireEvent.click(await screen.findByText('Demo meeting prep'));
+    expect(await screen.findByTestId('session-chat')).toBeTruthy();
+    expect(live.seen).toContainEqual(['s1']);
   });
 
   it('closes a task that is not needed from its project in Plan, with Undo', async () => {

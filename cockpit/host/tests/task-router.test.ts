@@ -78,17 +78,16 @@ describe('task router', () => {
   const setup = (task: Record<string, unknown>, space = { taskSystem: true, shared: false }) => {
     const ledger = new SessionLedger()
     const brain = fakeBrain(task)
-    const waited: string[] = []
     const logs: string[] = []
     const r = router.createTaskRouter({
       ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse',
-      waiting: (id) => waited.push(id), log: (l) => logs.push(l), now: () => new Date('2026-11-17T09:00:00Z'),
+      log: (l) => logs.push(l), now: () => new Date('2026-11-17T09:00:00Z'),
     })
-    return { ledger, brain, r, waited, logs }
+    return { ledger, brain, r, logs }
   }
 
-  it('puts the task on the user for a [lasse] question, writes the handoff once, and marks the session as waiting', async () => {
-    const { ledger, brain, r, waited } = setup({ id: 't1', status: 'active', properties: {} })
+  it('puts the task on the user for a [lasse] question and writes the handoff once; the session itself is not marked as waiting', async () => {
+    const { ledger, brain, r } = setup({ id: 't1', status: 'active', properties: {} })
     ledger.recordSpawn('s1', null, 'bp-eml', 'claude', false, 't1')
     await r.turnEnded('s1', HANDOFF)
     await r.turnEnded('s1', HANDOFF)
@@ -96,8 +95,7 @@ describe('task router', () => {
     expect(brain.posts[0].path).toBe('/task/t1/track')
     expect(brain.posts[0].body.text).toContain('Result: Homepage v4b hero')
     expect(brain.posts[0].body.waiting_on).toEqual({ who: 'lasse', kind: 'question', why: 'Ship the shorter headline?', since: '2026-11-17T09:00:00.000Z', session_id: 's1' })
-    expect(ledger.get('s1')!.attention).toMatchObject({ kind: 'question', reason: 'Ship the shorter headline?' })
-    expect(waited).toEqual(['s1'])
+    expect(ledger.get('s1')!.attention).toBeFalsy()
   })
 
   it('clears its own wait when the next handoff has no question, and leaves another session\'s', async () => {
@@ -116,7 +114,6 @@ describe('task router', () => {
     failed.ledger.setAttention('s4', { kind: 'failed', reason: 'Build broke' })
     await failed.r.turnEnded('s4', 'No block')
     expect(failed.brain.posts[0].body).toEqual({ waiting_on: expect.objectContaining({ kind: 'stopped', why: 'Build broke' }) })
-    expect(failed.waited).toEqual([])
 
     const after = setup({ id: 't4', status: 'active', properties: { checkpoint: 'after' } })
     after.ledger.recordSpawn('s5', null, 'bp-eml', 'claude', false, 't4')
@@ -153,7 +150,7 @@ describe('task router', () => {
     const brain = fakeBrain({ id: 't9', status: 'resolved', properties: {} })
     const r = router.createTaskRouter({
       ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, owner: 'lasse',
-      waiting: () => {}, finished: (id) => finished.push(id), log: () => {},
+      finished: (id) => finished.push(id), log: () => {},
     })
     ledger.recordSpawn('s10', null, 'bp-eml', 'claude', true, 't9')
     ledger.recordSpawn('s11', null, 'bp-eml', 'claude', true, 't9')

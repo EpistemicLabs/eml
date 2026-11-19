@@ -53,7 +53,8 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   // A prompt typed into a terminal is a new turn, as a chat message is (chat-bridge.ts sendMessage):
   // whoever it waited for has answered, and an archived session is back in the lists.
   if (signal.state === 'working' && terminal) {
-    if (deps.ledger.get(sessionId)?.attention) deps.answered?.(sessionId)
+    const asked = deps.ledger.get(sessionId)
+    if (asked?.attention || asked?.taskId) deps.answered?.(sessionId)
     deps.ledger.setAttention(sessionId, null)
     deps.ledger.unarchive(sessionId)
   }

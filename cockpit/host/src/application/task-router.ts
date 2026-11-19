@@ -14,7 +14,9 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - The session's handoff (domain/handoff.ts) goes into the task's history.
  *   - A question for the user, or a session that said question or failed
  *     (session_status), puts the task on the user: waiting_on { who, why,
- *     since, session_id } — the Your turn panel lists it and opens the session.
+ *     since, session_id } — the Inbox lists it and opens the session. The
+ *     session itself is not marked as waiting: it finished its turn, and the
+ *     question is the task's (decision handoff-questions-inbox-only).
  *   - A step with checkpoint "after" that handed over a result, or any session
  *     that said review, waits for the user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
@@ -28,13 +30,11 @@ import type { SessionLedger } from '../session-ledger.js'
  */
 
 export interface TaskRouterDeps {
-  ledger: Pick<SessionLedger, 'get' | 'setAttention'>
+  ledger: Pick<SessionLedger, 'get'>
   spaces: Pick<BrainSpaces, 'resolve'>
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
-  /** The session now waits for the user: its turn state shows it (turn-state.ts). */
-  waiting(sessionId: string): void
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
   log(line: string): void
@@ -136,11 +136,6 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     lastRouted.set(sessionId, key)
     if (Object.keys(patch).length === 0) return
     await brain.post(`/task/${task.id}/track`, patch)
-    // The session waits for the user too, so it is at the top of Your turn and the push says so.
-    if (waiting && !(attention && needsAnswer(attention.kind))) {
-      deps.ledger.setAttention(sessionId, { kind: 'question', reason: waiting.why })
-      deps.waiting(sessionId)
-    }
     deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} ${waiting ? `waiting on ${waiting.who}` : clear ? 'cleared' : 'handoff'}`)
   }
 

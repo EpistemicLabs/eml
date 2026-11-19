@@ -301,7 +301,6 @@ async function main() {
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
     ledger, spaces, brain: taskBrain, owner, log,
-    waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)

@@ -1,6 +1,6 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
 // the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
 import { SessionChat } from '@/components/ui/session-chat';
@@ -15,6 +15,7 @@ import {
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
+import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
 import { AgentBadge, BUTTON, Chip, Dot, FOCUS, LABEL, MINI, PRIMARY } from './parts';
 
@@ -49,6 +50,19 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
   const [pick, setPick] = useState<string | null>(sessionId ?? null);
   const current = own.find((s) => s.id === pick) ?? own[0];
+  // Looking at a session here is looking at it, as on its desk: its finished turn counts as seen.
+  // Opening it counts at once; a turn that finishes while it is shown only with the window in front.
+  const currentId = current?.id ?? null;
+  const since = useTurnStore().turns[currentId ?? '']?.since;
+  useEffect(() => { if (currentId) markSeen([currentId]); }, [currentId]);
+  useEffect(() => {
+    if (!currentId) return;
+    const run = () => { if (document.visibilityState === 'visible' && document.hasFocus()) markSeen([currentId]); };
+    run();
+    window.addEventListener('focus', run);
+    document.addEventListener('visibilitychange', run);
+    return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
+  }, [currentId, since]);
   const steps = board.tasks.filter((t) => t.parentId === task.id);
   const parent = task.parentId ? board.tasks.find((t) => t.id === task.parentId) : undefined;
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
