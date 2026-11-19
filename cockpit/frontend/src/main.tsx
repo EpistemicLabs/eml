@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource-variable/inter";
+import "@fontsource-variable/schibsted-grotesk";
+import "@fontsource-variable/martian-mono";
 import "./index.css";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PanelSourceContext } from "@/lib/engram-panel";
