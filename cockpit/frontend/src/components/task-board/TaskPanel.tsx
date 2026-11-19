@@ -85,7 +85,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
                 <span aria-hidden className="inline-block transition-transform duration-(--duration-fast) group-open:rotate-90">›</span>
                 {task.spaceName} · {project?.name ?? (task.project ? readable(task.project) : 'No project')}
               </summary>
-              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-data text-caption">
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 tabular-nums text-caption">
                 <span>project.{task.project ?? '–'}</span><span>{task.status}</span><span>{task.id}</span>
               </div>
             </details>
@@ -103,7 +103,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
               <div className={cn('rounded-xl border px-3 py-2.5', HUE.you.tint, HUE.you.edge)}>
                 <div className={cn(LABEL, 'mb-1', HUE.you.ink)}>Needs you · {agentName(task.delegate)} asks</div>
                 <div className="text-heading">{task.waitingOn?.why}</div>
-                {task.waitingOn?.since && <div className="mt-1 font-data text-caption text-muted-foreground">asked {when(task.waitingOn.since, now)}</div>}
+                {task.waitingOn?.since && <div className="mt-1 tabular-nums text-caption text-muted-foreground">asked {when(task.waitingOn.since, now)}</div>}
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   {current
                     ? <button type="button" className={PRIMARY} onClick={focusReply}>Reply…</button>
@@ -143,7 +143,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
             <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
               {own.map((s) => (
                 <button key={s.id} type="button" onClick={() => setPick(s.id)} aria-pressed={s.id === current?.id}
-                  className={cn('max-w-56 shrink-0 truncate rounded-md px-2 py-1 font-data text-ui text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>
+                  className={cn('max-w-56 shrink-0 truncate rounded-md px-2 py-1 tabular-nums text-ui text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>
                   {sessionDisplayName(s)}
                 </button>
               ))}

@@ -24,7 +24,7 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
   const segment = (label: string, pressed: boolean, onClick: () => void) => (
     <button key={label} type="button" aria-pressed={pressed} onClick={onClick} className={SEGMENT}>{label}</button>
   );
-  const num = (n: number, ink?: string) => (n ? <span className={cn('font-data text-ui tabular-nums', ink)}>{n}</span> : <span aria-label="none" className="font-data text-ui text-muted-foreground">·</span>);
+  const num = (n: number, ink?: string) => (n ? <span className={cn('text-ui tabular-nums', ink)}>{n}</span> : <span aria-label="none" className="tabular-nums text-ui text-muted-foreground">·</span>);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -45,7 +45,7 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <section className="flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-card p-3">
-          <h3 className={cn(LABEL, 'm-0 mb-1 flex items-center gap-2 text-you-ink')}>Stuck until you act<span className="ml-auto font-data text-muted-foreground">{actCount} important</span></h3>
+          <h3 className={cn(LABEL, 'm-0 mb-1 flex items-center gap-2 text-you-ink')}>Stuck until you act<span className="ml-auto tabular-nums text-muted-foreground">{actCount} important</span></h3>
           <p className="m-0 mb-1 text-caption text-muted-foreground">Important tasks where nothing happens next unless you do something. The reason says what. Not the same list as Needs you, which counts every task on the board where it is your move.</p>
           {act.length === 0 && <span className="text-ui text-muted-foreground">Nothing needs you.</span>}
           {act.map(({ group, tasks }) => (
@@ -56,7 +56,7 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
           ))}
         </section>
         <section className="flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-card p-3">
-          <h3 className={cn(LABEL, 'm-0 mb-1 flex items-center gap-2 text-agent-ink')}>Agents take care of it<span className="ml-auto font-data text-muted-foreground">{covered.length}</span></h3>
+          <h3 className={cn(LABEL, 'm-0 mb-1 flex items-center gap-2 text-agent-ink')}>Agents take care of it<span className="ml-auto tabular-nums text-muted-foreground">{covered.length}</span></h3>
           <p className="m-0 mb-1 text-caption text-muted-foreground">Important tasks with an agent on it: running now, scheduled for a set time, or waiting for a reply an agent will check.</p>
           {covered.length === 0 && <span className="text-ui text-muted-foreground">No agent has an important task right now.</span>}
           {covered.map((t) => <FocusItem key={t.id} task={t} onOpen={onOpen} side={t.due ? `due ${dueLabel(t.due, now)}` : t.priority === 'high' ? 'high' : undefined} chip={<Chip hue="agent" className="whitespace-normal">{coverageText(t, now)}</Chip>} />)}
@@ -81,7 +81,7 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
                   <span className="min-w-0 truncate font-semibold">{r.name}{r.goal && <span className="block truncate text-ui font-normal text-muted-foreground">{r.goal}</span>}</span>
                   <Chip>{r.spaceName}</Chip>
                   {num(r.open)}{num(r.needsYou, 'text-you-ink')}{num(r.delegated, 'text-agent-ink')}{num(r.waiting)}{num(r.high, 'text-stopped-ink')}
-                  <span className="font-data text-ui">{r.due ? dueLabel(r.due, now) : '·'}</span>
+                  <span className="tabular-nums text-ui">{r.due ? dueLabel(r.due, now) : '·'}</span>
                 </button>
                 {isOpen && (
                   <div className="flex flex-col border-t border-border bg-background py-1 pl-10 pr-3">

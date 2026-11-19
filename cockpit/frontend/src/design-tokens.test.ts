@@ -148,7 +148,8 @@ describe('tokens v2 scope', () => {
 // A literal in brackets: starting with a number, colour or calc, or holding a number with a unit anywhere (inset_2px_…).
 const ARBITRARY = /\b[\w:-]+-\[(?:\d|#|rgb|hsl|calc\(\s*\d|[^\]]*?\d(?:px|rem|em|ms|s|vh|vw|dvh|%|deg)\b)[^\]]*\]|\/\[\d?\.?\d+\]/g;
 const COLOUR = /#[0-9a-fA-F]{3,8}\b(?![\w-])|\brgba?\(|\bhsla?\(/g;
-const RAW_SCALE = /\b(?:text-(?:xs|sm|base|lg|xl)|z-\d+)\b/g;
+// v2 uses one font, the UI font with tabular figures for numbers; code keeps the cockpit's monospace.
+const RAW_SCALE = /\b(?:text-(?:xs|sm|base|lg|xl)|z-\d+|font-(?:data|mono))\b/g;
 const OPACITY = /\b(?:bg|text|border|ring|outline|fill|stroke|shadow|from|to|via)-[\w-]+\/(\d+)\b/g;
 
 function count(re: RegExp, text: string) {

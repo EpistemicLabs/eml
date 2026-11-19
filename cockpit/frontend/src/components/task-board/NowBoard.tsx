@@ -18,7 +18,7 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
                 <div className={cn('sticky top-0 z-(--z-raised) flex items-center gap-2 border-b-2 bg-background px-0.5 pb-1.5 pt-2', HUE[meta.hue].rule)}>
                   <Dot hue={meta.hue} live={col.turn === 'agent_working' && col.tasks.length > 0} />
                   <h2 title={meta.name} className="m-0 min-w-0 truncate text-body font-semibold">{meta.name}</h2>
-                  <span className="ml-auto font-data text-ui tabular-nums text-muted-foreground">{col.tasks.length}</span>
+                  <span className="ml-auto text-ui tabular-nums text-muted-foreground">{col.tasks.length}</span>
                 </div>
                 {col.tasks.length > 0 && <p className="m-0 mx-0.5 text-ui text-muted-foreground">{meta.rule}</p>}
                 {col.tasks.length === 0 && <Empty>{col.turn === 'agent_working' ? 'No agent is working right now.' : 'Empty.'}</Empty>}

@@ -215,8 +215,8 @@ function ControlBar({ board, view, onView }: { board: Board; view: View | null; 
           <button key={v} type="button" role="tab" aria-selected={view === v} title={`Shortcut: ${key}`} onClick={() => onView(v)}
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
-            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions, results and proposed tasks`} className="rounded-full bg-muted-foreground/12 px-1.5 font-data text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
-            <kbd className="rounded-sm border border-b-2 border-border px-1 py-0.5 font-data text-caption leading-none text-muted-foreground">{key}</kbd>
+            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions, results and proposed tasks`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
+            <kbd className="rounded-sm border border-b-2 border-border px-1 py-0.5 tabular-nums text-caption leading-none text-muted-foreground">{key}</kbd>
           </button>
         ))}
       </div>

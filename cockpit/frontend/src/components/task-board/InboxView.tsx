@@ -58,14 +58,14 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
         <Fold label={`FYI · ${results.length} result${results.length === 1 ? '' : 's'}, nothing to do`} open={showFyi} onToggle={() => setShowFyi(!showFyi)} />
         {showFyi && results.map((t) => (
           <div key={t.id} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
-            <time className="w-16 shrink-0 font-data text-caption">{when(t.updatedAt, now)}</time>
+            <time className="w-16 shrink-0 tabular-nums text-caption">{when(t.updatedAt, now)}</time>
             <span><b className="font-medium text-foreground">{readable(t.title)}</b> · done by {t.delegate}</span>
           </div>
         ))}
         {board.snoozed.length > 0 && <Fold label={`Snoozed · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setShowSnoozed(!showSnoozed)} />}
         {showSnoozed && board.snoozed.map((item) => (
           <div key={item.key} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
-            <time className="w-16 shrink-0 font-data text-caption">{when(item.until, now)}</time>
+            <time className="w-16 shrink-0 tabular-nums text-caption">{when(item.until, now)}</time>
             <span><b className="font-medium text-foreground">{readable(item.title)}</b> · back then</span>
           </div>
         ))}
@@ -99,7 +99,7 @@ function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
         <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-ui text-muted-foreground">
           <Chip hue={kind.hue}>{kind.label}</Chip>
           {task ? <Who task={task} viewer={viewer} /> : item.kind === 'new_task' ? <span>proposed by a session</span> : <span>no task</span>}
-          <time className="font-data text-caption">{when(item.since, now)}</time>
+          <time className="tabular-nums text-caption">{when(item.since, now)}</time>
         </span>
       </button>
       <span className={cn('flex flex-wrap gap-1.5', compact ? 'col-start-2 justify-start' : 'self-center justify-end')}>

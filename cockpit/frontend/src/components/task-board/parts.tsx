@@ -53,7 +53,7 @@ export function CardTime({ task, now }: { task: BoardTask; now: number }) {
   const t = cardTime(task, now);
   if (!t) return null;
   return (
-    <time title={t.future ? 'When the agent picks it up next' : 'When this happened'} className={cn('ml-auto shrink-0 whitespace-nowrap font-data text-caption tabular-nums', t.future ? 'text-scheduled-ink' : 'text-muted-foreground')}>
+    <time title={t.future ? 'When the agent picks it up next' : 'When this happened'} className={cn('ml-auto shrink-0 whitespace-nowrap text-caption tabular-nums', t.future ? 'text-scheduled-ink' : 'text-muted-foreground')}>
       {t.label}
     </time>
   );
