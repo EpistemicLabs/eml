@@ -166,6 +166,25 @@ async function readJson(req: http.IncomingMessage): Promise<Record<string, unkno
   }
 }
 
+/**
+ * Outside the task system an agent cannot hand a task to an agent: the delegate model runs only in
+ * spaces where the task system is on (decision delegate-only-where-task-system-is-on). The brain
+ * does not know the switch, so the cockpit refuses the field here. Taking a delegate back (null) passes.
+ */
+export function withoutDelegate(inner: EmlApi): EmlApi {
+  const message = 'delegate is not available: the task system is off in this space.'
+  const refuse = () => { throw new EmlApiError(400, { error: message }, message) }
+  return {
+    get: (p, query) => inner.get(p, query),
+    put: (p, body) => inner.put(p, body),
+    async post(p, body) {
+      const delegate = body && typeof body === 'object' ? (body as Record<string, unknown>).delegate : undefined
+      if (typeof delegate === 'string' && (p === '/engram/task' || /^\/task\/[^/]+\/track$/.test(p))) refuse()
+      return inner.post(p, body)
+    },
+  }
+}
+
 export function createBrainMcpHandler(deps: BrainMcpDeps) {
   const endpoint = new McpHttpEndpoint({
     clientName: 'eml-cockpit',
@@ -177,7 +196,8 @@ export function createBrainMcpHandler(deps: BrainMcpDeps) {
       if ('refused' in agent) throw new Error(agent.refused)
       const provenance = Provenance.forSession(sessionId, async () => sessionModel(deps, sessionId))
       const client = sessionClient(space, agent, provenance)
-      if (!deps.triage || !taskSystemOn(space)) return { client, provenance }
+      if (!taskSystemOn(space)) return { client: withoutDelegate(client), provenance }
+      if (!deps.triage) return { client, provenance }
       const sessionName = () => { const e = deps.ledger.get(sessionId); return e?.title ?? e?.agentTitle ?? null }
       return { client: triagedClient(client, { ...deps.triage, spaceId: space.id, sessionId, sessionName }), provenance }
     },
