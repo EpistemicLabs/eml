@@ -81,6 +81,15 @@ describe('the task board', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('closes with the pane toolbar\'s ×, like a desk pane', async () => {
+    mount();
+    fireEvent.click(await screen.findByText('Acme cancellation rescue'));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText(/Esc closes/)).toBeNull();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close this pane' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('hands over with the open question carried, and offers Undo', async () => {
     mount();
     fireEvent.click(await screen.findByText('Acme cancellation rescue'));

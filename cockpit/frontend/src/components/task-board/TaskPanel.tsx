@@ -2,6 +2,7 @@
 // the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions.
 import { useState } from 'react';
 
+import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
 import { SessionChat } from '@/components/ui/session-chat';
 import { TaskJournal } from '@/components/task-sections';
 import type { AllSession } from '@/components/sidebar/allSessions';
@@ -27,7 +28,7 @@ export function focusReply(): void {
   document.querySelector<HTMLTextAreaElement>(`#${CHAT_ID} textarea`)?.focus();
 }
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, onOpenTask, onHandOver, onReview }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -35,8 +36,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
   spaces: SpaceInfo[];
   /** Open on this session (the Inbox item that asked), not the newest. */
   sessionId?: string;
-  /** The row above the panel: how to close it. */
-  top: React.ReactNode;
+  /** Closes the task: the × in the chat's toolbar, as on a desk pane. */
+  onClose: () => void;
   onOpenTask: (task: BoardTask) => void;
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
   onReview: (task: BoardTask) => void;
@@ -69,7 +70,6 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
 
   return (
     <>
-      {top}
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto rounded-xl border border-border bg-card lg:grid-cols-(--grid-task) lg:overflow-hidden">
         <section aria-label="Task" className="flex min-w-0 flex-col border-b border-border lg:min-h-0 lg:border-b-0 lg:border-r">
           <div className="flex flex-col gap-3 p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
@@ -150,13 +150,18 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
             </div>
           )}
           {current ? (
-            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{}} />
+            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} />
           ) : (
+            <>
+            <div className="flex shrink-0 justify-end px-2 py-1.5">
+              <MainContentTabSwitcher groups={[]} paneView="chat" onSetPaneView={() => {}} onClosePane={onClose} />
+            </div>
             <div className="m-auto flex max-w-dialog flex-col items-center gap-3 px-5 py-10 text-center text-body text-muted-foreground">
               <b className="text-foreground">No session on this task yet.</b>
               Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.
               {handOver}
             </div>
+            </>
           )}
         </section>
       </div>

@@ -91,7 +91,7 @@ export default function MainContentTabSwitcher({
   return (
     <div className="flex items-center gap-2">
       {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
-      <div role="radiogroup" className="flex items-center gap-1.5">
+      {groups.length > 0 && <div role="radiogroup" className="flex items-center gap-1.5">
         {GROUPS.filter(({ group }) => groups.includes(group)).map(({ group }) => (
           <div key={group} className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10">
             {modes.filter((mode) => mode.group === group).map((mode) => {
@@ -120,9 +120,9 @@ export default function MainContentTabSwitcher({
             })}
           </div>
         ))}
-      </div>
+      </div>}
 
-      {(onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
+      {groups.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
 
       {onToggleMainPane && (
         <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">

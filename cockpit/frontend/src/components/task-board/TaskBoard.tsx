@@ -150,12 +150,7 @@ export function TaskBoard() {
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
       onReview={async (t) => answered(await reviewDone(t), 'Closed as reviewed.')}
-      top={(
-        <div className="flex items-center gap-2.5">
-          <span className="flex-1 text-caption text-muted-foreground">{split ? 'Pick another item on the left to switch. Esc closes.' : `Slides over ${VIEWS.find(([v]) => v === view)![1]}. Click outside or press Esc to close.`}</span>
-          <button type="button" className={cn(BUTTON, 'min-h-(--target-min) px-2.5')} onClick={() => setOpen(null)} aria-label="Close the task">× Close</button>
-        </div>
-      )}
+      onClose={() => setOpen(null)}
     />
   );
   const dialogTask = dialog ? byId.get(dialog.taskId) : undefined;
