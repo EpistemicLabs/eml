@@ -323,7 +323,7 @@ const FIELD_LABELS: Record<string, string> = {
   next_step: "next step", assignee_ids: "assignees", due_date: "due", review_due_at: "review due",
   occurred_at: "occurred", change_type: "change", source_url: "source url",
   source_name: "source name", checked_at: "checked", rule_type: "rule type", open_threads: "open threads",
-  depends_on: "depends on", done_when: "done when",
+  depends_on: "depends on",
 };
 
 function FieldsCard({ title, keys, props, relationHref }: {

@@ -38,7 +38,7 @@ interface Task {
   title: string | null
   content: string
   status: string
-  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; done_when?: string }
+  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string }
 }
 
 /** The name a task gets before its session has one. */
@@ -63,9 +63,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '# Your task (cockpit task system)',
     `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
     task.content,
-    task.status === 'pending triage' ? null : task.properties?.done_when
-      ? `Done when: ${task.properties.done_when}`
-      : 'Done when: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task done_when).',
+    task.status === 'pending triage' ? null : task.properties?.goal
+      ? `Goal: ${task.properties.goal}`
+      : 'Goal: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task goal).',
     ...(placeholder ? [
       '',
       'The cockpit created this task for the session; it takes the session\'s name once you name the session.',
@@ -85,7 +85,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     ...(unattended ? [
       '',
       '## Until it is done',
-      '- At every wake-up, check the task against its done when first. Checks are read-only; nothing goes out without the user\'s OK.',
+      '- At every wake-up, check the task against its goal first. Checks are read-only; nothing goes out without the user\'s OK.',
       '- Reached: hand the result over for review (session_status review and the handoff\'s Result). Do not close it yourself.',
       '- Not reached: schedule your next check yourself with the schedule tool (create with at and task_id of this task, or update the job you run in), then stop quietly: session_status done, Next names the time of the check, no [lasse] question. You decide whether and when to check again; do not ask the user about it.',
       '- Ask the user ([lasse]) only what only they can decide. A stop without a next step (a check, a question, or the task closed) is caught by the cockpit.',

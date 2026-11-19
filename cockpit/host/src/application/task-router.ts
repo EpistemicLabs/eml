@@ -79,7 +79,7 @@ export function decideWaiting(facts: {
   const wait = (why: string): WaitingOn => ({ who: facts.owner, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
   if (handoff && handoff.forUser.length > 0) return wait(handoff.forUser.map(shortQuestion).join(' · '))
   if (attention && needsAnswer(attention.kind as never)) return wait(attention.reason ?? (attention.kind === 'failed' ? 'The session failed' : 'The session has a question'))
-  // A session that says review hands a result over (its done when is reached), whatever the checkpoint.
+  // A session that says review hands a result over (its goal is reached), whatever the checkpoint.
   if (attention?.kind === 'review' || (facts.checkpoint === 'after' && handoff?.result)) return wait(`Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
   return null
 }

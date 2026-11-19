@@ -96,7 +96,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     waiting_on: { kind: 'map' },
     // What has to be true for the task to be done; the agent proposes it and
     // checks it at every wake-up (decision agent-schedules-own-follow-ups).
-    done_when: text(),
+    goal: text(),
   },
   event: {
     occurred_at: date({ required: true }),

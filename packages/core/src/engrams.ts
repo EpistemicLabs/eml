@@ -210,12 +210,12 @@ export interface TrackTaskInput {
   /** v0.22 task system: who acts next, set by the cockpit's router; null clears. */
   waiting_on?: Record<string, string> | null
   /** v0.22 task system: what has to be true for the task to be done; null clears. */
-  done_when?: string | null
+  goal?: string | null
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
   'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
-  'depends_on', 'checkpoint', 'waiting_on', 'done_when',
+  'depends_on', 'checkpoint', 'waiting_on', 'goal',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
