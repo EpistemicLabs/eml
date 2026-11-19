@@ -45,7 +45,7 @@
     "@engramprotocol/cockpit-frontend": "workspace:*",
     "@engramprotocol/core": "workspace:*",
     "@engramprotocol/server": "workspace:*",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
