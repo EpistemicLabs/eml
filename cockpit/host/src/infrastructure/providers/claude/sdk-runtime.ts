@@ -435,10 +435,10 @@ const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a 
   + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
   + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
   + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own; pass it when the user names another. '
-  + 'target: worker (default; a new session per run in project, by default this one\'s), job-session (one session of its own, woken again on every run: it remembers earlier runs), '
-  + 'self (this session), or session (another session of this space, by address). '
+  + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
+  + 'self (this session, to continue here later), or session (another session of this space, by address). '
   + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
-  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then wakes its own session when such mail arrives. '
+  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
   + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
   + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
   + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
@@ -452,9 +452,9 @@ const SCHEDULE_TOOL_INPUT = {
   cron: z.string().optional(),
   at: z.string().optional(),
   timezone: z.string().optional(),
-  target: z.enum(['worker', 'job-session', 'self', 'session']).optional(),
+  target: z.enum(['worker', 'self', 'session']).optional(),
   session: z.string().optional().describe('With target session: the session\'s address.'),
-  project: z.string().optional().describe('For a worker or job-session: the project it runs in.'),
+  project: z.string().optional().describe('For a worker: the project it runs in.'),
   provider: z.string().optional(),
   max_runs: z.number().int().optional(),
   ends_at: z.string().optional(),

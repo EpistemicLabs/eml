@@ -30,10 +30,9 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Check Acme reply' \
   own. Pass it only when the user names another zone.
 - **Whom it wakes (`--target`):**
   - `worker` (default): a new session per run, in `--project` (by default
-    this session's).
-  - `job-session`: one session of its own, woken again on every run; it
-    remembers earlier runs.
-  - `self`: this session.
+    this session's). Give it `--task-id`: the task's goal and journal carry
+    what earlier runs did, so a fresh session starts clean and short.
+  - `self`: this session, to continue the conversation here later.
   - `session`: another session of this space (`--session <address>`).
 - **The prompt is all the woken session gets.** Write it so it stands alone:
   what to do, where, and what to report.
@@ -51,7 +50,8 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Acme mail' --mail-domains acme.exampl
 ```
 
 A job with `--mail-domains` / `--mail-addresses` (with or without a schedule)
-wakes its own session (`job-session`) when such mail arrives. It reacts only
+starts a worker when such mail arrives; give it the customer's task with
+`--task-id`, so each run reads what the earlier ones did. It reacts only
 after the user's OK in the cockpit's Jobs view, and its replies are drafts the
 user approves; neither can be changed from a session. Adding addresses later
 asks for the OK again.

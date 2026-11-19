@@ -7,8 +7,8 @@ import { formatInZone, nextCronTime, parseCron } from './schedule.js'
  * A job: work the cockpit wakes a session for, without anyone asking at that
  * moment. Its triggers say when — a schedule now; later a mail, a Slack
  * conversation or WhatsApp numbers (the channel bridge, job-contract.ts) — and
- * its target says whom: a fresh worker per run, a session that exists, or one
- * session of its own kept across runs. Each wake is a run (JobRun), kept as
+ * its target says whom: a fresh worker per run (the default), or a session that
+ * exists (decision jobs-two-modes-worker-default-drop-job-session). Each wake is a run (JobRun), kept as
  * the job's history. The runner (application/job-runner.ts) fires them; the
  * definitions and runs live in the host (job-store.ts), not in the brain: the
  * runner works without a brain server, and a job links its brain task by id.
@@ -22,7 +22,10 @@ export type JobTarget =
   | { type: 'worker'; projectId: string; provider?: ProviderId }
   /** A session that exists: the one that made the job, or another of its space. */
   | { type: 'session'; sessionId: string }
-  /** One worker of its own, started on the first run and woken again on the next ones. */
+  /**
+   * One worker of its own, started on the first run and woken again on the next ones. No longer
+   * created: the jobs made with it keep running until they move to a worker and a task.
+   */
   | { type: 'job-session'; projectId: string; provider?: ProviderId; sessionId: string | null }
 
 export type ScheduleTrigger = { type: 'schedule'; timeZone: string } & ({ cron: string; at?: undefined } | { at: string; cron?: undefined })

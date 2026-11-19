@@ -210,8 +210,11 @@ describe('job runner', () => {
     expect(world.alerts).toEqual([])
   })
 
-  it('wakes its own session again on later runs', async () => {
-    const job = await create({ cron: '0 9 * * *', target: 'job-session' })
+  it('an existing job-session job still wakes its own session again on later runs', async () => {
+    // job-session can no longer be created; the ones made before keep running until they move to a worker and a task.
+    const made = await create({ cron: '0 9 * * *' })
+    const job = { ...made, target: { type: 'job-session' as const, projectId: 'bp-eml', sessionId: null } }
+    world.store.put(job)
     world.now = Date.parse('2026-11-09T01:00:10Z')
     await runner.tick()
     const sessionId = world.started[0].sessionId
@@ -289,6 +292,8 @@ describe('schedule tool', () => {
     expect((await create({ at: '2028-01-01T08:00' })).text).toMatch(/a year ahead/)
     expect((await create({ cron: '0 8 * * *', timezone: 'Mars/Olympus' })).text).toMatch(/unknown time zone/)
     expect((await create({ cron: '0 8 * * *', project: 'nope' })).text).toMatch(/unknown project/)
+    expect((await create({ cron: '0 8 * * *', target: 'job-session' })).text)
+      .toMatch(/^job-session is gone: a worker per run \(the default\) keeps its memory in the task's goal and journal; self wakes this session/)
   })
 
   it('answers with the next runs in words', async () => {
@@ -331,13 +336,13 @@ describe('mail jobs', () => {
   const createMail = async (jobs: Jobs, mail: unknown, extra: Record<string, unknown> = {}) =>
     jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'Draft replies to Acme.', mail, ...extra })
 
-  it('listens on mail in one session of its own, drafts, and waits for the user’s OK', async () => {
+  it('listens on mail with a fresh worker per mail, drafts, and waits for the user’s OK', async () => {
     const { jobs } = setup()
     const answer = await createMail(jobs, { domains: ['Acme.example'], addresses: ['boss@partner.example'] })
     expect(answer.status, answer.text).toBe(201)
     expect(answer.job).toMatchObject({
       kind: 'standing', pendingApproval: true, reply: { mail: 'draft' }, nextRunAt: null,
-      target: { type: 'job-session', projectId: 'bp-eml', sessionId: null },
+      target: { type: 'worker', projectId: 'bp-eml' },
       triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'boss@partner.example' }, { kind: 'domain', domain: 'acme.example' }] }],
     })
     expect(answer.text).toMatch(/only after the user's OK in the Jobs view/)

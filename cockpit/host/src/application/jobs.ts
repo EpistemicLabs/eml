@@ -122,8 +122,9 @@ export class Jobs {
     if (typeof trigger === 'string') return bad(trigger)
     const end = this.end(input, trigger?.timeZone ?? this.deps.defaultTimeZone())
     if (typeof end === 'string') return bad(end)
-    // One session that keeps the conversation fits a mail job; a fresh one per run a routine.
-    const target = await this.target(caller, mail && input.target === undefined && input.session === undefined ? { ...input, target: 'job-session' } : input)
+    // A fresh worker per run, mail jobs too: the task's goal and journal carry what earlier runs did
+    // (decision jobs-two-modes-worker-default-drop-job-session).
+    const target = await this.target(caller, input)
     if (typeof target === 'string') return bad(target)
     const notify = this.notify(input.notify)
     if (notify === null) return bad('notify must be needs-me, always or never')
@@ -318,15 +319,14 @@ export class Jobs {
       const sessionId = this.deps.findSession(caller.spaceId, name)
       return sessionId ? { type: 'session', sessionId } : `no session "${name}" in this space`
     }
-    if (kind !== 'worker' && kind !== 'job-session') return 'target must be worker, job-session, self or session'
+    if (kind === 'job-session') return 'job-session is gone: a worker per run (the default) keeps its memory in the task\'s goal and journal; self wakes this session, session another one'
+    if (kind !== 'worker') return 'target must be worker, self or session'
     const projectInput = str(input.project)
     const projectId = projectInput ? await this.deps.resolveProject(caller.spaceId, projectInput) : caller.projectId
     if (!projectId) return projectInput ? `unknown project "${projectInput}"` : 'project is required for a worker'
     const provider = str(input.provider)
     if (provider && !this.deps.providerKnown(provider)) return `unknown provider "${provider}"`
-    return kind === 'worker'
-      ? { type: 'worker', projectId, ...(provider ? { provider: provider as never } : {}) }
-      : { type: 'job-session', projectId, ...(provider ? { provider: provider as never } : {}), sessionId: null }
+    return { type: 'worker', projectId, ...(provider ? { provider: provider as never } : {}) }
   }
 
   /** The user's OK in the Jobs view: the job's channel addresses may wake it. Only the page calls this. */
