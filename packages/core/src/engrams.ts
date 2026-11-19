@@ -397,6 +397,22 @@ export class EngramStore {
   }
 
   /**
+   * conflict-detection: for every engram in scope, the task it is bound to —
+   * the derived_from/refines edge to a task of ANY status and ANY scope,
+   * mirroring boundTaskOf (write/task-binding.ts), which resolves the task
+   * without a status filter. One query; the conflict sweep uses it for its
+   * same-task thread test.
+   */
+  taskBindings(scope: string): Array<{ id: string, task: string }> {
+    return this.db.prepare(`
+      SELECT e.id, t.id AS task FROM relations r
+      JOIN engrams e ON e.id = r.source_id AND e.scope = ?
+      JOIN engrams t ON t.id = r.target_id AND t.type = 'task'
+      WHERE r.relation IN ('derived_from', 'refines')
+    `).all(scope) as Array<{ id: string, task: string }>
+  }
+
+  /**
    * v0.12/v0.14: batch-load registered facet ids (tags + subjects) onto a set of
    * engrams IN PLACE — ONE query per facet for the whole array, not one per engram
    * (rowToEngram stays pure). Called at every read boundary (query/get/getRaw/

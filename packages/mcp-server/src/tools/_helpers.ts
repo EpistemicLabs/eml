@@ -67,6 +67,8 @@ interface ConflictCandidateView {
   title: string | null
   gist: string
   coverage: number
+  /** conflict-detection (phase 1): same title as the written engram, no edge between the pair yet. */
+  lineage?: boolean
 }
 
 export function conflictBanner(result: unknown): string | null {
@@ -80,7 +82,7 @@ export function conflictBanner(result: unknown): string | null {
     : `⚠ ${pc.length} possibly conflicting/duplicate active engram${pc.length > 1 ? 's' : ''} found (advisory).`
 
   const lines = pc.map(c =>
-    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap — ${c.gist.slice(0, 120)}`,
+    `  • [${c.type}] ${c.title ?? '(no title)'} · ${c.id.slice(0, 8)} · ${Math.round(c.coverage * 100)} % word overlap${c.lineage ? ' · same title — check the lineage link' : ''} — ${c.gist.slice(0, 120)}`,
   )
 
   // v0.19: the resolve options follow the lifecycle of both sides — the call
@@ -88,14 +90,14 @@ export function conflictBanner(result: unknown): string | null {
   // An event is corrected, a status is versioned by set_status, a task is
   // replaced only by a task (eml_track_task supersedes), and a task write
   // supersedes no other type.
-  const relate = 'relate (eml_relate contradicts | related_to) / dismiss.'
+  const relate = 'relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate distinct_from, explanation = why they are distinct).'
   const ids = (cs: ConflictCandidateView[]) => cs.map(c => c.id.slice(0, 8)).join(', ')
   const ofType = (t: string) => pc.filter(c => c.type === t)
   const written = r?.type
   let evaluate: string
   if (written === 'event') {
     evaluate = 'Evaluate each before continuing: the same occurrence (this write is a duplicate: eml_update(<new id>, status=invalidated)) / ' +
-      'a different one (relate: eml_relate related_to, or dismiss).'
+      'a different one (relate: eml_relate related_to, or dismiss (record it: eml_relate distinct_from, explanation = why they are distinct)).'
   } else if (written === 'status') {
     evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${relate}`
   } else if (written === 'task') {
@@ -105,7 +107,7 @@ export function conflictBanner(result: unknown): string | null {
       ? 'Evaluate each before continuing: supersede (this task replaces it: eml_track_task(<new id>, supersedes=[<old id>]); ' +
         `its bound decisions and notes move along) / ${relate}`
       : `Evaluate each before continuing: ${relate}`
-    if (tasks.length > 0 && others.length > 0) evaluate += ` ${ids(others)}: not replaced by a task — relate or dismiss.`
+    if (tasks.length > 0 && others.length > 0) evaluate += ` ${ids(others)}: not replaced by a task — ${relate}`
   } else {
     const tasks = ofType('task')
     const statuses = ofType('status')

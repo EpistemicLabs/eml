@@ -100,6 +100,7 @@ import {
   readObject,
   CommandError,
   isValidationMessage,
+  recordedDismissal,
   SEED_ORIGIN,
   type EngramType,
   type EngramStatus,
@@ -958,7 +959,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     // POST /relate — create relation between two engrams.
     // v0.9.1 Cluster 1: no cross-namespace check anymore.
     if (url === '/relate' && method === 'POST') {
-      const body = await readBody(req)
+      // A dismissed conflict candidate (distinct_from) is recorded as the marked related_to.
+      const body = recordedDismissal(await readBody(req))
       const { created } = await applyWrite(eml, { name: 'relation.create', input: body as never }, env, sync, held)
       return json(res, 201, { ok: true, created })
     }
