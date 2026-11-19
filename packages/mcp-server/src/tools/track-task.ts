@@ -46,6 +46,7 @@ export function registerTrackTaskTool(server: McpServer, http: EmlApi): void {
       parent_id: z.string().nullable().optional().describe('Move under another parent task; null makes it top-level.'),
       checkpoint: z.enum(CHECKPOINTS).nullable().optional().describe('Task system: before · after · none; null clears. Loosening (after → none, before → after/none) is Lasse\'s call: only on his explicit word.'),
       depends_on: z.array(z.string()).nullable().optional().describe('Task system: replaces the ids of the steps that must be done first; [] or null clears.'),
+      done_when: z.string().nullable().optional().describe('Task system: what has to be true for the task to be done, one checkable sentence; set it when you first work on a task that has none. null clears.'),
       scope: z.string().optional().describe('Move the task to another scope (project.<id> …); sub-tasks and bound items keep theirs.'),
       supersedes: z.array(z.string()).optional().describe('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),

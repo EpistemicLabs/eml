@@ -82,7 +82,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'done_when'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -208,6 +208,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
     const who = (w: unknown) => (w && typeof w === 'object' ? `${(w as Record<string, string>).who ?? '?'} · ${(w as Record<string, string>).why ?? '?'}` : 'nobody')
     change(`waiting on ${who(old.waiting_on)} → ${who(input.waiting_on)}`)
   }
+  if (input.done_when !== undefined && (input.done_when ?? undefined) !== old.done_when) change(input.done_when === null ? 'done_when cleared' : old.done_when === undefined ? 'done_when set' : 'done_when changed')
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
   if (contentChanged) change('content rewritten')
