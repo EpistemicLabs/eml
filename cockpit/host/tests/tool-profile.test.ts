@@ -29,7 +29,8 @@ describe('limitMcpServers', () => {
 })
 
 describe('channelJobProfile', () => {
-  const CLOSED = ['Bash', 'SendMessage', 'mcp__cockpit__schedule']
+  // The schedule tool stays: a limited job's session reaches only its own job with it (application/jobs.ts).
+  const CLOSED = ['Bash', 'SendMessage']
 
   it('keeps what the maker denied, closes the ways out and leaves only the brain from the space', () => {
     expect(channelJobProfile({ deniedTools: ['Write'], mcpServers: ['gmail'] }, [])).toEqual({ deniedTools: ['Write', ...CLOSED], mcpServers: [] })
@@ -39,7 +40,7 @@ describe('channelJobProfile', () => {
 
   it('leaves the web tools on, and lifts a tool the user granted for now', () => {
     expect(channelJobProfile(null, []).deniedTools).not.toContain('WebFetch')
-    expect(channelJobProfile(null, ['SendMessage']).deniedTools).toEqual(['Bash', 'mcp__cockpit__schedule'])
+    expect(channelJobProfile(null, ['SendMessage']).deniedTools).toEqual(['Bash'])
   })
 
   it('never lifts what the maker could not use, even when granted', () => {

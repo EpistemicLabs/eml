@@ -30,13 +30,14 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Check Acme reply' \
   own. Pass it only when the user names another zone.
 - **Whom it wakes (`--target`):**
   - `worker` (default): a new session per run, in `--project` (by default
-    this session's).
-  - `job-session`: one session of its own, woken again on every run; it
-    remembers earlier runs.
-  - `self`: this session.
+    this session's). Give it `--task-id`: the task's goal and journal carry
+    what earlier runs did, so a fresh session starts clean and short.
+  - `self`: this session, to continue the conversation here later.
   - `session`: another session of this space (`--session <address>`).
 - **The prompt is all the woken session gets.** Write it so it stands alone:
   what to do, where, and what to report.
+- **Goal (`--goal`):** for work toward an outcome ("refund received"), say
+  what has to be true for the job to be over. Every run is told it.
 - **Optional:** `--max-runs`, `--ends-at`, `--task-id` (the brain task it
   belongs to), `--deny-tools a,b`, `--notify needs-me|always|never`
   (default needs-me: the user hears of runs that need them).
@@ -49,7 +50,8 @@ node "$COCKPIT_SCHEDULE_JS" create --name 'Acme mail' --mail-domains acme.exampl
 ```
 
 A job with `--mail-domains` / `--mail-addresses` (with or without a schedule)
-wakes its own session (`job-session`) when such mail arrives. It reacts only
+starts a worker when such mail arrives; give it the customer's task with
+`--task-id`, so each run reads what the earlier ones did. It reacts only
 after the user's OK in the cockpit's Jobs view, and its replies are drafts the
 user approves; neither can be changed from a session. Adding addresses later
 asks for the OK again.
@@ -66,6 +68,20 @@ node "$COCKPIT_SCHEDULE_JS" pause --job 'Daily brief'     # resume, delete, run_
 ```
 
 `--job` takes the id (or its first 8 characters) or the exact name.
+
+### Keep going until the goal is reached
+
+A woken run reports done only once the job's goal is reached. Until then,
+before it stops, it sets its next wake-up (a repeating job goes on at its
+next run instead):
+
+```bash
+node "$COCKPIT_SCHEDULE_JS" update --job 'Refund' --at '2026-11-18T09:00'
+node "$COCKPIT_SCHEDULE_JS" finish --job 'Refund'   # the goal is reached: it wakes no more
+```
+
+A limited job's session reaches only its own job: `update` with `--at`,
+`--timezone` or `--goal`, `list` and `finish`.
 
 ## Limits
 

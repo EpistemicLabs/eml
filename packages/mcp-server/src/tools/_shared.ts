@@ -9,6 +9,8 @@ export const ENGRAM_TYPES = [
 ] as const
 export const STAGES = ['ideation', 'planning', 'ready', 'implementation'] as const
 export const PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const
+/** v0.22 task system: where a step stops for its person (core CHECKPOINTS). */
+export const CHECKPOINTS = ['before', 'after', 'none'] as const
 export const BINDINGS = ['task', 'standing'] as const
 export const CHANGE_TYPES = [
   'created', 'started', 'completed', 'released', 'deployed', 'failed', 'incident', 'paused', 'resumed', 'deleted', 'other',

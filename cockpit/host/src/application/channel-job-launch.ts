@@ -17,11 +17,11 @@ export interface ChannelJobFacts {
 }
 
 /**
- * A channel job's facts for a launch now: limited unless the user took the limits off, and the
- * tools still lent to it.
+ * A channel job's facts for a launch now: limited once the user limited it, and the tools still
+ * lent to it.
  */
 export function channelJobFacts(job: Pick<Job, 'id' | 'triggers' | 'limited' | 'grants'>, now: number): ChannelJobFacts {
-  return { jobId: job.id, limited: job.limited !== false, granted: activeGrants(job, now).map((grant) => grant.tool) }
+  return { jobId: job.id, limited: job.limited === true, granted: activeGrants(job, now).map((grant) => grant.tool) }
 }
 
 export interface ChannelToolsDeps {

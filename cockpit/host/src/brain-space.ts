@@ -44,6 +44,11 @@ export interface BrainSpace {
   shared: boolean | null
   /** What tells it apart in this cockpit. */
   color: SpaceColor
+  /**
+   * The task system was switched on for this space in the cockpit config.
+   * Read it through taskSystemOn(), which keeps it off for a shared brain.
+   */
+  taskSystem: boolean
   /** The runtime of the bound agent (agent-runtime.ts); null = the home's. */
   runtime: SpaceRuntime | null
   /** How the session ledger keys this space: null for main (its pre-spaces entries carry no space), else the id. */
@@ -96,6 +101,8 @@ export interface SpaceView {
   /** Its sessions use the bound agent's own runtime, not the cockpit's. */
   ownRuntime: boolean
   color: SpaceColor
+  /** The task system runs in this space (taskSystemOn). */
+  taskSystem: boolean
 }
 
 /**
@@ -106,7 +113,14 @@ export function sessionAgentName(space: BrainSpace): string | null {
   return space.agent ? space.agent.charAt(0).toUpperCase() + space.agent.slice(1) : null
 }
 
-export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), ownRuntime: space.runtime !== null, upgrade: space.upgrade, shared: space.shared, color: space.color })
+/**
+ * Whether the task system runs in this space: switched on in the config and a
+ * local brain the server confirmed. A shared brain, or one whose sharing is
+ * unknown, keeps today's behaviour, so nothing new reaches the other members.
+ */
+export const taskSystemOn = (space: BrainSpace): boolean => space.taskSystem && space.shared === false
+
+export const spaceView = (space: BrainSpace): SpaceView => ({ id: space.id, name: space.name, main: space.main, agent: space.agent, agentName: sessionAgentName(space), ownRuntime: space.runtime !== null, upgrade: space.upgrade, shared: space.shared, color: space.color, taskSystem: taskSystemOn(space) })
 
 export interface OpenSpaceOptions {
   id: string
@@ -118,6 +132,8 @@ export interface OpenSpaceOptions {
   shared?: boolean | null
   /** Its stored colour, if the user chose one. */
   color?: SpaceColor
+  /** The task system was switched on for it in the config. */
+  taskSystem?: boolean
   url: string
   token: string
   /** The turn-state hook's config of this boot (isolation.ts). */
@@ -163,6 +179,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     main: opts.main,
     shared: opts.shared ?? null,
     color: opts.color ?? DEFAULT_SPACE_COLOR,
+    taskSystem: opts.taskSystem === true,
     runtime,
     ledgerKey: opts.main ? null : opts.id,
     url: opts.url,

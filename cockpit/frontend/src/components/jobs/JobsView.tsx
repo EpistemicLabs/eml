@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Pause, Play, RotateCw, Trash2 } from 'lucide
 
 import { api } from '@/utils/api';
 import { cn } from '@/lib/utils';
+import { splitEnded } from '@/lib/job-run-label';
 import { formatAgo, formatWhen, openSession, runLabel, type Job, type JobRun } from './jobs';
 
 const TONE: Record<ReturnType<typeof runLabel>['tone'], string> = {
@@ -59,12 +60,28 @@ export default function JobsView() {
         {spaces.map((spaceName) => (
           <section key={spaceName} className="mt-6">
             {spaces.length > 1 && <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{spaceName}</h2>}
-            <div className="flex flex-col gap-2">
-              {jobs!.filter((job) => job.spaceName === spaceName).map((job) => <JobCard key={job.id} job={job} onChanged={load} />)}
-            </div>
+            <SpaceJobs jobs={jobs!.filter((job) => job.spaceName === spaceName)} onChanged={load} />
           </section>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Ended jobs fold into a list of their own, closed until the user opens it.
+function SpaceJobs({ jobs, onChanged }: { jobs: Job[]; onChanged: () => Promise<void> }) {
+  const [showEnded, setShowEnded] = useState(false);
+  const { open, ended } = splitEnded(jobs);
+  return (
+    <div className="flex flex-col gap-2">
+      {open.map((job) => <JobCard key={job.id} job={job} onChanged={onChanged} />)}
+      {ended.length > 0 && (
+        <button type="button" onClick={() => setShowEnded(!showEnded)} className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground">
+          {showEnded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          Ended ({ended.length})
+        </button>
+      )}
+      {showEnded && ended.map((job) => <JobCard key={job.id} job={job} onChanged={onChanged} />)}
     </div>
   );
 }
@@ -122,6 +139,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
             {job.pendingApproval && <span className="rounded bg-warning/15 px-1.5 py-px text-[11px] text-warning">Waiting for your OK</span>}
             <span className="text-xs text-muted-foreground">{job.schedule} · wakes {job.wakes}</span>
           </div>
+          {job.goal && <div className="mt-1 text-sm text-foreground/80">Goal: {job.goal}</div>}
           <div className="mt-1 text-sm text-muted-foreground">
             {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map(formatWhen).join(' · ')}</>}
             {job.pausedReason && <span className="text-warning">{job.pausedReason}</span>}
@@ -171,7 +189,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
               </>
             )}
           </div>
-          {job.limited && (
+          {job.limited && !job.endedAt && (
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               {grants.map((grant) => (
                 <span key={grant.tool} className="inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-px">
@@ -221,13 +239,13 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
 function LastRun({ run, spaceId }: { run: JobRun; spaceId: string | null }) {
   return (
     <div className="mt-1 text-sm text-muted-foreground">
-      Last: <RunLine run={run} spaceId={spaceId} />
+      Last: <RunLine run={run} spaceId={spaceId} current />
     </div>
   );
 }
 
-function RunLine({ run, spaceId }: { run: JobRun; spaceId: string | null }) {
-  const label = runLabel(run);
+function RunLine({ run, spaceId, current = false }: { run: JobRun; spaceId: string | null; current?: boolean }) {
+  const label = runLabel(run, current);
   const when = run.startedAt ?? run.finishedAt ?? run.dueAt;
   return (
     <span className="inline-flex flex-wrap items-baseline gap-x-1.5">

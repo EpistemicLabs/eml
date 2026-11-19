@@ -37,6 +37,15 @@ export function liveQueue(review: ReviewState, sessions: AllSession[]): { queue:
   return pruneQueue(review.queue, review.index, listed);
 }
 
+/** Straight to one session of the queue (the Your turn list); one that left the lists stays where it is. */
+export function jumpReview(id: string, sessions: AllSession[]): void {
+  const review = getReview();
+  if (!review) return;
+  const { queue } = liveQueue(review, sessions);
+  const index = queue.indexOf(id);
+  if (index >= 0) show(queue, index);
+}
+
 /** Next or previous; past either end nothing happens. */
 export function stepReview(step: 1 | -1, sessions: AllSession[]): void {
   const review = getReview();

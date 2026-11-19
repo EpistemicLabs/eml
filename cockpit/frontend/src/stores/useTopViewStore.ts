@@ -7,11 +7,11 @@
 import { useSyncExternalStore } from 'react';
 
 /** The review screen is never restored: a reload lands on the desks, the queue is gone. */
-export type TopView = 'desks' | 'brain' | 'review' | 'jobs';
+export type TopView = 'desks' | 'brain' | 'review' | 'jobs' | 'tasks';
 
 const STORAGE_KEY = 'cockpit-top-view';
 
-const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain' || value === 'jobs';
+const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain' || value === 'jobs' || value === 'tasks';
 
 function load(): TopView {
   try {

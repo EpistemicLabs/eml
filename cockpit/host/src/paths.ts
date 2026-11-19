@@ -109,6 +109,8 @@ export const HOOK_TURN_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'turn-hoo
 export const HOOK_SEND_MESSAGE_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'send-message-hook.js'))
 // The hook that adds stopped sessions to ListAgents (list-agents-hook.ts), named the same way.
 export const HOOK_LIST_AGENTS_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'list-agents-hook.js'))
+// The hook that gives a session its task at start (task-hook.ts), named the same way.
+export const HOOK_TASK_JS = stableAppPath(path.join(HOST_ROOT, 'dist', 'task-hook.js'))
 export const HOOK_NODE = path.join(COCKPIT_HOME, 'bin', 'node')
 export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } chmod 600 (local loopback token)
 // Optional setup-token (Settings › Models › Advanced), injected per session only

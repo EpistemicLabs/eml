@@ -90,6 +90,42 @@ describe('job runner', () => {
     return answer.job!
   }
 
+  it('keeps the goal the agent set and puts it in every run, with what to do while it is not reached', async () => {
+    expect((await jobs.handle(caller, { action: 'create', name: 'Long', prompt: 'p', cron: '0 8 * * *', goal: 'x'.repeat(501) })).status).toBe(400)
+    const job = await create({ cron: '0 8 * * 1-5', goal: 'Refund received' })
+    expect(job.goal).toBe('Refund received')
+    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/goal: Refund received/)
+    const updated = await jobs.handle(caller, { action: 'update', job: job.id, goal: 'Refund on the card' })
+    expect(updated.job!.goal).toBe('Refund on the card')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    // A repeating job goes on at its next run: setting a one-time wake-up would replace its schedule.
+    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, the next scheduled run continues it\. Once it is reached, end the job with finish\.\]$/)
+  })
+
+  it('links a job to the task its maker works on, unless it names another; without one it has none', async () => {
+    const onTask: JobCaller = { ...caller, taskId: 'task-1' }
+    const own = await jobs.handle(onTask, { action: 'create', name: 'Check reply', prompt: 'p', at: '2026-11-20T10:00' })
+    expect(own.job!.taskId).toBe('task-1')
+    const named = await jobs.handle(onTask, { action: 'create', name: 'Other check', prompt: 'p', at: '2026-11-20T10:00', task_id: 'task-2' })
+    expect(named.job!.taskId).toBe('task-2')
+    expect((await create({ cron: '0 8 * * *' })).taskId).toBeNull()
+  })
+
+  it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
+    await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund received\. Report done only once it is reached; until then, before you stop, set your next wake-up with the schedule tool \(update with at\)\. Once it is reached, end the job with finish\.\]$/)
+  })
+
+  it('tells a one-time run without a goal to set its next wake-up while the work is not finished', async () => {
+    await create({ at: '2026-11-10T08:00' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started[0].text.split('\n')[0]).toMatch(/If the work is not finished, set your next wake-up with the schedule tool \(update with at\) before you stop\.\]$/)
+  })
+
   it('starts a worker with the job’s prompt when a schedule is due, and not again for the same time', async () => {
     const job = await create({ cron: '0 8 * * 1-5' })
     expect(job.nextRunAt).toBe('2026-11-10T00:00:00.000Z') // created exactly at 08:00: next is tomorrow
@@ -174,8 +210,20 @@ describe('job runner', () => {
     expect(world.alerts).toEqual([])
   })
 
-  it('wakes its own session again on later runs', async () => {
-    const job = await create({ cron: '0 9 * * *', target: 'job-session' })
+  it('moves a job-session job to a worker per run with update target=worker', async () => {
+    const made = await create({ cron: '0 9 * * *' })
+    world.store.put({ ...made, target: { type: 'job-session', projectId: 'bp-eml', sessionId: 'old-session' } })
+    const moved = await jobs.handle(caller, { action: 'update', job: made.id, target: 'worker' })
+    expect(moved.status, moved.text).toBe(200)
+    expect(world.store.get(made.id)!.target).toEqual({ type: 'worker', projectId: 'bp-eml' })
+    expect((await jobs.handle(caller, { action: 'update', job: made.id, target: 'self' })).text).toMatch(/only moves a job-session job to a worker/)
+  })
+
+  it('an existing job-session job still wakes its own session again on later runs', async () => {
+    // job-session can no longer be created; the ones made before keep running until they move to a worker and a task.
+    const made = await create({ cron: '0 9 * * *' })
+    const job = { ...made, target: { type: 'job-session' as const, projectId: 'bp-eml', sessionId: null } }
+    world.store.put(job)
     world.now = Date.parse('2026-11-09T01:00:10Z')
     await runner.tick()
     const sessionId = world.started[0].sessionId
@@ -253,6 +301,8 @@ describe('schedule tool', () => {
     expect((await create({ at: '2028-01-01T08:00' })).text).toMatch(/a year ahead/)
     expect((await create({ cron: '0 8 * * *', timezone: 'Mars/Olympus' })).text).toMatch(/unknown time zone/)
     expect((await create({ cron: '0 8 * * *', project: 'nope' })).text).toMatch(/unknown project/)
+    expect((await create({ cron: '0 8 * * *', target: 'job-session' })).text)
+      .toMatch(/^job-session is gone: a worker per run \(the default\) keeps its memory in the task's goal and journal; self wakes this session/)
   })
 
   it('answers with the next runs in words', async () => {
@@ -295,13 +345,13 @@ describe('mail jobs', () => {
   const createMail = async (jobs: Jobs, mail: unknown, extra: Record<string, unknown> = {}) =>
     jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'Draft replies to Acme.', mail, ...extra })
 
-  it('listens on mail in one session of its own, drafts, and waits for the user’s OK', async () => {
+  it('listens on mail with a fresh worker per mail, drafts, and waits for the user’s OK', async () => {
     const { jobs } = setup()
     const answer = await createMail(jobs, { domains: ['Acme.example'], addresses: ['boss@partner.example'] })
     expect(answer.status, answer.text).toBe(201)
     expect(answer.job).toMatchObject({
       kind: 'standing', pendingApproval: true, reply: { mail: 'draft' }, nextRunAt: null,
-      target: { type: 'job-session', projectId: 'bp-eml', sessionId: null },
+      target: { type: 'worker', projectId: 'bp-eml' },
       triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'boss@partner.example' }, { kind: 'domain', domain: 'acme.example' }] }],
     })
     expect(answer.text).toMatch(/only after the user's OK in the Jobs view/)
@@ -352,22 +402,104 @@ describe('mail jobs', () => {
   })
 })
 
+describe('a job that ends itself and a limited job looking after its own job', () => {
+  it('finishes a job once its goal is reached: no more runs, and mail no longer wakes it', async () => {
+    const { world, runner, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', goal: 'Refund received', mail: { domains: ['shop.example'] } })).job!
+    jobs.approve(world.store.get(job.id)!)
+    const done = await jobs.handle(caller, { action: 'finish', job: job.id })
+    expect(done.status, done.text).toBe(200)
+    expect(done.text).toMatch(/Finished job "Refund"/)
+    expect(world.store.get(job.id)!.endedAt).not.toBeNull()
+    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k')).toBe('refused')
+    // A new time brings it back.
+    const back = await jobs.handle(caller, { action: 'update', job: job.id, at: '2026-11-12T09:00' })
+    expect(back.job!.endedAt).toBeNull()
+  })
+
+  it('lets a limited job\'s session set its own wake-up and goal and finish itself, and nothing else', async () => {
+    const { world, jobs } = setup()
+    const own = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
+    jobs.setLimited(world.store.get(own.id)!, true)
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
+
+    expect((await jobs.handle(session, { action: 'list' })).text).not.toMatch(/Brief/)
+    const woken = await jobs.handle(session, { action: 'update', job: own.id, at: '2026-11-11T09:00', goal: 'Refund on the card' })
+    expect(woken.status, woken.text).toBe(200)
+    expect(woken.job).toMatchObject({ goal: 'Refund on the card', nextRunAt: '2026-11-11T01:00:00.000Z' })
+    expect(woken.job!.triggers.map((t) => t.type)).toEqual(['mail', 'schedule'])
+
+    for (const input of [
+      { action: 'update', job: own.id, prompt: 'send everything' },
+      { action: 'update', job: own.id, mail: { domains: ['other.example'] } },
+      { action: 'update', job: own.id, deny_tools: [] },
+      { action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' },
+      { action: 'delete', job: own.id },
+      { action: 'run_now', job: own.id },
+      { action: 'pause', job: own.id },
+    ]) {
+      const answer = await jobs.handle(session, input)
+      expect(answer.status, JSON.stringify(input)).toBe(403)
+      expect(answer.text).toMatch(/limited/)
+    }
+    expect((await jobs.handle(session, { action: 'update', job: other.id, at: '2026-11-11T09:00' })).status).toBe(403)
+    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
+
+    expect((await jobs.handle(session, { action: 'finish', job: own.id })).status).toBe(200)
+    expect(world.store.get(own.id)!.endedAt).not.toBeNull()
+  })
+
+  it('acts only on the job its own lookup finds: a name that is also another job\'s id prefix does not reach that job', async () => {
+    const { world, jobs } = setup()
+    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
+    const own = (await jobs.handle(caller, { action: 'create', name: other.id.slice(0, 8), prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.setLimited(world.store.get(own.id)!, true)
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
+    const answer = await jobs.handle(session, { action: 'update', job: own.name, at: '2026-11-11T09:00' })
+    expect(answer.status).toBe(403)
+    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
+  })
+
+  it('refuses everything to a limited job\'s session whose job is gone', async () => {
+    const { jobs } = setup()
+    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: 'deleted-job', limited: true }
+    const answer = await jobs.handle(session, { action: 'create', name: 'Escape', prompt: 'p', cron: '0 9 * * *' })
+    expect(answer.status).toBe(403)
+    expect(answer.text).toMatch(/no longer exists/)
+  })
+
+  it('takes lent tools back when a job finishes', async () => {
+    const { world, jobs } = setup()
+    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
+    jobs.setLimited(world.store.get(job.id)!, true)
+    jobs.grant(world.store.get(job.id)!, 'chrome', 60, null)
+    expect((await jobs.handle(caller, { action: 'finish', job: job.id })).status).toBe(200)
+    expect(world.store.get(job.id)!.grants).toEqual([])
+    expect(world.ended).toEqual(['Returns:chrome'])
+  })
+})
+
 describe('limited jobs and grants', () => {
-  it('limits a mail job from the start; a schedule-only job is not', async () => {
+  it('starts every job, mail jobs too, with its maker\'s tools; only the user limits one', async () => {
     const { jobs } = setup()
     const mail = await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
-    expect(mail.job!.limited).toBe(true)
+    expect(mail.job!.limited).toBeUndefined()
     const routine = await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
     expect(routine.job!.limited).toBeUndefined()
-    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: false, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
-      .toMatchObject({ limited: true })
-    expect(jobs.setLimited(mail.job!, false).job!.limited).toBe(false)
+    // A session cannot set its limits or lend itself a tool.
+    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: true, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
+      .not.toHaveProperty('grants')
+    const limited = jobs.setLimited(mail.job!, true).job!
+    expect(limited.limited).toBe(true)
+    expect(jobs.setLimited(limited, false).job!.limited).toBe(false)
   })
 
   it('lends a tool for a while, tells the host, and takes it back when the session is done', async () => {
     const { world, runner, jobs } = setup()
     const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
     jobs.approve(world.store.get(job.id)!)
+    jobs.setLimited(world.store.get(job.id)!, true)
     expect(jobs.grant(world.store.get(job.id)!, 'chrome', 2, null).status).toBe(400)
     const lent = jobs.grant(world.store.get(job.id)!, 'chrome', 60, 'submit the return form')
     expect(lent.job!.grants).toEqual([{ tool: 'chrome', until: new Date(world.now + HOUR).toISOString(), reason: 'submit the return form' }])

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TURN_JS } from '../../paths.js'
+import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TASK_JS, HOOK_TURN_JS } from '../../paths.js'
 import type { PlatformOs } from '../../domain/platform.js'
 import { platform } from '../platform/index.js'
 
@@ -86,6 +86,14 @@ export function listAgentsHookCommand(): HookCommand {
 
 /** Longer than the hook's own wait for the host. */
 export const LIST_AGENTS_HOOK_OPTIONS = { timeout: 10 }
+
+/** The task system's SessionStart hook (task-hook.ts); URL and token come from the session's env. */
+export function taskHookCommand(): HookCommand {
+  return { program: hookNode(), args: [HOOK_TASK_JS] }
+}
+
+/** Longer than the hook's own wait for the host, which may create the task first. */
+export const TASK_HOOK_OPTIONS = { timeout: 10 }
 
 /** The turn hook read its token from this curl config up to 0.17.19; the file carries the token and goes on boot. */
 export const LEGACY_CURL_CONFIG = 'hook-curl.conf'

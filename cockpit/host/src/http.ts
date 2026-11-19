@@ -1,3 +1,4 @@
+import { COCKPIT_HOME } from './paths.js'
 import * as http from 'node:http'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -5,10 +6,16 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
+import { handleTasksApi, type TasksApiDeps } from './tasks-api.js'
 import { handlePushApi, type PushApiDeps } from './push-api.js'
 import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
+import type { SessionTask } from './application/session-task.js'
+import type { Triage, TriageStore } from './application/triage.js'
+import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
+import { leadDay, leadPrompt } from './domain/project-lead.js'
+import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
@@ -122,8 +129,25 @@ export interface HostDeps {
   hooksUrl: string
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
+  /** Task system: a session's task at start, and its name (application/session-task.ts). */
+  sessionTask?: SessionTask
+  sessionNamed?: SpawnDeps['sessionNamed']
+  createTask?: SpawnDeps['createTask']
+  /** The user's time zone (jobs): a project lead's day. */
+  timeZone?: () => string
+  /** Tasks sessions created that wait for the user's triage (application/triage.ts). */
+  triage?: Triage
+  triageStore?: TriageStore
+  /** Weekly cycles (application/cycles.ts). */
+  cycles?: Cycles
+  /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
+  turnEnded?: (sessionId: string, text: string) => void
+  /** Task system: the user answered a session, or it was archived — its wait on the task is over. */
+  answered?: (sessionId: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
+  /** The task board and its commands (tasks-api.ts); absent: no task system. */
+  tasks?: TasksApiDeps
   /** Web push devices, the test and what the user is looking at (push-api.ts). */
   push?: PushApiDeps
   /** The channel bridge's /v1 routes (job-contract-api.ts). */
@@ -255,6 +279,7 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     for (const sessionId of plan.archive) {
       await stop(sessionId, 'archived')
       ledger.archive(sessionId)
+      deps.answered?.(sessionId)
     }
     json(res, 200, { success: true, archived: plan.archive })
     return true
@@ -268,6 +293,25 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   }
   json(res, 200, { success: true })
   return true
+}
+
+/**
+ * A new lead or planner: started here in the chat runtime when the page asks for chat (the user's new
+ * sessions open there), the pane then only joins; else the page starts it in a terminal with the prompt.
+ */
+function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string; chat: boolean }) {
+  const answer = { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId }
+  if (lead.chat) {
+    const problem = deps.chat.startWorker({
+      id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
+      createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
+    })
+    if (!problem) {
+      deps.bridge.ledger.claimLead(lead.sessionId)
+      return { ...answer, runtime: 'sdk' }
+    }
+  }
+  return { ...answer, runtime: 'terminal', prompt: lead.prompt }
 }
 
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
@@ -300,6 +344,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,
     readAt: entry.readAt,
+    snoozedUntil: entry.snoozedUntil ?? null,
     resultAt: entry.resultAt,
     archivedAt: entry.archivedAt,
     workdir: entry.workdir,
@@ -576,10 +621,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
+  if (deps.tasks && await handleTasksApi(req, res, deps.tasks, url.pathname, method, json, readJson)) return true
   if (deps.push && await handlePushApi(req, res, deps.push, url, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
@@ -727,6 +773,118 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
     json(res, 200, { text: directoryAnswer(deps, caller, url) })
+    return true
+  }
+
+  // Inbox snooze: the session leaves the Inbox until then ({ until: ISO } or null). Page Origin only.
+  if (resource === 'sessions' && id && parts[3] === 'snooze' && method === 'POST') {
+    const body = await readJson(req)
+    const until = typeof body.until === 'string' && !Number.isNaN(Date.parse(body.until)) ? body.until : null
+    if (!deps.bridge.ledger.get(id)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such session' } }); return true }
+    deps.bridge.ledger.setSnooze(id, until)
+    json(res, 200, { snoozedUntil: until })
+    return true
+  }
+
+  // Cycles (application/cycles.ts): this week's and next week's cycle; the planner session for them.
+  if (resource === 'cycles' && deps.cycles) {
+    if (!id && method === 'GET') {
+      json(res, 200, { current: deps.cycles.current(), next: deps.cycles.next() })
+      return true
+    }
+    if (id === 'planner' && method === 'POST') {
+      // The planner works across projects, in the main space, from a folder of its own (made once, hidden).
+      const space = deps.spaces.resolve(null)
+      const dir = path.join(COCKPIT_HOME, 'planning')
+      fs.mkdirSync(dir, { recursive: true })
+      const made = space.registry.create(dir, 'Cycle planning')
+      if (made.created) space.registry.update(made.project.projectId, { hidden: true })
+      const projectId = made.project.projectId
+      const ledger = deps.bridge.ledger
+      const current = deps.cycles.current()
+      const key = `cycle:${current.id}`
+      const existing = ledger.leadFor(key, current.id, space.ledgerKey)
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+      const sessionId = randomUUID()
+      ledger.expectLead(sessionId, { projectId: key, day: current.id })
+      const body = await readJson(req)
+      const prompt = plannerPrompt(current, deps.cycles.next(), cycleOf(new Date(), deps.timeZone?.() ?? 'UTC', -1))
+      json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt, chat: body.chat === true }))
+      return true
+    }
+  }
+
+  // Triage (application/triage.ts): what waits, and the user's accept, merge or close (page Origin only for the writes).
+  if (resource === 'triage' && deps.triage && deps.triageStore) {
+    if (!id && method === 'GET') {
+      const items = deps.triageStore.pending().map((item) => ({ ...item, spaceName: deps.spaces.get(item.spaceId)?.name ?? null }))
+      json(res, 200, { items })
+      return true
+    }
+    if (id && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        const item = body.action === 'accept' ? await deps.triage.accept(id, typeof body.scope === 'string' && body.scope ? body.scope : undefined)
+          : body.action === 'merge' && typeof body.taskId === 'string' ? await deps.triage.merge(id, body.taskId)
+          : body.action === 'close' ? deps.triage.close(id)
+          : null
+        if (!item) { json(res, 400, { error: { code: 'INVALID_ACTION', message: 'action is accept, merge (with taskId) or close' } }); return true }
+        json(res, 200, { item })
+      } catch (err) {
+        json(res, 409, { error: { code: 'TRIAGE_FAILED', message: (err as Error).message } })
+      }
+      return true
+    }
+  }
+
+  // The project lead of today (domain/project-lead.ts): the one of today if there is one, else the id and
+  // first message of a new one, which the page opens on the project's desk. Page Origin only.
+  if (resource === 'projects' && id === 'lead' && method === 'POST') {
+    const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
+    const body = await readJson(req)
+    const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+    const project = space?.registry.get(projectId)
+    if (!space || !project) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: 'This project has no folder in the cockpit, so a lead cannot run in it' } }); return true }
+    const ledger = deps.bridge.ledger
+    const day = leadDay(new Date(), deps.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
+    const name = project.customName ?? project.displayName
+    const existing = ledger.leadFor(projectId, day, space.ledgerKey)
+    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+    const sessionId = randomUUID()
+    ledger.expectLead(sessionId, { projectId, day })
+    json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day), chat: body.chat === true }))
+    return true
+  }
+
+  // A task run without a desk (task-run.tsx, "No desk"): the page asks, the host starts it unattended
+  // like a runner step; it shows next to its task and in Your turn when it asks. Page Origin only.
+  if (resource === 'tasks' && id === 'run' && method === 'POST') {
+    const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
+    const body = await readJson(req)
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+    const projectId = str(body.projectId), prompt = str(body.prompt), taskId = str(body.taskId)
+    if (!space || !projectId || !prompt || !taskId) { json(res, 400, { error: { code: 'INVALID_RUN', message: 'projectId, prompt and taskId are required' } }); return true }
+    if (!space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } }); return true }
+    const request = deps.spawns.add({
+      projectId, prompt, title: str(body.title), fromSessionId: null, origin: 'runner', taskId,
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    json(res, 202, { id: request.id })
+    return true
+  }
+
+  // A session's task at start, from its task hook (task-hook.ts); empty where the task system is off.
+  if (resource === 'session-task' && !id && method === 'POST') {
+    const caller = req.headers['x-cockpit-session']
+    if (req.headers['x-cockpit-token'] !== deps.spawnToken || typeof caller !== 'string') {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can ask for its task' } })
+      return true
+    }
+    try {
+      json(res, 200, { text: deps.sessionTask ? await deps.sessionTask.context(caller) : '' })
+    } catch (err) {
+      json(res, 502, { error: { code: 'TASK_FAILED', message: (err as Error).message } })
+    }
     return true
   }
 
@@ -973,7 +1131,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       // provider's own id, which the ledger keeps for resume and transcripts.
       const named = req.headers[HOOK_SESSION_HEADER]
       applySessionHook(
-        { providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns },
+        {
+          providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
+          ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
+          ...(deps.answered ? { answered: deps.answered } : {}),
+        },
         typeof named === 'string' && named ? named : null,
         await readJson(req),
       )
@@ -1003,6 +1165,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
       for (const s of deps.spaces.list()) followNotes(s)
       detachNotes.push(deps.spaces.onAdd(followNotes))
+      // The task board moved: which tasks changed whose turn (application/task-board.ts).
+      if (deps.tasks) detachNotes.push(deps.tasks.board.onChange((changes) => send('tasks', { changes })))
       const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 25_000)
       req.on('close', () => {
         clearInterval(keepAlive)
@@ -1259,12 +1423,12 @@ export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse)
 /**
  * The write routes a session reaches with its own per-boot token instead of
  * the page's Origin: /api/hook, /api/spawn, /api/jobs (a session scheduling),
- * /api/session-title/<id>, /api/sessions/<target>/message. Every
+ * /api/session-task, /api/session-title/<id>, /api/sessions/<target>/message. Every
  * other write — a project's move into a shared space among them — needs the
  * cockpit page's Origin.
  */
 export function isTokenEndpoint(url: string): boolean {
-  return /^\/api\/(hook|spawn|jobs|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
+  return /^\/api\/(hook|spawn|jobs|session-task|session-title\/[0-9a-f-]{36}|sessions\/[a-zA-Z0-9_.:-]+\/message)(\?|$)/.test(url)
 }
 
 export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http.Server {

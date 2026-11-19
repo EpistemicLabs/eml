@@ -21,11 +21,11 @@ export interface McpServerSpec {
 export type GrantableTool = 'SendMessage' | 'chrome'
 
 /**
- * Tools a limited job's session does not get, since its text comes from strangers: no shell, no
- * messages to other sessions, and no scheduling jobs, which would run with its maker's wider tools.
- * Web tools stay on.
+ * Tools a limited job's session does not get, since its text comes from strangers: no shell and no
+ * messages to other sessions. Web tools stay on, and so does the schedule tool, with which it reaches
+ * only its own job (application/limited-job-scope.ts).
  */
-const LIMITED_DENIED_TOOLS = ['Bash', 'SendMessage', 'mcp__cockpit__schedule']
+const LIMITED_DENIED_TOOLS = ['Bash', 'SendMessage']
 
 /**
  * What a limited job's session may use: what its maker could not, minus the tools above unless the

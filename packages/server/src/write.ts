@@ -1,4 +1,4 @@
-import { CommandError, knownAssignees, type CommandMap, type CommandName, type EML, type Env, type SpaceMember } from '@engramprotocol/core'
+import { CommandError, knownAssignees, spacePeople, type CommandMap, type CommandName, type EML, type Env, type SpaceMember } from '@engramprotocol/core'
 import type { Sync } from './sync/sync'
 
 /**
@@ -16,6 +16,7 @@ export async function applyWrite<N extends CommandName>(eml: EML, command: { nam
   if (moving) throw busy()
   if (sync instanceof Error) throw readOnly(`it stopped: its team file cannot be used (${sync.message})`, true)
   checkAssignees(eml, command, env, sync)
+  checkDelegate(eml, command, env, sync)
   if (sync) return await sync.write(command, env) as CommandMap[N][1]
   // a brain with a sync is shared even before its genesis arrived from the relay
   if (eml.teamBrain() !== null) throw readOnly('it is not connected to its relay')
@@ -74,4 +75,20 @@ function checkAssignees(eml: EML, command: { name: CommandName, input: unknown }
   if (unknown.length === 0) return
   const list = [...known].sort().join(', ')
   throw new CommandError('INVALID', `Invalid engram: assignee_ids names ${unknown.map(h => `"${String(h)}"`).join(', ')}, who ${unknown.length > 1 ? 'do' : 'does'} not work in this brain. Known handles: ${list || 'none'} (eml_read_object object=user · agent).`)
+}
+
+/**
+ * A task's delegate is one agent of the brain (spacePeople's agents, or the writer's own
+ * agent). Checked where the write is authored, like assignee_ids, never on replay.
+ */
+function checkDelegate(eml: EML, command: { name: CommandName, input: unknown }, env: Env, sync: Sync | undefined): void {
+  const input = command.input as Record<string, unknown> | null
+  const delegate = command.name === 'engram.create' ? (input?.properties as Record<string, unknown> | undefined)?.delegate
+    : command.name === 'task.track' ? input?.delegate
+    : undefined
+  if (typeof delegate !== 'string') return
+  const agents = new Set(spacePeople(eml, spaceMembers(sync)).agents.map(a => a.id))
+  if (env.actor.agent) agents.add(env.actor.agent)
+  if (agents.has(delegate)) return
+  throw new CommandError('INVALID', `Invalid engram: delegate names "${delegate}", who is not an agent of this brain. Agents: ${[...agents].sort().join(', ') || 'none'} (eml_read_object object=agent).`)
 }

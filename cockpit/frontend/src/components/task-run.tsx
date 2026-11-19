@@ -48,7 +48,16 @@ export function runPrompt(engram: Engram, extra: string): string {
   return `Use the task-run skill for task ${name}.${line ? `\n\n${line}` : ""}`;
 }
 
-export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; projects: Project[]; onStarted?: () => void }) {
+/** The desk choice that starts the run without a pane: it runs on the host, unattended. */
+const NO_DESK = "__no-desk__";
+
+export function TaskRunCard({ engram, projects, onStarted, background = false }: {
+  engram: Engram;
+  projects: Project[];
+  onStarted?: () => void;
+  /** Start without a desk by default (the Tasks view, where the run's chat shows next to the task). */
+  background?: boolean;
+}) {
   const desks = useDesks();
   const activeDeskId = useActiveDeskId();
   const run = useMemo(() => findRun(projects, engram.id), [projects, engram.id]);
@@ -57,7 +66,8 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
   const [open, setOpen] = useState(false);
   // A shared brain that is not live takes no write; a run would write (useTeamStore).
   const brain = useWritable();
-  const [deskId, setDeskId] = useState<string>(activeDeskId);
+  const [deskId, setDeskId] = useState<string>(background ? NO_DESK : activeDeskId);
+  const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string>(defaultProject?.projectId ?? "");
   const [extra, setExtra] = useState("");
 
@@ -92,6 +102,21 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
   const start = () => {
     if (!projectId) return;
     const title = engram.title ?? "Task run";
+    if (deskId === NO_DESK) {
+      // Runs on the host; the request goes to the active space (the Tasks view switched to the task's).
+      setError(null);
+      void fetch("/api/tasks/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, prompt: runPrompt(engram, extra), title, taskId: engram.id }),
+      }).then((res) => {
+        if (!res.ok) { setError(`The run could not start (HTTP ${res.status}).`); return; }
+        setOpen(false);
+        setExtra("");
+        if (!background) onStarted?.();
+      }).catch(() => setError("The run could not start: the cockpit did not answer."));
+      return;
+    }
     let target = deskId;
     let emptyPaneId: string | null = null;
     if (deskId === NEW_DESK) {
@@ -151,6 +176,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
                 </option>
               ))}
               <option value={NEW_DESK}>New desk for this task</option>
+              <option value={NO_DESK}>No desk: run in the background</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-caption text-muted-foreground">
@@ -181,6 +207,12 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
               className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
             />
           </label>
+          {deskId === NO_DESK && (
+            <p className="text-caption text-muted-foreground">
+              It runs without a pane and stops at each checkpoint with a question in Your turn. Its chat shows next to the task in the Tasks view.
+            </p>
+          )}
+          {error && <p role="alert" className="text-caption text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"

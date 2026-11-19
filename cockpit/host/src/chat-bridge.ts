@@ -101,6 +101,12 @@ interface ChatEntry {
   /** The status said this turn, and the visible text written after it: the closing summary. */
   status: WorkerStatus | null
   textAfterStatus: string
+  /** Everything the agent wrote this turn: the task router reads the handoff at its end. */
+  turnText: string
+  /** A turn finished since the session last handed off (or started): there is something to hand off. */
+  worked: boolean
+  /** It was asked for its handoff before an idle stop: it stops once that turn is over. */
+  stopAfterTurn: boolean
   askedSummary: boolean
   /** The memory ceiling its process started with, and the kills at it already reported; null: none. */
   ceiling: { limits: SessionLimits; kills: number } | null
@@ -119,6 +125,16 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** A turn finished with this text: the task router reads its handoff (application/task-router.ts). */
+  turnDone?: (sessionId: string, text: string) => void
+  /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
+  answered?: (sessionId: string) => void
+  /**
+   * Before an idle stop: the prompt that asks this session for its handoff
+   * (application/session-task.ts), or null when it needs none. Asked once per
+   * stretch of work; the session stops when that turn is over.
+   */
+  handoffBeforeStop?: (sessionId: string) => string | null
   /** The session's process died on its own: whatever its turn state said no longer holds. */
   onExit?: (sessionId: string) => void
   /** Whether a terminal process holds this session: a read-only view can't take it from there. */
@@ -283,6 +299,14 @@ export class ChatBridge {
     for (const entry of [...this.entries.values()]) {
       this.reportCeilingKills(entry)
       if (!chatSessionShouldStop({ ...this.facts(entry, now), idleMs })) continue
+      if (entry.stopAfterTurn && entry.active) continue
+      const prompt = entry.worked && !entry.stopAfterTurn && !entry.closing ? this.ctx.handoffBeforeStop?.(entry.sessionId) ?? null : null
+      if (prompt) {
+        this.sendMessage(entry, prompt)
+        entry.worked = false
+        entry.stopAfterTurn = true
+        continue
+      }
       void this.end(entry.sessionId, IDLE_STOP)
       ended += 1
     }
@@ -478,7 +502,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -546,7 +570,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -554,7 +578,7 @@ export class ChatBridge {
         provider.trustProject(path, sessionSpaceOf(space))
         // Started by hand it is the user's own session, in the mode they use: only a session's worker runs unattended.
         const worker = unattended(request)
-        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, null, space.ledgerKey)
+        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, request.taskId ?? null, space.ledgerKey)
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
         if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
@@ -599,7 +623,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -724,6 +748,7 @@ export class ChatBridge {
         break
       case 'text':
         if (entry.status) entry.textAfterStatus += event.text
+        entry.turnText += event.text
         break
       case 'turn_end': {
         entry.active = false
@@ -738,7 +763,17 @@ export class ChatBridge {
           if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         // An interrupted turn left nothing to look at, and a host going down is not its end.
-        if (!entry.closing && event.reason !== 'interrupted') this.ctx.ledger.setResult(entry.sessionId, true)
+        if (!entry.closing && event.reason !== 'interrupted') {
+          this.ctx.ledger.setResult(entry.sessionId, true)
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText)
+          if (!entry.stopAfterTurn) entry.worked = true
+        }
+        entry.turnText = ''
+        // Its handoff before an idle stop is written: now it stops.
+        if (entry.stopAfterTurn && !entry.closing) {
+          entry.stopAfterTurn = false
+          void this.end(entry.sessionId, IDLE_STOP)
+        }
         break
       }
       case 'runtime_exit':
@@ -773,6 +808,8 @@ export class ChatBridge {
 
   private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = [], clientId = ''): void {
     if (!message.trim() && imageNames.length === 0) return
+    // Someone wrote to it: an idle stop it was about to make is off.
+    entry.stopAfterTurn = false
     if (entry.closing) throw new Error('This session is closing. Send that again in a moment.')
     // First: an image that can't be read must not leave half a message behind.
     const images = imageNames.map(readPastedImage)
@@ -789,6 +826,7 @@ export class ChatBridge {
     entry.status = null
     entry.textAfterStatus = ''
     entry.askedSummary = false
+    if (this.ctx.ledger.get(entry.sessionId)?.attention) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)
