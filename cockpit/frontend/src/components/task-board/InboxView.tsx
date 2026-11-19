@@ -41,11 +41,6 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      {!compact && (
-        <p className="m-0 max-w-measure text-body text-muted-foreground">
-          <b className="font-semibold text-foreground">Inbox</b> holds only what is your turn: questions, results to review and tasks a session proposed. An item clears itself when you answer the session, review or close the task. Results that needed nothing from you are under <b className="font-semibold text-foreground">FYI</b>.
-        </p>
-      )}
       <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
         {board.inbox.length === 0 && <div className="m-3 rounded-xl border border-dashed border-border p-3 text-ui text-muted-foreground">Inbox zero. New questions and results land here.</div>}
         {board.inbox.map((item) => {

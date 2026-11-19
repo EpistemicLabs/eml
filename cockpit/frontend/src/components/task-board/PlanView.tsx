@@ -28,9 +28,6 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <p className="m-0 max-w-measure text-body text-muted-foreground">
-        <b className="font-semibold text-foreground">Plan</b> shows everything open, in every space, grouped by project and most urgent first. Urgency comes from priority, due date and whose turn it is. You set priorities in chat with the agent.
-      </p>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-ui text-muted-foreground">
         <span className="flex items-center gap-2">Owner
           <span className="inline-flex overflow-hidden rounded-lg border border-border bg-card">

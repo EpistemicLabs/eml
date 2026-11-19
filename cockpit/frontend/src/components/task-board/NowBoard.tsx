@@ -9,9 +9,6 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <p className="m-0 max-w-measure text-body text-muted-foreground">
-        <b className="font-semibold text-foreground">Now</b> sorts every moving task by <b className="font-semibold text-foreground">whose turn it is</b>, starting with what needs you. You own them (avatar); the badge shows the agent you delegated to. Open a card to answer or hand it over.
-      </p>
       <div className="overflow-x-auto pb-1.5">
         <div className="grid min-w-min grid-flow-col gap-3" style={{ gridTemplateColumns: cols.map((c) => (c.tasks.length ? 'minmax(var(--container-board-col), 1fr)' : 'var(--container-board-col-slim)')).join(' ') }}>
           {cols.map((col) => {
