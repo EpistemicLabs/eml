@@ -95,6 +95,20 @@
   --shadow-sheet: -20px 0 60px rgb(0 0 0 / .18);
 
   --ease-emphasized: cubic-bezier(.2, .7, .2, 1);
+  --animate-sheet-in: sheet-in var(--duration-base) var(--ease-emphasized);
+  --animate-fade-in: fade-in var(--duration-base) var(--ease-out);
+  --animate-arrive: arrive var(--duration-highlight) var(--ease-out);
+  --animate-live: live var(--duration-pulse) var(--ease-out) var(--pulse-iterations);
+  @keyframes sheet-in { from { transform: translateX(100%); } to { transform: none; } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes arrive {
+    from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-foreground) var(--mix-glow), transparent); }
+    to { box-shadow: 0 0 0 0 transparent; }
+  }
+  @keyframes live {
+    from { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor var(--mix-glow), transparent); }
+    to { box-shadow: 0 0 0 7px transparent; }
+  }
 
   --container-dialog: 32rem;
   --container-sheet: 75rem;
@@ -215,6 +229,13 @@ html.dark {
   --target-touch: 44px;
   --focus-offset: 2px;
   --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
+  /* The Inbox's task panel: the window's height under the control bar, never shorter than the minimum. */
+  --size-split-panel: calc(100dvh - var(--spacing) * 36);
+  --size-split-panel-min: 35rem;
+  /* The opened task: the task on the left, its session's chat on the right. */
+  --grid-task: minmax(0, var(--container-task-pane)) minmax(0, 1fr);
+  /* Plan's project table: caret, project, space, five counts, next due. */
+  --grid-plan-row: calc(var(--spacing) * 6) minmax(0, 2.2fr) calc(var(--spacing) * 20) repeat(5, calc(var(--spacing) * 18)) calc(var(--spacing) * 24);
   --glass-blur: 24px;
   --glass-blur-thick: 32px;
   --glass-saturate: 180%;
@@ -276,10 +297,10 @@ html.dark {
   --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
   --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
 
+  /* No background here: overlays carry the scope on full-screen portal roots that stay see-through. */
   font-family: var(--font-ui);
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
-  background: var(--color-background);
   color: var(--color-foreground);
 }
 
@@ -343,6 +364,11 @@ html.dark {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+}
+
+/* v2 moves only when the viewer allows it; pulses stop after three (--pulse-iterations). */
+@media (prefers-reduced-motion: reduce) {
+  [data-ui="v2"], [data-ui="v2"] * { animation: none !important; transition: none !important; }
 }
 
 html, body, #root { height: 100%; }
