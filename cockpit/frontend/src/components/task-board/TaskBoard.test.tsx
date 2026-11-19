@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TaskBoard onClassic={() => {}} /></QueryClientProvider></MemoryRouter>);
+const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TaskBoard /></QueryClientProvider></MemoryRouter>);
 
 describe('the task board', () => {
   it('shows one Needs-you count in the header and sorts cards by whose turn it is', async () => {

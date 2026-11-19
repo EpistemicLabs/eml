@@ -35,7 +35,7 @@ function rememberedView(): View {
   try { const v = localStorage.getItem(VIEW_KEY); return v === 'inbox' || v === 'plan' ? v : 'now'; } catch { return 'now'; }
 }
 
-export function TaskBoard({ onClassic }: { onClassic: () => void }) {
+export function TaskBoard() {
   const { data: board, error, refetch } = useTaskBoard();
   const { sessions } = useAllSessions(true);
   const spaces = useSpaces();
@@ -167,7 +167,7 @@ export function TaskBoard({ onClassic }: { onClassic: () => void }) {
   return (
     <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-4 pb-10 pt-3">
-        <ControlBar board={board} view={open && !split ? null : view} onView={setView} onClassic={onClassic} />
+        <ControlBar board={board} view={open && !split ? null : view} onView={setView} />
         {split ? (
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-split)">
             <div className="hidden min-w-0 lg:block">
@@ -206,7 +206,7 @@ export function TaskBoard({ onClassic }: { onClassic: () => void }) {
   );
 }
 
-function ControlBar({ board, view, onView, onClassic }: { board: Board; view: View | null; onView: (v: View) => void; onClassic: () => void }) {
+function ControlBar({ board, view, onView }: { board: Board; view: View | null; onView: (v: View) => void }) {
   return (
     <header className="glass sticky top-2 z-(--z-sticky) flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-2xl py-2 pl-4 pr-2.5 max-lg:static">
       <span className="text-title font-bold tracking-title">Tasks</span>
@@ -224,9 +224,6 @@ function ControlBar({ board, view, onView, onClassic }: { board: Board; view: Vi
         className={cn('inline-flex min-h-(--target-comfortable) items-center gap-2 rounded-lg border border-status-you/40 bg-status-you/10 px-2.5 font-semibold text-you-ink', FOCUS)}>
         Needs you <span className="tabular-nums">{board.counts.needsYou}</span>
       </button>
-      <span className="ml-auto flex items-center gap-3 text-ui text-muted-foreground max-lg:ml-0">
-        <button type="button" onClick={onClassic} className={cn('min-h-(--target-min) underline underline-offset-2 hover:text-foreground', FOCUS)}>Cycles and the old views</button>
-      </span>
     </header>
   );
 }

@@ -54,6 +54,8 @@ describe('what a card says', () => {
   it('reads anchors as titles', () => {
     expect(readable('verapur-cancellation-rescue')).toBe('Verapur cancellation rescue');
     expect(readable('Already a title')).toBe('Already a title');
+    expect(readable('session-2026-11-18-fa1d29c3')).toBe('Session 18 Nov · fa1d29c3');
+    expect(readable('single')).toBe('single');
   });
 });
 

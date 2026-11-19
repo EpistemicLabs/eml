@@ -177,10 +177,18 @@ export function hueOf(task: Pick<BoardTask, 'turn' | 'group' | 'status'>): Hue {
 export const agentName = (handle: string | undefined): string =>
   handle ? handle.charAt(0).toUpperCase() + handle.slice(1) : 'The agent';
 
-/** A brain anchor as a title a person reads: dashes become spaces, the first letter goes up. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A brain anchor as a title a person reads: a kebab anchor becomes words, a session's placeholder
+ * task (session-2026-11-18-fa1d29c3) its date and short id; anything else stays as written.
+ */
 export function readable(title: string): string {
-  const spaced = /\s/.test(title) ? title : title.replace(/[-_]+/g, ' ');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  const placeholder = /^session-(\d{4})-(\d{2})-(\d{2})-([0-9a-f]{8})$/.exec(title);
+  if (placeholder) return `Session ${Number(placeholder[3])} ${MONTHS[Number(placeholder[2]) - 1] ?? placeholder[2]} · ${placeholder[4]}`;
+  if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(title)) return title;
+  const words = title.split(/[-_]/).join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // ---- times ----

@@ -1,7 +1,7 @@
 import { sessionMark, MARK_WORD, type AllSession } from '@/components/sidebar/allSessions';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import { useSessionTask } from '@/lib/session-task';
-import { readableTitle } from '@/lib/tasks-overview';
+import { readable } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
@@ -57,7 +57,7 @@ function YourTurnRow({ session, space, current, turn, onPick }: {
         className={cn('block w-full px-3 py-2 text-left transition-colors hover:bg-accent', current && 'bg-accent')}
       >
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{task ? readableTitle(task.title) : sessionDisplayName(session)}</span>
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{task ? readable(task.title) : sessionDisplayName(session)}</span>
           {since && <span className="flex-shrink-0 text-[11px] text-muted-foreground">{compactAge(since, new Date())}</span>}
         </span>
         {why && (
