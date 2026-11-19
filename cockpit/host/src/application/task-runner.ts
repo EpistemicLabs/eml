@@ -64,6 +64,7 @@ export function stepPrompt(step: { id: string; title: string; content: string },
     step.content,
     '',
     how,
+    'Until the task is done, every wake-up checks its done when: reached, hand the result over; not reached, schedule your next check (schedule tool, task_id of this task) and stop quietly.',
     'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
   ].join('\n')
 }

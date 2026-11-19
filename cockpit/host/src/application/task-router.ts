@@ -14,8 +14,8 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - A question for the user, or a session that said question or failed
  *     (session_status), puts the task on the user: waiting_on { who, why,
  *     since, session_id } — the Your turn panel lists it and opens the session.
- *   - A step with checkpoint "after" that handed over a result waits for the
- *     user's review the same way.
+ *   - A step with checkpoint "after" that handed over a result, or any session
+ *     that said review, waits for the user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
  *   - A session that closed its task and asks nothing is finished: its
  *     handoff and outcome are in the task, so it leaves the lists (finished).
@@ -79,7 +79,8 @@ export function decideWaiting(facts: {
   const wait = (why: string): WaitingOn => ({ who: facts.owner, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
   if (handoff && handoff.forUser.length > 0) return wait(handoff.forUser.map(shortQuestion).join(' · '))
   if (attention && needsAnswer(attention.kind as never)) return wait(attention.reason ?? (attention.kind === 'failed' ? 'The session failed' : 'The session has a question'))
-  if (facts.checkpoint === 'after' && (handoff?.result || attention?.kind === 'review')) return wait(`Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
+  // A session that says review hands a result over (its done when is reached), whatever the checkpoint.
+  if (attention?.kind === 'review' || (facts.checkpoint === 'after' && handoff?.result)) return wait(`Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
   return null
 }
 

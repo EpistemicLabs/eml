@@ -124,6 +124,22 @@ describe('task router', () => {
     expect(after.brain.posts[0].body.waiting_on).toMatchObject({ why: 'Review: draft written' })
   })
 
+  it('puts a task on review when its session said review, whatever the checkpoint', async () => {
+    const { ledger, brain, r } = setup({ id: 't-rv', status: 'active', properties: {} })
+    ledger.recordSpawn('s-rv', null, 'bp-eml', 'claude', true, 't-rv')
+    ledger.setAttention('s-rv', { kind: 'review', reason: 'Max withdrew the cancellation' })
+    await r.turnEnded('s-rv', '### Handoff\nResult: Max withdrew the cancellation')
+    expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', why: 'Review: Max withdrew the cancellation' })
+  })
+
+  it('leaves a quiet reschedule off the user: the handoff goes to the journal, nobody waits', async () => {
+    const { ledger, brain, r } = setup({ id: 't-q', status: 'active', properties: {} })
+    ledger.recordSpawn('s-q', null, 'bp-eml', 'claude', true, 't-q')
+    ledger.setAttention('s-q', { kind: 'done', reason: 'No reply yet; next check tomorrow 10:00' })
+    await r.turnEnded('s-q', '### Handoff\nResult: No reply from Max yet.\nNext: check again tomorrow 10:00 (job)')
+    expect(brain.posts[0].body).toEqual({ text: '### Handoff\nResult: No reply from Max yet.\nNext: check again tomorrow 10:00 (job)' })
+  })
+
   it('finishes a session that closed its task and asks nothing, and keeps one that still asks', async () => {
     const finished: string[] = []
     const ledger = new SessionLedger()

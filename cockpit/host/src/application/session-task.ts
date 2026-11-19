@@ -38,7 +38,7 @@ interface Task {
   title: string | null
   content: string
   status: string
-  properties?: { stage?: string; checkpoint?: string; depends_on?: string[] }
+  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; done_when?: string }
 }
 
 /** The name a task gets before its session has one. */
@@ -63,6 +63,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '# Your task (cockpit task system)',
     `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
     task.content,
+    task.status === 'pending triage' ? null : task.properties?.done_when
+      ? `Done when: ${task.properties.done_when}`
+      : 'Done when: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task done_when).',
     ...(placeholder ? [
       '',
       'The cockpit created this task for the session; it takes the session\'s name once you name the session.',
@@ -79,6 +82,14 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. A task with checkpoint after you only close once the user has reviewed the result. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
+    ...(unattended ? [
+      '',
+      '## Until it is done',
+      '- At every wake-up, check the task against its done when first. Checks are read-only; nothing goes out without the user\'s OK.',
+      '- Reached: hand the result over for review (session_status review and the handoff\'s Result). Do not close it yourself.',
+      '- Not reached: schedule your next check yourself with the schedule tool (create with at and task_id of this task, or update the job you run in), then stop quietly: session_status done, Next names the time of the check, no [lasse] question. You decide whether and when to check again; do not ask the user about it.',
+      '- Ask the user ([lasse]) only what only they can decide. A stop without a next step (a check, a question, or the task closed) is caught by the cockpit.',
+    ] : []),
     '',
     '## Handoff',
     unattended

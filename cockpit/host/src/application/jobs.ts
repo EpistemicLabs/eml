@@ -30,6 +30,8 @@ export interface JobCaller {
   jobId?: string | null
   /** That job is limited: the caller reaches only it (limited-job-scope.ts). */
   limited?: boolean
+  /** The brain task the caller works on (task system): a job it makes belongs to it unless it names another. */
+  taskId?: string | null
 }
 
 export interface JobsDeps {
@@ -133,7 +135,7 @@ export class Jobs {
     const at = new Date(this.now()).toISOString()
     const draft: Job = {
       id: randomUUID(), name, kind: mail && !trigger ? 'standing' : 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
-      taskId: str(input.task_id) ?? null, prompt, ...(goal ? { goal } : {}), target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
+      taskId: str(input.task_id) ?? caller.taskId ?? null, prompt, ...(goal ? { goal } : {}), target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
       // Drafts until the user switches a channel to send in the Jobs view; a session never can.
       reply: mail ? { mail: 'draft' } : {}, end, notify,
       paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,

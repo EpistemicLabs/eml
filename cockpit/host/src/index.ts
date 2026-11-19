@@ -39,6 +39,7 @@ import { createSessionTask, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
+import { createNextStepCheck } from './application/next-step.js'
 import { createTriage, TriageStore } from './application/triage.js'
 import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
@@ -65,7 +66,7 @@ import { channelJobFacts, isChannelJob, withChannelTools } from './application/c
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
-import type { GrantTool, Job } from './domain/job.js'
+import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
@@ -325,10 +326,37 @@ async function main() {
     },
   })
   taskRunner.every(RUNNER_TICK_MS)
+  // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
+  const nextStep = createNextStepCheck({
+    ledger, spaces, brain: taskBrain, owner, people: () => [owner], log,
+    jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
+      ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
+      channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),
+      runWaiting: jobStore.runs(job.id).some((run) => run.status === 'waiting'),
+    })),
+    runStartedAt: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      const run = entry?.jobId ? jobStore.runs(entry.jobId).filter((r) => r.sessionId === sessionId && r.startedAt).at(-1) : undefined
+      return run?.startedAt ?? entry?.createdAt ?? ''
+    },
+    working: (sessionId) => turns.get(sessionId)?.state === 'working',
+    watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
+    // Like a finished worker: one the user pinned or put on the desk stays.
+    quiet: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry?.worker || entry.pinned || entry.deskMain) return
+      ledger.archive(sessionId)
+    },
+  })
+  setInterval(() => { void nextStep.tick() }, RUNNER_TICK_MS).unref?.()
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
   const cycles = createCycles({ spaces, log, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
-  const turnEnded = (sessionId: string, text: string) => { void taskRouter.turnEnded(sessionId, text).then(() => taskRunner.tick()) }
+  const turnEnded = (sessionId: string, text: string) => {
+    void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
+  }
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
   }
@@ -442,7 +470,9 @@ async function main() {
     if (!entry) return null
     // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
     const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
-    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, ...facts }
+    // In a task-system space a job belongs to the task its maker works on (a task in triage has no id to link yet).
+    const taskId = taskSystemOn(spaces.resolve(entry.spaceId)) && entry.taskId && !entry.taskId.startsWith('pending-') ? entry.taskId : null
+    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
   const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)

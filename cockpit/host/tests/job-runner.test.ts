@@ -103,6 +103,15 @@ describe('job runner', () => {
     expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, the next scheduled run continues it\. Once it is reached, end the job with finish\.\]$/)
   })
 
+  it('links a job to the task its maker works on, unless it names another; without one it has none', async () => {
+    const onTask: JobCaller = { ...caller, taskId: 'task-1' }
+    const own = await jobs.handle(onTask, { action: 'create', name: 'Check reply', prompt: 'p', at: '2026-11-20T10:00' })
+    expect(own.job!.taskId).toBe('task-1')
+    const named = await jobs.handle(onTask, { action: 'create', name: 'Other check', prompt: 'p', at: '2026-11-20T10:00', task_id: 'task-2' })
+    expect(named.job!.taskId).toBe('task-2')
+    expect((await create({ cron: '0 8 * * *' })).taskId).toBeNull()
+  })
+
   it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
     await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
     world.now = Date.parse('2026-11-10T00:00:30Z')
