@@ -1,8 +1,12 @@
 // The add-pane actions that used to sit at the right end moved into the
-// pane header's "+" (2026-09-22).
-import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Brain, Trash2 } from 'lucide-react';
-import { spaceTone } from '@/lib/space-color';
+// pane header's "+" (2026-09-22). Top bar v2 (mockup top bar v2, tokens v2): monochrome,
+// the space name opens its brain, one badge per desk with one meaning.
+import React, { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
+
+import { endPaneDrag, getDraggedPane } from '@/components/app/paneDrag';
+import { useAllSessions } from '@/components/sidebar/useAllSessions';
+import { FOCUS } from '@/components/task-board/parts';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
@@ -10,29 +14,33 @@ import * as paneStore from '@/stores/usePaneStore';
 import type { DeskState } from '@/stores/usePaneStore';
 import { loadSpaces, paneSpaceKey, renameSpace, reorderSpaces, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { setTopView, useTopView } from '@/stores/useTopViewStore';
-import { countNeedsYou, useTurnStore } from '@/stores/useTurnStateStore';
-import { endPaneDrag, getDraggedPane } from './paneDrag';
+import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
+
+import { IS_MAC, MOD } from './shortcuts';
+import { Count, TAB } from './TaskViewSwitch';
 
 /**
  * Top-level desk tabs (called spaces until 0.17.4; "space" now means a brain
  * space, decision cockpit-naming-desks-spaces). The bar shows every space as
- * a section — its Brain tab (the brain's name, opens that brain's dashboard),
- * then its desks, then "+" — so any desk of any space is one click away;
- * activating a desk or the Brain tab of another space switches the space
- * with it. Each desk owns its own panes (see usePaneStore), so switching
+ * a section — its name (opens that brain's dashboard), then its desks, then
+ * "+" — so any desk of any space is one click away; activating a desk or the
+ * name of another space switches the space with it. A desk's badge counts
+ * its sessions you have not seen yet that finished or ask you something
+ * (grey, gone once seen); a red "!" when one of them stopped with an error
+ * (decision desk-dot-until-seen). Each desk owns its own panes (see usePaneStore), so switching
  * tabs swaps the entire pane grid — letting e.g. an isolated "Research" desk
  * live next to "Dev" without their terminals mixing.
  *
  * Interactions:
  *  • click a tab        → activate that desk (and its space)
- *  • double-click a tab → inline-rename it (the Brain tab renames the space)
+ *  • double-click a tab → inline-rename it (the space name renames the space)
  *  • × (hover/active)   → delete it (guarded: never a space's last desk; warns
  *                         if the desk still holds a live session)
  *  • + (per section)    → create a new desk in that space, straight into rename
  *  • drag a tab         → reorder it among the desks of its space
- *  • drag a Brain tab   → reorder the spaces (kept by the host, cockpit config)
+ *  • drag a space name  → reorder the spaces (kept by the host, cockpit config)
  *  • drop a pane title  → move that pane to the desk (same space only; pinned and main panes stay)
- *  • ⌘/Ctrl 1–9         → the Nth desk in bar order
+ *  • ⌘/Ctrl 1–9         → the Nth desk in bar order; holding ⌘/Ctrl shows the numbers
  */
 export default function DeskTabBar() {
   const desks = paneStore.useDesks();
@@ -41,15 +49,28 @@ export default function DeskTabBar() {
   // Cockpit: the fixed Brain tab in the header takes the active highlight
   // away from the desks while it is shown.
   const topView = useTopView();
-  // Finished-while-away sessions per desk: one badge
-  // per tab — a dot for one, a count for more; gone once the desk is viewed.
+  // Per desk: the sessions that need a look, and whether one of them failed.
   const turnSnapshot = useTurnStore();
+  const { sessions } = useAllSessions(true);
+  const failed = new Set((sessions ?? []).filter((s) => s.attention?.kind === 'failed').map((s) => s.id));
+  // Holding the modifier shows each desk's ⌘N.
+  const [hint, setHint] = useState(false);
+  useEffect(() => {
+    const modKey = IS_MAC ? 'Meta' : 'Control';
+    const down = (e: KeyboardEvent) => { if (e.key === modKey) setHint(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === modKey) setHint(false); };
+    const off = () => setHint(false);
+    document.addEventListener('keydown', down, true);
+    document.addEventListener('keyup', up, true);
+    window.addEventListener('blur', off);
+    return () => { document.removeEventListener('keydown', down, true); document.removeEventListener('keyup', up, true); window.removeEventListener('blur', off); };
+  }, []);
   const activeSpaceId = paneStore.useActiveSpaceId();
   // The active space comes into view when the bar scrolls (many spaces).
   const activeSectionRef = useRef<HTMLDivElement>(null);
   useEffect(() => { activeSectionRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); }, [activeSpaceId]);
   // Engrams flagged for review in the ACTIVE space's brain (the request names
-  // the active space) — shown on that section's Brain tab only.
+  // the active space) — shown next to that section's name only.
   const pendingReviews = usePendingReviews().data?.length ?? 0;
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -157,7 +178,7 @@ export default function DeskTabBar() {
       }
       commitRename(id);
     },
-    className: 'w-[12ch] min-w-0 rounded border border-border bg-transparent px-1 py-0 text-body font-medium text-foreground outline-none focus:border-foreground/40',
+    className: 'w-24 min-w-0 rounded border border-border bg-transparent px-1 py-0 text-body font-medium text-foreground outline-none focus:border-foreground/40',
   });
 
   const handleCreate = (spaceKey: string | null, count: number) => {
@@ -259,43 +280,36 @@ export default function DeskTabBar() {
   let position = 0;
 
   return (
-    <div className="flex h-full flex-shrink-0 items-stretch gap-2 px-1">
-      {sections.map((section) => {
+    <div className="flex h-full flex-shrink-0 items-center gap-1.5">
+      {sections.map((section, sectionIndex) => {
         const isActiveSpace = section.key === activeSpaceId;
         const brainActive = topView === 'brain' && isActiveSpace;
         const count = isActiveSpace ? pendingReviews : 0;
-        const brainLabel = section.space?.name ?? 'Brain';
-        const tone = spaceTone(section.space);
+        const spaceLabel = section.space?.name ?? 'Brain';
         const spaceDropPlace = section.space && spaceDrop?.id === section.space.id ? spaceDrop.place : null;
         return (
-          // One section per brain: a soft surface in the space's colour holds its
-          // Brain tab and desks, so the colour — not lines — tells the brains apart.
-          // It keeps a fixed height and sits centred in the taller header row.
+          // One group per brain: its name, its desks, "+". A hairline sets the groups apart;
+          // the space you are in has a light background.
+          <div key={section.space?.id ?? 'all'} className="flex items-center gap-1.5">
+          {sectionIndex > 0 && <span aria-hidden className="h-5 w-px flex-shrink-0 bg-(--glass-line)" />}
           <div
-            key={section.space?.id ?? 'all'}
             ref={isActiveSpace ? activeSectionRef : undefined}
             data-active={isActiveSpace || undefined}
+            role="tablist"
+            aria-label={spaceLabel}
             {...(section.space ? spaceDragProps(section.space) : {})}
             className={cn(
-              'space-band relative flex h-8 self-center items-stretch gap-0.5 rounded-lg p-0.5',
-              section.space && draggingSpace === section.space.id && 'opacity-50',
+              'relative flex items-center gap-px rounded-lg py-0.5 pr-0.5 pl-1',
+              isActiveSpace && topView !== 'tasks' && topView !== 'jobs' && 'bg-foreground/8',
+              section.space && draggingSpace === section.space.id && 'opacity-60',
             )}
-            style={tone ? ({ '--space-tone': tone } as CSSProperties) : undefined}
           >
-            {/* Where the dragged space would land: a line in the gap before or after this section. */}
+            {/* Where the dragged space would land: a line in the gap before or after this group. */}
             {spaceDropPlace && (
-              <span
-                aria-hidden
-                className={cn('pointer-events-none absolute inset-y-1 w-[2px] rounded-full bg-primary', spaceDropPlace === 'before' ? '-left-[5px]' : '-right-[5px]')}
-              />
+              <span aria-hidden className={cn('pointer-events-none absolute inset-y-1 w-0.5 rounded-full bg-primary', spaceDropPlace === 'before' ? '-left-1' : '-right-1')} />
             )}
-            {/* The section's Brain tab: this brain's dashboard. Same underline
-                idiom as the desks, in the space's colour. */}
             {section.space && editingId === spaceEditId(section.space) ? (
-              <div className="flex items-center gap-1.5 px-2">
-                <Brain className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
-                <input {...renameInputProps(spaceEditId(section.space))} placeholder="Space name" aria-label="Space name" maxLength={40} />
-              </div>
+              <input {...renameInputProps(spaceEditId(section.space))} placeholder="Space name" aria-label="Space name" maxLength={40} />
             ) : (
             <button
               type="button"
@@ -316,48 +330,34 @@ export default function DeskTabBar() {
               }}
               onDragEnd={endDrag}
               aria-pressed={brainActive}
-              title={`${count > 0 ? `${brainLabel} · ${count} pending review${count === 1 ? '' : 's'}` : `Brain: ${brainLabel}`}${section.space ? ' · double-click to rename, drag to reorder the spaces' : ''}`}
+              title={`${spaceLabel}: open its brain${count > 0 ? ` · ${count} pending review${count === 1 ? '' : 's'}` : ''}${section.space ? ' · double-click to rename, drag to reorder the spaces' : ''}`}
               className={cn(
-                'flex h-full items-center gap-1.5 rounded-md px-2 text-body font-semibold transition-colors',
-                isActiveSpace ? 'text-foreground' : 'text-foreground/70 hover:text-foreground',
-                brainActive && 'space-tab-active',
+                'flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-lg px-1.5 text-(length:--text-space) font-bold text-foreground hover:bg-foreground/8 aria-pressed:bg-card aria-pressed:shadow-raised',
+                FOCUS,
               )}
             >
-              <Brain className="h-4 w-4" strokeWidth={brainActive ? 2.2 : 1.8} style={{ color: tone }} />
-              <span className="max-w-[16ch] truncate">{brainLabel}</span>
-              {count > 0 && (
-                <span className="rounded-full bg-warning/15 px-1.5 py-px font-mono text-[10px] leading-4 tabular-nums text-warning">
-                  {count}
-                </span>
-              )}
+              <span className="max-w-40 truncate">{spaceLabel}</span>
+              {count > 0 && <Count label={`${count} pending review${count === 1 ? '' : 's'}`}>{count}</Count>}
             </button>
             )}
             {section.desks.map((desk) => {
               const idx = position++;
               const isActive = topView === 'desks' && desk.id === activeDeskId;
               const isEditing = editingId === desk.id;
-              const shortcut = idx < 9 ? ` — ⌘${idx + 1}` : '';
+              const key = idx < 9 ? `${MOD}${idx + 1}` : null;
               const dropPlace = dropTarget?.id === desk.id ? dropTarget.place : null;
               return (
                 <div
                   key={desk.id}
                   {...dragProps(desk, section.key)}
-                  className={cn(
-                    'group relative flex items-center gap-1.5 rounded-md px-2.5 text-body transition-colors',
-                    isActive ? 'space-tab-active text-foreground' : 'text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground',
-                    dragging?.id === desk.id && 'opacity-50',
-                    paneDropId === desk.id && 'bg-primary/15 text-foreground',
-                  )}
+                  className={cn('relative flex items-center', dragging?.id === desk.id && 'opacity-60')}
                 >
                   {/* Where the dragged desk would land: a line on this tab's left or right edge. */}
                   {dropPlace && (
-                    <span
-                      aria-hidden
-                      className={cn('pointer-events-none absolute inset-y-1 w-[2px] rounded-full bg-primary', dropPlace === 'before' ? '-left-px' : '-right-px')}
-                    />
+                    <span aria-hidden className={cn('pointer-events-none absolute inset-y-1 w-0.5 rounded-full bg-primary', dropPlace === 'before' ? '-left-px' : '-right-px')} />
                   )}
                   {isEditing ? (
-                    <>
+                    <span className="flex h-(--size-tab) items-center gap-1 px-1">
                       <input {...renameInputProps(desk.id)} placeholder="Desk name" aria-label="Desk name" />
                       {section.desks.length > 1 && (
                         <button
@@ -367,31 +367,30 @@ export default function DeskTabBar() {
                           onClick={() => handleDelete(desk, section.desks.length)}
                           aria-label={`Close ${desk.name} desk`}
                           title={`Close ${desk.name} desk`}
-                          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                          className="flex size-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/12 hover:text-destructive"
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="size-3" />
                         </button>
                       )}
-                    </>
+                    </span>
                   ) : (
                     <button
                       type="button"
+                      role="tab"
+                      aria-selected={isActive}
                       onClick={() => {
                         setTopView('desks');
                         paneStore.activateDesk(desk.id);
                       }}
                       onDoubleClick={() => startEditing(desk.id, desk.name)}
-                      title={`${desk.name}${shortcut} · double-click to rename or close, drag to reorder, drop a pane title here to move the pane`}
-                      className="max-w-[10ch] cursor-pointer truncate font-medium whitespace-nowrap"
+                      title={`${desk.name}${key ? ` (${key})` : ''} · double-click to rename or close, drag to reorder, drop a pane title here to move the pane`}
+                      className={cn(TAB, paneDropId === desk.id && 'bg-foreground/12 text-foreground')}
                     >
-                      {desk.name}
+                      <span className="max-w-32 truncate">{desk.name}</span>
+                      <DeskBadge sessionIds={desk.panes.map((pane) => pane.sessionId)} turns={turnSnapshot} failed={failed} />
+                      {key && hint && <span aria-hidden className="text-caption text-muted-foreground">{key}</span>}
                     </button>
                   )}
-
-                  {!isEditing && (
-                    <UnseenBadge count={countNeedsYou(turnSnapshot, desk.panes.map((pane) => pane.sessionId))} />
-                  )}
-
                 </div>
               );
             })}
@@ -401,12 +400,13 @@ export default function DeskTabBar() {
               onClick={() => handleCreate(section.key, section.desks.length)}
               aria-label={section.space ? `New desk in ${section.space.name}` : 'New desk'}
               title={section.space ? `New desk in ${section.space.name}` : 'New desk'}
-              className="my-auto mx-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-l-0 text-muted-foreground/70 transition-colors hover:bg-foreground/5 hover:text-foreground"
+              className={cn('flex h-(--size-tab) w-6 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/8 hover:text-foreground', FOCUS)}
             >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
+          </div>
           </div>
         );
       })}
@@ -414,20 +414,14 @@ export default function DeskTabBar() {
   );
 }
 
-/** Sessions that need you on this desk: a dot (one) or a count, next to the name. */
-function UnseenBadge({ count }: { count: number }) {
-  if (count === 0) return null;
-  const label = `${count} session${count === 1 ? ' needs' : 's need'} you — waiting for input or finished while you were away`;
-  if (count === 1) {
-    return <span className="h-2 w-2 flex-shrink-0 rounded-full bg-primary" title={label} aria-label={label} />;
-  }
-  return (
-    <span
-      title={label}
-      aria-label={label}
-      className="flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold leading-none text-primary-foreground tabular-nums"
-    >
-      {count}
-    </span>
-  );
+/**
+ * A desk's badge: how many of its sessions finished or ask you something and are not seen yet
+ * (grey; gone once you look), or a red "!" when one of them stopped with an error.
+ */
+function DeskBadge({ sessionIds, turns, failed }: { sessionIds: Array<string | null | undefined>; turns: ReturnType<typeof useTurnStore>; failed: Set<string> }) {
+  const ids = sessionIds.filter((id): id is string => Boolean(id) && (turns.turns[id!]?.state === 'waiting' || isUnseenDone(turns, id!)));
+  if (ids.length === 0) return null;
+  const stopped = ids.filter((id) => failed.has(id)).length;
+  if (stopped > 0) return <Count stopped label={`${stopped} session${stopped === 1 ? '' : 's'} stopped with an error`}>!</Count>;
+  return <Count label={`${ids.length} session${ids.length === 1 ? '' : 's'} to look at: finished or asking you`}>{ids.length}</Count>;
 }

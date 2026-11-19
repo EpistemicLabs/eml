@@ -16,6 +16,10 @@ vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
 }));
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
 
+import { setTaskView } from '@/stores/useTaskViewStore';
+import { TaskViewSwitch } from '@/components/top-bar/TaskViewSwitch';
+import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
+
 import { TaskBoard } from './TaskBoard';
 
 const NOW = new Date();
@@ -42,7 +46,7 @@ beforeEach(() => {
   posts = [];
   live.sessions = [];
   live.seen = [];
-  try { localStorage.setItem('cockpit-task-board-view', 'now'); } catch { /* jsdom */ }
+  setTaskView('now');
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
     if (init?.method === 'POST') {
@@ -55,27 +59,33 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TaskBoard /></QueryClientProvider></MemoryRouter>);
+// The board with the top bar's view switch and the app's shortcuts, as the cockpit mounts them.
+function WithBar() {
+  useCockpitShortcuts(() => {});
+  return <><TaskViewSwitch /><TaskBoard /></>;
+}
+const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><WithBar /></QueryClientProvider></MemoryRouter>);
 
 describe('the task board', () => {
-  it('shows one Needs-you count in the header and sorts cards by whose turn it is', async () => {
+  it('sorts cards by whose turn it is', async () => {
     mount();
-    const headline = await screen.findByRole('button', { name: /Needs you 2/ });
-    expect(headline).toBeTruthy();
-    const needsYou = screen.getByRole('region', { name: 'Needs you' });
+    const needsYou = await screen.findByRole('region', { name: 'Needs you' });
     expect(within(needsYou).getByText('Acme cancellation rescue')).toBeTruthy();
     expect(within(needsYou).getByText('Asked you · 1')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Agent working' })).getByText('Kit v4 rollout')).toBeTruthy();
   });
 
-  it('switches views with 1 · 2 · 3 and shows the Inbox count on its tab', async () => {
+  it('follows the view picked in the top bar or with G then I / N / P; the Inbox tab shows its count; bare digits do nothing', async () => {
     mount();
-    await screen.findByRole('tab', { name: /Now/ });
-    expect(screen.getByRole('tab', { name: /Inbox/ }).textContent).toContain('1');
-    fireEvent.keyDown(document, { key: '3' });
+    await screen.findByRole('region', { name: 'Needs you' });
+    expect((await screen.findByRole('tab', { name: /Inbox/ })).textContent).toContain('1');
+    fireEvent.click(screen.getByRole('tab', { name: /Plan/ }));
     expect(await screen.findByText(/Stuck until you act/)).toBeTruthy();
-    fireEvent.keyDown(document, { key: '1' });
-    expect(await screen.findByText(/Inbox zero|One last check on Thursday\?/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: '2' });
+    expect(screen.getByText(/Stuck until you act/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'g' });
+    fireEvent.keyDown(document, { key: 'i' });
+    expect(await screen.findByText(/One last check on Thursday\?/)).toBeTruthy();
   });
 
   it('opens a card as a slide-over with focus on its title, answering first; Escape closes it', async () => {
@@ -116,7 +126,7 @@ describe('the task board', () => {
   });
 
   it('snoozes an Inbox item to tomorrow 09:00', async () => {
-    try { localStorage.setItem('cockpit-task-board-view', 'inbox'); } catch { /* jsdom */ }
+    setTaskView('inbox');
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Snooze to tomorrow' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/asked/snooze'));
@@ -138,7 +148,7 @@ describe('the task board', () => {
   });
 
   it('closes a task that is not needed from its project in Plan, with Undo', async () => {
-    try { localStorage.setItem('cockpit-task-board-view', 'plan'); } catch { /* jsdom */ }
+    setTaskView('plan');
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
     const closers = screen.getAllByTitle('Close: the task is not needed');

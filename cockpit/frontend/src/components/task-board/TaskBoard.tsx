@@ -1,7 +1,7 @@
-// The Tasks screen on tokens v2 (mockup v4): three views behind one tab bar (Inbox · Now · Plan).
+// The Tasks screen on tokens v2 (mockup v4): three views (Inbox · Now · Plan), picked in the top bar.
 // A task opens over the view it was clicked in (Inbox: split next to the list). Glass only on the
 // control layer; content on solid surfaces; colour only for Needs you and stopped.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectIdOfBrain } from '@/lib/project-lead';
@@ -14,6 +14,8 @@ import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
 import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
+import { setTaskView, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
+import { useCompactLayout } from '@/hooks/useCompactLayout';
 
 import { InboxView, type InboxAction } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
@@ -22,24 +24,21 @@ import { BUTTON, FOCUS, LABEL, PRIMARY } from './parts';
 import { PlanView } from './PlanView';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
-type View = 'inbox' | 'now' | 'plan';
-const VIEWS: Array<[View, string, string]> = [['inbox', 'Inbox', '1'], ['now', 'Now', '2'], ['plan', 'Plan', '3']];
-const VIEW_KEY = 'cockpit-task-board-view';
+type View = TaskView;
+const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan', 'Plan']];
 /** How long an informational toast stays (an Undo toast stays until its deadline). */
 const TOAST_MS = 3200;
 /** Relative times ("asked 10:27", "in 3 days") are worked out again this often. */
 const NOW_TICK_MS = 30_000;
-
-function rememberedView(): View {
-  try { const v = localStorage.getItem(VIEW_KEY); return v === 'inbox' || v === 'plan' ? v : 'now'; } catch { return 'now'; }
-}
 
 export function TaskBoard() {
   const { data: board, error, refetch } = useTaskBoard();
   const { sessions } = useAllSessions(true);
   const spaces = useSpaces();
   const desks = useDesks();
-  const [view, setViewState] = useState<View>(rememberedView);
+  // The view is picked in the top bar (TaskViewSwitch, G then I / N / P); on a phone in the board's own tabs.
+  const { view, picks } = useTaskView();
+  const compact = useCompactLayout();
   const [open, setOpen] = useState<{ taskId: string; sessionId?: string } | null>(null);
   const [dialog, setDialog] = useState<{ taskId: string; mode: HandOverMode } | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -47,23 +46,9 @@ export function TaskBoard() {
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS); return () => window.clearInterval(t); }, []);
   useEffect(() => { if (board) setNow(Date.now()); }, [board]);
 
-  const setView = useCallback((v: View) => {
-    setViewState(v);
-    setOpen(null);
-    try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-viewer only */ }
-  }, []);
-
-  // 1 · 2 · 3 switch views when nobody types.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target instanceof HTMLElement ? e.target : null;
-      if (e.metaKey || e.ctrlKey || e.altKey || dialog || el?.closest('input, textarea, select, [contenteditable="true"]')) return;
-      const hit = VIEWS.find(([, , key]) => key === e.key);
-      if (hit) { e.preventDefault(); setView(hit[0]); }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [dialog, setView]);
+  // Every pick of a view, the same one again too, closes an open task.
+  const seenPicks = useRef(picks);
+  useEffect(() => { if (picks !== seenPicks.current) { seenPicks.current = picks; setOpen(null); } }, [picks]);
 
   const byId = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.id, t])), [board]);
   const task = open ? byId.get(open.taskId) : undefined;
@@ -156,7 +141,7 @@ export function TaskBoard() {
   return (
     <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-4 pb-10 pt-3">
-        <ControlBar board={board} view={open && !split ? null : view} onView={setView} />
+        {compact && <ControlBar board={board} view={open && !split ? null : view} onView={setTaskView} />}
         {split ? (
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-split)">
             <div className="hidden min-w-0 lg:block">
@@ -194,24 +179,20 @@ export function TaskBoard() {
   );
 }
 
+/** On a phone the top bar is not there: the board switches its views itself. */
 function ControlBar({ board, view, onView }: { board: Board; view: View | null; onView: (v: View) => void }) {
   return (
     <header className="glass sticky top-2 z-(--z-sticky) flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-2xl py-2 pl-4 pr-2.5 max-lg:static">
       <span className="text-title font-bold tracking-title">Tasks</span>
       <div role="tablist" aria-label="Views" className="inline-flex gap-0.5 rounded-xl bg-foreground/8 p-1">
-        {VIEWS.map(([v, label, key]) => (
-          <button key={v} type="button" role="tab" aria-selected={view === v} title={`Shortcut: ${key}`} onClick={() => onView(v)}
+        {VIEWS.map(([v, label]) => (
+          <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => onView(v)}
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
             {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions and results to review`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
-            <kbd className="rounded-sm border border-b-2 border-border px-1 py-0.5 tabular-nums text-caption leading-none text-muted-foreground">{key}</kbd>
           </button>
         ))}
       </div>
-      <button type="button" onClick={() => onView('now')} title="Tasks where you have the next move"
-        className={cn('inline-flex min-h-(--target-comfortable) items-center gap-2 rounded-lg border border-status-you/40 bg-status-you/10 px-2.5 font-semibold text-you-ink', FOCUS)}>
-        Needs you <span className="tabular-nums">{board.counts.needsYou}</span>
-      </button>
     </header>
   );
 }

@@ -226,6 +226,11 @@ html.dark {
   --target-min: 24px;
   --target-comfortable: 32px;
   --target-touch: 44px;
+  /* The top bar (mockup top bar v2): a dense bar, its tabs still above the 24px minimum target. */
+  --size-bar: 36px;
+  --size-tab: 26px;
+  --size-logo: 26px;
+  --text-space: 12.5px;
   --focus-offset: 2px;
   --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
   /* The Inbox's task panel: the window's height under the control bar, never shorter than the minimum. */
