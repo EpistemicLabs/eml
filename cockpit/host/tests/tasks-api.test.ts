@@ -53,17 +53,16 @@ describe('task board routes', () => {
     expect(refreshed).toBeGreaterThan(0)
   })
 
-  it('takes review, snooze and triage; refuses with a code to branch on', async () => {
+  it('takes review, snooze and close; refuses with a code to branch on', async () => {
     expect((await post('/api/v1/tasks/t1/review', { opId: 'op-2', spaceId: 'main' })).status).toBe(202)
     expect((await post('/api/v1/tasks/t1/snooze', { opId: 'op-3', spaceId: 'main', key: 'task:t1@s', until: '2026-11-20T01:00:00Z' })).status).toBe(202)
-    expect((await post('/api/v1/triage/pending-1', { opId: 'op-4', spaceId: 'main', action: 'merge', intoTaskId: 't1' })).status).toBe(202)
-    expect(submitted.slice(-3).map((s) => s.kind)).toEqual(['review', 'snooze', 'triage'])
+    expect((await post('/api/v1/tasks/t1/close', { opId: 'op-4', spaceId: 'main' })).status).toBe(202)
+    expect(submitted.slice(-3).map((s) => [s.kind, s.taskId])).toEqual([['review', 't1'], ['snooze', 't1'], ['close', 't1']])
 
     expect(await post('/api/v1/tasks/closed/review', { opId: 'op-5', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'task_closed', message: 'The task is closed.', retry: false } } })
     expect((await post('/api/v1/tasks/t1/hand-over', { spaceId: 'main', mode: 'later', delegate: 'atlas' })).body.error.code).toBe('invalid')
     expect((await post('/api/v1/tasks/t1/snooze', { spaceId: 'main' })).body.error.code).toBe('invalid')
-    expect((await post('/api/v1/triage/pending-1', { spaceId: 'main', action: 'keep' })).body.error.code).toBe('invalid')
   })
 
   it('undoes, or says it is too late', async () => {

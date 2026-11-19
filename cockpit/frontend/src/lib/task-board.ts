@@ -44,13 +44,12 @@ export interface BoardTask {
 
 export interface InboxItem {
   key: string;
-  kind: 'question' | 'review' | 'new_task';
+  kind: 'question' | 'review';
   space: string;
   title: string;
   text: string;
   since: string;
   taskId?: string;
-  pendingId?: string;
   sessionId?: string;
   until?: string;
 }
@@ -124,9 +123,10 @@ export const handOver = (task: Pick<BoardTask, 'id' | 'spaceId'>, input: HandOve
 export const reviewDone = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/review`, { opId, spaceId: task.spaceId });
 export const snooze = (item: InboxItem, until: string, opId = newOpId()) =>
-  post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? item.pendingId ?? '')}/snooze`, { opId, spaceId: item.space, key: item.key, until });
-export const triage = (item: InboxItem, action: 'accept' | 'merge' | 'close', intoTaskId?: string, opId = newOpId()) =>
-  post(`/api/v1/triage/${encodeURIComponent(item.pendingId ?? '')}`, { opId, spaceId: item.space, action, ...(intoTaskId ? { intoTaskId } : {}) });
+  post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? '')}/snooze`, { opId, spaceId: item.space, key: item.key, until });
+/** Drops a task that is not needed (invalidated), after the undo window. */
+export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/close`, { opId, spaceId: task.spaceId });
 export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponent(opId)}/undo`, {});
 
 // ---- names and colours ----

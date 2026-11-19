@@ -10,10 +10,10 @@ import { stepPrompt } from './task-runner.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
- * Looks good, Snooze and the triage of a proposed task. Everything else stays in the chat.
+ * Looks good, Snooze and Close. Everything else stays in the chat.
  *
  * Each action is a command with the page's operation id, so a retry does the work once. A command
- * waits out its undo window (UNDO_WINDOW_MS) before it touches the brain, a job or the triage; Undo
+ * waits out its undo window (UNDO_WINDOW_MS) before it touches the brain or a job; Undo
  * inside the window drops it, and the board shows its effect meanwhile. Two exceptions act at once:
  * Snooze (local, undone by removing it) and Work on it now (the owner is there): the page opens the
  * session in its desk with the brief this answers with, and Undo puts the task back (the page closes
@@ -24,18 +24,15 @@ import { stepPrompt } from './task-runner.js'
 export const UNDO_WINDOW_MS = 8000
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'triage'
-export type TriageAction = 'accept' | 'merge' | 'close'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close'
 
 export interface CommandInput {
   opId: string
   kind: CommandKind
   spaceId: string
   taskId?: string
-  pendingId?: string
   handOver?: HandOverRequest
   snooze?: Snooze
-  triage?: { action: TriageAction; intoTaskId?: string; scope?: string }
 }
 
 export interface TaskCommand extends CommandInput {
@@ -57,6 +54,7 @@ export type CommandRefusal =
   | 'unknown_task'
   | 'no_brain'
   | 'bound_items'
+  | 'open_steps'
   | 'unknown_command'
   | 'undo_expired'
 
@@ -125,11 +123,6 @@ export interface TaskCommandsDeps {
   /** The task system is on in the space. */
   runner(space: BrainSpace): boolean
   createJob(space: BrainSpace, task: BrainTask, spec: ScheduleSpec, prompt: string): Promise<{ jobId: string } | { error: string }>
-  triage: {
-    accept(id: string, scope?: string): Promise<unknown>
-    merge(id: string, taskId: string): Promise<unknown>
-    close(id: string): unknown
-  }
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -206,9 +199,18 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       return { ok: true, command: save({ ...base, state: 'applied' }) }
     }
 
-    if (input.kind === 'triage') {
-      const action = input.triage?.action
-      if (!input.pendingId || !action || (action === 'merge' && !input.triage!.intoTaskId)) return { ok: false, refusal: 'invalid' }
+    if (input.kind === 'close') {
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      const task = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as (BrainTask & { relations?: Array<{ source_id: string; target_id: string; relation: string }> }) | null
+      if (!task) return { ok: false, refusal: 'unknown_task' }
+      if (task.status !== 'planned' && task.status !== 'active') return { ok: false, refusal: 'task_closed' }
+      const steps = (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
+      for (const id of steps) {
+        const step = await taskOf(brain, id)
+        if (step && (step.status === 'planned' || step.status === 'active')) return { ok: false, refusal: 'open_steps', message: 'This task still has open steps: close or move them first.' }
+      }
+      const bound = await brain.get('/list', { task_id: task.id, binding: 'task', status: 'active', limit: 1 }).catch(() => null) as { engrams?: unknown[] } | null
+      if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
       return { ok: true, command: save(base) }
     }
     return { ok: false, refusal: 'invalid' }
@@ -241,11 +243,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null }, 'Looks good: the owner reviewed the result and closed the task.')
         }
         save({ ...command, state: 'applied' })
-      } else if (command.kind === 'triage') {
-        const { action, intoTaskId, scope } = command.triage!
-        if (action === 'accept') await deps.triage.accept(command.pendingId!, scope)
-        else if (action === 'merge') await deps.triage.merge(command.pendingId!, intoTaskId!)
-        else deps.triage.close(command.pendingId!)
+      } else if (command.kind === 'close') {
+        const task = await taskOf(brain, command.taskId!)
+        if (task && (task.status === 'planned' || task.status === 'active')) {
+          await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null }, 'Closed on the task board by the owner: not needed.')
+        }
         save({ ...command, state: 'applied' })
       }
       deps.log(`[commands] ${command.opId.slice(0, 8)} ${command.kind} applied`)
@@ -302,11 +304,6 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     /** What the delegate of a task handed over with an open question reads first. */
     briefOf(taskId: string): string | undefined {
       return deps.store.commands().filter((c) => c.kind === 'hand_over' && c.state === 'applied' && c.taskId === taskId && c.brief).at(-1)?.brief
-    },
-
-    /** A proposed task's triage is decided and waits out its window. */
-    triagePending(pendingId: string): boolean {
-      return deps.store.commands().some((c) => c.kind === 'triage' && c.state === 'pending' && c.pendingId === pendingId)
     },
 
     /** The commands still in their undo window, for the board to show their effect. */

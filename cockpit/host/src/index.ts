@@ -40,7 +40,6 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
-import { createTriage, TriageStore } from './application/triage.js'
 import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
@@ -297,13 +296,12 @@ async function main() {
     const agent = boundAgent({ agents }, space)
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, pendingTask: (id) => triageStore.get(id) })
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
     ledger, spaces, brain: taskBrain, owner, log,
     waiting: (sessionId) => turns.apply({ sessionId, state: 'waiting' }),
-    keepPending: (taskId, text, waitingOn) => triage.keep(taskId, text, waitingOn ? { ...waitingOn } : null),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -381,17 +379,9 @@ async function main() {
       if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
     }
   }, 15_000).unref?.()
-  // Triage (application/triage.ts): a session's new standalone tasks wait in the cockpit until the user approves them.
-  const triageStore = new TriageStore()
-  const triage = createTriage({
-    store: triageStore, log,
-    brain: (spaceId) => { const space = spaces.get(spaceId); return space ? taskBrain(space) : null },
-    retarget: (from, to) => { for (const e of ledger.list()) if (e.taskId === from) ledger.setTask(e.sessionId, to) },
-  })
-  // The spawn API's newTask: in a space with the task system on it waits for triage like a session's own task.
-  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string; approved?: boolean }) => {
+  // The spawn API's newTask: written into the brain at once (decision no-task-triage).
+  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
     const fields = { title: kebabTitle(input.title) ?? input.title, content: input.content, scope: input.scope, status: 'active' }
-    if (taskSystemOn(space) && !input.approved) return { id: (await triage.add(space.id, fields, { kind: 'worker', sessionId: null, sessionName: null })).id }
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
     const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>
@@ -484,8 +474,8 @@ async function main() {
     if (!entry) return null
     // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
     const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
-    // In a task-system space a job belongs to the task its maker works on (a task in triage has no id to link yet).
-    const taskId = taskSystemOn(spaces.resolve(entry.spaceId)) && entry.taskId && !entry.taskId.startsWith('pending-') ? entry.taskId : null
+    // In a task-system space a job belongs to the task its maker works on.
+    const taskId = taskSystemOn(spaces.resolve(entry.spaceId)) && entry.taskId ? entry.taskId : null
     return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
@@ -595,8 +585,6 @@ async function main() {
       .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
     nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
       .map((job) => job.nextRunAt!).sort()[0] ?? null,
-    pendingTriage: (spaceId) => triageStore.pending(spaceId).map((item) => ({ id: item.id, title: item.title, createdAt: item.createdAt, ...(item.source.sessionId ? { sessionId: item.source.sessionId } : {}) })),
-    triagePending: (pendingId) => taskCommands?.triagePending(pendingId) ?? false,
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     now: () => Date.now(),
@@ -623,11 +611,6 @@ async function main() {
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },
-    triage: {
-      accept: (id, scope) => triage.accept(id, scope),
-      merge: (id, taskId) => triage.merge(id, taskId),
-      close: (id) => triage.close(id),
-    },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
@@ -635,10 +618,10 @@ async function main() {
   taskCommands.every(TASK_COMMAND_TICK_MS)
   taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
 
-  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version, triage: { triage, store: triageStore } })
+  const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), triage, triageStore, cycles,
+    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {

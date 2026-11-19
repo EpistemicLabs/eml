@@ -37,11 +37,6 @@ export interface TaskRouterDeps {
   waiting(sessionId: string): void
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
-  /**
-   * A task still in triage (application/triage.ts): keep the handoff and whose turn it is for the task
-   * it becomes; the real task's id once it is resolved, else null.
-   */
-  keepPending?(taskId: string, text: string | null, waitingOn: WaitingOn | null): string | null
   log(line: string): void
   now?: () => Date
 }
@@ -117,21 +112,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const key = handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
     if (lastRouted.get(sessionId) === key) return
 
-    let taskId = entry.taskId
-    if (taskId.startsWith('pending-')) {
-      const waiting = decideWaiting({ handoff, attention, checkpoint: undefined, owner: deps.owner, sessionId, now: now() })
-      const resolved = deps.keepPending?.(taskId, handoff?.text ?? null, waiting) ?? null
-      if (!resolved) {
-        lastRouted.set(sessionId, key)
-        if (waiting && !(attention && needsAnswer(attention.kind))) {
-          deps.ledger.setAttention(sessionId, { kind: 'question', reason: waiting.why })
-          deps.waiting(sessionId)
-        }
-        deps.log(`[router] ${sessionId.slice(0, 8)} task in triage: handoff kept`)
-        return
-      }
-      taskId = resolved
-    }
+    const taskId = entry.taskId
     const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
@@ -167,7 +148,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     async answered(sessionId) {
       try {
         const entry = deps.ledger.get(sessionId)
-        if (!entry?.taskId || entry.taskId.startsWith('pending-')) return
+        if (!entry?.taskId) return
         const space = deps.spaces.resolve(entry.spaceId)
         if (!taskSystemOn(space)) return
         const brain = deps.brain(space)

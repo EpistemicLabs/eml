@@ -128,7 +128,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
   const check = async (sessionId: string) => {
     const entry = deps.ledger.get(sessionId)
     // Only delegated work: a worker on a task in the brain; the user's own sessions and project leads are theirs.
-    if (!entry?.worker || !entry.taskId || entry.taskId.startsWith('pending-') || entry.leadOf || entry.archivedAt) return
+    if (!entry?.worker || !entry.taskId || entry.leadOf || entry.archivedAt) return
     const space = deps.spaces.resolve(entry.spaceId)
     if (!taskSystemOn(space)) return
     const brain = deps.brain(space)

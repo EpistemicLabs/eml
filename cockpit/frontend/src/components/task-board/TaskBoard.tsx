@@ -6,11 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import {
-  agentName, handOver, readable, reviewDone, snooze, snoozeTimes, triage, undo, useTaskBoard,
-  type Board, type BoardTask, type CommandAnswer, type HandOverInput, type HandOverMode, type InboxItem,
+  agentName, closeTask, handOver, readable, reviewDone, snooze, snoozeTimes, undo, useTaskBoard,
+  type Board, type BoardTask, type CommandAnswer, type HandOverInput, type HandOverMode,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
 import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
@@ -43,7 +42,6 @@ export function TaskBoard() {
   const [view, setViewState] = useState<View>(rememberedView);
   const [open, setOpen] = useState<{ taskId: string; sessionId?: string } | null>(null);
   const [dialog, setDialog] = useState<{ taskId: string; mode: HandOverMode } | null>(null);
-  const [merging, setMerging] = useState<InboxItem | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS); return () => window.clearInterval(t); }, []);
@@ -119,13 +117,9 @@ export function TaskBoard() {
     if (a.kind === 'review') {
       const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
       if (t) answered(await reviewDone(t), 'Closed as reviewed.');
-    } else if (a.kind === 'snooze') {
+    } else {
       const times = snoozeTimes(Date.now());
       answered(await snooze(a.item, a.until === 'tomorrow' ? times.tomorrow : times.monday), `Snoozed to ${a.until === 'tomorrow' ? 'tomorrow 09:00' : 'Monday 09:00'}.`);
-    } else if (a.action === 'merge') {
-      setMerging(a.item);
-    } else {
-      answered(await triage(a.item, a.action), a.action === 'accept' ? 'Accepted: the task goes into the brain.' : 'Closed: the proposed task is dropped.');
     }
   }, [answered, byId]);
 
@@ -177,7 +171,7 @@ export function TaskBoard() {
         ) : view === 'now' ? (
           <NowBoard board={board} now={now} onOpen={(t) => openTask(t)} movedId={board.events[0]?.taskId ?? null} />
         ) : (
-          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} />
+          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} onCloseTask={async (t) => answered(await closeTask(t), 'Closed: not needed.')} />
         )}
       </div>
 
@@ -195,7 +189,6 @@ export function TaskBoard() {
           onSubmit={(input, desk) => void submitHandOver(dialogTask, input, desk)}
         />
       )}
-      {merging && <MergeDialog item={merging} board={board} onClose={() => setMerging(null)} onMerge={async (taskId) => { const item = merging; setMerging(null); answered(await triage(item, 'merge', taskId), 'Merged into the task.'); }} />}
       <Toast message={toast} onDone={(id) => setToast((t) => (t?.id === id ? null : t))} />
     </div>
   );
@@ -210,7 +203,7 @@ function ControlBar({ board, view, onView }: { board: Board; view: View | null; 
           <button key={v} type="button" role="tab" aria-selected={view === v} title={`Shortcut: ${key}`} onClick={() => onView(v)}
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
-            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions, results and proposed tasks`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
+            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions and results to review`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
             <kbd className="rounded-sm border border-b-2 border-border px-1 py-0.5 tabular-nums text-caption leading-none text-muted-foreground">{key}</kbd>
           </button>
         ))}
@@ -220,28 +213,5 @@ function ControlBar({ board, view, onView }: { board: Board; view: View | null; 
         Needs you <span className="tabular-nums">{board.counts.needsYou}</span>
       </button>
     </header>
-  );
-}
-
-function MergeDialog({ item, board, onClose, onMerge }: { item: InboxItem; board: Board; onClose: () => void; onMerge: (taskId: string) => void }) {
-  const candidates = board.tasks.filter((t) => t.spaceId === item.space && t.status !== 'resolved').sort((a, b) => b.urgency - a.urgency);
-  const [target, setTarget] = useState(candidates[0]?.id ?? '');
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent data-ui="v2" className="glass-thick flex w-full max-w-dialog flex-col gap-3 rounded-3xl p-5 shadow-modal">
-        <DialogTitle className="sr-only">Merge into a task</DialogTitle>
-        <h3 className="m-0 text-title font-semibold">Merge “{readable(item.title)}”</h3>
-        <label className="flex flex-col gap-1.5">
-          <span className={LABEL}>Into the open task</span>
-          <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded-lg border border-input bg-background px-2 py-1.5 text-body">
-            {candidates.map((t) => <option key={t.id} value={t.id}>{readable(t.title)}</option>)}
-          </select>
-        </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
-          <button type="button" className={PRIMARY} disabled={!target} onClick={() => onMerge(target)}>Merge</button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

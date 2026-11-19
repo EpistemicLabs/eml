@@ -78,9 +78,7 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
   it first with eml_list / eml_recall). `--new-task` creates the task and puts the worker on it
   in one go, when none exists yet: `--in <project>` picks its brain project (the customer's,
   not the folder the worker runs in; default the worker's `--project`), `--task-text` says what
-  needs doing (default the title). The output names the new task's id. The new task waits for
-  the user's triage in the cockpit, unless the user asked for it in this conversation: then add
-  `--approved`. `--step` makes its task
+  needs doing (default the title). The output names the new task's id. `--step` makes its task
   a new step of your own task — only when the work is part of your task. Without any of them,
   the worker gets a task of its own and its task notes that you started it.
 

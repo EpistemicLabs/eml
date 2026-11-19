@@ -27,8 +27,6 @@ function setup(opts: { main: Row[]; other?: Row[]; working?: string[]; jobs?: Re
     viewer: 'lasse',
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
     nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
-    pendingTriage: () => [],
-    triagePending: () => false,
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     now: () => clock.now,

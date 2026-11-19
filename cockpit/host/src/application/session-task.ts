@@ -28,8 +28,6 @@ export interface SessionTaskDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The task a job is attached to (domain/job.ts taskId): a run of the job works on it. */
   jobTask?: (jobId: string) => string | null
-  /** A task still in triage (application/triage.ts), by its pending id. */
-  pendingTask?: (id: string) => { title: string; content: string; state: string; taskId?: string } | undefined
   now?: () => Date
 }
 
@@ -63,7 +61,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '# Your task (cockpit task system)',
     `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
     task.content,
-    task.status === 'pending triage' ? null : task.properties?.goal
+    task.properties?.goal
       ? `Goal: ${task.properties.goal}`
       : 'Goal: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task goal).',
     ...(placeholder ? [
@@ -75,11 +73,10 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '## Rules',
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
     '- A worker you start gets a task of its own by default. Name its task when it has one: spawn with --task <id> (an existing task, e.g. the customer\'s open task) or --step (a new step of this task, only when it is part of this task\'s own work).',
-    '- Handing out work (an inbox, a triage): find the open task it belongs to (eml_list, eml_recall) and start the worker with --task on it; when there is none, start it with --new-task "<title>" --in <the customer\'s or topic\'s project> --task-text "<what needs doing>".',
+    '- Handing out work (an inbox): find the open task it belongs to (eml_list, eml_recall) and start the worker with --task on it; when there is none, start it with --new-task "<title>" --in <the customer\'s or topic\'s project> --task-text "<what needs doing>".',
     '- A task has an owner and may have a delegate: assignee_ids names the person who owns it (Lasse for his work), delegate the one agent that works on it. Handing work to an agent sets delegate; the owner stays. Never put an agent into assignee_ids.',
     '- Planned steps of this task: eml_create_task with parent_id, depends_on, checkpoint (before · after · none) and delegate (your agent handle); the runner starts them.',
     '- A task you create that an agent can do gets a checkpoint (default after; before when it needs the user\'s OK first) and a delegate: the runner starts it, also as a standalone task. Leave both out only when the person does it themselves or the user says so. Name the checkpoint and delegate you set in your reply.',
-    '- A new standalone task you create (eml_create_task without parent_id, or --new-task) waits for the user\'s triage in the cockpit: you get a pending id to work and track on. Set approved_by_user (or --approved with --new-task) only when the user asked for that task in this conversation; then it goes straight in.',
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. A task with checkpoint after you only close once the user has reviewed the result. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
@@ -189,12 +186,6 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
         taskId = await running
       }
       if (!taskId) return ''
-      // Started on a task that waits for triage: it works on it; what it hands off is kept for the real task.
-      const pending = taskId.startsWith('pending-') ? deps.pendingTask?.(taskId) : undefined
-      if (pending && !pending.taskId) {
-        return taskContext({ id: taskId, title: pending.title, content: `${pending.content}\n\nThis task waits for the user's triage in the cockpit and is not in the brain yet. Work on it; your handoffs are kept and land in the task once it is approved. Do not link decisions, notes or sub-tasks to its id until then.`, status: 'pending triage' }, false, deps.ledger.get(sessionId)?.worker === true)
-      }
-      if (pending?.taskId) taskId = pending.taskId
       let task = await t.brain.get(`/engram/${taskId}`) as Task
       // A session that has a name already (it named itself before the task system was on) lends it now.
       const name = t.entry.title ?? t.entry.agentTitle

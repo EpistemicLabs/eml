@@ -180,26 +180,6 @@ describe('task router', () => {
     expect(shared.brain.posts).toHaveLength(0)
   })
 
-  it('keeps the handoff of a task in triage for the task it becomes, and still puts the question on the session', async () => {
-    const kept: Array<[string, string | null, unknown]> = []
-    const ledger = new SessionLedger()
-    const brain = fakeBrain({ id: 'unused', status: 'active', properties: {} })
-    const waited: string[] = []
-    const r = router.createTaskRouter({
-      ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, owner: 'lasse',
-      waiting: (id) => waited.push(id), log: () => {}, now: () => new Date('2026-11-18T09:00:00Z'),
-      keepPending: (taskId, text, waiting) => { kept.push([taskId, text, waiting]); return null },
-    })
-    ledger.recordSpawn('w1', null, 'bp-eml', 'claude', true, 'pending-abc')
-    await r.turnEnded('w1', HANDOFF)
-    expect(kept[0][0]).toBe('pending-abc')
-    expect(kept[0][1]).toContain('Result: Homepage v4b hero')
-    expect(kept[0][2]).toMatchObject({ who: 'lasse', why: 'Ship the shorter headline?' })
-    expect(brain.posts).toHaveLength(0)
-    expect(ledger.get('w1')!.attention).toMatchObject({ kind: 'question' })
-    expect(waited).toEqual(['w1'])
-  })
-
   it('keeps only the question, and clears a wait when the user answers the session that set it', async () => {
     expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The flairmax task was')).toBe('Close the task despite the open mails?')
     const { ledger, brain, r } = setup({ id: 't20', status: 'active', properties: {} })

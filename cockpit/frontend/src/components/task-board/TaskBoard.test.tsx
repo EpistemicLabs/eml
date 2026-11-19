@@ -115,4 +115,19 @@ describe('the task board', () => {
     expect([until.getHours(), until.getMinutes()]).toEqual([9, 0]);
     expect(posts[0].body.key).toBe('task:asked@x');
   });
+
+  it('closes a task that is not needed from its project in Plan, with Undo', async () => {
+    try { localStorage.setItem('cockpit-task-board-view', 'plan'); } catch { /* jsdom */ }
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+    const closers = screen.getAllByTitle('Close: the task is not needed');
+    expect(closers).toHaveLength(3);
+    fireEvent.click(closers[0]);
+    await waitFor(() => expect(posts[0]?.url).toMatch(/^\/api\/v1\/tasks\/(asked|mine|running)\/close$/));
+    expect(posts[0].body).toMatchObject({ spaceId: 'main' });
+    const status = await screen.findByRole('status');
+    await waitFor(() => expect(status.textContent).toContain('Closed: not needed.'));
+    await act(async () => { fireEvent.click(within(status).getByRole('button', { name: 'Undo' })); });
+    await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
+  });
 });

@@ -7,7 +7,7 @@ import { createTaskCommands, TaskCommandStore, UNDO_WINDOW_MS, type TaskCommands
 const dir = mkdtempSync(join(tmpdir(), 'cockpit-task-commands-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-type Task = { id: string; status: string; scope?: string; title?: string; properties: Record<string, unknown> }
+type Task = { id: string; status: string; scope?: string; title?: string; properties: Record<string, unknown>; relations?: Array<{ source_id: string; target_id: string; relation: string }> }
 
 function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {}) {
   const byId = new Map(tasks.map((t) => [t.id, t]))
@@ -17,7 +17,7 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
       if (path === '/list') return { engrams: query?.task_id ? (opts.bound ?? []).map((id) => ({ id })) : [] }
       const t = byId.get(path.slice('/engram/'.length))
       if (!t) throw new Error('not found')
-      return { ...t, title: t.title ?? t.id, scope: t.scope ?? 'project.eml', relations: [] }
+      return { ...t, title: t.title ?? t.id, scope: t.scope ?? 'project.eml', relations: t.relations ?? [] }
     },
     async post(path: string, body: Record<string, unknown>) {
       posts.push({ path, body })
@@ -33,7 +33,6 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
   }
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const jobs: Array<{ taskId: string; spec: unknown; prompt: string }> = []
-  const triaged: string[] = []
   const changed: string[] = []
   const space = { id: 'main', name: 'Main', taskSystem: true, shared: false }
   const store = new TaskCommandStore(join(dir, `${Math.random()}.json`))
@@ -44,18 +43,13 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
     agentsOf: async () => ['atlas', 'motti'],
     runner: () => opts.runner ?? true,
     createJob: async (_space, task, spec, prompt) => { jobs.push({ taskId: task.id, spec, prompt }); return { jobId: `job-${jobs.length}` } },
-    triage: {
-      accept: async (id) => { triaged.push(`accept ${id}`); return { taskId: 'new-task' } as never },
-      merge: async (id, into) => { triaged.push(`merge ${id} ${into}`); return { taskId: into } as never },
-      close: (id) => { triaged.push(`close ${id}`); return {} as never },
-    },
     changed: (spaceId) => changed.push(spaceId),
     now: () => clock.now,
     log: () => {},
   }
   const commands = createTaskCommands(deps)
   const later = (ms: number) => { clock.now += ms }
-  return { commands, posts, byId, clock, later, jobs, triaged, changed, store, deps }
+  return { commands, posts, byId, clock, later, jobs, changed, store, deps }
 }
 
 const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
@@ -156,7 +150,7 @@ describe('hand over', () => {
   })
 })
 
-describe('looks good, snooze, triage', () => {
+describe('looks good, snooze, close', () => {
   it('looks good closes the task after the window; a task with bound decisions or notes is closed in chat', async () => {
     const w = world([owned('t1', { delegate: 'atlas', waiting_on: { who: 'lasse', kind: 'review' } }, 'active')])
     await w.commands.submit({ opId: 'op-ok', kind: 'review', spaceId: 'main', taskId: 't1' })
@@ -176,15 +170,27 @@ describe('looks good, snooze, triage', () => {
     expect(w.commands.snoozes()).toEqual([])
   })
 
-  it('triage accept, merge and close wait out the window too', async () => {
-    const w = world([owned('t1')])
-    await w.commands.submit({ opId: 'op-a', kind: 'triage', spaceId: 'main', pendingId: 'pending-1', triage: { action: 'accept' } })
-    await w.commands.submit({ opId: 'op-m', kind: 'triage', spaceId: 'main', pendingId: 'pending-2', triage: { action: 'merge', intoTaskId: 't1' } })
-    await w.commands.submit({ opId: 'op-c', kind: 'triage', spaceId: 'main', pendingId: 'pending-3', triage: { action: 'close' } })
-    expect(w.commands.triagePending('pending-1')).toBe(true)
-    await w.commands.undo('op-c')
+  it('close drops a task not needed after the window; undo inside it leaves the task as it was', async () => {
+    const w = world([owned('t1', { delegate: 'atlas' }, 'active'), owned('t2')])
+    await w.commands.submit({ opId: 'op-c1', kind: 'close', spaceId: 'main', taskId: 't1' })
+    await w.commands.submit({ opId: 'op-c2', kind: 'close', spaceId: 'main', taskId: 't2' })
+    expect(await w.commands.undo('op-c2')).toEqual({ ok: true })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.triaged).toEqual(['accept pending-1', 'merge pending-2 t1'])
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/t1/track'])
+    expect(w.posts[0].body).toEqual({ status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null, text: 'Closed on the task board by the owner: not needed.' })
+    expect(w.byId.get('t2')!.status).toBe('planned')
+  })
+
+  it('refuses to close a closed task, one with open steps, or one with bound decisions or notes', async () => {
+    const steps = { relations: [{ source_id: 's1', target_id: 'p1', relation: 'part_of' }, { source_id: 's2', target_id: 'p1', relation: 'part_of' }] }
+    const w = world([{ ...owned('p1', {}, 'active'), ...steps }, owned('s1', {}, 'resolved'), owned('s2'), owned('done', {}, 'resolved')])
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'done' })).toMatchObject({ ok: false, refusal: 'task_closed' })
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'p1' })).toMatchObject({ ok: false, refusal: 'open_steps' })
+    w.byId.get('s2')!.status = 'invalidated'
+    expect(await w.commands.submit({ opId: 'op-3', kind: 'close', spaceId: 'main', taskId: 'p1' })).toMatchObject({ ok: true })
+
+    const bound = world([owned('t3', {}, 'active')], { bound: ['n1'] })
+    expect(await bound.commands.submit({ opId: 'op-4', kind: 'close', spaceId: 'main', taskId: 't3' })).toMatchObject({ ok: false, refusal: 'bound_items' })
   })
 })
