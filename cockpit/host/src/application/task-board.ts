@@ -113,6 +113,7 @@ interface Row {
 export function createTaskBoard(deps: TaskBoardDeps) {
   let current: Board | null = null
   let refreshing: Promise<Board> | null = null
+  let askedAt = -Infinity
   const turns = new Map<string, Turn | null>()
   let events: BoardEvent[] = []
   const listeners = new Set<(events: BoardEvent[]) => void>()
@@ -249,6 +250,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
     /** The board, rebuilt when it is older than `maxAgeMs`. */
     async get(maxAgeMs: number): Promise<Board> {
+      askedAt = deps.now()
       if (current && deps.now() - Date.parse(current.at) <= maxAgeMs) return current
       return this.refresh()
     },
@@ -258,8 +260,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       return () => { listeners.delete(listener) }
     },
 
-    every(ms: number): () => void {
-      const timer = setInterval(() => { this.refresh().catch((err) => deps.log(`[board] refresh failed: ${(err as Error).message}`)) }, ms)
+    /** Refresh every `ms` while a page asked for the board within `viewedMs`. */
+    every(ms: number, viewedMs: number): () => void {
+      const timer = setInterval(() => {
+        if (deps.now() - askedAt > viewedMs) return
+        this.refresh().catch((err) => deps.log(`[board] refresh failed: ${(err as Error).message}`))
+      }, ms)
       timer.unref?.()
       return () => clearInterval(timer)
     },

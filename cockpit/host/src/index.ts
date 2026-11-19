@@ -76,6 +76,9 @@ import { PushStore } from './push-store.js'
 import { PushNotifier, notifySessions } from './application/push-notifier.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
+import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
+import { createTaskBoard } from './application/task-board.js'
+import { projectIdForBrain } from './project-registry.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -308,17 +311,26 @@ async function main() {
       ledger.archive(sessionId)
     },
   })
+  // The task board's commands (application/task-commands.ts), made below; the runner asks them first.
+  let taskCommands: TaskCommands | null = null
+  // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
+  const ensureTaskProject = (space: BrainSpace, projectId: string): string | null => {
+    const brainId = brainIdFromProjectId(projectId)
+    if (!space.registry.get(projectId) && brainId) space.registry.ensureBrain(brainId, brainId)
+    if (!space.registry.get(projectId)) return `project ${projectId} is not in space ${space.name}`
+    if (!space.registry.get(projectId)!.path) space.registry.ensureCockpitFolder(projectId)
+    return null
+  }
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, log,
     busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
+    held: (taskId) => taskCommands?.held(taskId) ?? false,
+    brief: (taskId) => taskCommands?.briefOf(taskId),
     start: (space, step) => {
-      // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
-      const brainId = brainIdFromProjectId(step.projectId)
-      if (!space.registry.get(step.projectId) && brainId) space.registry.ensureBrain(brainId, brainId)
-      if (!space.registry.get(step.projectId)) return `project ${step.projectId} is not in space ${space.name}`
-      if (!space.registry.get(step.projectId)!.path) space.registry.ensureCockpitFolder(step.projectId)
+      const problem = ensureTaskProject(space, step.projectId)
+      if (problem) return problem
       spawns.add({
         projectId: step.projectId, prompt: stepPrompt(step, step.checkpoint), title: step.title, fromSessionId: null,
         origin: 'runner', taskId: step.id, ...(space.main ? {} : { spaceId: space.id }),
@@ -357,6 +369,7 @@ async function main() {
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => {
     void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
+      .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
@@ -573,10 +586,60 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
+  // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
+  const taskBoard = createTaskBoard({
+    spaces: () => spaces.list(),
+    brain: taskBrain,
+    viewer: owner,
+    sessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
+      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
+    nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
+      .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    pendingTriage: (spaceId) => triageStore.pending(spaceId).map((item) => ({ id: item.id, title: item.title, createdAt: item.createdAt, ...(item.source.sessionId ? { sessionId: item.source.sessionId } : {}) })),
+    triagePending: (pendingId) => taskCommands?.triagePending(pendingId) ?? false,
+    snoozes: () => taskCommands?.snoozes() ?? [],
+    pendingCommands: () => taskCommands?.pending() ?? [],
+    now: () => Date.now(),
+    log,
+  })
+  taskCommands = createTaskCommands({
+    store: new TaskCommandStore(),
+    space: (spaceId) => spaces.get(spaceId),
+    brain: taskBrain,
+    agentsOf: async (space) => {
+      const found = await taskBrain(space)?.get('/object/agent').catch(() => null) as { objects?: Array<{ id: string }> } | null
+      return (found?.objects ?? []).map((a) => a.id)
+    },
+    runner: (space) => taskSystemOn(space),
+    createJob: async (space, task, spec, prompt) => {
+      const brainProject = task.scope.startsWith('project.') ? task.scope.slice('project.'.length) : null
+      if (!brainProject) return { error: `the task has no project to run in (scope ${task.scope})` }
+      const projectId = projectIdForBrain(brainProject)
+      const problem = ensureTaskProject(space, projectId)
+      if (problem) return { error: problem }
+      const answer = await jobs.handle(
+        { sessionId: null, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
+        { action: 'create', name: task.title ?? task.id, prompt, ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, task_id: task.id },
+      )
+      return answer.job ? { jobId: answer.job.id } : { error: answer.text }
+    },
+    triage: {
+      accept: (id, scope) => triage.accept(id, scope),
+      merge: (id, taskId) => triage.merge(id, taskId),
+      close: (id) => triage.close(id),
+    },
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
+  taskCommands.every(TASK_COMMAND_TICK_MS)
+  taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
+
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version, triage: { triage, store: triageStore } })
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), triage, triageStore, cycles,
+      tasks: { board: taskBoard, commands: taskCommands },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
@@ -660,6 +723,11 @@ async function main() {
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
+/** Pending task board commands are applied once their undo window is over. */
+const TASK_COMMAND_TICK_MS = 1000
+/** The task board refreshes this often while a page looks at it, and not at all while none does. */
+const TASK_BOARD_REFRESH_MS = 20_000
+const TASK_BOARD_VIEWED_MS = 120_000
 const RECOVERY_GAP_MS = 10_000
 // Waiting longer than this for room, the worker goes anyway: a full machine must not hold it forever.
 const RECOVERY_WAIT_MS = 10 * 60_000

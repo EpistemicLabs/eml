@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
+import { handleTasksApi, type TasksApiDeps } from './tasks-api.js'
 import { handlePushApi, type PushApiDeps } from './push-api.js'
 import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
@@ -145,6 +146,8 @@ export interface HostDeps {
   answered?: (sessionId: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
+  /** The task board and its commands (tasks-api.ts); absent: no task system. */
+  tasks?: TasksApiDeps
   /** Web push devices, the test and what the user is looking at (push-api.ts). */
   push?: PushApiDeps
   /** The channel bridge's /v1 routes (job-contract-api.ts). */
@@ -622,6 +625,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
+  if (deps.tasks && await handleTasksApi(req, res, deps.tasks, url.pathname, method, json, readJson)) return true
   if (deps.push && await handlePushApi(req, res, deps.push, url, method, json, readJson)) return true
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
@@ -1161,6 +1165,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
       for (const s of deps.spaces.list()) followNotes(s)
       detachNotes.push(deps.spaces.onAdd(followNotes))
+      // The task board moved: which tasks changed whose turn (application/task-board.ts).
+      if (deps.tasks) detachNotes.push(deps.tasks.board.onChange((changes) => send('tasks', { changes })))
       const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 25_000)
       req.on('close', () => {
         clearInterval(keepAlive)

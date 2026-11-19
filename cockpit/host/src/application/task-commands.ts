@@ -15,9 +15,10 @@ import { stepPrompt } from './task-runner.js'
  * Each action is a command with the page's operation id, so a retry does the work once. A command
  * waits out its undo window (UNDO_WINDOW_MS) before it touches the brain, a job or the triage; Undo
  * inside the window drops it, and the board shows its effect meanwhile. Two exceptions act at once:
- * Snooze (local, undone by removing it) and Work on it now (the owner is there): its Undo puts the
- * task back and closes the session while nobody has written in it. Pending commands are kept in a
- * file, so a restart applies them instead of losing them.
+ * Snooze (local, undone by removing it) and Work on it now (the owner is there): the page opens the
+ * session in its desk with the brief this answers with, and Undo puts the task back (the page closes
+ * the pane it opened). Pending commands are kept in a file, so a restart applies them instead of
+ * losing them.
  */
 
 export const UNDO_WINDOW_MS = 8000
@@ -45,7 +46,7 @@ export interface TaskCommand extends CommandInput {
   before?: HandOverTask
   carriedQuestion?: string
   brief?: string
-  effects?: { sessionId?: string; jobId?: string }
+  effects?: { jobId?: string }
   error?: string
 }
 
@@ -58,7 +59,6 @@ export type CommandRefusal =
   | 'bound_items'
   | 'unknown_command'
   | 'undo_expired'
-  | 'session_in_use'
 
 export type Submitted = { ok: true; command: TaskCommand } | { ok: false; refusal: CommandRefusal; message?: string }
 
@@ -125,10 +125,6 @@ export interface TaskCommandsDeps {
   /** The task system is on in the space. */
   runner(space: BrainSpace): boolean
   createJob(space: BrainSpace, task: BrainTask, spec: ScheduleSpec, prompt: string): Promise<{ jobId: string } | { error: string }>
-  startTogether(space: BrainSpace, task: BrainTask, desk: string, brief: string | undefined): { sessionId: string } | { error: string }
-  /** The user wrote in the session. */
-  sessionTouched(sessionId: string): boolean
-  archiveSession(sessionId: string): void
   triage: {
     accept(id: string, scope?: string): Promise<unknown>
     merge(id: string, taskId: string): Promise<unknown>
@@ -188,12 +184,10 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (!planned.ok) return planned
       const command: TaskCommand = { ...base, before: asHandOverTask(planned.task), ...(planned.plan.carriedQuestion ? { carriedQuestion: planned.plan.carriedQuestion, brief: planned.plan.brief } : {}) }
       if (input.handOver.mode !== 'together') return { ok: true, command: save(command) }
-      // Work on it now: the owner is there, so the session starts at once.
-      const started = deps.startTogether(space, planned.task, input.handOver.desk!, planned.plan.brief)
-      if ('error' in started) return { ok: false, refusal: 'invalid', message: started.error }
+      // Work on it now: the owner is there, so it happens at once; the page opens the session.
       await track(brain, planned.task.id, { ...planned.plan.patch }, planned.plan.journal)
       deps.log(`[commands] ${input.opId.slice(0, 8)} together: task ${planned.task.id.slice(0, 8)} in desk ${input.handOver.desk}`)
-      return { ok: true, command: save({ ...command, state: 'applied', effects: { sessionId: started.sessionId } }) }
+      return { ok: true, command: save({ ...command, state: 'applied', ...(planned.plan.brief ? { brief: planned.plan.brief } : {}) }) }
     }
 
     if (input.kind === 'review') {
@@ -271,12 +265,9 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (command.kind === 'snooze') {
         deps.store.setSnoozes(deps.store.snoozes(now).filter((s) => s.key !== command.snooze!.key))
       } else if (command.kind === 'hand_over' && command.state === 'applied') {
-        const sessionId = command.effects?.sessionId
-        if (sessionId && deps.sessionTouched(sessionId)) return { ok: false, refusal: 'session_in_use' }
         const space = deps.space(command.spaceId)
         const brain = space ? deps.brain(space) : null
         if (!brain || !command.before) return { ok: false, refusal: 'no_brain' }
-        if (sessionId) deps.archiveSession(sessionId)
         const undo = planUndo(command.before)
         await track(brain, command.taskId!, { ...undo.patch }, undo.journal)
       }

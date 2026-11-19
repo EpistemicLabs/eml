@@ -33,9 +33,6 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
   }
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const jobs: Array<{ taskId: string; spec: unknown; prompt: string }> = []
-  const sessions: Array<{ taskId: string; desk: string; brief?: string; sessionId: string }> = []
-  const archived: string[] = []
-  const touched = new Set<string>()
   const triaged: string[] = []
   const changed: string[] = []
   const space = { id: 'main', name: 'Main', taskSystem: true, shared: false }
@@ -47,9 +44,6 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
     agentsOf: async () => ['atlas', 'motti'],
     runner: () => opts.runner ?? true,
     createJob: async (_space, task, spec, prompt) => { jobs.push({ taskId: task.id, spec, prompt }); return { jobId: `job-${jobs.length}` } },
-    startTogether: (_space, task, desk, brief) => { const sessionId = `s-${sessions.length + 1}`; sessions.push({ taskId: task.id, desk, brief, sessionId }); return { sessionId } },
-    sessionTouched: (id) => touched.has(id),
-    archiveSession: (id) => archived.push(id),
     triage: {
       accept: async (id) => { triaged.push(`accept ${id}`); return { taskId: 'new-task' } as never },
       merge: async (id, into) => { triaged.push(`merge ${id} ${into}`); return { taskId: into } as never },
@@ -61,7 +55,7 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
   }
   const commands = createTaskCommands(deps)
   const later = (ms: number) => { clock.now += ms }
-  return { commands, posts, byId, clock, later, jobs, sessions, archived, touched, triaged, changed, store, deps }
+  return { commands, posts, byId, clock, later, jobs, triaged, changed, store, deps }
 }
 
 const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
@@ -130,19 +124,14 @@ describe('hand over', () => {
     expect(w.posts[0].body.text).toMatch(/^Scheduled atlas for 2026-11-20T09:00/)
   })
 
-  it('work on it now starts the session at once; undo closes it only while nobody wrote in it', async () => {
-    const w = world([owned('t1'), owned('t2')])
+  it('work on it now happens at once, with the brief for the session the page opens; undo puts the task back', async () => {
+    const w = world([owned('t1', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } })])
     const r = await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' } })
-    expect(r).toMatchObject({ ok: true, command: { state: 'applied', effects: { sessionId: 's-1' } } })
-    expect(w.sessions).toEqual([{ taskId: 't1', desk: 'Customers', brief: undefined, sessionId: 's-1' }])
-    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', text: 'Working on it with atlas in desk Customers; the owner stays.' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', brief: expect.stringContaining('Which list?') } })
+    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', waiting_on: null })
+    expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
-    expect(w.archived).toEqual(['s-1'])
-    expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waiting_on: null, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
-
-    await w.commands.submit({ opId: 'op-t2', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Main' } })
-    w.touched.add('s-2')
-    expect(await w.commands.undo('op-t2')).toEqual({ ok: false, refusal: 'session_in_use' })
+    expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
   })
 
   it('refuses what cannot be handed over, with a reason', async () => {
