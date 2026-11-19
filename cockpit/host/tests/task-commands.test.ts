@@ -116,11 +116,11 @@ describe('hand over', () => {
 
   it('schedule makes a job on the task when the window is over', async () => {
     const w = world([owned('t1')])
-    await w.commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' } } })
+    await w.commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } } })
     expect(w.jobs).toEqual([])
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.jobs).toEqual([{ taskId: 't1', spec: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' }, prompt: expect.stringContaining('Checkpoint after') }])
+    expect(w.jobs).toEqual([{ taskId: 't1', spec: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' }, prompt: expect.stringContaining('Checkpoint after') }])
     expect(w.posts[0].body.text).toMatch(/^Scheduled atlas for 2026-11-20T09:00/)
   })
 

@@ -3,13 +3,13 @@ import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-boa
 
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; updated_at?: string; properties?: Record<string, unknown> }
 
-function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'verapur', name: 'Verapur', goal: 'keep the customer' }]) {
+function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }]) {
   return {
     rows,
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/object/agent') return { objects: agents.map((id) => ({ id, name: id })) }
       if (path === '/object/project') return { objects: projects }
-      if (path === '/list') return { engrams: rows.filter((r) => r.status === query?.status).map((r) => ({ title: r.id, scope: 'project.verapur', parent_id: null, updated_at: '2026-11-19T09:00:00Z', properties: {}, ...r })) }
+      if (path === '/list') return { engrams: rows.filter((r) => r.status === query?.status).map((r) => ({ title: r.id, scope: 'project.acme', parent_id: null, updated_at: '2026-11-19T09:00:00Z', properties: {}, ...r })) }
       throw new Error(`unexpected ${path}`)
     },
   }
@@ -56,7 +56,7 @@ describe('the task board', () => {
     })
     const model = await board.refresh()
     const turn = (id: string) => model.tasks.find((t) => t.id === id)
-    expect(turn('asked')).toMatchObject({ turn: 'needs_you', group: 'asked', onBoard: true, spaceName: 'Main', project: 'verapur' })
+    expect(turn('asked')).toMatchObject({ turn: 'needs_you', group: 'asked', onBoard: true, spaceName: 'Main', project: 'acme' })
     expect(turn('review')?.turn).toBe('review')
     expect(turn('working')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
     expect(turn('at-nine')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-20T01:00:00Z' })
@@ -65,7 +65,7 @@ describe('the task board', () => {
     expect(model.counts).toEqual({ needsYou: 2, inbox: 2 })
     expect(model.inbox.map((i) => [i.kind, i.taskId])).toEqual([['question', 'asked'], ['review', 'review']])
     expect(model.spaces).toEqual([{ id: 'main', name: 'Main', taskSystem: true, agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', taskSystem: false, agents: [] }])
-    expect(model.projects).toContainEqual({ spaceId: 'main', id: 'verapur', name: 'Verapur', goal: 'keep the customer' })
+    expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
   })
 
   it('shows other spaces in Plan only: not on the board, not in the counts', async () => {

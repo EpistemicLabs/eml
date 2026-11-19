@@ -14,19 +14,19 @@ import { TaskBoard } from './TaskBoard';
 const NOW = new Date();
 const iso = (minutesAgo: number) => new Date(NOW.getTime() - minutesAgo * 60_000).toISOString();
 const task = (patch: Partial<BoardTask>): BoardTask => ({
-  id: 't', spaceId: 'main', spaceName: 'Main', project: 'verapur', title: 'task', status: 'active', parentId: null, updatedAt: iso(30),
+  id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: iso(30),
   turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
 });
 const board = (): Board => ({
   at: NOW.toISOString(), viewer: 'lasse',
   spaces: [{ id: 'main', name: 'Main', taskSystem: true, agents: ['atlas'] }],
-  projects: [{ spaceId: 'main', id: 'verapur', name: 'Verapur', goal: null }],
+  projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
   tasks: [
-    task({ id: 'asked', title: 'verapur-cancellation-rescue', group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),
-    task({ id: 'mine', title: 'brax-meeting-prep' }),
+    task({ id: 'asked', title: 'acme-cancellation-rescue', group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),
+    task({ id: 'mine', title: 'demo-meeting-prep' }),
     task({ id: 'running', title: 'kit-v4-rollout', turn: 'agent_working', group: undefined, delegate: 'atlas', working: true }),
   ],
-  inbox: [{ key: 'task:asked@x', kind: 'question', space: 'main', title: 'verapur-cancellation-rescue', text: 'One last check on Thursday?', since: iso(5), taskId: 'asked' }],
+  inbox: [{ key: 'task:asked@x', kind: 'question', space: 'main', title: 'acme-cancellation-rescue', text: 'One last check on Thursday?', since: iso(5), taskId: 'asked' }],
   snoozed: [], events: [], counts: { needsYou: 2, inbox: 1 },
 });
 
@@ -54,7 +54,7 @@ describe('the task board', () => {
     const headline = await screen.findByRole('button', { name: /Needs you 2/ });
     expect(headline).toBeTruthy();
     const needsYou = screen.getByRole('region', { name: 'Needs you' });
-    expect(within(needsYou).getByText('Verapur cancellation rescue')).toBeTruthy();
+    expect(within(needsYou).getByText('Acme cancellation rescue')).toBeTruthy();
     expect(within(needsYou).getByText('Asked you · 1')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Agent working' })).getByText('Kit v4 rollout')).toBeTruthy();
   });
@@ -71,7 +71,7 @@ describe('the task board', () => {
 
   it('opens a card as a slide-over with focus on its title, answering first; Escape closes it', async () => {
     mount();
-    fireEvent.click(await screen.findByText('Verapur cancellation rescue'));
+    fireEvent.click(await screen.findByText('Acme cancellation rescue'));
     const sheet = await screen.findByRole('dialog');
     await waitFor(() => expect(document.activeElement?.id).toBe('task-board-title'));
     expect(within(sheet).getByText('Needs you · Atlas asks')).toBeTruthy();
@@ -83,7 +83,7 @@ describe('the task board', () => {
 
   it('hands over with the open question carried, and offers Undo', async () => {
     mount();
-    fireEvent.click(await screen.findByText('Verapur cancellation rescue'));
+    fireEvent.click(await screen.findByText('Acme cancellation rescue'));
     const sheet = await screen.findByRole('dialog');
     fireEvent.click(within(sheet).getAllByRole('button', { name: 'Run Atlas now' })[0]);
     const dialog = await screen.findByText(/asked you something that is still open/);

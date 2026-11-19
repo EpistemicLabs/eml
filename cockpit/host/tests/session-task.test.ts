@@ -168,13 +168,13 @@ describe('session task', () => {
 
   it('shows the task\'s goal, asks for one when it is missing, and gives only workers the follow-up rules', async () => {
     const brain = fakeBrain()
-    brain.tasks.set('t-dw', { id: 't-dw', title: 'verapur-rescue', content: 'Win Verapur back.', status: 'active', properties: { goal: 'Max confirmed the cancellation is withdrawn' } })
+    brain.tasks.set('t-dw', { id: 't-dw', title: 'acme-rescue', content: 'Win Acme back.', status: 'active', properties: { goal: 'Kim confirmed the cancellation is withdrawn' } })
     brain.tasks.set('t-none', { id: 't-none', title: 'other', content: 'Other work.', status: 'active', properties: {} })
     const { ledger, tasks } = setup({ taskSystem: true, shared: false }, brain)
     ledger.recordSpawn('worker-dw', null, 'bp-eml', 'claude', true, 't-dw')
     ledger.recordSpawn(id(8), null, 'bp-eml', 'claude', false, 't-none')
     const worker = await tasks.context('worker-dw')
-    expect(worker).toContain('Goal: Max confirmed the cancellation is withdrawn')
+    expect(worker).toContain('Goal: Kim confirmed the cancellation is withdrawn')
     expect(worker).toContain('## Until it is done')
     expect(worker).toContain('schedule your next check yourself')
     const own = await tasks.context(id(8))

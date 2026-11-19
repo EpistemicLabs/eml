@@ -39,7 +39,7 @@ describe('planning a hand-over', () => {
     const asked = task({ waitingOn: { who: 'lasse', kind: 'question', why: 'Which list?' } })
     const requests = [
       { mode: 'now', delegate: 'atlas', checkpoint: 'before' },
-      { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' } },
+      { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } },
       { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Main' },
     ] as const
     for (const req of requests) {
@@ -52,7 +52,7 @@ describe('planning a hand-over', () => {
   })
 
   it('a review or an outside wait is not a question: it stays', () => {
-    const outside = task({ waitingOn: { who: 'max', kind: 'outside', why: 'reply to the offer' } })
+    const outside = task({ waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' } })
     const r = planHandOver(outside, { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
     expect(r.plan.patch).not.toHaveProperty('waiting_on')
@@ -60,13 +60,13 @@ describe('planning a hand-over', () => {
   })
 
   it('schedule: a job on the task at that time, once or repeating', () => {
-    const once = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' } }, ctx)
+    const once = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx)
     if (!once.ok) throw new Error(once.refusal)
-    expect(once.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' })
-    expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-20T09:00 (Asia/Makassar) with checkpoint after; the owner stays.')
-    const weekly = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Makassar' } }, ctx)
+    expect(once.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' })
+    expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-20T09:00 (Asia/Singapore) with checkpoint after; the owner stays.')
+    const weekly = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Singapore' } }, ctx)
     if (!weekly.ok) throw new Error(weekly.refusal)
-    expect(weekly.plan.job).toEqual({ cron: '0 9 * * 1', timeZone: 'Asia/Makassar' })
+    expect(weekly.plan.job).toEqual({ cron: '0 9 * * 1', timeZone: 'Asia/Singapore' })
   })
 
   it('work on it now: a session in the chosen desk', () => {

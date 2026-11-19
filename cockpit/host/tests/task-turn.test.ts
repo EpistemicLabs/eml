@@ -15,7 +15,7 @@ describe('whose turn a task is', () => {
     ['a session works on it', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress with its session open between turns', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
-    ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'max@verapur', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
+    ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'kim@acme', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
     ['a job starts the delegate at a time', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z' }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['it waits for the task it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', depsResolved: false }, {}, { turn: 'agent_scheduled', group: 'runner' }],
@@ -56,7 +56,7 @@ describe('coverage: does anything move an important task without the owner', () 
   it('is covered by a working session, a job\'s next run or the runner', () => {
     expect(cover({ delegate: 'atlas' }, { working: true })).toEqual({ ok: true, how: 'working' })
     expect(cover({ delegate: 'atlas' }, { nextRunAt: '2026-11-20T09:00:00Z' })).toEqual({ ok: true, how: 'at_time', at: '2026-11-20T09:00:00Z' })
-    expect(cover({ delegate: 'atlas', waitingOn: { who: 'max', kind: 'outside' } }, { nextRunAt: '2026-11-26T10:00:00Z' }))
+    expect(cover({ delegate: 'atlas', waitingOn: { who: 'kim', kind: 'outside' } }, { nextRunAt: '2026-11-26T10:00:00Z' }))
       .toEqual({ ok: true, how: 'checks_back', at: '2026-11-26T10:00:00Z' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned' })).toEqual({ ok: true, how: 'runner' })
   })
@@ -67,7 +67,7 @@ describe('coverage: does anything move an important task without the owner', () 
     expect(cover({ waitingOn: { who: 'lasse', kind: 'stopped' } })).toEqual({ ok: false, group: 'stopped', reason: 'stopped' })
     expect(cover({ parentActive: false })).toEqual({ ok: false, group: 'blocked', reason: 'parent' })
     expect(cover({ status: 'planned' }, {}, 3)).toEqual({ ok: false, group: 'blocked', reason: 'steps_wait', steps: 3 })
-    expect(cover({ waitingOn: { who: 'max', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
+    expect(cover({ waitingOn: { who: 'kim', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
     expect(cover({ delegate: 'atlas', status: 'planned' })).toEqual({ ok: false, group: 'idle', reason: 'no_checkpoint' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned' }, { runner: false })).toEqual({ ok: false, group: 'idle', reason: 'no_runner' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after' })).toEqual({ ok: false, group: 'stopped', reason: 'stopped' })

@@ -22,7 +22,7 @@ describe('project lead', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   it('takes the day in the user\'s time zone', () => {
-    expect(lead.leadDay(new Date('2026-11-17T20:00:00Z'), 'Asia/Makassar')).toBe('2026-11-18')
+    expect(lead.leadDay(new Date('2026-11-17T20:00:00Z'), 'Asia/Singapore')).toBe('2026-11-18')
     expect(lead.leadDay(new Date('2026-11-17T20:00:00Z'), 'UTC')).toBe('2026-11-17')
   })
 

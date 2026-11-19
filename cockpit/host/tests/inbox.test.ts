@@ -9,7 +9,7 @@ describe('the Inbox', () => {
     t('asked', { who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T09:00:00Z', session_id: 's1' }),
     t('finished', { who: 'lasse', kind: 'review', why: 'result ready', since: '2026-11-19T08:00:00Z' }),
     t('go', { who: 'lasse', kind: 'go', why: 'ready to send', since: '2026-11-19T07:00:00Z' }),
-    t('customer', { who: 'max', kind: 'outside', since: '2026-11-18T07:00:00Z' }),
+    t('customer', { who: 'kim', kind: 'outside', since: '2026-11-18T07:00:00Z' }),
     t('stopped', { who: 'lasse', kind: 'stopped', since: '2026-11-18T06:00:00Z' }),
     t('quiet'),
   ]

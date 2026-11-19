@@ -47,9 +47,9 @@ describe('task board routes', () => {
   })
 
   it('hands a task over and answers with the undo deadline and a carried question', async () => {
-    const r = await post('/api/v1/tasks/asked/hand-over', { opId: 'op-1', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' } })
+    const r = await post('/api/v1/tasks/asked/hand-over', { opId: 'op-1', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } })
     expect(r).toEqual({ status: 202, body: { opId: 'op-1', state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', carriedQuestion: 'Which list?' } })
-    expect(submitted.at(-1)).toEqual({ opId: 'op-1', spaceId: 'main', kind: 'hand_over', taskId: 'asked', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Makassar' }, desk: undefined } })
+    expect(submitted.at(-1)).toEqual({ opId: 'op-1', spaceId: 'main', kind: 'hand_over', taskId: 'asked', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' }, desk: undefined } })
     expect(refreshed).toBeGreaterThan(0)
   })
 

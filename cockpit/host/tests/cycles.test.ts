@@ -17,8 +17,8 @@ describe('cycles', () => {
 
   it('names the ISO week in the user\'s zone, across a year end', () => {
     expect(mod.cycleOf(new Date('2026-11-18T10:00:00Z'), 'UTC')).toEqual({ id: 'cycle-2026-w47', week: 47, from: '2026-11-16', to: '2026-11-22' })
-    // Sunday 23:30 UTC is already Monday in Bali.
-    expect(mod.cycleOf(new Date('2026-11-22T23:30:00Z'), 'Asia/Makassar').id).toBe('cycle-2026-w48')
+    // Sunday 23:30 UTC is already Monday in Singapore.
+    expect(mod.cycleOf(new Date('2026-11-22T23:30:00Z'), 'Asia/Singapore').id).toBe('cycle-2026-w48')
     expect(mod.cycleOf(new Date('2027-01-01T12:00:00Z'), 'UTC').id).toBe('cycle-2026-w53')
     expect(mod.cycleOf(new Date('2026-11-18T10:00:00Z'), 'UTC', -1).id).toBe('cycle-2026-w46')
     expect(mod.rollovers(['cycle-2026-w46', 'cycle-2026-w47', 'homepage'])).toBe(1)

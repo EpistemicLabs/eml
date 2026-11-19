@@ -5,7 +5,7 @@ import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, proj
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
-  id: 't', spaceId: 'main', spaceName: 'Main', project: 'verapur', title: 'verapur-cancellation-rescue', status: 'active', parentId: null, updatedAt: local(19, 9),
+  id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'acme-cancellation-rescue', status: 'active', parentId: null, updatedAt: local(19, 9),
   turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
 });
 
@@ -52,7 +52,7 @@ describe('what a card says', () => {
   });
 
   it('reads anchors as titles', () => {
-    expect(readable('verapur-cancellation-rescue')).toBe('Verapur cancellation rescue');
+    expect(readable('acme-cancellation-rescue')).toBe('Acme cancellation rescue');
     expect(readable('Already a title')).toBe('Already a title');
     expect(readable('session-2026-11-18-fa1d29c3')).toBe('Session 18 Nov · fa1d29c3');
     expect(readable('single')).toBe('single');
@@ -90,8 +90,8 @@ describe('Plan', () => {
   it('shows the viewer\'s and unowned tasks unless Everyone, and groups by project with steps under their parent', () => {
     const tasks = [task({ id: 'p', urgency: 10 }), task({ id: 's', parentId: 'p', urgency: 99 }), task({ id: 'x', owner: 'dominik', project: 'eml-code' })];
     expect(tasks.filter((t) => visibleInPlan(t, 'lasse', { everyone: false, spaceId: null })).map((t) => t.id)).toEqual(['p', 's']);
-    const rows = projectRows(tasks, [{ spaceId: 'main', id: 'verapur', name: 'Verapur', goal: null }]);
-    expect(rows[0]).toMatchObject({ name: 'Verapur', open: 2 });
+    const rows = projectRows(tasks, [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }]);
+    expect(rows[0]).toMatchObject({ name: 'Acme', open: 2 });
     expect(rows[0].tasks.map((r) => [r.task.id, r.step])).toEqual([['p', false], ['s', true]]);
     expect(rows[1].name).toBe('Eml code');
   });
@@ -99,7 +99,7 @@ describe('Plan', () => {
   it('lists the projects the table leaves out, by name, in the chosen space', () => {
     const rows = projectRows([task({ id: 'p' })], []);
     const projects = [
-      { spaceId: 'main', id: 'verapur', name: 'Verapur', goal: null },
+      { spaceId: 'main', id: 'acme', name: 'Acme', goal: null },
       { spaceId: 'main', id: 'flairmax', name: 'flairmax', goal: null },
       { spaceId: 'main', id: 'aktivdog', name: 'AktivDog', goal: 'dogs' },
       { spaceId: 'main', id: 'global', name: 'Global', goal: null },
