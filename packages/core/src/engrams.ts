@@ -211,11 +211,13 @@ export interface TrackTaskInput {
   waiting_on?: Record<string, string> | null
   /** v0.22 task system: what has to be true for the task to be done; null clears. */
   goal?: string | null
+  /** v0.22 task system: the one agent that works on the task (the owner stays in assignee_ids); null clears. */
+  delegate?: string | null
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
   'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
-  'depends_on', 'checkpoint', 'waiting_on', 'goal',
+  'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
@@ -515,6 +517,10 @@ export class EngramStore {
     if (q.waiting_on) {
       conditions.push("json_extract(c.properties, '$.waiting_on.who') = ?")
       params.push(q.waiting_on)
+    }
+    if (q.delegate) {
+      conditions.push("json_extract(c.properties, '$.delegate') = ?")
+      params.push(q.delegate)
     }
     if (q.change_type) {
       conditions.push("json_extract(c.properties, '$.change_type') = ?")

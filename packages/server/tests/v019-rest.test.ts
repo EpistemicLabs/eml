@@ -136,6 +136,19 @@ describe('v0.19 REST', () => {
       expect(reopened.body.properties.outcome).toBeUndefined()
       expect(reopened.body.reopen_candidates.map((k: { id: string }) => k.id)).toEqual([n.body.id])
     })
+
+    it('task system: delegate names an agent of the brain; anyone else is refused with the known agents', async () => {
+      const task = await create(validTask({ title: 'rest-delegate' }))
+      const ok = await post(`/task/${task.body.id}/track`, { delegate: 'default', checkpoint: 'after', text: 'handed to the agent' })
+      expect(ok.status).toBe(200)
+      expect(ok.body.properties.delegate).toBe('default')
+      const typo = await post(`/task/${task.body.id}/track`, { delegate: 'atlass', text: 'typo' })
+      expect(typo.status).toBe(400)
+      expect(typo.body.error).toBe('Invalid engram: delegate names "atlass", who is not an agent of this brain. Agents: default (eml_read_object object=agent).')
+      const created = await create(validTask({ title: 'rest-delegate-create', properties: { delegate: 'atlass' } }))
+      expect(created.status).toBe(400)
+      expect((await get('/list?type=task&delegate=default')).body.engrams.map((e: { id: string }) => e.id)).toEqual([task.body.id])
+    })
   })
 
   describe('POST /learning', () => {

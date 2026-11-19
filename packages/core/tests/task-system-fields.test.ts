@@ -63,6 +63,30 @@ describe('task system fields', () => {
     expect(changes(t.id).at(-1)).toBe('goal cleared')
   })
 
+  it('delegate names the one agent that works on the task, journalled, and the owner stays', () => {
+    const t = writes(eml).store(validTask({ scope: 'project.eml', properties: { assignee_ids: ['lasse'] } }))
+    writes(eml).trackTask(t.id, { delegate: 'atlas', checkpoint: 'after' })
+    expect(props(t.id).delegate).toBe('atlas')
+    expect(props(t.id).assignee_ids).toEqual(['lasse'])
+    expect(changes(t.id)).toContain('delegate none → atlas')
+    writes(eml).trackTask(t.id, { delegate: 'motti' })
+    expect(changes(t.id).at(-1)).toBe('delegate atlas → motti')
+    writes(eml).trackTask(t.id, { delegate: null })
+    expect(props(t.id).delegate).toBeUndefined()
+    expect(changes(t.id).at(-1)).toBe('delegate motti → none')
+  })
+
+  it('delegate is one handle, not a list', () => {
+    expect(() => writes(eml).store(validTask({ scope: 'project.eml', properties: { delegate: ['atlas', 'motti'] } })))
+      .toThrow(/delegate/)
+  })
+
+  it('lists the tasks delegated to one agent', () => {
+    const mine = writes(eml).store(validTask({ scope: 'project.eml', title: 'atlas does it', properties: { delegate: 'atlas' } }))
+    writes(eml).store(validTask({ scope: 'project.eml', title: 'nobody does it' }))
+    expect(eml.engrams.query({ type: 'task', delegate: 'atlas' }).map(e => e.id)).toEqual([mine.id])
+  })
+
   it('lists the tasks whose turn it is for one handle', () => {
     const waiting = writes(eml).store(validTask({ scope: 'project.eml', title: 'waits' }))
     writes(eml).store(validTask({ scope: 'project.eml', title: 'runs' }))

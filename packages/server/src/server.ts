@@ -368,6 +368,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'binding', 'task_id', 'origin', 'session_id', // v0.19
   'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
   'waiting_on', // v0.22: tasks whose turn it is for this handle (task system)
+  'delegate', // v0.22: tasks an agent works on (task system)
   'with_parent', // v0.22: each task with its parent's id (part_of), for the cockpit's Tasks view
 ])
 
@@ -852,6 +853,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         session_id: q.session_id,
         learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
         waiting_on: q.waiting_on,
+        delegate: q.delegate,
       })
       // with_parent=true: a task names its parent task (parent_id), so a list shows plans without a call per task.
       if (q.with_parent === 'true') {

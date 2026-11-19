@@ -590,6 +590,7 @@ export interface EngramQuery {
   change_type?: string
   stage?: string                  // v0.15: $.stage (=)
   waiting_on?: string             // v0.22: $.waiting_on.who (=) — whose turn it is
+  delegate?: string               // v0.22: $.delegate (=) — the agent working on the task
   binding?: 'task' | 'standing'   // v0.19: decisions / notes (missing = standing)
   task_id?: string                // v0.19: engrams a task_id write tied to this task
   origin?: string                 // v0.19: the software that wrote it

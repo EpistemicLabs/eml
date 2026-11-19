@@ -93,10 +93,15 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     // has to act next ({ who, why, since, session_id }, written by the cockpit's router).
     depends_on: list(),
     checkpoint: oneOf(CHECKPOINTS),
+    // Who acts next, written by the cockpit: who, kind (question · go · review · stopped ·
+    // outside), why, since, session_id.
     waiting_on: { kind: 'map' },
     // What has to be true for the task to be done; the agent proposes it and
     // checks it at every wake-up (decision agent-schedules-own-follow-ups).
     goal: text(),
+    // The one agent that works on the task; the owner stays in assignee_ids
+    // (decision task-delegate-one-agent).
+    delegate: text(),
   },
   event: {
     occurred_at: date({ required: true }),

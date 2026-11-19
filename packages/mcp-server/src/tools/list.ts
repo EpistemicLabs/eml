@@ -42,6 +42,9 @@ export function registerListTool(server: McpServer, http: EmlApi): void {
         waiting_on: z.string().optional().describe(
           'Tasks whose turn it is for this handle (task system): waiting_on=lasse lists what waits for Lasse.',
         ),
+        delegate: z.string().optional().describe(
+          'Tasks an agent works on (task system): delegate=atlas lists what Atlas was handed.',
+        ),
         review_due: z.boolean().optional().describe(
           'true = due for a review: a standing decision, rule or profile past its review_due_at, or an active task ' +
           'without movement for 30 days. Every engram carries review_due.',
