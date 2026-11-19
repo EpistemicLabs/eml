@@ -13,7 +13,7 @@ import {
   type Board, type BoardTask, type HandOverMode,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import type { SpaceInfo } from '@/stores/useSpaceStore';
+import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 
 import { AgentBadge, BUTTON, Chip, Dot, FOCUS, LABEL, MINI, PRIMARY } from './parts';
 
@@ -42,6 +42,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
   onReview: (task: BoardTask) => void;
 }) {
   const { hrefFor } = useEngramPanel();
+  const spaceKey = (id: string) => { const space = spaces.find((s) => s.id === id); return space ? paneSpaceKey(space) : null; };
   const engram = useEngram(task.id);
   const own = sessions.filter((s) => task.sessionIds.includes(s.id))
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
@@ -149,7 +150,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, top, 
             </div>
           )}
           {current ? (
-            <SessionChat key={current.id} session={current} space={spaces.find((s) => s.id === current.spaceId)} paneId={TASK_BOARD_PANE_ID} />
+            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{}} />
           ) : (
             <div className="m-auto flex max-w-dialog flex-col items-center gap-3 px-5 py-10 text-center text-body text-muted-foreground">
               <b className="text-foreground">No session on this task yet.</b>

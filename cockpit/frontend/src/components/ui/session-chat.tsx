@@ -1,32 +1,91 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { ChatPane } from '@/components/chat/ChatPane';
-import type { AllSession } from '@/components/sidebar/allSessions';
-import { sessionDisplayName } from '@/components/sidebar/utils';
+import { useSwitchBlocked } from '@/components/chat/chat-store';
+import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
+import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
 import { reclaimTerminal } from '@/stores/useReviewStore';
-import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
+import type { PaneView } from '@/stores/usePaneStore';
+import type { LLMProvider, ProjectSession } from '@/types/app';
+
+export type SessionView = 'terminal' | 'chat';
 
 /**
- * A session's conversation outside its desk pane: the chat view for a session that runs in the
- * chat, its terminal for one that runs in a terminal. A terminal has one viewer, so it is borrowed
- * from its pane and given back when this unmounts. `paneId` names the surface that shows it (the
- * task board, the review screen), so the chat keeps its scroll and draft per surface.
+ * The toolbar's pane actions; each one shows only where it is passed. A desk pane passes them all,
+ * the task board and the review screen none, so there only the terminal/chat switch shows.
  */
-export function SessionChat({ session, space, paneId }: { session: AllSession; space: SpaceInfo | undefined; paneId: string }) {
-  const terminal = session.runtime !== 'sdk';
+export interface SessionChatToolbar {
+  onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
+  onClosePane?: () => void;
+  isMainPane?: boolean;
+  onToggleMainPane?: () => void;
+}
+
+/**
+ * A session's conversation, wherever it is shown: the chat view for a session that runs in the chat,
+ * its terminal (with the status bar) for one that runs in a terminal. One component for the desk
+ * panes, the task board and the review screen.
+ *
+ * - `view`/`onView` control which one shows (a desk pane keeps it in the pane); without them the
+ *   component starts from how the session runs and keeps the choice itself.
+ * - `toolbar` shows the view switch with the pane actions given; leave it out where the caller draws
+ *   its own toolbar (a desk pane's, which also switches to the plugins).
+ * - `borrowed`: shown outside its pane, so the terminal goes back to the pane on unmount.
+ * - `paneId` names the surface, so scroll and draft are kept per surface.
+ */
+export function SessionChat({
+  paneId, projectId, sessionId, session, spaceId, view: controlled, onView, toolbar, borrowed = false,
+  isActive = true, whenIdle = false, command = null, title = null,
+}: {
+  paneId: string;
+  projectId: string | null;
+  sessionId: string | null;
+  session: ProjectSession | null;
+  /** Outside the desks: the session's space, which a pane takes from its desk. */
+  spaceId?: string | null;
+  view?: SessionView;
+  onView?: (view: SessionView) => void;
+  toolbar?: SessionChatToolbar;
+  borrowed?: boolean;
+  isActive?: boolean;
+  whenIdle?: boolean;
+  /** First prompt for a freshly spawned terminal session. */
+  command?: string | null;
+  title?: string | null;
+}) {
+  const [own, setOwn] = useState<SessionView>(session?.runtime === 'sdk' ? 'chat' : 'terminal');
+  const view = controlled ?? own;
+  const setView = (next: SessionView) => { if (onView) onView(next); else setOwn(next); };
+  const switchBlocked = useSwitchBlocked(sessionId);
   useEffect(() => {
-    if (!terminal) return;
-    return () => reclaimTerminal(session.id);
-  }, [session.id, terminal]);
-  if (!session.__projectId) return <p className="p-4 text-body text-muted-foreground">This session has no project to open it in.</p>;
-  const spaceId = space ? paneSpaceKey(space) : null;
+    if (!borrowed || view !== 'terminal' || !sessionId) return;
+    return () => reclaimTerminal(sessionId);
+  }, [borrowed, view, sessionId]);
+
+  if (!projectId) return <p className="p-4 text-body text-muted-foreground">This session has no project to open it in.</p>;
   return (
-    <div className="relative min-h-0 flex-1">
-      {terminal ? (
-        <StandaloneShell paneId={paneId} projectId={session.__projectId} sessionId={session.id} sessionTitle={sessionDisplayName(session)} isActive={false} spaceId={spaceId} />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {toolbar && (
+        <div className="flex shrink-0 justify-end px-2 py-1.5">
+          <MainContentTabSwitcher
+            groups={['session']}
+            paneView={view}
+            onSetPaneView={(next) => { if (next === 'terminal' || next === 'chat') setView(next); }}
+            switchBlocked={switchBlocked}
+            {...toolbar}
+          />
+        </div>
+      )}
+      {view === 'chat' && sessionId ? (
+        <ChatPane paneId={paneId} projectId={projectId} sessionId={sessionId} session={session} whenIdle={whenIdle} isActive={isActive} spaceId={spaceId} />
       ) : (
-        <ChatPane paneId={paneId} projectId={session.__projectId} sessionId={session.id} session={session} isActive spaceId={spaceId} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            <StandaloneShell paneId={paneId} projectId={projectId} sessionId={sessionId} sessionTitle={title ?? (session?.summary as string | undefined) ?? null} command={command} isActive={borrowed ? false : isActive} spaceId={spaceId} />
+          </div>
+          <TerminalStatusBar session={session} />
+        </div>
       )}
     </div>
   );

@@ -241,7 +241,7 @@ export function ReviewScreen() {
         {!current ? (
           <p className="p-4 text-xs text-muted-foreground">Loading…</p>
         ) : (
-          <div className="absolute inset-0 flex min-h-0 flex-col"><SessionChat key={current.id} session={current} space={space} paneId={REVIEW_PANE_ID} /></div>
+          <div className="absolute inset-0 flex min-h-0 flex-col"><SessionChat key={current.id} paneId={REVIEW_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={space ? paneSpaceKey(space) : null} borrowed toolbar={{}} /></div>
         )}
       </div>
       </div>
