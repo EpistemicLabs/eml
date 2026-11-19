@@ -28,7 +28,8 @@ export function TaskViewSwitch() {
   const { view } = useTaskView();
   const inbox = useTaskBoard().data?.counts.inbox ?? 0;
   return (
-    <div role="tablist" aria-label="Task views" className="flex flex-shrink-0 gap-px rounded-lg bg-foreground/8 p-0.5">
+    // Like a space's group of desks: plain until a task view is open, then the light background.
+    <div role="tablist" aria-label="Task views" className={cn('flex flex-shrink-0 gap-px rounded-lg p-1', topView === 'tasks' && 'bg-foreground/8')}>
       {VIEWS.map(([v, label, key]) => (
         <button key={v} type="button" role="tab" aria-selected={topView === 'tasks' && view === v} title={`${label} (G then ${key})`}
           onClick={() => openTaskView(v)} className={TAB}>
