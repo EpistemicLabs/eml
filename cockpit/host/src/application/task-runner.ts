@@ -8,12 +8,14 @@ import { projectIdForBrain } from '../project-registry.js'
  * of its own.
  *
  * A task is ready when:
- *   - it is planned and has a checkpoint (before · after · none), so plain
- *     tasks and legacy tasks are never started;
+ *   - it is planned, has a delegate (the agent that works on it) and a
+ *     checkpoint (before · after · none), so plain tasks and legacy tasks are
+ *     never started (decision task-assignee-owner-and-agent-delegate);
  *   - as a step (a sub-task), its parent task is active (a parked plan does
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
- *   - nobody is assigned to it as a person (a person's step waits for them);
+ *   - nobody is waited on (waiting_on), its hand-over can no longer be undone,
+ *     and no job of its own will start it at a set time;
  *   - no session works on it already (a worker someone started on it);
  *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
  *     run at most MAX_RUNNING at a time per space.
@@ -30,12 +32,16 @@ const STANDALONE = '(standalone)'
 export interface TaskRunnerDeps {
   spaces: { list(): BrainSpace[] }
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
-  /** Handles of people: a step assigned to one of them is theirs, not a session's. */
-  people(space: BrainSpace): string[]
   /** A session works on this task already (a worker started on it by hand or by a session). */
   busy?(taskId: string): boolean
+  /** Its hand-over can still be undone: nothing starts until the undo window is over. */
+  held?(taskId: string): boolean
+  /** A job of the task will start it at a set time. */
+  scheduled?(taskId: string): boolean
+  /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
+  brief?(taskId: string): string | undefined
   /** Start a session on the step; an error text when it cannot. */
-  start(space: BrainSpace, step: { id: string; title: string; content: string; projectId: string; checkpoint: string }): string | null
+  start(space: BrainSpace, step: { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string }): string | null
   log(line: string): void
 }
 
@@ -45,7 +51,7 @@ interface Task {
   content: string
   status: string
   scope: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[] }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -53,7 +59,7 @@ const parentOf = (task: Task) => task.relations?.find((r) => r.relation === 'par
 const childrenOf = (task: Task) => (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
 
 /** The prompt a step's session starts with; its task and the rules come with its start hook. */
-export function stepPrompt(step: { id: string; title: string; content: string }, checkpoint: string): string {
+export function stepPrompt(step: { id: string; title: string; content: string; brief?: string }, checkpoint: string): string {
   const how = checkpoint === 'before'
     ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it and the work is done, close the task.'
     : checkpoint === 'after'
@@ -61,6 +67,7 @@ export function stepPrompt(step: { id: string; title: string; content: string },
       : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   return [
     `The task runner started you for "${step.title}" (task ${step.id}).`,
+    ...(step.brief ? [step.brief] : []),
     step.content,
     '',
     how,
@@ -85,14 +92,13 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       return tasks.get(id)!
     }
     const listed = await brain.get('/list', { type: 'task', status: 'planned', limit: 200 }) as { engrams?: Task[] }
-    const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint)
-    const people = new Set(deps.people(space))
+    const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate)
     const started = new Map<string, number>()
     for (const candidate of candidates) {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
-      if ((step.properties?.assignee_ids ?? []).some((who) => people.has(who))) continue
-      if (deps.busy?.(step.id)) continue
+      if (!step.properties?.delegate || step.properties.waiting_on?.who) continue
+      if (deps.busy?.(step.id) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
       const group = parentId ?? STANDALONE
@@ -105,7 +111,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         }
       } else if (!started.has(group)) {
         const running = await brain.get('/list', { type: 'task', status: 'active', with_parent: 'true', limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Array<Task & { parent_id?: string | null }> }
-        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && !t.parent_id).length)
+        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && !t.parent_id).length)
       }
       const deps_ = await Promise.all((step.properties?.depends_on ?? []).map(get))
       if (deps_.some((d) => !d || d.status !== 'resolved')) continue
@@ -116,7 +122,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         continue
       }
       const title = step.title ?? step.id
-      const problem = deps.start(space, { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint! })
+      const brief = deps.brief?.(step.id)
+      const problem = deps.start(space, { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) })
       if (problem) {
         deps.log(`[runner] step ${step.id.slice(0, 8)} not started: ${problem}`)
         continue

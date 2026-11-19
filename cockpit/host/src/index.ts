@@ -310,8 +310,9 @@ async function main() {
   })
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
-    spaces, brain: taskBrain, people: () => [owner], log,
+    spaces, brain: taskBrain, log,
     busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
+    scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     start: (space, step) => {
       // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
       const brainId = brainIdFromProjectId(step.projectId)
@@ -328,7 +329,7 @@ async function main() {
   taskRunner.every(RUNNER_TICK_MS)
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
-    ledger, spaces, brain: taskBrain, owner, people: () => [owner], log,
+    ledger, spaces, brain: taskBrain, owner, log,
     jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
       ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
       channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),

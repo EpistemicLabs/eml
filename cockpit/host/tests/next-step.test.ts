@@ -56,10 +56,10 @@ describe('next triggers', () => {
   })
 
   it('counts only steps the runner can move', () => {
-    const step = (patch: Record<string, unknown>) => ({ status: 'planned', checkpoint: 'after', person: false, depsCanResolve: true, ...patch })
+    const step = (patch: Record<string, unknown>) => ({ status: 'planned', checkpoint: 'after', delegated: true, depsCanResolve: true, ...patch })
     expect(mod.nextTriggers(facts({ steps: [step({ status: 'active', checkpoint: undefined })] }))).toEqual(['step'])
     expect(mod.nextTriggers(facts({ steps: [step({})] }))).toEqual(['step'])
-    expect(mod.nextTriggers(facts({ steps: [step({ checkpoint: undefined }), step({ person: true }), step({ depsCanResolve: false })] }))).toEqual([])
+    expect(mod.nextTriggers(facts({ steps: [step({ checkpoint: undefined }), step({ delegated: false }), step({ depsCanResolve: false })] }))).toEqual([])
     // A planned step under a task that is not active waits with its plan.
     expect(mod.nextTriggers(facts({ task: { status: 'planned', properties: {} }, steps: [step({})] }))).toEqual([])
   })
@@ -90,7 +90,7 @@ describe('next-step check', () => {
     const state = { watched: opts.watched ?? false }
     const check = mod.createNextStepCheck({
       ledger, spaces: { resolve: () => (opts.space ?? { taskSystem: true, shared: false }) as never }, brain: () => brain,
-      owner: 'lasse', people: () => ['lasse'], log: () => {},
+      owner: 'lasse', log: () => {},
       jobsOf: () => opts.jobs ?? [],
       runStartedAt: () => RUN,
       working: () => false,
@@ -194,7 +194,7 @@ describe('next-step check', () => {
   it('counts a runnable step and not one whose dependency was dropped', async () => {
     const tasks: Record<string, Record<string, unknown>> = {
       p: { id: 'p', status: 'active', properties: {}, relations: [{ source_id: 's1', target_id: 'p', relation: 'part_of' }] },
-      s1: { id: 's1', status: 'planned', properties: { checkpoint: 'after', depends_on: ['d'] } },
+      s1: { id: 's1', status: 'planned', properties: { checkpoint: 'after', delegate: 'atlas', depends_on: ['d'] } },
       d: { id: 'd', status: 'invalidated', properties: {} },
     }
     const dropped = setup(tasks)
@@ -204,8 +204,15 @@ describe('next-step check', () => {
 
     tasks.d = { id: 'd', status: 'active', properties: {} }
     const open = setup(tasks)
-    open.ledger.recordSpawn('w1-9', null, 'bp-eml', 'claude', true, 'p')
-    await open.check.turnEnded('w1-9')
+    open.ledger.recordSpawn('w2-9', null, 'bp-eml', 'claude', true, 'p')
+    await open.check.turnEnded('w2-9')
     expect(open.delivered).toEqual([])
+
+    // A step without a delegate is nobody's to start: no trigger.
+    tasks.s1 = { id: 's1', status: 'planned', properties: { checkpoint: 'after', depends_on: ['d'] } }
+    const undelegated = setup(tasks)
+    undelegated.ledger.recordSpawn('w3-9', null, 'bp-eml', 'claude', true, 'p')
+    await undelegated.check.turnEnded('w3-9')
+    expect(undelegated.delivered).toHaveLength(1)
   })
 })

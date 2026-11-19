@@ -17,7 +17,7 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - another session on the task that is working, or one of the user's own
  *     (not a worker): the task is in their conversation;
  *   - a step of the task the runner can move: active, or planned with a
- *     checkpoint, no person on it and dependencies that can still resolve,
+ *     checkpoint and a delegate, and dependencies that can still resolve,
  *     under an active task.
  *
  * None: the session gets one short prompt (NEXT_STEP_PROMPT). Still none once
@@ -52,8 +52,8 @@ export interface JobFacts {
 export interface StepFacts {
   status: string
   checkpoint?: string
-  /** A person is assigned: the step is theirs, not the runner's. */
-  person: boolean
+  /** An agent is its delegate: the runner may start it. */
+  delegated: boolean
   /** Every dependency is open or resolved (an invalidated one never resolves). */
   depsCanResolve: boolean
 }
@@ -61,7 +61,7 @@ export interface StepFacts {
 interface Task {
   id: string
   status: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -82,7 +82,7 @@ export function nextTriggers(facts: {
   if (facts.jobs.some((j) => !j.ended && !j.held && (j.nextRunAt !== null || j.channel || j.runWaiting))) found.push('job')
   if (facts.otherSession) found.push('session')
   const runnable = (s: StepFacts) => s.status === 'active'
-    || (s.status === 'planned' && Boolean(s.checkpoint) && !s.person && s.depsCanResolve && facts.task.status === 'active')
+    || (s.status === 'planned' && Boolean(s.checkpoint) && s.delegated && s.depsCanResolve && facts.task.status === 'active')
   if (facts.steps.some(runnable)) found.push('step')
   return found
 }
@@ -93,8 +93,6 @@ export interface NextStepDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
-  /** People's handles: a step assigned to one is theirs. */
-  people(space: BrainSpace): string[]
   /** The jobs attached to the task (domain/job.ts taskId). */
   jobsOf(taskId: string): JobFacts[]
   /** When the session's current run began: its job run's start, else its creation. */
@@ -149,7 +147,6 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       return
     }
     const get = (id: string) => (brain.get(`/engram/${id}`) as Promise<Task>).catch(() => null)
-    const people = new Set(deps.people(space))
     const childIds = (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
     const steps: StepFacts[] = []
     for (const child of await Promise.all(childIds.map(get))) {
@@ -158,7 +155,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       steps.push({
         status: child.status,
         checkpoint: child.properties?.checkpoint,
-        person: (child.properties?.assignee_ids ?? []).some((who) => people.has(who)),
+        delegated: Boolean(child.properties?.delegate),
         depsCanResolve: depTasks.every((d) => d !== null && ['planned', 'active', 'resolved'].includes(d.status)),
       })
     }
