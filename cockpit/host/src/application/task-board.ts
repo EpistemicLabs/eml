@@ -178,7 +178,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           parentActive: row.parent_id ? (statusOf.has(row.parent_id) ? statusOf.get(row.parent_id) === 'active' : null) : null,
           depsResolved: (props.depends_on ?? []).every((id) => !statusOf.has(id) || statusOf.get(id) === 'resolved'),
         }
-        const live: LiveFacts = { working: sessions.some((s) => s.working), nextRunAt: deps.nextRunOf(row.id), runner: onBoard }
+        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id), runner: onBoard }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (row.status === 'resolved' && turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length

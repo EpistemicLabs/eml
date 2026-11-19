@@ -49,6 +49,8 @@ export interface TaskFacts {
 export interface LiveFacts {
   /** A session on the task is working. */
   working: boolean
+  /** Sessions on the task that are not put away, working or not. */
+  sessions: number
   /** The next run of one of its jobs, if any. */
   nextRunAt: string | null
   /** The task's space has a runner (the task system is on there). */
@@ -89,6 +91,9 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: 'at_time' }
     if (!live.runner) return { turn: 'needs_you', group: 'nobody', reason: 'no_runner' }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
+    // The runner starts planned tasks only. One in progress is the open session's, between its turns,
+    // or nobody's once its session is gone.
+    if (task.status === 'active') return live.sessions > 0 ? { turn: 'agent_working' } : { turn: 'needs_you', group: 'nobody', reason: 'stopped' }
     if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }
     return { turn: 'agent_scheduled', group: 'runner' }
   }
@@ -100,9 +105,9 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
 
 // ---- Plan: coverage and urgency ----
 
-export type CoverageGroup = 'ask' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine'
+export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine'
 /** The order Plan's "Stuck until you act" box shows its groups in. */
-export const COVERAGE_GROUPS: readonly CoverageGroup[] = ['ask', 'due', 'high', 'blocked', 'idle', 'nofollow', 'stopped', 'owner', 'mine']
+export const COVERAGE_GROUPS: readonly CoverageGroup[] = ['ask', 'review', 'due', 'high', 'blocked', 'idle', 'nofollow', 'stopped', 'owner', 'mine']
 
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
@@ -121,13 +126,14 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
   const t = turnOf(task, live, viewer, now)
   if (live.working) return { ok: true, how: 'working' }
   if (t?.group === 'asked') return { ok: false, group: 'ask' }
+  if (t?.turn === 'review') return { ok: false, group: 'review' }
   if (t?.reason === 'stopped') return { ok: false, group: 'stopped', reason: 'stopped' }
   if (t?.group === 'parent') return { ok: false, group: 'blocked', reason: 'parent' }
   if (stepsWaiting > 0 && task.status !== 'active') return { ok: false, group: 'blocked', reason: 'steps_wait', steps: stepsWaiting }
   if (live.nextRunAt) return task.waitingOn?.who && task.waitingOn.who !== viewer
     ? { ok: true, how: 'checks_back', at: live.nextRunAt }
     : { ok: true, how: 'at_time', at: live.nextRunAt }
-  if (task.waitingOn?.who) return { ok: false, group: 'nofollow' }
+  if (task.waitingOn?.who && task.waitingOn.who !== viewer) return { ok: false, group: 'nofollow' }
   if (task.delegate) {
     if (t?.group === 'nobody') return { ok: false, group: 'idle', reason: t.reason }
     return { ok: true, how: 'runner' }
@@ -141,7 +147,7 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
 /** An important task for Plan's two boxes: asked, stopped, the viewer's own, due within two weeks, or high. */
 export function isImportant(task: TaskFacts, live: LiveFacts, viewer: string, now: number): boolean {
   const t = turnOf(task, live, viewer, now)
-  return t?.group === 'asked' || t?.reason === 'stopped' || t?.group === 'own'
+  return t?.group === 'asked' || t?.turn === 'review' || t?.reason === 'stopped' || t?.group === 'own'
     || (Boolean(task.due) && daysUntil(task.due!, now) <= DUE_SOON_DAYS) || task.priority === 'high'
 }
 

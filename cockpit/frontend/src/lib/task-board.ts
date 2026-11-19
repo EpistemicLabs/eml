@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
 export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner';
 export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_runner' | 'no_owner';
-export type CoverageGroup = 'ask' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
+export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
@@ -281,6 +281,7 @@ export function columns(tasks: BoardTask[]): Column[] {
 
 export const COVERAGE_META: Record<CoverageGroup, { name: string; hue: Hue }> = {
   ask: { name: 'Answer an agent', hue: 'you' },
+  review: { name: 'Look at a result', hue: 'review' },
   due: { name: 'Due soon, nobody on it', hue: 'mark' },
   high: { name: 'High priority, nobody on it', hue: 'stopped' },
   blocked: { name: 'Blocked until you start it', hue: 'stopped' },
@@ -303,6 +304,7 @@ export function coverageText(task: BoardTask, now: number): string {
     return `${agent} · next in line for the runner`;
   }
   if (c.group === 'ask') return 'answer the agent';
+  if (c.group === 'review') return 'review the result';
   if (c.group === 'stopped') return 'agent stopped: continue or close';
   if (c.group === 'blocked') return c.reason === 'steps_wait' ? `start it: ${c.steps} steps wait for it` : 'waits for its parent: start the parent';
   if (c.group === 'idle') return c.reason === 'no_runner' ? 'delegated, but this space has no runner' : 'delegated without a checkpoint: set one';
