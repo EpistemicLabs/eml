@@ -299,7 +299,7 @@ export default function DeskTabBar() {
             aria-label={spaceLabel}
             {...(section.space ? spaceDragProps(section.space) : {})}
             className={cn(
-              'relative flex items-center gap-px rounded-lg py-0.5 pr-0.5 pl-1',
+              'relative flex items-center gap-px rounded-lg p-1',
               isActiveSpace && topView !== 'tasks' && topView !== 'jobs' && 'bg-foreground/8',
               section.space && draggingSpace === section.space.id && 'opacity-60',
             )}
