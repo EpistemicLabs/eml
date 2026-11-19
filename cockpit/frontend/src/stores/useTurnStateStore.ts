@@ -132,6 +132,11 @@ export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void)
     window.dispatchEvent(new CustomEvent('cockpit:notes', { detail: JSON.parse((message as MessageEvent<string>).data) }));
   });
 
+  // The task board moved (host application/task-board.ts): lib/task-board.ts reloads it.
+  source.addEventListener('tasks', (message) => {
+    window.dispatchEvent(new CustomEvent('cockpit:tasks', { detail: JSON.parse((message as MessageEvent<string>).data) }));
+  });
+
   source.addEventListener('snapshot', (message) => {
     const events = JSON.parse((message as MessageEvent<string>).data) as TurnEvent[];
     const turns: Record<string, TurnInfo> = {};
