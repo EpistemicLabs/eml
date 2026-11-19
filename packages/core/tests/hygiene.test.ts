@@ -238,6 +238,27 @@ describe('hygieneCheck()', () => {
       expect(f[0].reason).toContain('same title')
     })
 
+    it('takes a chained same-title series as one thread (each member linked to the previous one)', () => {
+      const round = (c: string) => writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-series', content: c })
+      const first = round(content)
+      const second = round('quantumflux pipeline sweep threshold gate')
+      const third = round('quantumflux pipeline sweep threshold round three')
+      writes(eml).relate({ source_id: second.id, target_id: first.id, relation: 'refines' })
+      // first and third have no edge of their own yet: third is still unlinked
+      expect(check('conflict-scan').findings.map(f => f.id)).toEqual([third.id, third.id])
+      writes(eml).relate({ source_id: third.id, target_id: second.id, relation: 'refines' })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('a task both are bound to is no bridge: a same-title pair inside one task stays flagged', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'qf-same', content: 'the quantumflux work' })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-same', content, task_id: task.id, properties: { binding: 'task' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-same', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      const f = check('conflict-scan').findings
+      expect(f).toHaveLength(1)
+      expect(f[0].reason).toContain('same title')
+    })
+
     it('caps the findings at 20 per run (the next sweep surfaces the rest)', () => {
       for (let i = 0; i < 24; i++) writes(eml).store({ type: 'note', scope: 'project.demo', title: `qf-cap-${i}`, content })
       expect(check('conflict-scan').findings).toHaveLength(20)

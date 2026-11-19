@@ -386,8 +386,8 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
       'survivor (eml_update(<survivor>, supersedes=[<retired id>]); keep the more complete of the two, usually the ' +
       'earlier); a real contradiction → eml_relate contradicts with an explanation; a deliberate same-title thread ' +
       '→ draw the lineage link (eml_relate refines or related_to); judged unrelated → dismiss with eml_relate ' +
-      'related_to, explanation starting with "conflict check: judged distinct — <reason>", which keeps the pair off ' +
-      'the next sweep. When unsure, ask the user instead of dismissing.',
+      'distinct_from and the reason as explanation, which keeps the pair off the next sweep. When unsure, ask the ' +
+      'user instead of dismissing.',
     detect(eml, now) {
       const active = ACTIVE(eml)
       const byScope = new Map<string, EngramRow[]>()
@@ -428,7 +428,7 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
             now: now.toISOString(),
           })
           const rawBy = new Map(candidates.map(c => [c.id, c]))
-          for (const cand of filterConflictCandidates({ engram: e as Engram, linked: linkedOf.get(e.id) ?? EMPTY_SET, boundTask: id => boundTask.get(id) }, candidates)) {
+          for (const cand of filterConflictCandidates({ engram: e as Engram, linkedOf: id => linkedOf.get(id) ?? EMPTY_SET, boundTask: id => boundTask.get(id) }, candidates)) {
             const c = rawBy.get(cand.id)! // the filter's view drops status/created_at
             const key = [e.id, c.id].sort().join('|')
             const prev = pairs.get(key)

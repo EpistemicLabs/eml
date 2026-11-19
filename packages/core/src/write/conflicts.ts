@@ -4,6 +4,7 @@ import {
   EVENT_DUPLICATE_WINDOW_MS, extractSalientTerms, termCoverage,
 } from '../engrams'
 import { boundTaskOf } from './task-binding'
+import { CommandError } from '../commands/types'
 import type { WriteContext } from './context'
 
 /**
@@ -23,7 +24,10 @@ import type { WriteContext } from './context'
  *   record a dismissal as the marked related_to edge).
  * - a pair that already carries ANY typed relation is excluded: an edge is a
  *   prior verdict about the pair (a lineage link, a see-also, a supports, a
- *   contradicts, or a dismissal marked "conflict check: judged distinct").
+ *   contradicts, or a recorded dismissal).
+ * - a same-title series is one thread once its members are chained: each
+ *   member links to the previous one, so a pair further apart has no edge of
+ *   its own and is excluded through the chain.
  *
  * The filter (filterConflictCandidates) is shared with the batch hygiene
  * sweep (decision batch-scan-reuses-the-detector): same filters, same gate,
@@ -48,21 +52,22 @@ export function findPotentialConflicts(ctx: WriteContext, engram: Engram): Confl
     now: ctx.stamp.at,
   })
 
-  // A typed edge between the pair is a verdict that was already reached about
+  // A typed edge between a pair is a verdict that was already reached about
   // it — any verb, either direction.
-  const linked = new Set((ctx.db.prepare(`
+  const edges = ctx.db.prepare(`
     SELECT target_id AS id FROM relations WHERE source_id = ?
     UNION SELECT source_id FROM relations WHERE target_id = ?
-  `).all(engram.id, engram.id) as Array<{ id: string }>).map(r => r.id))
+  `)
+  const linkedOf = (id: string) => new Set((edges.all(id, id) as Array<{ id: string }>).map(r => r.id))
 
-  return filterConflictCandidates({ engram, linked, boundTask: id => boundTaskOf(ctx, id)?.id }, candidates)
+  return filterConflictCandidates({ engram, linkedOf, boundTask: id => boundTaskOf(ctx, id)?.id }, candidates)
 }
 
-/** What the candidate filter needs: the engram, the ids it already has a verdict edge to, and the task binding. */
+/** What the candidate filter needs: the engram, the verdict edges and the task binding. */
 export interface ConflictFilter {
   engram: Engram
-  /** Ids the engram already carries a typed relation to (a prior verdict about the pair). */
-  linked: ReadonlySet<string>
+  /** Ids an engram already carries a typed relation to (a prior verdict about the pair). */
+  linkedOf: (id: string) => ReadonlySet<string>
   /** The task an id is bound to (derived_from/refines to a task), if any. */
   boundTask: (id: string) => string | undefined
 }
@@ -71,7 +76,7 @@ export interface ConflictFilter {
  * The shared candidate filter (write-time and the batch sweep): drop self,
  * the judged pairs, the same-task thread and the type pairings, apply the
  * coverage gate, cap by coverage. A same-title candidate without an edge
- * survives, flagged lineage.
+ * survives, flagged lineage — unless a chain of its series leads to it.
  */
 export function filterConflictCandidates(f: ConflictFilter, candidates: Engram[]): ConflictCandidate[] {
   const { engram } = f
@@ -83,10 +88,13 @@ export function filterConflictCandidates(f: ConflictFilter, candidates: Engram[]
   // candidates; a same-TITLE pair inside the task is the duplicate marker and
   // stays (two parallel sessions writing under one title in one task).
   const ownTask = f.boundTask(engram.id)
+  const linked = f.linkedOf(engram.id)
+  const series = seriesChain(f, candidates)
   const survivors: ConflictCandidate[] = []
   for (const c of candidates) {
     if (c.id === engram.id) continue                                   // self
-    if (f.linked.has(c.id)) continue                                   // a verdict edge exists between the pair
+    if (linked.has(c.id)) continue                                     // a verdict edge exists between the pair
+    if (series.has(c.id)) continue                                     // the same series, reached through its chain
     if (c.status === 'planned' && c.type !== 'task') continue          // only tasks are open while planned
     const sameTitle = c.title !== null && c.title === engram.title
     if (!sameTitle && ownTask !== undefined && f.boundTask(c.id) === ownTask) continue // the same-task thread
@@ -118,4 +126,53 @@ export function filterConflictCandidates(f: ConflictFilter, candidates: Engram[]
   // the escalation exactly when it matters. Sort coverage-desc, then cap the tail.
   survivors.sort((a, b) => b.coverage - a.coverage)
   return survivors.slice(0, CONFLICT_MAX)
+}
+
+/**
+ * The members of the engram's series that a chain of edges leads to. A series
+ * is the candidates of the engram's type under its title; the walk follows
+ * edges from member to member only, so a task both are bound to is no bridge
+ * (a same-title pair inside one task stays the duplicate marker).
+ */
+function seriesChain(f: ConflictFilter, candidates: Engram[]): ReadonlySet<string> {
+  const { engram } = f
+  const reached = new Set<string>()
+  if (engram.title === null) return reached
+  const members = new Set(candidates.filter(c => c.id !== engram.id && c.type === engram.type && c.title === engram.title).map(c => c.id))
+  if (members.size === 0) return reached
+  const queue = [engram.id]
+  for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+    for (const next of f.linkedOf(id)) {
+      if (!members.has(next) || reached.has(next)) continue
+      reached.add(next)
+      queue.push(next)
+    }
+  }
+  return reached
+}
+
+/**
+ * A dismissed candidate pair: compared and judged distinct. Schema 21 has no
+ * verb of its own for it, so a relation written as distinct_from is recorded
+ * as a related_to edge that carries the marker — the explanation in one fixed
+ * form and metadata.conflict_check. The server writes the marker, not the
+ * agent, so every recorded dismissal can be told from a see-also.
+ */
+export const DISMISSAL_VERB = 'distinct_from'
+export const DISMISSAL_EXPLANATION_PREFIX = 'conflict check: judged distinct — '
+
+/** A relation.create payload as it is recorded: a distinct_from becomes the marked related_to; any other payload passes unchanged. */
+export function recordedDismissal(input: unknown): unknown {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return input
+  const o = input as Record<string, unknown>
+  if (o.relation !== DISMISSAL_VERB) return input
+  const reason = typeof o.explanation === 'string' ? o.explanation.trim() : ''
+  if (reason === '') throw new CommandError('INVALID', 'distinct_from needs an explanation: why the two are distinct')
+  const metadata = o.metadata !== null && typeof o.metadata === 'object' && !Array.isArray(o.metadata) ? o.metadata : {}
+  return {
+    ...o,
+    relation: 'related_to',
+    explanation: DISMISSAL_EXPLANATION_PREFIX + reason,
+    metadata: { ...metadata, conflict_check: 'distinct' },
+  }
 }

@@ -90,14 +90,14 @@ export function conflictBanner(result: unknown): string | null {
   // An event is corrected, a status is versioned by set_status, a task is
   // replaced only by a task (eml_track_task supersedes), and a task write
   // supersedes no other type.
-  const relate = 'relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate related_to, explanation "conflict check: judged distinct — <reason>").'
+  const relate = 'relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate distinct_from, explanation = why they are distinct).'
   const ids = (cs: ConflictCandidateView[]) => cs.map(c => c.id.slice(0, 8)).join(', ')
   const ofType = (t: string) => pc.filter(c => c.type === t)
   const written = r?.type
   let evaluate: string
   if (written === 'event') {
     evaluate = 'Evaluate each before continuing: the same occurrence (this write is a duplicate: eml_update(<new id>, status=invalidated)) / ' +
-      'a different one (relate: eml_relate related_to, or dismiss (record it: eml_relate related_to, explanation "conflict check: judged distinct — <reason>")).'
+      'a different one (relate: eml_relate related_to, or dismiss (record it: eml_relate distinct_from, explanation = why they are distinct)).'
   } else if (written === 'status') {
     evaluate = `Evaluate each before continuing: the previous status is already superseded by this write; another engram saying the same → ${relate}`
   } else if (written === 'task') {

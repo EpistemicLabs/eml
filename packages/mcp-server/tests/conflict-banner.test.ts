@@ -79,7 +79,7 @@ describe('conflictBanner', () => {
     // a task write with only a decision candidate: relate or dismiss
     const taskDec = conflictBanner({ type: 'task', potential_conflicts: [cand(0.8)] })!
     expect(taskDec).not.toContain('supersede')
-    expect(taskDec).toContain('relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate related_to, explanation "conflict check: judged distinct — <reason>").')
+    expect(taskDec).toContain('relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate distinct_from, explanation = why they are distinct).')
   })
 
   // conflict-detection (phase 1): a same-title candidate without an edge is a

@@ -5,6 +5,7 @@ import {
   termCoverage,
   CONFLICT_COVERAGE_THRESHOLD,
   CONFLICT_MAX,
+  recordedDismissal,
 } from '../src'
 import {
   validDecision, validLog, validTask, writes,
@@ -19,6 +20,24 @@ import {
 // a candidate (flagged lineage, no longer excluded), and any typed edge between
 // the pair is a prior verdict (excluded). Stable across FTS-impl changes —
 // asserts coverage, not opaque BM25 numbers. See docs/specs/v0.10.9-PROPOSAL.md.
+
+describe('conflict guardrail — recorded dismissal', () => {
+  it('writes a distinct_from as the marked related_to, the reason behind the fixed prefix', () => {
+    expect(recordedDismissal({ source_id: 'a', target_id: 'b', relation: 'distinct_from', explanation: ' different topics ', metadata: { k: 1 } })).toEqual({
+      source_id: 'a', target_id: 'b', relation: 'related_to',
+      explanation: 'conflict check: judged distinct — different topics',
+      metadata: { k: 1, conflict_check: 'distinct' },
+    })
+  })
+
+  it('needs the reason, and leaves every other payload as it is', () => {
+    expect(() => recordedDismissal({ source_id: 'a', target_id: 'b', relation: 'distinct_from' })).toThrow('distinct_from needs an explanation')
+    expect(() => recordedDismissal({ source_id: 'a', target_id: 'b', relation: 'distinct_from', explanation: '  ' })).toThrow('distinct_from needs an explanation')
+    const other = { source_id: 'a', target_id: 'b', relation: 'related_to' }
+    expect(recordedDismissal(other)).toBe(other)
+    expect(recordedDismissal(null)).toBe(null)
+  })
+})
 
 describe('conflict guardrail — pure helpers', () => {
   it('extractSalientTerms: title tokens (kebab-split, unfiltered) + content terms len≥4, stopword-stripped', () => {
