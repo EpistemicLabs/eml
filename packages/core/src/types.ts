@@ -631,6 +631,8 @@ export interface ConflictCandidate {
   gist: string                    // first 200 chars of the candidate's content
   overlap: 'fts'
   coverage: number                // 0–1, rounded to 2 decimals
+  /** conflict-detection (phase 1): same title as the new write, no edge between the pair yet — possible thread/duplicate. */
+  lineage?: boolean
 }
 
 // v0.10.9: store() return — a stored Engram plus, when non-empty, the advisory

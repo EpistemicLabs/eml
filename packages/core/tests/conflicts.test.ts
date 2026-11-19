@@ -7,15 +7,18 @@ import {
   CONFLICT_MAX,
 } from '../src'
 import {
-  validDecision, validLog, writes,
+  validDecision, validLog, validTask, writes,
 } from './fixtures'
 
 // v0.10.9 write-time conflict guardrail. Asserts the term-coverage gate at the
 // calibrated threshold (≈0.5): a vocabulary-overlapping re-write FIRES (candidate
 // surfaced), a paraphrase without shared vocabulary stays SILENT (empty field).
-// Plus the structural exclusions (self / same-title / log+event) and the pure
-// extraction + coverage helpers. Stable across FTS-impl changes — asserts coverage,
-// not opaque BM25 numbers. See docs/specs/v0.10.9-PROPOSAL.md.
+// Plus the structural exclusions (self / judged pairs / same-task thread /
+// log+event) and the pure extraction + coverage helpers.
+// conflict-detection (phase 1, 2026-11-19): a same-title pair WITHOUT an edge is
+// a candidate (flagged lineage, no longer excluded), and any typed edge between
+// the pair is a prior verdict (excluded). Stable across FTS-impl changes —
+// asserts coverage, not opaque BM25 numbers. See docs/specs/v0.10.9-PROPOSAL.md.
 
 describe('conflict guardrail — pure helpers', () => {
   it('extractSalientTerms: title tokens (kebab-split, unfiltered) + content terms len≥4, stopword-stripped', () => {
@@ -112,8 +115,8 @@ describe('conflict guardrail — store() integration', () => {
     expect(res.potential_conflicts).toBeUndefined()
   })
 
-  it('EXCLUDES same-title: an intentional thread/supersede lineage is never flagged as a conflict', () => {
-    writes(eml).store(validDecision({
+  it('LINEAGE: a same-title write without an edge is a candidate, flagged lineage (the concurrent-writer case)', () => {
+    const seed = writes(eml).store(validDecision({
       scope: 'project.eml',
       title: 'persistence-sqlite',
       content: 'We use SQLite for persistence — single-file local database, deterministic.',
@@ -121,11 +124,71 @@ describe('conflict guardrail — store() integration', () => {
 
     const res = writes(eml).store(validDecision({
       scope: 'project.eml',
-      title: 'persistence-sqlite', // SAME title — heavy overlap but a deliberate lineage
+      title: 'persistence-sqlite', // SAME title, no edge between the pair
       content: 'SQLite persistence single-file local database deterministic choice.',
     }))
 
+    expect(res.potential_conflicts).toBeDefined()
+    const hit = res.potential_conflicts!.find(c => c.id === seed.id)
+    expect(hit).toBeDefined()
+    expect(hit!.lineage).toBe(true)
+  })
+
+  it('EXCLUDES a pair with an edge: a wikilink-drawn related_to is a prior verdict about the pair', () => {
+    writes(eml).store(validDecision({
+      scope: 'project.eml',
+      title: 'brand-and-domain',
+      content: 'Brand name is Engram Protocol, domain engramprotocol.io is the canonical naming choice.',
+    }))
+
+    // The [[wikilink]] materializes a related_to edge to the seed at write time,
+    // so the seed is no longer a candidate of this write.
+    const res = writes(eml).store(validDecision({
+      scope: 'project.eml',
+      title: 'brand-rename',
+      content: 'Engram Protocol brand naming and domain choice canonical — see [[brand-and-domain]].',
+    }))
+
     expect(res.potential_conflicts).toBeUndefined()
+  })
+
+  it('EXCLUDES the same-task thread: task-bound siblings with overlapping vocabulary are not flagged; same-title inside the task still is', () => {
+    const task = writes(eml).store(validTask({
+      scope: 'project.eml',
+      title: 'conflict-detection',
+      status: 'active',
+      content: 'the conflict detection work thread',
+    }))
+    const first = writes(eml).store(validDecision({
+      scope: 'project.eml',
+      title: 'dec-conflict-plan',
+      task_id: task.id,
+      properties: { binding: 'task' },
+      content: 'conflict detection sweep threshold coverage decision one.',
+    }))
+
+    const res = writes(eml).store(validDecision({
+      scope: 'project.eml',
+      title: 'dec-conflict-plan-two',
+      task_id: task.id,
+      properties: { binding: 'task' },
+      content: 'conflict detection sweep threshold coverage decision two.',
+    }))
+
+    // The sibling in the same task and the task itself are the thread, not conflicts.
+    expect(res.potential_conflicts).toBeUndefined()
+
+    // Same title inside the task is the duplicate marker and stays, flagged lineage.
+    const lineage = writes(eml).store(validDecision({
+      scope: 'project.eml',
+      title: 'dec-conflict-plan',
+      task_id: task.id,
+      properties: { binding: 'task' },
+      content: 'conflict detection sweep threshold coverage decision three.',
+    }))
+    const hit = lineage.potential_conflicts!.find(c => c.id === first.id)
+    expect(hit).toBeDefined()
+    expect(hit!.lineage).toBe(true)
   })
 
   it('EXCLUDES log/event candidates: a heavily-overlapping log is never a supersede/merge target', () => {
