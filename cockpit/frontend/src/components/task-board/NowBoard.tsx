@@ -1,35 +1,17 @@
 // Now: every moving task by whose turn it is, starting with what needs the viewer.
-import { cardLine, columns, dueLabel, GROUP_META, HUE, readable, TURN_META, when, type Board, type BoardTask } from '@/lib/task-board';
+import { cardLine, columns, dueLabel, GROUP_META, HUE, readable, TURN_META, type Board, type BoardTask } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
 import { CardTime, Chip, Dot, Empty, FOCUS, LABEL, Who } from './parts';
 
 export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: number; onOpen: (task: BoardTask) => void; movedId: string | null }) {
   const cols = columns(board.tasks);
-  const byId = new Map(board.tasks.map((t) => [t.id, t]));
-  const events = board.events.filter((e) => byId.has(e.taskId)).slice(0, 16);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <p className="m-0 max-w-measure text-body text-muted-foreground">
         <b className="font-semibold text-foreground">Now</b> sorts every moving task by <b className="font-semibold text-foreground">whose turn it is</b>, starting with what needs you. You own them (avatar); the badge shows the agent you delegated to. Open a card to answer or hand it over.
       </p>
-      {events.length > 0 && (
-        <div className="flex overflow-x-auto rounded-xl border border-border bg-card" aria-label="Just now">
-          <span className={cn(LABEL, 'flex shrink-0 items-center border-r border-border px-3 py-2.5')}>Just now</span>
-          {events.map((e) => {
-            const task = byId.get(e.taskId)!;
-            const hue = e.to ? TURN_META[e.to].hue : 'done';
-            return (
-              <button key={`${e.at}-${e.taskId}`} type="button" onClick={() => onOpen(task)} className={cn('flex shrink-0 items-center gap-2 whitespace-nowrap border-r border-border px-3 py-2.5 text-left text-ui hover:bg-muted', FOCUS)}>
-                <time className="font-data text-caption text-muted-foreground">{when(e.at, now)}</time>
-                <span className={cn('font-semibold', HUE[hue].ink)}>{e.to ? TURN_META[e.to].name.toLowerCase() : 'off the board'}</span>
-                <span>{readable(task.title)}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
       <div className="overflow-x-auto pb-1.5">
         <div className="grid min-w-min grid-flow-col gap-3" style={{ gridTemplateColumns: cols.map((c) => (c.tasks.length ? 'minmax(var(--container-board-col), 1fr)' : 'var(--container-board-col-slim)')).join(' ') }}>
           {cols.map((col) => {
