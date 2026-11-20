@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
+import { readSettings } from '@/components/settings/utils/settingsStorage';
 
 import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers, showSentMessage } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
@@ -70,6 +71,8 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         const space = spaceId !== undefined ? spaceId : paneStore.getDeskOfPane(paneId)?.spaceId ?? null;
         socket.send(JSON.stringify({
           type: 'init', paneId, projectId, sessionId, spaceId: space, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
+          // Settings › Preferences › Sessions; the host greets only a plain new chat, as in the terminal.
+          greet: readSettings().greetOnStart,
         }));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
