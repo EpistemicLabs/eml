@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EmlApi } from '../http-client'
-import { callTool, writeBanner } from './_helpers'
+import { callTool, handOverBanner, writeBanner } from './_helpers'
 import {
   BINDINGS, CHANGE_TYPES, CHECKPOINTS, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
   content, detail, isoDate, optIsoDate, scope, subjects, supersedes, tags, taskId, title,
@@ -82,6 +82,8 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       'durable inbox.\n\n' +
       'NOT a task: finished work → eml_event / eml_log · a way of working → eml_rule · a state snapshot → ' +
       'eml_set_status · speculation without commitment → wait.\n\n' +
+      'An agent will do the work (task system): set delegate (that agent) and checkpoint in this same call; the ' +
+      'person who owns the task stays in assignee_ids. The runner starts a task only with both.\n\n' +
       'After this call, everything about the task goes through eml_track_task: progress, stage, status, closing, ' +
       'edits.\n\n' +
       'Larger work: settle the intent with the user first (intent), then make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
@@ -107,7 +109,9 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       tags: tags(),
       subjects: subjects(),
     }).strict(),
-  }, async (args) => callTool(() => http.post('/engram/task', body(args)), { prefix: writeBanner }))
+  }, async (args) => callTool(() => http.post('/engram/task', body(args)), {
+    prefix: (result) => [handOverBanner(args), writeBanner(result)].filter(Boolean).join('\n\n') || null,
+  }))
 }
 
 export function registerNoteTool(server: McpServer, http: EmlApi): void {

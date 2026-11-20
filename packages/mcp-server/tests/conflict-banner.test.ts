@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
+import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, handOverBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
 
 // v0.10.9 write-time conflict guardrail — rendering layer. conflictBanner turns the
 // store response's advisory `potential_conflicts` into the banner prepended to the
@@ -204,5 +204,14 @@ describe('boundItemsBanner', () => {
     const b = writeBanner({ type: 'status', scope: 'global', previous_state: null, properties: { state: 's' }, potential_conflicts: [cand(0.6)], closed_with_task: [item('a')] })!
     expect(b.indexOf('status (first)')).toBeLessThan(b.indexOf('possibly conflicting'))
     expect(b.indexOf('possibly conflicting')).toBeLessThan(b.indexOf('closed with the task'))
+  })
+})
+
+describe('handOverBanner', () => {
+  it('says what is missing when a task is half handed to an agent, and nothing otherwise', () => {
+    expect(handOverBanner({ checkpoint: 'after' })).toContain('no delegate')
+    expect(handOverBanner({ delegate: 'atlas' })).toContain('no checkpoint')
+    expect(handOverBanner({ delegate: 'atlas', checkpoint: 'after' })).toBeNull()
+    expect(handOverBanner({})).toBeNull()
   })
 })
