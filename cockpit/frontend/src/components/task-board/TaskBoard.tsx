@@ -140,14 +140,15 @@ export function TaskBoard() {
 
   return (
     <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
-      <div className="mx-auto flex w-full max-w-content flex-col gap-4 px-4 pb-10 pt-3">
+      {/* An open task in the Inbox fills the height, with the same gap below as above; the list beside it scrolls on its own. */}
+      <div className={cn('mx-auto flex w-full max-w-content flex-col gap-4 px-4 pt-3', split ? 'min-h-0 flex-1 pb-3' : 'pb-10')}>
         {compact && <ControlBar board={board} view={open && !split ? null : view} onView={setTaskView} />}
         {split ? (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-split)">
-            <div className="hidden min-w-0 lg:block">
+          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-split)">
+            <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">
               <InboxView board={board} now={now} compact currentTaskId={task.id} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
             </div>
-            <section aria-labelledby={TASK_TITLE_ID} className="flex min-h-(--size-split-panel-min) min-w-0 flex-col gap-2.5 lg:sticky lg:top-2 lg:h-(--size-split-panel)">
+            <section aria-labelledby={TASK_TITLE_ID} className="flex min-h-(--size-split-panel-min) min-w-0 flex-col gap-2.5">
               {panel}
             </section>
           </div>
