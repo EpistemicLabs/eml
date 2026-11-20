@@ -536,6 +536,12 @@ export function useSidebarController(props: SidebarProps) {
     },
     [activeSpace],
   );
+  // "New project…" in an empty pane's launcher (session-launcher) opens the same wizard.
+  useEffect(() => {
+    const open = () => setWizardOpen(true);
+    window.addEventListener('cockpit-add-project', open);
+    return () => window.removeEventListener('cockpit-add-project', open);
+  }, []);
   const handleProjectCreated = useCallback(() => {
     void runManualRefresh();
   }, [runManualRefresh]);

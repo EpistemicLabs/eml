@@ -42,6 +42,7 @@ import DeskTabBar from '../top-bar/DeskTabBar';
 import { TaskViewSwitch } from '../top-bar/TaskViewSwitch';
 import { ShortcutSheet } from '../top-bar/ShortcutSheet';
 import { useCockpitShortcuts } from '../top-bar/useCockpitShortcuts';
+import { setLauncherProjects } from '../session-launcher/launcher-projects';
 import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
@@ -94,6 +95,8 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
+  // The empty panes' launcher offers the open space's projects.
+  useEffect(() => { setLauncherProjects(projects); }, [projects]);
   // ⌘. Inbox, ⌘, Settings, G then I / N / P, ? (top-bar/shortcuts.ts lists them all).
   const openSettingsDefault = useCallback(() => openSettings(), [openSettings]);
   useCockpitShortcuts(openSettingsDefault);

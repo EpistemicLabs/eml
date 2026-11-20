@@ -12,7 +12,7 @@ const CSS = readFileSync(join(SRC, 'index.css'), 'utf8');
 const BASELINE_FILE = join(SRC, 'design-tokens.baseline.json');
 
 /** Directories built on tokens v2: no literal values at all. */
-const V2_DIRS = ['components/task-board', 'components/top-bar'];
+const V2_DIRS = ['components/task-board', 'components/top-bar', 'components/session-launcher'];
 /** Files that may hold colour literals, and why. */
 const COLOUR_EXCEPTIONS: Record<string, string> = {
   'lib/graph.ts': 'canvas drawing reads concrete colours',

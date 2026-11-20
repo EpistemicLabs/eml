@@ -150,6 +150,21 @@ describe('ChatBridge', () => {
     expect(runtimes[0].start.worker?.onPrompt?.() ?? null).toBeNull()
   })
 
+  it('starts a new chat from the launcher with its own first message and model, without the greeting', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Verapur reply', model: 'opus' })
+    await flush()
+    expect(runtimes[0].sent).toEqual(['Check the Verapur reply'])
+    expect(runtimes[0].start.model).toBe('opus')
+    expect(ledgerEntries.get('s1')).not.toMatchObject({ greeted: true })
+
+    // A known session takes neither: reopening it never sends anything.
+    const known = setup({ runtimeOf: 'sdk', transcript: true })
+    connect(known.bridge, { readOnly: true, prompt: 'again', model: 'opus' })
+    await flush()
+    expect(known.runtimes.flatMap((r) => r.sent)).toEqual([])
+  })
+
   it('greets no chat when the greeting is off, nor one the ledger knows (a resume or a worker)', async () => {
     const off = setup()
     connect(off.bridge, { readOnly: true, greet: false })

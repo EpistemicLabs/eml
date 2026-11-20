@@ -119,7 +119,7 @@ function MainContent({
             <MainContentTabSwitcher paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} isMainPane={isMainPane} onToggleMainPane={onToggleMainPane} />
           </div>
         )}
-        <MainContentStateView mode="empty" />
+        <MainContentStateView mode="empty" paneId={paneId} />
       </div>
     );
   }

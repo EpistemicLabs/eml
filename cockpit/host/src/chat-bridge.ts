@@ -156,6 +156,8 @@ type ClientMessage = {
   id?: unknown
   /** Settings › Preferences › Sessions: a plain new chat opens with the greeting (session-greeting.ts). */
   greet?: unknown
+  /** A new chat started from the empty pane's launcher: its first message, sent once the session starts. */
+  prompt?: unknown
   readOnly?: unknown
   whenIdle?: unknown
   images?: unknown
@@ -462,12 +464,16 @@ export class ChatBridge {
     const path = project.path
     // As in the terminal: only a plain new session greets. One the ledger knows is a resume or a worker
     // (spawned work is recorded before its view opens), and a chat never brings a first prompt of its own.
-    const greeting = greetingFor({ resume: this.ctx.ledger.has(sessionId), initialPrompt: null, greet: data.greet === true, worker: false })
+    const isNew = !this.ctx.ledger.has(sessionId)
+    // A new chat from the launcher brings its first message (and model); a known session never does.
+    const prompt = isNew ? text(data.prompt).trim() || null : null
+    const model = isNew && SAFE_MODEL.test(text(data.model)) ? text(data.model) : null
+    const greeting = greetingFor({ resume: !isNew, initialPrompt: prompt, greet: data.greet === true, worker: false })
     const handoff = this.handoff()
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
-      readOnly, greeting,
+      readOnly, greeting, firstPrompt: prompt, model,
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -490,6 +496,10 @@ export class ChatBridge {
     readOnly: boolean
     /** A plain new chat's first prompt (session-greeting.ts): the session starts at once and sends it. */
     greeting: string | null
+    /** A new chat's own first message (the launcher): sent like the greeting, which it replaces. */
+    firstPrompt: string | null
+    /** The model a new chat starts with. */
+    model: string | null
     onSwitch: () => void
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
@@ -522,9 +532,14 @@ export class ChatBridge {
       for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.runtime)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
-    if (opts.greeting && !resume) {
-      this.startEntry(entry, provider, space, paneId, false, true)
-      this.sendMessage(entry, opts.greeting)
+    const first = resume ? null : opts.firstPrompt ?? opts.greeting
+    if (first) {
+      if (opts.model) {
+        this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, first === opts.greeting)
+        this.ctx.ledger.setChatSettings(sessionId, { model: opts.model })
+      }
+      this.startEntry(entry, provider, space, paneId, false, first === opts.greeting)
+      this.sendMessage(entry, first)
     } else if (opts.readOnly) {
       if (!entry.runtime) this.emit(entry, { kind: 'process', state: 'stopped' })
     } else this.startEntry(entry, provider, space, paneId, resume)

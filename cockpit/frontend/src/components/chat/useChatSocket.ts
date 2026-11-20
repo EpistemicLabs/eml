@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
+import { clearChatStart, peekChatStart, rememberModels } from './chat-start';
 
 import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers, showSentMessage } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
@@ -69,10 +70,14 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       const sendInit = (wait: boolean) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         const space = spaceId !== undefined ? spaceId : paneStore.getDeskOfPane(paneId)?.spaceId ?? null;
+        const start = peekChatStart(sessionId);
         socket.send(JSON.stringify({
           type: 'init', paneId, projectId, sessionId, spaceId: space, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
           // Settings › Preferences › Sessions; the host greets only a plain new chat, as in the terminal.
           greet: readSettings().greetOnStart,
+          // A chat started from the launcher: its first message and model (the host ignores them for a known session).
+          ...(start?.prompt ? { prompt: start.prompt } : {}),
+          ...(start?.model ? { model: start.model } : {}),
         }));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
@@ -88,6 +93,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
         if (frame.type === 'joined') {
           joinedRef.current = true;
+          clearChatStart(sessionId);
           for (const waiting of waitingRef.current.splice(0)) socket.send(JSON.stringify(waiting));
           return;
         }
@@ -100,6 +106,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
+          if (frame.event.kind === 'capabilities') rememberModels(frame.event.models);
         } else if (frame.type === 'reset' && typeof frame.epoch === 'number') {
           resetChat(sessionId, frame.epoch);
           for (const waiting of waitingRef.current) if (waiting.type === 'send') showSentMessage(sessionId, waiting.id as string, waiting.text as string);
