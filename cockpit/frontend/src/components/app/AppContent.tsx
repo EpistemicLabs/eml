@@ -329,7 +329,7 @@ function AppContentInner() {
           its desks, and Inbox · Now · Plan at the right. The sidebar rail and the pane grid start below it. */}
       {!compact && (
       <div className="flex-shrink-0 px-2 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
-      <header data-ui="v2" aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-xl pr-1 pl-1.5">
+      <header data-ui="v2" aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-(--radius-bar) pr-(--pad-bar-end) pl-2">
         <button
           type="button"
           onClick={() => openSettings('about')}

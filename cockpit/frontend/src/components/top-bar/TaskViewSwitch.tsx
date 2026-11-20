@@ -10,7 +10,9 @@ import { openTaskView } from './useCockpitShortcuts';
 
 const VIEWS: Array<[TaskView, string, string]> = [['inbox', 'Inbox', 'I'], ['now', 'Now', 'N'], ['plan', 'Plan', 'P']];
 
-export const TAB = cn('flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-body font-medium text-muted-foreground hover:text-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS);
+export const TAB = cn('flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-(--radius-tab) px-3 text-body font-medium text-muted-foreground hover:text-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-(--shadow-pill)', FOCUS);
+/** The track around the space you are in and around the open task view. */
+export const TRACK = 'flex items-center gap-0.5 rounded-(--radius-track) p-(--pad-track)';
 
 /** A count next to a tab's name: grey, or red for something that stopped with an error. */
 export function Count({ children, label, stopped = false }: { children: React.ReactNode; label: string; stopped?: boolean }) {
@@ -29,7 +31,7 @@ export function TaskViewSwitch() {
   const inbox = useTaskBoard().data?.counts.inbox ?? 0;
   return (
     // Like a space's group of desks: plain until a task view is open, then the light background.
-    <div role="tablist" aria-label="Task views" className={cn('flex flex-shrink-0 gap-px rounded-lg p-1', topView === 'tasks' && 'bg-foreground/8')}>
+    <div role="tablist" aria-label="Task views" className={cn(TRACK, 'flex-shrink-0', topView === 'tasks' && 'bg-foreground/8')}>
       {VIEWS.map(([v, label, key]) => (
         <button key={v} type="button" role="tab" aria-selected={topView === 'tasks' && view === v} title={`${label} (G then ${key})`}
           onClick={() => openTaskView(v)} className={TAB}>

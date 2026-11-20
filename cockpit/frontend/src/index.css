@@ -227,10 +227,18 @@ html.dark {
   --target-comfortable: 32px;
   --target-touch: 44px;
   /* The top bar (mockup top bar v2): a dense bar, its tabs still above the 24px minimum target. */
-  --size-bar: 36px;
-  --size-tab: 26px;
+  --size-bar: 42px;
+  --size-tab: 28px;
   --size-logo: 26px;
-  --text-space: 12.5px;
+  --size-add: 26px;
+  --pad-bar-end: 5px;
+  --pad-track: 3px;
+  --gap-spaces: 22px;
+  /* Concentric corners: the track's radius is the tab's plus the track's padding. */
+  --radius-bar: 13px;
+  --radius-track: 10px;
+  --radius-tab: 7px;
+  --shadow-pill: 0 1px 2px rgb(0 0 0 / .12), 0 1px 4px rgb(0 0 0 / .06), 0 0 0 .5px rgb(0 0 0 / .08);
   --focus-offset: 2px;
   --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
   /* The Inbox's task panel: the window's height under the control bar, never shorter than the minimum. */

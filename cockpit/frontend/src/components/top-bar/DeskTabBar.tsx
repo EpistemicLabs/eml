@@ -17,7 +17,7 @@ import { setTopView, useTopView } from '@/stores/useTopViewStore';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 
 import { IS_MAC, MOD } from './shortcuts';
-import { Count, TAB } from './TaskViewSwitch';
+import { Count, TAB, TRACK } from './TaskViewSwitch';
 
 /**
  * Top-level desk tabs (called spaces until 0.17.4; "space" now means a brain
@@ -280,7 +280,7 @@ export default function DeskTabBar() {
   let position = 0;
 
   return (
-    <div className="flex h-full flex-shrink-0 items-center gap-1.5">
+    <div className="flex h-full flex-shrink-0 items-center">
       {sections.map((section, sectionIndex) => {
         const isActiveSpace = section.key === activeSpaceId;
         const brainActive = topView === 'brain' && isActiveSpace;
@@ -290,8 +290,9 @@ export default function DeskTabBar() {
         return (
           // One group per brain: its name, its desks, "+". A hairline sets the groups apart;
           // the space you are in has a light background.
-          <div key={section.space?.id ?? 'all'} className="flex items-center gap-1.5">
-          {sectionIndex > 0 && <span aria-hidden className="h-5 w-px flex-shrink-0 bg-(--glass-line)" />}
+          <div key={section.space?.id ?? 'all'} className="flex h-full items-center">
+          {/* The gap between spaces, its hairline in the middle. */}
+          {sectionIndex > 0 && <span aria-hidden className="flex w-(--gap-spaces) flex-shrink-0 justify-center self-stretch py-2"><span className="w-px bg-(--glass-line)" /></span>}
           <div
             ref={isActiveSpace ? activeSectionRef : undefined}
             data-active={isActiveSpace || undefined}
@@ -299,7 +300,7 @@ export default function DeskTabBar() {
             aria-label={spaceLabel}
             {...(section.space ? spaceDragProps(section.space) : {})}
             className={cn(
-              'relative flex items-center gap-px rounded-lg p-1',
+              cn(TRACK, 'relative'),
               isActiveSpace && topView !== 'tasks' && topView !== 'jobs' && 'bg-foreground/8',
               section.space && draggingSpace === section.space.id && 'opacity-60',
             )}
@@ -332,7 +333,7 @@ export default function DeskTabBar() {
               aria-pressed={brainActive}
               title={`${spaceLabel}: open its brain${count > 0 ? ` · ${count} pending review${count === 1 ? '' : 's'}` : ''}${section.space ? ' · double-click to rename, drag to reorder the spaces' : ''}`}
               className={cn(
-                'flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-lg px-1.5 text-(length:--text-space) font-bold text-foreground hover:bg-foreground/8 aria-pressed:bg-card aria-pressed:shadow-raised',
+                'mr-1.5 flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-(--radius-tab) px-1.5 text-body font-semibold text-foreground hover:bg-foreground/8 aria-pressed:bg-card aria-pressed:shadow-(--shadow-pill)',
                 FOCUS,
               )}
             >
@@ -400,7 +401,7 @@ export default function DeskTabBar() {
               onClick={() => handleCreate(section.key, section.desks.length)}
               aria-label={section.space ? `New desk in ${section.space.name}` : 'New desk'}
               title={section.space ? `New desk in ${section.space.name}` : 'New desk'}
-              className={cn('flex h-(--size-tab) w-6 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/8 hover:text-foreground', FOCUS)}
+              className={cn('ml-0.5 flex h-(--size-tab) w-(--size-add) flex-shrink-0 items-center justify-center rounded-(--radius-tab) text-muted-foreground hover:bg-foreground/8 hover:text-foreground', FOCUS)}
             >
               <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
                 <path d="M12 5v14M5 12h14" />
