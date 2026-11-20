@@ -194,7 +194,7 @@ function ProjectPicker({ open, onOpen, project, reason, ranked, spaceName, now, 
         <span aria-hidden className="text-muted-foreground">▾</span>
       </button>
       {open && (
-        <div role="dialog" aria-label="Pick a project" className="absolute top-full left-0 z-(--z-popover) mt-1.5 flex w-80 max-w-full flex-col gap-1.5 rounded-2xl border border-border bg-card p-1.5 shadow-modal">
+        <div role="dialog" aria-label="Pick a project" className="absolute top-full left-0 z-(--z-popover) mt-1.5 flex w-80 flex-col gap-1.5 rounded-2xl border border-border bg-card p-1.5 shadow-modal">
           <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search projects" aria-label="Search projects"
             onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) { e.preventDefault(); onPick(shown[0].project); } }}
             className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-body outline-none focus:border-border-strong" />
@@ -203,8 +203,8 @@ function ProjectPicker({ open, onOpen, project, reason, ranked, spaceName, now, 
             {shown.map(({ project: p, last }) => (
               <button key={p.projectId} type="button" role="option" aria-selected={p.projectId === project?.projectId} onClick={() => onPick(p)}
                 className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-body hover:bg-muted aria-selected:bg-muted', FOCUS)}>
-                <span className="truncate">{p.displayName}</span>
-                {last && <span className="ml-auto whitespace-nowrap text-ui text-muted-foreground">{when(last, now)}</span>}
+                <span className="min-w-0 flex-1 truncate">{p.displayName}</span>
+                {last && <span className="ml-auto shrink-0 whitespace-nowrap text-ui text-muted-foreground">{when(last, now)}</span>}
               </button>
             ))}
             {shown.length === 0 && <span className="px-2 py-1.5 text-body text-muted-foreground">No project matches.</span>}
