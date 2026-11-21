@@ -9,7 +9,7 @@ interface StandaloneShellProps {
   command?: string | null;
   isActive?: boolean;
   autoConnect?: boolean;
-  /** Outside the desks (the review screen): the session's space. */
+  /** Outside the desks (the task panel): the session's space. */
   spaceId?: string | null;
 }
 

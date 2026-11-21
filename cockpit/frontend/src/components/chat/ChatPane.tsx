@@ -9,7 +9,6 @@ import {
 
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
-import { returnToReviewBar } from '@/stores/useReviewStore';
 import { cn } from '@/lib/utils';
 import { buttonVariants, Chip, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
@@ -450,7 +449,7 @@ export function ChatPane({
   paneId, projectId, sessionId, session, isActive, whenIdle = false, spaceId,
 }: {
   paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean;
-  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  /** Outside the desks (the task panel): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
 }) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
@@ -494,11 +493,7 @@ export function ChatPane({
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
     const sent = send(text, images);
-    if (sent) {
-      pinWhenSentArrives.current = true;
-      // Replied during a review: the keyboard goes back to its bar, the session stays on screen.
-      returnToReviewBar(paneId);
-    }
+    if (sent) pinWhenSentArrives.current = true;
     return sent;
   }, [send, paneId]);
 
