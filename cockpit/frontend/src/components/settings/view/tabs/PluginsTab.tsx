@@ -56,7 +56,7 @@ export default function PluginsTab() {
       )}
       {view === 'spaces' && plugins.data && <SpacesMatrix plugins={plugins.data} spaces={spaces} connections={connections.data ?? []} onOpen={setOpen} />}
       {view === 'connectors' && <Connectors spaces={spaces} />}
-      {view === 'add' && <AddCustomMcp spaces={spaces} locked={connections.isError} onAdded={(id) => { setView('installed'); setOpen(id); }} />}
+      {view === 'add' && <AddCustomMcp spaces={spaces} onAdded={(id) => { setView('installed'); setOpen(id); }} />}
     </div>
   );
 }

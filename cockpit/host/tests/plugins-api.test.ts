@@ -229,6 +229,16 @@ describe('plugins per space', () => {
     await patch({ id: 'gmail', enabled: false, space: 'main' })
   })
 
+  it('lets a remote user see and add sign-ins, but adds a custom server remotely only with the shell on', async () => {
+    const remote = { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' }
+    expect((await fetch(`${base}/api/plugins/connections`, { headers: remote })).status).toBe(200)
+    const custom = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: remote, body: JSON.stringify({ id: 'remote-one', name: 'R', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+    })
+    expect(custom.status).toBe(403)
+    expect((await custom.json()).error.message).toContain('remote shell on')
+  })
+
   it('switches a claude.ai connector off in one space', async () => {
     const res = await fetch(`${base}/api/plugins/outside`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: false }),

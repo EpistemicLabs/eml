@@ -14,7 +14,7 @@ type Row = { name: string; value: string; secret: boolean };
 
 const input = 'mt-1 w-full rounded-md border border-foreground/10 bg-background px-2 py-1 text-sm';
 
-export default function AddCustomMcp({ spaces, locked, onAdded }: { spaces: SpaceInfo[]; locked: boolean; onAdded: (id: string) => void }) {
+export default function AddCustomMcp({ spaces, onAdded }: { spaces: SpaceInfo[]; onAdded: (id: string) => void }) {
   const add = useAddCustomMcp();
   const [name, setName] = useState('');
   const [transport, setTransport] = useState<'stdio' | 'http'>('stdio');
@@ -23,9 +23,6 @@ export default function AddCustomMcp({ spaces, locked, onAdded }: { spaces: Spac
   const [rows, setRows] = useState<Row[]>([]);
   const [chosen, setChosen] = useState<string[]>([]);
 
-  if (locked) {
-    return <SettingsSection title="Add custom MCP" description="Custom MCP servers are added on the cockpit's own machine: they run with your user rights there." ><span /></SettingsSection>;
-  }
   const id = idFromName(name);
   const rowsValid = rows.every((r) => /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(r.name) && r.value !== '');
   const complete = id !== '' && target.trim() !== '' && rowsValid;
@@ -33,7 +30,7 @@ export default function AddCustomMcp({ spaces, locked, onAdded }: { spaces: Spac
 
   return (
     <SettingsSection title="Add custom MCP" description="Any MCP server, by command or URL. It becomes a plugin with an mcp part, switched on in the spaces you pick.">
-      <p className="rounded-lg border border-foreground/10 bg-foreground/4 px-3 py-2 text-sm"><b>Runs with your user rights.</b> The server starts as its own process on this machine and can do what your user can. It only gets the values you enter here.</p>
+      <p className="rounded-lg border border-foreground/10 bg-foreground/4 px-3 py-2 text-sm"><b>Runs with your user rights.</b> The server starts as its own process on the cockpit's machine and can do what your user can. It only gets the values you enter here. From another device it can be added once remote access lets the shell in too (eml-cockpit remote shell on).</p>
       <form
         className="space-y-4"
         onSubmit={(event) => {
