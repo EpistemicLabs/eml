@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { Chip, FOCUS, HUE, Switch } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-import { needsSignIn } from './shared';
+import { needsSignIn } from './PluginShared';
 
 /** The sign-ins a plugin uses in a space: a label for the only one, a toggle chip each where there are several. */
 export function SignInPicker({ plugin, space, connections }: { plugin: PluginView; space: SpaceInfo; connections: ConnectionView[] }) {

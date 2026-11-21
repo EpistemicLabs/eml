@@ -15,7 +15,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button, FOCUS, Input, Textarea } from '@/shared/view/ui';
 
-import { SlugField } from './shared';
+import { SlugField } from './PluginShared';
 
 function ClientStep({ fromSignIns }: { fromSignIns: Array<{ id: string; label: string }> }) {
   const save = useSaveGoogleClient();

@@ -22,10 +22,10 @@ import { useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 
 import type { SettingsMainTabMeta } from '../../constants/constants';
 import SettingsHeading from '../SettingsHeading';
-import AddCustomMcp from './plugins/AddCustomMcp';
-import PluginDetail from './plugins/PluginDetail';
-import SpaceCell from './plugins/SpaceCell';
-import { PartChips, PluginIcon, TierChip, needsSignIn } from './plugins/shared';
+import AddCustomMcp from './AddCustomMcp';
+import PluginDetail from './PluginDetail';
+import SpaceCell from './PluginSpaceCell';
+import { PartChips, PluginIcon, TierChip, needsSignIn } from './PluginShared';
 
 type View = 'installed' | 'spaces' | 'add';
 

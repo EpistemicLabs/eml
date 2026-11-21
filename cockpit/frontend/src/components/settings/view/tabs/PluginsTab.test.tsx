@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSpaces } from '@/stores/useSpaceStore';
 import { SETTINGS_MAIN_TABS } from '../../constants/constants';
 import PluginsTab from './PluginsTab';
-import { splitCommand } from './plugins/AddCustomMcp';
+import { splitCommand } from './AddCustomMcp';
 
 // Settings › Plugins: the plugins per space, a plugin's own page, and adding a
 // custom MCP server whose secret values go into a sign-in, never the plugin.
