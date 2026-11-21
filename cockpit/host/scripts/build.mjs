@@ -11,12 +11,13 @@
 //   dist/channel-bridge-mcp.cjs  a job's bridge tools    — esbuild, CJS
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
+//   plugins/<id>/plugin.json  official plugins' manifests — copied from the repo's plugins/
 //   THIRD_PARTY_LICENSES.md                     — notices for the code bundled into dist/ and ui/
 // The SQL files sit next to dist/ so core's `__dirname/../migrations` resolves the
 // same way inside the bundle as it does in the workspace checkout.
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,7 +32,7 @@ const core = pkgRoot('@engramprotocol/core')
 const frontend = pkgRoot('@engramprotocol/cockpit-frontend')
 const channelBridge = pkgRoot('@engramprotocol/channel-bridge')
 
-for (const p of ['dist', 'ui', 'migrations', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
+for (const p of ['dist', 'ui', 'migrations', 'plugins', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
 
 const common = {
   bundle: true, platform: 'node', format: 'cjs', target: 'node20',
@@ -67,6 +68,12 @@ bundledFiles.push(...JSON.parse(readFileSync(UI_MODULES, 'utf8')))
 cpSync(uiDist, path.join(HOST, 'ui'), { recursive: true, filter: (src) => src !== UI_MODULES })
 const licensed = writeThirdPartyLicenses(bundledFiles, path.join(HOST, 'THIRD_PARTY_LICENSES.md'))
 cpSync(path.join(core, 'migrations'), path.join(HOST, 'migrations'), { recursive: true })
+// Only the manifests: a plugin's code parts are bundled where they run (the channel into dist/channel-bridge.cjs).
+const PLUGINS = path.resolve(HOST, '..', '..', 'plugins')
+for (const id of readdirSync(PLUGINS)) {
+  const manifest = path.join(PLUGINS, id, 'plugin.json')
+  if (existsSync(manifest)) cpSync(manifest, path.join(HOST, 'plugins', id, 'plugin.json'))
+}
 
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
-console.log(`eml-cockpit: dist/ ui/ migrations/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)
+console.log(`eml-cockpit: dist/ ui/ migrations/ plugins/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)

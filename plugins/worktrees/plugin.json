@@ -1,0 +1,12 @@
+{
+  "id": "worktrees",
+  "name": "Worktrees",
+  "description": "The project's git worktrees and branches, the sessions working in them and the local ports in use.",
+  "tier": "official",
+  "defaultEnabled": true,
+  "parts": {
+    "pane": {
+      "builtin": "worktrees"
+    }
+  }
+}
