@@ -1,4 +1,4 @@
-// Settings › EML Plugins (plan cockpit-plugins-mcp-channels-plan, mockup v3):
+// Settings › EML Plugins:
 // every plugin — the cockpit's views, services such as Gmail, the user's
 // custom MCP servers — switched on or off per space, all or nothing, with one
 // of the user's sign-ins where it needs one. Three tabs: Installed, Spaces (the
@@ -22,10 +22,10 @@ import { useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 
 import type { SettingsMainTabMeta } from '../../constants/constants';
 import SettingsHeading from '../SettingsHeading';
-import AddCustomMcp from './plugins/AddCustomMcp';
-import PluginDetail from './plugins/PluginDetail';
-import SpaceCell from './plugins/SpaceCell';
-import { PartChips, PluginIcon, TierChip, needsSignIn } from './plugins/shared';
+import AddCustomMcp from './AddCustomMcp';
+import PluginDetail from './PluginDetail';
+import SpaceCell from './PluginSpaceCell';
+import { PartChips, PluginIcon, TierChip, needsSignIn } from './PluginShared';
 
 type View = 'installed' | 'spaces' | 'add';
 

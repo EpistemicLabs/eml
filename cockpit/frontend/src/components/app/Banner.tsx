@@ -2,7 +2,7 @@
 // brain hygiene, agent upgrade, shared space): one layout, and a tone that says
 // the state, not the sender — info: something is up to you (amber), success:
 // done (grey), destructive: broken (red). Tokens v2: colour only for meaning.
-// Every banner has a × (Lasse, 2026-11-21): one dismissed with its `dismissKey`
+// Every banner has a ×: one dismissed with its `dismissKey`
 // stays away in this browser until what it says changes (its key does).
 import { useState, type ReactNode } from 'react';
 import { Loader2, X, type LucideIcon } from 'lucide-react';

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSpaces } from '@/stores/useSpaceStore';
 import { SETTINGS_MAIN_TABS } from '../../constants/constants';
 import PluginsTab from './PluginsTab';
-import { splitCommand } from './plugins/AddCustomMcp';
+import { splitCommand } from './AddCustomMcp';
 
 // Settings › Plugins: the plugins per space, a plugin's own page, and adding a
 // custom MCP server whose secret values go into a sign-in, never the plugin.
@@ -37,7 +37,7 @@ beforeEach(async () => {
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     const body = url.startsWith('/api/spaces') ? { spaces: SPACES }
       : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }] }
-      : url === '/api/plugins/google/client' ? { configured: false }
+      : url === '/api/plugins/google/client' ? { configured: method === 'PUT', fromSignIns: [{ id: 'work', label: 'Work mailbox' }] }
       : url === '/api/plugins/connections' ? { connection: { id: 'lookup-1', plugin: 'lookup', label: 'Settings', secrets: ['API_KEY'] } }
       : url.startsWith('/api/plugins/custom') ? { plugin: {} }
       : url.startsWith('/api/plugins/outside') ? { servers: [{ name: 'claude.ai Slack', kind: 'connector', off: ['other-id'] }] }
@@ -121,6 +121,14 @@ describe('Settings › Plugins', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Gmail/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add another Google account' }));
     expect(await screen.findByRole('textbox', { name: 'OAuth client JSON' })).toBeTruthy();
+  });
+
+  it('offers the OAuth client of an earlier sign-in instead of asking for the JSON', async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole('button', { name: /Gmail/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add another Google account' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Work mailbox' }));
+    await waitFor(() => expect(calls.find((c) => c.url === '/api/plugins/google/client' && c.method === 'PUT')?.body).toEqual({ fromConnection: 'work' }));
   });
 
   it('splits a command line at spaces outside quotes', () => {

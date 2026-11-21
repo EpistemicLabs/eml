@@ -2,12 +2,13 @@ import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import type { ConfigValue } from '../../domain/plugin-manifest.js'
 import { setPlugin, type Connection, type SpacePlugins } from '../../domain/space-plugins.js'
+import { writeOwnerOnly } from './owner-only-file.js'
 import { redactSecrets } from '../../diagnostics/redact.js'
 import type { PluginRegistry } from './plugin-registry.js'
 import type { PluginStore } from './plugin-store.js'
 
 /**
- * One-time import of the MCP servers configured outside the plugins (plan phase 3), so that from
+ * One-time import of the MCP servers configured outside the plugins, so that from
  * then on a space's sessions get exactly the plugins switched on for it:
  *
  *   - the user-level servers in the cockpit's Claude config (<home>/claude-config/.claude.json
@@ -68,7 +69,8 @@ export async function importMcpServers(
       }
       // Only what became a plugin leaves the config; what couldn't be read stays where it was.
       const rest = Object.fromEntries(Object.entries(servers).filter(([name]) => !taken.includes(name)))
-      await writeJsonAtomic(source.claudeJson, { ...config, mcpServers: rest })
+      // Claude Code's own folder: the file owner-only, the folder as it is.
+      await writeOwnerOnly(source.claudeJson, JSON.stringify({ ...config, mcpServers: rest }, null, 2), { lockDir: false })
     }
     await deps.store.updateSpaces((state) => markDone(state, CLAUDE_STEP))
   }
@@ -102,14 +104,15 @@ async function importOne(
 ): Promise<Outcome> {
   const split = splitDefinition(definition)
   if (!split) return { ok: false, reason: 'not a stdio or http server definition the cockpit can read' }
-  const id = await freeId(serverName, origin, deps.registry)
-  const added = await deps.registry.addCustom({
-    id,
-    name: serverName,
-    description: origin === 'claude-config' ? 'Imported from the cockpit\'s Claude config.' : `Imported from agent ${origin.slice('agent-'.length)}'s MCP file.`,
-    parts: { mcp: { ...split.part, serverName } },
-  })
-  if (!added.ok) return { ok: false, reason: added.reason }
+  const description = origin === 'claude-config' ? 'Imported from the cockpit\'s Claude config.' : `Imported from agent ${origin.slice('agent-'.length)}'s MCP file.`
+  // A run cut off before it was marked done made some plugins already: the same server again is that one.
+  const before = (await deps.store.spaces()).imported
+  const earlier = (await deps.registry.custom()).find((m) => before.includes(m.id) && m.description === description && m.parts.mcp?.serverName === serverName)
+  const id = earlier?.id ?? await freeId(serverName, origin, deps.registry)
+  if (!earlier) {
+    const added = await deps.registry.addCustom({ id, name: serverName, description, parts: { mcp: { ...split.part, serverName } } })
+    if (!added.ok) return { ok: false, reason: added.reason }
+  }
   const hasSecrets = Object.keys(split.values).length > 0
   const connection: Connection | null = hasSecrets ? { id: `${id}-imported`, plugin: id, label: 'Imported settings', values: split.values } : null
   if (connection) await deps.store.updateConnections((connections) => [...connections.filter((c) => c.id !== connection.id), connection])
@@ -207,11 +210,6 @@ async function readJsonObject(file: string): Promise<Record<string, unknown> | n
   }
 }
 
-async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), { mode: 0o600 })
-  await fs.rename(tmp, file)
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null

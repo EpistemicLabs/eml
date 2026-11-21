@@ -27,7 +27,7 @@ export interface TimeNames {
 }
 
 /**
- * The cockpit's plugins (plan cockpit-plugins-mcp-channels-plan): the official
+ * The cockpit's plugins: the official
  * ones in plugins/<id>/plugin.json — the project's views, Brain among them, and
  * services such as Gmail — and the user's own custom MCP servers
  * (infrastructure/plugins/plugin-registry.ts). Each space has its own: a plugin
@@ -47,7 +47,7 @@ export interface TimeNames {
  *   POST   /api/plugins/connections  { plugin, label, values } → { connection }
  *   DELETE /api/plugins/connections/<id>        → { removed }
  *   GET|PUT /api/plugins/google/client  { client } → { configured }: the user's own Google OAuth client
- *   POST   /api/plugins/google/sign-in  { plugin, connection? } → { url }: Google's consent page
+ *   POST   /api/plugins/google/sign-in  { plugin } → { url }: Google's consent page
  *   POST   /api/plugins/google/sign-in/finish  { plugin, redirect, slug? } → { connection }
  *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, remotely only with the shell on
  *   DELETE /api/plugins/custom/<id>             → { removed }, remotely only with the shell on
@@ -266,7 +266,7 @@ export async function handlePluginsApi(
       const known = typeof body.id === 'string' && (await registry.get(body.id)) !== null
       if (!known || typeof body.enabled !== 'boolean') return badRequest('id is a plugin this cockpit knows, enabled a boolean')
       if (body.space !== undefined && typeof body.space !== 'string') return badRequest('space is a space id')
-      // `connections` (the sign-ins it uses there) or, as before, one `connection`.
+      // `connections` (the sign-ins it uses there) or a single `connection`, the older form of the request.
       const picked = Array.isArray(body.connections) ? body.connections : body.connection === undefined ? undefined : body.connection === null ? [] : [body.connection]
       if (picked !== undefined && !picked.every((c): c is string => typeof c === 'string')) return badRequest('connections is a list of connection ids')
       const id = body.id as string
@@ -358,13 +358,16 @@ export async function handlePluginsApi(
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin)) || typeof body.redirect !== 'string') return badRequest('plugin and redirect (the address the browser ended on) are needed')
       if (body.slug !== undefined && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
       const finished = await google.finish(body.redirect)
-      if (!finished.ok) return badRequest(finished.reason)
+      if (!finished.ok) {
+        // The code says what happened; 503 only where trying the same address again can help.
+        json(res, finished.retryable ? 503 : 400, { error: { code: finished.code, message: finished.reason, retryable: finished.retryable } })
+        return true
+      }
       const { address, credentialsFile, tokenFile } = finished.signedIn
       const all = await service.connections()
       const again = all.find((c) => c.plugin === body.plugin && c.values.address?.toLowerCase() === address.toLowerCase())
-      const base = `${body.plugin}-${address.toLowerCase().split('@')[0].replace(/[^a-z0-9]+/g, '-')}`.slice(0, 50).replace(/-+$/, '')
-      let id = again?.id ?? base
-      for (let n = 2; !again && all.some((c) => c.id === id); n++) id = `${base}-${n}`
+      // An id that doesn't name the mailbox: it shows up in logs and file names.
+      const id = again?.id ?? `${body.plugin}-${randomUUID().slice(0, 8)}`
       const connection = { id, plugin: body.plugin, label: address, ...(typeof body.slug === 'string' ? { slug: body.slug } : again?.slug ? { slug: again.slug } : {}), values: { address, credentialsFile, tokenFile } }
       await service.saveConnection(connection)
       json(res, 200, { connection: { id, plugin: connection.plugin, label: address, slug: connection.slug ?? null, secrets: Object.keys(connection.values), again: !!again } })
@@ -391,7 +394,13 @@ export async function handlePluginsApi(
     }
     const connectionId = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})$/.exec(pathname)?.[1]
     if (connectionId && method === 'DELETE') {
+      const gone = (await service.connections()).find((c) => c.id === connectionId)
       const removed = await service.removeConnection(connectionId)
+      // A token file the cockpit wrote for the sign-in goes with it; one another program keeps stays.
+      const tokenFile = gone?.values.tokenFile
+      if (removed && tokenFile && ctx.google && path.dirname(path.resolve(tokenFile)) === path.resolve(path.dirname(ctx.google.clientFile))) {
+        await fs.rm(tokenFile, { force: true })
+      }
       json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No connection with this id' } })
       return true
     }

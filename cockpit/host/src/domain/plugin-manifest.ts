@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 /**
- * A cockpit plugin (plan cockpit-plugins-mcp-channels-plan): one service, made of parts.
+ * A cockpit plugin: one service, made of parts.
  *
  *   pane     a view in a pane: one of the cockpit's built-in views, or later a sandboxed page
  *   mcp      an MCP server the space's sessions get

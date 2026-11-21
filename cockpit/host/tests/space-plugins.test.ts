@@ -124,6 +124,15 @@ describe('importMcpServers', () => {
     expect(Object.keys((await service.snapshot()).filesFor('sachi-space').mcpServers)).toEqual(['qonto'])
   })
 
+  it('makes no second plugin when a run was cut off before it was marked done', async () => {
+    await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
+    // As if the cockpit had stopped before writing the steps: the config still lists the servers.
+    await store.updateSpaces((state) => ({ ...state, done: [] }))
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ mcpServers: { stripe: { command: 'npx', args: ['-y', 'stripe-mcp'], env: { STRIPE_KEY: 'placeholder-b' } } } }))
+    await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
+    expect((await registry.custom()).map((m) => m.id).sort()).toEqual(['gmail-claude-config', 'qonto', 'stripe'])
+  })
+
   it('changes nothing when it runs again', async () => {
     await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
     const before = ['custom.json', 'connections.json', 'spaces.json'].map((f) => readFileSync(join(dir, 'plugins', f), 'utf8'))
@@ -135,7 +144,7 @@ describe('importMcpServers', () => {
 })
 
 describe('SpacePluginService.setup', () => {
-  it('carries the cockpit-wide switches of before over to every space, once', async () => {
+  it('carries the cockpit-wide switches an older cockpit kept over to every space, once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-setup-'))
     try {
       mkdirSync(join(dir, 'official', 'time'), { recursive: true })
@@ -198,15 +207,15 @@ describe('the channel bridge accounts', () => {
     expect(bridgeAccountsFor({ ...state, partsOff: { gmail: ['channel'] } }, [gmail], [work], ['main']).accounts).toEqual([])
   })
 
-  it('turns the accounts file of before into connections once, keeping each account id', async () => {
+  it('turns the accounts file of an older cockpit into connections once, keeping each account id', async () => {
     const { importBridgeAccounts, writeBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-'))
     try {
       const file = join(dir, 'accounts.json')
       writeFileSync(file, JSON.stringify([{ type: 'gmail', accountId: 'home-mail', space: 'main', address: 'me@home.example', credentialsFile: '/c2', tokenFile: '/t2' }]))
       const store = new PluginStore(join(dir, 'plugins'))
-      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual(['home-mail'])
-      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual([])
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: ['home-mail'], problem: null })
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: [], problem: null })
       expect(await store.connections()).toEqual([{ ...home, label: 'me@home.example' }])
       expect((await store.spaces()).spaces.main.plugins.gmail).toEqual({ connections: ['home-mail'] })
       expect(readdirSync(join(dir, 'backups'))).toHaveLength(1)
@@ -223,8 +232,48 @@ describe('the channel bridge accounts', () => {
   })
 })
 
+describe('an older cockpit\'s accounts file, when it is not as expected', () => {
+  it('leaves a file it cannot read as it is and takes it over only once it can', async () => {
+    const { importBridgeAccounts, ownsBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-broken-'))
+    try {
+      const file = join(dir, 'accounts.json')
+      writeFileSync(file, '[{ "type": "gmail", }]')
+      const store = new PluginStore(join(dir, 'plugins'))
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toMatchObject({ imported: [], problem: expect.stringContaining('not JSON') })
+      expect(await ownsBridgeAccounts(store)).toBe(false)
+      expect(readFileSync(file, 'utf8')).toBe('[{ "type": "gmail", }]')
+      writeFileSync(file, JSON.stringify([{ type: 'gmail', accountId: 'Work_Mail', space: 'main', address: 'me@work.example' }]))
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: ['gmail-work-mail'], problem: null })
+      expect(await ownsBridgeAccounts(store)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an account id of another form as the bridge account id, so its cursors carry on', async () => {
+    const { bridgeAccountsFor } = await import('../src/domain/space-plugins.js')
+    const gmail = (() => { const r = readManifest({ id: 'gmail', name: 'Gmail', tier: 'official', parts: { channel: { adapter: 'gmail' } } }, 'official'); if (!r.ok) throw new Error(r.reason); return r.manifest })()
+    const state = setPlugin(emptySpacePlugins(), 'main', 'gmail', { connections: ['gmail-work-mail'] })
+    const connection = { id: 'gmail-work-mail', accountId: 'Work_Mail', plugin: 'gmail', label: 'Work', values: { address: 'me@work.example' } }
+    expect(bridgeAccountsFor(state, [gmail], [connection], ['main']).accounts).toEqual([{ type: 'gmail', accountId: 'Work_Mail', spaces: ['main'], address: 'me@work.example' }])
+  })
+
+  it('counts a missing file as nothing to import', async () => {
+    const { importBridgeAccounts, ownsBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-none-'))
+    try {
+      const store = new PluginStore(join(dir, 'plugins'))
+      expect(await importBridgeAccounts(join(dir, 'accounts.json'), store, join(dir, 'backups'))).toEqual({ imported: [], problem: null })
+      expect(await ownsBridgeAccounts(store)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('several sign-ins and name clashes', () => {
-  it('reads a file of before with one connection per space', async () => {
+  it('reads an older file with one connection per space', async () => {
     const { spacePluginsSchema } = await import('../src/domain/space-plugins.js')
     const state = spacePluginsSchema.parse({ version: 1, spaces: { a: { plugins: { x: { connection: 'c1' }, y: { connection: null } } } } })
     expect(state.spaces.a.plugins).toEqual({ x: { connections: ['c1'] }, y: { connections: [] } })
@@ -239,6 +288,32 @@ describe('several sign-ins and name clashes', () => {
     const { servers, problems } = mcpServersFor('a', state, [official, imported], [g1], { NODE: '/usr/bin/node', COCKPIT_DIST: '/app/dist' })
     expect(servers).toEqual({ gmail: { type: 'stdio', command: '/usr/bin/node', args: ['/app/dist/gmail-mcp.cjs'], env: { T: '/t' } } })
     expect(problems).toEqual(['gmail: left out, gmail serves gmail here'])
+  })
+})
+
+describe('a new space and the parts of a plugin', () => {
+  it('starts a new space with the main space\'s panes and no server, and switches a part off for every space', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-adopt-'))
+    try {
+      for (const [id, parts] of [['note', { pane: { builtin: 'note' } }], ['gmail', { mcp: { transport: 'stdio', command: 'x' }, channel: { adapter: 'gmail' } }]] as const) {
+        mkdirSync(join(dir, 'official', id), { recursive: true })
+        writeFileSync(join(dir, 'official', id, 'plugin.json'), JSON.stringify({ id, name: id, tier: 'official', parts }))
+      }
+      const registry = new PluginRegistry({ officialDir: join(dir, 'official'), customFile: join(dir, 'p', 'custom.json') })
+      const store = new PluginStore(join(dir, 'p'))
+      const service = new SpacePluginService(registry, store)
+      await service.setPlugin('main', 'note', true)
+      await service.setPlugin('main', 'gmail', true)
+      await service.adoptSpace('new', 'main')
+      expect((await store.spaces()).spaces.new.plugins).toEqual({ note: { connections: [] } })
+      expect(Object.keys((await service.snapshot()).filesFor('main').mcpServers)).toEqual(['gmail'])
+      await service.setPart('gmail', 'mcp', false)
+      expect((await service.snapshot()).filesFor('main').mcpServers).toEqual({})
+      await service.setPart('gmail', 'mcp', true)
+      expect(Object.keys((await service.snapshot()).filesFor('main').mcpServers)).toEqual(['gmail'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

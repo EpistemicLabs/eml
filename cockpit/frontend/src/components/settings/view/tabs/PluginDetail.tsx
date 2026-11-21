@@ -1,4 +1,4 @@
-// Settings › Plugins › one plugin (mockup v3): its parts and the user's
+// Settings › Plugins › one plugin: its parts and the user's
 // sign-ins side by side, the spaces it is on in, and what its tier lets it do.
 import { ChevronLeft } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -16,9 +16,10 @@ import { cn } from '@/lib/utils';
 import { Button, HUE, Input, LABEL, Switch } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
+import SettingsPanel, { SettingsPanelLine } from '../SettingsPanel';
 import { GoogleSignIn, GoogleSignInAgain } from './GoogleSignIn';
-import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, trustNote } from './shared';
-import { SignInPicker } from './SpaceCell';
+import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, trustNote } from './PluginShared';
+import { SignInPicker } from './PluginSpaceCell';
 
 /** The values a gmail sign-in holds for the channel bridge (plugins/gmail/channel). */
 const GMAIL_FIELDS = ['address', 'credentialsFile', 'tokenFile'];
@@ -28,29 +29,6 @@ const partNote = (plugin: PluginView, part: PluginView['parts'][number]) => ({
   mcp: plugin.channel ? 'Tools for your own sessions (jobs send through the bridge)' : 'Tools the agent can call',
   channel: 'Incoming messages wake the matching job; replies leave through the bridge outbox',
 }[part]);
-
-/** A bordered panel with a small heading, as the mockup draws them. */
-function Panel({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
-  return (
-    <section className={cn('flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3', className)}>
-      <h4 className={LABEL}>{title}</h4>
-      {children}
-    </section>
-  );
-}
-
-/** A line in a panel: a label with a note under it, and controls on the right. */
-function Line({ label, note, children, noteClassName }: { label: ReactNode; note?: ReactNode; children?: ReactNode; noteClassName?: string }) {
-  return (
-    <div className="flex items-center gap-3 border-t border-border py-2 first-of-type:border-t-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-body text-foreground">{label}</div>
-        {note && <div className={cn('text-ui text-muted-foreground', noteClassName)}>{note}</div>}
-      </div>
-      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
-    </div>
-  );
-}
 
 export default function PluginDetail({ plugin, spaces, connections, onBack }: {
   plugin: PluginView;
@@ -88,42 +66,42 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
       )}
 
       <div className="grid grid-cols-(--grid-plugin-panels) items-start gap-3">
-        <Panel title="Parts">
+        <SettingsPanel title="Parts">
           {plugin.parts.map((part) => (
-            <Line key={part} label={PART_LABEL[part]} note={part === 'mcp' && plugin.mcp ? `${partNote(plugin, part)} · ${plugin.mcp.target}` : partNote(plugin, part)}>
+            <SettingsPanelLine key={part} label={PART_LABEL[part]} note={part === 'mcp' && plugin.mcp ? `${partNote(plugin, part)} · ${plugin.mcp.target}` : partNote(plugin, part)}>
               <Switch
                 checked={!plugin.partsOff.includes(part)}
                 disabled={setPart.isPending || plugin.parts.length === 1}
                 onChange={(enabled) => setPart.mutate({ id: plugin.id, part, enabled })}
                 ariaLabel={`${plugin.name} ${PART_LABEL[part]}`}
               />
-            </Line>
+            </SettingsPanelLine>
           ))}
           {setPart.isError && <p className="text-ui text-stopped-ink">{setPart.error.message}</p>}
-        </Panel>
+        </SettingsPanel>
 
-        <Panel title="Sign-ins">
+        <SettingsPanel title="Sign-ins">
           {!needsSignIn(plugin) && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
           {needsSignIn(plugin) && own.length === 0 && <p className={cn('text-body', HUE.you.ink)}>No sign-in yet: add one to use it in a space.</p>}
           {own.map((connection) => (
             <div key={connection.id} className="border-t border-border first-of-type:border-t-0">
-              <Line
+              <SettingsPanelLine
                 label={connection.label}
                 note={`Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · secret stored once, owner only, never shown`}
               >
                 {google && againFor !== connection.id && <Button variant="outline" size="sm" onClick={() => setAgainFor(connection.id)}>Sign in again</Button>}
                 <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
-              </Line>
+              </SettingsPanelLine>
               {google && againFor === connection.id && <GoogleSignInAgain plugin={plugin} connection={connection} onClose={() => setAgainFor(null)} />}
             </div>
           ))}
           {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
           {needsSignIn(plugin) && !google && <AddSignIn plugin={plugin} another={own.length > 0} />}
           {google && <AddSignIn plugin={plugin} another={own.length > 0} manual />}
-        </Panel>
+        </SettingsPanel>
       </div>
 
-      <Panel title="Spaces">
+      <SettingsPanel title="Spaces">
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-body">
             <thead className="bg-muted">
@@ -154,12 +132,12 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
             Incoming messages are routed across all {onIn} space{onIn === 1 ? '' : 's'} where this plugin is on: thread owner first, then exact address, then verified domain. Unmatched or ambiguous ones show in the inbox of each of those spaces.
           </p>
         )}
-      </Panel>
+      </SettingsPanel>
 
-      <Panel title="Trust and permissions">
+      <SettingsPanel title="Trust and permissions">
         <p className="text-body text-muted-foreground">{trustNote(plugin.tier)}</p>
         {plugin.tier === 'custom' && (
-          <Line label="Remove plugin" note="Its sign-ins and secrets are deleted from this cockpit.">
+          <SettingsPanelLine label="Remove plugin" note="Its sign-ins and secrets are deleted from this cockpit.">
             {confirmRemove ? (
               <>
                 <Button variant="destructive" size="sm" onClick={() => removeCustom.mutate(plugin.id, { onSuccess: onBack })} loading={removeCustom.isPending}>Remove</Button>
@@ -168,10 +146,10 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
             ) : (
               <Button variant="outline" size="sm" onClick={() => setConfirmRemove(true)}>Remove…</Button>
             )}
-          </Line>
+          </SettingsPanelLine>
         )}
         {removeCustom.isError && <p className="text-ui text-stopped-ink">{removeCustom.error.message}</p>}
-      </Panel>
+      </SettingsPanel>
     </div>
   );
 }

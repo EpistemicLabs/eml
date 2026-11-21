@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { secretsOf, serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
 
 /**
- * Which plugins each space has (plan cockpit-plugins-mcp-channels-plan, item 4). A plugin is all or
+ * Which plugins each space has. A plugin is all or
  * nothing per space: switched on, the space gets every part of it that is on for the cockpit. A
  * plugin with a sign-in uses one or more of the user's connections in each space where it is on
  * (decision plugin-several-sign-ins-per-space: two mailboxes in one space).
@@ -53,6 +53,8 @@ export const connectionSchema = z.object({
   plugin: z.string(),
   /** What the user recognises it by ("work mailbox"); never a secret. */
   label: z.string().max(80),
+  /** The channel bridge's account id, where it differs from the connection's (an account named before the plugins). */
+  accountId: z.string().min(1).optional(),
   /** Names its MCP server next to the plugin's own (gmail-invoice); the plugin's name when left out. */
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/).optional(),
   /** Secret name → value; owner-only on disk, never sent to the page. */
@@ -147,7 +149,7 @@ export function mcpServersFor(
         ? { type: 'stdio', command: expand(part.command), args: part.args.map(fill), env: mapValues(part.env, fill) }
         : { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
       if (missing.length > 0) {
-        problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.label} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
+        problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.id} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
         continue
       }
       // The first sign-in (or one without a short name) takes the plugin's own name; others add theirs.
@@ -206,7 +208,7 @@ export function bridgeAccountsFor(
     for (const connection of connections.filter((c) => c.plugin === manifest.id)) {
       const spaces = bySpace.filter((on) => on.connections.includes(connection.id) && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
       if (spaces.length === 0) continue
-      accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.id, spaces: spaces.sort() })
+      accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.accountId ?? connection.id, spaces: spaces.sort() })
     }
   }
   return { accounts, problems }

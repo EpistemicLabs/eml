@@ -64,7 +64,8 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
   // once, it shows in each of them. Sender and subject only; the text stays for a job to read.
   if (req.method === 'GET' && path === '/v1/inbox') {
     if (!authorized(req, options.cockpitToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
-    const space = new URL(req.url ?? '/', 'http://localhost').searchParams.get('space') ?? ''
+    const space = new URL(req.url ?? '/', 'http://localhost').searchParams.get('space')
+    if (!space) return send(res, 400, { kind: 'refused', reason: 'missing_space', retryable: false })
     const accounts = deps.channels.inSpace(space).map((account) => account.accountId)
     const messages = (await deps.store.inbox(accounts, 100)).map((m) => ({
       id: m.id, accountId: m.accountId, channel: m.channel, from: m.from, senderVerified: m.senderVerified,

@@ -73,8 +73,18 @@ describe('GoogleSignIn', () => {
     if (!started.ok) throw new Error(started.reason)
     grantedScope = SCOPES[0]
     const state = new URL(started.url).searchParams.get('state')
-    expect(await google.finish(`http://127.0.0.1:53682/?state=${state}&code=c`)).toMatchObject({ ok: false, reason: expect.stringContaining('calendar.readonly') })
-    expect(await google.finish('http://127.0.0.1:53682/?error=access_denied')).toMatchObject({ ok: false, reason: 'Google said: access_denied' })
-    expect(await google.finish('the code was 1234')).toMatchObject({ ok: false })
+    expect(await google.finish(`http://127.0.0.1:53682/?state=${state}&code=c`)).toMatchObject({ ok: false, code: 'scopes_missing', retryable: false, reason: expect.stringContaining('calendar.readonly') })
+    expect(await google.finish('http://127.0.0.1:53682/?error=access_denied')).toMatchObject({ ok: false, code: 'refused_by_google', reason: 'Google said: access_denied' })
+    expect(await google.finish('the code was 1234')).toMatchObject({ ok: false, code: 'bad_address' })
+  })
+
+  it('keeps the sign-in open when Google cannot be reached, so the same address can be pasted again', async () => {
+    const google = new GoogleSignIn({ dir: join(dir, 'd'), gmailApi: base })
+    await google.saveClient({ installed: { ...client().installed, token_uri: 'http://127.0.0.1:1/token' } })
+    const started = await google.start(SCOPES)
+    if (!started.ok) throw new Error(started.reason)
+    const address = `http://127.0.0.1:53682/?state=${new URL(started.url).searchParams.get('state')}&code=c`
+    expect(await google.finish(address)).toMatchObject({ ok: false, code: 'google_unreachable', retryable: true })
+    expect(await google.finish(address)).toMatchObject({ code: 'google_unreachable' })
   })
 })

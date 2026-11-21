@@ -2,7 +2,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createGmailServer } from './server'
 
 export { createGmailServer } from './server'
-export { GoogleApi, GoogleApiError } from './google-api'
+export { GoogleApi, refusalText, type ApiResult, type Refusal } from './google-api'
 export { Calendar, Mailbox, addressesOf } from './tools'
 
 if (require.main === module) {

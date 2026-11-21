@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
+import { writeOwnerOnly, WriteQueue } from './owner-only-file.js'
 import { readManifest, type ManifestResult, type PluginManifest } from '../../domain/plugin-manifest.js'
 
 export interface PluginRegistryOptions {
@@ -19,7 +20,7 @@ export interface PluginRegistryOptions {
  */
 export class PluginRegistry {
   private officialCache: PluginManifest[] | null = null
-  private writes: Promise<unknown> = Promise.resolve()
+  private readonly writes = new WriteQueue()
 
   constructor(private readonly options: PluginRegistryOptions) {}
 
@@ -58,7 +59,7 @@ export class PluginRegistry {
 
   /** Adds a custom MCP plugin; its id must be new. */
   addCustom(input: unknown): Promise<ManifestResult> {
-    return this.serialised(async () => {
+    return this.writes.run(async () => {
       const result = readManifest({ ...(input as object), tier: 'custom' }, 'custom')
       if (!result.ok) return result
       if ((await this.get(result.manifest.id)) !== null) return { ok: false, reason: `a plugin with the id ${result.manifest.id} exists` }
@@ -69,7 +70,7 @@ export class PluginRegistry {
 
   /** Removes a custom plugin; false when there is none with that id. */
   removeCustom(id: string): Promise<boolean> {
-    return this.serialised(async () => {
+    return this.writes.run(async () => {
       const current = await this.custom()
       const rest = current.filter((manifest) => manifest.id !== id)
       if (rest.length === current.length) return false
@@ -101,19 +102,8 @@ export class PluginRegistry {
       })
   }
 
-  /** Atomically, readable by the owner only: custom servers may carry tokens in their settings. */
-  private async writeCustom(plugins: PluginManifest[]): Promise<void> {
-    const file = this.options.customFile
-    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-    await fs.chmod(path.dirname(file), 0o700)
-    const tmp = `${file}.${process.pid}.tmp`
-    await fs.writeFile(tmp, `${JSON.stringify({ plugins }, null, 2)}\n`, { mode: 0o600 })
-    await fs.rename(tmp, file)
-  }
-
-  private serialised<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.writes.then(work, work)
-    this.writes = next.catch(() => undefined)
-    return next
+  /** Owner-only: custom servers may carry tokens in their settings. */
+  private writeCustom(plugins: PluginManifest[]): Promise<void> {
+    return writeOwnerOnly(this.options.customFile, `${JSON.stringify({ plugins }, null, 2)}\n`)
   }
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -21,6 +21,7 @@ const wtX = `${repo}-x`
 const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-plain-')))
 
 let host: http.Server
+let pluginsModule: typeof import('../src/plugins-api.js')
 let base: string
 
 // The Shell plugin's running terminals, as the bridge would hold them.
@@ -44,7 +45,8 @@ beforeAll(async () => {
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
   const { handlePluginsApi, spacePlugins } = await import('../src/plugins-api.js')
-  // A home's first boot: the switches of before (none here) carry over to both spaces.
+  pluginsModule = await import('../src/plugins-api.js')
+  // A home's first boot: the switches an older cockpit kept (none here) carry over to both spaces.
   await spacePlugins.setup(
     [{ id: 'main', agent: null, ownRuntime: false }, { id: 'other', agent: null, ownRuntime: false }],
     {}, { claudeJson: join(home, 'claude-config', '.claude.json'), agents: [] }, join(home, 'plugins', 'backups'),
@@ -229,6 +231,20 @@ describe('plugins per space', () => {
     await patch({ id: 'gmail', enabled: false, space: 'main' })
   })
 
+  it('lets a remote user add a custom server once remote access lets the shell in', async () => {
+    writeFileSync(join(home, 'remote.json'), JSON.stringify({ origins: ['https://cockpit.example'], users: [], shell: true }))
+    try {
+      const res = await fetch(`${base}/api/plugins/custom`, {
+        method: 'POST', headers: { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'remote-two', name: 'R', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+      })
+      expect(res.status).toBe(201)
+      await fetch(`${base}/api/plugins/custom/remote-two`, { method: 'DELETE' })
+    } finally {
+      rmSync(join(home, 'remote.json'), { force: true })
+    }
+  })
+
   it('lets a remote user see and add sign-ins, but adds a custom server remotely only with the shell on', async () => {
     const remote = { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' }
     expect((await fetch(`${base}/api/plugins/connections`, { headers: remote })).status).toBe(200)
@@ -237,6 +253,56 @@ describe('plugins per space', () => {
     })
     expect(custom.status).toBe(403)
     expect((await custom.json()).error.message).toContain('remote shell on')
+  })
+
+  it('deletes a removed sign-in\'s token file when the cockpit wrote it, never one another program keeps', async () => {
+    const google = join(home, 'plugins', 'google')
+    mkdirSync(google, { recursive: true })
+    const own = join(google, 'abc.token.json')
+    const foreign = join(home, 'elsewhere.token.json')
+    writeFileSync(own, '{}')
+    writeFileSync(foreign, '{}')
+    const add = (tokenFile: string) => fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plugin: 'gmail', label: 'x', values: { tokenFile } }),
+    }).then((r) => r.json()).then((b) => b.connection.id as string)
+    const ownId = await add(own)
+    const foreignId = await add(foreign)
+    await fetch(`${base}/api/plugins/connections/${ownId}`, { method: 'DELETE' })
+    await fetch(`${base}/api/plugins/connections/${foreignId}`, { method: 'DELETE' })
+    expect(existsSync(own)).toBe(false)
+    expect(existsSync(foreign)).toBe(true)
+  })
+
+  it('tells of the imported servers until the notice is done', async () => {
+    await pluginsModule.pluginStore.updateSpaces((state) => ({ ...state, imported: ['lookup-imported'], importNoticeDone: false }))
+    expect((await (await fetch(`${base}/api/plugins`)).json()).importNotice).toEqual({ count: 1 })
+    expect((await fetch(`${base}/api/plugins/import-notice`, { method: 'DELETE' })).status).toBe(200)
+    expect((await (await fetch(`${base}/api/plugins`)).json()).importNotice).toBeNull()
+  })
+
+  it('switches a part off for every space and on again', async () => {
+    const parts = (enabled: boolean) => fetch(`${base}/api/plugins/parts`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'gmail', part: 'mcp', enabled }) })
+    expect((await (await parts(false)).json()).plugins.find((p: { id: string }) => p.id === 'gmail').partsOff).toEqual(['mcp'])
+    expect((await (await parts(true)).json()).plugins.find((p: { id: string }) => p.id === 'gmail').partsOff).toEqual([])
+    expect((await fetch(`${base}/api/plugins/parts`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'gmail', part: 'wings', enabled: false }) })).status).toBe(400)
+  })
+
+  it('offers the OAuth client an earlier sign-in was made with, and copies it on request', async () => {
+    const clientFile = join(home, 'earlier-client.json')
+    writeFileSync(clientFile, JSON.stringify({ installed: { client_id: 'client-placeholder', client_secret: 'secret-placeholder' } }))
+    const add = (credentialsFile: string) => fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plugin: 'gmail', label: 'Earlier', values: { credentialsFile } }),
+    }).then((r) => r.json()).then((b) => b.connection.id as string)
+    const earlier = await add(clientFile)
+    const gone = await add(join(home, 'no-such-client.json'))
+    const client = await (await fetch(`${base}/api/plugins/google/client`)).json()
+    expect(client).toMatchObject({ configured: false, fromSignIns: expect.arrayContaining([{ id: earlier, label: 'Earlier' }]) })
+    const put = (fromConnection: string) => fetch(`${base}/api/plugins/google/client`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fromConnection }) })
+    expect((await put(gone)).status).toBe(400)
+    expect(await (await put(earlier)).json()).toMatchObject({ configured: true })
+    expect(JSON.parse(readFileSync(join(home, 'plugins', 'google', 'client.json'), 'utf8')).installed.client_id).toBe('client-placeholder')
+    expect(statSync(join(home, 'plugins', 'google', 'client.json')).mode & 0o777).toBe(0o600)
+    for (const id of [earlier, gone]) await fetch(`${base}/api/plugins/connections/${id}`, { method: 'DELETE' })
   })
 
   it('switches a claude.ai connector off in one space', async () => {

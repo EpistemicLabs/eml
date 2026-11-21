@@ -120,8 +120,8 @@ export function useSaveGoogleClient() {
 /** Google's consent page for a new sign-in, or to sign an existing one in again. */
 export function useStartGoogleSignIn() {
   return useMutation({
-    mutationFn: ({ plugin, connection }: { plugin: string; connection?: string }) =>
-      request<{ url: string }>('/api/plugins/google/sign-in', send('POST', { plugin, ...(connection ? { connection } : {}) })).then((b) => b.url),
+    mutationFn: ({ plugin }: { plugin: string }) =>
+      request<{ url: string }>('/api/plugins/google/sign-in', send('POST', { plugin })).then((b) => b.url),
   });
 }
 

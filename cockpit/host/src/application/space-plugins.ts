@@ -4,7 +4,6 @@ import {
   deniedFor,
   isOn,
   mcpServersFor,
-  partOn,
   setOutsideServer,
   setPlugin,
   type Connection,
@@ -35,7 +34,7 @@ export interface PluginSnapshot {
 const CARRY_STEP = 'carry:switches'
 
 /**
- * The plugins per space (plan phase 3): the switches, the user's connections, and the session files
+ * The plugins per space: the switches, the user's connections, and the session files
  * that follow from them. A change rewrites the space's files at once (`rewrite`), so its next session
  * starts with it; a session already running keeps what it started with.
  */
@@ -55,7 +54,7 @@ export class SpacePluginService {
   }
 
   /**
-   * Once per home, before the spaces open: the cockpit-wide switches of before carry over to every
+   * Once per home, before the spaces open: the cockpit-wide switches an older cockpit kept carry over to every
    * space, then the MCP servers configured outside the plugins are imported (mcp-import.ts).
    */
   async setup(spaces: ImportSpace[], legacy: Record<string, boolean>, source: ImportSource, backupsDir: string): Promise<ImportResult> {
@@ -87,15 +86,8 @@ export class SpacePluginService {
   }
 
   /** Whether a plugin is on in a space, and the part with it. */
-  async enabled(spaceId: string, pluginId: string, part?: 'pane' | 'mcp' | 'channel'): Promise<boolean> {
-    const state = await this.store.spaces()
-    return isOn(state, spaceId, pluginId) && (!part || partOn(state, pluginId, part))
-  }
-
-  /** Whether a plugin is on in any space: the gate for a pane's routes, which serve every space. */
-  async onAnywhere(pluginId: string): Promise<boolean> {
-    const state = await this.store.spaces()
-    return Object.values(state.spaces).some((space) => space.plugins[pluginId] !== undefined)
+  async enabled(spaceId: string, pluginId: string): Promise<boolean> {
+    return isOn(await this.store.spaces(), spaceId, pluginId)
   }
 
   /**

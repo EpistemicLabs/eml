@@ -18,11 +18,12 @@ let server: Server
 let base: string
 let mailbox: ScriptedChannel
 let logged: { event: string; fields: Record<string, unknown> }[]
+let deps: Parameters<typeof createBridgeApi>[0]
 
 beforeEach(async () => {
   mailbox = new ScriptedChannel('acc-1', 'support')
   logged = []
-  const deps = {
+  deps = {
     channels: new ScriptedChannels([mailbox]),
     store: new MemoryMessageStore(),
     wakes: new MemoryWakeQueue(),
@@ -51,6 +52,31 @@ async function post(path: string, token: string | null, body: unknown = {}) {
   const response = await fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) })
   return { status: response.status, body: await response.json() as Record<string, unknown> }
 }
+
+describe('bridge API: a space\'s inbox', () => {
+  const inbox = async (query: string, token: string | null = COCKPIT) => {
+    const response = await fetch(`${base}/v1/inbox${query}`, { headers: token ? { authorization: `Bearer ${token}` } : {} })
+    return { status: response.status, body: await response.json() as { kind?: string; reason?: string; messages?: Array<Record<string, unknown>> } }
+  }
+
+  it('lists what no job took of the space\'s accounts, without the text, for the cockpit only', async () => {
+    mailbox.receive({
+      channelMessageId: 'm-2', threadKey: 't-2', from: 'someone@unknown.example', senderVerified: true, automated: false,
+      receivedAt: '2026-11-08T11:00:00.000Z', subject: 'Hello', text: 'Who are you?',
+    })
+    await syncChannel(deps, { account: mailbox })
+    expect((await inbox('?space=support', null)).status).toBe(401)
+    expect((await inbox('?space=support', TOOL)).status).toBe(401)
+    const listed = await inbox('?space=support')
+    expect(listed.body.messages).toEqual([{ id: expect.any(String), accountId: 'acc-1', channel: 'mail', from: 'someone@unknown.example', senderVerified: true, subject: 'Hello', receivedAt: '2026-11-08T11:00:00.000Z', reason: 'no_match' }])
+    expect(JSON.stringify(listed.body)).not.toContain('Who are you?')
+    expect((await inbox('?space=other')).body.messages).toEqual([])
+  })
+
+  it('refuses a request that names no space', async () => {
+    expect(await inbox('')).toEqual({ status: 400, body: { kind: 'refused', reason: 'missing_space', retryable: false } })
+  })
+})
 
 describe('bridge API: job tools', () => {
   it('needs the tool token', async () => {
