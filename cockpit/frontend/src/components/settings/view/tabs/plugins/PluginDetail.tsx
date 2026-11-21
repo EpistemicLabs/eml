@@ -13,10 +13,12 @@ import {
   type PluginView,
 } from '@/lib/plugins-admin';
 import { cn } from '@/lib/utils';
-import { Button, HUE, Input, LABEL, Select, Switch } from '@/shared/view/ui';
+import { Button, HUE, Input, LABEL, Switch } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-import { PART_LABEL, PluginIcon, TierChip, needsSignIn, trustNote } from './shared';
+import { GoogleSignIn, GoogleSignInAgain } from './GoogleSignIn';
+import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, trustNote } from './shared';
+import { SignInPicker } from './SpaceCell';
 
 /** The values a gmail sign-in holds for the channel bridge (plugins/gmail/channel). */
 const GMAIL_FIELDS = ['address', 'credentialsFile', 'tokenFile'];
@@ -63,6 +65,7 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const own = connections.filter((c) => c.plugin === plugin.id);
   const onIn = Object.keys(plugin.spaces).length;
+  const google = plugin.auth?.kind === 'google-oauth';
   const cell = 'px-3 py-2 align-middle';
 
   return (
@@ -101,11 +104,18 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
           {!needsSignIn(plugin) && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
           {needsSignIn(plugin) && own.length === 0 && <p className={cn('text-body', HUE.you.ink)}>No sign-in yet: add one to use it in a space.</p>}
           {own.map((connection) => (
-            <Line key={connection.id} label={connection.label} note="Connected · secret stored once, owner only, never shown">
+            <Line
+              key={connection.id}
+              label={connection.label}
+              note={`Connected · ${plugin.mcp ? `its tools: ${plugin.mcp ? `${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · ` : ''}secret stored once, owner only, never shown`}
+            >
+              {google && <GoogleSignInAgain plugin={plugin} connection={connection} />}
               <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
             </Line>
           ))}
-          {needsSignIn(plugin) && <AddSignIn plugin={plugin} another={own.length > 0} />}
+          {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
+          {needsSignIn(plugin) && !google && <AddSignIn plugin={plugin} another={own.length > 0} />}
+          {google && <AddSignIn plugin={plugin} another={own.length > 0} manual />}
         </Panel>
       </div>
 
@@ -118,7 +128,6 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
             <tbody className="divide-y divide-border">
               {spaces.map((space) => {
                 const on = space.id in plugin.spaces;
-                const current = plugin.spaces[space.id] ?? null;
                 return (
                   <tr key={space.id}>
                     <td className={cell}>
@@ -128,22 +137,7 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
                     <td className={cell}>
                       <Switch checked={on} disabled={setPlugin.isPending} onChange={(enabled) => setPlugin.mutate({ id: plugin.id, space: space.id, enabled })} ariaLabel={`${plugin.name} in ${space.name}`} />
                     </td>
-                    <td className={cell}>
-                      {on && own.length > 1 && (
-                        <Select
-                          aria-label={`${plugin.name} sign-in in ${space.name}`}
-                          value={current ?? ''}
-                          onChange={(event) => setPlugin.mutate({ id: plugin.id, space: space.id, enabled: true, connection: event.target.value || null })}
-                          className="min-h-(--target-min) w-auto px-2 text-ui"
-                        >
-                          <option value="">No sign-in</option>
-                          {own.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </Select>
-                      )}
-                      {on && own.length === 1 && own[0].label}
-                      {on && own.length === 0 && needsSignIn(plugin) && <span className={HUE.you.ink}>needs a sign-in</span>}
-                      {(!on || (own.length === 0 && !needsSignIn(plugin))) && <span className="text-muted-foreground">–</span>}
-                    </td>
+                    <td className={cell}><SignInPicker plugin={plugin} space={space} connections={connections} /></td>
                   </tr>
                 );
               })}
@@ -179,17 +173,21 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
 }
 
 /** A new sign-in: the values the plugin's settings name (a custom server's secrets, a Gmail mailbox's files). */
-function AddSignIn({ plugin, another }: { plugin: PluginView; another: boolean }) {
+function AddSignIn({ plugin, another, manual = false }: { plugin: PluginView; another: boolean; manual?: boolean }) {
   const add = useAddConnection();
   const gmail = plugin.channel === 'gmail';
   const names = gmail ? GMAIL_FIELDS : (plugin.mcp?.settings.filter((s) => s.secret).map((s) => s.name) ?? []);
   const [label, setLabel] = useState('');
+  const [slug, setSlug] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
   const [openForm, setOpenForm] = useState(false);
   if (!openForm) {
+    if (manual) {
+      return <button type="button" className="self-start text-ui text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setOpenForm(true)}>or use the files of an existing sign-in</button>;
+    }
     return (
       <Button variant="outline" size="sm" className="self-start" onClick={() => setOpenForm(true)}>
-        {another ? (gmail ? 'Add another Google account' : 'Add another sign-in') : (gmail ? 'Add a Google account' : 'Add a sign-in')}
+        {another ? 'Add another sign-in' : 'Add a sign-in'}
       </Button>
     );
   }
@@ -199,13 +197,14 @@ function AddSignIn({ plugin, another }: { plugin: PluginView; another: boolean }
       className="space-y-3 border-t border-border pt-3"
       onSubmit={(event) => {
         event.preventDefault();
-        add.mutate({ plugin: plugin.id, label: label.trim(), values }, { onSuccess: () => { setOpenForm(false); setLabel(''); setValues({}); } });
+        add.mutate({ plugin: plugin.id, label: label.trim(), values, slug: slug || undefined }, { onSuccess: () => { setOpenForm(false); setLabel(''); setSlug(''); setValues({}); } });
       }}
     >
       <label className="block text-body">
         <span className="text-muted-foreground">Name it</span>
         <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={gmail ? 'Work mailbox' : 'Workspace'} className="mt-1" />
       </label>
+      {plugin.mcp && <SlugField plugin={plugin} value={slug} onChange={setSlug} />}
       {names.map((name) => (
         <label key={name} className="block text-body">
           <span className="font-code text-ui text-muted-foreground">{name}</span>

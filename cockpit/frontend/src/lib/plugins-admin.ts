@@ -18,8 +18,8 @@ export interface PluginView {
   auth: { kind: 'google-oauth' | 'token'; scopes: string[] } | null;
   /** On in any space. */
   enabled: boolean;
-  /** Space id → the connection it uses there (null: none), for every space it is on in. */
-  spaces: Record<string, string | null>;
+  /** Space id → the sign-ins it uses there, for every space it is on in. */
+  spaces: Record<string, string[]>;
   partsOff: PluginPart[];
   /** Made by the one-time import of the servers configured outside the plugins. */
   imported: boolean;
@@ -31,6 +31,10 @@ export interface ConnectionView {
   label: string;
   /** The names of the values it holds; the values never reach the page. */
   secrets: string[];
+  /** Names its MCP server next to the plugin's own (gmail-invoice); null: the plugin's name. */
+  slug: string | null;
+  /** The mailbox a Google sign-in is for. */
+  address: string | null;
 }
 
 export interface OutsideServerView {
@@ -64,7 +68,7 @@ export function useDismissImportNotice() {
   return useChange(() => request('/api/plugins/import-notice', { method: 'DELETE' }));
 }
 
-/** Connections are managed on this machine only: elsewhere the host answers 403 and the list stays empty. */
+/** The user's sign-ins: names and labels only, never the values. */
 export function useConnections() {
   return useQuery({
     queryKey: [...adminKey, 'connections'],
@@ -90,9 +94,34 @@ function useChange<A>(run: (args: A) => Promise<unknown>) {
   });
 }
 
+/** On or off in a space; `connections` names the sign-ins it uses there (left out: keep them). */
 export function useSetPlugin() {
-  return useChange(({ id, space, enabled, connection }: { id: string; space: string; enabled: boolean; connection?: string | null }) =>
-    request('/api/plugins', send('PATCH', { id, space, enabled, ...(connection !== undefined ? { connection } : {}) })));
+  return useChange(({ id, space, enabled, connections }: { id: string; space: string; enabled: boolean; connections?: string[] }) =>
+    request('/api/plugins', send('PATCH', { id, space, enabled, ...(connections !== undefined ? { connections } : {}) })));
+}
+
+// ── A Google sign-in with the user's own OAuth client (host: google-sign-in.ts) ──
+
+export function useGoogleClient() {
+  return useQuery({ queryKey: [...adminKey, 'google-client'], queryFn: () => request<{ configured: boolean }>('/api/plugins/google/client').then((b) => b.configured), retry: false });
+}
+
+export function useSaveGoogleClient() {
+  return useChange((client: string) => request('/api/plugins/google/client', send('PUT', { client })));
+}
+
+/** Google's consent page for a new sign-in, or to sign an existing one in again. */
+export function useStartGoogleSignIn() {
+  return useMutation({
+    mutationFn: ({ plugin, connection }: { plugin: string; connection?: string }) =>
+      request<{ url: string }>('/api/plugins/google/sign-in', send('POST', { plugin, ...(connection ? { connection } : {}) })).then((b) => b.url),
+  });
+}
+
+/** Ends a sign-in with the address the browser was sent to after Google's consent page. */
+export function useFinishGoogleSignIn() {
+  return useChange(({ plugin, redirect, slug }: { plugin: string; redirect: string; slug?: string }) =>
+    request<{ connection: ConnectionView & { again: boolean } }>('/api/plugins/google/sign-in/finish', send('POST', { plugin, redirect, ...(slug ? { slug } : {}) })).then((b) => b.connection));
 }
 
 export function useSetPart() {
@@ -106,8 +135,8 @@ export function useSetOutside() {
 }
 
 export function useAddConnection() {
-  return useChange(({ plugin, label, values }: { plugin: string; label: string; values: Record<string, string> }) =>
-    request<{ connection: ConnectionView }>('/api/plugins/connections', send('POST', { plugin, label, values })).then((b) => b.connection));
+  return useChange(({ plugin, label, values, slug }: { plugin: string; label: string; values: Record<string, string>; slug?: string }) =>
+    request<{ connection: ConnectionView }>('/api/plugins/connections', send('POST', { plugin, label, values, ...(slug ? { slug } : {}) })).then((b) => b.connection));
 }
 
 export function useRemoveConnection() {
@@ -145,7 +174,7 @@ export function useAddCustomMcp() {
     const connection = Object.keys(secrets).length > 0
       ? (await request<{ connection: ConnectionView }>('/api/plugins/connections', send('POST', { plugin: input.id, label: 'Settings', values: secrets }))).connection.id
       : null;
-    for (const space of input.spaces) await request('/api/plugins', send('PATCH', { id: input.id, space, enabled: true, connection }));
+    for (const space of input.spaces) await request('/api/plugins', send('PATCH', { id: input.id, space, enabled: true, connections: connection ? [connection] : [] }));
   });
 }
 
