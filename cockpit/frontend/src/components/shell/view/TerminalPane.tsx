@@ -13,7 +13,7 @@ interface TerminalPaneProps {
   initialCommand: string | null;
   isActive: boolean;
   autoConnect: boolean;
-  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  /** Outside the desks (the task panel): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
   /** 'shell': the Shell plugin's terminal (sessionId is its shell id). */
   kind?: 'session' | 'shell';

@@ -34,7 +34,7 @@ async function mintNonce(): Promise<string | null> {
 // How often a view waiting for the terminal asks again.
 const BUSY_RETRY_MS = 3_000;
 
-/** `spaceId` for a view outside the desks (the review screen); a pane's comes from its desk. */
+/** `spaceId` for a view outside the desks (the task panel); a pane's comes from its desk. */
 export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false, spaceId?: string | null) {
   const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);

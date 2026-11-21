@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { knownModels, queueChatStart } from '@/components/chat/chat-start';
+import { ADD_PROJECT_EVENT } from '@/components/projects/useProjectActions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { Chip, FOCUS, LABEL, TAB, TRACK } from '@/shared/view/ui';
@@ -20,9 +21,6 @@ import { getLauncherProjects, subscribeLauncherProjects } from './launcher-proje
 
 const RECENT_PROJECTS = 6;
 const RECENT_SESSIONS = 5;
-/** Asks the sidebar to open its add-project flow (useSidebarController). */
-export const ADD_PROJECT_EVENT = 'cockpit-add-project';
-
 const REASON: Record<PickReason, string | null> = { desk: 'last used on this desk', words: 'from your words', manual: null };
 
 export function SessionLauncher({ paneId }: { paneId: string }) {

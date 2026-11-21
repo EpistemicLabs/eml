@@ -17,7 +17,7 @@ vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
 
 import { setTaskView } from '@/stores/useTaskViewStore';
-import { TaskViewSwitch } from '@/components/top-bar/TaskViewSwitch';
+import { TaskNav } from '@/components/sidebar/nav/SidebarNav';
 import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
 
 import { TaskBoard } from './TaskBoard';
@@ -59,10 +59,10 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-// The board with the top bar's view switch and the app's shortcuts, as the cockpit mounts them.
+// The board with the sidebar's task views and the app's shortcuts, as the cockpit mounts them.
 function WithBar() {
   useCockpitShortcuts(() => {});
-  return <><TaskViewSwitch /><TaskBoard /></>;
+  return <><TaskNav /><TaskBoard /></>;
 }
 const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><WithBar /></QueryClientProvider></MemoryRouter>);
 
@@ -75,11 +75,11 @@ describe('the task board', () => {
     expect(within(screen.getByRole('region', { name: 'Agent working' })).getByText('Kit v4 rollout')).toBeTruthy();
   });
 
-  it('follows the view picked in the top bar or with G then I / N / P; the Inbox tab shows its count; bare digits do nothing', async () => {
+  it('follows the view picked in the sidebar or with G then I / N / P; the Inbox row shows its count; bare digits do nothing', async () => {
     mount();
     await screen.findByRole('region', { name: 'Needs you' });
-    expect((await screen.findByRole('tab', { name: /Inbox/ })).textContent).toContain('1');
-    fireEvent.click(screen.getByRole('tab', { name: /Plan/ }));
+    expect((await screen.findByRole('button', { name: /^Inbox/ })).textContent).toContain('1');
+    fireEvent.click(screen.getByRole('button', { name: /^Plan/ }));
     expect(await screen.findByText(/Stuck until you act/)).toBeTruthy();
     fireEvent.keyDown(document, { key: '2' });
     expect(screen.getByText(/Stuck until you act/)).toBeTruthy();

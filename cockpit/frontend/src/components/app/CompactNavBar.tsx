@@ -33,7 +33,7 @@ export default function CompactNavBar({ onOpenMenu }: { onOpenMenu: () => void }
       {overChat && <div aria-hidden="true" className="glass-edge-top pointer-events-none absolute inset-x-0 top-0 z-(--z-sticky) h-[calc(env(safe-area-inset-top)+var(--size-phone-edge))]" />}
       <div className="pointer-events-none absolute inset-x-2 top-[calc(env(safe-area-inset-top)+var(--pad-shell-top))] z-(--z-chrome) flex items-center justify-between">
         <div className={cn('pointer-events-auto', capsule)}>
-          <button type="button" className={CAPSULE_BUTTON_CLASS} aria-label="Projects and sessions" onClick={onOpenMenu}>
+          <button type="button" className={CAPSULE_BUTTON_CLASS} aria-label="Navigation" onClick={onOpenMenu}>
             <Menu aria-hidden className="size-5" />
           </button>
         </div>

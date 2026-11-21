@@ -6,15 +6,28 @@ import {
   COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, TURN_META, visibleInPlan,
   type Board, type BoardTask, type PlanFilter,
 } from '@/lib/task-board';
+import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
+import type { ProjectActions } from '@/components/projects/useProjectActions';
+import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { cn } from '@/lib/utils';
 import { Chip, Dot, FOCUS, HUE, LABEL, MINI } from '@/shared/view/ui';
+import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 
 import { Who } from './parts';
 
 const SEGMENT = cn('min-h-(--target-min) px-2.5 text-ui text-muted-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2';
 
-export function PlanView({ board, now, onOpen, onCloseTask }: { board: Board; now: number; onOpen: (task: BoardTask) => void; onCloseTask: (task: BoardTask) => void }) {
+export function PlanView({ board, now, onOpen, onCloseTask, projects, projectActions }: {
+  board: Board;
+  now: number;
+  onOpen: (task: BoardTask) => void;
+  onCloseTask: (task: BoardTask) => void;
+  /** The cockpit's projects and what can be done to them: the project list at the end of Plan. */
+  projects?: ProjectsBySpace;
+  projectActions?: ProjectActions;
+}) {
+  const knownSpaces = useSpaces();
   const [filter, setFilter] = useState<PlanFilter>({ everyone: false, spaceId: null });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showQuiet, setShowQuiet] = useState(false);
@@ -117,6 +130,18 @@ export function PlanView({ board, now, onOpen, onCloseTask }: { board: Board; no
           )}
         </div>
       </div>
+      {projects && projectActions && (
+        <ProjectsSection
+          projects={projects}
+          actions={projectActions}
+          spaces={board.spaces
+            .filter((s) => !filter.spaceId || s.id === filter.spaceId)
+            .map((s): PlanSpace => {
+              const known = knownSpaces.find((k) => k.id === s.id);
+              return { key: known ? paneSpaceKey(known) ?? '' : s.id, name: s.name };
+            })}
+        />
+      )}
     </div>
   );
 }

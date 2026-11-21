@@ -44,7 +44,7 @@ export default function PreferencesTab({
         <SettingsCard divided>
           <SettingsRow
             label="Project sorting"
-            description="How projects are ordered in the sidebar"
+            description="How projects are ordered in Plan"
           >
             <Select
               value={projectSortOrder}

@@ -3,7 +3,9 @@
 // control layer; content on solid surfaces; colour only for Needs you and stopped.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { ProjectActions } from '@/components/projects/useProjectActions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
+import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import {
   agentName, closeTask, handOver, readable, reviewDone, snooze, snoozeTimes, undo, useTaskBoard,
@@ -30,7 +32,8 @@ const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan
 /** Relative times ("asked 10:27", "in 3 days") are worked out again this often. */
 const NOW_TICK_MS = 30_000;
 
-export function TaskBoard() {
+/** `projects` and `projectActions`: Plan's project list and its actions (both live in AppContent, so the launcher's add-project works anywhere). */
+export function TaskBoard({ projects, projectActions }: { projects?: ProjectsBySpace; projectActions?: ProjectActions } = {}) {
   const { data: board, error, refetch } = useTaskBoard();
   const { sessions } = useAllSessions(true);
   const spaces = useSpaces();
@@ -156,7 +159,7 @@ export function TaskBoard() {
         ) : view === 'now' ? (
           <NowBoard board={board} now={now} onOpen={(t) => openTask(t)} movedId={board.events[0]?.taskId ?? null} />
         ) : (
-          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} onCloseTask={async (t) => answered(await closeTask(t), 'Closed: not needed.')} />
+          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} onCloseTask={async (t) => answered(await closeTask(t), 'Closed: not needed.')} projects={projects} projectActions={projectActions} />
         )}
       </div>
 
