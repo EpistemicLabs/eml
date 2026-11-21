@@ -358,7 +358,11 @@ export async function handlePluginsApi(
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin)) || typeof body.redirect !== 'string') return badRequest('plugin and redirect (the address the browser ended on) are needed')
       if (body.slug !== undefined && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
       const finished = await google.finish(body.redirect)
-      if (!finished.ok) return badRequest(finished.reason)
+      if (!finished.ok) {
+        // The code says what happened; 503 only where trying the same address again can help.
+        json(res, finished.retryable ? 503 : 400, { error: { code: finished.code, message: finished.reason, retryable: finished.retryable } })
+        return true
+      }
       const { address, credentialsFile, tokenFile } = finished.signedIn
       const all = await service.connections()
       const again = all.find((c) => c.plugin === body.plugin && c.values.address?.toLowerCase() === address.toLowerCase())

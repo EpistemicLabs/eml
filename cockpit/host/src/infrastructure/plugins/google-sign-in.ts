@@ -33,6 +33,14 @@ export interface SignedIn {
   tokenFile: string
 }
 
+/** Why a sign-in could not be finished; only an unreachable Google is worth trying again. */
+export interface SignInRefusal {
+  ok: false
+  code: 'bad_address' | 'refused_by_google' | 'unknown_sign_in' | 'no_client' | 'google_unreachable' | 'token_refused' | 'scopes_missing' | 'no_mailbox'
+  reason: string
+  retryable: boolean
+}
+
 export class GoogleSignIn {
   private readonly pending = new Map<string, { verifier: string; scopes: string[]; at: number }>()
 
@@ -93,37 +101,55 @@ export class GoogleSignIn {
     return { ok: true, url: url.toString() }
   }
 
-  /** Takes the code from the address the browser ended on, and keeps the refresh token Google gives for it. */
-  async finish(redirected: string): Promise<{ ok: true; signedIn: SignedIn } | { ok: false; reason: string }> {
+  /**
+   * Takes the code from the address the browser ended on, and keeps the refresh token Google gives
+   * for it. A refusal names its reason; only an unreachable Google is worth trying again, with the
+   * same address (the code is only used up once Google answered).
+   */
+  async finish(redirected: string): Promise<{ ok: true; signedIn: SignedIn } | SignInRefusal> {
+    const refuse = (code: SignInRefusal['code'], reason: string): SignInRefusal => ({ ok: false, code, reason, retryable: code === 'google_unreachable' })
     let url: URL
     try {
       url = new URL(redirected.trim())
     } catch {
-      return { ok: false, reason: 'Paste the whole address from the browser, starting with http://127.0.0.1' }
+      return refuse('bad_address', 'Paste the whole address from the browser, starting with http://127.0.0.1')
     }
-    if (url.searchParams.get('error')) return { ok: false, reason: `Google said: ${url.searchParams.get('error')}` }
+    if (url.searchParams.get('error')) return refuse('refused_by_google', `Google said: ${url.searchParams.get('error')}`)
     const state = url.searchParams.get('state') ?? ''
     const code = url.searchParams.get('code')
     const pending = this.pending.get(state)
-    if (!pending || !code) return { ok: false, reason: 'This address belongs to no sign-in started here (or it is older than 15 minutes): start again' }
-    this.pending.delete(state)
+    if (!pending || !code) return refuse('unknown_sign_in', 'This address belongs to no sign-in started here (or it is older than 15 minutes): start again')
     const client = await this.client()
-    if (!client) return { ok: false, reason: 'The Google OAuth client is gone' }
-    const tokenAnswer = await fetch(client.token_uri, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ code, client_id: client.client_id, client_secret: client.client_secret, redirect_uri: REDIRECT, grant_type: 'authorization_code', code_verifier: pending.verifier }),
-    }).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => null) as { refresh_token?: string; access_token?: string; scope?: string; error_description?: string } | null }))
-      .catch(() => ({ ok: false, body: null }))
-    if (!tokenAnswer.ok || !tokenAnswer.body?.refresh_token || !tokenAnswer.body.access_token) {
-      return { ok: false, reason: `Google gave no sign-in for it${tokenAnswer.body?.error_description ? `: ${tokenAnswer.body.error_description}` : ''}` }
+    if (!client) return refuse('no_client', 'The Google OAuth client is gone')
+    let tokenAnswer: { status: number; body: { refresh_token?: string; access_token?: string; scope?: string; error_description?: string } | null }
+    try {
+      const response = await fetch(client.token_uri, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ code, client_id: client.client_id, client_secret: client.client_secret, redirect_uri: REDIRECT, grant_type: 'authorization_code', code_verifier: pending.verifier }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      tokenAnswer = { status: response.status, body: await response.json().catch(() => null) }
+    } catch {
+      return refuse('google_unreachable', 'Google cannot be reached right now: try Finish again in a moment')
+    }
+    if (tokenAnswer.status >= 500) return refuse('google_unreachable', 'Google cannot answer right now: try Finish again in a moment')
+    // Google has seen the code: it is used up, whatever the answer.
+    this.pending.delete(state)
+    if (tokenAnswer.status !== 200 || !tokenAnswer.body?.refresh_token || !tokenAnswer.body.access_token) {
+      return refuse('token_refused', `Google gave no sign-in for it${tokenAnswer.body?.error_description ? `: ${tokenAnswer.body.error_description}` : ''}`)
     }
     const granted = (tokenAnswer.body.scope ?? '').split(' ')
     const missing = pending.scopes.filter((s) => !granted.includes(s))
-    if (missing.length > 0) return { ok: false, reason: `The sign-in lacks ${missing.map((s) => s.split('/').pop()).join(', ')}: tick every box on Google's page` }
-    const profile = await fetch(`${this.options.gmailApi ?? 'https://gmail.googleapis.com'}/gmail/v1/users/me/profile`, { headers: { authorization: `Bearer ${tokenAnswer.body.access_token}` } })
-      .then((r) => (r.ok ? r.json() as Promise<{ emailAddress?: string }> : null)).catch(() => null)
-    if (!profile?.emailAddress) return { ok: false, reason: 'Signed in, but Gmail did not name the mailbox' }
+    if (missing.length > 0) return refuse('scopes_missing', `The sign-in lacks ${missing.map((s) => s.split('/').pop()).join(', ')}: tick every box on Google's page`)
+    let profile: { emailAddress?: string } | null
+    try {
+      const response = await fetch(`${this.options.gmailApi ?? 'https://gmail.googleapis.com'}/gmail/v1/users/me/profile`, { headers: { authorization: `Bearer ${tokenAnswer.body.access_token}` }, signal: AbortSignal.timeout(30_000) })
+      profile = response.ok ? await response.json() as { emailAddress?: string } : null
+    } catch {
+      profile = null
+    }
+    if (!profile?.emailAddress) return refuse('no_mailbox', 'Signed in, but Gmail did not name the mailbox: start again')
     // Named by chance, not by the mailbox: the name shows up in listings and logs.
     const tokenFile = path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
     await this.writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
