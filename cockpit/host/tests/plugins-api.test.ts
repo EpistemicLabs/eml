@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -237,6 +237,24 @@ describe('plugins per space', () => {
     })
     expect(custom.status).toBe(403)
     expect((await custom.json()).error.message).toContain('remote shell on')
+  })
+
+  it('deletes a removed sign-in\'s token file when the cockpit wrote it, never one another program keeps', async () => {
+    const google = join(home, 'plugins', 'google')
+    mkdirSync(google, { recursive: true })
+    const own = join(google, 'abc.token.json')
+    const foreign = join(home, 'elsewhere.token.json')
+    writeFileSync(own, '{}')
+    writeFileSync(foreign, '{}')
+    const add = (tokenFile: string) => fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plugin: 'gmail', label: 'x', values: { tokenFile } }),
+    }).then((r) => r.json()).then((b) => b.connection.id as string)
+    const ownId = await add(own)
+    const foreignId = await add(foreign)
+    await fetch(`${base}/api/plugins/connections/${ownId}`, { method: 'DELETE' })
+    await fetch(`${base}/api/plugins/connections/${foreignId}`, { method: 'DELETE' })
+    expect(existsSync(own)).toBe(false)
+    expect(existsSync(foreign)).toBe(true)
   })
 
   it('switches a claude.ai connector off in one space', async () => {

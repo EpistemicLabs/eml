@@ -390,7 +390,13 @@ export async function handlePluginsApi(
     }
     const connectionId = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})$/.exec(pathname)?.[1]
     if (connectionId && method === 'DELETE') {
+      const gone = (await service.connections()).find((c) => c.id === connectionId)
       const removed = await service.removeConnection(connectionId)
+      // A token file the cockpit wrote for the sign-in goes with it; one another program keeps stays.
+      const tokenFile = gone?.values.tokenFile
+      if (removed && tokenFile && ctx.google && path.dirname(path.resolve(tokenFile)) === path.resolve(path.dirname(ctx.google.clientFile))) {
+        await fs.rm(tokenFile, { force: true })
+      }
       json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No connection with this id' } })
       return true
     }
