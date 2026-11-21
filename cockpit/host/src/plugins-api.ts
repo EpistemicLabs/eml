@@ -4,6 +4,9 @@ import { promises as fs } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { readCockpitConfig, updateCockpitConfig } from './config.js'
+import { partsOf, type McpPart, type PluginManifest } from './domain/plugin-manifest.js'
+import { PluginRegistry } from './infrastructure/plugins/plugin-registry.js'
+import { CUSTOM_PLUGINS_FILE, OFFICIAL_PLUGINS_DIR } from './paths.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
@@ -19,20 +22,25 @@ export interface TimeNames {
 }
 
 /**
- * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
- * project's views, Brain among them, that Settings › EML Plugins switches on
- * or off, for the whole cockpit — every browser of it sees the same. Brain off
- * hides only the pane view; the brain itself and the header's Brain tab stay.
- * Brain, Note and Worktrees start on, the others off (PLUGIN_DEFAULTS); the user's own switch wins.
+ * The cockpit's plugins (plan cockpit-plugins-mcp-channels-plan): the official
+ * ones in plugins/<id>/plugin.json — the project's views, Brain among them, and
+ * services such as Gmail — and the user's own custom MCP servers
+ * (infrastructure/plugins/plugin-registry.ts). Settings › EML Plugins switches
+ * them on or off for the whole cockpit — every browser of it sees the same.
+ * Brain off hides only the pane view; the brain itself and the header's Brain tab stay.
+ * A plugin's manifest says whether it starts on (defaultEnabled: Brain, Note
+ * and Worktrees, decision cockpit-plugin-defaults); the user's own switch wins.
  *
- *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
- *   PATCH /api/plugins  { id, enabled }        → the same, after the change
- *   GET   /api/plugins/worktrees/git?projectId= → the project folder's worktrees
- *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
- *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
+ *   GET    /api/plugins                         → { plugins: [PluginView] }
+ *   PATCH  /api/plugins  { id, enabled }        → the same, after the change
+ *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, this machine only
+ *   DELETE /api/plugins/custom/<id>             → { removed }, this machine only
+ *   GET    /api/plugins/worktrees/git?projectId= → the project folder's worktrees
+ *   GET    /api/plugins/worktrees/ports          → the ports the user's processes listen on
+ *   GET    /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
  *   DELETE /api/plugins/shell/<id>              → end a Shell plugin terminal (its pane closed)
- *   POST  /api/plugins/time/beat { spaceId, projectId, sessionId, fresh? } → the user is at the cockpit (time-tracking.ts)
- *   GET   /api/plugins/time?days=              → the last days' times, today last, and the sessions' names
+ *   POST   /api/plugins/time/beat { spaceId, projectId, sessionId, fresh? } → the user is at the cockpit (time-tracking.ts)
+ *   GET    /api/plugins/time?days=              → the last days' times, today last, and the sessions' names
  *
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
@@ -41,22 +49,55 @@ export interface TimeNames {
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell', 'time'] as const
-export type PluginId = (typeof PLUGIN_IDS)[number]
+export const pluginRegistry = new PluginRegistry({
+  officialDir: OFFICIAL_PLUGINS_DIR,
+  customFile: CUSTOM_PLUGINS_FILE,
+  log: (line) => console.log(line),
+})
 
-const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
-
-/**
- * A plugin's state until the user switches it. The plugins released on by
- * default stay so, for the cockpits that never touched them; every plugin
- * after them starts off.
- */
-export const PLUGIN_DEFAULTS: Record<PluginId, boolean> = { brain: true, note: true, worktrees: true, repository: false, shell: false, time: false }
-
-/** What the user chose, else the plugin's default. */
-export async function pluginStates(): Promise<Record<PluginId, boolean>> {
+/** What the user chose, else the plugin's default; every plugin the registry knows. */
+export async function pluginStates(registry: PluginRegistry = pluginRegistry): Promise<Record<string, boolean>> {
   const chosen = (await readCockpitConfig())?.plugins ?? {}
-  return Object.fromEntries(PLUGIN_IDS.map((id) => [id, chosen[id] ?? PLUGIN_DEFAULTS[id]])) as Record<PluginId, boolean>
+  return Object.fromEntries((await registry.list()).map((manifest) => [manifest.id, chosen[manifest.id] ?? manifest.defaultEnabled]))
+}
+
+/** A plugin as the page sees it: never a value an MCP part passes, only the names. */
+export interface PluginView {
+  id: string
+  name: string
+  description: string
+  tier: PluginManifest['tier']
+  parts: Array<'pane' | 'mcp' | 'channel'>
+  /** The built-in view its pane shows. */
+  pane: string | null
+  /** The bridge account type its channel serves. */
+  channel: string | null
+  mcp: { transport: McpPart['transport']; target: string; settings: Array<{ name: string; secret: boolean }> } | null
+  auth: PluginManifest['auth'] | null
+  enabled: boolean
+}
+
+export function pluginView(manifest: PluginManifest, enabled: boolean): PluginView {
+  const { pane, mcp, channel } = manifest.parts
+  const settings = mcp ? Object.entries(mcp.transport === 'stdio' ? mcp.env : mcp.headers).map(([name, value]) => ({ name, secret: typeof value !== 'string' })) : []
+  return {
+    id: manifest.id,
+    name: manifest.name,
+    description: manifest.description,
+    tier: manifest.tier,
+    parts: partsOf(manifest),
+    pane: pane && 'builtin' in pane ? pane.builtin : null,
+    channel: channel?.adapter ?? null,
+    // The command without its arguments: they may carry a token.
+    mcp: mcp ? { transport: mcp.transport, target: mcp.transport === 'stdio' ? mcp.command : new URL(mcp.url).origin, settings } : null,
+    auth: manifest.auth ?? null,
+    enabled,
+  }
+}
+
+async function pluginViews(registry: PluginRegistry): Promise<PluginView[]> {
+  const states = await pluginStates(registry)
+  return (await registry.list()).map((manifest) => pluginView(manifest, states[manifest.id] ?? false))
 }
 
 export interface Worktree {
@@ -97,6 +138,8 @@ export interface WorktreesGit {
 }
 
 export interface PluginsApiDeps {
+  /** The plugins; the cockpit's own registry when left out. */
+  registry?: PluginRegistry
   /** The pane project's folder in the request's space; null: no such project or no folder. */
   projectFolder: (projectId: string) => string | null
   /** The cockpit sessions' running agent processes, pid → session. */
@@ -152,26 +195,52 @@ export async function handlePluginsApi(
   readJson: ReadJson,
 ): Promise<boolean> {
   const { pathname } = url
+  const registry = deps.registry ?? pluginRegistry
   if (pathname === '/api/notes' || pathname.startsWith('/api/notes/')) {
-    if ((await pluginStates()).note) return false
+    if ((await pluginStates(registry)).note) return false
     notFound(json, res, 'Notes are switched off (Settings › EML Plugins)')
     return true
   }
   if (pathname === '/api/plugins') {
     if (method === 'PATCH') {
       const body = await readJson(req)
-      if (!isPluginId(body.id) || typeof body.enabled !== 'boolean') {
-        json(res, 400, { error: { code: 'BAD_REQUEST', message: `id is one of ${PLUGIN_IDS.join(', ')}, enabled a boolean` } })
+      const known = typeof body.id === 'string' && (await registry.get(body.id)) !== null
+      if (!known || typeof body.enabled !== 'boolean') {
+        json(res, 400, { error: { code: 'BAD_REQUEST', message: 'id is a plugin this cockpit knows, enabled a boolean' } })
         return true
       }
-      const { id, enabled } = body
+      const id = body.id as string
+      const enabled = body.enabled
       await updateCockpitConfig((config) => config && { ...config, plugins: { ...config.plugins, [id]: enabled } })
       // A shell switched off ends with it, not only at its detach timeout.
       if (id === 'shell' && !enabled) deps.endShells?.()
     } else if (method !== 'GET') return false
-    const states = await pluginStates()
-    json(res, 200, { plugins: PLUGIN_IDS.map((id) => ({ id, enabled: states[id] })) })
+    json(res, 200, { plugins: await pluginViews(registry) })
     return true
+  }
+  if (pathname === '/api/plugins/custom' || pathname.startsWith('/api/plugins/custom/')) {
+    // A custom MCP server runs with the user's rights in every session that gets it: set up on this machine only.
+    if (!isLocalRequest(req)) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Custom MCP servers are added and removed on this machine only' } })
+      return true
+    }
+    if (pathname === '/api/plugins/custom' && method === 'POST') {
+      const result = await registry.addCustom(await readJson(req))
+      if (!result.ok) {
+        json(res, 400, { error: { code: 'BAD_REQUEST', message: result.reason } })
+        return true
+      }
+      json(res, 201, { plugin: pluginView(result.manifest, (await pluginStates(registry))[result.manifest.id] ?? false) })
+      return true
+    }
+    const customId = /^\/api\/plugins\/custom\/([a-z][a-z0-9-]{0,39})$/.exec(pathname)?.[1]
+    if (customId && method === 'DELETE') {
+      const removed = await registry.removeCustom(customId)
+      if (removed) await updateCockpitConfig((config) => config && { ...config, plugins: Object.fromEntries(Object.entries(config.plugins ?? {}).filter(([id]) => id !== customId)) })
+      json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No custom plugin with this id' } })
+      return true
+    }
+    return false
   }
   // The Shell plugin's terminal runs over the terminal socket (pty-bridge.ts); its pane closed, it ends here.
   const shellId = /^\/api\/plugins\/shell\/([a-zA-Z0-9_.\-:]+)$/.exec(pathname)?.[1]
@@ -186,7 +255,7 @@ export async function handlePluginsApi(
   }
   if (pathname === '/api/plugins/time' || pathname === '/api/plugins/time/beat') {
     if (!deps.time) return false
-    if (!(await pluginStates()).time) {
+    if (!(await pluginStates(registry)).time) {
       notFound(json, res, 'Time is switched off (Settings › EML Plugins)')
       return true
     }
@@ -209,14 +278,14 @@ export async function handlePluginsApi(
     return true
   }
   if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
-    if (!(await pluginStates()).repository) {
+    if (!(await pluginStates(registry)).repository) {
       notFound(json, res, 'Repository is switched off (Settings › EML Plugins)')
       return true
     }
     return handleRepositoryApi(res, deps, url, json)
   }
   if (!pathname.startsWith('/api/plugins/worktrees/') || method !== 'GET') return false
-  if (!(await pluginStates()).worktrees) {
+  if (!(await pluginStates(registry)).worktrees) {
     notFound(json, res, 'Worktrees is switched off (Settings › EML Plugins)')
     return true
   }
