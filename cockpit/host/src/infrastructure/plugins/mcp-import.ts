@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import type { ConfigValue } from '../../domain/plugin-manifest.js'
 import { setPlugin, type Connection, type SpacePlugins } from '../../domain/space-plugins.js'
+import { writeOwnerOnly } from './owner-only-file.js'
 import { redactSecrets } from '../../diagnostics/redact.js'
 import type { PluginRegistry } from './plugin-registry.js'
 import type { PluginStore } from './plugin-store.js'
@@ -68,7 +69,8 @@ export async function importMcpServers(
       }
       // Only what became a plugin leaves the config; what couldn't be read stays where it was.
       const rest = Object.fromEntries(Object.entries(servers).filter(([name]) => !taken.includes(name)))
-      await writeJsonAtomic(source.claudeJson, { ...config, mcpServers: rest })
+      // Claude Code's own folder: the file owner-only, the folder as it is.
+      await writeOwnerOnly(source.claudeJson, JSON.stringify({ ...config, mcpServers: rest }, null, 2), { lockDir: false })
     }
     await deps.store.updateSpaces((state) => markDone(state, CLAUDE_STEP))
   }
@@ -208,11 +210,6 @@ async function readJsonObject(file: string): Promise<Record<string, unknown> | n
   }
 }
 
-async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), { mode: 0o600 })
-  await fs.rename(tmp, file)
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null

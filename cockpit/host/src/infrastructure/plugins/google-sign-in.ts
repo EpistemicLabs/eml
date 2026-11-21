@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import { z } from 'zod'
+import { writeOwnerOnly } from './owner-only-file.js'
 
 /**
  * Signing in to Google with the user's own OAuth client (decision gmail-plugin-mcp-scope-and-sign-in):
@@ -71,7 +72,7 @@ export class GoogleSignIn {
     }
     const client = clientFileSchema.safeParse(parsed)
     if (!client.success) return { ok: false, reason: 'Use an OAuth client of type "Desktop app" (its file starts with {"installed": …})' }
-    await this.writeOwnerOnly(this.clientFile, `${JSON.stringify({ installed: client.data.installed }, null, 2)}\n`)
+    await writeOwnerOnly(this.clientFile, `${JSON.stringify({ installed: client.data.installed }, null, 2)}\n`)
     return { ok: true }
   }
 
@@ -152,15 +153,7 @@ export class GoogleSignIn {
     if (!profile?.emailAddress) return refuse('no_mailbox', 'Signed in, but Gmail did not name the mailbox: start again')
     // Named by chance, not by the mailbox: the name shows up in listings and logs.
     const tokenFile = path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
-    await this.writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
+    await writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
     return { ok: true, signedIn: { address: profile.emailAddress, credentialsFile: this.clientFile, tokenFile } }
-  }
-
-  private async writeOwnerOnly(file: string, text: string): Promise<void> {
-    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-    await fs.chmod(path.dirname(file), 0o700)
-    const tmp = `${file}.${process.pid}.tmp`
-    await fs.writeFile(tmp, text, { mode: 0o600 })
-    await fs.rename(tmp, file)
   }
 }

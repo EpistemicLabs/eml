@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import * as path from 'node:path'
 import { setPlugin, type BridgeAccount, type Connection } from '../../domain/space-plugins.js'
+import { writeOwnerOnly } from './owner-only-file.js'
 import type { PluginStore } from './plugin-store.js'
 
 const STEP = 'import:bridge-accounts'
@@ -83,9 +84,6 @@ export async function writeBridgeAccounts(file: string, accounts: BridgeAccount[
   }
   const text = `${JSON.stringify(accounts, null, 2)}\n`
   if (text === before) return false
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const tmp = `${file}.${process.pid}.tmp`
-  await fs.writeFile(tmp, text, { mode: 0o600 })
-  await fs.rename(tmp, file)
+  await writeOwnerOnly(file, text)
   return true
 }
