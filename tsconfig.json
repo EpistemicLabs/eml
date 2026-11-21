@@ -20,6 +20,9 @@
       "path": "packages/channel-bridge-sdk"
     },
     {
+      "path": "plugins/gmail/channel"
+    },
+    {
       "path": "packages/channel-bridge"
     }
   ]

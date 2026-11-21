@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { channelAccountContract } from '@engramprotocol/channel-bridge-sdk/testing'
-import { GmailAccount } from '../src/adapters/gmail/gmail-account'
-import { GoogleRefreshToken } from '../src/adapters/gmail/google-refresh-token'
+import { GmailAccount } from '../src/gmail-account'
+import { GoogleRefreshToken } from '../src/google-refresh-token'
 import { FakeGmail, gmailMessage } from './support/fake-gmail'
 
 let gmail: FakeGmail

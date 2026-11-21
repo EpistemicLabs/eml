@@ -58,6 +58,9 @@ describe('main', () => {
       }
       writeFileSync(join(root, 'accounts.json'), JSON.stringify([{ type: 'gmail', accountId: 'a', space: 'support' }]))
       await expect(main(env)).rejects.toThrow('CHANNEL_BRIDGE_ACCOUNTS_FILE')
+      // A type no plugin's channel part serves.
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([{ type: 'pager', accountId: 'a', space: 'support' }]))
+      await expect(main(env)).rejects.toThrow('CHANNEL_BRIDGE_ACCOUNTS_FILE')
       writeFileSync(join(root, 'accounts.json'), JSON.stringify([
         { type: 'gmail', accountId: 'a', space: 'support', address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
         { type: 'gmail', accountId: 'a', space: 'support', address: 'other@home.example', credentialsFile: '/x', tokenFile: '/y' },

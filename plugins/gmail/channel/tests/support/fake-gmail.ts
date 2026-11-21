@@ -1,7 +1,7 @@
 import { createServer } from 'http'
 import type { IncomingMessage, Server, ServerResponse } from 'http'
 import type { AddressInfo } from 'net'
-import type { GmailMessage } from '../../src/adapters/gmail/gmail-mapping'
+import type { GmailMessage } from '../../src/gmail-mapping'
 
 /**
  * A stand-in for Google's token endpoint and the parts of the Gmail API the bridge calls, with
