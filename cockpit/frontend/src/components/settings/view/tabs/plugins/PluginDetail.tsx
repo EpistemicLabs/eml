@@ -11,7 +11,7 @@ import {
   type ConnectionView,
   type PluginView,
 } from '@/lib/plugins-admin';
-import { Switch } from '@/shared/view/ui';
+import { Button, Input, Switch } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
 import SettingsCard from '../../SettingsCard';
@@ -47,19 +47,19 @@ export default function PluginDetail({ plugin, spaces, connections, connectionsL
 
   return (
     <div className="space-y-6">
-      <button type="button" onClick={onBack} className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-1 text-sm hover:bg-foreground/4">
-        <ChevronLeft className="size-4" aria-hidden="true" /> Plugins
-      </button>
+      <Button variant="outline" size="sm" onClick={onBack}>
+        <ChevronLeft aria-hidden="true" /> Plugins
+      </Button>
       <div className="flex items-center gap-3">
         <PluginIcon plugin={plugin} large />
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-foreground">{plugin.name}</h2>
-          {plugin.description && <p className="text-sm text-muted-foreground">{plugin.description}</p>}
+          <h2 className="text-title font-semibold text-foreground">{plugin.name}</h2>
+          {plugin.description && <p className="text-body text-muted-foreground">{plugin.description}</p>}
           <div className="mt-1 flex gap-1"><TierChip tier={plugin.tier} /></div>
         </div>
       </div>
       {plugin.tier === 'custom' && (
-        <p className="rounded-lg border border-foreground/10 bg-foreground/4 px-3 py-2 text-sm"><b>Runs with your user rights.</b> A custom MCP server can do what your user account can do on this machine.</p>
+        <p className="rounded-lg border border-border bg-muted px-3 py-2 text-body text-foreground"><b>Runs with your user rights.</b> A custom MCP server can do what your user account can do on this machine.</p>
       )}
 
       <SettingsSection title="Parts" description="Switched off, a part is off in every space; the plugin itself stays on where it is.">
@@ -75,27 +75,27 @@ export default function PluginDetail({ plugin, spaces, connections, connectionsL
             </SettingsRow>
           ))}
         </SettingsCard>
-        {setPart.isError && <p className="text-sm text-destructive">{setPart.error.message}</p>}
+        {setPart.isError && <p className="text-body text-stopped-ink">{setPart.error.message}</p>}
       </SettingsSection>
 
       {needsSignIn && (
         <SettingsSection title="Sign-ins" description="Stored once in this cockpit, readable by you only and never shown again; each space picks one.">
           {connectionsLocked ? (
-            <p className="text-sm text-muted-foreground">Sign-ins are managed on the cockpit's own machine.</p>
+            <p className="text-body text-muted-foreground">Sign-ins are managed on the cockpit's own machine.</p>
           ) : (
             <>
               <SettingsCard divided>
-                {own.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground">No sign-in yet.</p>}
+                {own.length === 0 && <p className="px-4 py-3 text-body text-muted-foreground">No sign-in yet.</p>}
                 {own.map((connection) => (
                   <SettingsRow key={connection.id} label={connection.label} description={`Holds ${connection.secrets.join(', ') || 'nothing'} · used in ${Object.values(plugin.spaces).filter((c) => c === connection.id).length} space(s)`}>
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
                       aria-label={`Remove ${connection.label}`}
                       onClick={() => removeConnection.mutate(connection.id)}
-                      className="rounded-md p-1.5 text-muted-foreground hover:bg-foreground/8 hover:text-foreground"
                     >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                    </button>
+                      <Trash2 aria-hidden="true" />
+                    </Button>
                   </SettingsRow>
                 ))}
               </SettingsCard>
@@ -109,7 +109,7 @@ export default function PluginDetail({ plugin, spaces, connections, connectionsL
         <SettingsCard divided>
           {spaces.map((space) => (
             <div key={space.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <span className="text-sm">
+              <span className="text-body text-foreground">
                 {space.name}
                 <span className="text-muted-foreground"> · {space.agentName ?? space.agent ?? 'no agent'}{space.shared ? ' · shared' : ''}</span>
               </span>
@@ -125,16 +125,16 @@ export default function PluginDetail({ plugin, spaces, connections, connectionsL
             <SettingsRow label="Remove plugin" description="It leaves every space, and its sign-ins are deleted from this cockpit.">
               {confirmRemove ? (
                 <span className="flex gap-2">
-                  <button type="button" onClick={() => removeCustom.mutate(plugin.id, { onSuccess: onBack })} className="rounded-full bg-destructive px-3 py-1 text-sm text-white">Remove</button>
-                  <button type="button" onClick={() => setConfirmRemove(false)} className="rounded-full border border-foreground/10 px-3 py-1 text-sm">Cancel</button>
+                  <Button variant="destructive" size="sm" onClick={() => removeCustom.mutate(plugin.id, { onSuccess: onBack })}>Remove</Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmRemove(false)}>Cancel</Button>
                 </span>
               ) : (
-                <button type="button" onClick={() => setConfirmRemove(true)} className="rounded-full border border-foreground/10 px-3 py-1 text-sm hover:bg-foreground/4">Remove…</button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmRemove(true)}>Remove…</Button>
               )}
             </SettingsRow>
           </SettingsCard>
         )}
-        {removeCustom.isError && <p className="text-sm text-destructive">{removeCustom.error.message}</p>}
+        {removeCustom.isError && <p className="text-body text-stopped-ink">{removeCustom.error.message}</p>}
       </SettingsSection>
     </div>
   );
@@ -148,39 +148,39 @@ function AddSignIn({ plugin }: { plugin: PluginView }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [openForm, setOpenForm] = useState(false);
   if (!openForm) {
-    return <button type="button" onClick={() => setOpenForm(true)} className="rounded-full border border-foreground/10 px-3 py-1 text-sm hover:bg-foreground/4">Add a sign-in</button>;
+    return <Button variant="outline" size="sm" onClick={() => setOpenForm(true)}>Add a sign-in</Button>;
   }
   const complete = label.trim() !== '' && names.every((name) => (values[name] ?? '') !== '');
   return (
     <form
-      className="space-y-3 rounded-xl border border-foreground/8 p-4"
+      className="space-y-3 rounded-xl border border-border bg-card p-4"
       onSubmit={(event) => {
         event.preventDefault();
         add.mutate({ plugin: plugin.id, label: label.trim(), values }, { onSuccess: () => { setOpenForm(false); setLabel(''); setValues({}); } });
       }}
     >
-      <label className="block text-sm">
+      <label className="block text-body">
         <span className="text-muted-foreground">Name it</span>
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={plugin.channel === 'gmail' ? 'Work mailbox' : 'Workspace'} className="mt-1 w-full rounded-md border border-foreground/10 bg-background px-2 py-1" />
+        <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={plugin.channel === 'gmail' ? 'Work mailbox' : 'Workspace'} className="mt-1" />
       </label>
       {names.map((name) => (
-        <label key={name} className="block text-sm">
-          <span className="font-mono text-xs text-muted-foreground">{name}</span>
-          <input
+        <label key={name} className="block text-body">
+          <span className="font-code text-ui text-muted-foreground">{name}</span>
+          <Input
             type={plugin.channel === 'gmail' ? 'text' : 'password'}
             autoComplete="off"
             value={values[name] ?? ''}
             onChange={(e) => setValues({ ...values, [name]: e.target.value })}
-            className="mt-1 w-full rounded-md border border-foreground/10 bg-background px-2 py-1 font-mono text-xs"
+            className="mt-1 font-code text-ui"
           />
         </label>
       ))}
-      {plugin.channel === 'gmail' && <p className="text-xs text-muted-foreground">The mailbox's address, an OAuth Desktop app client file and the token file of an existing sign-in; the bridge only reads the files.</p>}
+      {plugin.channel === 'gmail' && <p className="text-ui text-muted-foreground">The mailbox's address, an OAuth Desktop app client file and the token file of an existing sign-in; the bridge only reads the files.</p>}
       <div className="flex gap-2">
-        <button type="submit" disabled={!complete || add.isPending} className="rounded-full bg-primary px-3 py-1 text-sm text-primary-foreground disabled:opacity-50">Save sign-in</button>
-        <button type="button" onClick={() => setOpenForm(false)} className="rounded-full border border-foreground/10 px-3 py-1 text-sm">Cancel</button>
+        <Button type="submit" size="sm" disabled={!complete || add.isPending}>Save sign-in</Button>
+        <Button variant="outline" size="sm" onClick={() => setOpenForm(false)}>Cancel</Button>
       </div>
-      {add.isError && <p className="text-sm text-destructive">{add.error.message}</p>}
+      {add.isError && <p className="text-body text-stopped-ink">{add.error.message}</p>}
     </form>
   );
 }

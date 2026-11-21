@@ -4,6 +4,7 @@ import { Mail, Plug, Puzzle, type LucideIcon } from 'lucide-react';
 import { PANE_VIEW_DEFS } from '@/lib/pane-views';
 import type { PluginPart, PluginTier, PluginView } from '@/lib/plugins-admin';
 import { cn } from '@/lib/utils';
+import { Chip } from '@/shared/view/ui';
 
 export const TIER_LABEL: Record<PluginTier, string> = { official: 'Official', custom: 'Custom MCP', community: 'Community', dev: 'Local dev' };
 
@@ -20,34 +21,20 @@ export function pluginIcon(plugin: PluginView): LucideIcon {
 export function PluginIcon({ plugin, large }: { plugin: PluginView; large?: boolean }) {
   const Icon = pluginIcon(plugin);
   return (
-    <span className={cn('grid shrink-0 place-items-center rounded-lg bg-foreground/8 text-foreground', large ? 'size-11' : 'size-8')}>
+    <span className={cn('grid shrink-0 place-items-center rounded-lg bg-muted text-foreground', large ? 'size-11' : 'size-8')}>
       <Icon className={large ? 'size-5' : 'size-4'} aria-hidden="true" />
     </span>
   );
 }
 
-export function Chip({ children, mono, muted, className }: { children: React.ReactNode; mono?: boolean; muted?: boolean; className?: string }) {
-  return (
-    <span className={cn(
-      'inline-flex items-center rounded-full border border-foreground/10 px-2 py-0.5 text-xs whitespace-nowrap',
-      mono && 'font-mono',
-      muted && 'text-muted-foreground line-through',
-      className,
-    )}
-    >
-      {children}
-    </span>
-  );
-}
-
 export function TierChip({ tier }: { tier: PluginTier }) {
-  return <Chip className={cn(tier === 'community' && 'border-dashed', tier === 'official' && 'font-medium')}>{tier === 'official' ? `✓ ${TIER_LABEL[tier]}` : TIER_LABEL[tier]}</Chip>;
+  return <Chip className={cn('py-0.5', tier === 'community' && 'border border-dashed border-border-strong bg-transparent', tier === 'official' && 'text-foreground')}>{tier === 'official' ? `✓ ${TIER_LABEL[tier]}` : TIER_LABEL[tier]}</Chip>;
 }
 
 export function PartChips({ plugin }: { plugin: PluginView }) {
   return (
     <>
-      {plugin.parts.map((part) => <Chip key={part} mono muted={plugin.partsOff.includes(part)}>{part}</Chip>)}
+      {plugin.parts.map((part) => <Chip key={part} className={cn('py-0.5 font-code', plugin.partsOff.includes(part) ? 'line-through' : 'text-foreground')}>{part}</Chip>)}
     </>
   );
 }

@@ -240,6 +240,8 @@ html.dark {
   --size-folder-browser: 80vh;
   /* A settings row keeps its control beside the label down to this label width, else the control wraps under it. */
   --size-settings-label: 14rem;
+  /* A reading dialog (the release notes): at most this much of the viewport, then it scrolls. */
+  --size-dialog-tall: 85vh;
   /* area: chat and terminal */
   /* The chat column: as wide as one of two panes side by side; a sent message takes at most 85% of it. */
   --size-chat-column: 980px;

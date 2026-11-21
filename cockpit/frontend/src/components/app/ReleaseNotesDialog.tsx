@@ -6,7 +6,8 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, ExternalLink, Loader2 } from 'lucide-react';
 
-import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
+import { cn } from '@/lib/utils';
+import { Button, Dialog, DialogContent, DialogTitle, FOCUS, LABEL } from '@/shared/view/ui';
 
 type ReleaseNotes = { version: string; url: string; highlights: string[] };
 
@@ -36,37 +37,37 @@ export default function ReleaseNotesDialog({ from, to, brainLine, onClose }: {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto border border-border bg-card p-6 shadow-xl">
+      <DialogContent className="max-h-(--size-dialog-tall) max-w-measure overflow-y-auto p-6">
         <DialogTitle>Updated to v{to}</DialogTitle>
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
-          <CheckCircle2 aria-hidden className="h-5 w-5 text-success" /> Updated to v{to}
+        <h2 className="flex items-center gap-2 text-title font-semibold text-foreground">
+          <CheckCircle2 aria-hidden className="size-5 text-foreground" /> Updated to v{to}
         </h2>
-        {brainLine && <p className="mt-1 text-sm text-muted-foreground">{brainLine}</p>}
-        <h3 className="mt-5 text-xs font-medium uppercase tracking-wide text-muted-foreground">What’s new since v{from}</h3>
+        {brainLine && <p className="mt-1 text-body text-muted-foreground">{brainLine}</p>}
+        <h3 className={cn('mt-5', LABEL)}>What’s new since v{from}</h3>
         {error ? (
-          <p className="mt-4 text-sm text-muted-foreground">
+          <p className="mt-4 text-body text-muted-foreground">
             The release notes could not be loaded ({error}).{' '}
-            <a className="text-primary hover:underline" href={RELEASES_URL} target="_blank" rel="noreferrer">Read them on GitHub</a>.
+            <a className={cn('text-foreground underline underline-offset-2 hover:no-underline', FOCUS)} href={RELEASES_URL} target="_blank" rel="noreferrer">Read them on GitHub</a>.
           </p>
         ) : !notes ? (
-          <Loader2 className="mt-4 h-4 w-4 animate-spin text-muted-foreground" />
+          <Loader2 className="mt-4 size-4 animate-spin text-muted-foreground" />
         ) : (
           notes.map((release) => (
             <section key={release.version} className="mt-4">
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <h3 className="flex items-center gap-2 text-body font-semibold text-foreground">
                 v{release.version}
                 {release.url && (
-                  <a className="inline-flex items-center gap-1 text-xs font-normal text-primary hover:underline" href={release.url} target="_blank" rel="noreferrer">
+                  <a className={cn('inline-flex min-h-(--target-min) items-center gap-1 text-ui font-normal text-muted-foreground underline underline-offset-2 hover:text-foreground', FOCUS)} href={release.url} target="_blank" rel="noreferrer">
                     Full notes <ExternalLink aria-hidden className="size-3" />
                   </a>
                 )}
               </h3>
               {release.highlights.length > 0 ? (
-                <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-6 text-foreground">
+                <ul className="mt-2 list-disc space-y-1.5 pl-5 text-body text-foreground">
                   {release.highlights.map((highlight, i) => <li key={i}>{highlight}</li>)}
                 </ul>
               ) : (
-                <p className="mt-2 text-sm text-muted-foreground">No summary for this release — see the full notes.</p>
+                <p className="mt-2 text-body text-muted-foreground">No summary for this release — see the full notes.</p>
               )}
             </section>
           ))
