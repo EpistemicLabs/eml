@@ -10,6 +10,13 @@ describe('cn', () => {
     expect(cn('text-heading text-warning')).toBe('text-heading text-warning');
   });
 
+  it('knows the v2 sizes too (chat, title, display)', () => {
+    expect(cn('text-chat text-foreground')).toBe('text-chat text-foreground');
+    expect(cn('text-title text-muted-foreground')).toBe('text-title text-muted-foreground');
+    expect(cn('text-display', 'text-you-ink')).toBe('text-display text-you-ink');
+    expect(cn('text-title', 'text-body')).toBe('text-body');
+  });
+
   it('still lets a later size replace an earlier one', () => {
     expect(cn('text-caption', 'text-ui')).toBe('text-ui');
     expect(cn('text-caption', 'text-xs')).toBe('text-xs');
