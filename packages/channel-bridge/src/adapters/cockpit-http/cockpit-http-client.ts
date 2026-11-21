@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Channel } from '../../domain/address'
+import type { Channel } from '@engramprotocol/channel-bridge-sdk'
 import type { JobRoute, MailMatch, ReplyMode } from '../../domain/routing'
 import type { Cockpit, WakeOutcome, WakeRequest } from '../../ports/cockpit'
 import type { DirectoryUnavailable, JobDirectory, RouteAnswer, RoutesAnswer } from '../../ports/job-directory'

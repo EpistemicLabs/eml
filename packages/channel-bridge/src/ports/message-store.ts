@@ -1,4 +1,4 @@
-import type { InboundMessage } from '../domain/inbound-message'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { Routing } from '../domain/routing'
 
 export interface StoredMessage extends InboundMessage {

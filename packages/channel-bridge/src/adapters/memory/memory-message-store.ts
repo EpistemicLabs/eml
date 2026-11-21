@@ -1,5 +1,5 @@
-import { normalizeMailAddress } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import { normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { Routing } from '../../domain/routing'
 import type { MessageStore, SaveOutcome, StoredMessage } from '../../ports/message-store'
 

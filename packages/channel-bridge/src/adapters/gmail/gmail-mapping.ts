@@ -1,5 +1,5 @@
-import { domainOf, normalizeMailAddress } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import { domainOf, normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 
 /** The part of a Gmail API message (format=full) the bridge reads. */
 export interface GmailHeader {

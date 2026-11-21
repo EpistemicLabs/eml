@@ -1,4 +1,4 @@
-import type { Channel } from './address'
+import type { Channel } from '@engramprotocol/channel-bridge-sdk'
 
 /**
  * draft     waits for a person

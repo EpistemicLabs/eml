@@ -1,4 +1,4 @@
-/** The channels the bridge carries. A channel joins this list with its plug-in. */
+/** The channels the bridge carries. A channel joins this list with its plugin. */
 export type Channel = 'mail'
 
 /** Mail addresses compare in lower case, without surrounding space. */

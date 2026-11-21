@@ -1,4 +1,4 @@
-import type { Channel } from './address'
+import type { Channel } from '@engramprotocol/channel-bridge-sdk'
 import { routeCovers } from './routing'
 import type { JobRoute } from './routing'
 

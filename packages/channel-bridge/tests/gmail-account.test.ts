@@ -2,11 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { channelAccountContract } from '@engramprotocol/channel-bridge-sdk/testing'
 import { GmailAccount } from '../src/adapters/gmail/gmail-account'
 import { GoogleRefreshToken } from '../src/adapters/gmail/google-refresh-token'
-import { ScriptedChannel } from '../src/adapters/fake-channel/scripted-channel'
 import { FakeGmail, gmailMessage } from './support/fake-gmail'
-import { channelAccountContract } from './contracts/channel-account-contract'
 
 let gmail: FakeGmail
 let dir: string
@@ -30,17 +29,7 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-channelAccountContract('scripted', async () => {
-  const channel = new ScriptedChannel('acc-1', 'support')
-  return {
-    account: channel,
-    arrive: (id) => channel.receive({
-      channelMessageId: id, threadKey: `t-${id}`, from: 'team@shop.example', senderVerified: true, automated: false,
-      receivedAt: '2026-11-08T10:00:00.000Z', subject: 'Hi', text: 'Hello',
-    }),
-  }
-})
-channelAccountContract('gmail', async () => ({ account: await account(), arrive: (id) => gmail.deliver(gmailMessage(id)) }))
+channelAccountContract({ describe, it, expect }, 'gmail', async () => ({ account: await account(), arrive: (id) => gmail.deliver(gmailMessage(id)) }))
 
 describe('GmailAccount', () => {
   it('follows history pages and skips its own sent mail', async () => {

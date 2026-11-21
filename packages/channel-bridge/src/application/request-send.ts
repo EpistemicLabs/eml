@@ -1,4 +1,4 @@
-import { normalizeMailAddress } from '../domain/address'
+import { normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
 import { outcomeOf } from '../domain/outbox'
 import type { OutboxItem } from '../domain/outbox'
 import { decideSend } from '../domain/send-policy'

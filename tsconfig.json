@@ -17,6 +17,9 @@
       "path": "packages/bench"
     },
     {
+      "path": "packages/channel-bridge-sdk"
+    },
+    {
       "path": "packages/channel-bridge"
     }
   ]

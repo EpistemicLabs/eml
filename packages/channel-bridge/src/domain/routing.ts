@@ -1,6 +1,5 @@
-import { domainOf, normalizeMailAddress } from './address'
-import type { Channel } from './address'
-import type { InboundMessage } from './inbound-message'
+import { domainOf, normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
+import type { Channel, InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 
 export type MailMatch = { kind: 'address'; address: string } | { kind: 'domain'; domain: string }
 

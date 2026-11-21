@@ -1,4 +1,4 @@
-import type { Channel } from '../domain/address'
+import type { Channel } from '@engramprotocol/channel-bridge-sdk'
 import type { JobRoute } from '../domain/routing'
 
 /** The cockpit could not answer now; asking again later may help. */

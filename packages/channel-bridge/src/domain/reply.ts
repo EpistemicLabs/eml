@@ -1,4 +1,4 @@
-import { normalizeMailAddress } from './address'
+import { normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
 
 /** The subject of a reply: the original's, with one Re: in front. */
 export function replySubject(subject: string | null): string | null {
