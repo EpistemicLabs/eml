@@ -245,6 +245,15 @@ describe('plugins per space', () => {
     }
   })
 
+  it('lets a remote user remove a custom server without the shell on', async () => {
+    const added = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'remote-gone', name: 'G', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+    })
+    expect(added.status).toBe(201)
+    const removed = await fetch(`${base}/api/plugins/custom/remote-gone`, { method: 'DELETE', headers: { 'x-forwarded-for': '100.64.0.2' } })
+    expect(removed.status).toBe(200)
+  })
+
   it('lets a remote user see and add sign-ins, but adds a custom server remotely only with the shell on', async () => {
     const remote = { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' }
     expect((await fetch(`${base}/api/plugins/connections`, { headers: remote })).status).toBe(200)

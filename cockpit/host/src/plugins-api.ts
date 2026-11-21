@@ -407,9 +407,9 @@ export async function handlePluginsApi(
     return false
   }
   if (pathname === '/api/plugins/custom' || pathname.startsWith('/api/plugins/custom/')) {
-    // A custom MCP server runs a command with the user's rights, as a shell would: from elsewhere only
-    // where the Shell plugin may open too (`eml-cockpit remote shell on`).
-    if (!isLocalRequest(req) && !readRemoteAccess().shell) {
+    // A custom MCP server runs a command with the user's rights, as a shell would: added from elsewhere
+    // only where the Shell plugin may open too (`eml-cockpit remote shell on`). Removing one runs nothing.
+    if (method !== 'DELETE' && !isLocalRequest(req) && !readRemoteAccess().shell) {
       json(res, 403, { error: { code: 'FORBIDDEN', message: 'Custom MCP servers are added on the cockpit\'s machine, or remotely after `eml-cockpit remote shell on`' } })
       return true
     }
