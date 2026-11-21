@@ -5,8 +5,10 @@ import { callTool } from './_helpers'
 
 // v0.19: supersedes and part_of are not drawn by hand — they come from
 // supersedes on a write (also after the fact via eml_update) and parent_id.
+// conflict-detection (phase 1): distinct_from records a dismissed conflict
+// candidate; the server writes it as a marked related_to edge.
 const RELATION_VERBS = [
-  'supports', 'contradicts', 'derived_from', 'refines', 'related_to', 'blocks',
+  'supports', 'contradicts', 'derived_from', 'refines', 'related_to', 'blocks', 'distinct_from',
 ] as const
 
 /**
@@ -29,7 +31,8 @@ export function registerRelateTool(server: McpServer, http: EmlApi): void {
         'materializes a related_to edge). A replacement is supersedes on the new engram (on create, ' +
         'or eml_update(new_id, supersedes=[old_id]) when both exist — eml_track_task for a task); a sub-task is parent_id on ' +
         'eml_create_task / eml_track_task. Verbs: supports / contradicts / derived_from / refines / ' +
-        'related_to / blocks. One end may be in your agent brain and the other in this space (a learning refining ' +
+        'related_to / blocks / distinct_from. distinct_from records a conflict check: the two were compared and ' +
+        'are not a duplicate or contradiction — give the reason as explanation; the pair is not flagged again. One end may be in your agent brain and the other in this space (a learning refining ' +
         'the task it came from): the relation is kept in your agent brain as a reference to the space. Both ends in ' +
         'two different spaces is not possible.',
       inputSchema: z.object({
@@ -37,9 +40,9 @@ export function registerRelateTool(server: McpServer, http: EmlApi): void {
         target_id: z.string().describe('The engram the edge points TO (full id). Must differ from source_id.'),
         relation: z.enum(RELATION_VERBS).describe(
           'Directed verb source→target: supports · contradicts · derived_from · refines · ' +
-          'related_to (generic) · blocks.',
+          'related_to (generic) · blocks · distinct_from (a dismissed conflict candidate).',
         ),
-        explanation: z.string().optional().describe('1-line why — recommended for anything but related_to.'),
+        explanation: z.string().optional().describe('1-line why — recommended for anything but related_to, required for distinct_from.'),
         strength: z.number().min(0).max(1).optional().describe('Edge weight 0–1 (default 1.0).'),
       }).strict(),
     },

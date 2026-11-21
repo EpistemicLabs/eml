@@ -46,9 +46,9 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'models',
     label: 'Models',
-    keywords: 'models claude codex login sign in subscription permissions version update setup-token default',
+    keywords: 'models claude codex qwen openrouter endpoint api key login sign in subscription permissions version update setup-token default',
     icon: Cpu,
-    blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code and Codex (beta).',
+    blurb: 'The agent CLIs sessions run with: sign-in, permissions and version for Claude Code, Codex (beta) and Qwen Code (beta).',
   },
   {
     id: 'spaces',
@@ -67,7 +67,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   {
     id: 'plugins',
     label: 'EML Plugins',
-    keywords: 'plugins extensions notes worktrees worktree branch git ports localhost',
+    keywords: 'plugins extensions notes worktrees worktree branch git ports localhost repository repo changes diff code files commits shell terminal console time tracking clock hours',
     icon: Puzzle,
     blurb: 'The cockpit\'s own plugins: views a pane can show next to its sessions, switched on or off.',
   },

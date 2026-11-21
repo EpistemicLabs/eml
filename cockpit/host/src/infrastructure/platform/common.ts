@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import type { ListeningPort, Platform } from '../../domain/platform.js'
 
@@ -19,7 +20,7 @@ export const detached = (cmd: string, args: string[]) => {
   try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref() } catch { /* headless */ }
 }
 
-export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink' | 'linksFiles' | 'minimalEnv' | 'tarBin' | 'npm' | 'toolDirs' | 'listeningPorts'> = {
+export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink' | 'linksFiles' | 'minimalEnv' | 'tarBin' | 'npm' | 'toolDirs' | 'listeningPorts' | 'userShell'> = {
   exe: (name) => name,
   sessionEnvKeys: [],
   switchDirLink(target, link) {
@@ -28,6 +29,12 @@ export const posixBase: Pick<Platform, 'exe' | 'sessionEnvKeys' | 'switchDirLink
     fs.renameSync(tmp, link)
   },
   linksFiles: true,
+  // The login shell the account names (a service's env may have no SHELL), as a login shell like Terminal starts it.
+  userShell: () => {
+    let shell: string | null = null
+    try { shell = os.userInfo().shell } catch { /* no passwd entry */ }
+    return { bin: shell || process.env.SHELL || '/bin/sh', args: ['-l'] }
+  },
   minimalEnv: () => ({ PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '' }),
   // The npm next to this node (a launchd service's PATH may not have it), else PATH's.
   npm: () => {

@@ -62,6 +62,8 @@ export interface ShellRuntimeOptions {
   touchInput: boolean;
   /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
+  /** 'shell': the Shell plugin's terminal, `sessionId` its shell id; no project, no agent. */
+  kind?: 'session' | 'shell';
 }
 
 /** Input from outside the terminal: the compact layout's key row and its extras. */
@@ -238,8 +240,8 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
         if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
         const terminal = terminalRef.current;
         const fit = fitRef.current;
-        const { paneId, projectId, sessionId: currentSessionId, initialCommand } = latestRef.current;
-        if (!terminal || !fit || !currentSessionId || !projectId) {
+        const { paneId, projectId, sessionId: currentSessionId, initialCommand, kind } = latestRef.current;
+        if (!terminal || !fit || !currentSessionId || (!projectId && kind !== 'shell')) {
           setFailure(ERROR_NO_IDENTITY);
           return;
         }
@@ -260,12 +262,20 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
         }
 
         const size = fitTerminal(terminal, fit);
+        const isDark = document.documentElement.classList.contains('dark');
+        if (kind === 'shell') {
+          const sent = sendFrame(socket, {
+            type: 'init', kind: 'shell', paneId, sessionId: currentSessionId, cols: size.cols, rows: size.rows, isDarkMode: isDark,
+          });
+          if (sent) lastSentSizeRef.current = size;
+          return;
+        }
         const pane = paneId ? getPane(paneId) : undefined;
         const desk = paneId ? getDeskOfPane(paneId) : undefined;
         const sent = sendFrame(socket, {
           type: 'init',
           paneId,
-          projectId,
+          projectId: projectId ?? '',
           sessionId: currentSessionId,
           cols: size.cols,
           rows: size.rows,
@@ -274,7 +284,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
           taskId: pane?.taskId ?? null,
           provider: pane?.provider ?? null,
           spaceId: latestRef.current.spaceId !== undefined ? latestRef.current.spaceId : desk?.spaceId ?? null,
-          isDarkMode: document.documentElement.classList.contains('dark'),
+          isDarkMode: isDark,
         });
         if (sent) lastSentSizeRef.current = size;
       };

@@ -1,6 +1,8 @@
 import type { AgentProvider, ProviderId } from '../../domain/agent-provider.js'
 import { createClaudeProvider } from './claude/index.js'
 import { createCodexProvider } from './codex/index.js'
+import { createQwenProvider } from './qwen/index.js'
+import { platform } from '../platform/index.js'
 
 export interface RegistryOptions {
   /** The provider a known session runs with (the ledger's record). */
@@ -21,7 +23,12 @@ export class ProviderRegistry {
   private readonly preferred: () => ProviderId | undefined
 
   constructor(options: RegistryOptions = {}) {
-    const providers = options.providers ?? [createClaudeProvider(), createCodexProvider()]
+    const providers = options.providers ?? [
+      createClaudeProvider(),
+      createCodexProvider(),
+      // macOS only for now: unattended sessions need Qwen Code's sandbox-exec sandbox.
+      ...(platform.os === 'darwin' ? [createQwenProvider()] : []),
+    ]
     this.providers = new Map(providers.map((provider) => [provider.id, provider]))
     this.providerOf = options.providerOf ?? (() => undefined)
     this.preferred = options.preferred ?? (() => undefined)
