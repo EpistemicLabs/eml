@@ -65,8 +65,8 @@ export function addressesOf(value: string): string[] {
 type Files = { ok: true; files: Array<{ filename: string; mimeType: string; content: Buffer }> } | { ok: false; text: string }
 
 /**
- * The tools of the gmail plugin's MCP part for one mailbox. Their names, arguments and answers are
- * those of the Gmail MCP server they replace, so skills built on it keep working. Each answers with
+ * The tools of the gmail plugin's MCP part for one mailbox. Their names, arguments and answers are a
+ * contract: skills call them by name and read their text. Each answers with
  * text, also when Google refuses: what went wrong is an answer, not an exception.
  */
 export class Mailbox {

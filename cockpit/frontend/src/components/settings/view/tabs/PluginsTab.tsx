@@ -1,4 +1,4 @@
-// Settings › EML Plugins (plan cockpit-plugins-mcp-channels-plan, mockup v3):
+// Settings › EML Plugins:
 // every plugin — the cockpit's views, services such as Gmail, the user's
 // custom MCP servers — switched on or off per space, all or nothing, with one
 // of the user's sign-ins where it needs one. Three tabs: Installed, Spaces (the

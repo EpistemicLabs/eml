@@ -44,7 +44,7 @@ describe('Codex\'s plugin servers', () => {
     expect(existsSync(join(CODEX_CONFIG_DIR, 'config.toml'))).toBe(false)
   })
 
-  it('replaces the plugin tables of before and leaves the rest of config.toml alone', () => {
+  it('replaces the plugin tables an earlier write left and leaves the rest of config.toml alone', () => {
     mkdirSync(CODEX_CONFIG_DIR, { recursive: true })
     writeFileSync(join(CODEX_CONFIG_DIR, 'config.toml'), 'check_for_update_on_startup = false\n\n[mcp_servers.eml_brain]\nurl = "http://127.0.0.1:1/mcp"\n')
     codex.writeCodexPluginServers({ a: { lookup, other: { ...lookup, command: 'other-mcp' } } })

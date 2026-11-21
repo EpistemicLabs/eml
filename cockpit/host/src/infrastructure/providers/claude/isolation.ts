@@ -289,7 +289,7 @@ export function writeRuntimeFiles(
   spaceId: string,
   turnHookConfig: string,
   host: SpaceHost,
-  /** The space's plugin servers (space-plugins.ts); without them, the agent.json list of before. */
+  /** The space's plugin servers (space-plugins.ts); without them, the agent.json list. */
   pluginServers?: Record<string, unknown>,
 ): void {
   const configDir = runtime.configDirs.claude

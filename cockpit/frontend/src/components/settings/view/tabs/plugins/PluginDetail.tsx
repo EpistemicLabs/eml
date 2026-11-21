@@ -1,4 +1,4 @@
-// Settings › Plugins › one plugin (mockup v3): its parts and the user's
+// Settings › Plugins › one plugin: its parts and the user's
 // sign-ins side by side, the spaces it is on in, and what its tier lets it do.
 import { ChevronLeft } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -29,7 +29,7 @@ const partNote = (plugin: PluginView, part: PluginView['parts'][number]) => ({
   channel: 'Incoming messages wake the matching job; replies leave through the bridge outbox',
 }[part]);
 
-/** A bordered panel with a small heading, as the mockup draws them. */
+/** A bordered panel with a small heading. */
 function Panel({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
   return (
     <section className={cn('flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3', className)}>

@@ -1,4 +1,4 @@
-// Settings › Plugins › Add plugin (mockup v3): any MCP server, by command or
+// Settings › Plugins › Add plugin: any MCP server, by command or
 // URL, becomes a custom plugin with an mcp part. Its secret values are stored
 // once in a sign-in of its own; the plain ones go into the plugin.
 import { ChevronLeft, Plus, Trash2 } from 'lucide-react';

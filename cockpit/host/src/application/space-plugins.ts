@@ -34,7 +34,7 @@ export interface PluginSnapshot {
 const CARRY_STEP = 'carry:switches'
 
 /**
- * The plugins per space (plan phase 3): the switches, the user's connections, and the session files
+ * The plugins per space: the switches, the user's connections, and the session files
  * that follow from them. A change rewrites the space's files at once (`rewrite`), so its next session
  * starts with it; a session already running keeps what it started with.
  */
@@ -54,7 +54,7 @@ export class SpacePluginService {
   }
 
   /**
-   * Once per home, before the spaces open: the cockpit-wide switches of before carry over to every
+   * Once per home, before the spaces open: the cockpit-wide switches an older cockpit kept carry over to every
    * space, then the MCP servers configured outside the plugins are imported (mcp-import.ts).
    */
   async setup(spaces: ImportSpace[], legacy: Record<string, boolean>, source: ImportSource, backupsDir: string): Promise<ImportResult> {

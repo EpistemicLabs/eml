@@ -46,7 +46,7 @@ beforeAll(async () => {
 
   const { handlePluginsApi, spacePlugins } = await import('../src/plugins-api.js')
   pluginsModule = await import('../src/plugins-api.js')
-  // A home's first boot: the switches of before (none here) carry over to both spaces.
+  // A home's first boot: the switches an older cockpit kept (none here) carry over to both spaces.
   await spacePlugins.setup(
     [{ id: 'main', agent: null, ownRuntime: false }, { id: 'other', agent: null, ownRuntime: false }],
     {}, { claudeJson: join(home, 'claude-config', '.claude.json'), agents: [] }, join(home, 'plugins', 'backups'),

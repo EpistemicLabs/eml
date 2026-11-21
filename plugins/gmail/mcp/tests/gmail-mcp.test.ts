@@ -75,7 +75,7 @@ const mailbox = () => new Mailbox({ api: api(), address: 'me@work.example', atta
 const decodeRaw = (raw: string) => Buffer.from(raw, 'base64url').toString('utf8')
 
 describe('Mailbox', () => {
-  it('lists unanswered and found mail as the replaced server did', async () => {
+  it('lists unanswered and found mail in the agreed text format', async () => {
     expect(await mailbox().unanswered(3, 5)).toBe('Found 1 unanswered emails:\n\nID: m1\nFrom: Anna <anna@client.example>\nSubject: Meeting\nDate: Sat, 21 Nov 2026 10:00:00 +0000\nSnippet: about Meeting')
     expect(lastQuery).toBe('is:inbox -is:replied newer_than:3d')
     expect(await mailbox().search('from:anna')).toMatch(/^Found 1 emails:/)
@@ -158,7 +158,7 @@ describe('Calendar', () => {
 })
 
 describe('the MCP server', () => {
-  it('offers the tools of the server it replaces, plus the calendar', async () => {
+  it('offers the mail and calendar tools', async () => {
     const mcp = createGmailServer({ GMAIL_ADDRESS: 'me@work.example', GMAIL_ATTACHMENTS_DIR: dir }, api())
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
     await mcp.connect(serverSide)

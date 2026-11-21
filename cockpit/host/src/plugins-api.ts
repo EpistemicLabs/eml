@@ -27,7 +27,7 @@ export interface TimeNames {
 }
 
 /**
- * The cockpit's plugins (plan cockpit-plugins-mcp-channels-plan): the official
+ * The cockpit's plugins: the official
  * ones in plugins/<id>/plugin.json — the project's views, Brain among them, and
  * services such as Gmail — and the user's own custom MCP servers
  * (infrastructure/plugins/plugin-registry.ts). Each space has its own: a plugin
@@ -266,7 +266,7 @@ export async function handlePluginsApi(
       const known = typeof body.id === 'string' && (await registry.get(body.id)) !== null
       if (!known || typeof body.enabled !== 'boolean') return badRequest('id is a plugin this cockpit knows, enabled a boolean')
       if (body.space !== undefined && typeof body.space !== 'string') return badRequest('space is a space id')
-      // `connections` (the sign-ins it uses there) or, as before, one `connection`.
+      // `connections` (the sign-ins it uses there) or a single `connection`, the older form of the request.
       const picked = Array.isArray(body.connections) ? body.connections : body.connection === undefined ? undefined : body.connection === null ? [] : [body.connection]
       if (picked !== undefined && !picked.every((c): c is string => typeof c === 'string')) return badRequest('connections is a list of connection ids')
       const id = body.id as string

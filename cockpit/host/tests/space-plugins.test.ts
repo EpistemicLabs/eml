@@ -144,7 +144,7 @@ describe('importMcpServers', () => {
 })
 
 describe('SpacePluginService.setup', () => {
-  it('carries the cockpit-wide switches of before over to every space, once', async () => {
+  it('carries the cockpit-wide switches an older cockpit kept over to every space, once', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-setup-'))
     try {
       mkdirSync(join(dir, 'official', 'time'), { recursive: true })
@@ -207,7 +207,7 @@ describe('the channel bridge accounts', () => {
     expect(bridgeAccountsFor({ ...state, partsOff: { gmail: ['channel'] } }, [gmail], [work], ['main']).accounts).toEqual([])
   })
 
-  it('turns the accounts file of before into connections once, keeping each account id', async () => {
+  it('turns the accounts file of an older cockpit into connections once, keeping each account id', async () => {
     const { importBridgeAccounts, writeBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-'))
     try {
@@ -232,7 +232,7 @@ describe('the channel bridge accounts', () => {
   })
 })
 
-describe('the accounts file of before, when it is not as expected', () => {
+describe('an older cockpit\'s accounts file, when it is not as expected', () => {
   it('leaves a file it cannot read as it is and takes it over only once it can', async () => {
     const { importBridgeAccounts, ownsBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-broken-'))
@@ -273,7 +273,7 @@ describe('the accounts file of before, when it is not as expected', () => {
 })
 
 describe('several sign-ins and name clashes', () => {
-  it('reads a file of before with one connection per space', async () => {
+  it('reads an older file with one connection per space', async () => {
     const { spacePluginsSchema } = await import('../src/domain/space-plugins.js')
     const state = spacePluginsSchema.parse({ version: 1, spaces: { a: { plugins: { x: { connection: 'c1' }, y: { connection: null } } } } })
     expect(state.spaces.a.plugins).toEqual({ x: { connections: ['c1'] }, y: { connections: [] } })

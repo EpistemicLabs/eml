@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { secretsOf, serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
 
 /**
- * Which plugins each space has (plan cockpit-plugins-mcp-channels-plan, item 4). A plugin is all or
+ * Which plugins each space has. A plugin is all or
  * nothing per space: switched on, the space gets every part of it that is on for the cockpit. A
  * plugin with a sign-in uses one or more of the user's connections in each space where it is on
  * (decision plugin-several-sign-ins-per-space: two mailboxes in one space).

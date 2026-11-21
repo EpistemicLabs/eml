@@ -8,7 +8,7 @@ import type { PluginRegistry } from './plugin-registry.js'
 import type { PluginStore } from './plugin-store.js'
 
 /**
- * One-time import of the MCP servers configured outside the plugins (plan phase 3), so that from
+ * One-time import of the MCP servers configured outside the plugins, so that from
  * then on a space's sessions get exactly the plugins switched on for it:
  *
  *   - the user-level servers in the cockpit's Claude config (<home>/claude-config/.claude.json
