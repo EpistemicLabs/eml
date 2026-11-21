@@ -17,7 +17,7 @@ import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
 import { pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
-import { importBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
+import { importBridgeAccounts, ownsBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
 import { bridgeAccountsFor } from './domain/space-plugins.js'
 import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
 import { writeCodexPluginServers } from './infrastructure/providers/codex/index.js'
@@ -233,7 +233,8 @@ async function main() {
       }),
     }, path.join(PLUGINS_HOME, 'backups'))
     const accounts = await importBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, pluginStore, path.join(PLUGINS_HOME, 'backups'))
-    if (accounts.length > 0) log(`plugins: the channel bridge's accounts ${accounts.join(', ')} became connections of their plugin`)
+    if (accounts.imported.length > 0) log(`plugins: the channel bridge's accounts ${accounts.imported.join(', ')} became connections of their plugin`)
+    if (accounts.problem) log(`plugins: ${accounts.problem}`)
     if (imported.imported.length > 0) log(`plugins: imported ${imported.imported.map((i) => i.serverName).join(', ')} as custom MCP plugins${imported.backup ? ` (backup ${imported.backup})` : ''}`)
     for (const skipped of imported.skipped) log(`plugins: ${skipped.serverName} not imported — ${skipped.reason}`)
   } catch (err) {
@@ -642,6 +643,8 @@ async function main() {
   // The bridge's accounts follow the channel plugins' switches and connections (no home space: one
   // account per connection, on in every space that picked it); the bridge reads them at start.
   const writeAccounts = async (): Promise<boolean> => {
+    // A hand-written file the import could not take over is left as it is.
+    if (!(await ownsBridgeAccounts(pluginStore))) return false
     const snapshot = await spacePlugins.snapshot()
     const { accounts, problems } = bridgeAccountsFor(snapshot.state, snapshot.manifests, await pluginStore.connections(), jobSpaceIds())
     for (const problem of problems) log(`plugins: ${problem}`)

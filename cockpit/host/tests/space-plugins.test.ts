@@ -205,8 +205,8 @@ describe('the channel bridge accounts', () => {
       const file = join(dir, 'accounts.json')
       writeFileSync(file, JSON.stringify([{ type: 'gmail', accountId: 'home-mail', space: 'main', address: 'me@home.example', credentialsFile: '/c2', tokenFile: '/t2' }]))
       const store = new PluginStore(join(dir, 'plugins'))
-      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual(['home-mail'])
-      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual([])
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: ['home-mail'], problem: null })
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: [], problem: null })
       expect(await store.connections()).toEqual([{ ...home, label: 'me@home.example' }])
       expect((await store.spaces()).spaces.main.plugins.gmail).toEqual({ connections: ['home-mail'] })
       expect(readdirSync(join(dir, 'backups'))).toHaveLength(1)
@@ -217,6 +217,46 @@ describe('the channel bridge accounts', () => {
       expect(statSync(file).mode & 0o777).toBe(0o600)
       expect(await writeBridgeAccounts(file, [])).toBe(true)
       expect(readdirSync(dir)).not.toContain('accounts.json')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the accounts file of before, when it is not as expected', () => {
+  it('leaves a file it cannot read as it is and takes it over only once it can', async () => {
+    const { importBridgeAccounts, ownsBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-broken-'))
+    try {
+      const file = join(dir, 'accounts.json')
+      writeFileSync(file, '[{ "type": "gmail", }]')
+      const store = new PluginStore(join(dir, 'plugins'))
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toMatchObject({ imported: [], problem: expect.stringContaining('not JSON') })
+      expect(await ownsBridgeAccounts(store)).toBe(false)
+      expect(readFileSync(file, 'utf8')).toBe('[{ "type": "gmail", }]')
+      writeFileSync(file, JSON.stringify([{ type: 'gmail', accountId: 'Work_Mail', space: 'main', address: 'me@work.example' }]))
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual({ imported: ['gmail-work-mail'], problem: null })
+      expect(await ownsBridgeAccounts(store)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an account id of another form as the bridge account id, so its cursors carry on', async () => {
+    const { bridgeAccountsFor } = await import('../src/domain/space-plugins.js')
+    const gmail = (() => { const r = readManifest({ id: 'gmail', name: 'Gmail', tier: 'official', parts: { channel: { adapter: 'gmail' } } }, 'official'); if (!r.ok) throw new Error(r.reason); return r.manifest })()
+    const state = setPlugin(emptySpacePlugins(), 'main', 'gmail', { connections: ['gmail-work-mail'] })
+    const connection = { id: 'gmail-work-mail', accountId: 'Work_Mail', plugin: 'gmail', label: 'Work', values: { address: 'me@work.example' } }
+    expect(bridgeAccountsFor(state, [gmail], [connection], ['main']).accounts).toEqual([{ type: 'gmail', accountId: 'Work_Mail', spaces: ['main'], address: 'me@work.example' }])
+  })
+
+  it('counts a missing file as nothing to import', async () => {
+    const { importBridgeAccounts, ownsBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-none-'))
+    try {
+      const store = new PluginStore(join(dir, 'plugins'))
+      expect(await importBridgeAccounts(join(dir, 'accounts.json'), store, join(dir, 'backups'))).toEqual({ imported: [], problem: null })
+      expect(await ownsBridgeAccounts(store)).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

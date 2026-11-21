@@ -53,6 +53,8 @@ export const connectionSchema = z.object({
   plugin: z.string(),
   /** What the user recognises it by ("work mailbox"); never a secret. */
   label: z.string().max(80),
+  /** The channel bridge's account id, where it differs from the connection's (an account named before the plugins). */
+  accountId: z.string().min(1).optional(),
   /** Names its MCP server next to the plugin's own (gmail-invoice); the plugin's name when left out. */
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/).optional(),
   /** Secret name → value; owner-only on disk, never sent to the page. */
@@ -206,7 +208,7 @@ export function bridgeAccountsFor(
     for (const connection of connections.filter((c) => c.plugin === manifest.id)) {
       const spaces = bySpace.filter((on) => on.connections.includes(connection.id) && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
       if (spaces.length === 0) continue
-      accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.id, spaces: spaces.sort() })
+      accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.accountId ?? connection.id, spaces: spaces.sort() })
     }
   }
   return { accounts, problems }
