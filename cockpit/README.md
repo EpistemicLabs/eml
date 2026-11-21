@@ -398,7 +398,7 @@ A pane's views come in two groups (`lib/pane-views.ts`): the session's — Termi
 plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
 show both groups. All six are official plugins with only a pane part, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
-`host/src/plugins-api.ts`). Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
+`host/src/plugins-api.ts`), per space. Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
 the user set is kept.
 
 Every plugin has a manifest, `plugin.json` (`host/src/domain/plugin-manifest.ts`): id, name, tier and
@@ -410,7 +410,30 @@ custom MCP servers live in `<home>/plugins/custom.json` (owner-only), added and 
 only (`POST /api/plugins/custom`, `DELETE /api/plugins/custom/<id>`). The tier decides the parts
 (decision cockpit-plugin-isolation): official, custom and dev plugins may run servers, a community
 plugin is a pane only, and a custom one an MCP server only. `GET /api/plugins` shows an MCP part's
-settings by name only, never their values. `host/src/infrastructure/plugins/plugin-registry.ts` reads them. A plugin switched off leaves the menus, its routes answer 404 (Notes:
+settings by name only, never their values. `host/src/infrastructure/plugins/plugin-registry.ts` reads them.
+
+**Per space** (`host/src/application/space-plugins.ts`, `<home>/plugins/spaces.json`): a plugin is on
+or off in each space, all or nothing; a part can be switched off for every space. A plugin with a
+sign-in uses one of the user's connections there (`<home>/plugins/connections.json`, owner-only:
+the values a plugin's `{ secret }` settings stand for, never sent to the page). From this the cockpit
+writes each space's session files whenever a switch changes (a running session keeps what it started
+with): `mcp.json` holds the brain and the MCP servers of its plugins under their server names, and
+`settings.json` lists the claude.ai connectors and Claude Code plugin servers switched off in it as
+`deniedMcpServers` (Claude Code honours a name there for a single connector; `--strict-mcp-config`
+would drop every connector, so a space without an agent runtime stays non-strict). An agent with a
+runtime of its own keeps `--strict-mcp-config` and gets its space's plugin servers in place of its
+`agent.json` list. Codex reads one `config.toml` for every space: each space's plugin servers are
+written there switched off, and a session switches on its own with `--config mcp_servers.<name>.enabled=true`.
+
+On a home's first boot with plugins the cockpit-wide switches of before carry over to every space,
+and the MCP servers configured outside the plugins are imported once
+(`host/src/infrastructure/plugins/mcp-import.ts`): the user-level servers of the cockpit's Claude
+config (`<home>/claude-config/.claude.json`) and each agent runtime's `mcp-servers.json` (as far as its
+`agent.json` lists them) become custom MCP plugins under their own server names, on in exactly the
+spaces that loaded them; their values go into connections. `.claude.json` is copied to
+`<home>/plugins/backups/` first and keeps only what couldn't be imported; agent files stay untouched.
+`spaces.json` → `done` records each step, so it never runs twice. To undo it: copy the backup over
+`<home>/claude-config/.claude.json` and remove `<home>/plugins/` (that also resets the switches). A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
 holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
 agents' brain stay. With every plugin off, the tab bar shows only the session's views.
