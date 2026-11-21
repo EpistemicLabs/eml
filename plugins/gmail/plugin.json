@@ -19,7 +19,8 @@
           "secret": "credentialsFile"
         },
         "GOOGLE_TOKEN_FILE": {
-          "secret": "tokenFile"
+          "secret": "tokenFile",
+          "optional": true
         }
       }
     },
