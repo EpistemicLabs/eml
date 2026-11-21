@@ -141,7 +141,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
             </div>
             <DialogTitle id="add-project-title" className="not-sr-only text-title font-semibold text-foreground">Add project</DialogTitle>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={isCreating} aria-label="Close">
             <X aria-hidden />
           </Button>
         </div>

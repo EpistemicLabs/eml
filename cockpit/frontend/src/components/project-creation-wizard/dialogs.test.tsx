@@ -42,6 +42,7 @@ describe('add-project dialog', () => {
     fireEvent.change(screen.getByPlaceholderText('e.g. Lighthouse'), { target: { value: 'Lighthouse' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Create project' }));
     escape();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -57,6 +58,7 @@ describe('link-folder dialog', () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Link folder' }));
     escape();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).not.toHaveBeenCalled();
   });
 

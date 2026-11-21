@@ -72,7 +72,7 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
               <p className="text-ui text-muted-foreground">{project.displayName}</p>
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={isSaving} aria-label="Close">
             <X aria-hidden />
           </Button>
         </div>
