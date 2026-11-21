@@ -64,7 +64,6 @@ export function plainToHtml(text: string): string {
 
 /** A header value with anything beyond ASCII as an RFC 2047 encoded word. */
 export function encodeHeader(value: string): string {
-  // eslint-disable-next-line no-control-regex
   return /^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`
 }
 

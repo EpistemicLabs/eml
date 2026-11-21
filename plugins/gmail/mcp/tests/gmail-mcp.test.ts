@@ -36,6 +36,7 @@ let dir: string
 const sent: Array<{ raw: string; threadId?: string }> = []
 const modified: Array<{ id: string; removeLabelIds: string[] }> = []
 let lastQuery = ''
+let failArchive = false
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'gmail-mcp-test-'))
@@ -50,7 +51,12 @@ beforeAll(async () => {
       if (p === '/gmail/v1/users/me/messages/m1') return json(msg('m1', 'Anna <anna@client.example>', 'Meeting'))
       if (p === '/gmail/v1/users/me/messages/m1/attachments/att-1') return json({ data: b64('PDF') })
       if (p === '/gmail/v1/users/me/messages/send') { sent.push(JSON.parse(body)); return json({ id: 'sent-1', threadId: JSON.parse(body).threadId ?? 'new' }) }
-      if (p === '/gmail/v1/users/me/threads/t-m1') return json({ messages: [{ id: 'm1', labelIds: ['INBOX'] }, { id: 'm0', labelIds: [] }] })
+      if (p === '/gmail/v1/users/me/threads/t-m1') {
+        if (failArchive) { res.writeHead(500); return res.end('{}') }
+        return json({ messages: [{ id: 'm1', labelIds: ['INBOX'] }, { id: 'm0', labelIds: [] }] })
+      }
+      if (p === '/gmail/v1/users/me/messages/odd') return json({ unexpected: true })
+      if (p === '/calendar/v3/calendars/scoped/events') { res.writeHead(403, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'Request had insufficient authentication scopes.' } })) }
       const modify = /^\/gmail\/v1\/users\/me\/messages\/([^/]+)\/modify$/.exec(p)
       if (modify) { modified.push({ id: modify[1], ...JSON.parse(body) }); return json({}) }
       if (p.startsWith('/gmail/v1/users/me/settings/sendAs/')) return json({ signature: '<b>Me</b> · Work' })
@@ -110,12 +116,32 @@ describe('Mailbox', () => {
     const raw = decodeRaw(sent[0].raw)
     expect(raw).toContain('Subject: =?UTF-8?B?')
     expect(raw).toContain('Content-Disposition: attachment; filename="note.txt"')
-    await expect(mailbox().send('a@b.example', 's', 'b', '', join(dir, 'missing.pdf'))).rejects.toThrow('Attachment not found')
+    expect(await mailbox().send('a@b.example', 's', 'b', '', join(dir, 'missing.pdf'))).toBe(`Attachment not found: ${join(dir, 'missing.pdf')}`)
   })
 
   it('archives a message, and says so when it was not in the inbox', async () => {
     expect(await mailbox().doneMessage('m1')).toBe('Message m1 moved to Done.')
     expect(await mailbox().doneThread('t-m1')).toBe('Thread t-m1 moved to Done. Archived 1 message(s).')
+  })
+
+  it('says a send Google did not answer may have gone out, rather than inviting a second one', async () => {
+    const away = new Mailbox({ api: new GoogleApi({ get: async () => ({ kind: 'token', token: 't' }), forget: () => undefined }, 'http://127.0.0.1:1'), address: 'me@work.example', attachmentsDir: dir })
+    expect(await away.send('anna@client.example', 'Hi', 'Hello')).toContain('may have been sent')
+  })
+
+  it('reports a reply as sent when only archiving the thread failed', async () => {
+    failArchive = true
+    try {
+      const answer = await mailbox().reply('m1', 'Thanks')
+      expect(answer).toMatch(/^Reply sent\. Message ID: sent-1, Thread ID: t-m1\. Archiving the thread failed: /)
+    } finally {
+      failArchive = false
+    }
+  })
+
+  it('answers with a refusal, not a crash, for an unknown answer shape or a missing scope', async () => {
+    expect(await mailbox().read('odd')).toBe('Google answered in a form this tool does not know.')
+    expect(await new Calendar(api()).events('2026-11-23T00:00:00Z', '2026-11-24T00:00:00Z', 'scoped')).toContain('sign in again')
   })
 
   it('reads addresses out of header lists', () => {
