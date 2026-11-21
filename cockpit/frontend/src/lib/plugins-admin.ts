@@ -139,13 +139,19 @@ export function useFinishGoogleSignIn() {
 
 /**
  * The server's consent page for a new sign-in, or to sign `connection` in again. It comes back to
- * the cockpit's own callback, which keeps the sign-in.
+ * the cockpit's loopback callback; `paste`: the browser can't reach it from here (remote access),
+ * so the user pastes the address it ended on (useFinishMcpOAuth).
  */
 export function useStartMcpOAuth() {
   return useMutation({
     mutationFn: ({ plugin, label, slug, connection }: { plugin: string; label?: string; slug?: string; connection?: string }) =>
-      request<{ url: string }>('/api/plugins/oauth/sign-in', send('POST', { plugin, ...(label ? { label } : {}), ...(slug ? { slug } : {}), ...(connection ? { connection } : {}) })).then((b) => b.url),
+      request<{ url: string; paste: boolean }>('/api/plugins/oauth/sign-in', send('POST', { plugin, ...(label ? { label } : {}), ...(slug ? { slug } : {}), ...(connection ? { connection } : {}) })),
   });
+}
+
+/** Ends a sign-in with the address the browser ended on after the consent page. */
+export function useFinishMcpOAuth() {
+  return useChange((redirect: string) => request<{ connection: { id: string; label: string } }>('/api/plugins/oauth/finish', send('POST', { redirect })).then((b) => b.connection));
 }
 
 export function useSetPart() {

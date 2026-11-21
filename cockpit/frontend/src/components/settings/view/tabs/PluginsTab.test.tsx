@@ -38,7 +38,8 @@ beforeEach(async () => {
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     const body = url.startsWith('/api/spaces') ? { spaces: SPACES }
       : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }, { id: 'qonto-a', plugin: 'qonto', label: 'Company A', secrets: ['accessToken'], slug: null, address: null, oauth: true, signInNeeded: true }] }
-      : url === '/api/plugins/oauth/sign-in' ? { url: 'https://mcp.qonto.example/authorize?state=s' }
+      : url === '/api/plugins/oauth/sign-in' ? { url: 'https://mcp.qonto.example/authorize?state=s', paste: true }
+      : url === '/api/plugins/oauth/finish' ? { connection: { id: 'qonto-a', label: 'Company A' } }
       : url === '/api/plugins/google/client' ? { configured: method === 'PUT', fromSignIns: [{ id: 'work', label: 'Work mailbox' }] }
       : url === '/api/plugins/connections' ? { connection: { id: 'lookup-1', plugin: 'lookup', label: 'Settings', secrets: ['API_KEY'] } }
       : url.startsWith('/api/plugins/custom') ? { plugin: {} }
@@ -78,6 +79,11 @@ describe('Settings › Plugins', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
     await waitFor(() => expect(calls.find((c) => c.url === '/api/plugins/oauth/sign-in')?.body).toEqual({ plugin: 'qonto', connection: 'qonto-a' }));
     await waitFor(() => expect(tab.location.href).toBe('https://mcp.qonto.example/authorize?state=s'));
+    // Opened through remote access: the address the tab ended on is pasted back.
+    const pasteField = await screen.findByPlaceholderText(/^http:\/\/127\.0\.0\.1:4317/);
+    fireEvent.change(pasteField, { target: { value: 'http://127.0.0.1:4317/api/plugins/oauth/callback?code=c&state=s' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Finish sign-in' }));
+    await waitFor(() => expect(calls.find((c) => c.url === '/api/plugins/oauth/finish')?.body).toEqual({ redirect: 'http://127.0.0.1:4317/api/plugins/oauth/callback?code=c&state=s' }));
     fireEvent.change(screen.getByPlaceholderText('Company B'), { target: { value: 'Company B' } });
     fireEvent.change(screen.getByPlaceholderText('invoice'), { target: { value: 'b' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));

@@ -112,7 +112,10 @@ export interface PluginsContext {
 const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn, oauth: mcpOAuth }
 
 /** What an OAuth sign-in started from the page becomes once its callback comes: a new sign-in or one signed in again. */
-const oauthStarted = new Map<string, { plugin: string; label: string; slug?: string; connection?: string; origin: string }>()
+const oauthStarted = new Map<string, { plugin: string; label: string; slug?: string; connection?: string }>()
+
+/** Where every OAuth consent page sends the browser back: the loopback address of this cockpit. */
+const OAUTH_CALLBACK = `http://127.0.0.1:${Number(process.env.COCKPIT_PORT) || 4317}/api/plugins/oauth/callback`
 
 /** The small page the browser shows after an OAuth sign-in, with a way back to the cockpit. */
 function oauthPage(res: http.ServerResponse, status: number, title: string, text: string, back: string): void {
@@ -355,49 +358,23 @@ export async function handlePluginsApi(
     return true
   }
   if (pathname.startsWith('/api/plugins/oauth/') && ctx.oauth) {
-    // OAuth sign-ins to remote MCP servers (mcp-oauth.ts): the server's consent page comes back to
-    // the cockpit's own address, the one the page was opened at (local or through remote access).
+    // OAuth sign-ins to remote MCP servers (mcp-oauth.ts). The server's consent page always comes
+    // back to the loopback address, which every OAuth server accepts for an app on the user's own
+    // machine (RFC 8252): on this machine the browser lands on the callback by itself; through remote
+    // access it ends on a page that can't load, and the user pastes that address into the page.
     const oauth = ctx.oauth
-    if (pathname === '/api/plugins/oauth/sign-in' && method === 'POST') {
-      const body = await readJson(req)
-      const manifest = typeof body.plugin === 'string' ? await registry.get(body.plugin) : null
-      const part = manifest?.parts.mcp
-      if (!manifest || !part || part.transport === 'stdio' || typeof part.url !== 'string') return badRequest('plugin is a plugin with a remote MCP server')
-      if (body.slug !== undefined && body.slug !== '' && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
-      const again = typeof body.connection === 'string' ? (await service.connections()).find((c) => c.id === body.connection && c.plugin === manifest.id) : undefined
-      if (typeof body.connection === 'string' && !again) return badRequest('connection is a sign-in of this plugin')
-      const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 80) : again?.label ?? manifest.name
-      const origin = req.headers.origin
-      if (!origin) return badRequest('the sign-in starts from the cockpit\'s page')
-      const started = await oauth.start(part.url, `${origin}/api/plugins/oauth/callback`)
-      if (!started.ok) {
-        json(res, started.retryable ? 503 : 400, { error: { code: 'OAUTH_REFUSED', message: started.reason, retryable: started.retryable } })
-        return true
-      }
-      oauthStarted.set(started.state, { plugin: manifest.id, label, ...(typeof body.slug === 'string' && body.slug ? { slug: body.slug } : {}), ...(again ? { connection: again.id } : {}), origin })
-      json(res, 200, { url: started.url })
-      return true
-    }
-    if (pathname === '/api/plugins/oauth/callback' && method === 'GET') {
-      const state = url.searchParams.get('state') ?? ''
+    /** Ends a started sign-in with what the server sent back: a new sign-in, or one signed in again. */
+    const complete = async (state: string, code: string | null, error: string | null): Promise<{ ok: true; id: string; label: string } | { ok: false; status: number; title: string; reason: string }> => {
       const started = oauthStarted.get(state)
-      const back = started ? `${started.origin}/` : '/'
-      if (!started || !oauth.knows(state)) {
-        oauthPage(res, 400, 'Sign-in not found', 'This sign-in was not started here, or it is older than 15 minutes. Start it again in Settings › Plugins.', back)
-        return true
-      }
-      const error = url.searchParams.get('error')
-      const code = url.searchParams.get('code')
+      if (!started || !oauth.knows(state)) return { ok: false, status: 400, title: 'Sign-in not found', reason: 'This sign-in was not started here, or it is older than 15 minutes. Start it again in Settings › Plugins.' }
       if (error || !code) {
         oauthStarted.delete(state)
-        oauthPage(res, 400, 'Sign-in refused', `The server said: ${error ?? 'no code'}. Nothing was changed.`, back)
-        return true
+        return { ok: false, status: 400, title: 'Sign-in refused', reason: `The server said: ${error ?? 'no code'}. Nothing was changed.` }
       }
       const finished = await oauth.finish(state, code)
       if (!finished.ok) {
         if (!finished.retryable) oauthStarted.delete(state)
-        oauthPage(res, finished.retryable ? 503 : 400, 'Sign-in not finished', finished.reason, back)
-        return true
+        return { ok: false, status: finished.retryable ? 503 : 400, title: 'Sign-in not finished', reason: finished.reason }
       }
       oauthStarted.delete(state)
       const all = await service.connections()
@@ -412,7 +389,45 @@ export async function handlePluginsApi(
         await registry.setCustomAuth(manifest.id, { kind: 'mcp-oauth', scopes: [] })
         await service.refreshAllFiles()
       }
-      oauthPage(res, 200, 'Signed in', `${started.label} is signed in. Pick it in the spaces that should use it (Settings › Plugins); sessions started from now on use it.`, back)
+      return { ok: true, id, label: started.label }
+    }
+    if (pathname === '/api/plugins/oauth/sign-in' && method === 'POST') {
+      const body = await readJson(req)
+      const manifest = typeof body.plugin === 'string' ? await registry.get(body.plugin) : null
+      const part = manifest?.parts.mcp
+      if (!manifest || !part || part.transport === 'stdio' || typeof part.url !== 'string') return badRequest('plugin is a plugin with a remote MCP server')
+      if (body.slug !== undefined && body.slug !== '' && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
+      const again = typeof body.connection === 'string' ? (await service.connections()).find((c) => c.id === body.connection && c.plugin === manifest.id) : undefined
+      if (typeof body.connection === 'string' && !again) return badRequest('connection is a sign-in of this plugin')
+      const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 80) : again?.label ?? manifest.name
+      const started = await oauth.start(part.url, OAUTH_CALLBACK)
+      if (!started.ok) {
+        json(res, started.retryable ? 503 : 400, { error: { code: 'OAUTH_REFUSED', message: started.reason, retryable: started.retryable } })
+        return true
+      }
+      oauthStarted.set(started.state, { plugin: manifest.id, label, ...(typeof body.slug === 'string' && body.slug ? { slug: body.slug } : {}), ...(again ? { connection: again.id } : {}) })
+      // `paste`: the browser won't reach the loopback callback from where the page is open.
+      json(res, 200, { url: started.url, paste: !isLocalRequest(req) })
+      return true
+    }
+    if (pathname === '/api/plugins/oauth/callback' && method === 'GET') {
+      const done = await complete(url.searchParams.get('state') ?? '', url.searchParams.get('code'), url.searchParams.get('error'))
+      if (done.ok) oauthPage(res, 200, 'Signed in', `${done.label} is signed in. Pick it in the spaces that should use it (Settings › Plugins); sessions started from now on use it.`, '/')
+      else oauthPage(res, done.status, done.title, done.reason, '/')
+      return true
+    }
+    if (pathname === '/api/plugins/oauth/finish' && method === 'POST') {
+      // { redirect }: the address the browser ended on after the consent page, pasted by the user.
+      const body = await readJson(req)
+      let back: URL
+      try {
+        back = new URL(String(body.redirect ?? '').trim())
+      } catch {
+        return badRequest('Paste the whole address from the browser, starting with http://127.0.0.1')
+      }
+      const done = await complete(back.searchParams.get('state') ?? '', back.searchParams.get('code'), back.searchParams.get('error'))
+      if (done.ok) json(res, 200, { connection: { id: done.id, label: done.label } })
+      else json(res, done.status, { error: { code: done.status === 503 ? 'RETRY' : 'OAUTH_REFUSED', message: done.reason, retryable: done.status === 503 } })
       return true
     }
     return false

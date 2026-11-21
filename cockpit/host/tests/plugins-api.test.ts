@@ -586,9 +586,24 @@ describe('OAuth sign-ins to a remote MCP server', () => {
     const callback = await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)
     expect(callback.status).toBe(200)
     expect(await callback.text()).toContain('Company B is signed in')
+    // Through remote access the browser can't reach the loopback callback: the user pastes the address.
+    const remoteStart = await fetch(`${base}/api/plugins/oauth/sign-in`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '100.64.0.2' }, body: JSON.stringify({ plugin: 'bank', label: 'Company C', slug: 'c' }),
+    })
+    const remoteAnswer = await remoteStart.json()
+    expect(remoteAnswer.paste).toBe(true)
+    const remoteState = new URL(remoteAnswer.url).searchParams.get('state')
+    const pasted = `http://127.0.0.1:4317/api/plugins/oauth/callback?code=code-2&state=${remoteState}`
+    const finish = (redirect: string) => fetch(`${base}/api/plugins/oauth/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect }) })
+    const finished = await finish(pasted)
+    expect(finished.status).toBe(200)
+    expect((await finished.json()).connection.label).toBe('Company C')
+    expect((await finish(pasted)).status).toBe(400)
+    expect((await finish('not an address')).status).toBe(400)
     const { connections } = await (await fetch(`${base}/api/plugins/connections`)).json()
     const signedIn = connections.find((c: { plugin: string }) => c.plugin === 'bank')
     expect(signedIn).toMatchObject({ label: 'Company B', slug: 'b', oauth: true, signInNeeded: false })
+    expect(connections.filter((c: { plugin: string }) => c.plugin === 'bank')).toHaveLength(2)
     expect(JSON.stringify(connections)).not.toContain('placeholder-access')
     const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
     expect(plugins.find((p: { id: string }) => p.id === 'bank').auth).toEqual({ kind: 'mcp-oauth', scopes: [] })

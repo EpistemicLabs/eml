@@ -18,7 +18,7 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 
 import SettingsPanel, { SettingsPanelLine } from '../SettingsPanel';
 import { GoogleSignIn, GoogleSignInAgain } from './GoogleSignIn';
-import { McpOAuthSignIn, McpOAuthSignInAgain, useRefreshOnReturn } from './McpOAuthSignIn';
+import { McpOAuthSignIn, McpOAuthSignInAgain, PasteAddress, useRefreshOnReturn } from './McpOAuthSignIn';
 import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, signsInWithOAuth, trustNote } from './PluginShared';
 import { SignInPicker } from './PluginSpaceCell';
 
@@ -96,11 +96,12 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
                   : `Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · ${connection.oauth ? 'renewed by the cockpit' : 'secret stored once'}, owner only, never shown`}
                 noteClassName={connection.signInNeeded ? 'text-stopped-ink' : undefined}
               >
-                {oauth && connection.oauth && <McpOAuthSignInAgain plugin={plugin} connection={connection} />}
+                {oauth && connection.oauth && <McpOAuthSignInAgain plugin={plugin} connection={connection} onPaste={() => setAgainFor(connection.id)} />}
                 {google && againFor !== connection.id && <Button variant="outline" size="sm" onClick={() => setAgainFor(connection.id)}>Sign in again</Button>}
                 <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
               </SettingsPanelLine>
               {google && againFor === connection.id && <GoogleSignInAgain plugin={plugin} connection={connection} onClose={() => setAgainFor(null)} />}
+              {oauth && againFor === connection.id && <div className="pb-2"><PasteAddress onDone={() => setAgainFor(null)} /></div>}
             </div>
           ))}
           {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
