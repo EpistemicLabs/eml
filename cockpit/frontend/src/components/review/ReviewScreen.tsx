@@ -169,7 +169,7 @@ export function ReviewScreen() {
   ].filter(Boolean).join(' · ') : '';
 
   return (
-    <div data-ui="v2" className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+    <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
       <div
         ref={barRef}
         tabIndex={-1}

@@ -54,7 +54,6 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
   return (
     <div
       role="search"
-      data-ui="v2"
       className="glass-thick absolute top-3 right-5 z-(--z-sticky) flex items-center gap-1 rounded-xl py-1 pr-1 pl-2 shadow-overlay"
     >
       <input

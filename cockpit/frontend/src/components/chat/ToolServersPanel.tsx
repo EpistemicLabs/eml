@@ -72,7 +72,7 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
 
   const needsSignIn = servers?.some((server) => server.status === 'needs-auth');
   return (
-    <div data-ui="v2" className="max-h-72 overflow-auto rounded-xl border border-border bg-card p-2 text-ui">
+    <div className="max-h-72 overflow-auto rounded-xl border border-border bg-card p-2 text-ui">
       <div className="flex items-center justify-between pb-1">
         <span className="font-semibold">MCP servers</span>
         <IconButton label="Close MCP servers" onClick={onClose}><X aria-hidden className="size-3.5" /></IconButton>

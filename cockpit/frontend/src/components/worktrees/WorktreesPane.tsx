@@ -125,7 +125,7 @@ export function WorktreesPane({ project }: { project: Project | null }) {
       .sort((a, b) => Number(b.wt.isProjectFolder) - Number(a.wt.isProjectFolder) || (b.at ?? '').localeCompare(a.at ?? ''));
 
   return (
-    <div data-ui="v2" className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-2">
         <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={folder}>
           {worktrees
@@ -415,7 +415,7 @@ const Count = ({ n }: { n: number }) => <span className="text-caption tabular-nu
 
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div data-ui="v2" className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
+    <div className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
       {children}
     </div>
   );

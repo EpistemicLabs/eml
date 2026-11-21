@@ -138,7 +138,6 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
 
       {open && anchor && createPortal(
         <div
-          data-ui="v2"
           ref={menuRef}
           role="menu"
           style={{ left: anchor.left, top: anchor.top }}

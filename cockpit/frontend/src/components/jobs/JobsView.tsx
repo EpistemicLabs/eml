@@ -50,7 +50,7 @@ export default function JobsView() {
   const spaces = jobs ? [...new Set(jobs.map((job) => job.spaceName))] : [];
 
   return (
-    <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-6 py-5">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-6 py-5">
       <div className="mx-auto w-full max-w-4xl">
         <h1 className="text-display font-semibold tracking-title text-foreground">Jobs</h1>
         <p className="mt-1 text-body text-muted-foreground">

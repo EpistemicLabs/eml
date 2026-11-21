@@ -17,7 +17,7 @@ export function SingleWindowGate({ children }: { children: ReactNode }) {
 
 function OpenElsewhere() {
   return (
-    <div data-ui="v2" className="flex min-h-full items-center justify-center bg-background px-4 py-10">
+    <div className="flex min-h-full items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-sm space-y-5 rounded-2xl border border-border bg-card p-6 shadow-card">
         <div className="space-y-1.5">
           <h1 className="text-title font-semibold tracking-title">Open in another window</h1>

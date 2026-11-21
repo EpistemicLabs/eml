@@ -110,7 +110,7 @@ export function TaskBoard() {
 
   if (!board) {
     return (
-      <div data-ui="v2" className="flex flex-1 items-center justify-center bg-background p-6 text-body text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center bg-background p-6 text-body text-muted-foreground">
         {error ? <span>{(error as Error).message} <button type="button" className={BUTTON} onClick={() => void refetch()}>Try again</button></span> : 'Loading the tasks…'}
       </div>
     );
@@ -139,7 +139,7 @@ export function TaskBoard() {
   };
 
   return (
-    <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       {/* An open task in the Inbox fills the height, with the same gap below as above; the list beside it scrolls on its own. */}
       <div className={cn('mx-auto flex w-full max-w-content flex-col gap-4 px-4 pt-3', split ? 'min-h-0 flex-1 pb-3' : 'pb-10')}>
         {compact && <ControlBar board={board} view={open && !split ? null : view} onView={setTaskView} />}

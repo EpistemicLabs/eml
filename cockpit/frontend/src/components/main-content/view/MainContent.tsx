@@ -112,7 +112,7 @@ function MainContent({
   // Plugin panes don't need a project here; terminal and chat panes do.
   if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {
     return (
-      <div data-ui="v2" className="relative flex h-full flex-col">
+      <div className="relative flex h-full flex-col">
         {/* A main pane can't be closed, but must stay able to stop being main. */}
         {(onClosePane || isMainPane) && !compact && (
           <div className={cn('pointer-events-auto absolute top-0 right-0 z-(--z-pane-toolbar) pt-2 pr-2 pb-2 sm:pt-3 sm:pr-3', toolbarReveal)}>
@@ -125,7 +125,7 @@ function MainContent({
   }
 
   return (
-    <div data-ui="v2" className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Body area: title (top-left), floating toolbar (top-right of THIS
           area), and the pane body. */}
       <div className="relative flex min-h-0 min-w-(--size-pane-min) flex-1 flex-col overflow-hidden">

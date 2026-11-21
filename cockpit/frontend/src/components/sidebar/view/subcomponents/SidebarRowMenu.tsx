@@ -148,7 +148,6 @@ export function SidebarRowMenu({
 
   return createPortal(
     <div
-      data-ui="v2"
       className="fixed inset-x-0 top-0 z-(--z-popover) flex items-center justify-center bg-(--scrim) px-6"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
       onClick={dismiss}

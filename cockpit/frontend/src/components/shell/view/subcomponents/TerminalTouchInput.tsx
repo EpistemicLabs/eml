@@ -82,7 +82,7 @@ export default function TerminalTouchInput({ input, disabled }: { input: ShellIn
   };
 
   return (
-    <div data-ui="v2" className={cn('flex flex-shrink-0 flex-col gap-1.5 border-t border-border pt-1.5', disabled && 'pointer-events-none opacity-50')}>
+    <div className={cn('flex flex-shrink-0 flex-col gap-1.5 border-t border-border pt-1.5', disabled && 'pointer-events-none opacity-50')}>
       {composing && (
         <form
           className="flex items-end gap-1.5"

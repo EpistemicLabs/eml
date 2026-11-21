@@ -168,7 +168,7 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
   const hiddenToggleLabel = showHidden ? 'Hide hidden folders' : 'Show hidden folders';
 
   return createPortal(
-    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal-nested) flex items-center justify-center bg-(--scrim) p-4">
+    <div className="animate-fade-in fixed inset-0 z-(--z-modal-nested) flex items-center justify-center bg-(--scrim) p-4">
       <div
         ref={panelRef}
         role="dialog"

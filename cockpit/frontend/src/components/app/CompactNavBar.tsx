@@ -22,7 +22,7 @@ export default function CompactNavBar({ onOpenMenu }: { onOpenMenu: () => void }
   const panes = activeDesk.panes;
   const shownPane = panes.find((pane) => pane.id === activePaneId) ?? panes[0];
   const overChat = shownPane?.paneView === 'chat';
-  const capsule = cn('rounded-full', overChat ? 'glass-bar' : 'glass-solid');
+  const capsule = cn('rounded-full', overChat ? 'glass' : 'glass-solid');
 
   // As in the desktop pane toolbar: the last pane closes only when it holds
   // something, and a pinned or main pane never.
@@ -31,7 +31,7 @@ export default function CompactNavBar({ onOpenMenu }: { onOpenMenu: () => void }
   return (
     <>
       {overChat && <div aria-hidden="true" className="glass-edge-top pointer-events-none absolute inset-x-0 top-0 z-(--z-sticky) h-[calc(env(safe-area-inset-top)+var(--size-phone-edge))]" />}
-      <div data-ui="v2" className="pointer-events-none absolute inset-x-2 top-[calc(env(safe-area-inset-top)+var(--pad-shell-top))] z-(--z-chrome) flex items-center justify-between">
+      <div className="pointer-events-none absolute inset-x-2 top-[calc(env(safe-area-inset-top)+var(--pad-shell-top))] z-(--z-chrome) flex items-center justify-between">
         <div className={cn('pointer-events-auto', capsule)}>
           <button type="button" className={CAPSULE_BUTTON_CLASS} aria-label="Projects and sessions" onClick={onOpenMenu}>
             <Menu aria-hidden className="size-5" />

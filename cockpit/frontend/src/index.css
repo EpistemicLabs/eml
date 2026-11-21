@@ -19,13 +19,6 @@
   --color-border: #d8dce3;
   --color-primary: #c93a22;   /* coral */
   --color-ring: #6d4ee6;      /* purple */
-  /* Status hues (review flags and the DEV badge, update banners). Text-safe
-     on both grounds; fills and borders use them at low alpha. */
-  --color-warning: #b45309;   /* amber */
-  --color-info: #0369a1;      /* sky */
-  --color-success: #047857;   /* emerald */
-  /* Flagged-for-review accent (amber, same hue as the decision type). */
-  --color-review: #7f590c;
 
   /* Token names the components reference, mapped onto the
      palette above so they resolve (an undefined --color-* utility renders
@@ -154,14 +147,6 @@
   --type-learning: #5f6b12;
   --subject-active: #186c53;
   --hash-lightness: 38%;
-  --glass-bar: rgba(255, 255, 255, .70);
-  --glass-field: rgba(255, 255, 255, .88);
-  --glass-solid: #fff;
-  --glass-rim: rgba(255, 255, 255, .70);
-  --glass-line-bar: rgba(0, 0, 0, .10);
-  --glass-line-field: rgba(0, 0, 0, .42);
-  --glass-shadow: 0 8px 24px rgba(16, 24, 40, .12), 0 1px 2px rgba(16, 24, 40, .08);
-  --glass-edge: 246 247 249;
 }
 
 html.dark {
@@ -177,15 +162,6 @@ html.dark {
   --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
-  --glass-bar: rgba(26, 30, 36, .62);
-  --glass-field: rgba(26, 30, 36, .86);
-  --glass-solid: #1b1f26;
-  --glass-rim: rgba(255, 255, 255, .10);
-  --glass-line-bar: rgba(255, 255, 255, .16);
-  --glass-line-field: rgba(255, 255, 255, .34);
-  --glass-shadow: 0 8px 24px rgba(0, 0, 0, .45), 0 1px 2px rgba(0, 0, 0, .40);
-  --glass-edge: 11 13 16;
-  --color-review: #d9a441;
   --color-background: #0b0d10;
   --color-foreground: #e6e8ec;
   --color-card: #14171c;
@@ -194,14 +170,11 @@ html.dark {
   --color-border: #262b33;
   --color-primary: #ff7a66;   /* coral */
   --color-ring: #a78bfa;      /* purple */
-  --color-warning: #fbbf24;
-  --color-info: #7dd3fc;
-  --color-success: #6ee7b7;
 }
 
-/* Tokens v2: the mockup v4 look (monochrome glass, Schibsted Grotesk and Martian Mono).
-   It applies inside [data-ui="v2"]; everything outside keeps v1. Overlays that portal
-   out of a v2 view carry the attribute on their own root. */
+/* Tokens v2: the mockup v4 look (monochrome glass, Schibsted Grotesk; code in the monospace).
+   It applies inside [data-ui="v2"], which <html> carries (index.html), so the whole cockpit is on
+   v2. The kit's overlays also carry it on their own portal root, so they render the same in tests. */
 :root {
   --mix-track: 8%;
   --mix-tint: 10%;
@@ -242,6 +215,10 @@ html.dark {
   --radius-tab: 7px;
   --shadow-pill: 0 1px 2px rgb(0 0 0 / .12), 0 1px 4px rgb(0 0 0 / .06), 0 0 0 .5px rgb(0 0 0 / .08);
   --focus-offset: 2px;
+  /* A hairline: dividers, rims and the inset edge of a tinted surface. */
+  --width-hairline: 1px;
+  /* How far a scroll edge fades under the phone's status bar. */
+  --size-edge-fade: 28px;
   /* A dialog sits in the middle of the viewport; the open animation ends on this same transform. */
   --transform-center: translate(-50%, -50%);
   /* The command palette's result list: about eight rows before it scrolls. */
@@ -548,6 +525,12 @@ html.dark {
   -webkit-backdrop-filter: blur(32px) saturate(180%);
   backdrop-filter: blur(32px) saturate(180%);
 }
+/* Opaque glass: the same rim and edge, nothing blurred, for controls over terminal text. */
+@utility glass-solid {
+  background: var(--glass-solid);
+  border: var(--width-hairline) solid var(--glass-line);
+  box-shadow: inset 0 var(--width-hairline) 0 var(--glass-rim), var(--shadow-glass);
+}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass, .glass-thick { background: var(--glass-solid); }
 }
@@ -601,19 +584,17 @@ html.dark {
 /* A space in the header: a soft surface in its colour, stronger while it is the open one. */
 .space-band {
   background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 12%, transparent);
+  box-shadow: inset 0 0 0 var(--width-hairline) color-mix(in srgb, var(--space-tone, var(--space-slate)) 12%, transparent);
 }
 .space-band[data-active] {
   background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 13%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 38%, transparent);
+  box-shadow: inset 0 0 0 var(--width-hairline) color-mix(in srgb, var(--space-tone, var(--space-slate)) 38%, transparent);
 }
 .space-tab-active { background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 26%, transparent); }
 body {
   margin: 0;
   background: var(--color-background);
   color: var(--color-foreground);
-  font-family: var(--font-mono);
-  font-size: 13px;
 }
 
 /* The chat view's type (tokens v2): the UI font at --text-chat, headings at --text-title, everything
@@ -651,61 +632,18 @@ body {
 /* Below --text-field-touch (16px), iOS zooms the page when a field takes the focus. */
 @media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: var(--text-field-touch); } }
 
-/* Structural utilities the sidebar uses; they resolve against the current
-   palette. */
-@utility frosted {
-  background-color: color-mix(in srgb, var(--color-card) 85%, transparent);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid var(--color-border);
-}
 
-/* Frosted glass on the phone. The filter values are literal: Safari is reported not
-   to resolve custom properties inside -webkit-backdrop-filter. */
-.glass-bar, .glass-field { box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
-.glass-bar { background: var(--glass-bar); border: 1px solid var(--glass-line-bar); }
-.glass-field { background: var(--glass-field); border: 1px solid var(--glass-line-field); }
-.glass-solid { background: var(--glass-solid); border: 1px solid var(--glass-line-field); box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
-.glass-bar, .glass-field {
-  -webkit-backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
-  backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
-}
-html.dark .glass-bar, html.dark .glass-field {
-  -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(.55);
-  backdrop-filter: blur(18px) saturate(170%) brightness(.55);
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass-bar, .glass-field { background: var(--glass-solid); border-color: var(--glass-line-field); }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .glass-bar, .glass-field, html.dark .glass-bar, html.dark .glass-field {
-    background: var(--glass-solid);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    border-color: var(--glass-line-field);
-  }
-}
 /* Scroll edges fade without blur: a gradient costs almost nothing. */
-.glass-edge-top { background: linear-gradient(to bottom, rgb(var(--glass-edge)) 0, rgb(var(--glass-edge) / .96) env(safe-area-inset-top), rgb(var(--glass-edge) / .55) calc(env(safe-area-inset-top) + 28px), rgb(var(--glass-edge) / 0) 100%); }
-.glass-edge-bottom { background: linear-gradient(to top, rgb(var(--glass-edge) / .92) 0, rgb(var(--glass-edge) / .6) 45%, rgb(var(--glass-edge) / 0) 100%); }
+.glass-edge-top { background: linear-gradient(to bottom, var(--color-background) 0, color-mix(in srgb, var(--color-background) 96%, transparent) env(safe-area-inset-top), color-mix(in srgb, var(--color-background) 55%, transparent) calc(env(safe-area-inset-top) + var(--size-edge-fade)), transparent 100%); }
+.glass-edge-bottom { background: linear-gradient(to top, color-mix(in srgb, var(--color-background) 92%, transparent) 0, color-mix(in srgb, var(--color-background) 60%, transparent) 45%, transparent 100%); }
 /* Readable secondary text in the chat, phone only: a step closer to the text colour than muted. */
-@media (max-width: 767px) {
-  .chat-pane { --color-muted-foreground: color-mix(in srgb, var(--color-foreground) var(--mix-chat-phone-muted), var(--color-background)); }
+.chat-pane {
+  @variant max-md { --color-muted-foreground: color-mix(in srgb, var(--color-foreground) var(--mix-chat-phone-muted), var(--color-background)); }
 }
 
 @utility nav-divider {
-  height: 1px;
+  height: var(--width-hairline);
   background: linear-gradient(90deg, transparent, var(--color-border) 20%, var(--color-border) 80%, transparent);
-}
-
-/* Settings modal: content fades in on tab switch. */
-@utility settings-content-enter {
-  animation: settings-fade-in 150ms ease-out;
-}
-
-@keyframes settings-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 @utility scrollbar-hide {

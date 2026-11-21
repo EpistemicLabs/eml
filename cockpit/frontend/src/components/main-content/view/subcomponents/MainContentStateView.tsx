@@ -9,7 +9,7 @@ export default function MainContentStateView({ mode, paneId }: MainContentStateV
   if (!isLoading && paneId) return <SessionLauncher paneId={paneId} />;
 
   return (
-    <div data-ui="v2" className="flex h-full flex-col">
+    <div className="flex h-full flex-col">
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center text-muted-foreground">

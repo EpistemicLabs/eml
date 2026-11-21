@@ -107,7 +107,6 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
       {open && (
         <div
           role="menu"
-          data-ui="v2"
           className={cn(POPOVER, 'absolute top-full left-0 mt-1 min-w-40 whitespace-nowrap')}
         >
           {sections.map(({ title, items }, index) => (

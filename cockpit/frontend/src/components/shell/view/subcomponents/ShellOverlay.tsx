@@ -93,6 +93,6 @@ export default function ShellOverlay({ state, sessionTitle, onConnect }: ShellOv
   }
 
   return (
-    <div data-ui="v2" className="absolute inset-0 z-(--z-sticky) flex items-center justify-center bg-background p-4">{content}</div>
+    <div className="absolute inset-0 z-(--z-sticky) flex items-center justify-center bg-background p-4">{content}</div>
   );
 }

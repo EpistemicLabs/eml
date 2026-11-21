@@ -69,7 +69,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
     const { error, componentStack } = this.state;
 
     return (
-      <div data-ui="v2" className="flex h-full w-full flex-1 items-center justify-center p-8 text-center">
+      <div className="flex h-full w-full flex-1 items-center justify-center p-8 text-center">
         <div className="w-full max-w-md rounded-xl border border-border bg-muted p-6">
           <div className="flex items-center justify-center gap-2">
             <CircleX className="size-4 shrink-0 text-foreground" aria-hidden="true" />

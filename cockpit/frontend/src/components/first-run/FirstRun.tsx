@@ -65,7 +65,7 @@ export function FirstRunSignIn() {
   };
 
   return (
-    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
+    <div className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
       <div role="dialog" aria-modal="true" aria-labelledby="first-run-sign-in" className="glass-thick w-full max-w-sm space-y-5 rounded-3xl p-6 shadow-modal">
         <div className="space-y-1.5">
           <p className="text-caption text-muted-foreground">Step 2 of 2</p>
@@ -234,7 +234,7 @@ function FirstRun() {
   };
 
   return (
-    <div data-ui="v2" className="flex min-h-full items-center justify-center bg-background px-4 py-10">
+    <div className="flex min-h-full items-center justify-center bg-background px-4 py-10">
       <form onSubmit={submit} className="w-full max-w-sm space-y-5 rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="space-y-1.5">
           <p className="text-caption text-muted-foreground">Step 1 of 2</p>

@@ -528,7 +528,6 @@ export function ChatPane({
   return (
     <div
       ref={rootRef}
-      data-ui="v2"
       className="chat-pane relative flex h-full min-h-0 flex-col"
       // --composer-gap above the keyboard; with it closed, partly into the home indicator's inset.
       style={compact ? ({ '--composer-bottom': 'max(var(--composer-gap), calc(var(--bottom-inset, 0px) - var(--composer-gap)))', '--composer-offset': 'calc(var(--composer-height, var(--composer-height-initial)) + var(--composer-bottom))' } as React.CSSProperties) : undefined}

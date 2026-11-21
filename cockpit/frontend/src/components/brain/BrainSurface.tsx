@@ -53,7 +53,7 @@ export default function BrainSurface({ surfaceId, initialLoc, persist = false }:
     <SurfaceContext.Provider value={surfaceId}>
       {/* @container: the views size their grids by the surface's width, not
           the viewport, so the same view works in a half-width pane. */}
-      <div data-ui="v2" className="@container h-full min-h-0 overflow-y-auto bg-background">
+      <div className="@container h-full min-h-0 overflow-y-auto bg-background">
         <div className="mx-auto max-w-(--container-brain) px-6 py-5">
           {loc.view === 'dashboard' && <BrainHome />}
           {/* key: switching parent → child resets the page's search field and status pager. */}

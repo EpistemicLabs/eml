@@ -74,7 +74,7 @@ export function BrainPane({ paneId, project = null }: { paneId: string; project?
   const ids = engrams.map((e) => e.id);
 
   return (
-    <div data-ui="v2" className="@container flex h-full min-h-0 flex-col">
+    <div className="@container flex h-full min-h-0 flex-col">
       {/* Toolbar: row 1 = lens switcher (+ scope in a
           brain project) and the search taking the rest of the width; row 2 =
           the type chips. */}

@@ -97,7 +97,6 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
           onClick={drawer.onClose}
         />
         <div
-          data-ui="v2"
           role="dialog"
           aria-label="Projects and sessions"
           aria-hidden={!drawer.open}
@@ -123,7 +122,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
   return (
     <>
       <SidebarModals controller={controller} />
-      <div data-ui="v2" className={cn('relative h-full', controller.isPinnedOpen ? 'w-(--size-sidebar)' : 'w-(--size-sidebar-rail)')}>
+      <div className={cn('relative h-full', controller.isPinnedOpen ? 'w-(--size-sidebar)' : 'w-(--size-sidebar-rail)')}>
         <div
           onMouseEnter={openPanel}
           onMouseLeave={scheduleClose}

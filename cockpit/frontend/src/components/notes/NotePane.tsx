@@ -60,7 +60,7 @@ export function NotePane({ paneId, project, noteId }: NotePaneProps) {
 
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div data-ui="v2" className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
+    <div className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
       {children}
     </div>
   );
@@ -73,7 +73,7 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
   const open = (id: string) => updatePane(paneId, { noteId: id });
 
   return (
-    <div data-ui="v2" className="mx-auto flex w-full max-w-xl flex-col gap-3 p-4">
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-3 p-4">
       <Button
         variant="outline"
         size="sm"
@@ -246,7 +246,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
   }
 
   return (
-    <div data-ui="v2" className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 text-caption text-muted-foreground">
         {/* Back to the project's notes; leaving the editor saves what is pending. */}
         <button

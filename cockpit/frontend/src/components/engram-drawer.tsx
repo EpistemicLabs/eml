@@ -126,7 +126,7 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
   return (
     // The page behind stays as it is — no dimming, no blur — and
     // stays clickable: only the drawer takes pointer events.
-    <div data-ui="v2" className="pointer-events-none absolute inset-0 z-(--z-sheet) overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-(--z-sheet) overflow-hidden">
       <aside
         ref={asideRef}
         tabIndex={-1}

@@ -45,7 +45,7 @@ export function Banner({
   children: ReactNode;
 }) {
   return (
-    <div data-ui="v2" role={tone === 'destructive' ? 'alert' : 'status'} className={cn('mx-2 mt-2 flex-shrink-0 rounded-xl border px-3 py-2 text-body text-foreground', TONE[tone])}>
+    <div role={tone === 'destructive' ? 'alert' : 'status'} className={cn('mx-2 mt-2 flex-shrink-0 rounded-xl border px-3 py-2 text-body text-foreground', TONE[tone])}>
       <div className="flex items-center gap-2.5">
         {busy
           ? <Loader2 aria-hidden className={cn('size-4 flex-shrink-0 animate-spin', INK[tone])} />
