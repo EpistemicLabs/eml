@@ -432,8 +432,14 @@ config (`<home>/claude-config/.claude.json`) and each agent runtime's `mcp-serve
 `agent.json` lists them) become custom MCP plugins under their own server names, on in exactly the
 spaces that loaded them; their values go into connections. `.claude.json` is copied to
 `<home>/plugins/backups/` first and keeps only what couldn't be imported; agent files stay untouched.
+The channel bridge's accounts file (`<home>/channel-bridge/accounts.json`)
+is written by the cockpit from the channel plugins: one account per connection, listing every space
+with a job token where the plugin is on with it; a change restarts the bridge with it. A file
+written by hand before becomes the gmail plugin's connections on that first boot, each keeping its
+account id (the bridge's cursors and threads carry on), after a copy to `<home>/plugins/backups/`.
 `spaces.json` → `done` records each step, so it never runs twice. To undo it: copy the backup over
-`<home>/claude-config/.claude.json` and remove `<home>/plugins/` (that also resets the switches). A plugin switched off leaves the menus, its routes answer 404 (Notes:
+`<home>/claude-config/.claude.json` (and the accounts backup over `<home>/channel-bridge/accounts.json`)
+and remove `<home>/plugins/` (that also resets the switches). A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
 holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
 agents' brain stay. With every plugin off, the tab bar shows only the session's views.

@@ -257,7 +257,7 @@ export async function handlePluginsApi(
       space = typeof body.space === 'string' ? body.space : null
       const targets = space !== null ? [space] : (deps.spaceIds?.() ?? [])
       for (const target of targets) {
-        const result = await service.setPlugin(target, id, body.enabled, (body.connection as string | null | undefined) ?? null)
+        const result = await service.setPlugin(target, id, body.enabled, body.connection as string | null | undefined)
         if (!result.ok) return badRequest(result.reason)
       }
       // A shell switched off everywhere ends with it, not only at its detach timeout.

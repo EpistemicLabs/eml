@@ -95,14 +95,21 @@ export class SpacePluginService {
     return Object.values(state.spaces).some((space) => space.plugins[pluginId] !== undefined)
   }
 
-  /** Switch a plugin on (with one of the user's connections for it) or off in a space. */
-  async setPlugin(spaceId: string, pluginId: string, on: boolean, connection: string | null = null): Promise<{ ok: true } | { ok: false; reason: string }> {
+  /**
+   * Switch a plugin on (with one of the user's connections for it) or off in a space. Switched on
+   * without naming one, it keeps the connection it has there, else takes the plugin's only one.
+   */
+  async setPlugin(spaceId: string, pluginId: string, on: boolean, connection?: string | null): Promise<{ ok: true } | { ok: false; reason: string }> {
     const manifest = await this.registry.get(pluginId)
     if (!manifest) return { ok: false, reason: 'no such plugin' }
-    if (on && connection !== null && !(await this.store.connections()).some((c) => c.id === connection && c.plugin === pluginId)) {
-      return { ok: false, reason: 'no such connection for this plugin' }
-    }
-    await this.store.updateSpaces((state) => setPlugin(state, spaceId, pluginId, on ? { connection } : null))
+    const own = (await this.store.connections()).filter((c) => c.plugin === pluginId)
+    if (on && connection && !own.some((c) => c.id === connection)) return { ok: false, reason: 'no such connection for this plugin' }
+    await this.store.updateSpaces((state) => {
+      if (!on) return setPlugin(state, spaceId, pluginId, null)
+      const current = state.spaces[spaceId]?.plugins[pluginId]?.connection ?? null
+      const picked = connection !== undefined ? connection : current ?? (own.length === 1 ? own[0].id : null)
+      return setPlugin(state, spaceId, pluginId, { connection: picked })
+    })
     await this.refresh(spaceId)
     return { ok: true }
   }
