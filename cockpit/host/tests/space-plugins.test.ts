@@ -291,6 +291,32 @@ describe('several sign-ins and name clashes', () => {
   })
 })
 
+describe('a new space and the parts of a plugin', () => {
+  it('starts a new space with the main space\'s panes and no server, and switches a part off for every space', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-adopt-'))
+    try {
+      for (const [id, parts] of [['note', { pane: { builtin: 'note' } }], ['gmail', { mcp: { transport: 'stdio', command: 'x' }, channel: { adapter: 'gmail' } }]] as const) {
+        mkdirSync(join(dir, 'official', id), { recursive: true })
+        writeFileSync(join(dir, 'official', id, 'plugin.json'), JSON.stringify({ id, name: id, tier: 'official', parts }))
+      }
+      const registry = new PluginRegistry({ officialDir: join(dir, 'official'), customFile: join(dir, 'p', 'custom.json') })
+      const store = new PluginStore(join(dir, 'p'))
+      const service = new SpacePluginService(registry, store)
+      await service.setPlugin('main', 'note', true)
+      await service.setPlugin('main', 'gmail', true)
+      await service.adoptSpace('new', 'main')
+      expect((await store.spaces()).spaces.new.plugins).toEqual({ note: { connections: [] } })
+      expect(Object.keys((await service.snapshot()).filesFor('main').mcpServers)).toEqual(['gmail'])
+      await service.setPart('gmail', 'mcp', false)
+      expect((await service.snapshot()).filesFor('main').mcpServers).toEqual({})
+      await service.setPart('gmail', 'mcp', true)
+      expect(Object.keys((await service.snapshot()).filesFor('main').mcpServers)).toEqual(['gmail'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('switching a plugin on without naming a connection', () => {
   it('keeps the one it has in the space, else takes the plugin\'s only one', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-connection-'))
