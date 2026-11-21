@@ -1,5 +1,6 @@
 import type { PluginManifest } from '../domain/plugin-manifest.js'
 import {
+  connectionsIn,
   deniedFor,
   isOn,
   mcpServersFor,
@@ -45,6 +46,8 @@ export class SpacePluginService {
   constructor(
     private readonly registry: PluginRegistry,
     private readonly store: PluginStore,
+    /** What a manifest's ${NAME} placeholders stand for: the node binary, the cockpit's bundles. */
+    private readonly vars: Record<string, string> = {},
   ) {}
 
   onRewrite(rewrite: (spaceId: string, files: SpacePluginFiles) => boolean): void {
@@ -63,7 +66,7 @@ export class SpacePluginService {
         let next = current
         for (const manifest of manifests) {
           if (!(legacy[manifest.id] ?? manifest.defaultEnabled) || manifest.auth) continue
-          for (const space of spaces) next = setPlugin(next, space.id, manifest.id, { connection: null })
+          for (const space of spaces) next = setPlugin(next, space.id, manifest.id, { connections: [] })
         }
         return { ...next, done: [...next.done, CARRY_STEP] }
       })
@@ -77,7 +80,7 @@ export class SpacePluginService {
       manifests,
       state,
       filesFor: (spaceId) => {
-        const { servers, problems } = mcpServersFor(spaceId, state, manifests, connections)
+        const { servers, problems } = mcpServersFor(spaceId, state, manifests, connections, this.vars)
         return { mcpServers: servers, problems, denied: deniedFor(spaceId, state) }
       },
     }
@@ -96,19 +99,19 @@ export class SpacePluginService {
   }
 
   /**
-   * Switch a plugin on (with one of the user's connections for it) or off in a space. Switched on
-   * without naming one, it keeps the connection it has there, else takes the plugin's only one.
+   * Switch a plugin on (with the user's sign-ins it uses there) or off in a space. Switched on
+   * without naming any, it keeps the ones it has there, else takes the plugin's only one.
    */
-  async setPlugin(spaceId: string, pluginId: string, on: boolean, connection?: string | null): Promise<{ ok: true } | { ok: false; reason: string }> {
+  async setPlugin(spaceId: string, pluginId: string, on: boolean, picked?: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
     const manifest = await this.registry.get(pluginId)
     if (!manifest) return { ok: false, reason: 'no such plugin' }
     const own = (await this.store.connections()).filter((c) => c.plugin === pluginId)
-    if (on && connection && !own.some((c) => c.id === connection)) return { ok: false, reason: 'no such connection for this plugin' }
+    if (on && picked?.some((id) => !own.some((c) => c.id === id))) return { ok: false, reason: 'no such connection for this plugin' }
     await this.store.updateSpaces((state) => {
       if (!on) return setPlugin(state, spaceId, pluginId, null)
-      const current = state.spaces[spaceId]?.plugins[pluginId]?.connection ?? null
-      const picked = connection !== undefined ? connection : current ?? (own.length === 1 ? own[0].id : null)
-      return setPlugin(state, spaceId, pluginId, { connection: picked })
+      const current = connectionsIn(state, spaceId, pluginId)
+      const connections = picked ?? (current.length > 0 ? current : own.length === 1 ? [own[0].id] : [])
+      return setPlugin(state, spaceId, pluginId, { connections })
     })
     await this.refresh(spaceId)
     return { ok: true }
@@ -136,7 +139,7 @@ export class SpacePluginService {
     const manifests = await this.registry.list()
     await this.store.updateSpaces((state) => manifests
       .filter((m) => m.parts.pane && !m.parts.mcp && !m.parts.channel && isOn(state, like, m.id))
-      .reduce((next, m) => setPlugin(next, spaceId, m.id, { connection: null }), state))
+      .reduce((next, m) => setPlugin(next, spaceId, m.id, { connections: [] }), state))
   }
 
   async connections(): Promise<Connection[]> {
@@ -148,7 +151,7 @@ export class SpacePluginService {
     await this.refreshAll()
   }
 
-  /** Removes a connection; the spaces that used it keep the plugin on without one until another is picked. */
+  /** Removes a connection; the spaces that used it keep the plugin on with the sign-ins left. */
   async removeConnection(id: string): Promise<boolean> {
     let removed = false
     await this.store.updateConnections((all) => {
@@ -160,7 +163,7 @@ export class SpacePluginService {
         ...state,
         spaces: Object.fromEntries(Object.entries(state.spaces).map(([spaceId, space]) => [spaceId, {
           ...space,
-          plugins: Object.fromEntries(Object.entries(space.plugins).map(([pluginId, on]) => [pluginId, on.connection === id ? { connection: null } : on])),
+          plugins: Object.fromEntries(Object.entries(space.plugins).map(([pluginId, on]) => [pluginId, { connections: on.connections.filter((c) => c !== id) }])),
         }])),
       }))
       await this.refreshAll()

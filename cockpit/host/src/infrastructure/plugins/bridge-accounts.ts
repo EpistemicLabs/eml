@@ -37,7 +37,7 @@ export async function importBridgeAccounts(file: string, store: PluginStore, bac
   }
   await store.updateSpaces((state) => {
     let next = state
-    for (const { connection, spaces } of imported) for (const space of spaces) next = setPlugin(next, space, connection.plugin, { connection: connection.id })
+    for (const { connection, spaces } of imported) for (const space of spaces) next = setPlugin(next, space, connection.plugin, { connections: [connection.id] })
     return { ...next, done: [...next.done, STEP] }
   })
   return imported.map((i) => i.connection.id)

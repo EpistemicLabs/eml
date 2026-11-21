@@ -1,10 +1,28 @@
 {
   "id": "gmail",
   "name": "Gmail",
-  "description": "A Gmail mailbox as a channel: incoming mail reaches the job it belongs to, replies wait as drafts until approved.",
+  "description": "A Gmail mailbox: incoming mail reaches the job it belongs to and replies wait as drafts until approved (channel), and your own sessions get mail and calendar tools on the same sign-in (mcp). Several Google accounts can be on in one space.",
   "tier": "official",
   "defaultEnabled": false,
   "parts": {
+    "mcp": {
+      "transport": "stdio",
+      "command": "${NODE}",
+      "args": [
+        "${COCKPIT_DIST}/gmail-mcp.cjs"
+      ],
+      "env": {
+        "GMAIL_ADDRESS": {
+          "secret": "address"
+        },
+        "GOOGLE_CREDENTIALS_FILE": {
+          "secret": "credentialsFile"
+        },
+        "GOOGLE_TOKEN_FILE": {
+          "secret": "tokenFile"
+        }
+      }
+    },
     "channel": {
       "adapter": "gmail"
     }
@@ -13,7 +31,8 @@
     "kind": "google-oauth",
     "scopes": [
       "https://www.googleapis.com/auth/gmail.modify",
-      "https://www.googleapis.com/auth/gmail.send"
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/calendar.readonly"
     ]
   }
 }

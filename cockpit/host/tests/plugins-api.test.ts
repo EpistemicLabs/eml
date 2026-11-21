@@ -111,7 +111,7 @@ describe('plugin switches', () => {
   it('describes each official plugin by its manifest', async () => {
     const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
     expect(plugins.find((p: { id: string }) => p.id === 'note')).toMatchObject({ name: 'Note', tier: 'official', parts: ['pane'], pane: 'note', channel: null, mcp: null })
-    expect(plugins.find((p: { id: string }) => p.id === 'gmail')).toMatchObject({ tier: 'official', parts: ['channel'], pane: null, channel: 'gmail', auth: { kind: 'google-oauth' } })
+    expect(plugins.find((p: { id: string }) => p.id === 'gmail')).toMatchObject({ tier: 'official', parts: ['mcp', 'channel'], pane: null, channel: 'gmail', auth: { kind: 'google-oauth' }, mcp: { transport: 'stdio', target: 'gmail-mcp.cjs' } })
   })
 
   // Switches every plugin on for the tests below.
@@ -188,7 +188,7 @@ describe('custom MCP plugins', () => {
   it('switches like any plugin and forgets the switch when removed', async () => {
     await patch({ id: 'lookup', enabled: true, space: 'other' })
     const spaces = () => JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces
-    expect(spaces().other.plugins.lookup).toEqual({ connection: null })
+    expect(spaces().other.plugins.lookup).toEqual({ connections: [] })
     expect(spaces().main.plugins.lookup).toBeUndefined()
     expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(200)
     expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(404)
@@ -204,7 +204,7 @@ describe('plugins per space', () => {
   it('switches a plugin in one space only and tells each space its own state', async () => {
     await patch({ id: 'time', enabled: false, space: 'other' })
     expect(await view('main', 'time')).toMatchObject({ enabled: true })
-    expect(await view('other', 'time')).toMatchObject({ enabled: false, spaces: { main: null } })
+    expect(await view('other', 'time')).toMatchObject({ enabled: false, spaces: { main: [] } })
     await patch({ id: 'time', enabled: true, space: 'other' })
   })
 
@@ -222,10 +222,10 @@ describe('plugins per space', () => {
     // A connection of another plugin can't be picked.
     expect((await patch({ id: 'time', enabled: true, space: 'main', connection: connection.id })).status).toBe(400)
     expect((await patch({ id: 'gmail', enabled: true, space: 'main', connection: connection.id })).status).toBe(200)
-    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: connection.id } })
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: [connection.id] } })
     // Removed, the space keeps the plugin without one.
     expect((await fetch(`${base}/api/plugins/connections/${connection.id}`, { method: 'DELETE' })).status).toBe(200)
-    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: null } })
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: [] } })
     await patch({ id: 'gmail', enabled: false, space: 'main' })
   })
 

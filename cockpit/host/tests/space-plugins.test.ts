@@ -25,8 +25,8 @@ const remote = manifest({ id: 'remote', name: 'Remote', tier: 'custom', parts: {
 
 describe('mcpServersFor', () => {
   it('fills the secrets from the connection the space picked and names a server by its server name', () => {
-    let state = setPlugin(emptySpacePlugins(), 'a', 'lookup', { connection: 'c1' })
-    state = setPlugin(state, 'a', 'remote', { connection: null })
+    let state = setPlugin(emptySpacePlugins(), 'a', 'lookup', { connections: ['c1'] })
+    state = setPlugin(state, 'a', 'remote', { connections: [] })
     const connections = [{ id: 'c1', plugin: 'lookup', label: 'x', values: { key: 'placeholder-key', 'arg:1': 'placeholder-token' } }]
     const { servers, problems } = mcpServersFor('a', state, [lookup, remote], connections)
     expect(problems).toEqual([])
@@ -38,9 +38,9 @@ describe('mcpServersFor', () => {
   })
 
   it('leaves out a server whose secret is missing, or whose mcp part is off, saying why without values', () => {
-    const state = setPlugin(emptySpacePlugins(), 'a', 'lookup', { connection: null })
-    expect(mcpServersFor('a', state, [lookup], [])).toEqual({ servers: {}, problems: ['Lookup: no connection picked for this space'] })
-    const off = { ...setPlugin(emptySpacePlugins(), 'a', 'remote', { connection: null }), partsOff: { remote: ['mcp' as const] } }
+    const state = setPlugin(emptySpacePlugins(), 'a', 'lookup', { connections: [] })
+    expect(mcpServersFor('a', state, [lookup], [])).toEqual({ servers: {}, problems: ['Lookup: no sign-in picked for this space'] })
+    const off = { ...setPlugin(emptySpacePlugins(), 'a', 'remote', { connections: [] }), partsOff: { remote: ['mcp' as const] } }
     expect(mcpServersFor('a', off, [remote], []).servers).toEqual({})
   })
 
@@ -148,7 +148,7 @@ describe('SpacePluginService.setup', () => {
       const spaces = [{ id: 'a', agent: null, ownRuntime: false }, { id: 'b', agent: null, ownRuntime: false }]
       const source = { claudeJson: join(dir, 'missing.json'), agents: [] }
       await service.setup(spaces, { time: true, note: false }, source, join(dir, 'backups'))
-      expect((await store.spaces()).spaces).toEqual({ a: { plugins: { time: { connection: null } }, off: [] }, b: { plugins: { time: { connection: null } }, off: [] } })
+      expect((await store.spaces()).spaces).toEqual({ a: { plugins: { time: { connections: [] } }, off: [] }, b: { plugins: { time: { connections: [] } }, off: [] } })
       expect((await store.spaces()).imported).toEqual([])
       await service.setPlugin('a', 'time', false)
       await service.setup(spaces, { time: true }, source, join(dir, 'backups'))
@@ -187,10 +187,10 @@ describe('the channel bridge accounts', () => {
 
   it('makes one account per connection, on in every space that picked it, leaving out spaces without a token', async () => {
     const { bridgeAccountsFor } = await import('../src/domain/space-plugins.js')
-    let state = setPlugin(emptySpacePlugins(), 'main', 'gmail', { connection: 'work-mail' })
-    state = setPlugin(state, 'eml', 'gmail', { connection: 'work-mail' })
-    state = setPlugin(state, 'shared', 'gmail', { connection: 'work-mail' })
-    state = setPlugin(state, 'private', 'gmail', { connection: null })
+    let state = setPlugin(emptySpacePlugins(), 'main', 'gmail', { connections: ['work-mail'] })
+    state = setPlugin(state, 'eml', 'gmail', { connections: ['work-mail'] })
+    state = setPlugin(state, 'shared', 'gmail', { connections: ['work-mail'] })
+    state = setPlugin(state, 'private', 'gmail', { connections: [] })
     const { accounts, problems } = bridgeAccountsFor(state, [gmail], [work, home], ['main', 'eml', 'private'])
     expect(accounts).toEqual([{ type: 'gmail', accountId: 'work-mail', spaces: ['eml', 'main'], address: 'me@work.example', credentialsFile: '/c', tokenFile: '/t' }])
     expect(problems).toHaveLength(2)
@@ -208,7 +208,7 @@ describe('the channel bridge accounts', () => {
       expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual(['home-mail'])
       expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual([])
       expect(await store.connections()).toEqual([{ ...home, label: 'me@home.example' }])
-      expect((await store.spaces()).spaces.main.plugins.gmail).toEqual({ connection: 'home-mail' })
+      expect((await store.spaces()).spaces.main.plugins.gmail).toEqual({ connections: ['home-mail'] })
       expect(readdirSync(join(dir, 'backups'))).toHaveLength(1)
       // Written by the cockpit from then on: unchanged is no change, none removes the file.
       const accounts = [{ type: 'gmail', accountId: 'home-mail', spaces: ['main'], address: 'me@home.example' }]
@@ -223,6 +223,25 @@ describe('the channel bridge accounts', () => {
   })
 })
 
+describe('several sign-ins and name clashes', () => {
+  it('reads a file of before with one connection per space', async () => {
+    const { spacePluginsSchema } = await import('../src/domain/space-plugins.js')
+    const state = spacePluginsSchema.parse({ version: 1, spaces: { a: { plugins: { x: { connection: 'c1' }, y: { connection: null } } } } })
+    expect(state.spaces.a.plugins).toEqual({ x: { connections: ['c1'] }, y: { connections: [] } })
+  })
+
+  it('lets an official plugin keep its server name: an imported server of that name stays out', () => {
+    const official = (() => { const r = readManifest({ id: 'gmail', name: 'Gmail', tier: 'official', parts: { mcp: { transport: 'stdio', command: '${NODE}', args: ['${COCKPIT_DIST}/gmail-mcp.cjs'], env: { T: { secret: 'tokenFile' } } } } }, 'official'); if (!r.ok) throw new Error(r.reason); return r.manifest })()
+    const imported = manifest({ id: 'gmail-claude-config', name: 'gmail', tier: 'custom', parts: { mcp: { transport: 'http', serverName: 'gmail', url: 'http://127.0.0.1:1/mcp' } } })
+    let state = setPlugin(emptySpacePlugins(), 'a', 'gmail', { connections: ['g1'] })
+    state = setPlugin(state, 'a', 'gmail-claude-config', { connections: [] })
+    const g1 = { id: 'g1', plugin: 'gmail', label: 'Work', values: { tokenFile: '/t' } }
+    const { servers, problems } = mcpServersFor('a', state, [official, imported], [g1], { NODE: '/usr/bin/node', COCKPIT_DIST: '/app/dist' })
+    expect(servers).toEqual({ gmail: { type: 'stdio', command: '/usr/bin/node', args: ['/app/dist/gmail-mcp.cjs'], env: { T: '/t' } } })
+    expect(problems).toEqual(['gmail: left out, gmail serves gmail here'])
+  })
+})
+
 describe('switching a plugin on without naming a connection', () => {
   it('keeps the one it has in the space, else takes the plugin\'s only one', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-connection-'))
@@ -233,13 +252,17 @@ describe('switching a plugin on without naming a connection', () => {
       const service = new SpacePluginService(registry, store)
       await service.saveConnection({ id: 'only', plugin: 'lookup', label: 'x', values: { k: 'placeholder' } })
       await service.setPlugin('a', 'lookup', true)
-      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connection: 'only' })
+      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connections: ['only'] })
       await service.saveConnection({ id: 'second', plugin: 'lookup', label: 'y', values: { k: 'placeholder-2' } })
-      await service.setPlugin('a', 'lookup', true, 'second')
+      await service.setPlugin('a', 'lookup', true, ['second'])
       await service.setPlugin('a', 'lookup', true)
-      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connection: 'second' })
+      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connections: ['second'] })
+      // Both at once: one server each, the second under its short name.
+      await service.saveConnection({ id: 'third', plugin: 'lookup', label: 'z', slug: 'invoice', values: { k: 'placeholder-3' } })
+      await service.setPlugin('a', 'lookup', true, ['second', 'third'])
+      expect(Object.keys((await service.snapshot()).filesFor('a').mcpServers)).toEqual(['lookup', 'lookup-invoice'])
       await service.setPlugin('b', 'lookup', true)
-      expect((await store.spaces()).spaces.b.plugins.lookup).toEqual({ connection: null })
+      expect((await store.spaces()).spaces.b.plugins.lookup).toEqual({ connections: [] })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
