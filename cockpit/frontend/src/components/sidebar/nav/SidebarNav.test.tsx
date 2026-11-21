@@ -81,6 +81,12 @@ describe('the sidebar navigation', () => {
     expect(within(eml).getByRole('button', { name: /^Desk 1(?! actions)/ })).toBeTruthy();
   });
 
+  it("opens a space's brain from its letters", () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Open the brain of EML' }));
+    expect(getTopView()).toBe('brain');
+  });
+
   it("opens a space's brain from its menu", () => {
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Main actions' }));

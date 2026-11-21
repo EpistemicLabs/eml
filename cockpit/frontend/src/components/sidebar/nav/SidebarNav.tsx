@@ -127,19 +127,30 @@ export function SpacesNav({ onNavigate }: { onNavigate?: () => void }) {
               {section.space && nav.editingId === nav.spaceEditId(section.space) ? (
                 <input {...nav.renameInputProps(nav.spaceEditId(section.space))} aria-label="Space name" placeholder="Space name" maxLength={40} className={RENAME} />
               ) : (
-                <button
-                  type="button"
-                  aria-expanded={unfolded}
-                  onClick={() => nav.toggleFold(section)}
-                  onDoubleClick={() => { if (section.space) nav.startEditing(nav.spaceEditId(section.space), section.space.name); }}
-                  title={`${name}: ${unfolded ? 'fold' : 'unfold'} its desks · double-click to rename, drag to reorder the spaces`}
-                  className={cn(NAV_ROW, 'gap-2 pl-1 font-semibold')}
-                >
-                  <ChevronRight aria-hidden className={cn('size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', unfolded && 'rotate-90')} />
-                  <Monogram letters={letters.get(name) ?? '?'} active={isActiveSpace} />
-                  <span className="min-w-0 flex-1 truncate">{name}</span>
-                  {!unfolded && <Mark mark={nav.markOfSection(section)} />}
-                </button>
+                <>
+                  {/* The space's letters open its brain; the rest of the row folds its desks. */}
+                  <button
+                    type="button"
+                    onClick={() => openBrain(section)}
+                    aria-label={`Open the brain of ${name}`}
+                    title={reviews > 0 ? `Open the brain of ${name} · ${reviews} to review` : `Open the brain of ${name}`}
+                    className={cn('ml-1.5 flex-shrink-0 rounded-md', FOCUS)}
+                  >
+                    <Monogram letters={letters.get(name) ?? '?'} active={isActiveSpace} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-expanded={unfolded}
+                    onClick={() => nav.toggleFold(section)}
+                    onDoubleClick={() => { if (section.space) nav.startEditing(nav.spaceEditId(section.space), section.space.name); }}
+                    title={`${name}: ${unfolded ? 'fold' : 'unfold'} its desks · double-click to rename, drag to reorder the spaces`}
+                    className={cn(NAV_ROW, 'gap-2 pl-1.5 font-semibold')}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{name}</span>
+                    {!unfolded && <Mark mark={nav.markOfSection(section)} />}
+                    <ChevronRight aria-hidden className={cn('size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', unfolded && 'rotate-90')} />
+                  </button>
+                </>
               )}
               <Menu
                 label={`${name} actions`}
