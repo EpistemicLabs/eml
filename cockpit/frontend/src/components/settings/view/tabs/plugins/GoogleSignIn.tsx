@@ -41,7 +41,7 @@ function ClientStep({ fromSignIns }: { fromSignIns: Array<{ id: string; label: s
   );
 }
 
-function ConsentSteps({ plugin, connection, slugField, onDone }: { plugin: PluginView; connection?: ConnectionView; slugField: boolean; onDone: () => void }) {
+function ConsentSteps({ plugin, slugField, onDone }: { plugin: PluginView; slugField: boolean; onDone: () => void }) {
   const start = useStartGoogleSignIn();
   const finish = useFinishGoogleSignIn();
   const [url, setUrl] = useState<string | null>(null);
@@ -54,7 +54,7 @@ function ConsentSteps({ plugin, connection, slugField, onDone }: { plugin: Plugi
         <Button
           size="sm"
           loading={start.isPending}
-          onClick={() => start.mutate({ plugin: plugin.id, connection: connection?.id }, {
+          onClick={() => start.mutate({ plugin: plugin.id }, {
             onSuccess: (consent) => { setUrl(consent); window.open(consent, '_blank', 'noopener'); },
           })}
         >
@@ -108,7 +108,7 @@ export function GoogleSignInAgain({ plugin, connection, onClose }: { plugin: Plu
       {client.data?.configured === true && (
         <>
           <p className="text-ui text-muted-foreground">Sign in with {connection.address ?? connection.label} on Google's page.</p>
-          <ConsentSteps plugin={plugin} connection={connection} slugField={false} onDone={onClose} />
+          <ConsentSteps plugin={plugin} slugField={false} onDone={onClose} />
         </>
       )}
       <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>

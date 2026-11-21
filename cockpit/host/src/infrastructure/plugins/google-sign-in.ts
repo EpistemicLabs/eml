@@ -34,7 +34,7 @@ export interface SignedIn {
 }
 
 export class GoogleSignIn {
-  private readonly pending = new Map<string, { verifier: string; scopes: string[]; at: number; tokenFile: string | null }>()
+  private readonly pending = new Map<string, { verifier: string; scopes: string[]; at: number }>()
 
   constructor(private readonly options: { dir: string; gmailApi?: string; now?: () => number }) {}
 
@@ -67,15 +67,15 @@ export class GoogleSignIn {
     return { ok: true }
   }
 
-  /** The consent page's address for these scopes; `tokenFile` signs an existing connection in again. */
-  async start(scopes: string[], tokenFile: string | null = null): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {
+  /** The consent page's address for these scopes. */
+  async start(scopes: string[]): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {
     const client = await this.client()
     if (!client) return { ok: false, reason: 'Add your Google OAuth client first' }
     const now = this.options.now?.() ?? Date.now()
     for (const [key, entry] of this.pending) if (now - entry.at > PENDING_MS) this.pending.delete(key)
     const state = randomBytes(16).toString('hex')
     const verifier = randomBytes(32).toString('base64url')
-    this.pending.set(state, { verifier, scopes, at: now, tokenFile })
+    this.pending.set(state, { verifier, scopes, at: now })
     const url = new URL(client.auth_uri)
     url.search = new URLSearchParams({
       client_id: client.client_id,
@@ -125,7 +125,7 @@ export class GoogleSignIn {
       .then((r) => (r.ok ? r.json() as Promise<{ emailAddress?: string }> : null)).catch(() => null)
     if (!profile?.emailAddress) return { ok: false, reason: 'Signed in, but Gmail did not name the mailbox' }
     // Named by chance, not by the mailbox: the name shows up in listings and logs.
-    const tokenFile = pending.tokenFile ?? path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
+    const tokenFile = path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
     await this.writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
     return { ok: true, signedIn: { address: profile.emailAddress, credentialsFile: this.clientFile, tokenFile } }
   }

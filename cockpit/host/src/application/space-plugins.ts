@@ -4,7 +4,6 @@ import {
   deniedFor,
   isOn,
   mcpServersFor,
-  partOn,
   setOutsideServer,
   setPlugin,
   type Connection,
@@ -87,15 +86,8 @@ export class SpacePluginService {
   }
 
   /** Whether a plugin is on in a space, and the part with it. */
-  async enabled(spaceId: string, pluginId: string, part?: 'pane' | 'mcp' | 'channel'): Promise<boolean> {
-    const state = await this.store.spaces()
-    return isOn(state, spaceId, pluginId) && (!part || partOn(state, pluginId, part))
-  }
-
-  /** Whether a plugin is on in any space: the gate for a pane's routes, which serve every space. */
-  async onAnywhere(pluginId: string): Promise<boolean> {
-    const state = await this.store.spaces()
-    return Object.values(state.spaces).some((space) => space.plugins[pluginId] !== undefined)
+  async enabled(spaceId: string, pluginId: string): Promise<boolean> {
+    return isOn(await this.store.spaces(), spaceId, pluginId)
   }
 
   /**

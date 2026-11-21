@@ -47,7 +47,7 @@ export interface TimeNames {
  *   POST   /api/plugins/connections  { plugin, label, values } → { connection }
  *   DELETE /api/plugins/connections/<id>        → { removed }
  *   GET|PUT /api/plugins/google/client  { client } → { configured }: the user's own Google OAuth client
- *   POST   /api/plugins/google/sign-in  { plugin, connection? } → { url }: Google's consent page
+ *   POST   /api/plugins/google/sign-in  { plugin } → { url }: Google's consent page
  *   POST   /api/plugins/google/sign-in/finish  { plugin, redirect, slug? } → { connection }
  *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, remotely only with the shell on
  *   DELETE /api/plugins/custom/<id>             → { removed }, remotely only with the shell on
