@@ -26,4 +26,10 @@ describe('cn', () => {
   it('still lets a later colour replace an earlier one', () => {
     expect(cn('text-caption text-foreground', 'text-muted-foreground')).toBe('text-caption text-muted-foreground');
   });
+
+  it('lets a width or shadow from the scale replace a token one, and the other way round', () => {
+    expect(cn('max-w-dialog', 'max-w-4xl')).toBe('max-w-4xl');
+    expect(cn('max-w-4xl', 'max-w-sheet')).toBe('max-w-sheet');
+    expect(cn('shadow-modal', 'shadow-overlay')).toBe('shadow-overlay');
+  });
 });
