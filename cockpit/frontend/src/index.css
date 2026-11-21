@@ -65,6 +65,8 @@
   --tracking-label: .06em;
   --tracking-title: -.01em;
   --font-ui: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
+  /* Code, paths and terminal output keep the monospace; everything else is the UI font. */
+  --font-code: var(--font-mono);
 
   /* Status hues. Text in a hue always uses its -ink token, never the hue itself. */
   --color-status-you: #b35200;
@@ -256,6 +258,12 @@ html.dark {
   --glass-blur: 24px;
   --glass-blur-thick: 32px;
   --glass-saturate: 180%;
+  /* Area tokens (one block per area, added while it moves onto v2). */
+  /* area: sidebar */
+  /* area: settings */
+  /* area: chat and terminal */
+  /* area: brain and review */
+  /* area: app shell */
 }
 /* v1's type tokens carry no line height: outside the scope a text-* utility keeps the
    inherited one (an invalid custom property falls back to inheritance). Unlayered, so it
