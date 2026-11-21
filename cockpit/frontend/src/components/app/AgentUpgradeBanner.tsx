@@ -62,6 +62,7 @@ export default function AgentUpgradeBanner() {
     <Banner
       tone="info"
       icon={Bot}
+      dismissKey={`agent-upgrade:${space.id}:${state?.reason ?? ''}:${state?.needs ?? ''}`}
       busy={busy}
       detail={detail}
       actions={state?.report && !needsHandle ? <BannerLink icon={FolderSearch} onClick={reveal}>Show report</BannerLink> : undefined}

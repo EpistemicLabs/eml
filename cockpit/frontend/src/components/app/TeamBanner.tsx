@@ -51,6 +51,7 @@ export default function TeamBanner() {
   return (
     <Banner
       tone={stateTone(team.state)}
+      dismissKey={`team:${space.id}:${team.state.kind}`}
       icon={team.state.kind === 'joining' ? Users : XCircle}
       busy={busy || team.state.kind === 'joining' || team.state.kind === 'catching_up'}
       detail={error ?? step ?? team.read_only}

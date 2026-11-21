@@ -72,6 +72,7 @@ export default function BrainHygieneBanner() {
     <Banner
       tone="info"
       icon={Sparkles}
+      dismissKey={`hygiene:${offer.space}:${offer.reasons.join('|')}`}
       busy={busy}
       detail={error}
       actions={<BannerButton disabled={busy} onClick={() => void start()}>Start</BannerButton>}

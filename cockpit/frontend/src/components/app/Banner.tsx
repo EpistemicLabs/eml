@@ -1,8 +1,10 @@
-// The strip under the header that every banner renders through (update,
-// brain hygiene): one layout, and a tone that says the state, not the sender —
-// info: something is up to you (amber), success: done (grey, the only one
-// with ×), destructive: broken (red). Tokens v2: colour only for meaning.
-import type { ReactNode } from 'react';
+// The strip over the panes that every banner renders through (update,
+// brain hygiene, agent upgrade, shared space): one layout, and a tone that says
+// the state, not the sender — info: something is up to you (amber), success:
+// done (grey), destructive: broken (red). Tokens v2: colour only for meaning.
+// Every banner has a × (Lasse, 2026-11-21): one dismissed with its `dismissKey`
+// stays away in this browser until what it says changes (its key does).
+import { useState, type ReactNode } from 'react';
 import { Loader2, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -20,6 +22,37 @@ const INK: Record<BannerTone, string> = { info: HUE.you.ink, success: 'text-fore
 /** A field inside a banner's form (a handle, an invite link). */
 export const BANNER_FIELD = cn(FIELD, 'min-h-(--target-min) w-auto px-2 text-ui');
 
+const DISMISSED = 'eml.banners.dismissed';
+
+function readDismissed(): string[] {
+  try {
+    const raw: unknown = JSON.parse(window.localStorage.getItem(DISMISSED) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Whether a banner with this key was dismissed here, and how to dismiss it; per browser, a convenience. */
+function useDismissal(key: string | undefined): [boolean, () => void] {
+  const [dismissed, setDismissed] = useState(() => (key ? readDismissed().includes(key) : false));
+  const [seenKey, setSeenKey] = useState(key);
+  // What the banner says changed: it shows again unless that was dismissed too.
+  if (key !== seenKey) {
+    setSeenKey(key);
+    setDismissed(key ? readDismissed().includes(key) : false);
+  }
+  const dismiss = () => {
+    setDismissed(true);
+    if (!key) return;
+    try {
+      // The last few only: an old key never comes back.
+      window.localStorage.setItem(DISMISSED, JSON.stringify([...readDismissed().filter((k) => k !== key), key].slice(-20)));
+    } catch { /* no storage: dismissed until the next load */ }
+  };
+  return [dismissed, dismiss];
+}
+
 export function Banner({
   tone,
   icon: Icon,
@@ -27,6 +60,7 @@ export function Banner({
   detail,
   actions,
   onDismiss,
+  dismissKey,
   below,
   children,
 }: {
@@ -38,12 +72,16 @@ export function Banner({
   detail?: ReactNode;
   /** Buttons and links on the right, in the same row. */
   actions?: ReactNode;
-  /** Only for success: the user has seen it. Everything else stays until done. */
+  /** What dismissing does beyond hiding it (the host records it was seen). */
   onDismiss?: () => void;
+  /** Names what the banner says; dismissed, it stays away here until this changes. */
+  dismissKey?: string;
   /** Full-width content under the row (an opened report). */
   below?: ReactNode;
   children: ReactNode;
 }) {
+  const [dismissed, dismiss] = useDismissal(dismissKey);
+  if (dismissed) return null;
   return (
     <div role={tone === 'destructive' ? 'alert' : 'status'} className={cn('mx-2 mt-2 flex-shrink-0 rounded-xl border px-3 py-2 text-body text-foreground', TONE[tone])}>
       <div className="flex items-center gap-2.5">
@@ -55,8 +93,8 @@ export function Banner({
           {detail && <div className="mt-0.5 break-words font-code text-ui text-muted-foreground">{detail}</div>}
         </div>
         {actions && <div className="flex flex-shrink-0 items-center gap-3">{actions}</div>}
-        {onDismiss && (
-          <button type="button" aria-label="Dismiss" title="Dismiss" className={cn('grid size-(--target-min) place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)} onClick={onDismiss}>
+        {(onDismiss || dismissKey) && (
+          <button type="button" aria-label="Dismiss" title="Dismiss" className={cn('grid size-(--target-min) place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)} onClick={() => { dismiss(); onDismiss?.(); }}>
             <X aria-hidden className="size-4" />
           </button>
         )}

@@ -64,6 +64,7 @@ export default function UpdateBanner() {
         <Banner
           tone="destructive"
           icon={XCircle}
+          dismissKey={`update-failed:${space?.id ?? ''}:${report.codeVersion ?? ''}:${report.from}:${failure}`}
           detail={report.error && `Reason: ${report.error}`}
           actions={
             <>
@@ -91,6 +92,7 @@ export default function UpdateBanner() {
         <Banner
           tone="info"
           icon={ArrowUpCircle}
+          dismissKey={`update-offer:${latest.version}`}
           busy={busy}
           detail={app.error}
           actions={app.phase === 'idle' && (
