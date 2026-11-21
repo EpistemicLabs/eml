@@ -412,6 +412,13 @@ only (`POST /api/plugins/custom`, `DELETE /api/plugins/custom/<id>`). The tier d
 plugin is a pane only, and a custom one an MCP server only. `GET /api/plugins` shows an MCP part's
 settings by name only, never their values. `host/src/infrastructure/plugins/plugin-registry.ts` reads them.
 
+Settings › EML Plugins (`frontend/src/components/settings/view/tabs/PluginsTab.tsx`, `lib/plugins-admin.ts`)
+shows them in four views: Installed (tier, parts, sign-ins, spaces), Spaces (a switch per plugin and
+space, with the sign-in it uses), Connectors (the claude.ai connectors per space) and Add plugin
+(a custom MCP server by command or URL, its secret values stored as a sign-in of its own); a plugin
+opens on its own page with its parts, sign-ins, spaces and what its tier lets it do. Sign-ins and
+custom servers are managed on the cockpit's own machine only.
+
 **Per space** (`host/src/application/space-plugins.ts`, `<home>/plugins/spaces.json`): a plugin is on
 or off in each space, all or nothing; a part can be switched off for every space. A plugin with a
 sign-in uses one of the user's connections there (`<home>/plugins/connections.json`, owner-only:

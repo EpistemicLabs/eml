@@ -41,11 +41,11 @@ export interface TimeNames {
  *   PATCH  /api/plugins/parts  { id, part, enabled } → a part off or on for every space
  *   GET    /api/plugins/outside                 → { servers: [{ name, kind, off: [space] }] }
  *   PATCH  /api/plugins/outside  { space, server, enabled } → a connector off or on in a space
- *   GET    /api/plugins/connections             → { connections: [{ id, plugin, label, secrets }] }, this machine only
- *   POST   /api/plugins/connections  { plugin, label, values } → { connection }, this machine only
- *   DELETE /api/plugins/connections/<id>        → { removed }, this machine only
- *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, this machine only
- *   DELETE /api/plugins/custom/<id>             → { removed }, this machine only
+ *   GET    /api/plugins/connections             → { connections: [{ id, plugin, label, secrets }] }
+ *   POST   /api/plugins/connections  { plugin, label, values } → { connection }
+ *   DELETE /api/plugins/connections/<id>        → { removed }
+ *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, remotely only with the shell on
+ *   DELETE /api/plugins/custom/<id>             → { removed }, remotely only with the shell on
  *   GET    /api/plugins/worktrees/git?projectId= → the project folder's worktrees
  *   GET    /api/plugins/worktrees/ports          → the ports the user's processes listen on
  *   GET    /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
@@ -239,11 +239,6 @@ export async function handlePluginsApi(
     return true
   }
   const badRequest = (message: string) => { json(res, 400, { error: { code: 'BAD_REQUEST', message } }); return true }
-  const localOnly = (what: string) => {
-    if (isLocalRequest(req)) return false
-    json(res, 403, { error: { code: 'FORBIDDEN', message: `${what} on this machine only` } })
-    return true
-  }
   if (pathname === '/api/plugins') {
     let space = url.searchParams.get('space')
     if (method === 'PATCH') {
@@ -295,8 +290,8 @@ export async function handlePluginsApi(
     return true
   }
   if (pathname === '/api/plugins/connections' || pathname.startsWith('/api/plugins/connections/')) {
-    // Sign-ins and secrets: set up on this machine, never sent back.
-    if (localOnly('Connections are managed')) return true
+    // Sign-ins and secrets: set up by the user here or through remote access (remote.json lets
+    // only the user's own tailnet logins in); their values are never sent back.
     if (pathname === '/api/plugins/connections' && method === 'GET') {
       json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, secrets: Object.keys(values) })) })
       return true
@@ -320,8 +315,12 @@ export async function handlePluginsApi(
     return false
   }
   if (pathname === '/api/plugins/custom' || pathname.startsWith('/api/plugins/custom/')) {
-    // A custom MCP server runs with the user's rights in every session that gets it: set up on this machine only.
-    if (localOnly('Custom MCP servers are added and removed')) return true
+    // A custom MCP server runs a command with the user's rights, as a shell would: from elsewhere only
+    // where the Shell plugin may open too (`eml-cockpit remote shell on`).
+    if (!isLocalRequest(req) && !readRemoteAccess().shell) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Custom MCP servers are added on the cockpit\'s machine, or remotely after `eml-cockpit remote shell on`' } })
+      return true
+    }
     if (pathname === '/api/plugins/custom' && method === 'POST') {
       const body = await readJson(req)
       const parts = body.parts && typeof body.parts === 'object' ? Object.keys(body.parts) : []
