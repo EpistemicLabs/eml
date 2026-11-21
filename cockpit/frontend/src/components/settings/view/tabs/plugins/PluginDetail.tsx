@@ -25,7 +25,7 @@ const GMAIL_FIELDS = ['address', 'credentialsFile', 'tokenFile'];
 
 const partNote = (plugin: PluginView, part: PluginView['parts'][number]) => ({
   pane: 'UI in a pane, next to the sessions',
-  mcp: plugin.channel ? 'Read and lookup tools; no send tool' : 'Tools the agent can call',
+  mcp: plugin.channel ? 'Tools for your own sessions (jobs send through the bridge)' : 'Tools the agent can call',
   channel: 'Incoming messages wake the matching job; replies leave through the bridge outbox',
 }[part]);
 
