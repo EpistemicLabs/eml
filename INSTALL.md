@@ -181,7 +181,9 @@ node ~/.eml-cockpit/app/current/node_modules/eml-cockpit/dist/index.js remote en
 `remote enable` lets in exactly that address and your Tailscale login; anyone else on the tailnet and
 anything from the internet is refused. More people: `remote enable --user <their login>`. Check with
 `remote status`, turn it off with `remote disable`. The list lives in `~/.eml-cockpit/remote.json`
-and can only be changed there or with these commands, never from the browser. The service runs the Node.js the
+and can only be changed there or with these commands, never from the browser. The Shell plugin's
+terminal (a shell on this machine with your rights) stays local even then; `remote shell on` lets the
+same users open it, `remote shell off` takes it back. The service runs the Node.js the
 installer was run with: if you move or replace it, run the installer again.
 
 To uninstall or to collect diagnostics, run these as on a Mac:

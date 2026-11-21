@@ -1,0 +1,19 @@
+{
+  "id": "gmail",
+  "name": "Gmail",
+  "description": "A Gmail mailbox as a channel: incoming mail reaches the job it belongs to, replies wait as drafts until approved.",
+  "tier": "official",
+  "defaultEnabled": false,
+  "parts": {
+    "channel": {
+      "adapter": "gmail"
+    }
+  },
+  "auth": {
+    "kind": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  }
+}

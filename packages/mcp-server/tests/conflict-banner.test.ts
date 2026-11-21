@@ -79,7 +79,16 @@ describe('conflictBanner', () => {
     // a task write with only a decision candidate: relate or dismiss
     const taskDec = conflictBanner({ type: 'task', potential_conflicts: [cand(0.8)] })!
     expect(taskDec).not.toContain('supersede')
-    expect(taskDec).toContain('relate (eml_relate contradicts | related_to) / dismiss.')
+    expect(taskDec).toContain('relate (eml_relate contradicts | related_to) / dismiss (record it: eml_relate distinct_from, explanation = why they are distinct).')
+  })
+
+  // conflict-detection (phase 1): a same-title candidate without an edge is a
+  // possible thread/duplicate — the marker reaches the agent at write time.
+  it('marks a lineage candidate (same title, no edge) and leaves ordinary candidates unmarked', () => {
+    const banner = conflictBanner({ potential_conflicts: [cand(0.79, { lineage: true })] })!
+    expect(banner).toContain('same title — check the lineage link')
+    const plain = conflictBanner({ potential_conflicts: [cand(0.79)] })!
+    expect(plain).not.toContain('same title — check the lineage link')
   })
 
   it('escalates wording at/above the escalation threshold (high word overlap)', () => {

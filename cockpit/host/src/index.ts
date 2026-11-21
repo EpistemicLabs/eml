@@ -16,6 +16,12 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
+import { pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
+import { importBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
+import { bridgeAccountsFor } from './domain/space-plugins.js'
+import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
+import { writeCodexPluginServers } from './infrastructure/providers/codex/index.js'
+import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
@@ -30,7 +36,8 @@ import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
 import { ABOUT, createHostServer } from './http.js'
 import { getFreePort } from './ports.js'
-import { TurnTracker } from './turn-state.js'
+import { TurnTracker, type TurnEvent } from './turn-state.js'
+import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
@@ -43,7 +50,7 @@ import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
-import { BACKUPS_DIR, DATA_DIR } from './paths.js'
+import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
@@ -186,7 +193,7 @@ async function main() {
   for (const provider of providers.all()) {
     provider.prepare({ hookUrl, hookToken, mcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
   }
-  log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME)')
+  log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME, QWEN_HOME)')
 
   // The agent brains (agents.ts) and the brain spaces (brain-space.ts): the
   // local brain this home was provisioned with (main) plus the further local
@@ -204,6 +211,40 @@ async function main() {
   const upgradeStateOf = (brainId: string, bound: string | null | undefined): UpgradeState | null => (bound ? null : upgrade ?? upgradeStates.get(brainId) ?? null)
   const agents = loadAgentBrains(config, server.baseUrl, log)
   const row = brainForLocalToken(config?.token ?? brain.token)
+  // The plugins per space (application/space-plugins.ts): once per home the cockpit-wide switches
+  // carry over and the MCP servers configured outside the plugins are imported; then every space
+  // opens with the servers and the connector switches it has.
+  const extraRows = (config?.spaces ?? []).flatMap((extra) => {
+    const extraRow = brainForLocalToken(extra.token)
+    return extraRow ? [{ id: extraRow.id, agent: extra.agent ?? null }] : []
+  })
+  const importSpaces = [{ id: row?.id ?? 'main', agent: config?.agent ?? null }, ...extraRows]
+    .map((space) => ({ ...space, ownRuntime: agents.expectsRuntime(space.agent) }))
+  const runtimeAgents = [...new Set(importSpaces.filter((space) => space.ownRuntime && space.agent).map((space) => space.agent as string))]
+  try {
+    const imported = await spacePlugins.setup(importSpaces, config?.plugins ?? {}, {
+      claudeJson: path.join(CONFIG_DIR, '.claude.json'),
+      agents: runtimeAgents.map((id) => {
+        let allowed: string[] = []
+        let definitions: Record<string, unknown> | null = null
+        try { allowed = readAgentRuntime(id).mcpServers } catch { /* the runtime reports its own problem */ }
+        try { definitions = readAgentMcpDefinitions(id) } catch { /* likewise */ }
+        return { id, allowed, definitions }
+      }),
+    }, path.join(PLUGINS_HOME, 'backups'))
+    const accounts = await importBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, pluginStore, path.join(PLUGINS_HOME, 'backups'))
+    if (accounts.length > 0) log(`plugins: the channel bridge's accounts ${accounts.join(', ')} became connections of their plugin`)
+    if (imported.imported.length > 0) log(`plugins: imported ${imported.imported.map((i) => i.serverName).join(', ')} as custom MCP plugins${imported.backup ? ` (backup ${imported.backup})` : ''}`)
+    for (const skipped of imported.skipped) log(`plugins: ${skipped.serverName} not imported — ${skipped.reason}`)
+  } catch (err) {
+    log(`plugins: setup failed — ${(err as Error).message}`)
+  }
+  const pluginSnapshot = await spacePlugins.snapshot().catch((err: Error) => { log(`plugins: ${err.message}`); return null })
+  const pluginFiles = (spaceId: string) => {
+    const files = pluginSnapshot?.filesFor(spaceId)
+    for (const problem of files?.problems ?? []) log(`plugins: space ${spaceId} — ${problem}`)
+    return files
+  }
   const main = openBrainSpace({
     id: row?.id ?? 'main',
     name: config?.mainName ?? 'Main',
@@ -218,6 +259,7 @@ async function main() {
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
     mcpUrl,
     hooksUrl,
+    plugins: pluginFiles(row?.id ?? 'main'),
   })
   const spaces = new BrainSpaces(main, config?.spaceOrder)
   for (const extra of config?.spaces ?? []) {
@@ -226,11 +268,31 @@ async function main() {
     spaces.add(openBrainSpace({
       id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color, taskSystem: extra.taskSystem === true,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl, ownRuntime: agents.expectsRuntime(extra.agent),
+      plugins: pluginFiles(extraRow.id),
     }))
     const runtime = spaces.get(extraRow.id)?.runtime
     const problem = runtime?.problem('claude')
     if (runtime) log(`space ${extra.name ?? extraRow.name}: runtime of ${runtime.id}${problem ? ` — ${problem}` : ''}`)
   }
+  // Codex reads one config for every space: each space's plugin servers are written there, off,
+  // and its sessions switch on their own (codex/plugin-servers.ts).
+  const writeCodexServers = async () => {
+    const snapshot = await spacePlugins.snapshot()
+    writeCodexPluginServers(Object.fromEntries(spaces.list().map((space) => [space.id, snapshot.filesFor(space.id).mcpServers])))
+  }
+  await writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+  // Set once the channel bridge runs: a switch may change its accounts.
+  let channelsChanged: () => void = () => {}
+  // A switch changed later rewrites that space's session files (its next session starts with it).
+  spacePlugins.onRewrite((spaceId, files) => {
+    const space = spaces.get(spaceId)
+    if (!space?.rewriteFiles) return false
+    space.rewriteFiles(files)
+    for (const problem of files.problems) log(`plugins: space ${space.name} — ${problem}`)
+    void writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+    channelsChanged()
+    return true
+  })
   // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
   await loadSharedFlags(spaces.list())
   // The human's name moves into the config once (after the agent upgrade, which sets the handle).
@@ -395,6 +457,12 @@ async function main() {
   const bridge = new PtyBridge({
     ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
     memory, sessionLimits: () => sessionLimits(readLimits()),
+    // The Shell plugin's terminal: while the plugin is on, on this machine, and remotely only after `eml-cockpit remote shell on`.
+    shellRefusal: async (local) => {
+      if (!(await pluginStates()).shell) return 'Shell is switched off (Settings › EML Plugins)'
+      if (!local && !readRemoteAccess().shell) return 'The shell opens on this machine only (eml-cockpit remote shell on lets remote users open it)'
+      return null
+    },
   })
   // The cap on running sessions (Settings › Preferences › Sessions); 0: none.
   const running = (): number => chat.runningCount() + bridge.runningCount()
@@ -571,9 +639,33 @@ async function main() {
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())
   // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
-  const channelBridge = await startChannelBridge(url, log)
+  // The bridge's accounts follow the channel plugins' switches and connections (no home space: one
+  // account per connection, on in every space that picked it); the bridge reads them at start.
+  const writeAccounts = async (): Promise<boolean> => {
+    const snapshot = await spacePlugins.snapshot()
+    const { accounts, problems } = bridgeAccountsFor(snapshot.state, snapshot.manifests, await pluginStore.connections(), jobSpaceIds())
+    for (const problem of problems) log(`plugins: ${problem}`)
+    return writeBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, accounts)
+  }
+  await writeAccounts().catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  let channelBridge = await startChannelBridge(url, log)
+  let bridgeRestart: Promise<unknown> = Promise.resolve()
+  channelsChanged = () => {
+    bridgeRestart = bridgeRestart.then(async () => {
+      if (!(await writeAccounts())) return
+      channelBridge?.stop()
+      channelBridge = await startChannelBridge(url, log)
+      log('[bridge] restarted with its new accounts')
+    }).catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  }
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
+  // The Time plugin's clocks: the agent's from the turns, the user's from the browser's beats.
+  const time = new TimeTracker((sessionId) => {
+    const entry = ledger.get(sessionId)
+    return entry ? { spaceId: entry.spaceId, projectId: entry.projectId, taskId: entry.taskId } : null
+  }, async () => (await pluginStates()).time)
+  turns.on('turn', (event: TurnEvent) => { void time.turn(event) })
 
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
@@ -623,7 +715,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {

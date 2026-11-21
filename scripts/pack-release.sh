@@ -6,7 +6,7 @@
 # its double-click starter install-eml-cockpit.cmd,
 # linked via releases/latest/download/<installer>.
 # Attach them to the GitHub release of tag v<version>:
-#   gh release create v<version> release/<version>/* --notes-file <notes>
+#   gh release create v<version> release/<version>/* --notes-file docs/release-notes/v<version>.md
 # The cockpit's updater and the installers download the cockpit and mcp-server
 # tarballs and SHA256SUMS by name; the relay installs the protocol tarball,
 # pinned by version and its SHA256SUMS line.
@@ -15,6 +15,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 VERSION="$(node -p "require('./package.json').version")"
 OUT="release/$VERSION"
+
+node scripts/check-release-notes.mjs "$VERSION"
 
 echo "[pack] v$VERSION"
 pnpm install --frozen-lockfile

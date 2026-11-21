@@ -60,6 +60,19 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
     options.log('job.drafts', { jobId, count: result.drafts.length })
     return send(res, 200, result)
   }
+  // A space's inbox: what no job took, of every account whose plugin is on in the space. Stored
+  // once, it shows in each of them. Sender and subject only; the text stays for a job to read.
+  if (req.method === 'GET' && path === '/v1/inbox') {
+    if (!authorized(req, options.cockpitToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
+    const space = new URL(req.url ?? '/', 'http://localhost').searchParams.get('space') ?? ''
+    const accounts = deps.channels.inSpace(space).map((account) => account.accountId)
+    const messages = (await deps.store.inbox(accounts, 100)).map((m) => ({
+      id: m.id, accountId: m.accountId, channel: m.channel, from: m.from, senderVerified: m.senderVerified,
+      subject: m.subject, receivedAt: m.receivedAt, reason: m.routing.kind === 'inbox' ? m.routing.reason : null,
+    }))
+    options.log('space.inbox', { count: messages.length })
+    return send(res, 200, { kind: 'inbox', messages })
+  }
   if (req.method !== 'POST') return send(res, 404, { kind: 'refused', reason: 'unknown_route', retryable: false })
 
   const read = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/read$/)

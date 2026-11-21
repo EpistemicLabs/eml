@@ -135,8 +135,8 @@ describe('hygieneCheck()', () => {
         'reference-without-source', 'profile-scope',
         'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
       ])
-      // the recurring checks come last: review-due, then the learning check
-      expect(r.checks.slice(-2).map(c => c.id)).toEqual(['review-due', 'learning-unclear'])
+      // the recurring checks come last: review-due, the learning check, then the conflict sweep
+      expect(r.checks.slice(-3).map(c => c.id)).toEqual(['review-due', 'learning-unclear', 'conflict-scan'])
     })
 
     it('reference-without-source: active references without source', () => {
@@ -187,6 +187,87 @@ describe('hygieneCheck()', () => {
       const c = check('task-link-without-binding')
       expect(c.findings.map(f => f.id)).toEqual([d.id])
       expect(c.findings[0].reason).toBe('taken in a task (planned), no binding.')
+    })
+  })
+
+  describe('conflict-scan', () => {
+    const content = 'quantumflux pipeline sweep threshold coverage'
+
+    it('surfaces an unresolved pair once, owned by the newer engram, naming the other side', () => {
+      const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-one', content })
+      const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-two', content: 'quantumflux pipeline sweep threshold gate' })
+      const f = check('conflict-scan').findings
+      expect(f).toHaveLength(1)
+      expect(f[0].id).toBe(b.id) // the newer engram carries the pair
+      expect(f[0].reason).toContain('possible conflict with ' + a.id.slice(0, 8))
+      expect(f[0].reason).toContain('word overlap')
+    })
+
+    it('excludes a pair with a verdict edge (a drawn related_to)', () => {
+      const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-edge-a', content })
+      const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-edge-b', content: 'quantumflux pipeline sweep threshold gate' })
+      writes(eml).relate({ source_id: a.id, target_id: b.id, relation: 'related_to', explanation: 'judged distinct' })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('excludes the same-task thread (planned task, task-bound siblings with overlapping vocabulary)', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'qf-task', content: 'the quantumflux work' })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-task-a', content, task_id: task.id, properties: { binding: 'task' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-task-b', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('excludes the same-task thread across scopes (the bound task sits in another scope)', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'global', title: 'qf-xscope-task', content: 'the quantumflux work' })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-xscope-a', content, task_id: task.id, properties: { binding: 'task' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-xscope-b', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('never takes a log or learning as a sweep subject (the write-time scan leaves them out)', () => {
+      writes(eml).store({ type: 'log', scope: 'project.demo', title: 'qf-log', content, properties: { what: 'w', landed: 'l', next: 'n' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-note', content: 'quantumflux pipeline sweep threshold gate' })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('flags a same-title pair without an edge, marked lineage (the concurrent-writer case)', () => {
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-dup', content })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-dup', content: 'quantumflux pipeline sweep threshold repeat' })
+      const f = check('conflict-scan').findings
+      expect(f).toHaveLength(1)
+      expect(f[0].reason).toContain('same title')
+    })
+
+    it('takes a chained same-title series as one thread (each member linked to the previous one)', () => {
+      const round = (c: string) => writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-series', content: c })
+      const first = round(content)
+      const second = round('quantumflux pipeline sweep threshold gate')
+      const third = round('quantumflux pipeline sweep threshold round three')
+      writes(eml).relate({ source_id: second.id, target_id: first.id, relation: 'refines' })
+      // first and third have no edge of their own yet: third is still unlinked
+      expect(check('conflict-scan').findings.map(f => f.id)).toEqual([third.id, third.id])
+      writes(eml).relate({ source_id: third.id, target_id: second.id, relation: 'refines' })
+      expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    it('a task both are bound to is no bridge: a same-title pair inside one task stays flagged', () => {
+      const task = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'qf-same', content: 'the quantumflux work' })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-same', content, task_id: task.id, properties: { binding: 'task' } })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-same', content: 'quantumflux pipeline sweep threshold gate', task_id: task.id, properties: { binding: 'task' } })
+      const f = check('conflict-scan').findings
+      expect(f).toHaveLength(1)
+      expect(f[0].reason).toContain('same title')
+    })
+
+    it('caps the findings at 20 per run (the next sweep surfaces the rest)', () => {
+      for (let i = 0; i < 24; i++) writes(eml).store({ type: 'note', scope: 'project.demo', title: `qf-cap-${i}`, content })
+      expect(check('conflict-scan').findings).toHaveLength(20)
+    })
+
+    it('leaves pairs with a retired side out (a superseded engram is not a candidate)', () => {
+      const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-retired', content })
+      writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-successor', content: 'quantumflux pipeline sweep threshold gate', supersedes: [a.id] })
+      expect(check('conflict-scan').findings).toEqual([])
     })
   })
 })

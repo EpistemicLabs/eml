@@ -27,7 +27,7 @@ export interface SyncSummary {
 /**
  * Takes what arrived on one account since its cursor. Without the cockpit's answer on the space's
  * jobs it stores nothing and keeps the cursor, since routing blind would send everything to the
- * inbox. Otherwise it stores each message once, routes it among the jobs of the account's space,
+ * inbox. Otherwise it stores each message once, routes it among the jobs of all the account's spaces,
  * and queues a wake for each job that got one. The
  * cursor moves only after everything is stored, so a crash repeats a sync instead of losing
  * messages; the duplicates it brings are recognised and their wakes made good.
@@ -40,12 +40,17 @@ export async function syncChannel(
   const result = await account.sync(await deps.store.cursor(account.accountId))
   if (result.kind === 'unavailable') return result
   const summary: SyncSummary = { kind: 'synced', gap: result.gap, stored: 0, duplicates: 0, toJobs: 0, toInbox: 0, ignored: 0 }
+  // No home space: the jobs of every space the account's plugin is on in, merged (job ids are unique).
   let routes: JobRoute[] = []
   if (result.messages.length > 0) {
-    const answer = await deps.jobs.routesInSpace(account.space, account.channel)
-    if (answer.kind === 'unavailable') return answer
-    routes = answer.routes
+    for (const space of account.spaces) {
+      const answer = await deps.jobs.routesInSpace(space, account.channel)
+      if (answer.kind === 'unavailable') return answer
+      routes = [...routes, ...answer.routes]
+    }
   }
+  // A wake goes to the job's own space: the cockpit takes it only with that space's token.
+  const spaceOf = (jobId: string) => routes.find((route) => route.jobId === jobId)?.space ?? null
 
   for (const message of result.messages) {
     const threadOwner = await deps.store.threadOwner(account.accountId, message.threadKey)
@@ -53,13 +58,14 @@ export async function syncChannel(
     const saved = await deps.store.save(message, routing)
     if (saved.kind === 'duplicate') {
       summary.duplicates += 1
-      await wakeForUnread(deps, account.space, saved.id)
+      await wakeForUnread(deps, spaceOf, saved.id)
       continue
     }
     summary.stored += 1
     if (routing.kind === 'job') {
       summary.toJobs += 1
-      await deps.wakes.add({ jobId: routing.jobId, space: account.space }, { kind: 'message', messageId: saved.id }, deps.clock.now())
+      const space = spaceOf(routing.jobId)
+      if (space) await deps.wakes.add({ jobId: routing.jobId, space }, { kind: 'message', messageId: saved.id }, deps.clock.now())
     } else if (routing.kind === 'inbox') {
       summary.toInbox += 1
     } else {
@@ -75,8 +81,9 @@ export async function syncChannel(
  * A duplicate means an earlier sync stopped before it moved the cursor, perhaps before it queued
  * the wake. A message its job has not read yet is queued again; the queue holds it once.
  */
-async function wakeForUnread(deps: SyncChannelDeps, space: string, messageId: string): Promise<void> {
+async function wakeForUnread(deps: SyncChannelDeps, spaceOf: (jobId: string) => string | null, messageId: string): Promise<void> {
   const stored = await deps.store.get(messageId)
   if (stored?.routing.kind !== 'job' || stored.read) return
-  await deps.wakes.add({ jobId: stored.routing.jobId, space }, { kind: 'message', messageId }, deps.clock.now())
+  const space = spaceOf(stored.routing.jobId)
+  if (space) await deps.wakes.add({ jobId: stored.routing.jobId, space }, { kind: 'message', messageId }, deps.clock.now())
 }

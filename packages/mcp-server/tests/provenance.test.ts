@@ -26,6 +26,20 @@ describe('Provenance — harness', () => {
     p.setHarness('claude-code')
     expect(p.harness).toBe('claude-code')
   })
+
+  it('drops the per-server suffix Qwen Code adds to its client name', () => {
+    const p = new Provenance({})
+    p.setHarness('qwen-cli-mcp-client-eml_brain')
+    expect(p.harness).toBe('qwen-cli')
+    // Codex names no server: its client name stays as it is.
+    p.setHarness('codex-mcp-client')
+    expect(p.harness).toBe('codex-mcp-client')
+    // A name that is only the suffix stays as it is; a long hostile one is handled in linear time.
+    p.setHarness('-mcp-client-x')
+    expect(p.harness).toBe('-mcp-client-x')
+    p.setHarness('a-mcp-client-'.repeat(50_000))
+    expect(p.harness).toBe('a')
+  })
 })
 
 describe('Provenance — model', () => {

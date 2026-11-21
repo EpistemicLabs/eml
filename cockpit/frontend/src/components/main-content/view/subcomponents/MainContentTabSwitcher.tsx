@@ -1,5 +1,5 @@
 // Adapted: the views come from lib/pane-views.ts, in two groups — the
-// session's (Terminal, Chat) and the plugins (Brain and the ones switched on).
+// session's (Terminal, Chat) and the plugins switched on; a group with none shows no pill.
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
@@ -64,6 +64,8 @@ export default function MainContentTabSwitcher({
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
   const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
+  // The offered groups that still have a view switched on.
+  const shown = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
   // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
   // terminal entries come from newSessionEntries, one per ready agent CLI.
@@ -92,8 +94,8 @@ export default function MainContentTabSwitcher({
   return (
     <div className="flex items-center gap-2">
       {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
-      {groups.length > 0 && <div role="radiogroup" className="flex items-center gap-1.5">
-        {GROUPS.filter(({ group }) => groups.includes(group)).map(({ group }) => (
+      {shown.length > 0 && <div role="radiogroup" className="flex items-center gap-1.5">
+        {shown.map(({ group }) => (
           <div key={group} className={cn(TRACK, 'bg-foreground/8')}>
             {modes.filter((mode) => mode.group === group).map((mode) => {
               const isActive = paneView === mode.view;
@@ -118,7 +120,7 @@ export default function MainContentTabSwitcher({
         ))}
       </div>}
 
-      {groups.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-border" aria-hidden="true" />}
+      {shown.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-border" aria-hidden="true" />}
 
       {onToggleMainPane && (
         <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">
@@ -152,7 +154,7 @@ export default function MainContentTabSwitcher({
               role="menu"
               className={cn(POPOVER, 'absolute top-full right-0 mt-1 min-w-(--size-menu-min)')}
             >
-              {GROUPS.map(({ group, title }, index) => (
+              {shown.map(({ group, title }, index) => (
                 <Fragment key={group}>
                   <div className={cn(LABEL, 'px-2 pb-0.5', index > 0 ? 'mt-1 border-t border-border pt-1.5' : 'pt-1')}>
                     {title}

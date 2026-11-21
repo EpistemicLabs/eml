@@ -57,12 +57,13 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   const overrideTitle = pane?.title;
   // Note panes are named after their note's first line.
   const isNoteView = pane?.paneView === 'note';
-  // Brain and worktrees show the project, not one item of it.
-  const projectView = pane?.paneView === 'brain' || pane?.paneView === 'worktrees' ? paneViewDef(pane.paneView).label : null;
+  // Brain, worktrees and repository show the project, not one item of it; the shell and the time are this computer's, of no project.
+  const shellView = pane?.paneView === 'shell' || pane?.paneView === 'time';
+  const projectView = pane?.paneView === 'brain' || pane?.paneView === 'worktrees' || pane?.paneView === 'repository' || shellView ? paneViewDef(pane.paneView).label : null;
   const { data: note } = useNote(isNoteView ? pane.noteId : null);
   const renameNote = useRenameNote();
   // The pane's own title belongs to its session (terminal) or to a pure brain
-  // or worktrees pane; a session pane in such a view keeps its name ("Brain") and is not renamed.
+  // worktrees or repository pane; a session pane in such a view keeps its name ("Brain") and is not renamed.
   // A note's title lives in the brain; a shared brain that is not live takes no write (useTeamStore).
   const brain = useWritable();
   const canRename = isNoteView ? Boolean(note) && brain.writable : !(projectView && pane?.sessionId);
@@ -124,7 +125,9 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   // Brain panes show the project they are scoped to, like terminal panes do;
   // a brain-wide pane (no project) names the instance — for now there is only
   // one ("Main"), hosted/other instances come later.
-  const subtitle = projectView
+  const subtitle = shellView
+    ? (pane?.paneView === 'time' ? 'All projects' : '~')
+    : projectView
     ? selectedProject?.displayName ?? 'Main'
     : selectedProject?.displayName ?? '';
 

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import type { ChannelAccount } from '../../src/ports/channel'
+import type { describe, expect, it } from 'vitest'
+import type { ChannelAccount } from './account'
 
 /** A channel account under test, and a way to make a mail arrive on it. */
 export interface ChannelHarness {
@@ -7,8 +7,16 @@ export interface ChannelHarness {
   arrive(id: string): void
 }
 
-/** What every channel account must do. */
-export function channelAccountContract(name: string, make: () => Promise<ChannelHarness>): void {
+/** The test runner's functions; passed in, so this module loads in a CommonJS build without the runner. */
+export interface TestApi {
+  describe: typeof describe
+  it: typeof it
+  expect: typeof expect
+}
+
+/** What every channel account must do: run it in the tests of each plugin's channel part. */
+export function channelAccountContract(test: TestApi, name: string, make: () => Promise<ChannelHarness>): void {
+  const { describe, it, expect } = test
   describe(`ChannelAccount contract: ${name}`, () => {
     it('starts from now, then hands out each new message once', async () => {
       const { account, arrive } = await make()

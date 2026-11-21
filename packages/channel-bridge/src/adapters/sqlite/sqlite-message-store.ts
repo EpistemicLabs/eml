@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import type Database from 'better-sqlite3'
-import { normalizeMailAddress } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import { normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { Routing } from '../../domain/routing'
 import type { MessageStore, SaveOutcome, StoredMessage } from '../../ports/message-store'
 import { parseChannel, parseRouting } from './stored-shapes'
@@ -81,6 +81,14 @@ export class SqliteMessageStore implements MessageStore {
 
   async unreadForJob(jobId: string): Promise<StoredMessage[]> {
     const rows = this.db.prepare('SELECT * FROM messages WHERE job_id = ? AND read = 0 ORDER BY rowid').all(jobId) as MessageRow[]
+    return rows.map(toStoredMessage)
+  }
+
+  async inbox(accountIds: string[], limit: number): Promise<StoredMessage[]> {
+    if (accountIds.length === 0) return []
+    const rows = this.db
+      .prepare(`SELECT * FROM messages WHERE account_id IN (${accountIds.map(() => '?').join(', ')}) AND json_extract(routing, '$.kind') = 'inbox' ORDER BY rowid DESC LIMIT ?`)
+      .all(...accountIds, limit) as MessageRow[]
     return rows.map(toStoredMessage)
   }
 

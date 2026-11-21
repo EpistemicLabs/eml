@@ -1,5 +1,4 @@
-import type { Channel } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import type { Channel, InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { ChannelAccount, ChannelAccounts, ChannelUnavailable, OutgoingMessage, SendOutcome, SyncResult } from '../../ports/channel'
 
 /**
@@ -15,10 +14,15 @@ export class ScriptedChannel implements ChannelAccount {
   private down: ChannelUnavailable | null = null
   private historyLost = false
 
+  readonly spaces: readonly string[]
+
+  /** One space, or the several its plugin is on in. */
   constructor(
     readonly accountId: string,
-    readonly space: string,
-  ) {}
+    spaces: string | readonly string[],
+  ) {
+    this.spaces = typeof spaces === 'string' ? [spaces] : spaces
+  }
 
   receive(message: Omit<InboundMessage, 'channel' | 'accountId'>): void {
     this.history.push({ ...message, channel: this.channel, accountId: this.accountId })
@@ -68,6 +72,6 @@ export class ScriptedChannels implements ChannelAccounts {
   }
 
   inSpace(space: string): ChannelAccount[] {
-    return this.accounts.filter((account) => account.space === space)
+    return this.accounts.filter((account) => account.spaces.includes(space))
   }
 }

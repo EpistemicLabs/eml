@@ -37,6 +37,8 @@ export const api = {
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}/release`, jsonInit('POST', { paneId })),
   deleteSession: (sessionId: string) =>
     fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, jsonInit('DELETE')),
+  endShell: (shellId: string) =>
+    fetch(`/api/plugins/shell/${encodeURIComponent(shellId)}`, jsonInit('DELETE')),
 
   about: () => fetch('/api/about'),
   claimSpawn: (id: string) => fetch(`/api/spawns/${encodeURIComponent(id)}/claim`, jsonInit('POST')),

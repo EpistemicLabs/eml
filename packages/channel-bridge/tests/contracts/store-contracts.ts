@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { MessageStore } from '../../src/ports/message-store'
 import type { WakeQueue } from '../../src/ports/wake-queue'
 import type { OutboxStore } from '../../src/ports/outbox-store'
-import type { InboundMessage } from '../../src/domain/inbound-message'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { OutboxItem } from '../../src/domain/outbox'
 
 function message(over: Partial<InboundMessage> = {}): InboundMessage {

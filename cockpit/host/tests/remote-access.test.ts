@@ -11,7 +11,7 @@ import { parseTailscaleStatus, proxiesTo } from '../src/remote.js'
 
 const LOCAL = ['http://127.0.0.1:4317', 'http://localhost:4317']
 const ORIGIN = 'https://box.tailnet-1234.ts.net'
-const ON: RemoteAccess = { origins: [ORIGIN], users: ['jane@example.com'] }
+const ON: RemoteAccess = { origins: [ORIGIN], users: ['jane@example.com'], shell: false }
 
 const req = (headers: Record<string, string>) => ({ headers }) as unknown as IncomingMessage
 const viaServe = (extra: Record<string, string> = {}) =>
@@ -29,7 +29,7 @@ describe('request gate', () => {
   })
 
   it('refuses every remote request while remote access is off', () => {
-    expect(requestGate(viaServe(), LOCAL, { origins: [], users: [] })).toEqual({ allowed: false })
+    expect(requestGate(viaServe(), LOCAL, { origins: [], users: [], shell: false })).toEqual({ allowed: false })
   })
 
   it('lets a listed tailnet user in on the enabled host, writing only from the remote origins', () => {
@@ -38,7 +38,7 @@ describe('request gate', () => {
 
   it('compares logins without case and lets every tailnet user in when the list is empty', () => {
     expect(requestGate(viaServe({ 'tailscale-user-login': 'Jane@Example.com' }), LOCAL, ON).allowed).toBe(true)
-    expect(requestGate(viaServe({ 'tailscale-user-login': 'joe@example.com' }), LOCAL, { origins: [ORIGIN], users: [] }).allowed).toBe(true)
+    expect(requestGate(viaServe({ 'tailscale-user-login': 'joe@example.com' }), LOCAL, { origins: [ORIGIN], users: [], shell: false }).allowed).toBe(true)
   })
 
   it('refuses a tailnet user not in the list', () => {
@@ -46,8 +46,8 @@ describe('request gate', () => {
   })
 
   it('refuses a request without a tailnet user, and any Funnel request from the internet', () => {
-    expect(requestGate(viaServe({ 'tailscale-user-login': '' }), LOCAL, { origins: [ORIGIN], users: [] })).toEqual({ allowed: false })
-    expect(requestGate(viaServe({ 'tailscale-funnel-request': '?1' }), LOCAL, { origins: [ORIGIN], users: [] })).toEqual({ allowed: false })
+    expect(requestGate(viaServe({ 'tailscale-user-login': '' }), LOCAL, { origins: [ORIGIN], users: [], shell: false })).toEqual({ allowed: false })
+    expect(requestGate(viaServe({ 'tailscale-funnel-request': '?1' }), LOCAL, { origins: [ORIGIN], users: [], shell: false })).toEqual({ allowed: false })
   })
 
   it('refuses a host other than the enabled one, and a proxied request on a loopback Host', () => {
@@ -60,7 +60,7 @@ describe('remote.json', () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-')), 'remote.json')
 
   it('reads nothing as off', () => {
-    expect(readRemoteAccess(file)).toEqual({ origins: [], users: [] })
+    expect(readRemoteAccess(file)).toEqual({ origins: [], users: [], shell: false })
   })
 
   it('keeps only https origins, lowercase and without a path; logins lowercase', () => {
@@ -68,12 +68,19 @@ describe('remote.json', () => {
       origins: ['HTTPS://Box.Tailnet-1234.ts.net/', 'http://box.tailnet-1234.ts.net', 'https://x.ts.net/path', 7],
       users: ['Jane@Example.com', '', 'jane@example.com'],
     }))
-    expect(readRemoteAccess(file)).toEqual({ origins: [ORIGIN], users: ['jane@example.com'] })
+    expect(readRemoteAccess(file)).toEqual({ origins: [ORIGIN], users: ['jane@example.com'], shell: false })
+  })
+
+  it('lets remote users open a shell only when the file says so with true', () => {
+    fs.writeFileSync(file, JSON.stringify({ origins: [ORIGIN], users: [], shell: 'yes' }))
+    expect(readRemoteAccess(file).shell).toBe(false)
+    fs.writeFileSync(file, JSON.stringify({ origins: [ORIGIN], users: [], shell: true }))
+    expect(readRemoteAccess(file).shell).toBe(true)
   })
 
   it('reads a broken file as off', () => {
     fs.writeFileSync(file, '{ not json')
-    expect(readRemoteAccess(file)).toEqual({ origins: [], users: [] })
+    expect(readRemoteAccess(file)).toEqual({ origins: [], users: [], shell: false })
   })
 })
 

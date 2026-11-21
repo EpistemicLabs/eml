@@ -1,4 +1,4 @@
-import type { InboundMessage } from '../domain/inbound-message'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { Routing } from '../domain/routing'
 
 export interface StoredMessage extends InboundMessage {
@@ -21,6 +21,8 @@ export interface MessageStore {
   /** The job's messages it has not read yet, oldest first. */
   unreadForJob(jobId: string): Promise<StoredMessage[]>
   markRead(ids: string[]): Promise<void>
+  /** The messages no job took (no match, ambiguous, unverified sender) of these accounts, newest first. */
+  inbox(accountIds: string[], limit: number): Promise<StoredMessage[]>
   cursor(accountId: string): Promise<string | null>
   setCursor(accountId: string, cursor: string): Promise<void>
 }

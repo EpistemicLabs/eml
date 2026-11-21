@@ -2,23 +2,29 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 // The cockpit's own plugins (plugins-api.ts): the switches, kept in the
 // config for every browser; a plugin that is off answers 404 on its routes,
 // Notes included; Worktrees reads the project's folder from the registry
-// only, and lists its worktrees against the default branch.
+// only, and lists its worktrees against the default branch; Repository reads a
+// checkout of that folder only, and nothing outside it.
 
 const home = mkdtempSync(join(tmpdir(), 'cockpit-plugins-api-test-'))
 process.env.EML_COCKPIT_HOME = home
 const repo = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-repo-')))
 // A worktree next to the checkout, as the repo's own worktrees are.
 const wtX = `${repo}-x`
+// A project folder that is no repository.
+const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-plain-')))
 
 let host: http.Server
 let base: string
+
+// The Shell plugin's running terminals, as the bridge would hold them.
+const shells = new Set(['sh-1'])
 
 const listen = (server: http.Server) =>
   new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)))
@@ -37,8 +43,14 @@ beforeAll(async () => {
   execFileSync('git', ['-C', wtX, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'second'])
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
-  const { handlePluginsApi } = await import('../src/plugins-api.js')
-  const folders: Record<string, string> = { p1: repo }
+  const { handlePluginsApi, spacePlugins } = await import('../src/plugins-api.js')
+  // A home's first boot: the switches of before (none here) carry over to both spaces.
+  await spacePlugins.setup(
+    [{ id: 'main', agent: null, ownRuntime: false }, { id: 'other', agent: null, ownRuntime: false }],
+    {}, { claudeJson: join(home, 'claude-config', '.claude.json'), agents: [] }, join(home, 'plugins', 'backups'),
+  )
+  const { TimeTracker } = await import('../src/time-tracking.js')
+  const folders: Record<string, string> = { p1: repo, p2: plain }
   const deps = {
     projectFolder: (id: string) => folders[id] ?? null,
     ports: async () => [
@@ -50,6 +62,16 @@ beforeAll(async () => {
     ],
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
+    endShell: (id: string) => shells.delete(id),
+    spaceIds: () => ['main', 'other'],
+    outside: { list: async () => [{ name: 'claude.ai Slack', kind: 'connector' as const }] },
+    time: new TimeTracker(() => ({ spaceId: null, projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
+    sessionName: (id: string) => (id === 's1' ? 'Dev server session' : null),
+    timeNames: async ({ projects }: { projects: Array<{ spaceId: string | null; projectId: string | null }> }) => ({
+      spaces: { '': 'Main' },
+      projects: Object.fromEntries(projects.map((p) => [`${p.spaceId ?? ''}/${p.projectId ?? ''}`, 'Project one'])),
+      tasks: {},
+    }),
     // The user's home folder: the temp folder the repo lies in.
     home: dirname(repo),
   }
@@ -72,25 +94,43 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true })
   rmSync(repo, { recursive: true, force: true })
   rmSync(wtX, { recursive: true, force: true })
+  rmSync(plain, { recursive: true, force: true })
 })
 
 const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('plugin switches', () => {
-  it('lists every plugin as on until it is switched off', async () => {
+  it('starts with Brain, Note and Worktrees on and the later plugins off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'note', enabled: true }, { id: 'worktrees', enabled: true }] })
+    const { plugins } = await res.json()
+    expect(Object.fromEntries(plugins.map((p: { id: string; enabled: boolean }) => [p.id, p.enabled]))).toEqual({
+      brain: true, note: true, worktrees: true, repository: false, shell: false, time: false, gmail: false,
+    })
+  })
+
+  it('describes each official plugin by its manifest', async () => {
+    const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
+    expect(plugins.find((p: { id: string }) => p.id === 'note')).toMatchObject({ name: 'Note', tier: 'official', parts: ['pane'], pane: 'note', channel: null, mcp: null })
+    expect(plugins.find((p: { id: string }) => p.id === 'gmail')).toMatchObject({ tier: 'official', parts: ['channel'], pane: null, channel: 'gmail', auth: { kind: 'google-oauth' } })
+  })
+
+  // Switches every plugin on for the tests below.
+  it('keeps what the user chose over the default', async () => {
+    await patch({ id: 'brain', enabled: false })
+    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time', 'gmail']) await patch({ id, enabled: true })
+    const res = await patch({ id: 'brain', enabled: true })
+    expect((await res.json()).plugins.every((p: { enabled: boolean }) => p.enabled)).toBe(true)
   })
 
   it('refuses an unknown plugin or a non-boolean', async () => {
-    expect((await patch({ id: 'brain', enabled: false })).status).toBe(400)
+    expect((await patch({ id: 'terminal', enabled: false })).status).toBe(400)
     expect((await patch({ id: 'note', enabled: 'no' })).status).toBe(400)
   })
 
   it('keeps a switch in the config and refuses the plugin\'s routes while off', async () => {
     const res = await patch({ id: 'note', enabled: false })
-    expect((await res.json()).plugins).toContainEqual({ id: 'note', enabled: false })
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toEqual({ note: false })
+    expect((await res.json()).plugins).toContainEqual(expect.objectContaining({ id: 'note', enabled: false }))
+    expect(JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces.main.plugins.note).toBeUndefined()
     expect((await fetch(`${base}/api/notes?projectId=p1`)).status).toBe(404)
     expect((await fetch(`${base}/api/notes/abc`)).status).toBe(404)
 
@@ -103,6 +143,119 @@ describe('plugin switches', () => {
     await patch({ id: 'worktrees', enabled: false })
     expect((await fetch(`${base}/api/plugins/worktrees/ports`)).status).toBe(404)
     await patch({ id: 'worktrees', enabled: true })
+  })
+
+  it('answers 404 on Repository routes while it is off', async () => {
+    await patch({ id: 'repository', enabled: false })
+    expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(404)
+    await patch({ id: 'repository', enabled: true })
+    expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(200)
+  })
+})
+
+describe('custom MCP plugins', () => {
+  const add = (body: unknown) => fetch(`${base}/api/plugins/custom`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const lookup = { id: 'lookup', name: 'Lookup', parts: { mcp: { transport: 'stdio', command: 'lookup-mcp', args: ['--token', 'abc'], env: { LOOKUP_KEY: { secret: 'key' }, LOOKUP_REGION: 'eu' } } } }
+
+  it('adds one owner-only, starts it off and shows its settings by name only', async () => {
+    const res = await add(lookup)
+    expect(res.status).toBe(201)
+    expect((await res.json()).plugin).toMatchObject({
+      id: 'lookup', tier: 'custom', parts: ['mcp'], enabled: false,
+      mcp: { transport: 'stdio', target: 'lookup-mcp', settings: [{ name: 'LOOKUP_KEY', secret: true }, { name: 'LOOKUP_REGION', secret: false }] },
+    })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins`)).json())
+    expect(listed).toContain('"lookup"')
+    expect(listed).not.toContain('abc')
+    expect(listed).not.toContain('"eu"')
+    const file = join(home, 'plugins', 'custom.json')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugins[0]).toMatchObject({ id: 'lookup', tier: 'custom' })
+  })
+
+  it('refuses a taken id, an official one, a channel or a pane, and a bad manifest', async () => {
+    expect((await add(lookup)).status).toBe(400)
+    expect((await add({ ...lookup, id: 'gmail' })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'mail2', parts: { channel: { adapter: 'gmail' } } })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'view2', parts: { pane: { builtin: 'note' } } })).status).toBe(400)
+    expect((await add({ id: 'Bad Id', name: 'x', parts: {} })).status).toBe(400)
+    // It can't make itself official.
+    const official = await add({ ...lookup, id: 'sneaky', tier: 'official' })
+    expect((await official.json()).plugin).toMatchObject({ tier: 'custom' })
+    await fetch(`${base}/api/plugins/custom/sneaky`, { method: 'DELETE' })
+  })
+
+  it('switches like any plugin and forgets the switch when removed', async () => {
+    await patch({ id: 'lookup', enabled: true, space: 'other' })
+    const spaces = () => JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces
+    expect(spaces().other.plugins.lookup).toEqual({ connection: null })
+    expect(spaces().main.plugins.lookup).toBeUndefined()
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(200)
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(404)
+    expect(spaces().other.plugins.lookup).toBeUndefined()
+    expect((await patch({ id: 'lookup', enabled: true })).status).toBe(400)
+  })
+})
+
+describe('plugins per space', () => {
+  const view = async (space: string, id: string) =>
+    (await (await fetch(`${base}/api/plugins?space=${space}`)).json()).plugins.find((p: { id: string }) => p.id === id)
+
+  it('switches a plugin in one space only and tells each space its own state', async () => {
+    await patch({ id: 'time', enabled: false, space: 'other' })
+    expect(await view('main', 'time')).toMatchObject({ enabled: true })
+    expect(await view('other', 'time')).toMatchObject({ enabled: false, spaces: { main: null } })
+    await patch({ id: 'time', enabled: true, space: 'other' })
+  })
+
+  it('keeps connections owner-only and never sends their values back', async () => {
+    const res = await fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: 'gmail', label: 'Test mailbox', values: { token: 'placeholder-value' } }),
+    })
+    expect(res.status).toBe(201)
+    const { connection } = await res.json()
+    expect(connection).toMatchObject({ plugin: 'gmail', label: 'Test mailbox', secrets: ['token'] })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins/connections`)).json())
+    expect(listed).not.toContain('placeholder-value')
+    expect(statSync(join(home, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
+    // A connection of another plugin can't be picked.
+    expect((await patch({ id: 'time', enabled: true, space: 'main', connection: connection.id })).status).toBe(400)
+    expect((await patch({ id: 'gmail', enabled: true, space: 'main', connection: connection.id })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: connection.id } })
+    // Removed, the space keeps the plugin without one.
+    expect((await fetch(`${base}/api/plugins/connections/${connection.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: null } })
+    await patch({ id: 'gmail', enabled: false, space: 'main' })
+  })
+
+  it('lets a remote user see and add sign-ins, but adds a custom server remotely only with the shell on', async () => {
+    const remote = { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' }
+    expect((await fetch(`${base}/api/plugins/connections`, { headers: remote })).status).toBe(200)
+    const custom = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: remote, body: JSON.stringify({ id: 'remote-one', name: 'R', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+    })
+    expect(custom.status).toBe(403)
+    expect((await custom.json()).error.message).toContain('remote shell on')
+  })
+
+  it('switches a claude.ai connector off in one space', async () => {
+    const res = await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: false }),
+    })
+    expect((await res.json()).servers).toEqual([{ name: 'claude.ai Slack', kind: 'connector', off: ['other'] }])
+    await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: true }),
+    })
+  })
+})
+
+describe('shell', () => {
+  it('ends a shell whose pane was closed, once', async () => {
+    const end = () => fetch(`${base}/api/plugins/shell/sh-1`, { method: 'DELETE' }).then((r) => r.json())
+    expect(await end()).toEqual({ ended: true })
+    expect(await end()).toEqual({ ended: false })
+    expect((await fetch(`${base}/api/plugins/shell/..%2Fx`, { method: 'DELETE' })).status).toBe(418)
   })
 })
 
@@ -153,6 +306,119 @@ describe('worktrees', () => {
   })
 })
 
+describe('repository', () => {
+  const get = async (route: string, query: Record<string, string>) => {
+    const res = await fetch(`${base}/api/plugins/repository/${route}?${new URLSearchParams(query)}`)
+    return { status: res.status, body: await res.json() }
+  }
+  const inX = (extra: Record<string, string> = {}) => ({ projectId: 'p1', worktree: wtX, ...extra })
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-outside-')))
+
+  beforeAll(() => {
+    // feat/x: a.txt changed, a new file, a secret, an ignored build folder, a link out of the checkout.
+    writeFileSync(join(wtX, 'a.txt'), 'a\nmore\n')
+    writeFileSync(join(wtX, 'new.txt'), 'one\ntwo\n')
+    writeFileSync(join(wtX, '.env'), 'API_KEY=secret\n')
+    writeFileSync(join(wtX, '.gitignore'), 'build/\n')
+    mkdirSync(join(wtX, 'build'))
+    writeFileSync(join(wtX, 'build', 'out.js'), 'x\n')
+    writeFileSync(join(outside, 'private.txt'), 'private\n')
+    symlinkSync(join(outside, 'private.txt'), join(wtX, 'link.txt'))
+    // A link inside the checkout to the secret: named like a plain file.
+    symlinkSync('.env', join(wtX, 'notes.txt'))
+    writeFileSync(join(plain, 'readme.md'), '# plain\n')
+  })
+  afterAll(() => rmSync(outside, { recursive: true, force: true }))
+
+  it('lists the project\'s checkouts, the project folder marked', async () => {
+    const { body } = await get('repo', { projectId: 'p1' })
+    expect(body.base).toBe('main')
+    expect(body.worktrees).toEqual([
+      expect.objectContaining({ path: repo, branch: 'main', isProjectFolder: true }),
+      expect.objectContaining({ path: wtX, branch: 'feat/x', isProjectFolder: false }),
+    ])
+  })
+
+  it('lists the uncommitted changes with new files, the branch\'s and a commit\'s', async () => {
+    const uncommitted = (await get('files', inX({ scope: 'uncommitted' }))).body.files
+    expect(uncommitted).toContainEqual({ path: 'a.txt', oldPath: null, status: 'M', additions: 1, deletions: 0 })
+    expect(uncommitted).toContainEqual({ path: 'new.txt', oldPath: null, status: '?', additions: 2, deletions: 0 })
+    expect(uncommitted.map((f: { path: string }) => f.path)).not.toContain('build/out.js')
+    expect((await get('files', inX({ scope: 'branch' }))).body.files).toEqual([{ path: 'b.txt', oldPath: null, status: 'A', additions: 1, deletions: 0 }])
+    const { body: log } = await get('commits', inX())
+    expect(log).toMatchObject({ base: 'main', onBranch: true, commits: [{ subject: 'second', author: 't' }] })
+    const commit = (await get('files', inX({ scope: 'commit', commit: log.commits[0].hash }))).body.files
+    expect(commit.map((f: { path: string }) => f.path)).toEqual(['b.txt'])
+    // The first commit has no parent: compared with nothing.
+    const first = git('rev-parse', '--short', 'main').trim()
+    expect((await get('files', inX({ scope: 'commit', commit: first }))).body.files.map((f: { path: string }) => f.path)).toEqual(['a.txt'])
+    expect((await get('files', inX({ scope: 'commit', commit: 'zz' }))).status).toBe(400)
+  })
+
+  it('shows a file\'s patch, a new file\'s whole, a secret only on reveal', async () => {
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'a.txt' }))).body.patch).toContain('\n+more\n')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'new.txt', status: '?' }))).body.patch).toBe('@@ -0,0 +1,2 @@\n+one\n+two\n')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '.env', status: '?' }))).body).toEqual({ patch: null, truncated: false, secret: true })
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '.env', status: '?', reveal: '1' }))).body.patch).toContain('+API_KEY=secret')
+    expect((await get('patch', inX({ scope: 'uncommitted', path: '../x' }))).status).toBe(400)
+  })
+
+  it('reads files inside the checkout only', async () => {
+    expect((await get('file', inX({ path: 'new.txt' }))).body).toMatchObject({ content: 'one\ntwo\n', secret: false, binary: false })
+    expect((await get('file', inX({ path: '.env' }))).body).toMatchObject({ content: null, secret: true })
+    expect((await get('file', inX({ path: '.env', reveal: '1' }))).body.content).toBe('API_KEY=secret\n')
+    for (const path of ['link.txt', '../' + 'x/a.txt', join(outside, 'private.txt'), '']) {
+      expect((await get('file', inX({ path }))).status).toBe(404)
+    }
+  })
+
+  it('keeps a secret behind a link a secret, and the .git folder closed', async () => {
+    expect((await get('file', inX({ path: 'notes.txt' }))).body).toMatchObject({ content: null, secret: true })
+    expect((await get('patch', inX({ scope: 'uncommitted', path: 'notes.txt', status: '?' }))).body).toEqual({ patch: null, truncated: false, secret: true })
+    expect((await get('file', inX({ path: 'notes.txt', reveal: '1' }))).body.content).toBe('API_KEY=secret\n')
+    // .git/config can hold a token in a remote URL.
+    expect((await get('file', { projectId: 'p1', worktree: repo, path: '.git/config' })).status).toBe(404)
+  })
+
+  it('reads only checkouts of the project folder', async () => {
+    expect((await get('tree', { projectId: 'p1', worktree: outside })).status).toBe(404)
+    expect((await get('tree', { projectId: 'p1', worktree: dirname(repo) })).status).toBe(404)
+    expect((await get('file', { projectId: 'p1', path: 'a.txt' })).body.content).toBe('a\n')
+  })
+
+  it('lists the tree with the ignored folders apart, and a folder\'s entries', async () => {
+    const { body } = await get('tree', inX())
+    expect(body.paths).toEqual(expect.arrayContaining(['a.txt', 'b.txt', 'new.txt', '.gitignore']))
+    expect(body.ignored).toEqual(['build/'])
+    expect((await get('dir', inX({ path: 'build' }))).body.entries).toEqual([{ name: 'out.js', dir: false }])
+    const root = (await get('dir', inX())).body.entries.map((e: { name: string }) => e.name)
+    expect(root).toContain('build')
+    expect(root).not.toContain('.git')
+    expect((await get('dir', inX({ path: '..' }))).status).toBe(404)
+  })
+
+  it('shows a folder that is no repository as files only', async () => {
+    expect((await get('repo', { projectId: 'p2' })).body).toEqual({ folder: plain, base: null, worktrees: null })
+    expect((await get('dir', { projectId: 'p2' })).body.entries).toEqual([{ name: 'readme.md', dir: false }])
+    expect((await get('file', { projectId: 'p2', path: 'readme.md' })).body.content).toBe('# plain\n')
+    expect((await get('tree', { projectId: 'p2' })).status).toBe(404)
+    expect((await get('dir', { projectId: 'p2', worktree: repo })).status).toBe(404)
+  })
+
+  it('parses renames in name-status and numstat', async () => {
+    const { parseNameStatus, parseNumstat } = await import('../src/plugins-repository.js')
+    expect(parseNameStatus('M\0a.txt\0R087\0old.txt\0new.txt\0')).toEqual([
+      { path: 'a.txt', oldPath: null, status: 'M', additions: null, deletions: null },
+      { path: 'new.txt', oldPath: 'old.txt', status: 'R', additions: null, deletions: null },
+    ])
+    expect([...parseNumstat('1\t0\ta.txt\0' + '2\t3\t\0old.txt\0new.txt\0' + '-\t-\timg.png\0')]).toEqual([
+      ['a.txt', { additions: 1, deletions: 0 }],
+      ['new.txt', { additions: 2, deletions: 3 }],
+      ['img.png', { additions: null, deletions: null }],
+    ])
+  })
+})
+
 describe('secrets in a command line', () => {
   it('blacks out user info in a URL, short secret flags, -p<password> and secret headers; ports and other flags stay', async () => {
     const { redactSecrets } = await import('../src/diagnostics/redact.js')
@@ -187,5 +453,25 @@ describe('lsof parsing', () => {
     expect(processes.get(50)?.elapsed).toBe(93784)
     expect(ancestorsOf(101, processes)).toEqual([50])
     expect(parseLsofCwd('p101\nfcwd\nn/Users/x/eml\np202\nfcwd\nn/tmp\n')).toEqual(new Map([[101, '/Users/x/eml'], [202, '/tmp']]))
+  })
+})
+
+describe('time', () => {
+  it('takes beats and answers the days with the names', async () => {
+    const beat = () => fetch(`${base}/api/plugins/time/beat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: 's1' }) })
+    expect((await beat()).status).toBe(200)
+    // A moment later: the time between the two goes to the session.
+    await new Promise((r) => setTimeout(r, 20))
+    expect((await beat()).status).toBe(200)
+    const body = await (await fetch(`${base}/api/plugins/time?days=3`)).json()
+    expect(body.days).toHaveLength(3)
+    expect(body.days[2].sessions.s1.projectId).toBe('p1')
+    expect(body.names).toEqual({ spaces: { '': 'Main' }, projects: { '/p1': 'Project one' }, tasks: {}, sessions: { s1: 'Dev server session' } })
+  })
+
+  it('answers 404 while it is off', async () => {
+    await patch({ id: 'time', enabled: false })
+    expect((await fetch(`${base}/api/plugins/time`)).status).toBe(404)
+    await patch({ id: 'time', enabled: true })
   })
 })

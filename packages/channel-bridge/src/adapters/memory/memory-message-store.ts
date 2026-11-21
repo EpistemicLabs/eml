@@ -1,5 +1,5 @@
-import { normalizeMailAddress } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import { normalizeMailAddress } from '@engramprotocol/channel-bridge-sdk'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { Routing } from '../../domain/routing'
 import type { MessageStore, SaveOutcome, StoredMessage } from '../../ports/message-store'
 
@@ -46,6 +46,13 @@ export class MemoryMessageStore implements MessageStore {
 
   async unreadForJob(jobId: string): Promise<StoredMessage[]> {
     return (await this.forJob(jobId)).filter((stored) => !stored.read)
+  }
+
+  async inbox(accountIds: string[], limit: number): Promise<StoredMessage[]> {
+    return this.messages
+      .filter((stored) => accountIds.includes(stored.accountId) && stored.routing.kind === 'inbox')
+      .reverse()
+      .slice(0, limit)
   }
 
   async markRead(ids: string[]): Promise<void> {

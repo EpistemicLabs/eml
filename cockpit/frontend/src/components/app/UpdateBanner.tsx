@@ -6,7 +6,8 @@
 // brain's migration only; a failure in another space is marked on the space
 // switch. Success is green and can be dismissed. A failed migration is red and
 // stays until the brain has caught up: it is the only place that says why the
-// brain is offline.
+// brain is offline. An in-app update's success is not a strip but a dialog
+// over the page, with the notes of the releases it brought; closing it dismisses.
 import { useState } from 'react';
 import { ArrowUpCircle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FolderSearch, XCircle } from 'lucide-react';
 
@@ -14,6 +15,7 @@ import { useAppUpdate } from '@/hooks/useAppUpdate';
 import { dismissUpdateStatus, failedUnresolved, useUpdateStatus, type MigrationReport } from '@/stores/useUpdateStatusStore';
 import { useActiveSpace } from '@/stores/useSpaceStore';
 import { Banner, BannerButton, BannerLink } from './Banner';
+import ReleaseNotesDialog from './ReleaseNotesDialog';
 
 // What the failure means for the brain, per outcome.
 const FAILURE_STATE: Record<Exclude<MigrationReport['outcome'], 'migrated'>, string> = {
@@ -46,11 +48,13 @@ export default function UpdateBanner() {
   const offer = !!latest && (busy || app.phase === 'installed-restart-needed' || !!app.status?.available);
 
   // The outcome: the update this host runs, and the migration it brought along.
+  // An in-app update shows it in the "What's new" dialog, everything else here.
+  const brainLine = migrated ? `Your brain “${brain}” successfully migrated from schema v${migrated.from} to v${migrated.to}.` : '';
+  const whatsNew = !failure && !busy && updated?.outcome === 'updated' ? updated : null;
   let outcome: string | null = null;
-  if (!failure && (updated || migrated)) {
+  if (!failure && !whatsNew && (updated || migrated)) {
     const version = updated?.to ?? knownVersion(migrated?.codeVersion);
     const head = !version ? '' : updated?.outcome === 'rolled_back' ? `Rolled back to v${version}.` : `Updated to v${version}.`;
-    const brainLine = migrated ? `Your brain “${brain}” successfully migrated from schema v${migrated.from} to v${migrated.to}.` : '';
     outcome = [head, brainLine].filter(Boolean).join(' ');
   }
 
@@ -111,6 +115,7 @@ export default function UpdateBanner() {
           {outcome}
         </Banner>
       )}
+      {whatsNew && <ReleaseNotesDialog from={whatsNew.from} to={whatsNew.to} brainLine={brainLine} onClose={dismiss} />}
     </>
   );
 }

@@ -3,8 +3,12 @@ import type { ChannelAccounts } from '../ports/channel'
 import type { Clock } from '../ports/clock'
 import type { OutboxStore } from '../ports/outbox-store'
 import type { WakeQueue } from '../ports/wake-queue'
+import type { JobDirectory } from '../ports/job-directory'
+import { jobSpace } from './job-space'
 
 export interface SkipDraftDeps {
+  /** Names the job's space when the account is on in several. */
+  jobs?: JobDirectory
   outbox: OutboxStore
   channels: ChannelAccounts
   wakes: WakeQueue
@@ -31,6 +35,6 @@ export async function skipOutboxDraft(deps: SkipDraftDeps, input: { outboxId: st
   } else if (item.state !== 'skipped') {
     return { kind: 'refused', reason: 'not_a_draft', retryable: false }
   }
-  await deps.wakes.add({ jobId: item.jobId, space: account.space }, { kind: 'draft', outboxId: item.id, outcome: 'skipped' }, deps.clock.now())
+  await deps.wakes.add({ jobId: item.jobId, space: await jobSpace(deps.jobs, item.jobId, account) }, { kind: 'draft', outboxId: item.id, outcome: 'skipped' }, deps.clock.now())
   return { kind: 'skipped', outboxId: item.id }
 }

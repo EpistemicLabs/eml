@@ -127,6 +127,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
   })
 
+  // Three disk-backed fixtures can exceed Vitest's default on the Windows runner.
   it('the genesis is a function of the brain\'s id, the time and the state: the preflight and the live run write the same entry', () => {
     const a = join(dir, 'a.db'); const b = join(dir, 'b.db'); const c = join(dir, 'c.db')
     createV20Brain(a); createV20Brain(b); createV20Brain(c)
@@ -136,7 +137,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log').get() as { op_id: string })
     expect(entry(b)).toEqual(entry(a))
     expect(entry(c).op_id).not.toBe(entry(a).op_id)
-  })
+  }, process.platform === 'win32' ? 15_000 : 5_000)
 
   it('two new brains in the same millisecond get their own ids and genesis op_ids', () => {
     const a = new EML({ namespace: 'test', dbPath: ':memory:', clock: () => NOW })

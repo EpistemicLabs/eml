@@ -18,7 +18,7 @@ import { SequentialIds } from '../src/adapters/memory/sequential-ids'
 import { RecordingCockpit } from '../src/adapters/memory/recording-cockpit'
 import { ScriptedChannel, ScriptedChannels } from '../src/adapters/fake-channel/scripted-channel'
 import type { JobRoute } from '../src/domain/routing'
-import type { InboundMessage } from '../src/domain/inbound-message'
+import type { InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 
 const COLLECT_MS = 120_000
 

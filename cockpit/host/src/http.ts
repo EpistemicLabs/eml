@@ -48,15 +48,18 @@ import { readLimits, writeLimits } from './session-limits.js'
 // through /api/providers.
 import { claudeVersion } from './infrastructure/providers/claude/isolation.js'
 import type { TurnEvent, TurnTracker } from './turn-state.js'
-import { requestGate } from './remote-access.js'
+import { isLocalRequest, requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
-import { applyUpdate, checkForUpdate, readAppUpdateStatus, rollbackUpdate, writeGithubToken } from './app-update.js'
+import { applyUpdate, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
-import { handlePluginsApi, type PluginsApiDeps, type PortSession } from './plugins-api.js'
+import { projectKey, type TimeTracker } from './time-tracking.js'
+import { handlePluginsApi, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
+import { OutsideServers } from './infrastructure/plugins/outside-servers.js'
+import { CLAUDE_BIN } from './infrastructure/providers/claude/runtime.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
@@ -102,6 +105,8 @@ export interface HostDeps {
   spaces: BrainSpaces
   bridge: PtyBridge
   turns: TurnTracker
+  /** The Time plugin's clocks (time-tracking.ts). */
+  time?: TimeTracker
   /** Why sessions run without a memory ceiling here; null when they get one (session-memory.ts). */
   memoryUnavailable?: string | null
   /** The agent CLIs sessions run with. */
@@ -404,6 +409,9 @@ function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
 }
 
 /** What the cockpit's own plugins read from the host (plugins-api.ts). */
+/** The claude.ai connectors and Claude Code plugin servers of the cockpit's Claude config (names only). */
+const outsideServers = new OutsideServers({ bin: CLAUDE_BIN, configDir: CONFIG_DIR })
+
 function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
   return {
     projectFolder: (projectId) => space.registry.get(projectId)?.path ?? null,
@@ -422,6 +430,18 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
       const port = Number(new URL(s.url).port)
       return port ? [[port, 'EML brain server'] as const] : []
     })),
+    endShell: (id) => deps.bridge.endShell(id),
+    endShells: () => deps.bridge.endShells(),
+    spaceIds: () => deps.spaces.list().map((s) => s.id),
+    outside: outsideServers,
+    time: deps.time,
+    sessionName: (sessionId) => {
+      const entry = deps.bridge.ledger.get(sessionId)
+      if (!entry) return null
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+      return sessionView(deps, project, { ...entry, sessionId }).summary || null
+    },
+    timeNames: (refs) => timeNames(deps, refs),
   }
 }
 
@@ -456,6 +476,40 @@ function projectView(deps: HostDeps, space: BrainSpace, project: ProjectEntry, b
     sessions,
     sessionMeta: { total: sessions.length, hasMore: false },
   }
+}
+
+/**
+ * The Time view's names (plugins-api.ts), each in its own space: a project as
+ * the sidebar names it (renamed, else the brain's name, else the registry's),
+ * a task by its brain title. One brain read per space; what can't be read stays null.
+ */
+async function timeNames(
+  deps: HostDeps,
+  refs: { projects: Array<{ spaceId: string | null; projectId: string | null }>; tasks: Array<{ spaceId: string | null; taskId: string }> },
+): Promise<TimeNames> {
+  const names: TimeNames = { spaces: {}, projects: {}, tasks: {} }
+  const spaceIds = new Set([...refs.projects, ...refs.tasks].map((ref) => ref.spaceId ?? ''))
+  await Promise.all([...spaceIds].map(async (spaceId) => {
+    const space = deps.spaces.resolve(spaceId || null)
+    names.spaces[spaceId] = space.name
+    const inSpace = <T extends { spaceId: string | null }>(list: T[]) => list.filter((ref) => (ref.spaceId ?? '') === spaceId)
+    const projects = inSpace(refs.projects).filter((ref) => ref.projectId)
+    const brain: BrainProject[] = projects.length > 0 ? await space.projects.list().catch(() => []) : []
+    for (const ref of projects) {
+      const entry = space.registry.get(ref.projectId!)
+      const live = brain.find((bp) => projectIdForBrain(bp.id) === ref.projectId)
+      names.projects[projectKey(ref)] = entry?.customName ?? live?.name ?? entry?.displayName ?? null
+    }
+    await Promise.all(inSpace(refs.tasks).map(async ({ taskId }) => {
+      try {
+        const res = await fetch(`${space.url}/engram/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${space.token}`, Accept: 'application/json' } })
+        names.tasks[taskId] = res.ok ? ((await res.json()) as { title?: string }).title ?? null : null
+      } catch {
+        names.tasks[taskId] = null
+      }
+    }))
+  }))
+  return names
 }
 
 /** A brain project the registry hasn't touched yet: listed, not persisted. */
@@ -562,6 +616,8 @@ function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: s
     turnHookConfig: deps.turnHookConfig, mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
   })
   deps.spaces.add(space)
+  // It starts with the main space's panes; servers only once switched on for it.
+  void spacePlugins.adoptSpace(space.id, deps.spaces.main.id).catch(() => undefined)
   return space
 }
 
@@ -979,9 +1035,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
 
     // App updates (Settings › About › Updates, the update banner): status, a
     // check against GitHub Releases, install + restart, go back, and the GitHub
-    // token — write-only from the browser (GET reports only its source).
+    // token — write-only from the browser (GET reports only its source). The
+    // banner after an update reads the "What's new" of the releases it brought.
     if (resource === 'app-update') {
       if (!id && method === 'GET') { json(res, 200, readAppUpdateStatus()); return true }
+      if (id === 'notes' && method === 'GET') {
+        try {
+          json(res, 200, await releaseNotesBetween(url.searchParams.get('from') ?? '', url.searchParams.get('to') ?? ''))
+        } catch (err) {
+          json(res, 502, { error: { code: 'NOTES_UNAVAILABLE', message: (err as Error).message } })
+        }
+        return true
+      }
       if (id === 'check' && method === 'POST') { json(res, 200, await checkForUpdate()); return true }
       if ((id === 'apply' || id === 'rollback') && method === 'POST') {
         try {
@@ -1474,11 +1539,14 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     const nonce = searchParams.get('nonce') ?? ''
     const side = pathname === '/ws/chat' ? deps.chat : deps.bridge
     if (!side.consumeNonce(nonce)) { socket.destroy(); return }
+    // Whether the client is on this machine: the Shell plugin's terminal opens for it alone, unless remote access allows more.
+    const local = isLocalRequest(req)
     wss.handleUpgrade(req, socket, head, (ws) => {
       // Disable Nagle on loopback — it only delays small frames.
       const tcp = (ws as unknown as { _socket?: { setNoDelay?: (f: boolean) => void } })._socket
       tcp?.setNoDelay?.(true)
-      side.attach(ws)
+      if (side === deps.bridge) deps.bridge.attach(ws, local)
+      else deps.chat.attach(ws)
     })
   })
 
