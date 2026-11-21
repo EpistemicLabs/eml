@@ -119,8 +119,8 @@
   --container-content: 112rem;
 
   /* Dialog animations used by the ported Dialog primitive. */
-  --animate-dialog-overlay-show: dialog-overlay-show 150ms ease-out;
-  --animate-dialog-content-show: dialog-content-show 150ms ease-out;
+  --animate-dialog-overlay-show: dialog-overlay-show var(--duration-fast) var(--ease-out);
+  --animate-dialog-content-show: dialog-content-show var(--duration-fast) var(--ease-out);
 
   @keyframes dialog-overlay-show {
     from { opacity: 0; }
@@ -240,6 +240,12 @@ html.dark {
   --radius-tab: 7px;
   --shadow-pill: 0 1px 2px rgb(0 0 0 / .12), 0 1px 4px rgb(0 0 0 / .06), 0 0 0 .5px rgb(0 0 0 / .08);
   --focus-offset: 2px;
+  /* A dialog sits in the middle of the viewport; the open animation ends on this same transform. */
+  --transform-center: translate(-50%, -50%);
+  /* The command palette's result list: about eight rows before it scrolls. */
+  --size-command-list: 340px;
+  /* A tooltip's gap to what it explains. */
+  --gap-tooltip: 6px;
   --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
   /* The Inbox's task panel fills the board's height, never shorter than this. */
   --size-split-panel-min: 35rem;

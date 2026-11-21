@@ -4,6 +4,8 @@ import { Search } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
+import { LABEL } from './styles';
+
 // Each wrapper takes exactly the cmdk primitive's props (minus ref) and
 // forwards its ref to the primitive's element, adding only the look.
 type PropsOf<T extends React.ElementType> = React.ComponentPropsWithoutRef<T>;
@@ -19,13 +21,13 @@ Command.displayName = Cmdk.displayName;
 export const CommandInput = React.forwardRef<RefOf<typeof Cmdk.Input>, PropsOf<typeof Cmdk.Input>>(
   function CommandInput({ className, ...rest }, ref) {
     return (
-      <div className="flex items-center border-b border-foreground/10 px-3">
-        <Search aria-hidden className="mr-2 h-3.5 w-3.5 shrink-0 text-foreground/50" />
+      <div className="flex items-center border-b border-border px-3">
+        <Search aria-hidden className="mr-2 size-3.5 shrink-0 text-muted-foreground" />
         <Cmdk.Input
           ref={ref}
           className={cn(
-            'flex h-12 w-full rounded-md bg-transparent py-3 text-sm outline-none',
-            'placeholder:text-foreground/45 disabled:cursor-not-allowed disabled:opacity-50',
+            'flex h-(--target-touch) w-full bg-transparent text-body outline-none',
+            'placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60',
             className,
           )}
           {...rest}
@@ -41,7 +43,7 @@ export const CommandList = React.forwardRef<RefOf<typeof Cmdk.List>, PropsOf<typ
     return (
       <Cmdk.List
         ref={ref}
-        className={cn('max-h-[340px] overflow-x-hidden overflow-y-auto p-1.5 [scrollbar-width:thin]', className)}
+        className={cn('max-h-(--size-command-list) overflow-x-hidden overflow-y-auto p-1.5', className)}
         {...rest}
       />
     );
@@ -51,15 +53,15 @@ CommandList.displayName = Cmdk.List.displayName;
 
 export const CommandEmpty = React.forwardRef<RefOf<typeof Cmdk.Empty>, PropsOf<typeof Cmdk.Empty>>(
   function CommandEmpty(props, ref) {
-    return <Cmdk.Empty ref={ref} className="py-6 text-center text-sm text-muted-foreground" {...props} />;
+    return <Cmdk.Empty ref={ref} className="py-6 text-center text-body text-muted-foreground" {...props} />;
   },
 );
 CommandEmpty.displayName = Cmdk.Empty.displayName;
 
-const GROUP_HEADING =
-  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5 ' +
-  '[&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:uppercase ' +
-  '[&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-foreground/45';
+const GROUP_HEADING = cn(
+  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5',
+  LABEL.split(' ').map((c) => `[&_[cmdk-group-heading]]:${c}`).join(' '),
+);
 
 export const CommandGroup = React.forwardRef<RefOf<typeof Cmdk.Group>, PropsOf<typeof Cmdk.Group>>(
   function CommandGroup({ className, ...rest }, ref) {
@@ -76,9 +78,9 @@ export const CommandItem = React.forwardRef<RefOf<typeof Cmdk.Item>, PropsOf<typ
       <Cmdk.Item
         ref={ref}
         className={cn(
-          'relative flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-[13px] outline-none select-none',
-          'data-[selected=true]:bg-foreground/5 data-[selected=true]:text-foreground',
-          'data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50',
+          'relative flex min-h-(--target-comfortable) cursor-pointer items-center gap-3 rounded-lg px-3 py-1.5 text-body outline-none select-none',
+          'data-[selected=true]:bg-muted data-[selected=true]:text-foreground',
+          'data-[disabled=true]:pointer-events-none data-[disabled=true]:text-muted-foreground',
           className,
         )}
         {...rest}
@@ -90,7 +92,7 @@ CommandItem.displayName = Cmdk.Item.displayName;
 
 export const CommandSeparator = React.forwardRef<RefOf<typeof Cmdk.Separator>, PropsOf<typeof Cmdk.Separator>>(
   function CommandSeparator({ className, ...rest }, ref) {
-    return <Cmdk.Separator ref={ref} className={cn('-mx-1.5 h-px bg-foreground/10', className)} {...rest} />;
+    return <Cmdk.Separator ref={ref} className={cn('-mx-1.5 h-px bg-border', className)} {...rest} />;
   },
 );
 CommandSeparator.displayName = Cmdk.Separator.displayName;

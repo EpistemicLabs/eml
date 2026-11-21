@@ -128,8 +128,8 @@ const PANEL_CLASS: Record<NonNullable<DialogContentProps['size']>, string> = {
   // property): the content-show keyframe animates that same transform and
   // ends at translate(-50%, -50%), so the panel settles without a jump.
   default:
-    'fixed top-1/2 left-1/2 z-50 w-full max-w-md [transform:translate(-50%,-50%)] frosted rounded-2xl p-0 text-foreground',
-  fullscreen: 'fixed inset-0 z-50',
+    'fixed top-1/2 left-1/2 z-(--z-modal) w-full max-w-dialog transform-(--transform-center) glass-thick rounded-3xl p-0 text-foreground shadow-modal',
+  fullscreen: 'fixed inset-0 z-(--z-modal) bg-background',
 };
 
 export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
@@ -210,10 +210,11 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
     };
 
     return createPortal(
-      <div className="fixed inset-0 z-50">
+      // Carries the v2 scope itself: it portals out of whatever view opened it.
+      <div data-ui="v2" className="fixed inset-0 z-(--z-modal)">
         <div
           aria-hidden
-          className="animate-dialog-overlay-show fixed inset-0 bg-black/20 backdrop-blur-md"
+          className="animate-dialog-overlay-show fixed inset-0 bg-(--scrim)"
           onClick={() => {
             onPointerDownOutside?.();
             onOpenChange(false);

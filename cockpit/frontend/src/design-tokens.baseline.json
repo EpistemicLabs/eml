@@ -55,7 +55,5 @@
   "components/ui/badge.tsx": 1,
   "components/worktrees/WorktreesPane.tsx": 8,
   "index.css": 36,
-  "lib/tag-graph.ts": 1,
-  "shared/view/ui/Command.tsx": 3,
-  "shared/view/ui/Tooltip.tsx": 1
+  "lib/tag-graph.ts": 1
 }

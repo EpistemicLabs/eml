@@ -7,8 +7,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { knownModels, queueChatStart } from '@/components/chat/chat-start';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { Chip, FOCUS, LABEL } from '@/shared/view/ui';
-import { TAB, TRACK } from '@/components/top-bar/TaskViewSwitch';
+import { Chip, FOCUS, LABEL, TAB, TRACK } from '@/shared/view/ui';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { readable, useTaskBoard, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';

@@ -17,8 +17,8 @@ type TooltipProps = {
   delay?: number;
 };
 
-// Distance between the anchor's edge and the bubble, in px.
-const EDGE_GAP = 6;
+// Distance between the anchor's edge and the bubble (--gap-tooltip).
+const EDGE_GAP = 'var(--gap-tooltip)';
 
 // Parked off-screen and invisible until the first measurement lands.
 const PARKED_STYLE: React.CSSProperties = {
@@ -33,14 +33,14 @@ function bubbleStyleFor(anchor: DOMRect, side: Side): React.CSSProperties {
   const midY = anchor.top + anchor.height / 2;
   switch (side) {
     case 'bottom':
-      return { position: 'fixed', left: midX, top: anchor.bottom + EDGE_GAP, transform: 'translate(-50%, 0)' };
+      return { position: 'fixed', left: midX, top: `calc(${anchor.bottom}px + ${EDGE_GAP})`, transform: 'translate(-50%, 0)' };
     case 'left':
-      return { position: 'fixed', left: anchor.left - EDGE_GAP, top: midY, transform: 'translate(-100%, -50%)' };
+      return { position: 'fixed', left: `calc(${anchor.left}px - ${EDGE_GAP})`, top: midY, transform: 'translate(-100%, -50%)' };
     case 'right':
-      return { position: 'fixed', left: anchor.right + EDGE_GAP, top: midY, transform: 'translate(0, -50%)' };
+      return { position: 'fixed', left: `calc(${anchor.right}px + ${EDGE_GAP})`, top: midY, transform: 'translate(0, -50%)' };
     case 'top':
     default:
-      return { position: 'fixed', left: midX, top: anchor.top - EDGE_GAP, transform: 'translate(-50%, -100%)' };
+      return { position: 'fixed', left: midX, top: `calc(${anchor.top}px - ${EDGE_GAP})`, transform: 'translate(-50%, -100%)' };
   }
 }
 
@@ -169,9 +169,11 @@ export default function Tooltip({
       {canPortal &&
         createPortal(
           <div
+            data-ui="v2"
+            role="tooltip"
             style={bubbleStyle ?? PARKED_STYLE}
             className={cn(
-              'pointer-events-none z-[9999] rounded-md bg-foreground px-2 py-1 text-xs font-medium whitespace-nowrap text-background shadow-lg',
+              'pointer-events-none z-(--z-top) rounded-md bg-foreground px-2 py-1 text-ui font-medium whitespace-nowrap text-background shadow-overlay',
               className,
             )}
           >
