@@ -1,15 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Brain, ChevronDown, Folder, Plus, X } from 'lucide-react';
 
 import { SPACE_HEADER } from '@/lib/space-fetch';
 import { SESSIONS_CHANGED_EVENT } from '@/lib/session-actions';
-import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
+import { MOD } from '@/components/top-bar/shortcuts';
 import { FIELD, FOCUS } from '@/shared/view/ui';
 import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
-import type { SidebarController } from '../../useSidebarController';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
 
@@ -29,6 +28,11 @@ function PickField({ icon, children }: { icon: ReactNode; children: ReactNode })
 }
 
 
+/** Running as an installed app (standalone window), where the page gets ⌘/Ctrl N. */
+function installedApp(): boolean {
+  try { return window.matchMedia('(display-mode: standalone)').matches; } catch { return false; }
+}
+
 function readLastProject(spaceId: string): string | null {
   try { return localStorage.getItem(`${LAST_PROJECT_KEY}:${spaceId}`); } catch { return null; }
 }
@@ -42,10 +46,23 @@ function writeLastProject(spaceId: string, projectId: string): void {
  * last. Without a prompt it opens an empty session in a pane; with one it runs on the
  * host, in a pane or in the background.
  */
-export function SidebarNewSession({ controller }: { controller: SidebarController }) {
+export function SidebarNewSession({ onError }: { onError: (message: string) => void }) {
   const spaces = useSpaces();
   const openKey = useActiveSpaceId();
   const [open, setOpen] = useState(false);
+  // ⌘/Ctrl N opens it where the cockpit runs as an installed app; a browser tab keeps the key for
+  // a new window and never hands it to the page, so there the hint stays away.
+  const newSessionKey = installedApp() ? `${MOD}N` : null;
+  useEffect(() => {
+    if (!newSessionKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'n') return;
+      e.preventDefault();
+      setOpen(true);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [newSessionKey]);
   const [spaceId, setSpaceId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
@@ -94,34 +111,33 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
       });
       const body = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
       if (!response.ok || !body?.id) {
-        controller.reportError(body?.error?.message ?? 'The session could not start.');
+        onError(body?.error?.message ?? 'The session could not start.');
         return;
       }
       if (!background) openSessionInSpace(key, { surface: 'terminal', projectId, sessionId: body.id, chat: true });
       window.dispatchEvent(new CustomEvent(SESSIONS_CHANGED_EVENT));
       close();
     } catch {
-      controller.reportError('The cockpit host did not answer. Try again.');
+      onError('The cockpit host did not answer. Try again.');
     } finally {
       setStarting(false);
     }
   };
 
-  // In the colour of the space it starts in, so it stands apart from the rows around it.
-  const tone = spaceTone(space);
-  const toneStyle = tone ? ({ '--space-tone': tone } as CSSProperties) : undefined;
-
   if (!open) {
     return (
-      <div className="flex-shrink-0 px-2 pb-2">
+      <div className="flex-shrink-0 px-3 pb-3">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          style={toneStyle}
-          data-active
-          className={cn('space-band flex min-h-(--target-comfortable) w-full items-center justify-center gap-1.5 rounded-lg px-2 text-ui font-semibold text-foreground transition-[filter] duration-(--duration-fast) hover:brightness-125', FOCUS)}
+          title={newSessionKey ? `New session (${newSessionKey})` : 'New session'}
+          className={cn('flex min-h-(--target-touch) w-full items-center gap-3 rounded-xl border border-border bg-card px-2.5 text-body font-semibold text-foreground shadow-card transition-colors duration-(--duration-fast) hover:bg-muted', FOCUS)}
         >
-          <Plus aria-hidden className="size-3.5" /> New session
+          <span aria-hidden className="grid size-6 flex-shrink-0 place-items-center rounded-md bg-foreground text-background">
+            <Plus className="size-4" />
+          </span>
+          <span className="flex-1 text-left">New session</span>
+          {newSessionKey && <kbd className="font-sans text-caption font-semibold text-muted-foreground">{newSessionKey}</kbd>}
         </button>
       </div>
     );
@@ -131,9 +147,8 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
     <div className="flex-shrink-0 px-2 pb-2">
       <div
         ref={panelRef}
-        style={toneStyle}
         data-active
-        className="space-band space-y-1.5 rounded-lg p-2"
+        className="space-y-1.5 rounded-xl border border-border bg-card p-2 shadow-card"
         onKeyDown={(event) => { if (event.key === 'Escape') close(); }}
       >
         <div className="flex items-center justify-between pl-0.5">
@@ -149,7 +164,7 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
           </button>
         </div>
         {spaces.length > 1 && (
-          <PickField icon={<Brain className="size-3.5" strokeWidth={1.8} style={{ color: tone }} />}>
+          <PickField icon={<Brain aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />}>
             <select aria-label="Space" className={cn(PICK, 'appearance-none pr-6 pl-7')} value={space?.id ?? ''} onChange={(event) => setSpaceId(event.target.value)}>
               {spaces.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
             </select>
@@ -175,7 +190,7 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
           className={cn(PICK, 'resize-none py-1')}
         />
         <div className="flex gap-1.5">
-          <button type="button" className={cn(ACTION, 'space-tab-active flex-1 font-semibold hover:brightness-125')} disabled={!projectId || starting} onClick={() => void run(false)}>Open</button>
+          <button type="button" className={cn(ACTION, 'flex-1 bg-primary font-semibold text-primary-foreground hover:opacity-90')} disabled={!projectId || starting} onClick={() => void run(false)}>Open</button>
           <button type="button" className={cn(ACTION, 'hover:bg-foreground/10')} disabled={!projectId || starting || !prompt.trim()} onClick={() => void run(true)} title="Run in the background (Alt+Enter)">Background</button>
         </div>
       </div>

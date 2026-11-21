@@ -18,7 +18,7 @@ export interface Shortcut {
 }
 
 export const SHORTCUTS: Shortcut[] = [
-  { keys: [MOD, '1–9'], label: 'Desk 1–9, counted left to right across the bar', group: 'Desks' },
+  { keys: [MOD, '1–9'], label: 'Desk 1–9, counted top to bottom in the sidebar', group: 'Desks' },
   { keys: [MOD, '.'], label: 'Open the Inbox from anywhere', group: 'Tasks' },
   { keys: ['G', 'then', 'I'], label: 'Inbox', group: 'Tasks' },
   { keys: ['G', 'then', 'N'], label: 'Now', group: 'Tasks' },

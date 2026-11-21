@@ -5,7 +5,7 @@ import { useSwitchBlocked } from '@/components/chat/chat-store';
 import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
-import { reclaimTerminal } from '@/stores/useReviewStore';
+import { reclaimTerminal } from '@/lib/terminal-reclaim';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { LLMProvider, ProjectSession } from '@/types/app';
 
@@ -13,7 +13,7 @@ export type SessionView = 'terminal' | 'chat';
 
 /**
  * The toolbar's pane actions; each one shows only where it is passed. A desk pane passes them all,
- * the task board and the review screen none, so there only the terminal/chat switch shows.
+ * the task board none, so there only the terminal/chat switch shows.
  */
 export interface SessionChatToolbar {
   onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
@@ -25,7 +25,7 @@ export interface SessionChatToolbar {
 /**
  * A session's conversation, wherever it is shown: the chat view for a session that runs in the chat,
  * its terminal (with the status bar) for one that runs in a terminal. One component for the desk
- * panes, the task board and the review screen.
+ * panes and the task board.
  *
  * - `view`/`onView` control which one shows (a desk pane keeps it in the pane); without them the
  *   component starts from how the session runs and keeps the choice itself.
