@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 
+import { durationMs } from '@/lib/time';
 import { cn } from '@/lib/utils';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
@@ -13,7 +14,7 @@ type TooltipProps = {
   className?: string;
   /** Replaces (does not merge with) the hover wrapper's class list. */
   wrapperClassName?: string;
-  /** Milliseconds before the bubble appears. */
+  /** Milliseconds before the bubble appears; --duration-tooltip when left out. */
   delay?: number;
 };
 
@@ -62,7 +63,7 @@ export default function Tooltip({
   position = 'top',
   className = '',
   wrapperClassName = 'relative inline-block',
-  delay = 300,
+  delay,
 }: TooltipProps) {
   const [visible, setVisible] = React.useState(false);
   const [bubbleStyle, setBubbleStyle] = React.useState<React.CSSProperties | null>(null);
@@ -81,7 +82,7 @@ export default function Tooltip({
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       fire();
-    }, delay);
+    }, delay ?? durationMs('--duration-tooltip'));
   }, [delay]);
 
   // Never let a pending timer flip state after unmount.

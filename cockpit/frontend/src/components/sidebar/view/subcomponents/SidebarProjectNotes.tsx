@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { newSessionEntries, useProviders } from '@/lib/providers';
 import { paneViewDef, useViewEnabled } from '@/lib/pane-views';
 import { noteAge, parseBrainDate, useArchiveNote, useCreateNote, useRenameNote, useUnseenNotes, type Note } from '@/lib/notes';
+import { DAY_MS } from '@/lib/time';
 import { FIELD, FOCUS, LABEL, POPOVER, ROW } from '@/shared/view/ui';
 import { forgetNoteInPanes, openInPane, openNote, useActivePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
@@ -151,7 +152,7 @@ export function isRecentNote(note: Note, openNoteIds: Set<string>, unseen: Set<s
   return Number.isFinite(last) && now - last < RECENT_WINDOW_MS;
 }
 
-export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const RECENT_WINDOW_MS = DAY_MS;
 
 export function SidebarProjectNotes({
   project,

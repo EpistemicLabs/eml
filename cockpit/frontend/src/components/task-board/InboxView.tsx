@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import { fyi, readable, when, type Board, type BoardTask, type InboxItem } from '@/lib/task-board';
+import { DAY_MS } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 
@@ -12,7 +13,6 @@ export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }
   | { kind: 'review'; item: InboxItem };
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const dayOf = (iso: string, now: number) => {
   const days = Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / DAY_MS);
   return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : new Date(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });

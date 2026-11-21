@@ -1,3 +1,4 @@
+import { DAY_MS } from '@/lib/time';
 import type { Project, ProjectSession } from '@/types/app';
 import { RECENT_WINDOW_MS } from './view/subcomponents/SidebarProjectNotes';
 import type {
@@ -11,7 +12,6 @@ import type {
 export const NEW_SESSION_NAME = 'New Session';
 export const FALLBACK_ERROR_MESSAGE = 'Something went wrong';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ── Storage ──────────────────────────────────────────────────────────
 

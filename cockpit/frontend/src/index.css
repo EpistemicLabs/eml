@@ -170,6 +170,11 @@ html.dark {
   --duration-slow: 500ms;
   --duration-highlight: 2000ms;
   --duration-pulse: 1500ms;
+  /* How long a pointer rests on a control before its tooltip shows. */
+  --duration-tooltip: 300ms;
+  /* How long a passing confirmation shows: a toast, and a short one in place ("Copied"). */
+  --duration-toast: 3200ms;
+  --duration-feedback: 1500ms;
   --pulse-iterations: 3;
   /* Layers sit around the app's own: chrome bars at 40, dialogs and drawers at 50. */
   --z-raised: 1;

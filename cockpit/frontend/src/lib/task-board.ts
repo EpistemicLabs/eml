@@ -3,6 +3,7 @@
 // host; the page never works it out again, so every count agrees.
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
@@ -179,7 +180,6 @@ export function readable(title: string): string {
 
 // ---- times ----
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const hhmm = (d: Date) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 

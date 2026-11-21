@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEngramPanel } from "@/lib/engram-panel";
+import { durationMs } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { FOCUS, LABEL, PAGER_BUTTON } from "@/shared/view/ui";
 import { EngramDetail } from "@/components/engram-detail";
@@ -58,8 +59,8 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
 
   // Slide in on open, slide out on close. `entered` drives the transform;
   // `renderId` keeps the panel mounted (with its last content) through the exit
-  // animation, then unmounts. Paging (id → id, both truthy) never triggers exit.
-  const SLIDE_MS = 200;
+  // animation (--duration-base, the panel's transition), then unmounts. Paging (id → id, both truthy)
+  // never triggers exit.
   const [entered, setEntered] = useState(false);
   const [renderId, setRenderId] = useState<string | null>(openedId);
   const asideRef = useRef<HTMLElement>(null);
@@ -73,7 +74,7 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
       return () => cancelAnimationFrame(raf);
     }
     setEntered(false); // start slide-out
-    const t = setTimeout(() => setRenderId(null), SLIDE_MS);
+    const t = setTimeout(() => setRenderId(null), durationMs('--duration-base'));
     return () => clearTimeout(t);
   }, [openedId]);
 

@@ -9,6 +9,7 @@ import { useState } from 'react';
 
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useProviders } from '@/lib/providers';
+import { durationMs } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { copyTextToClipboard } from '@/utils/clipboard';
@@ -38,7 +39,7 @@ export default function AboutTab() {
   const copyVersions = async () => {
     if (await copyTextToClipboard(versions.map(([name, value]) => `${name}: ${value}`).join('\n'))) {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.setTimeout(() => setCopied(false), durationMs('--duration-feedback'));
     }
   };
 

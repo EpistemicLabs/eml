@@ -9,6 +9,7 @@ import {
   agentName, closeTask, handOver, readable, reviewDone, snooze, snoozeTimes, undo, useTaskBoard,
   type Board, type BoardTask, type CommandAnswer, type HandOverInput, type HandOverMode,
 } from '@/lib/task-board';
+import { durationMs } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
@@ -16,18 +17,16 @@ import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
 import { setTaskView, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
+import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 
 import { InboxView, type InboxAction } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
 import { NowBoard } from './NowBoard';
-import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 import { PlanView } from './PlanView';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
 type View = TaskView;
 const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan', 'Plan']];
-/** How long an informational toast stays (an Undo toast stays until its deadline). */
-const TOAST_MS = 3200;
 /** Relative times ("asked 10:27", "in 3 days") are worked out again this often. */
 const NOW_TICK_MS = 30_000;
 
@@ -52,7 +51,7 @@ export function TaskBoard() {
 
   const byId = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.id, t])), [board]);
   const task = open ? byId.get(open.taskId) : undefined;
-  const say = useCallback((text: string, action?: ToastMessage['action'], until?: string) => setToast({ id: crypto.randomUUID(), text, action, until, ms: TOAST_MS }), []);
+  const say = useCallback((text: string, action?: ToastMessage['action'], until?: string) => setToast({ id: crypto.randomUUID(), text, action, until, ms: durationMs('--duration-toast') }), []);
 
   const openTask = useCallback((t: BoardTask, sessionId?: string) => {
     // The task's journal and chat load from its own space.
