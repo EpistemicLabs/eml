@@ -42,6 +42,17 @@ export function messageStoreContract(name: string, make: () => MessageStore): vo
       expect(await store.get(saved.id)).toEqual({ ...message({ subject: null }), id: saved.id, routing: toJob, read: false })
     })
 
+    it('lists what no job took, of the given accounts only, newest first and up to the limit', async () => {
+      const store = make()
+      await store.save(message({ channelMessageId: 'i-1', threadKey: 'ti-1' }), toInbox)
+      await store.save(message({ channelMessageId: 'j-1' }), toJob)
+      await store.save(message({ channelMessageId: 'i-2', threadKey: 'ti-2' }), toInbox)
+      await store.save(message({ channelMessageId: 'i-3', threadKey: 'ti-3', accountId: 'acc-2' }), toInbox)
+      expect((await store.inbox(['acc-1'], 10)).map((m) => m.channelMessageId)).toEqual(['i-2', 'i-1'])
+      expect((await store.inbox(['acc-1', 'acc-2'], 2)).map((m) => m.channelMessageId)).toEqual(['i-3', 'i-2'])
+      expect(await store.inbox([], 10)).toEqual([])
+    })
+
     it('names the job a thread went to last, and none for an inbox thread', async () => {
       const store = make()
       await store.save(message({ threadKey: 't-inbox' }), toInbox)
