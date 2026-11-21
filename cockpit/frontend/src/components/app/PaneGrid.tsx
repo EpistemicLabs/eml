@@ -105,8 +105,8 @@ export function PaneGridLayout({
             style={{ gridColumn: placement.gridColumn, gridRow: placement.gridRow }}
             className={[
               'group relative flex min-h-0 min-w-0 flex-col overflow-hidden',
-              placement.borderRight && 'border-r border-foreground/15',
-              placement.borderBottom && 'border-b border-foreground/15',
+              placement.borderRight && 'border-r border-border',
+              placement.borderBottom && 'border-b border-border',
               !isActive && 'cursor-pointer',
             ]
               .filter(Boolean)
@@ -149,7 +149,7 @@ export function PaneGridLayout({
               slotDeps={slotDeps}
             />
             {swapTargetId === paneId && (
-              <div aria-hidden className="pointer-events-none absolute inset-0 z-40 bg-primary/15 ring-2 ring-inset ring-primary" />
+              <div aria-hidden className="pointer-events-none absolute inset-0 z-(--z-sticky) bg-foreground/8 ring-2 ring-inset ring-ring" />
             )}
           </div>
         );
@@ -182,7 +182,7 @@ function MainDivider({
       aria-orientation="vertical"
       aria-label="Resize the main pane"
       title="Drag to resize the main pane"
-      className="absolute inset-y-0 z-30 w-2 -translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-primary/30 active:bg-primary/40"
+      className="absolute inset-y-0 z-(--z-sticky) w-2 -translate-x-1/2 cursor-col-resize touch-none transition-colors duration-(--duration-fast) hover:bg-border-strong active:bg-foreground/40"
       style={{ left: 'var(--main-width)' }}
       onPointerDown={(event) => {
         event.preventDefault();

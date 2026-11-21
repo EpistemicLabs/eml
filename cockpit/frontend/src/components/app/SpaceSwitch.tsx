@@ -13,6 +13,7 @@ import { Brain, Check, ChevronDown, Layers } from 'lucide-react';
 import { spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
 import { stateTitle, stateTone } from '@/lib/team';
+import { FOCUS, LABEL, POPOVER, ROW } from '@/shared/view/ui';
 import { failedUnresolved, useUpdateStatus } from '@/stores/useUpdateStatusStore';
 import { useTeams } from '@/stores/useTeamStore';
 import { setTopView } from '@/stores/useTopViewStore';
@@ -109,14 +110,15 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           aria-expanded={open}
           title={title}
           className={cn(
-            'flex h-full max-w-[12rem] items-center gap-1.5 px-2 text-body font-medium transition-colors',
+            'flex h-full max-w-(--size-menu) items-center gap-1.5 px-2 text-body font-medium transition-colors duration-(--duration-fast)',
             open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            FOCUS,
           )}
         >
-          <Brain className="h-4 w-4" strokeWidth={1.8} style={{ color: tone }} />
+          <Brain aria-hidden className="size-4" strokeWidth={1.8} style={{ color: tone }} />
           <span className="truncate">{label}</span>
-          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
-          <ChevronDown className="h-3 w-3 opacity-70" />
+          {mark && <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', otherBroken ? 'bg-status-stopped' : 'bg-status-you')} />}
+          <ChevronDown aria-hidden className="size-3 text-muted-foreground" />
         </button>
       ) : (
         <button
@@ -125,23 +127,24 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
           aria-haspopup="menu"
           aria-expanded={open}
           title={title}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body font-medium text-foreground hover:bg-muted"
+          className={cn(ROW, 'font-medium')}
         >
-          <SpaceIcon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
+          <SpaceIcon aria-hidden className="size-4 text-muted-foreground" strokeWidth={1.8} style={{ color: tone }} />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-          {mark && <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', otherBroken ? 'bg-destructive' : 'bg-warning')} />}
-          <ChevronDown className="h-3 w-3 opacity-70" />
+          {mark && <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', otherBroken ? 'bg-status-stopped' : 'bg-status-you')} />}
+          <ChevronDown aria-hidden className="size-3 text-muted-foreground" />
         </button>
       )}
 
       {open && anchor && createPortal(
         <div
+          data-ui="v2"
           ref={menuRef}
           role="menu"
           style={{ left: anchor.left, top: anchor.top }}
           // Keep pane focus handlers out of it: a click in the menu is not a click on a pane.
           onMouseDown={(e) => e.stopPropagation()}
-          className="fixed z-[1000] min-w-[12rem] rounded-lg border border-border bg-popover p-1 text-body shadow-lg"
+          className={cn(POPOVER, 'fixed min-w-(--size-menu) text-body')}
         >
           {variant === 'sidebar' && spaces.length > 1 && (
             <button
@@ -150,12 +153,11 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
               aria-checked={showingAll}
               onClick={() => { setAllView(true); close(); }}
               className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal',
-                showingAll ? 'text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                ROW, 'normal-case tracking-normal',
               )}
             >
-              <Check className={cn('h-3.5 w-3.5', showingAll ? 'opacity-100' : 'opacity-0')} />
-              <Layers className="h-3.5 w-3.5 opacity-60" strokeWidth={1.8} />
+              <Check aria-hidden className={cn('size-3.5', !showingAll && 'invisible')} />
+              <Layers aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
               <span className="flex-1 truncate">All spaces</span>
             </button>
           )}
@@ -172,23 +174,22 @@ export default function SpaceSwitch({ variant }: SpaceSwitchProps) {
                 onClick={() => select(space)}
                 title={state?.title ?? (unknown ? 'The cockpit could not ask the brain server.' : undefined)}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left normal-case tracking-normal',
-                  isActive ? 'text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  ROW, 'normal-case tracking-normal',
                 )}
               >
-                <Check className={cn('h-3.5 w-3.5', isActive ? 'opacity-100' : 'opacity-0')} />
-                <Brain className="h-3.5 w-3.5" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+                <Check aria-hidden className={cn('size-3.5', !isActive && 'invisible')} />
+                <Brain aria-hidden className="size-3.5" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="flex-1 truncate">{space.name}</span>
                 {failed(space) && (
-                  <span className="flex items-center gap-1 text-[10px] text-destructive" title="The brain update failed — open the space for details">
-                    <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-destructive" />
+                  <span className="flex items-center gap-1 text-caption text-stopped-ink" title="The brain update failed — open the space for details">
+                    <span aria-hidden className="size-1.5 rounded-full bg-status-stopped" />
                     update failed
                   </span>
                 )}
                 {state && !failed(space) && (
-                  <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', state.tone === 'destructive' ? 'bg-destructive' : 'bg-warning')} />
+                  <span aria-hidden className={cn('size-1.5 rounded-full', state.tone === 'destructive' ? 'bg-status-stopped' : 'bg-status-you')} />
                 )}
-                {space.shared && <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">shared</span>}
+                {space.shared && <span className={LABEL}>shared</span>}
               </button>
             );
           })}

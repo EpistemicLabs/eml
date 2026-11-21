@@ -1,9 +1,4 @@
 {
-  "components/app/AppContent.tsx": 2,
-  "components/app/Banner.tsx": 1,
-  "components/app/CompactNavBar.tsx": 2,
-  "components/app/SpaceSwitch.tsx": 5,
-  "components/app/UpdateBanner.tsx": 1,
   "components/brain/ActivityHeatmap.tsx": 3,
   "components/brain/BrainHome.tsx": 4,
   "components/brain/BrainProject.tsx": 2,

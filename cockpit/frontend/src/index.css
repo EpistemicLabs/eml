@@ -264,6 +264,13 @@ html.dark {
   /* area: chat and terminal */
   /* area: brain and review */
   /* area: app shell */
+  /* The gap above the top bar, under the status bar on a phone. */
+  --pad-shell-top: 6px;
+  /* The phone's floating buttons: their row sits this far below the status bar, and a chat fades out
+     under a band this tall. */
+  --size-phone-edge: 56px;
+  /* The space menu: wide enough for a space's name and its marks. */
+  --size-menu: 12rem;
 }
 /* v1's type tokens carry no line height: outside the scope a text-* utility keeps the
    inherited one (an invalid custom property falls back to inheritance). Unlayered, so it
