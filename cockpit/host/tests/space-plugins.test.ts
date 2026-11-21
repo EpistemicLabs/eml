@@ -217,6 +217,8 @@ describe('the channel bridge accounts', () => {
     expect(bridgeAccountsFor({ ...state, partsOff: { gmail: ['channel'] } }, [gmail], [work], ['main']).accounts).toEqual([])
     // A sign-in for the mcp part only (a service account) is no bridge account.
     expect(bridgeAccountsFor(state, [gmail], [{ ...work, parts: ['mcp' as const] }], ['main']).accounts).toEqual([])
+    const mcpOnly = setPlugin(emptySpacePlugins(), 'eml', 'gmail', { connections: ['work-mail'] })
+    expect(bridgeAccountsFor(mcpOnly, [gmail], [{ ...work, parts: ['mcp' as const] }], []).problems).toEqual([])
   })
 
   it('turns the accounts file of an older cockpit into connections once, keeping each account id', async () => {
