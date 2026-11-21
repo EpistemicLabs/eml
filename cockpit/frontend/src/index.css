@@ -227,7 +227,7 @@ html.dark {
   /* Area tokens: one block per area. */
   /* area: sidebar */
   /* The sidebar: pinned open, as the rail, and as the phone's drawer (at most 85% of the screen). */
-  --size-sidebar: 17rem;
+  --size-sidebar: 14rem;
   --size-sidebar-rail: 3rem;
   --size-sidebar-drawer: min(20rem, 85vw);
   /* A row's inline rename field: about eight characters before it scrolls. */
