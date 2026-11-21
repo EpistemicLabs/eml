@@ -50,6 +50,12 @@ export function trustNote(tier: PluginTier): string {
 }
 
 /** It needs one of the user's sign-ins to work: a sign-in kind, or a secret setting. */
+/** A remote MCP server that signs in with OAuth, or one without secrets that may (its first sign-in says so). */
+export function signsInWithOAuth(plugin: PluginView): boolean {
+  if (plugin.auth?.kind === 'mcp-oauth') return true;
+  return !plugin.auth && !!plugin.mcp && plugin.mcp.transport !== 'stdio' && !plugin.mcp.settings.some((s) => s.secret);
+}
+
 export function needsSignIn(plugin: PluginView): boolean {
   return !!plugin.auth || !!plugin.mcp?.settings.some((s) => s.secret);
 }

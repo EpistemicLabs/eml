@@ -23,6 +23,7 @@ const plugin = (over: Record<string, unknown>) => ({
 const PLUGINS = [
   plugin({ id: 'note', name: 'Note', pane: 'note', enabled: true, spaces: { 'main-id': null } }),
   plugin({ id: 'stripe', name: 'stripe', tier: 'custom', parts: ['mcp'], mcp: { transport: 'stdio', target: 'npx', settings: [] }, imported: true }),
+  plugin({ id: 'qonto', name: 'Qonto', tier: 'custom', parts: ['mcp'], mcp: { transport: 'http', target: 'https://mcp.qonto.example/mcp', settings: [] }, auth: { kind: 'mcp-oauth', scopes: [] }, spaces: { 'main-id': ['qonto-a'] } }),
   plugin({ id: 'gmail', name: 'Gmail', parts: ['mcp', 'channel'], channel: 'gmail', mcp: { transport: 'stdio', target: 'node', settings: [{ name: 'GMAIL_ADDRESS', secret: true }] }, auth: { kind: 'google-oauth', scopes: [] }, spaces: { 'main-id': ['work'] } }),
 ];
 
@@ -36,7 +37,8 @@ beforeEach(async () => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     const body = url.startsWith('/api/spaces') ? { spaces: SPACES }
-      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }] }
+      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }, { id: 'qonto-a', plugin: 'qonto', label: 'Company A', secrets: ['accessToken'], slug: null, address: null, oauth: true, signInNeeded: true }] }
+      : url === '/api/plugins/oauth/sign-in' ? { url: 'https://mcp.qonto.example/authorize?state=s' }
       : url === '/api/plugins/google/client' ? { configured: method === 'PUT', fromSignIns: [{ id: 'work', label: 'Work mailbox' }] }
       : url === '/api/plugins/connections' ? { connection: { id: 'lookup-1', plugin: 'lookup', label: 'Settings', secrets: ['API_KEY'] } }
       : url.startsWith('/api/plugins/custom') ? { plugin: {} }
@@ -64,6 +66,22 @@ describe('Settings › Plugins', () => {
     expect(screen.getAllByText('Work mailbox').length).toBeGreaterThan(0);
     expect(screen.getByText(/its tools: gmail-invoice/)).toBeTruthy();
     expect(screen.getByRole('switch', { name: 'Gmail in Other' }).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('shows an OAuth sign-in that ran out, and opens the server\'s sign-in page for it and for another account', async () => {
+    const tab = { location: { href: '' }, close: vi.fn() };
+    vi.stubGlobal('open', vi.fn(() => tab));
+    renderTab();
+    expect(await screen.findByText('· sign in again')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Qonto/ }));
+    expect(await screen.findByText(/refused to renew this sign-in/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    await waitFor(() => expect(calls.find((c) => c.url === '/api/plugins/oauth/sign-in')?.body).toEqual({ plugin: 'qonto', connection: 'qonto-a' }));
+    await waitFor(() => expect(tab.location.href).toBe('https://mcp.qonto.example/authorize?state=s'));
+    fireEvent.change(screen.getByPlaceholderText('Company B'), { target: { value: 'Company B' } });
+    fireEvent.change(screen.getByPlaceholderText('invoice'), { target: { value: 'b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(calls.filter((c) => c.url === '/api/plugins/oauth/sign-in').at(-1)?.body).toEqual({ plugin: 'qonto', label: 'Company B', slug: 'b' }));
   });
 
   it('switches a plugin in one space from the table', async () => {

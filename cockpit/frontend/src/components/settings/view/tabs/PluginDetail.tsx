@@ -18,7 +18,8 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 
 import SettingsPanel, { SettingsPanelLine } from '../SettingsPanel';
 import { GoogleSignIn, GoogleSignInAgain } from './GoogleSignIn';
-import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, trustNote } from './PluginShared';
+import { McpOAuthSignIn, McpOAuthSignInAgain, useRefreshOnReturn } from './McpOAuthSignIn';
+import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, signsInWithOAuth, trustNote } from './PluginShared';
 import { SignInPicker } from './PluginSpaceCell';
 
 /** The values a gmail sign-in holds for the channel bridge (plugins/gmail/channel). */
@@ -46,6 +47,8 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
   const own = connections.filter((c) => c.plugin === plugin.id);
   const onIn = Object.keys(plugin.spaces).length;
   const google = plugin.auth?.kind === 'google-oauth';
+  const oauth = signsInWithOAuth(plugin);
+  useRefreshOnReturn();
   const cell = 'px-3 py-2 align-middle';
 
   return (
@@ -81,14 +84,19 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
         </SettingsPanel>
 
         <SettingsPanel title="Sign-ins">
-          {!needsSignIn(plugin) && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
+          {!needsSignIn(plugin) && !oauth && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
+          {oauth && !plugin.auth && <p className="text-body text-muted-foreground">Until you sign in here, each Claude config signs in to this server itself.</p>}
           {needsSignIn(plugin) && own.length === 0 && <p className={cn('text-body', HUE.you.ink)}>No sign-in yet: add one to use it in a space.</p>}
           {own.map((connection) => (
             <div key={connection.id} className="border-t border-border first-of-type:border-t-0">
               <SettingsPanelLine
                 label={connection.label}
-                note={`Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · secret stored once, owner only, never shown`}
+                note={connection.signInNeeded
+                  ? 'The server refused to renew this sign-in: sign in again. Sessions using it get no answer until then.'
+                  : `Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · ${connection.oauth ? 'renewed by the cockpit' : 'secret stored once'}, owner only, never shown`}
+                noteClassName={connection.signInNeeded ? 'text-stopped-ink' : undefined}
               >
+                {oauth && connection.oauth && <McpOAuthSignInAgain plugin={plugin} connection={connection} />}
                 {google && againFor !== connection.id && <Button variant="outline" size="sm" onClick={() => setAgainFor(connection.id)}>Sign in again</Button>}
                 <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
               </SettingsPanelLine>
@@ -96,7 +104,8 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
             </div>
           ))}
           {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
-          {needsSignIn(plugin) && !google && <AddSignIn plugin={plugin} another={own.length > 0} />}
+          {oauth && <McpOAuthSignIn plugin={plugin} another={own.length > 0} />}
+          {needsSignIn(plugin) && !google && !oauth && <AddSignIn plugin={plugin} another={own.length > 0} />}
           {google && <AddSignIn plugin={plugin} another={own.length > 0} manual />}
         </SettingsPanel>
       </div>

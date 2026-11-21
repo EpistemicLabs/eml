@@ -133,7 +133,11 @@ function Installed({ plugins, filtered, onShowAll, spaces, connections, onOpen }
                 {!needsSignIn(plugin) && 'No sign-in needed'}
                 {needsSignIn(plugin) && own.length === 0 && <span className={HUE.you.ink}>No sign-in yet</span>}
                 {needsSignIn(plugin) && own.map((c) => (
-                  <span key={c.id} className="flex items-center gap-1.5"><span aria-hidden className="size-1.5 shrink-0 rounded-full bg-foreground" />{c.label}</span>
+                  <span key={c.id} className="flex items-center gap-1.5">
+                    <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', c.signInNeeded ? 'bg-status-stopped' : 'bg-foreground')} />
+                    {c.label}
+                    {c.signInNeeded && <span className="text-stopped-ink">· sign in again</span>}
+                  </span>
                 ))}
               </span>
               <span className="flex min-w-0 flex-wrap gap-1">

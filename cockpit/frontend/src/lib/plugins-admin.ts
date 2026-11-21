@@ -15,7 +15,7 @@ export interface PluginView {
   pane: string | null;
   channel: string | null;
   mcp: { transport: 'stdio' | 'http' | 'sse'; target: string; settings: Array<{ name: string; secret: boolean }> } | null;
-  auth: { kind: 'google-oauth' | 'token'; scopes: string[] } | null;
+  auth: { kind: 'google-oauth' | 'token' | 'mcp-oauth'; scopes: string[] } | null;
   /** On in any space. */
   enabled: boolean;
   /** Space id → the sign-ins it uses there, for every space it is on in. */
@@ -35,6 +35,10 @@ export interface ConnectionView {
   slug: string | null;
   /** The mailbox a Google sign-in is for. */
   address: string | null;
+  /** An OAuth sign-in to a remote MCP server, kept and renewed by the cockpit. */
+  oauth?: boolean;
+  /** The server refused to renew it: the user signs in again. */
+  signInNeeded?: boolean;
 }
 
 export interface OutsideServerView {
@@ -129,6 +133,19 @@ export function useStartGoogleSignIn() {
 export function useFinishGoogleSignIn() {
   return useChange(({ plugin, redirect, slug }: { plugin: string; redirect: string; slug?: string }) =>
     request<{ connection: ConnectionView & { again: boolean } }>('/api/plugins/google/sign-in/finish', send('POST', { plugin, redirect, ...(slug ? { slug } : {}) })).then((b) => b.connection));
+}
+
+// ── An OAuth sign-in to a remote MCP server (host: mcp-oauth.ts) ──
+
+/**
+ * The server's consent page for a new sign-in, or to sign `connection` in again. It comes back to
+ * the cockpit's own callback, which keeps the sign-in.
+ */
+export function useStartMcpOAuth() {
+  return useMutation({
+    mutationFn: ({ plugin, label, slug, connection }: { plugin: string; label?: string; slug?: string; connection?: string }) =>
+      request<{ url: string }>('/api/plugins/oauth/sign-in', send('POST', { plugin, ...(label ? { label } : {}), ...(slug ? { slug } : {}), ...(connection ? { connection } : {}) })).then((b) => b.url),
+  });
 }
 
 export function useSetPart() {
