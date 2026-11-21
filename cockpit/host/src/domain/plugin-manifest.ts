@@ -11,7 +11,8 @@ import { z } from 'zod'
  * (decision cockpit-plugin-isolation): server parts (mcp, channel) run with the
  * user's rights, so only official plugins (in the repo, pinned with the
  * cockpit), the user's own custom ones and local dev plugins may have them; a
- * community plugin is a pane only.
+ * community plugin is a pane only. A community plugin the user promotes
+ * becomes custom and keeps its pane; the file itself never raises its tier.
  */
 
 export const PLUGIN_TIERS = ['official', 'custom', 'community', 'dev'] as const
@@ -31,16 +32,23 @@ export type ConfigValue = z.infer<typeof configValueSchema>
 const envNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
 const headerNameSchema = z.string().regex(/^[A-Za-z0-9-]{1,64}$/)
 
+/** The name sessions know the server by (its tools are mcp__<name>__…); the plugin id when left out. */
+const serverNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+
 export const mcpPartSchema = z.discriminatedUnion('transport', [
   z.strictObject({
     transport: z.literal('stdio'),
+    serverName: serverNameSchema.optional(),
     command: z.string().min(1),
-    args: z.array(z.string()).default([]),
+    args: z.array(configValueSchema).default([]),
     env: z.record(envNameSchema, configValueSchema).default({}),
   }),
   z.strictObject({
-    transport: z.literal('http'),
-    url: z.string().url(),
+    /** Streamable HTTP, or the older server-sent events transport. */
+    transport: z.enum(['http', 'sse']),
+    serverName: serverNameSchema.optional(),
+    /** A URL with a key in it is a secret as a whole. */
+    url: z.union([z.string().url(), z.strictObject({ secret: z.string().min(1).max(64) })]),
     headers: z.record(headerNameSchema, configValueSchema).default({}),
   }),
 ])
@@ -110,14 +118,18 @@ export function readManifest(raw: unknown, tier: PluginTier): ManifestResult {
   if (!SERVER_TIERS.has(tier) && (manifest.parts.mcp || manifest.parts.channel)) {
     return { ok: false, reason: `a ${tier} plugin may only have a pane` }
   }
-  if (tier === 'custom' && (manifest.parts.channel || manifest.parts.pane)) {
-    return { ok: false, reason: 'a custom plugin is an MCP server only' }
-  }
   return { ok: true, manifest }
+}
+
+/** The name sessions know a plugin's MCP server by. */
+export function serverNameOf(manifest: PluginManifest): string | null {
+  return manifest.parts.mcp ? (manifest.parts.mcp.serverName ?? manifest.id) : null
 }
 
 /** The names of the secrets a part asks for, e.g. to tell which connection it needs. */
 export function secretsOf(part: McpPart): string[] {
-  const values = part.transport === 'stdio' ? Object.values(part.env) : Object.values(part.headers)
+  const values: ConfigValue[] = part.transport === 'stdio'
+    ? [...part.args, ...Object.values(part.env)]
+    : [part.url, ...Object.values(part.headers)]
   return [...new Set(values.flatMap((value) => (typeof value === 'string' ? [] : [value.secret])))]
 }

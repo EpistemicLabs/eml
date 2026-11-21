@@ -89,7 +89,7 @@ export function pluginView(manifest: PluginManifest, enabled: boolean): PluginVi
     pane: pane && 'builtin' in pane ? pane.builtin : null,
     channel: channel?.adapter ?? null,
     // The command without its arguments: they may carry a token.
-    mcp: mcp ? { transport: mcp.transport, target: mcp.transport === 'stdio' ? mcp.command : new URL(mcp.url).origin, settings } : null,
+    mcp: mcp ? { transport: mcp.transport, target: mcp.transport === 'stdio' ? mcp.command : typeof mcp.url === 'string' ? new URL(mcp.url).origin : 'a URL kept as a secret', settings } : null,
     auth: manifest.auth ?? null,
     enabled,
   }
