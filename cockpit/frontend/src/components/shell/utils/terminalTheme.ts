@@ -1,90 +1,30 @@
 import type { ITheme } from '@xterm/xterm';
 import type { ISearchOptions } from '@xterm/addon-search';
 
-type AnsiSlot =
-  | 'black'
-  | 'red'
-  | 'green'
-  | 'yellow'
-  | 'blue'
-  | 'magenta'
-  | 'cyan'
-  | 'white'
-  | 'brightBlack'
-  | 'brightRed'
-  | 'brightGreen'
-  | 'brightYellow'
-  | 'brightBlue'
-  | 'brightMagenta'
-  | 'brightCyan'
-  | 'brightWhite';
+const ANSI_SLOTS = [
+  'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+  'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
+] as const;
 
-type AnsiPalette = Readonly<Record<AnsiSlot, string>>;
+type AnsiSlot = (typeof ANSI_SLOTS)[number];
 
-/**
- * Dark palette: the ANSI colours of VS Code's default (Dark+) integrated
- * terminal (Visual Studio Code, (c) Microsoft Corporation, MIT licence; see
- * NOTICE). Bright slots are vivid, meant for near-black backgrounds.
- */
-export const ANSI_DARK: AnsiPalette = {
-  black: '#000000',
-  red: '#cd3131',
-  green: '#0dbc79',
-  yellow: '#e5e510',
-  blue: '#2472c8',
-  magenta: '#bc3fbc',
-  cyan: '#11a8cd',
-  white: '#e5e5e5',
-  brightBlack: '#666666',
-  brightRed: '#f14c4c',
-  brightGreen: '#23d18b',
-  brightYellow: '#f5f543',
-  brightBlue: '#3b8eea',
-  brightMagenta: '#d670d6',
-  brightCyan: '#29b8db',
-  brightWhite: '#ffffff',
-};
-
-/**
- * Light palette: every slot reaches at least 4.5:1 on white. "Yellow" is a
- * gold so it stays visible, the "white" slots are greys so dim text remains
- * readable, and bright variants go deeper instead of lighter.
- */
-export const ANSI_LIGHT: AnsiPalette = {
-  black: '#1d1d1f',
-  red: '#c41a16',
-  green: '#326d24',
-  yellow: '#a3712e',
-  blue: '#0058c7',
-  magenta: '#ad3da4',
-  cyan: '#1a7b9c',
-  white: '#6e6e73',
-  brightBlack: '#8e8e93',
-  brightRed: '#a01007',
-  brightGreen: '#22501a',
-  brightYellow: '#7e570f',
-  brightBlue: '#003f8c',
-  brightMagenta: '#8a2e83',
-  brightCyan: '#0d5a7d',
-  brightWhite: '#3c3c43',
-};
-
-export interface SurfaceColors {
-  background: string;
-  foreground: string;
-  cursor: string;
-  cursorAccent: string;
-  selectionBackground: string;
-  selectionForeground: string;
-  muted: string;
+/** brightBlack → --term-ansi-bright-black: the token that holds the slot's colour. */
+export function ansiToken(slot: AnsiSlot): string {
+  return `--term-ansi-${slot.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
 }
 
-/** Reads the app's surface colours live from the root element's CSS variables. */
-export function getSurfaceColors(): SurfaceColors {
-  const style = getComputedStyle(document.documentElement);
+/**
+ * xterm takes concrete colours, so the theme is read live from the tokens v2 in effect on the
+ * terminal's element (`scope`, inside the v2 scope): the surface follows the v2 neutrals, the ANSI
+ * palette comes from the --term-ansi-* tokens (light: every slot at 4.5:1 on white; dark: the
+ * VS Code Dark+ colours, see NOTICE). Called again after a theme switch.
+ */
+export function getXtermTheme(scope: Element): ITheme {
+  const style = getComputedStyle(scope);
   const read = (name: string) => style.getPropertyValue(name).trim();
   const background = read('--color-background');
   const foreground = read('--color-foreground');
+  const ansi = Object.fromEntries(ANSI_SLOTS.map((slot) => [slot, read(ansiToken(slot))])) as Record<AnsiSlot, string>;
   return {
     background,
     foreground,
@@ -92,31 +32,18 @@ export function getSurfaceColors(): SurfaceColors {
     cursorAccent: background,
     selectionBackground: read('--color-muted'),
     selectionForeground: foreground,
-    muted: read('--color-muted-foreground'),
-  };
-}
-
-/** Builds the xterm theme: app surface colours plus the ANSI palette for the mode. */
-export function getXtermTheme(isDarkMode: boolean): ITheme {
-  const surface = getSurfaceColors();
-  return {
-    background: surface.background,
-    foreground: surface.foreground,
-    cursor: surface.cursor,
-    cursorAccent: surface.cursorAccent,
-    selectionBackground: surface.selectionBackground,
-    selectionForeground: surface.selectionForeground,
-    ...(isDarkMode ? ANSI_DARK : ANSI_LIGHT),
+    ...ansi,
   };
 }
 
 /**
- * Highlight colours for scrollback search: amber matches, a stronger amber for
- * the current one. xterm takes them as #RRGGBB only (no alpha).
+ * Highlight colours for scrollback search: amber matches, a stronger amber for the current one
+ * (--term-match, --term-match-active). xterm takes them as #RRGGBB only (no alpha).
  */
-export function getSearchDecorations(isDarkMode: boolean): ISearchOptions['decorations'] {
-  const match = isDarkMode ? '#5c4a12' : '#fde68a';
-  const active = isDarkMode ? '#b45309' : '#f59e0b';
+export function getSearchDecorations(scope: Element): ISearchOptions['decorations'] {
+  const style = getComputedStyle(scope);
+  const match = style.getPropertyValue('--term-match').trim();
+  const active = style.getPropertyValue('--term-match-active').trim();
   return {
     matchBackground: match,
     matchOverviewRuler: match,

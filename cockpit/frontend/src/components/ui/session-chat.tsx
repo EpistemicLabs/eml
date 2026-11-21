@@ -63,9 +63,9 @@ export function SessionChat({
     return () => reclaimTerminal(sessionId);
   }, [borrowed, view, sessionId]);
 
-  if (!projectId) return <p className="p-4 text-body text-muted-foreground">This session has no project to open it in.</p>;
+  if (!projectId) return <p data-ui="v2" className="p-4 text-body text-muted-foreground">This session has no project to open it in.</p>;
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div data-ui="v2" className="relative flex min-h-0 flex-1 flex-col">
       {toolbar && (
         <div className="flex shrink-0 justify-end px-2 py-1.5">
           <MainContentTabSwitcher

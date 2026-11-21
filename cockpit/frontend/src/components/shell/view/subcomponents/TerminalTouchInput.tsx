@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import type { TerminalKey } from '../../domain/terminalKeys';
 import type { ShellInput } from '../../hooks/useShellRuntime';
 
@@ -32,19 +33,21 @@ const ROW: RowItem[] = [
   { kind: 'key', key: 'escape', label: 'Esc', title: 'Escape' },
   { kind: 'key', key: 'shift-tab', label: '⇧Tab', title: 'Shift+Tab' },
   { kind: 'key', key: 'tab', label: 'Tab', title: 'Tab' },
-  { kind: 'key', key: 'up', label: <ArrowUp className="h-4 w-4" />, title: 'Up' },
-  { kind: 'key', key: 'down', label: <ArrowDown className="h-4 w-4" />, title: 'Down' },
-  { kind: 'key', key: 'left', label: <ArrowLeft className="h-4 w-4" />, title: 'Left' },
-  { kind: 'key', key: 'right', label: <ArrowRight className="h-4 w-4" />, title: 'Right' },
-  { kind: 'key', key: 'enter', label: <CornerDownLeft className="h-4 w-4" />, title: 'Enter' },
+  { kind: 'key', key: 'up', label: <ArrowUp aria-hidden className="size-4" />, title: 'Up' },
+  { kind: 'key', key: 'down', label: <ArrowDown aria-hidden className="size-4" />, title: 'Down' },
+  { kind: 'key', key: 'left', label: <ArrowLeft aria-hidden className="size-4" />, title: 'Left' },
+  { kind: 'key', key: 'right', label: <ArrowRight aria-hidden className="size-4" />, title: 'Right' },
+  { kind: 'key', key: 'enter', label: <CornerDownLeft aria-hidden className="size-4" />, title: 'Enter' },
   { kind: 'text', text: '1' },
   { kind: 'text', text: '2' },
   { kind: 'text', text: '3' },
   { kind: 'key', key: 'interrupt', label: '^C', title: 'Ctrl+C' },
 ];
 
-const KEY_CLASS =
-  'flex h-9 min-w-[2.75rem] flex-shrink-0 items-center justify-center rounded-md border border-foreground/15 bg-foreground/[0.04] px-2 font-mono text-[13px] text-foreground active:bg-foreground/15';
+const KEY_CLASS = cn(
+  'flex h-9 min-w-(--target-touch) flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted px-2 font-code text-body text-foreground active:bg-foreground/12',
+  FOCUS,
+);
 
 // A key tap must not take the focus from where the user types (the terminal
 // or the text field): on iOS that closes the keyboard.
@@ -79,7 +82,7 @@ export default function TerminalTouchInput({ input, disabled }: { input: ShellIn
   };
 
   return (
-    <div className={cn('flex flex-shrink-0 flex-col gap-1.5 border-t border-foreground/15 pt-1.5', disabled && 'pointer-events-none opacity-50')}>
+    <div data-ui="v2" className={cn('flex flex-shrink-0 flex-col gap-1.5 border-t border-border pt-1.5', disabled && 'pointer-events-none opacity-50')}>
       {composing && (
         <form
           className="flex items-end gap-1.5"
@@ -96,25 +99,25 @@ export default function TerminalTouchInput({ input, disabled }: { input: ShellIn
             placeholder="Write or dictate, then send"
             aria-label="Message the agent"
             autoCapitalize="sentences"
-            className="max-h-40 min-h-20 flex-1 resize-none rounded-md border border-foreground/15 bg-background px-2.5 py-2 text-base leading-snug [field-sizing:content] focus:border-primary/60 focus:outline-none"
+            className={cn('max-h-40 min-h-20 flex-1 resize-none rounded-md border border-input bg-background px-2.5 py-2 text-(length:--text-field-touch) leading-snug [field-sizing:content]', FOCUS)}
           />
           <div className="flex flex-col gap-1.5">
             <button type="button" className={KEY_CLASS} title="Close" aria-label="Close" onPointerDown={keepFocus} onClick={closeComposer}>
-              <X className="h-4 w-4" />
+              <X aria-hidden className="size-4" />
             </button>
             <button
               type="submit"
-              className={cn(KEY_CLASS, 'bg-primary/90 text-primary-foreground active:bg-primary')}
+              className={cn(KEY_CLASS, 'border-primary bg-primary text-primary-foreground active:opacity-90')}
               title="Send"
               aria-label="Send"
               onPointerDown={keepFocus}
             >
-              <SendHorizontal className="h-4 w-4" />
+              <SendHorizontal aria-hidden className="size-4" />
             </button>
           </div>
         </form>
       )}
-      {attachFailed && <p className="px-1 text-[12px] text-destructive">The image could not be added. Try another one.</p>}
+      {attachFailed && <p className="px-1 text-ui text-stopped-ink">The image could not be added. Try another one.</p>}
       <div className="flex gap-1.5 overflow-x-auto" role="toolbar" aria-label="Terminal keys">
         {ROW.map((item) => (
           <button
@@ -137,17 +140,17 @@ export default function TerminalTouchInput({ input, disabled }: { input: ShellIn
           disabled={attaching}
           onClick={() => fileRef.current?.click()}
         >
-          {attaching ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+          {attaching ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ImagePlus aria-hidden className="size-4" />}
         </button>
         <button
           type="button"
-          className={cn(KEY_CLASS, composing && 'bg-foreground/15')}
+          className={cn(KEY_CLASS, composing && 'bg-foreground/12')}
           title="Write a longer message"
           aria-label="Write a longer message"
           aria-pressed={composing}
           onClick={() => (composing ? closeComposer() : setComposing(true))}
         >
-          <PencilLine className="h-4 w-4" />
+          <PencilLine aria-hidden className="size-4" />
         </button>
         <input
           ref={fileRef}

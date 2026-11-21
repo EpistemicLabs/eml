@@ -275,6 +275,65 @@ html.dark {
   --z-modal-nested: calc(var(--z-modal) + 1);
   --size-folder-browser: 80vh;
   /* area: chat and terminal */
+  /* The chat column: as wide as one of two panes side by side; a sent message takes at most 85% of it. */
+  --size-chat-column: 980px;
+  --size-chat-bubble: min(85%, var(--container-measure));
+  /* A tool call's output and an agent's tools hang under the row's icon. */
+  --indent-chat-work: 11px;
+  /* The chat's text steps: the reply, what is secondary, and a heading in a reply. */
+  --gap-chat-block: 12px;
+  --gap-chat-heading: 20px;
+  --gap-chat-item: 4px;
+  --text-chat-small: var(--text-ui);
+  --text-chat-small--line-height: 18px;
+  /* On a phone the chat's secondary text is a little darker than the muted grey. */
+  --mix-chat-phone-muted: 72%;
+  /* The phone composer: its gap to the keyboard, its height before it is measured, the fade under it. */
+  --composer-gap: 6px;
+  --composer-height-initial: 96px;
+  --pad-composer-bottom: 5px;
+  --pad-chat-compact-top: 60px;
+  --size-chat-menu-max: 80vw;
+  /* The outline around the current search match. */
+  --width-chat-current: 1px;
+  /* Layers inside a chat: the phone fade under the composer, the "Jump to latest" button above both. */
+  --z-chat-fade: 5;
+  --z-chat-jump: 20;
+  /* A pane: the narrowest it gets, its floating toolbar's layer, the phone header it scrolls under. */
+  --size-pane-min: 280px;
+  --z-pane-toolbar: 30;
+  --pad-pane-compact-top: 52px;
+  --pad-pane-compact-bottom: 4px;
+  --size-menu-min: 10rem;
+  /* The terminal status bar: when (shrinks), model, context (never shrinks). */
+  --grid-status-bar: minmax(0, 1fr) auto minmax(max-content, 1fr);
+  /* The MCP server table: name, type, status with its two actions. */
+  --grid-tool-servers: minmax(0, 1fr) 8.5rem 5.5rem;
+  /* The terminal find bar's match count ("12/340"). */
+  --size-find-count: 4.5rem;
+  /* Code changes in the chat: added and removed lines keep a code editor's green and red. */
+  --diff-added: #047857;
+  --diff-removed: #c4281c;
+  /* The terminal: xterm takes concrete colours, read at runtime (terminalTheme.ts). Light: every
+     slot at 4.5:1 on white, yellow a gold, the white slots greys. Search marks are #RRGGBB only. */
+  --term-ansi-black: #1d1d1f;
+  --term-ansi-red: #c41a16;
+  --term-ansi-green: #326d24;
+  --term-ansi-yellow: #a3712e;
+  --term-ansi-blue: #0058c7;
+  --term-ansi-magenta: #ad3da4;
+  --term-ansi-cyan: #1a7b9c;
+  --term-ansi-white: #6e6e73;
+  --term-ansi-bright-black: #8e8e93;
+  --term-ansi-bright-red: #a01007;
+  --term-ansi-bright-green: #22501a;
+  --term-ansi-bright-yellow: #7e570f;
+  --term-ansi-bright-blue: #003f8c;
+  --term-ansi-bright-magenta: #8a2e83;
+  --term-ansi-bright-cyan: #0d5a7d;
+  --term-ansi-bright-white: #3c3c43;
+  --term-match: #fde68a;
+  --term-match-active: #f59e0b;
   /* area: brain and review */
   /* area: app shell */
   /* The gap above the top bar, under the status bar on a phone. */
@@ -378,6 +437,29 @@ html.dark {
   --shadow-overlay: 0 8px 24px rgb(0 0 0 / .55);
   --shadow-modal: 0 24px 60px rgb(0 0 0 / .60);
   --shadow-sheet: -20px 0 60px rgb(0 0 0 / .55);
+  /* area: chat and terminal */
+  --diff-added: #34d399;
+  --diff-removed: #ff6961;
+  /* The ANSI colours of VS Code's default (Dark+) terminal (MIT licence, see NOTICE): vivid, for a black ground. */
+  --term-ansi-black: #000000;
+  --term-ansi-red: #cd3131;
+  --term-ansi-green: #0dbc79;
+  --term-ansi-yellow: #e5e510;
+  --term-ansi-blue: #2472c8;
+  --term-ansi-magenta: #bc3fbc;
+  --term-ansi-cyan: #11a8cd;
+  --term-ansi-white: #e5e5e5;
+  --term-ansi-bright-black: #666666;
+  --term-ansi-bright-red: #f14c4c;
+  --term-ansi-bright-green: #23d18b;
+  --term-ansi-bright-yellow: #f5f543;
+  --term-ansi-bright-blue: #3b8eea;
+  --term-ansi-bright-magenta: #d670d6;
+  --term-ansi-bright-cyan: #29b8db;
+  --term-ansi-bright-white: #ffffff;
+  --term-match: #5c4a12;
+  --term-match-active: #b45309;
+  /* area: brain and review */
   color-scheme: dark;
 }
 
@@ -466,39 +548,40 @@ body {
   font-size: 13px;
 }
 
-/* The chat view's type: 14px text, 16px headings, 12px for everything secondary,
-   which is what is muted, plus preformatted output. Gaps sit on a 4px grid. Not in
-   a layer, so it wins over the utilities the markdown renderer brings. */
+/* The chat view's type (tokens v2): the UI font at --text-chat, headings at --text-title, everything
+   secondary (what is muted, plus preformatted output) at the small step; code stays monospace. Gaps
+   sit on a 4px grid. Not in a layer, so it wins over the utilities the markdown renderer brings. */
 .chat-pane {
-  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 22px;
+  font-family: var(--font-ui);
+  font-size: var(--text-chat);
+  line-height: var(--text-chat--line-height);
   font-variant-numeric: tabular-nums;
 }
 .chat-pane * { font-size: inherit; line-height: inherit; }
-.chat-pane .text-muted-foreground, .chat-pane pre { font-size: 12px; line-height: 18px; }
-.chat-pane [class*="font-mono"], .chat-pane code, .chat-pane pre { font-family: var(--font-mono); font-variant-ligatures: none; }
-.chat-pane [data-streamdown^="heading-"] { margin-top: 20px; margin-bottom: 8px; font-size: 16px; line-height: 24px; font-weight: 600; }
+.chat-pane .text-muted-foreground, .chat-pane pre { font-size: var(--text-chat-small); line-height: var(--text-chat-small--line-height); }
+.chat-pane [class*="font-code"], .chat-pane code, .chat-pane pre { font-family: var(--font-code); font-variant-ligatures: none; }
+.chat-pane [data-streamdown^="heading-"] { margin-top: var(--gap-chat-heading); margin-bottom: calc(var(--spacing) * 2); font-size: var(--text-title); line-height: var(--text-title--line-height); font-weight: 600; }
 .chat-pane [data-streamdown="ordered-list"], .chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="code-block"],
-.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: 12px; margin-bottom: 12px; }
-.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: 4px; margin-bottom: 4px; }
-.chat-pane p { margin-top: 12px; margin-bottom: 12px; }
+.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: var(--gap-chat-block); margin-bottom: var(--gap-chat-block); }
+.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: var(--gap-chat-item); margin-bottom: var(--gap-chat-item); }
+.chat-pane p { margin-top: var(--gap-chat-block); margin-bottom: var(--gap-chat-block); }
 /* Prose stays at about 100 characters a line; code, tables and tools take the pane. */
 .chat-pane p, .chat-pane [data-streamdown^="heading-"], .chat-pane [data-streamdown="ordered-list"],
-.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 720px; }
+.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: var(--container-measure); }
 .chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
 .chat-pane p:last-child { margin-bottom: 0; }
 /* What the agent did reads as one stream; the wider gaps stay around the conversation. */
 /* A quote in a reply is text to read, however the markdown renderer mutes it. */
-.chat-pane [data-streamdown="blockquote"] { font-size: 14px; line-height: 22px; font-style: normal; color: var(--color-foreground); }
-.chat-pane .chat-work + .chat-work { margin-top: 4px; }
+.chat-pane [data-streamdown="blockquote"] { font-size: var(--text-chat); line-height: var(--text-chat--line-height); font-style: normal; color: var(--color-foreground); }
+.chat-pane .chat-work + .chat-work { margin-top: var(--gap-chat-item); }
 /* Tables keep one line per row and show all their rows: wide ones scroll sideways, none scrolls down. */
 .chat-pane [data-streamdown="table-wrapper"] > div:has(> table) { max-height: none !important; overflow-y: hidden; }
 .chat-pane [data-streamdown="table-cell"] { white-space: nowrap; }
-.chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
-::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
-/* Below 16px, iOS zooms the page when a field takes the focus. */
-@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
+/* Search marks are a highlighter's amber, the current match outlined in the same hue. */
+.chat-pane [data-chat-current] { outline: var(--width-chat-current) solid var(--color-status-you); outline-offset: var(--focus-offset); border-radius: calc(var(--spacing) * .5); }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-status-you) var(--mix-edge), transparent); }
+/* Below --text-field-touch (16px), iOS zooms the page when a field takes the focus. */
+@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: var(--text-field-touch); } }
 
 /* Structural utilities the sidebar uses; they resolve against the current
    palette. */
@@ -537,10 +620,9 @@ html.dark .glass-bar, html.dark .glass-field {
 /* Scroll edges fade without blur: a gradient costs almost nothing. */
 .glass-edge-top { background: linear-gradient(to bottom, rgb(var(--glass-edge)) 0, rgb(var(--glass-edge) / .96) env(safe-area-inset-top), rgb(var(--glass-edge) / .55) calc(env(safe-area-inset-top) + 28px), rgb(var(--glass-edge) / 0) 100%); }
 .glass-edge-bottom { background: linear-gradient(to top, rgb(var(--glass-edge) / .92) 0, rgb(var(--glass-edge) / .6) 45%, rgb(var(--glass-edge) / 0) 100%); }
-/* Readable secondary text in the chat, phone only. */
+/* Readable secondary text in the chat, phone only: a step closer to the text colour than muted. */
 @media (max-width: 767px) {
-  .chat-pane { --color-muted-foreground: #4a5260; }
-  html.dark .chat-pane { --color-muted-foreground: #9aa4b1; }
+  .chat-pane { --color-muted-foreground: color-mix(in srgb, var(--color-foreground) var(--mix-chat-phone-muted), var(--color-background)); }
 }
 
 @utility nav-divider {

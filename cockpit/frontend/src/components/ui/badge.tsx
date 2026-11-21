@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import type { EngramType } from "@/lib/types";
+import { Chip } from "@/shared/view/ui";
 
 export function Badge({
   className,
@@ -9,7 +10,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-caption font-medium text-muted-foreground",
         className,
       )}
       {...props}
@@ -23,8 +24,8 @@ export function Badge({
  * "muted" set (chosen after trying the warmer "cockpit" set and finding it
  * too weak): the familiar hues, desaturated and lifted so they sit in the
  * dark ground instead of on top of it. Light is the same hues deepened to
- * read as text. Chips and badges paint with a tint of the color, never a
- * solid fill with white text.
+ * read as text. In v2 the hue is only a small dot (TypeDot) or a graph node;
+ * the text and fill of a badge stay monochrome.
  */
 export const TYPE_COLORS: Record<EngramType, string> = {
   status: "var(--type-status)",
@@ -58,19 +59,31 @@ export const TYPE_ORDER: EngramType[] = [
   "status", "task", "note", "reference", "decision", "rule", "learning", "event", "profile", "log",
 ];
 
-export function TypeBadge({ type }: { type: EngramType }) {
-  const color = TYPE_COLORS[type] ?? "var(--color-muted-foreground)";
+/** The type's hue as a small dot: the one place a type shows its colour outside the graph. */
+export function TypeDot({ type, className }: { type: EngramType; className?: string }) {
   return (
-    <Badge style={typeChipStyle(color)}>
+    <span
+      aria-hidden
+      className={cn("inline-block size-2 shrink-0 rounded-full", className)}
+      style={{ backgroundColor: TYPE_COLORS[type] ?? "var(--color-muted-foreground)" }}
+    />
+  );
+}
+
+export function TypeBadge({ type }: { type: EngramType }) {
+  return (
+    <Badge>
+      <TypeDot type={type} />
       {type}
     </Badge>
   );
 }
 
+/** Due for review: it waits on you, so it carries the amber of "needs you". */
 export function ReviewFlag() {
   return (
-    <span className="inline-flex shrink-0 items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+    <Chip hue="you" className="shrink-0 uppercase tracking-label">
       review
-    </span>
+    </Chip>
   );
 }

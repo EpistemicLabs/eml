@@ -27,7 +27,7 @@ export default function TerminalPane({ sessionTitle, ...runtimeOptions }: Termin
   const { containerRef, overlay, connect, search, input } = useShellRuntime({ ...runtimeOptions, touchInput });
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col">
+    <div data-ui="v2" className="flex h-full min-h-0 w-full flex-col">
       <div className="relative min-h-0 flex-1 overflow-hidden p-2">
         <div ref={containerRef} className="h-full w-full outline-none focus:outline-none" />
         {search.open && !overlay && <TerminalSearchBar search={search} />}
