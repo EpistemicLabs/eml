@@ -454,11 +454,17 @@ html.dark {
   --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
   --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
 
-  /* No background here: overlays carry the scope on full-screen portal roots that stay see-through. */
-  font-family: var(--font-ui);
-  font-size: var(--text-body);
-  line-height: var(--text-body--line-height);
-  color: var(--color-foreground);
+}
+/* The scope's base type, in the base layer so a text-* utility on the same element still wins (an
+   unlayered rule would beat every utility). No background: overlays carry the scope on full-screen
+   portal roots that stay see-through. */
+@layer base {
+  [data-ui="v2"] {
+    font-family: var(--font-ui);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    color: var(--color-foreground);
+  }
 }
 
 .dark [data-ui="v2"], [data-ui="v2"].dark {

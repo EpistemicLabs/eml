@@ -4,8 +4,6 @@ import { Search } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
-import { LABEL } from './styles';
-
 // Each wrapper takes exactly the cmdk primitive's props (minus ref) and
 // forwards its ref to the primitive's element, adding only the look.
 type PropsOf<T extends React.ElementType> = React.ComponentPropsWithoutRef<T>;
@@ -58,10 +56,11 @@ export const CommandEmpty = React.forwardRef<RefOf<typeof Cmdk.Empty>, PropsOf<t
 );
 CommandEmpty.displayName = Cmdk.Empty.displayName;
 
-const GROUP_HEADING = cn(
-  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5',
-  LABEL.split(' ').map((c) => `[&_[cmdk-group-heading]]:${c}`).join(' '),
-);
+// The group heading reads like LABEL; Tailwind needs the classes written out to generate them.
+const GROUP_HEADING =
+  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5 ' +
+  '[&_[cmdk-group-heading]]:text-caption [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase ' +
+  '[&_[cmdk-group-heading]]:tracking-label [&_[cmdk-group-heading]]:text-muted-foreground';
 
 export const CommandGroup = React.forwardRef<RefOf<typeof Cmdk.Group>, PropsOf<typeof Cmdk.Group>>(
   function CommandGroup({ className, ...rest }, ref) {
