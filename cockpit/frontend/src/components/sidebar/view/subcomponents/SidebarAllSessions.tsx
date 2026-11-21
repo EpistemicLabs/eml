@@ -4,6 +4,7 @@ import { MessageSquare, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { joinReview, startReview } from '@/lib/review-flow';
 import { archiveSession, clearSession, markSessionRead, stopSession } from '@/lib/session-actions';
+import { FIELD, FOCUS, ROW } from '@/shared/view/ui';
 import { useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
@@ -123,14 +124,14 @@ function SidebarNow({ controller, onlyOpenSpace }: { controller: SidebarControll
   if (waiting.length === 0 && working.length === 0) return null;
   return (
     // The scroll region's padding is uneven; the margins line the card up with the tabs above.
-    <div className="-mr-1 ml-0.5 space-y-2 rounded-lg bg-foreground/[0.04] py-1.5 ring-1 ring-foreground/[0.07]">
+    <div className="-mr-1 ml-0.5 space-y-2 rounded-lg border border-border bg-card py-1.5 shadow-card">
       <div className="flex items-center justify-between gap-1 pr-2 pl-2">
-        <span className="text-xs font-semibold text-foreground">Now</span>
+        <span className="text-ui font-semibold text-foreground">Now</span>
         {waiting.length > 0 && (
           <button
             type="button"
             onClick={() => startReview(waiting)}
-            className="flex-shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-foreground/10"
+            className={cn('min-h-(--target-min) flex-shrink-0 rounded-md px-1.5 text-ui font-medium text-foreground transition-colors duration-(--duration-fast) hover:bg-muted', FOCUS)}
           >
             Review {waiting.length} ▶
           </button>
@@ -197,11 +198,12 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
             title="Search sessions"
             onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
             className={cn(
-              'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors hover:bg-accent hover:text-foreground',
+              'flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground',
+              FOCUS,
               searchOpen ? 'text-foreground' : 'text-muted-foreground',
             )}
           >
-            <Search className="h-3.5 w-3.5" />
+            <Search aria-hidden className="size-3.5" />
           </button>
         </div>
         {searchOpen && (
@@ -214,7 +216,7 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
               onKeyDown={(event) => { if (event.key === 'Escape') closeSearch(); }}
               placeholder="Search sessions"
               aria-label="Search sessions"
-              className="w-full rounded-md border border-border bg-background px-2 py-1 text-base text-foreground outline-none select-text focus:border-primary md:text-xs"
+              className={cn(FIELD, 'min-h-(--target-min) rounded-md px-2 text-(length:--text-field-touch) select-text md:text-ui')}
             />
           </div>
         )}
@@ -223,14 +225,14 @@ export function SidebarAllSessions({ controller, onlyOpenSpace }: { controller: 
           <button
             type="button"
             onClick={() => setExtra((current) => current + SHOW_MORE_STEP)}
-            className="w-full rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            className={cn(ROW, 'text-ui text-muted-foreground hover:text-foreground')}
           >
             Show {Math.min(hidden, SHOW_MORE_STEP)} more
           </button>
         )}
         {found.map(row)}
         {searching && recent.length === 0 && found.length === 0 && (
-          <p className="px-2 py-1 text-[11px] text-muted-foreground">No matching sessions</p>
+          <p className="px-2 py-1 text-ui text-muted-foreground">No matching sessions</p>
         )}
       </div>
     </div>

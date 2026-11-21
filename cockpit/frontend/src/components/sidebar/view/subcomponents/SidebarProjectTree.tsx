@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { Brain, Eye, EyeOff, Folder, Plus } from 'lucide-react';
 
 import { spaceTone } from '@/lib/space-color';
+import { cn } from '@/lib/utils';
+import { FOCUS, ROW } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 import { projectKey } from '../../spaceProjects';
@@ -16,9 +18,9 @@ function HiddenToggle({ controller }: { controller: SidebarController }) {
     <button
       type="button"
       onClick={controller.toggleShowHidden}
-      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+      className={cn(ROW, 'gap-1.5 text-ui text-muted-foreground hover:text-foreground')}
     >
-      {controller.showHidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+      {controller.showHidden ? <Eye aria-hidden className="size-3" /> : <EyeOff aria-hidden className="size-3" />}
       {controller.showHidden ? 'Hide hidden & archived' : `Show hidden & archived (${controller.hiddenCount})`}
     </button>
   );
@@ -56,9 +58,9 @@ function AddProjectHeading({
         title={space ? `Add project to ${space.name}` : 'Add project'}
         aria-label={space ? `Add project to ${space.name}` : 'Add project'}
         onClick={() => controller.addProjectTo(space)}
-        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className={cn('flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground', FOCUS)}
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus aria-hidden className="size-3.5" />
       </button>
     </div>
   );
@@ -142,11 +144,11 @@ export function SidebarProjectTree({ controller }: { controller: SidebarControll
             <div
               aria-hidden
               className="mx-2 h-px"
-              style={{ backgroundColor: `color-mix(in srgb, ${spaceTone(space) ?? 'var(--color-border)'} 60%, transparent)` }}
+              style={{ backgroundColor: `color-mix(in srgb, ${spaceTone(space) ?? 'var(--color-border)'} var(--mix-glow), transparent)` }}
             />
             <AddProjectHeading space={space} controller={controller}>
-              <div className="flex items-center gap-1.5 px-2 pt-1 text-[11px] font-medium text-foreground" title={`Space: ${space.name}`}>
-                <Brain className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+              <div className="flex items-center gap-1.5 px-2 pt-1 text-ui font-medium text-foreground" title={`Space: ${space.name}`}>
+                <Brain className="size-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
                 <span className="truncate">{space.name}</span>
               </div>
             </AddProjectHeading>

@@ -35,17 +35,17 @@ export function SidebarProjectActions({
       <SidebarIconAction title={starred ? 'Unpin project' : 'Pin project'} onActivate={() => onToggleStar(project)}>
         <Pin
           className={cn(
-            'h-3 w-3',
-            starred ? 'fill-muted-foreground text-muted-foreground' : 'text-muted-foreground/60',
+            'size-3 text-muted-foreground',
+            starred && 'fill-muted-foreground',
           )}
         />
       </SidebarIconAction>
       <SidebarIconAction title="Rename project" onActivate={() => onStartRename(project)}>
-        <Edit3 className="h-3 w-3 text-muted-foreground" />
+        <Edit3 className="size-3 text-muted-foreground" />
       </SidebarIconAction>
       {isBrain && (
         <SidebarIconAction title={folderTitle(project)} onActivate={() => onSetFolder(project)}>
-          <FolderPlus className={cn('h-3 w-3', project.fullPath ? 'text-muted-foreground' : 'text-primary')} />
+          <FolderPlus className={cn('size-3', project.fullPath ? 'text-muted-foreground' : 'text-foreground')} />
         </SidebarIconAction>
       )}
       {isBrain ? (
@@ -54,18 +54,17 @@ export function SidebarProjectActions({
           onActivate={() => onToggleHidden(project)}
         >
           {project.hidden ? (
-            <Eye className="h-3 w-3 text-muted-foreground" />
+            <Eye className="size-3 text-muted-foreground" />
           ) : (
-            <EyeOff className="h-3 w-3 text-muted-foreground" />
+            <EyeOff className="size-3 text-muted-foreground" />
           )}
         </SidebarIconAction>
       ) : (
         <SidebarIconAction
           title="Remove folder from cockpit"
           onActivate={() => onRequestRemove(project)}
-          className="hover:bg-muted dark:hover:bg-foreground/15"
         >
-          <Trash2 className="h-3 w-3 text-foreground" />
+          <Trash2 className="size-3 text-foreground" />
         </SidebarIconAction>
       )}
     </>

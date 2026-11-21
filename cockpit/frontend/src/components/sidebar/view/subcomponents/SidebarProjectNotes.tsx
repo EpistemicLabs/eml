@@ -12,10 +12,11 @@ import { cn } from '@/lib/utils';
 import { newSessionEntries, useProviders } from '@/lib/providers';
 import { paneViewDef, useViewEnabled } from '@/lib/pane-views';
 import { noteAge, parseBrainDate, useArchiveNote, useCreateNote, useRenameNote, useUnseenNotes, type Note } from '@/lib/notes';
-import { Button } from '@/shared/view/ui';
+import { FIELD, FOCUS, LABEL, POPOVER, ROW } from '@/shared/view/ui';
 import { forgetNoteInPanes, openInPane, openNote, useActivePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
 import { useRowMenu } from '../rowMenuContext';
+import { CHIP, CHIP_DELETE } from './SidebarParts';
 
 // The project's one "+" (0.15.1): a small menu — the new sessions, then the
 // plugins (brain view, and note / worktrees while on) — like the pane
@@ -83,8 +84,9 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
       <button
         type="button"
         className={cn(
-          'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-primary transition-colors hover:bg-primary/10',
-          open && 'bg-primary/10',
+          'flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md text-foreground transition-colors duration-(--duration-fast) hover:bg-muted',
+          open && 'bg-muted',
+          FOCUS,
         )}
         title="New pane (⌥-click: new session)"
         aria-label="New pane"
@@ -100,16 +102,17 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
           }
         }}
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus aria-hidden className="size-3.5" />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute top-full left-0 z-40 mt-1 min-w-[10rem] whitespace-nowrap rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
+          data-ui="v2"
+          className={cn(POPOVER, 'absolute top-full left-0 mt-1 min-w-40 whitespace-nowrap')}
         >
           {sections.map(({ title, items }, index) => (
             <Fragment key={title}>
-              <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
+              <div className={cn(LABEL, 'px-2 pb-0.5', index > 0 ? 'mt-1 border-t border-border pt-1.5' : 'pt-1')}>
                 {title}
               </div>
               {items.map(({ label, Icon, disabled, run }) => (
@@ -124,9 +127,9 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
                     setOpen(false);
                     run();
                   }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui text-foreground transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                  className={cn(ROW, 'min-h-(--target-comfortable) text-ui disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent')}
                 >
-                  <Icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
+                  <Icon aria-hidden className="size-3.5" strokeWidth={1.8} />
                   {label}
                 </button>
               ))}
@@ -137,10 +140,6 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
     </div>
   );
 }
-
-// Hover actions, same chip as session rows (SidebarSessionItem ROW_ACTION).
-const ROW_ACTION =
-  'flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground';
 
 /**
  * A note stays in the list while it still matters — open in a pane, changed by
@@ -175,8 +174,8 @@ export function SidebarProjectNotes({
     <div className="space-y-0.5">
       <SidebarGroupLabel>Notes</SidebarGroupLabel>
       {shown.map((note) => (
-        <div key={note.id} className={cn(oldNoteIds.has(note.id) && 'opacity-60')}>
-          <SidebarNoteItem project={project} note={note} currentTime={currentTime} />
+        <div key={note.id}>
+          <SidebarNoteItem project={project} note={note} currentTime={currentTime} old={oldNoteIds.has(note.id)} />
         </div>
       ))}
     </div>
@@ -185,10 +184,11 @@ export function SidebarProjectNotes({
 
 // The small caps label over a project's sessions and notes groups.
 export function SidebarGroupLabel({ children }: { children: string }) {
-  return <div className="px-2 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{children}</div>;
+  return <div className={cn(LABEL, 'px-2 pt-1')}>{children}</div>;
 }
 
-function SidebarNoteItem({ project, note, currentTime }: { project: Project; note: Note; currentTime: Date }) {
+/** An old note (behind History) shows its title in the muted text colour, never dimmed. */
+function SidebarNoteItem({ project, note, currentTime, old }: { project: Project; note: Note; currentTime: Date; old: boolean }) {
   const unseen = useUnseenNotes();
   const activePane = useActivePane();
   const rename = useRenameNote();
@@ -210,39 +210,40 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
 
   return (
     <div ref={rowRef} className={cn('group relative', archive.isPending && 'pointer-events-none opacity-50')} {...(menu ? longPress : {})}>
-      <Button
-        variant="ghost"
+      <button
+        type="button"
         className={cn(
-          'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50',
+          ROW,
+          'justify-start py-0 font-normal transition-colors duration-(--duration-fast)',
           menu ? 'h-10 pr-10' : 'h-7.5',
-          isSelected && 'bg-accent text-accent-foreground',
+          isSelected && 'bg-muted',
         )}
         onClick={() => openNote(note.id, project.projectId)}
         title={note.title}
       >
-        <div className={cn('flex w-full min-w-0 items-center gap-2', !menu && 'group-hover:pr-[56px]')}>
-          <NotebookPen className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{note.title}</span>
+        <div className={cn('flex w-full min-w-0 items-center gap-2', !menu && 'group-hover:pr-14')}>
+          <NotebookPen aria-hidden className="size-3 flex-shrink-0 text-muted-foreground" />
+          <span className={cn('min-w-0 flex-1 truncate text-ui font-medium', old ? 'text-muted-foreground' : 'text-foreground')}>{note.title}</span>
           {unseen.has(note.id) && (
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" title="Changed by the agent" />
+            <span className="size-1.5 flex-shrink-0 rounded-full bg-mark" title="Changed by the agent" />
           )}
-          <span className={cn('flex-shrink-0 text-[11px] text-muted-foreground', !menu && 'group-hover:hidden')}>
+          <span className={cn('flex-shrink-0 text-caption text-muted-foreground tabular-nums', !menu && 'group-hover:hidden')}>
             {noteAge(note.updatedAt, currentTime)}
           </span>
         </div>
-      </Button>
+      </button>
 
       {menu ? (
         <button
           type="button"
           aria-label={`Actions for ${note.title}`}
-          className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
+          className={cn('absolute top-0 right-0 flex size-10 items-center justify-center rounded-md text-muted-foreground active:text-foreground', FOCUS)}
           onClick={openMenu}
         >
-          <MoreHorizontal className="h-4 w-4" />
+          <MoreHorizontal aria-hidden className="size-4" />
         </button>
       ) : (
-      <div className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-all duration-200 group-hover:opacity-100">
+      <div className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity duration-(--duration-fast) group-focus-within:opacity-100 group-hover:opacity-100">
         {editing ? (
           <>
             <input
@@ -256,20 +257,20 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
               }}
               onClick={(event) => event.stopPropagation()}
               aria-label="Note title"
-              className="w-32 rounded border border-border bg-background px-2 py-1 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+              className={cn(FIELD, 'min-h-(--target-min) w-32 rounded-md px-2 text-ui')}
               autoFocus
             />
-            <button className={ROW_ACTION} onClick={(event) => { event.stopPropagation(); save(); }} title="Save">
-              <Check className="h-3 w-3" />
+            <button className={cn(CHIP, 'bg-muted text-foreground')} onClick={(event) => { event.stopPropagation(); save(); }} title="Save">
+              <Check className="size-3" />
             </button>
-            <button className={ROW_ACTION} onClick={(event) => { event.stopPropagation(); setEditing(false); }} title="Cancel">
-              <X className="h-3 w-3" />
+            <button className={CHIP} onClick={(event) => { event.stopPropagation(); setEditing(false); }} title="Cancel">
+              <X className="size-3" />
             </button>
           </>
         ) : (
           <>
             <button
-              className={ROW_ACTION}
+              className={CHIP}
               disabled={!brain.writable}
               onClick={(event) => {
                 event.stopPropagation();
@@ -278,10 +279,10 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
               }}
               title={brain.reason ?? 'Rename note'}
             >
-              <Edit2 className="h-3.5 w-3.5" />
+              <Edit2 className="size-3.5" />
             </button>
             <button
-              className={cn(ROW_ACTION, 'hover:border-destructive/60 hover:text-destructive')}
+              className={cn(CHIP, CHIP_DELETE)}
               disabled={!brain.writable}
               onClick={(event) => {
                 event.stopPropagation();
@@ -289,7 +290,7 @@ function SidebarNoteItem({ project, note, currentTime }: { project: Project; not
               }}
               title={brain.reason ?? 'Delete note (archived in the brain)'}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="size-3.5" />
             </button>
           </>
         )}

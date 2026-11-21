@@ -90,13 +90,14 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         <div
           data-sidebar-drawer
           className={cn(
-            'fixed inset-0 z-50 bg-black/40 transition-opacity duration-200',
+            'fixed inset-0 z-(--z-modal) bg-(--scrim) transition-opacity duration-(--duration-fast)',
             drawer.open ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
           aria-hidden
           onClick={drawer.onClose}
         />
         <div
+          data-ui="v2"
           role="dialog"
           aria-label="Projects and sessions"
           aria-hidden={!drawer.open}
@@ -105,10 +106,10 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
           // Sized to the visible viewport like the app: searching raises the keyboard, which would cover its lower part.
           style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
           className={cn(
-            'fixed top-0 left-0 z-50 flex w-[min(20rem,85vw)] flex-col border-r border-border bg-popover select-none',
+            'fixed top-0 left-0 z-(--z-modal) flex w-(--size-sidebar-drawer) flex-col border-r border-border bg-card select-none',
             // Off screen its shadow would still fall on the page's left edge.
-            drawer.open && 'shadow-2xl',
-            'pt-[env(safe-area-inset-top)] transition-transform duration-200 [-webkit-touch-callout:none]',
+            drawer.open && 'shadow-modal',
+            'pt-[env(safe-area-inset-top)] transition-transform duration-(--duration-fast) [-webkit-touch-callout:none]',
             !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]',
             drawer.open ? 'translate-x-0' : '-translate-x-full',
           )}
@@ -122,20 +123,18 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
   return (
     <>
       <SidebarModals controller={controller} />
-      <div className={cn('relative h-full', controller.isPinnedOpen ? 'w-68' : 'w-12')}>
+      <div data-ui="v2" className={cn('relative h-full', controller.isPinnedOpen ? 'w-(--size-sidebar)' : 'w-(--size-sidebar-rail)')}>
         <div
           onMouseEnter={openPanel}
           onMouseLeave={scheduleClose}
           className={cn(
-            'absolute top-0 left-0 z-50 h-full overflow-hidden rounded-xl transition-[width] duration-200',
-            isOpen
-              ? 'w-68 border border-border bg-popover shadow-2xl'
-              : 'frosted w-12 shadow-md',
+            'absolute top-0 left-0 z-(--z-modal) h-full overflow-hidden rounded-xl transition-[width] duration-(--duration-fast)',
+            isOpen ? 'glass-thick w-(--size-sidebar)' : 'glass w-(--size-sidebar-rail)',
           )}
         >
           <div
             className={cn(
-              'absolute top-0 left-0 h-full w-12 transition-opacity duration-150',
+              'absolute top-0 left-0 h-full w-(--size-sidebar-rail) transition-opacity duration-(--duration-fast)',
               isOpen ? 'pointer-events-none opacity-0' : 'opacity-100',
             )}
           >
@@ -143,7 +142,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
           </div>
           <div
             className={cn(
-              'absolute top-0 left-0 flex h-full w-68 flex-col select-none transition-[opacity,visibility] duration-150',
+              'absolute top-0 left-0 flex h-full w-(--size-sidebar) flex-col select-none transition-[opacity,visibility] duration-(--duration-fast)',
               isOpen ? 'opacity-100' : 'pointer-events-none invisible opacity-0',
             )}
           >
