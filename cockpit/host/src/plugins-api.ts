@@ -323,19 +323,32 @@ export async function handlePluginsApi(
     // address the browser ended on (google-sign-in.ts). Like the connections, for the user's own logins.
     const google = ctx.google
     if (pathname === '/api/plugins/google/client') {
+      // A sign-in made before (e.g. the bridge's accounts file) names the client it was made with.
+      const fromSignIns = (await service.connections()).filter((c) => c.values.credentialsFile && c.values.credentialsFile !== google.clientFile)
       if (method === 'PUT') {
-        const saved = await google.saveClient((await readJson(req)).client)
+        const body = await readJson(req)
+        const from = typeof body.fromConnection === 'string' ? fromSignIns.find((c) => c.id === body.fromConnection) : undefined
+        let client: unknown = body.client
+        if (from) {
+          try {
+            client = await fs.readFile(from.values.credentialsFile, 'utf8')
+          } catch {
+            return badRequest('The client file of that sign-in cannot be read')
+          }
+        }
+        const saved = await google.saveClient(client)
         if (!saved.ok) return badRequest(saved.reason)
       } else if (method !== 'GET') return false
-      json(res, 200, { configured: (await google.client()) !== null })
+      json(res, 200, { configured: (await google.client()) !== null, fromSignIns: fromSignIns.map((c) => ({ id: c.id, label: c.label })) })
       return true
     }
     if (pathname === '/api/plugins/google/sign-in' && method === 'POST') {
       const body = await readJson(req)
       const manifest = typeof body.plugin === 'string' ? await registry.get(body.plugin) : null
       if (!manifest || manifest.auth?.kind !== 'google-oauth') return badRequest('plugin is a plugin that signs in with Google')
-      const again = typeof body.connection === 'string' ? (await service.connections()).find((c) => c.id === body.connection && c.plugin === manifest.id) : undefined
-      const started = await google.start(manifest.auth.scopes, again?.values.tokenFile ?? null)
+      // Signed in again, a mailbox gets a token file of its own in the cockpit home: a file another
+      // program keeps (a sign-in made before the plugins) is never written. finish matches it by address.
+      const started = await google.start(manifest.auth.scopes)
       if (!started.ok) return badRequest(started.reason)
       json(res, 200, { url: started.url })
       return true

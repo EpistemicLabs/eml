@@ -102,12 +102,19 @@ export function useSetPlugin() {
 
 // ── A Google sign-in with the user's own OAuth client (host: google-sign-in.ts) ──
 
+/** Whether the user's own Google OAuth client is stored, and the earlier sign-ins whose client could be used. */
 export function useGoogleClient() {
-  return useQuery({ queryKey: [...adminKey, 'google-client'], queryFn: () => request<{ configured: boolean }>('/api/plugins/google/client').then((b) => b.configured), retry: false });
+  return useQuery({
+    queryKey: [...adminKey, 'google-client'],
+    queryFn: () => request<{ configured: boolean; fromSignIns?: Array<{ id: string; label: string }> }>('/api/plugins/google/client')
+      .then((b) => ({ configured: b.configured, fromSignIns: b.fromSignIns ?? [] })),
+    retry: false,
+  });
 }
 
+/** Stores the client: pasted JSON, or the one an earlier sign-in was made with. */
 export function useSaveGoogleClient() {
-  return useChange((client: string) => request('/api/plugins/google/client', send('PUT', { client })));
+  return useChange((input: { client: string } | { fromConnection: string }) => request('/api/plugins/google/client', send('PUT', input)));
 }
 
 /** Google's consent page for a new sign-in, or to sign an existing one in again. */

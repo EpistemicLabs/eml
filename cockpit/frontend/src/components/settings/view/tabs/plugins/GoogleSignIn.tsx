@@ -17,17 +17,25 @@ import { Button, FOCUS, Input, Textarea } from '@/shared/view/ui';
 
 import { SlugField } from './shared';
 
-function ClientStep() {
+function ClientStep({ fromSignIns }: { fromSignIns: Array<{ id: string; label: string }> }) {
   const save = useSaveGoogleClient();
   const [text, setText] = useState('');
   return (
     <div className="space-y-2">
+      {fromSignIns.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-ui text-muted-foreground">Use the OAuth client your earlier sign-in was made with:</span>
+          {fromSignIns.map((c) => (
+            <Button key={c.id} size="sm" variant="outline" loading={save.isPending} onClick={() => save.mutate({ fromConnection: c.id })}>{c.label}</Button>
+          ))}
+        </div>
+      )}
       <p className="text-ui text-muted-foreground">
         First your own Google OAuth client, once: in Google Cloud Console enable the Gmail API and the Google Calendar API, then
         under Credentials create an OAuth client ID of type <b className="text-foreground">Desktop app</b> and download its JSON. Paste it here; it stays on this cockpit, readable by you only.
       </p>
       <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder='{"installed": {"client_id": "…", …}}' className="font-code text-ui" aria-label="OAuth client JSON" />
-      <Button size="sm" disabled={!text.trim()} loading={save.isPending} onClick={() => save.mutate(text, { onSuccess: () => setText('') })}>Save client</Button>
+      <Button size="sm" disabled={!text.trim()} loading={save.isPending} onClick={() => save.mutate({ client: text }, { onSuccess: () => setText('') })}>Save client</Button>
       {save.isError && <p className="text-ui text-stopped-ink">{save.error.message}</p>}
     </div>
   );
@@ -83,8 +91,8 @@ export function GoogleSignIn({ plugin, another }: { plugin: PluginView; another:
   }
   return (
     <div className="space-y-3 border-t border-border pt-3">
-      {client.data === false && <ClientStep />}
-      {client.data === true && <ConsentSteps plugin={plugin} slugField={another} onDone={() => setOpen(false)} />}
+      {client.data?.configured === false && <ClientStep fromSignIns={client.data.fromSignIns} />}
+      {client.data?.configured === true && <ConsentSteps plugin={plugin} slugField={another} onDone={() => setOpen(false)} />}
       {client.isError && <p className="text-ui text-stopped-ink">{client.error.message}</p>}
       <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
     </div>
@@ -93,11 +101,18 @@ export function GoogleSignIn({ plugin, another }: { plugin: PluginView; another:
 
 /** "Sign in again" for a sign-in Google withdrew or that should get new scopes. */
 export function GoogleSignInAgain({ plugin, connection }: { plugin: PluginView; connection: ConnectionView }) {
+  const client = useGoogleClient();
   const [open, setOpen] = useState(false);
   if (!open) return <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Sign in again</Button>;
   return (
     <div className="w-full basis-full space-y-2">
-      <ConsentSteps plugin={plugin} connection={connection} slugField={false} onDone={() => setOpen(false)} />
+      {client.data?.configured === false && <ClientStep fromSignIns={client.data.fromSignIns} />}
+      {client.data?.configured === true && (
+        <>
+          <p className="text-ui text-muted-foreground">Sign in with {connection.address ?? connection.label} on Google's page.</p>
+          <ConsentSteps plugin={plugin} connection={connection} slugField={false} onDone={() => setOpen(false)} />
+        </>
+      )}
       <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
     </div>
   );
