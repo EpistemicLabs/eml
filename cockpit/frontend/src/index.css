@@ -332,8 +332,8 @@ html.dark {
   --term-ansi-bright-magenta: #8a2e83;
   --term-ansi-bright-cyan: #0d5a7d;
   --term-ansi-bright-white: #3c3c43;
-  --term-match: #fde68a;
-  --term-match-active: #f59e0b;
+  --term-match: #e5e5ea;
+  --term-match-active: #aeaeb2;
   /* area: brain and review */
   /* area: app shell */
   /* The gap above the top bar, under the status bar on a phone. */
@@ -457,8 +457,8 @@ html.dark {
   --term-ansi-bright-magenta: #d670d6;
   --term-ansi-bright-cyan: #29b8db;
   --term-ansi-bright-white: #ffffff;
-  --term-match: #5c4a12;
-  --term-match-active: #b45309;
+  --term-match: #3a3a3c;
+  --term-match-active: #636366;
   /* area: brain and review */
   color-scheme: dark;
 }
@@ -577,9 +577,9 @@ body {
 /* Tables keep one line per row and show all their rows: wide ones scroll sideways, none scrolls down. */
 .chat-pane [data-streamdown="table-wrapper"] > div:has(> table) { max-height: none !important; overflow-y: hidden; }
 .chat-pane [data-streamdown="table-cell"] { white-space: nowrap; }
-/* Search marks are a highlighter's amber, the current match outlined in the same hue. */
-.chat-pane [data-chat-current] { outline: var(--width-chat-current) solid var(--color-status-you); outline-offset: var(--focus-offset); border-radius: calc(var(--spacing) * .5); }
-::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-status-you) var(--mix-edge), transparent); }
+/* Search marks are neutral (amber means "needs you"): a grey wash, the current match outlined in the text colour. */
+.chat-pane [data-chat-current] { outline: var(--width-chat-current) solid var(--color-foreground); outline-offset: var(--focus-offset); border-radius: calc(var(--spacing) * .5); }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-foreground) var(--mix-flash), transparent); }
 /* Below --text-field-touch (16px), iOS zooms the page when a field takes the focus. */
 @media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: var(--text-field-touch); } }
 
