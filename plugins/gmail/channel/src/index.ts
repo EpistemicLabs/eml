@@ -7,6 +7,7 @@ export { GmailAccount } from './gmail-account'
 export type { GmailAccountOptions } from './gmail-account'
 export { GoogleRefreshToken } from './google-refresh-token'
 export type { AccessToken, AccessTokens } from './google-refresh-token'
+export { GoogleServiceAccount, googleAccessTokens, SERVICE_ACCOUNT_SCOPES } from './google-service-account'
 
 const gmailConfigSchema = z.object({
   type: z.literal('gmail'),
