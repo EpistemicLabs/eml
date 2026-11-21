@@ -5,7 +5,8 @@
 // and its commits ahead. Read-only; a session opens on click. Data:
 // /api/plugins/worktrees/git and /ports (host plugins-api.ts), the sessions
 // from the project list (their workdir, from the agent's hooks). Drawn with
-// the brain surface's cards (../brain/ui.tsx).
+// the brain surface's cards (../brain/ui.tsx). Tokens v2: state is grey with a
+// label; only a session waiting for you is amber.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, ExternalLink, GitBranch, Loader2, RefreshCw, Terminal } from 'lucide-react';
@@ -13,6 +14,7 @@ import { ChevronRight, ExternalLink, GitBranch, Loader2, RefreshCw, Terminal } f
 import { BrainCard, SectionHeader } from '@/components/brain/ui';
 import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import { cn } from '@/lib/utils';
+import { FOCUS, LABEL } from '@/shared/view/ui';
 import { openInPane } from '@/stores/usePaneStore';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { Project, ProjectSession } from '@/types/app';
@@ -63,8 +65,6 @@ interface ListeningPort {
 
 // While the pane is open and the window has focus; the button refreshes at once.
 const REFRESH_MS = 30_000;
-const CHANGED = 'var(--color-review)';
-const AHEAD = 'var(--color-primary)';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api/plugins/worktrees/${path}`, { headers: { Accept: 'application/json' } });
@@ -101,7 +101,7 @@ export function WorktreesPane({ project }: { project: Project | null }) {
 
   if (!project) return <PaneMessage>Pick a project for this pane to see its worktrees.</PaneMessage>;
   if (!project.path) return <PaneMessage>This project has no folder yet — worktrees are a git folder's checkouts.</PaneMessage>;
-  if (git.isPending) return <PaneMessage><Loader2 className="h-4 w-4 animate-spin" /></PaneMessage>;
+  if (git.isPending) return <PaneMessage><Loader2 aria-hidden className="size-4 animate-spin" /></PaneMessage>;
   if (git.isError) return <PaneMessage>{git.error.message}</PaneMessage>;
 
   const now = new Date();
@@ -125,7 +125,7 @@ export function WorktreesPane({ project }: { project: Project | null }) {
       .sort((a, b) => Number(b.wt.isProjectFolder) - Number(a.wt.isProjectFolder) || (b.at ?? '').localeCompare(a.at ?? ''));
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div data-ui="v2" className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-2">
         <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={folder}>
           {worktrees
@@ -137,14 +137,14 @@ export function WorktreesPane({ project }: { project: Project | null }) {
           onClick={() => { void git.refetch(); void ports.refetch(); }}
           aria-label="Refresh"
           title="Refresh"
-          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+          className={cn("flex size-(--target-min) items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground", FOCUS)}
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          <RefreshCw aria-hidden className={cn('size-3.5', refreshing && 'animate-spin')} />
         </button>
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pb-3">
         {!worktrees ? (
-          <BrainCard className="p-4 text-sm text-muted-foreground">The project folder is no git repository.</BrainCard>
+          <BrainCard className="p-4 text-body text-muted-foreground">The project folder is no git repository.</BrainCard>
         ) : (
           rows(worktrees).map(({ wt, here, at }) => (
             <WorktreeCard key={wt.path} worktree={wt} base={base} projectId={project.projectId} sessions={here} ports={portsOf(wt)} lastActive={at} now={now} />
@@ -171,27 +171,26 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
 }) {
   const [open, setOpen] = useState(false);
   const { branch, dirty, ahead, behind, lastCommit, changes, commits } = worktree;
-  const accent = dirty > 0 ? CHANGED : ahead ? AHEAD : 'var(--color-muted-foreground)';
 
   return (
-    <BrainCard className="border-l-[3px] px-2.5 py-2" style={{ borderLeftColor: accent }}>
+    <BrainCard className="px-2.5 py-2">
       {/* Folded: one line to scan — branch, its state, who works there, what runs there. */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 text-left"
+        className={cn("flex min-h-(--target-min) w-full min-w-0 items-center gap-2 rounded-md text-left", FOCUS)}
       >
-        <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
-        <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate text-sm font-semibold text-foreground" title={worktree.path}>
+        <ChevronRight aria-hidden className={cn('size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90')} />
+        <GitBranch aria-hidden className="size-3.5 flex-shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-body font-semibold text-foreground" title={worktree.path}>
           {branch ?? `detached at ${worktree.head.slice(0, 7)}`}
         </span>
         {worktree.isProjectFolder && <Chip>project folder</Chip>}
         <span className="ml-auto flex flex-shrink-0 items-center gap-1.5">
-          {dirty > 0 && <Chip color={CHANGED}>{dirty} changed</Chip>}
+          {dirty > 0 && <Chip strong>{dirty} changed</Chip>}
           {ahead !== null && behind !== null && (ahead > 0 || behind > 0) && (
-            <Chip color={ahead > 0 ? AHEAD : undefined} title={`${ahead} commits ahead of ${base}, ${behind} behind`}>
+            <Chip strong={ahead > 0} title={`${ahead} commits ahead of ${base}, ${behind} behind`}>
               ↑{ahead} ↓{behind}
             </Chip>
           )}
@@ -208,9 +207,9 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
       </button>
 
       {open && (
-        <div className="mt-2 space-y-2.5 pl-[22px]">
+        <div className="mt-2 space-y-2.5 pl-(--indent-worktree)">
           <div className="flex min-w-0 items-center gap-2 text-caption text-muted-foreground">
-            <span className="min-w-0 truncate font-mono" title={worktree.path}>{worktree.path}</span>
+            <span className="min-w-0 truncate font-code" title={worktree.path}>{worktree.path}</span>
             {worktree.createdAt && <span className="flex-shrink-0">· added {age(worktree.createdAt, now)} ago</span>}
           </div>
           {(sessions.length > 0 || ports.length > 0) && (
@@ -222,9 +221,9 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
           {changes.length > 0 && (
             <DetailList title={`Changed files${dirty > changes.length ? ` · first ${changes.length} of ${dirty}` : ''}`}>
               {changes.map((change) => (
-                <div key={change.path} className="flex min-w-0 gap-2 text-xs">
-                  <span className="w-5 flex-shrink-0 font-mono" style={{ color: CHANGED }}>{change.code.trim() || '·'}</span>
-                  <span className="min-w-0 truncate font-mono text-foreground/85" title={change.path}>{change.path}</span>
+                <div key={change.path} className="flex min-w-0 gap-2 text-ui">
+                  <span className="w-5 flex-shrink-0 font-code font-semibold text-foreground">{change.code.trim() || '·'}</span>
+                  <span className="min-w-0 truncate font-code text-foreground" title={change.path}>{change.path}</span>
                 </div>
               ))}
             </DetailList>
@@ -247,9 +246,9 @@ function WorktreeCard({ worktree, base, projectId, sessions, ports, lastActive, 
 
 function CommitRow({ commit, now }: { commit: Commit; now: Date }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-2 text-xs">
-      <span className="flex-shrink-0 font-mono text-muted-foreground">{commit.hash}</span>
-      <span className="min-w-0 flex-1 truncate text-foreground/85" title={commit.subject}>{commit.subject}</span>
+    <div className="flex min-w-0 items-baseline gap-2 text-ui">
+      <span className="flex-shrink-0 font-code text-muted-foreground">{commit.hash}</span>
+      <span className="min-w-0 flex-1 truncate text-foreground" title={commit.subject}>{commit.subject}</span>
       <span className="flex-shrink-0 tabular-nums text-muted-foreground">{age(commit.at, now)}</span>
     </div>
   );
@@ -282,8 +281,9 @@ function Dot({ state }: { state: SessionState }) {
   return (
     <span
       className={cn(
-        'block h-1.5 w-1.5 flex-shrink-0 rounded-full',
-        state === 'working' ? 'animate-pulse bg-foreground' : state ? 'bg-primary' : 'bg-foreground/25',
+        'block size-1.5 flex-shrink-0 rounded-full',
+        // Waiting for you is the one amber state; finished is the text colour, idle a grey.
+        state === 'working' ? 'animate-pulse bg-foreground' : state === 'waiting' ? 'bg-status-you' : state ? 'bg-foreground' : 'bg-border-strong',
       )}
     />
   );
@@ -296,11 +296,11 @@ function SessionRow({ session, projectId, now }: { session: ProjectSession; proj
     <button
       type="button"
       onClick={() => openInPane({ surface: 'terminal', projectId, sessionId: session.id })}
-      className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs transition-colors hover:bg-foreground/5"
+      className={cn("-mx-1.5 flex min-h-(--target-min) w-(--size-worktree-row) min-w-0 items-center gap-2 rounded-md px-1.5 text-left text-ui transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}
     >
       <span className="flex w-3 flex-shrink-0 justify-center"><Dot state={state} /></span>
       <span className="min-w-0 flex-1 truncate text-foreground">{sessionDisplayName(session)}</span>
-      {word && <span className="flex-shrink-0 text-caption text-primary">{word}</span>}
+      {word && <span className={cn('flex-shrink-0 text-caption', state === 'waiting' ? 'text-you-ink' : 'text-muted-foreground')}>{word}</span>}
       <span className="w-10 flex-shrink-0 text-right tabular-nums text-caption text-muted-foreground">{age(session.lastActivity as string | undefined, now)}</span>
     </button>
   );
@@ -323,9 +323,9 @@ function OtherPorts({ ports, now }: { ports: ListeningPort[]; now: Date }) {
             type="button"
             onClick={() => setShowSystem((s) => !s)}
             aria-expanded={showSystem}
-            className="mt-1.5 flex items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground"
+            className={cn("mt-1.5 flex min-h-(--target-min) items-center gap-1 rounded-md text-caption text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground", FOCUS)}
           >
-            <ChevronRight className={cn('h-3 w-3 transition-transform', showSystem && 'rotate-90')} />
+            <ChevronRight aria-hidden className={cn('size-3 transition-transform duration-(--duration-fast)', showSystem && 'rotate-90')} />
             {system.length} system {system.length === 1 ? 'port' : 'ports'}: apps and services outside your home folder
           </button>
           {showSystem && (
@@ -346,23 +346,23 @@ function PortRow({ port, now }: { port: ListeningPort; now: Date }) {
   const reachable = local || port.address === '*' || port.address === '0.0.0.0' || port.address === '::';
   const { session } = port;
   return (
-    <div className="group/port min-w-0 rounded-md px-1.5 py-1 hover:bg-foreground/[0.03]">
-      <div className="flex min-w-0 items-center gap-2 text-xs">
-        <span className="w-14 flex-shrink-0 font-mono font-medium tabular-nums text-foreground">:{port.port}</span>
-        <span className="min-w-0 truncate font-medium text-foreground/90">{port.label ?? port.command}</span>
+    <div className="group/port min-w-0 rounded-md px-1.5 py-1 hover:bg-muted">
+      <div className="flex min-w-0 items-center gap-2 text-ui">
+        <span className="w-14 flex-shrink-0 font-code font-medium tabular-nums text-foreground">:{port.port}</span>
+        <span className="min-w-0 truncate font-medium text-foreground">{port.label ?? port.command}</span>
         {session && (
           <button
             type="button"
             onClick={() => openInPane({ surface: 'terminal', projectId: session.projectId, sessionId: session.id })}
             title="Started by this cockpit session: open it"
-            className="flex min-w-0 flex-shrink items-center gap-1 rounded-full border border-primary/40 px-1.5 py-px text-[10px] text-primary transition-colors hover:bg-primary/10"
+            className={cn("flex min-h-(--target-min) min-w-0 flex-shrink items-center gap-1 rounded-full border border-border-strong px-2 text-caption text-foreground transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}
           >
-            <Terminal className="h-2.5 w-2.5 flex-shrink-0" />
+            <Terminal aria-hidden className="size-2.5 flex-shrink-0" />
             <span className="truncate">{session.name ?? 'cockpit session'}</span>
           </button>
         )}
         <span className="ml-auto flex flex-shrink-0 items-center gap-2 text-caption tabular-nums text-muted-foreground">
-          {!local && <Chip color={CHANGED} title={`Listens on ${port.address}: reachable from other machines`}>{port.address}</Chip>}
+          {!local && <Chip strong title={`Listens on ${port.address}: reachable from other machines`}>{port.address}</Chip>}
           {port.memory !== null && <span title="Memory in use">{megabytes(port.memory)}</span>}
           <span className="w-8 text-right" title={port.startedAt ? `Running since ${new Date(port.startedAt).toLocaleString()}` : undefined}>
             {age(port.startedAt, now)}
@@ -373,15 +373,16 @@ function PortRow({ port, now }: { port: ListeningPort; now: Date }) {
               target="_blank"
               rel="noopener noreferrer"
               title={`Open http://localhost:${port.port}`}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+              aria-label={`Open http://localhost:${port.port}`}
+              className={cn("flex size-(--target-min) items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground", FOCUS)}
             >
-              <ExternalLink className="h-3 w-3" />
+              <ExternalLink aria-hidden className="size-3" />
             </a>
-          ) : <span className="w-5" />}
+          ) : <span className="w-(--target-min)" />}
         </span>
       </div>
       {port.commandLine && (
-        <div className="mt-0.5 truncate pl-16 font-mono text-[11px] text-muted-foreground" title={`${port.commandLine}${port.cwd ? `\nin ${port.cwd}` : ''}\npid ${port.pid}`}>
+        <div className="mt-0.5 truncate pl-16 font-code text-caption text-muted-foreground" title={`${port.commandLine}${port.cwd ? `\nin ${port.cwd}` : ''}\npid ${port.pid}`}>
           {port.commandLine}
         </div>
       )}
@@ -392,18 +393,18 @@ function PortRow({ port, now }: { port: ListeningPort; now: Date }) {
 function DetailList({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{title}</div>
+      <div className={cn(LABEL, "mb-1")}>{title}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );
 }
 
-function Chip({ children, color, title }: { children: React.ReactNode; color?: string; title?: string }) {
+/** A worktree fact; strong (text colour, strong edge) when it is worth a look: changes, commits ahead, an open port. */
+function Chip({ children, strong = false, title }: { children: React.ReactNode; strong?: boolean; title?: string }) {
   return (
     <span
       title={title}
-      className={cn('flex-shrink-0 rounded-full border px-1.5 py-px text-[10px] font-medium tabular-nums', !color && 'border-foreground/15 text-muted-foreground')}
-      style={color ? { color, borderColor: `color-mix(in srgb, ${color} 40%, transparent)` } : undefined}
+      className={cn('flex-shrink-0 rounded-full border px-1.5 text-caption font-medium tabular-nums', strong ? 'border-border-strong text-foreground' : 'border-border text-muted-foreground')}
     >
       {children}
     </span>
@@ -414,7 +415,7 @@ const Count = ({ n }: { n: number }) => <span className="text-caption tabular-nu
 
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+    <div data-ui="v2" className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
       {children}
     </div>
   );

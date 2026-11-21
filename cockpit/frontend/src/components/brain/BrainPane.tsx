@@ -9,11 +9,12 @@ import { useMemo, useState } from "react";
 
 import { useList } from "@/lib/queries";
 import type { Engram, EngramType } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import type { Project } from "@/types/app";
 import { EngramRow } from "@/components/engram-row";
 import { Timeline } from "@/components/timeline/timeline";
-import { TYPE_COLORS, TYPE_ORDER, typeChipStyle } from "@/components/ui/badge";
-import { Input } from "@/shared/view/ui";
+import { FOCUS, Input } from "@/shared/view/ui";
+import { TYPE_ORDER, TypeToggle } from "@/shared/view/ui/EngramType";
 import { updatePane, usePane, type BrainPaneView } from "@/stores/usePaneStore";
 import { EmptyNote, Segmented } from "./ui";
 
@@ -73,11 +74,11 @@ export function BrainPane({ paneId, project = null }: { paneId: string; project?
   const ids = engrams.map((e) => e.id);
 
   return (
-    <div className="@container flex h-full min-h-0 flex-col">
+    <div data-ui="v2" className="@container flex h-full min-h-0 flex-col">
       {/* Toolbar: row 1 = lens switcher (+ scope in a
           brain project) and the search taking the rest of the width; row 2 =
           the type chips. */}
-      <div className="flex flex-shrink-0 flex-col gap-2.5 border-b border-foreground/15 px-2 pt-2 pb-2.5">
+      <div className="flex flex-shrink-0 flex-col gap-2.5 border-b border-border px-2 pt-2 pb-2.5">
         <div className="flex items-center gap-1.5">
           <Segmented value={lens} options={LENSES} onChange={setLens} ariaLabel="Brain lens" />
           {brainProjectId && (
@@ -88,13 +89,14 @@ export function BrainPane({ paneId, project = null }: { paneId: string; project?
               placeholder="Search the brain…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              className="h-7 text-ui"
+              className="pr-8"
             />
             {searching && (
               <button
                 type="button"
                 onClick={() => setQ("")}
-                className="absolute top-1/2 right-2 -translate-y-1/2 text-caption text-muted-foreground hover:text-foreground"
+                aria-label="Clear the search"
+                className={cn("absolute top-1/2 right-1 grid size-(--target-min) -translate-y-1/2 place-items-center rounded-md text-caption text-muted-foreground hover:text-foreground", FOCUS)}
               >
                 ✕
               </button>
@@ -105,18 +107,14 @@ export function BrainPane({ paneId, project = null }: { paneId: string; project?
           <div className="flex flex-wrap items-center gap-1.5">
             {presentTypes.map((t) => {
               const on = activeTypes.has(t);
-              const color = TYPE_COLORS[t];
               return (
-                <button
+                <TypeToggle
                   key={t}
-                  type="button"
+                  type={t}
+                  on={on}
                   onClick={(e) => pick(t, e.metaKey || e.shiftKey)}
                   title="Click to hide/show this type · Shift/Cmd-click to show only this type"
-                  className="h-6 rounded-full border px-2 text-caption font-medium capitalize transition-opacity"
-                  style={typeChipStyle(color, on)}
-                >
-                  {t}
-                </button>
+                />
               );
             })}
           </div>

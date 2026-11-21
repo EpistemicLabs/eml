@@ -6,15 +6,21 @@ import { ChevronDown, ChevronRight, Pause, Play, RotateCw, Trash2 } from 'lucide
 
 import { api } from '@/utils/api';
 import { cn } from '@/lib/utils';
+import { FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 import { splitEnded } from '@/lib/job-run-label';
 import { formatAgo, formatWhen, openSession, runLabel, type Job, type JobRun } from './jobs';
 
+// Colour only for meaning: amber when the run waits for you, red when it failed; fine is plain text.
 const TONE: Record<ReturnType<typeof runLabel>['tone'], string> = {
-  ok: 'text-success',
-  attention: 'text-warning',
-  bad: 'text-destructive',
+  ok: 'text-foreground',
+  attention: 'text-you-ink',
+  bad: 'text-stopped-ink',
   muted: 'text-muted-foreground',
 };
+/** An inline text action: underlined text, the focus ring around it. */
+const LINK = cn('rounded-sm text-ui font-medium text-foreground underline underline-offset-2 hover:no-underline disabled:opacity-60', FOCUS);
+/** The second click of something that cannot be taken back quietly: red. */
+const CONFIRM = cn('min-h-(--target-min) rounded-full bg-status-stopped/12 px-2.5 text-ui font-medium text-stopped-ink hover:bg-status-stopped/20 disabled:opacity-60', FOCUS);
 
 export default function JobsView() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -44,22 +50,22 @@ export default function JobsView() {
   const spaces = jobs ? [...new Set(jobs.map((job) => job.spaceName))] : [];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
+    <div data-ui="v2" className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-6 py-5">
       <div className="mx-auto w-full max-w-4xl">
-        <h1 className="text-lg font-semibold text-foreground">Jobs</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="text-display font-semibold tracking-title text-foreground">Jobs</h1>
+        <p className="mt-1 text-body text-muted-foreground">
           Work the cockpit wakes a session for, on a schedule. Sessions set them up with their schedule tool; times
           read in {timeZone ?? 'your time zone'}.
         </p>
-        {error && <p className="mt-4 text-sm text-destructive">Jobs could not be loaded: {error}</p>}
+        {error && <p role="alert" className="mt-4 text-body text-stopped-ink">Jobs could not be loaded: {error}</p>}
         {jobs && jobs.length === 0 && (
-          <p className="mt-8 text-sm text-muted-foreground">
+          <p className="mt-8 text-body text-muted-foreground">
             No jobs yet. Ask an agent for something on a schedule, for example "every weekday at 8:00 write the daily brief".
           </p>
         )}
         {spaces.map((spaceName) => (
           <section key={spaceName} className="mt-6">
-            {spaces.length > 1 && <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{spaceName}</h2>}
+            {spaces.length > 1 && <h2 className={cn(LABEL, "mb-2")}>{spaceName}</h2>}
             <SpaceJobs jobs={jobs!.filter((job) => job.spaceName === spaceName)} onChanged={load} />
           </section>
         ))}
@@ -76,8 +82,8 @@ function SpaceJobs({ jobs, onChanged }: { jobs: Job[]; onChanged: () => Promise<
     <div className="flex flex-col gap-2">
       {open.map((job) => <JobCard key={job.id} job={job} onChanged={onChanged} />)}
       {ended.length > 0 && (
-        <button type="button" onClick={() => setShowEnded(!showEnded)} className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground">
-          {showEnded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        <button type="button" onClick={() => setShowEnded(!showEnded)} className={cn("flex min-h-(--target-min) items-center gap-1 self-start rounded-md text-ui text-muted-foreground hover:text-foreground", FOCUS)}>
+          {showEnded ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
           Ended ({ended.length})
         </button>
       )}
@@ -127,28 +133,29 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
   };
 
   return (
-    <div className={cn('rounded-lg border border-foreground/10 bg-foreground/[0.02] px-4 py-3', state && 'opacity-75')}>
+    // An ended or paused job reads as such by its dashed edge and its state chip, never by fading its controls.
+    <div className={cn('rounded-xl border px-4 py-3', state ? 'border-dashed border-border-strong bg-transparent' : 'border-border bg-card shadow-card')}>
       <div className="flex items-start gap-3">
-        <button type="button" onClick={() => setOpen(!open)} className="mt-0.5 text-muted-foreground hover:text-foreground" aria-label={open ? 'Hide details' : 'Show details'}>
-          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <button type="button" onClick={() => setOpen(!open)} className={cn("grid size-(--target-min) shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground", FOCUS)} aria-label={open ? 'Hide details' : 'Show details'}>
+          {open ? <ChevronDown aria-hidden className="size-4" /> : <ChevronRight aria-hidden className="size-4" />}
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-medium text-foreground">{job.name}</span>
-            {state && <span className="rounded bg-foreground/10 px-1.5 py-px text-[11px] text-muted-foreground">{state}</span>}
-            {job.pendingApproval && <span className="rounded bg-warning/15 px-1.5 py-px text-[11px] text-warning">Waiting for your OK</span>}
-            <span className="text-xs text-muted-foreground">{job.schedule} · wakes {job.wakes}</span>
+            <span className="text-body font-medium text-foreground">{job.name}</span>
+            {state && <span className="rounded-full bg-muted px-2 text-caption font-medium text-muted-foreground">{state}</span>}
+            {job.pendingApproval && <span className="rounded-full bg-status-you/12 px-2 text-caption font-medium text-you-ink">Waiting for your OK</span>}
+            <span className="text-ui text-muted-foreground">{job.schedule} · wakes {job.wakes}</span>
           </div>
-          {job.goal && <div className="mt-1 text-sm text-foreground/80">Goal: {job.goal}</div>}
-          <div className="mt-1 text-sm text-muted-foreground">
+          {job.goal && <div className="mt-1 text-body text-foreground">Goal: {job.goal}</div>}
+          <div className="mt-1 text-body text-muted-foreground">
             {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map(formatWhen).join(' · ')}</>}
-            {job.pausedReason && <span className="text-warning">{job.pausedReason}</span>}
+            {job.pausedReason && <span className="text-you-ink">{job.pausedReason}</span>}
           </div>
           {last && <LastRun run={last} spaceId={job.spaceId} />}
           {job.pendingApproval && (
-            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-warning/10 px-2 py-1.5 text-sm">
-              <span className="text-foreground/90">This job wants to react to {job.schedule.split(' + ').filter((part) => part.startsWith('on ')).map((part) => part.slice(3)).join(' and ')}. Mail for it waits until you approve.</span>
-              <button type="button" onClick={() => void decide(() => api.approveJob(job.id))} disabled={busy} className="rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-status-you/40 bg-status-you/10 px-2.5 py-1.5 text-body">
+              <span className="text-foreground">This job wants to react to {job.schedule.split(' + ').filter((part) => part.startsWith('on ')).map((part) => part.slice(3)).join(' and ')}. Mail for it waits until you approve.</span>
+              <button type="button" onClick={() => void decide(() => api.approveJob(job.id))} disabled={busy} className={cn(PRIMARY, "min-h-(--target-min) px-3 text-ui")}>
                 Approve
               </button>
             </div>
@@ -156,76 +163,76 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
           {channels.map((channel) => {
             const mode = job.reply[channel] ?? 'draft';
             return (
-              <div key={channel} className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                <span>Replies on {channel}: <span className={mode === 'send' ? 'text-warning' : 'text-foreground/90'}>{mode === 'send' ? 'sent without asking' : 'drafts you approve'}</span></span>
+              <div key={channel} className="mt-1 flex flex-wrap items-center gap-2 text-body text-muted-foreground">
+                <span>Replies on {channel}: <span className={mode === 'send' ? 'font-medium text-foreground' : 'text-foreground'}>{mode === 'send' ? 'sent without asking' : 'drafts you approve'}</span></span>
                 {mode === 'send' ? (
-                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'draft'))} disabled={busy} className="text-xs text-primary hover:underline">Back to drafts</button>
+                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'draft'))} disabled={busy} className={LINK}>Back to drafts</button>
                 ) : confirmSend === channel ? (
-                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'send'))} disabled={busy} className="rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/25">
+                  <button type="button" onClick={() => void decide(() => api.setJobReply(job.id, channel, 'send'))} disabled={busy} className={CONFIRM}>
                     Yes, send without asking
                   </button>
                 ) : (
-                  <button type="button" onClick={() => setConfirmSend(channel)} disabled={busy} className="text-xs text-primary hover:underline">Let it send…</button>
+                  <button type="button" onClick={() => setConfirmSend(channel)} disabled={busy} className={LINK}>Let it send…</button>
                 )}
               </div>
             );
           })}
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-body text-muted-foreground">
             {job.limited ? (
               <>
-                <span><span className="text-foreground/90">Limited</span>: no shell, no messages to sessions, only the brain</span>
+                <span><span className="text-foreground">Limited</span>: no shell, no messages to sessions, only the brain</span>
                 {confirmFree ? (
-                  <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, false))} disabled={busy} className="rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/25">
+                  <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, false))} disabled={busy} className={CONFIRM}>
                     Yes, give it all its tools
                   </button>
                 ) : (
-                  <button type="button" onClick={() => setConfirmFree(true)} disabled={busy} className="text-xs text-primary hover:underline">Remove limits…</button>
+                  <button type="button" onClick={() => setConfirmFree(true)} disabled={busy} className={LINK}>Remove limits…</button>
                 )}
               </>
             ) : (
               <>
                 <span>Runs with all its maker’s tools</span>
-                <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, true))} disabled={busy} className="text-xs text-primary hover:underline">Limit it</button>
+                <button type="button" onClick={() => void decide(() => api.setJobLimited(job.id, true))} disabled={busy} className={LINK}>Limit it</button>
               </>
             )}
           </div>
           {job.limited && !job.endedAt && (
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-body text-muted-foreground">
               {grants.map((grant) => (
-                <span key={grant.tool} className="inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-px">
-                  <span className="text-foreground/90">{grant.tool === 'chrome' ? 'Chrome' : 'Messages'}</span> lent until {formatWhen(grant.until)}
-                  <button type="button" onClick={() => void decide(() => api.revokeJobTool(job.id, grant.tool))} disabled={busy} className="text-xs text-primary hover:underline">take back</button>
+                <span key={grant.tool} className="inline-flex items-center gap-1 rounded-full bg-muted px-2">
+                  <span className="text-foreground">{grant.tool === 'chrome' ? 'Chrome' : 'Messages'}</span> lent until {formatWhen(grant.until)}
+                  <button type="button" onClick={() => void decide(() => api.revokeJobTool(job.id, grant.tool))} disabled={busy} className={LINK}>take back</button>
                 </span>
               ))}
               {(['chrome', 'SendMessage'] as const).filter((tool) => !grants.some((grant) => grant.tool === tool)).map((tool) => (
-                <button key={tool} type="button" onClick={() => void decide(() => api.grantJobTool(job.id, tool))} disabled={busy} className="text-xs text-primary hover:underline">
+                <button key={tool} type="button" onClick={() => void decide(() => api.grantJobTool(job.id, tool))} disabled={busy} className={LINK}>
                   Lend {tool === 'chrome' ? 'Chrome' : 'messages'} for 1 h
                 </button>
               ))}
             </div>
           )}
-          {message && <p className="mt-1 text-xs text-muted-foreground">{message}</p>}
+          {message && <p className="mt-1 text-ui text-muted-foreground">{message}</p>}
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">
           {!job.endedAt && (
-            <IconButton label="Run now" onClick={() => void act('run_now')} disabled={busy}><RotateCw className="h-4 w-4" /></IconButton>
+            <IconButton label="Run now" onClick={() => void act('run_now')} disabled={busy}><RotateCw aria-hidden className="size-4" /></IconButton>
           )}
           {!job.endedAt && (job.paused
-            ? <IconButton label="Resume" onClick={() => void act('resume')} disabled={busy}><Play className="h-4 w-4" /></IconButton>
-            : <IconButton label="Pause" onClick={() => void act('pause')} disabled={busy}><Pause className="h-4 w-4" /></IconButton>)}
+            ? <IconButton label="Resume" onClick={() => void act('resume')} disabled={busy}><Play aria-hidden className="size-4" /></IconButton>
+            : <IconButton label="Pause" onClick={() => void act('pause')} disabled={busy}><Pause aria-hidden className="size-4" /></IconButton>)}
           {confirmDelete ? (
-            <button type="button" onClick={() => void act('delete')} disabled={busy} className="rounded-md bg-destructive/15 px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/25">
+            <button type="button" onClick={() => void act('delete')} disabled={busy} className={CONFIRM}>
               Delete job
             </button>
           ) : (
-            <IconButton label="Delete" onClick={() => setConfirmDelete(true)} disabled={busy}><Trash2 className="h-4 w-4" /></IconButton>
+            <IconButton label="Delete" onClick={() => setConfirmDelete(true)} disabled={busy}><Trash2 aria-hidden className="size-4" /></IconButton>
           )}
         </div>
       </div>
       {open && (
-        <div className="mt-3 border-t border-foreground/10 pt-3 pl-7 text-sm">
-          <p className="mt-2 whitespace-pre-wrap text-foreground/90">{job.prompt}</p>
-          <h3 className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runs</h3>
+        <div className="mt-3 border-t border-border pt-3 pl-7 text-body">
+          <p className="mt-2 whitespace-pre-wrap text-foreground">{job.prompt}</p>
+          <h3 className={cn(LABEL, "mt-3")}>Runs</h3>
           {job.runs.length === 0 && <p className="mt-1 text-muted-foreground">None yet.</p>}
           <ul className="mt-1 flex flex-col gap-1">
             {job.runs.map((run) => <li key={run.id}><RunLine run={run} spaceId={job.spaceId} /></li>)}
@@ -238,7 +245,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
 
 function LastRun({ run, spaceId }: { run: JobRun; spaceId: string | null }) {
   return (
-    <div className="mt-1 text-sm text-muted-foreground">
+    <div className="mt-1 text-body text-muted-foreground">
       Last: <RunLine run={run} spaceId={spaceId} current />
     </div>
   );
@@ -251,9 +258,9 @@ function RunLine({ run, spaceId, current = false }: { run: JobRun; spaceId: stri
     <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
       <span title={formatWhen(when)}>{formatAgo(when)}</span>
       <span className={TONE[label.tone]}>{label.text}</span>
-      {run.note && <span className="text-xs text-muted-foreground">({run.note})</span>}
+      {run.note && <span className="text-ui text-muted-foreground">({run.note})</span>}
       {run.sessionId && (
-        <button type="button" className="text-xs text-primary hover:underline" onClick={() => openSession(spaceId, run.sessionId!, run.session)}>
+        <button type="button" className={LINK} onClick={() => openSession(spaceId, run.sessionId!, run.session)}>
           open session
         </button>
       )}
@@ -269,7 +276,7 @@ function IconButton({ label, onClick, disabled, children }: { label: string; onC
       disabled={disabled}
       title={label}
       aria-label={label}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:opacity-40"
+      className={cn("flex size-(--target-comfortable) items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground disabled:opacity-60", FOCUS)}
     >
       {children}
     </button>

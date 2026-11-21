@@ -11,12 +11,11 @@ const SRC = import.meta.dirname;
 const CSS = readFileSync(join(SRC, 'index.css'), 'utf8');
 const BASELINE_FILE = join(SRC, 'design-tokens.baseline.json');
 
-/** Directories built on tokens v2: no literal values at all. */
-const V2_DIRS = ['components/task-board', 'components/top-bar', 'components/session-launcher', 'shared/view/ui', 'components/app', 'components/sidebar', 'components/settings', 'components/project-creation-wizard', 'components/first-run', 'components/chat', 'components/shell', 'components/ui', 'components/main-content', 'components/standalone-shell'];
+/** Everything the UI is built from is on tokens v2: no literal values at all. */
+const V2_DIRS = ['components', 'shared'];
 /** Files that may hold colour literals, and why. */
 const COLOUR_EXCEPTIONS: Record<string, string> = {
-  'lib/graph.ts': 'canvas drawing reads concrete colours',
-  'components/graph/nodes.tsx': 'graph node colours are computed per engram type',
+  'lib/tag-graph.ts': 'a tag hue is hashed per tag, so its hsl() is computed (saturation and lightness are tokens)',
 };
 const MIX_STEPS = new Set(['8', '10', '12', '20', '40', '60']);
 

@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useEngramPanel } from "@/lib/engram-panel";
-import { TYPE_COLORS } from "@/components/ui/badge";
 import { type Engram } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { FOCUS } from "@/shared/view/ui";
+import { TypeDot } from "@/shared/view/ui/EngramType";
 
 // Ported from packages/web/components/timeline/timeline.tsx. Days become columns
 // (newest first); each engram is a card in its day's column.
@@ -60,39 +62,44 @@ export function Timeline({ engrams }: { engrams: Engram[] }) {
   return (
     <div className="flex h-full gap-3 overflow-x-auto p-3">
       {columns.map((col) => (
-        <div key={col.key} className="flex w-[220px] shrink-0 flex-col gap-2">
-          <div className="sticky top-0 flex items-baseline justify-between border-b border-border pb-1">
-            <div className="text-sm font-semibold text-foreground">{col.month} {col.day}</div>
-            <div className="text-xs text-muted-foreground">{col.items.length}</div>
+        <div key={col.key} className="flex w-(--size-graph-hub) shrink-0 flex-col gap-2">
+          <div className="sticky top-0 flex items-baseline justify-between border-b border-border bg-background pb-1">
+            <div className="text-body font-semibold text-foreground">{col.month} {col.day}</div>
+            <div className="text-ui tabular-nums text-muted-foreground">{col.items.length}</div>
           </div>
           <div className="flex flex-col gap-1.5 overflow-y-auto pr-1">
             {col.items.map((e) => {
-              const color = TYPE_COLORS[e.type] ?? "var(--color-muted-foreground)";
               const current = isCurrent(e);
               return (
                 <button
                   key={e.id}
+                  type="button"
                   onClick={() => open(e.id, orderedIds)}
-                  className="rounded-md border border-border bg-card p-2 text-left transition-shadow hover:shadow-md"
-                  style={{ borderLeft: `4px solid ${color}`, opacity: current ? 1 : 0.45 }}
+                  // A card no longer current reads as history (dashed, struck through), never faded.
+                  className={cn(
+                    "rounded-md border bg-card p-2 text-left transition-shadow duration-(--duration-fast) hover:shadow-raised",
+                    current ? "border-border" : "border-dashed border-border-strong bg-transparent",
+                    FOCUS,
+                  )}
                   title={current ? cardTitle(e) : `${cardTitle(e)} — ${e.status}`}
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide" style={{ color }}>
+                    <div className="flex items-center gap-1 text-caption font-semibold uppercase tracking-label text-muted-foreground">
+                      <TypeDot type={e.type} />
                       {e.type}
                     </div>
                     <div className="flex items-center gap-1">
                       {e.review_due && (
-                        <span className="text-[10px] leading-none text-warning" title="Flagged for review">⚑</span>
+                        <span className="text-caption leading-none text-you-ink" title="Flagged for review">⚑</span>
                       )}
                       {!current && (
-                        <div className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                        <div className="text-caption font-medium uppercase tracking-label text-muted-foreground">
                           {e.status}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className={`line-clamp-2 text-xs text-foreground/80${current ? "" : " line-through decoration-1"}`}>
+                  <div className={cn("line-clamp-2 text-ui", current ? "text-foreground" : "text-muted-foreground line-through decoration-1")}>
                     {cardTitle(e)}
                   </div>
                 </button>

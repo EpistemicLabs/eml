@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Background, Controls, Panel, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { HoverContext, tagNodeTypes, type EngramNodeData, type TagHubNodeData } from "./nodes";
+import { edgeStyle, GRAPH_PANEL, HoverContext, tagNodeTypes, type EngramNodeData, type TagHubNodeData } from "./nodes";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { buildTagGraph, tagColor } from "@/lib/tag-graph";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -62,7 +62,7 @@ export function TagGraph({ engrams, showUntagged }: { engrams: Engram[]; showUnt
         id: e.id,
         source: e.source,
         target: e.target,
-        style: { stroke: tagColor(e.key), strokeWidth: 1, opacity: 0.4 },
+        style: edgeStyle(tagColor(e.key)),
       })),
     [graph.edges],
   );
@@ -73,7 +73,7 @@ export function TagGraph({ engrams, showUntagged }: { engrams: Engram[]; showUnt
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-muted-foreground">
         <p>No tagged engrams in the selected filters.</p>
-        <p className="text-xs">Tag engrams (eml_create_object object=tag, then the tags param) to grow the tag hubs.</p>
+        <p className="text-ui">Tag engrams (eml_create_object object=tag, then the tags param) to grow the tag hubs.</p>
       </div>
     );
   }
@@ -100,7 +100,7 @@ export function TagGraph({ engrams, showUntagged }: { engrams: Engram[]; showUnt
       >
         <Background />
         <Controls />
-        <Panel position="top-left" className="rounded-md border border-border bg-card/90 px-3 py-2 text-xs shadow-sm backdrop-blur">
+        <Panel position="top-left" className={GRAPH_PANEL}>
           <div className="mb-1 font-medium text-foreground">
             {graph.hubs.length} tag{graph.hubs.length === 1 ? "" : "s"} · {graph.nodes.length} tagged
           </div>
@@ -108,10 +108,10 @@ export function TagGraph({ engrams, showUntagged }: { engrams: Engram[]; showUnt
             {graph.unassignedCount} untagged
             {!showUntagged && graph.unassignedCount > 0 && <> (hidden)</>}
           </div>
-          <div className="mt-2 flex max-w-[220px] flex-wrap gap-x-2 gap-y-0.5">
+          <div className="mt-2 flex max-w-(--size-graph-hub) flex-wrap gap-x-2 gap-y-0.5">
             {usedTags.map((t) => (
               <span key={t} className="inline-flex items-center gap-1">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: tagColor(t) }} />
+                <span aria-hidden className="inline-block size-2 rounded-full" style={{ background: tagColor(t) }} />
                 <span className="text-muted-foreground">{t}</span>
               </span>
             ))}

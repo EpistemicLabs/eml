@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Background, Controls, Panel, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { HoverContext, subjectNodeTypes, type EngramNodeData, type SubjectHubNodeData } from "./nodes";
+import { edgeStyle, GRAPH_PANEL, HoverContext, subjectNodeTypes, type EngramNodeData, type SubjectHubNodeData } from "./nodes";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { useSubjects } from "@/lib/queries";
 import { buildSubjectGraph, subjectColor, SUBJECT_STATUS_COLOR } from "@/lib/subject-graph";
@@ -81,11 +81,7 @@ export function SubjectGraph({ engrams, showWithoutSubject }: { engrams: Engram[
           id: e.id,
           source: e.source,
           target: e.target,
-          style: {
-            stroke: closed ? SUBJECT_STATUS_COLOR.closed : subjectColor(e.key),
-            strokeWidth: 1,
-            opacity: closed ? 0.2 : 0.45,
-          },
+          style: edgeStyle(closed ? SUBJECT_STATUS_COLOR.closed : subjectColor(e.key), closed),
         };
       }),
     [graph.edges, registry],
@@ -97,7 +93,7 @@ export function SubjectGraph({ engrams, showWithoutSubject }: { engrams: Engram[
     return (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-muted-foreground">
         <p>No engrams in a subject in the selected filters.</p>
-        <p className="text-xs">Create a subject (eml_create_object object=subject) and assign it via the subjects param to grow the strands.</p>
+        <p className="text-ui">Create a subject (eml_create_object object=subject) and assign it via the subjects param to grow the strands.</p>
       </div>
     );
   }
@@ -123,7 +119,7 @@ export function SubjectGraph({ engrams, showWithoutSubject }: { engrams: Engram[
       >
         <Background />
         <Controls />
-        <Panel position="top-left" className="rounded-md border border-border bg-card/90 px-3 py-2 text-xs shadow-sm backdrop-blur">
+        <Panel position="top-left" className={GRAPH_PANEL}>
           <div className="mb-1 font-medium text-foreground">
             {graph.hubs.length} subject{graph.hubs.length === 1 ? "" : "s"} · {graph.nodes.length} in a subject
           </div>
@@ -131,17 +127,15 @@ export function SubjectGraph({ engrams, showWithoutSubject }: { engrams: Engram[
             {graph.unassignedCount} without a subject
             {!showWithoutSubject && graph.unassignedCount > 0 && <> (hidden)</>}
           </div>
-          <div className="mt-2 flex max-w-[240px] flex-col gap-0.5">
+          <div className="mt-2 flex max-w-(--size-graph-legend) flex-col gap-0.5">
             {usedSubjects.map(({ id, subject }) => {
               const closed = subject?.status === "closed";
               return (
-                <span key={id} className="inline-flex items-center gap-1.5" style={{ opacity: closed ? 0.55 : 1 }}>
+                <span key={id} className="inline-flex items-center gap-1.5">
                   <span
-                    className="inline-block h-2 w-2 shrink-0 rounded-full"
-                    style={{
-                      background: closed ? "transparent" : subjectColor(id),
-                      border: `1.5px solid ${closed ? SUBJECT_STATUS_COLOR.closed : SUBJECT_STATUS_COLOR.active}`,
-                    }}
+                    aria-hidden
+                    className={`inline-block size-2 shrink-0 rounded-full border ${closed ? "border-border-strong" : "border-foreground"}`}
+                    style={{ background: closed ? "transparent" : subjectColor(id) }}
                   />
                   <span className={`truncate text-muted-foreground ${closed ? "line-through" : ""}`}>{subject?.name ?? id}</span>
                 </span>

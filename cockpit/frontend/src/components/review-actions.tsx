@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useConfirmReview, useRetireEngram, useCreateReviewTask } from "@/lib/queries";
 import { useWritable } from "@/stores/useTeamStore";
 import type { Engram } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { BUTTON, FIELD, LABEL, PRIMARY } from "@/shared/view/ui";
 import { parseBrainTime } from "@/components/task-sections";
 
 // v0.15: a task is flagged for inactivity — its last movement is the later of
@@ -65,12 +67,13 @@ export function ReviewActions({ engram }: { engram: Engram }) {
     );
   }
 
-  const action =
-    "h-7 rounded-md border border-border bg-foreground/[0.04] px-2.5 text-ui font-medium text-foreground transition-colors hover:bg-foreground/[0.08] disabled:opacity-40";
+  const action = cn(BUTTON, "px-3 text-ui");
+  const primary = cn(PRIMARY, "px-3 text-ui");
 
   return (
-    <div className="rounded-lg border border-warning/30 bg-warning/[0.06] p-3">
-      <div className="mb-2 flex items-center gap-1.5 text-caption font-semibold tracking-wide text-warning uppercase">
+    // Flagged for review waits for you: the one amber block in the drawer.
+    <div className="rounded-lg border border-status-you/40 bg-status-you/10 p-3">
+      <div className={cn(LABEL, "mb-2 flex items-center gap-1.5 text-you-ink")}>
         <span aria-hidden>⚑</span> Flagged for review
       </div>
       {isTask && (() => {
@@ -95,7 +98,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           }
           className={
             confirmOpen
-              ? "h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground disabled:opacity-40"
+              ? primary
               : action
           }
         >
@@ -121,7 +124,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
           title={brain.reason ?? "Needs work — spin up a follow-up task linked to this engram"}
           className={
             taskOpen
-              ? "h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground disabled:opacity-40"
+              ? primary
               : action
           }
         >
@@ -137,13 +140,13 @@ export function ReviewActions({ engram }: { engram: Engram }) {
             onKeyDown={(e) => { if (e.key === "Enter") submitConfirm(); }}
             placeholder="Why it still holds"
             autoFocus
-            className="h-7 min-w-0 flex-1 rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 text-body text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
+            className={cn(FIELD, "w-auto min-w-0 flex-1")}
           />
           <button
             type="button"
             onClick={submitConfirm}
             disabled={!why.trim() || confirm.isPending}
-            className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+            className={primary}
           >
             {confirm.isPending ? "Confirming…" : "Confirm"}
           </button>
@@ -160,14 +163,14 @@ export function ReviewActions({ engram }: { engram: Engram }) {
             }}
             placeholder="What needs to be done? (⌘/Ctrl+Enter to create)"
             rows={3}
-            className="w-full resize-y rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 py-1.5 text-body text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
+            className={cn(FIELD, "resize-y py-1.5")}
           />
           <div className="flex gap-2">
             <button
               type="button"
               onClick={submitTask}
               disabled={!taskText.trim() || createTask.isPending}
-              className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+              className={primary}
             >
               {createTask.isPending ? "Creating…" : "Create task"}
             </button>
@@ -186,7 +189,7 @@ export function ReviewActions({ engram }: { engram: Engram }) {
         </div>
       )}
 
-      {error && <p className="mt-2 text-caption text-destructive">{error}</p>}
+      {error && <p className="mt-2 text-caption text-stopped-ink">{error}</p>}
     </div>
   );
 }

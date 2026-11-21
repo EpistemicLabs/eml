@@ -15,7 +15,9 @@ import { type EngramType } from "@/lib/types";
 import { TagGraph } from "@/components/graph/tag-graph";
 import { SubjectGraph } from "@/components/graph/subject-graph";
 import { Timeline } from "@/components/timeline/timeline";
-import { TYPE_COLORS, TYPE_ORDER, typeChipStyle } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { FOCUS } from "@/shared/view/ui";
+import { TYPE_ORDER, TypeToggle } from "@/shared/view/ui/EngramType";
 import { BrainCard, EmptyNote, Segmented, ToggleChip } from "./ui";
 
 type ViewMode = "timeline" | "subjects" | "tags";
@@ -26,9 +28,7 @@ const LENSES: ReadonlyArray<{ value: ViewMode; label: string }> = [
   { value: "tags", label: "tags" },
 ];
 
-const REVIEW_ACCENT = "var(--color-review)"; // amber, same hue as the decision type
-
-export default function GraphPanel({ projectId, height = "h-[560px]" }: { projectId: string; height?: string }) {
+export default function GraphPanel({ projectId, height = "h-(--size-graph-panel)" }: { projectId: string; height?: string }) {
   const engramsQuery = useProjectEngrams(projectId, { limit: 500 });
 
   // Profiles are an identity facet, not project work — kept out of the project
@@ -96,18 +96,14 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
         </div>
         {presentTypes.map((t) => {
           const on = activeTypes.has(t);
-          const color = TYPE_COLORS[t];
           return (
-            <button
+            <TypeToggle
               key={t}
-              type="button"
+              type={t}
+              on={on}
               onClick={(e) => pick(t, e.metaKey || e.shiftKey)}
               title="Click: only this type (again: all) · Shift/Cmd-click: add/remove this type"
-              className="h-6 rounded-full border px-2.5 text-caption font-medium capitalize transition-opacity"
-              style={typeChipStyle(color, on)}
-            >
-              {t}
-            </button>
+            />
           );
         })}
         <div className="ml-auto flex flex-wrap items-center gap-1">
@@ -123,12 +119,13 @@ export default function GraphPanel({ projectId, height = "h-[560px]" }: { projec
               type="button"
               onClick={() => setShowReviewOnly((v) => !v)}
               title="Show only engrams flagged for review"
-              className="inline-flex h-6 items-center gap-1 rounded-full border px-2.5 text-caption font-medium transition-colors"
-              style={{
-                borderColor: REVIEW_ACCENT,
-                color: showReviewOnly ? "var(--color-background)" : REVIEW_ACCENT,
-                backgroundColor: showReviewOnly ? REVIEW_ACCENT : "transparent",
-              }}
+              aria-pressed={showReviewOnly}
+              // Flagged for review waits for you: amber, filled while it filters.
+              className={cn(
+                "inline-flex min-h-(--target-min) items-center gap-1 rounded-full border border-status-you px-2.5 text-caption font-medium transition-colors duration-(--duration-fast)",
+                showReviewOnly ? "bg-status-you text-background" : "text-you-ink",
+                FOCUS,
+              )}
             >
               ⚑ Review {reviewCount}
             </button>

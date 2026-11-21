@@ -15,6 +15,8 @@ import {
   useSurfaceLoc,
   type BrainLoc,
 } from '@/lib/brain-nav';
+import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import BrainHome from './BrainHome';
 import BrainProject from './BrainProject';
 import BrainSearch from './BrainSearch';
@@ -51,8 +53,8 @@ export default function BrainSurface({ surfaceId, initialLoc, persist = false }:
     <SurfaceContext.Provider value={surfaceId}>
       {/* @container: the views size their grids by the surface's width, not
           the viewport, so the same view works in a half-width pane. */}
-      <div className="@container h-full min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-[1440px] px-6 py-5">
+      <div data-ui="v2" className="@container h-full min-h-0 overflow-y-auto bg-background">
+        <div className="mx-auto max-w-(--container-brain) px-6 py-5">
           {loc.view === 'dashboard' && <BrainHome />}
           {/* key: switching parent → child resets the page's search field and status pager. */}
           {loc.view === 'project' && <BrainProject key={loc.projectId} projectId={loc.projectId} />}
@@ -68,7 +70,7 @@ export function BackLink({ onClick, children }: { onClick: () => void; children:
     <button
       type="button"
       onClick={onClick}
-      className="self-start text-ui text-muted-foreground transition-colors hover:text-foreground"
+      className={cn("min-h-(--target-min) self-start rounded-md text-ui text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground", FOCUS)}
     >
       {children}
     </button>

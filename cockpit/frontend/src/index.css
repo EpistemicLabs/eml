@@ -335,6 +335,60 @@ html.dark {
   --term-match: #e5e5ea;
   --term-match-active: #aeaeb2;
   /* area: brain and review */
+  /* A brain list panel scrolls past this height. */
+  --size-brain-list: 420px;
+  /* The project page's graph and the brain home's activity panels. */
+  --size-graph-panel: 560px;
+  /* The brain surface's content column. */
+  --container-brain: 1440px;
+  /* The activity heatmap: day cells, their gap and corner, the picked day's outline, the shade steps. */
+  --size-heat-cell: 13px;
+  --gap-heat: 3px;
+  --radius-heat: 3px;
+  --gap-heat-outline: 1px;
+  --focus-width: 2px;
+  --mix-heat-1: 28%;
+  --mix-heat-2: 50%;
+  --mix-heat-3: 75%;
+  /* Graph nodes: the type edge, the widest hub, and how far nodes fade outside the hovered neighbourhood. */
+  --width-graph-edge: 4px;
+  --size-graph-hub: 220px;
+  --opacity-graph-dim: .12;
+  --opacity-graph-hub-dim: .15;
+  --opacity-graph-isolated: .6;
+  --opacity-graph-closed: .4;
+  --size-graph-legend: 240px;
+  --width-graph-line: 1;
+  --width-graph-line-strong: 1.5;
+  --opacity-graph-edge: .45;
+  --opacity-graph-edge-faint: .2;
+  --opacity-graph-relation: .55;
+  /* Tag and subject hues are hashed from their id; this is their saturation (lightness: --hash-lightness). */
+  --hash-saturation: 45%;
+  /* The engram drawer: full width less its margin on a phone, else up to 600px or 70% of the view; off-screen it sits past its own width and margin. */
+  --size-drawer-narrow: calc(100% - 1rem);
+  --size-drawer: min(600px, 70vw);
+  --offset-drawer-out: calc(100% + 1rem);
+  /* A task journal row: the timeline rail and its entry dot, then the entry. */
+  --grid-journal: 14px 1fr;
+  --size-journal-dot: 7px;
+  /* The review screen's drafts strip takes at most this much of the screen's height. */
+  --size-drafts: 45%;
+  /* A worktree's opened details line up under its name (chevron + branch icon); a session row bleeds into the card's padding. */
+  --indent-worktree: 22px;
+  --size-worktree-row: calc(100% + 0.75rem);
+  /* The note editor: a checklist's box and a quote's rule. */
+  --size-note-check: 15px;
+  --width-quote: 2px;
+  /* Relation edges: the relation type is meaning, so each keeps its hue (light here, dark in the v2 dark scope). */
+  --relation-supersedes: #b45309;
+  --relation-supports: #047857;
+  --relation-contradicts: #dc2626;
+  --relation-derived_from: #4f46e5;
+  --relation-refines: #0369a1;
+  --relation-related_to: #64748b;
+  --relation-blocks: #be123c;
+  --relation-part_of: #0f766e;
   /* area: app shell */
   /* The gap above the top bar, under the status bar on a phone. */
   --pad-shell-top: 6px;
@@ -460,6 +514,14 @@ html.dark {
   --term-match: #3a3a3c;
   --term-match-active: #636366;
   /* area: brain and review */
+  --relation-supersedes: #f59e0b;
+  --relation-supports: #10b981;
+  --relation-contradicts: #ef4444;
+  --relation-derived_from: #6366f1;
+  --relation-refines: #0ea5e9;
+  --relation-related_to: #94a3b8;
+  --relation-blocks: #e11d48;
+  --relation-part_of: #2fb5a5;
   color-scheme: dark;
 }
 

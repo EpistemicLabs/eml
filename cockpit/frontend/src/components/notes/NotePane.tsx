@@ -28,7 +28,7 @@ import {
   type Note,
 } from '@/lib/notes';
 import { cn } from '@/lib/utils';
-import { Button } from '@/shared/view/ui';
+import { Button, FOCUS, ROW } from '@/shared/view/ui';
 import { updatePane } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
 
@@ -60,7 +60,7 @@ export function NotePane({ paneId, project, noteId }: NotePaneProps) {
 
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+    <div data-ui="v2" className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
       {children}
     </div>
   );
@@ -73,7 +73,7 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
   const open = (id: string) => updatePane(paneId, { noteId: id });
 
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-3 p-4">
+    <div data-ui="v2" className="mx-auto flex w-full max-w-xl flex-col gap-3 p-4">
       <Button
         variant="outline"
         size="sm"
@@ -82,10 +82,10 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
         title={brain.reason ?? undefined}
         onClick={() => create.mutate(project.projectId, { onSuccess: (note) => open(note.id) })}
       >
-        <Plus className="h-3 w-3" /> New note
+        <Plus aria-hidden className="size-3" /> New note
       </Button>
       {notes.isLoading ? (
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <Loader2 aria-hidden className="size-4 animate-spin text-muted-foreground" />
       ) : notes.data?.length ? (
         <ul className="flex flex-col">
           {notes.data.map((note) => (
@@ -93,9 +93,9 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
               <button
                 type="button"
                 onClick={() => open(note.id)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-foreground/5"
+                className={cn(ROW, "py-1.5")}
               >
-                <NotebookPen className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                <NotebookPen aria-hidden className="size-3.5 flex-shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">{note.title}</span>
                 <span className="text-caption text-muted-foreground">{noteAge(note.updatedAt)}</span>
               </button>
@@ -103,7 +103,7 @@ function NotePicker({ paneId, project }: { paneId: string; project: Project }) {
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">No notes in {project.displayName} yet.</p>
+        <p className="text-body text-muted-foreground">No notes in {project.displayName} yet.</p>
       )}
     </div>
   );
@@ -234,7 +234,7 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
       <PaneMessage>
         <span>
           This note was archived or no longer exists.{' '}
-          <button type="button" className="underline" onClick={() => updatePane(paneId, { noteId: undefined })}>
+          <button type="button" className={cn("rounded-sm font-medium text-foreground underline underline-offset-2", FOCUS)} onClick={() => updatePane(paneId, { noteId: undefined })}>
             Show all notes
           </button>
         </span>
@@ -242,45 +242,46 @@ function NoteEditor({ paneId, noteId }: { paneId: string; noteId: string }) {
     );
   }
   if (!note) {
-    return <PaneMessage><Loader2 className="h-4 w-4 animate-spin" /></PaneMessage>;
+    return <PaneMessage><Loader2 aria-hidden className="size-4 animate-spin" /></PaneMessage>;
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div data-ui="v2" className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 text-caption text-muted-foreground">
         {/* Back to the project's notes; leaving the editor saves what is pending. */}
         <button
           type="button"
           title="All notes of this project"
-          className="-ml-1 flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-foreground/5 hover:text-foreground"
+          className={cn("-ml-1 flex min-h-(--target-min) items-center gap-0.5 rounded-md px-1 hover:bg-muted hover:text-foreground", FOCUS)}
           onClick={() => updatePane(paneId, { noteId: undefined })}
         >
-          <ChevronLeft className="h-3.5 w-3.5" />
+          <ChevronLeft aria-hidden className="size-3.5" />
           All notes
         </button>
         <span>
           {note.lastEditor === 'agent' ? 'Edited by the agent' : 'Edited by you'} · {noteAge(note.updatedAt)}
         </span>
-        <span className="opacity-70">
+        <span className={saveState === 'error' ? 'text-stopped-ink' : undefined}>
           {saveState === 'saving' ? '· saving…' : saveState === 'pending' ? '· unsaved' : saveState === 'error' ? '· save failed' : ''}
         </span>
         <button
           type="button"
           title={brain.reason ?? 'Archive this note'}
           disabled={!brain.writable}
-          className="ml-auto rounded p-1 hover:bg-foreground/5 hover:text-foreground disabled:opacity-40"
+          aria-label="Archive this note"
+          className={cn("ml-auto grid size-(--target-min) place-items-center rounded-md hover:bg-muted hover:text-foreground disabled:opacity-60", FOCUS)}
           onClick={() => {
             if (timerRef.current) clearTimeout(timerRef.current);
             dirtyRef.current = false;
             archive.mutate(note, { onSuccess: () => updatePane(paneId, { noteId: undefined }) });
           }}
         >
-          <Archive className="h-3.5 w-3.5" />
+          <Archive aria-hidden className="size-3.5" />
         </button>
       </div>
       <NoteToolbar editor={editor} />
       {conflict && (
-        <div className="mx-3 mb-2 flex flex-wrap items-center gap-2 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+        <div role="alert" className="mx-3 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-status-you/40 bg-status-you/10 px-3 py-2 text-body">
           <span className="flex-1">
             {conflict.lastEditor === 'agent' ? 'The agent' : 'Someone'} changed this note while you were typing.
           </span>
@@ -338,11 +339,12 @@ function NoteToolbar({ editor }: { editor: Editor | null }) {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => tool.run(editor)}
                 className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground',
-                  on && 'bg-foreground/10 text-foreground',
+                  'flex size-(--target-comfortable) items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground',
+                  on && 'bg-muted text-foreground',
+                  FOCUS,
                 )}
               >
-                <Icon className="h-4 w-4" />
+                <Icon aria-hidden className="size-4" />
               </button>
             );
           })}

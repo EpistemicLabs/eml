@@ -1,8 +1,8 @@
 // Ported from packages/web/components/home/activity-heatmap.tsx: the same
 // data-driven contribution grid (max 30 weeks, back to the first active day,
-// click a day to filter the activity list). Adapted to the cockpit look:
-// the intensity scale is coral (the brand accent) over the muted surface
-// instead of GitHub green; selection outlines in the foreground colour.
+// click a day to filter the activity list). In tokens v2 the
+// intensity scale runs towards the text colour over the muted surface (activity
+// is no status, so it takes no hue); selection outlines in the foreground colour.
 // The grid is wider than its card, so it opens scrolled to today (right end)
 // and stays pinned there on resize unless the user scrolled back in time.
 import { useLayoutEffect, useMemo, useRef } from "react";
@@ -11,16 +11,20 @@ import { useActivityByDay } from "@/lib/queries";
 import { SectionHeader } from "./ui";
 
 const MAX_WEEKS = 30;
-const CELL = 13;
-const GAP = 3;
+// Cell size, gap and corner are tokens (--size-heat-cell, --gap-heat, --radius-heat).
+const CELL = "var(--size-heat-cell)";
+const GAP = "var(--gap-heat)";
+const RADIUS = "var(--radius-heat)";
+/** n cells with their gaps, as a CSS length. */
+const span = (n: number) => `calc((var(--size-heat-cell) + var(--gap-heat)) * ${n})`;
 
-// Empty → muted surface; then four coral steps.
+// Empty → muted surface; then four steps towards the text colour.
 const SCALE = [
   "var(--color-muted)",
-  "color-mix(in srgb, var(--color-primary) 28%, var(--color-muted))",
-  "color-mix(in srgb, var(--color-primary) 50%, var(--color-muted))",
-  "color-mix(in srgb, var(--color-primary) 75%, var(--color-muted))",
-  "var(--color-primary)",
+  "color-mix(in srgb, var(--color-foreground) var(--mix-heat-1), var(--color-muted))",
+  "color-mix(in srgb, var(--color-foreground) var(--mix-heat-2), var(--color-muted))",
+  "color-mix(in srgb, var(--color-foreground) var(--mix-heat-3), var(--color-muted))",
+  "var(--color-foreground)",
 ];
 function shade(count: number): string {
   if (count <= 0) return SCALE[0];
@@ -130,8 +134,8 @@ export function ActivityHeatmap({
             {WEEKDAYS.map((w, i) => (
               <span
                 key={i}
-                className="text-[9px] leading-none text-muted-foreground"
-                style={{ height: CELL, lineHeight: `${CELL}px` }}
+                className="text-caption text-muted-foreground"
+                style={{ height: CELL, lineHeight: CELL }}
               >
                 {w}
               </span>
@@ -139,12 +143,12 @@ export function ActivityHeatmap({
           </div>
           <div className="inline-flex flex-col gap-1">
             {/* month labels */}
-            <div className="relative h-3" style={{ width: weeks * (CELL + GAP) }}>
+            <div className="relative h-3" style={{ width: span(weeks) }}>
               {monthLabels.map((m) => (
                 <span
                   key={`${m.col}-${m.label}`}
-                  className="absolute text-[10px] text-muted-foreground"
-                  style={{ left: m.col * (CELL + GAP) }}
+                  className="absolute text-caption leading-none text-muted-foreground"
+                  style={{ left: span(m.col) }}
                 >
                   {m.label}
                 </span>
@@ -173,11 +177,11 @@ export function ActivityHeatmap({
                         style={{
                           width: CELL,
                           height: CELL,
-                          borderRadius: 3,
+                          borderRadius: RADIUS,
                           background: cell.future ? "transparent" : shade(cell.count),
                           cursor: clickable ? "pointer" : "default",
-                          outline: selected ? "2px solid var(--color-foreground)" : "none",
-                          outlineOffset: selected ? 1 : 0,
+                          outline: selected ? "var(--focus-width) solid var(--color-foreground)" : "none",
+                          outlineOffset: selected ? "var(--gap-heat-outline)" : 0,
                         }}
                       />
                     );
@@ -188,10 +192,10 @@ export function ActivityHeatmap({
           </div>
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+      <div className="mt-2 flex items-center justify-end gap-1 text-caption text-muted-foreground">
         <span>less</span>
         {SCALE.map((c) => (
-          <span key={c} style={{ width: CELL, height: CELL, borderRadius: 3, background: c }} />
+          <span key={c} style={{ width: CELL, height: CELL, borderRadius: RADIUS, background: c }} />
         ))}
         <span>more</span>
       </div>

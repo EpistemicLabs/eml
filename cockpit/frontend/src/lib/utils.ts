@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from 'clsx'
 import { extendTailwindMerge } from 'tailwind-merge'
 
-// tailwind-merge only knows Tailwind's own font sizes (text-xs …). Our
+// tailwind-merge only knows Tailwind's own font sizes. Our
 // scale from index.css (text-caption … text-display) must be registered
 // as font sizes, or it reads them as text colours and drops one of
 // `text-caption text-foreground` as a conflict.

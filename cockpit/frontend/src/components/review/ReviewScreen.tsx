@@ -10,23 +10,26 @@ import { SessionChat } from '@/components/ui/session-chat';
 import { endReview, finishCurrent, jumpReview, liveQueue, stepReview } from '@/lib/review-flow';
 import { useSessionTask } from '@/lib/session-task';
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import { openSessionInSpace } from '@/stores/usePaneStore';
 import { REVIEW_PANE_ID, setReviewBarFocus, useReview } from '@/stores/useReviewStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
-const BUTTON =
-  'flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border border-border bg-background px-2 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40';
+const BUTTON = cn(
+  'flex min-h-(--target-comfortable) min-w-(--target-comfortable) items-center justify-center gap-1 rounded-full border border-border bg-card px-2.5 text-ui text-foreground transition-colors duration-(--duration-fast) hover:bg-muted disabled:opacity-60',
+  FOCUS,
+);
 
 const NEEDS_YOU: readonly SessionMark[] = ['question', 'failed', 'waiting'];
 // Still waiting for an answer: Done drops it only on a second press.
 const ASKS: readonly SessionMark[] = ['question', 'waiting'];
 const CONFIRM_MS = 3000;
 
-// Dimmed while the bar doesn't hold the keyboard: then the keys go elsewhere.
+// Dashed while the bar doesn't hold the keyboard (then the keys go elsewhere), solid once it does.
 function KeyHint({ children }: { children: string }) {
   return (
-    <kbd className="hidden rounded border border-border px-1 text-[10px] text-muted-foreground opacity-40 group-focus-within:opacity-100 md:inline">
+    <kbd className="hidden rounded-xs border border-dashed border-border px-1 font-code text-caption text-muted-foreground group-focus-within:border-solid group-focus-within:border-border-strong group-focus-within:text-foreground md:inline">
       {children}
     </kbd>
   );
@@ -166,31 +169,31 @@ export function ReviewScreen() {
   ].filter(Boolean).join(' · ') : '';
 
   return (
-    <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+    <div data-ui="v2" className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
       <div
         ref={barRef}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         aria-label="Review"
-        className="group flex-shrink-0 border-b border-border bg-muted/40 px-3 py-2 outline-none"
+        className="group flex-shrink-0 border-b border-border bg-card px-3 py-2 outline-none"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="mr-auto min-w-0 truncate text-xs text-muted-foreground">
+          <span className="mr-auto min-w-0 truncate text-ui text-muted-foreground">
             <span className="font-medium text-foreground">Review</span>
             <span className="pl-1.5">{live.index + 1} of {live.queue.length}</span>
-            {needYou > 0 && <span className="pl-1.5 text-primary">· {needYou} need{needYou === 1 ? 's' : ''} you</span>}
+            {needYou > 0 && <span className="pl-1.5 text-you-ink">· {needYou} need{needYou === 1 ? 's' : ''} you</span>}
           </span>
           <button type="button" className={BUTTON} disabled={live.index <= 0} onClick={() => move(-1)} aria-label="Previous">
-            <ChevronLeft className="h-3.5 w-3.5" /> <KeyHint>A</KeyHint>
+            <ChevronLeft aria-hidden className="size-3.5" /> <KeyHint>A</KeyHint>
           </button>
           <button type="button" className={BUTTON} disabled={live.index >= live.queue.length - 1} onClick={() => move(1)} aria-label="Next">
-            <KeyHint>D</KeyHint> <ChevronRight className="h-3.5 w-3.5" />
+            <KeyHint>D</KeyHint> <ChevronRight aria-hidden className="size-3.5" />
           </button>
           <button type="button" className={BUTTON} onClick={reply}>
-            <MessageSquareReply className="h-3.5 w-3.5" /> Reply <KeyHint>R</KeyHint>
+            <MessageSquareReply aria-hidden className="size-3.5" /> Reply <KeyHint>R</KeyHint>
           </button>
           <button type="button" className={`${BUTTON} font-medium`} onClick={done} title="Done: the mark goes, the session stays where it is listed">
-            <Check className="h-3.5 w-3.5" />
+            <Check aria-hidden className="size-3.5" />
             {confirming && confirming === current?.id ? 'Press again to drop it' : 'Done & next'} <KeyHint>E</KeyHint>
           </button>
           <button
@@ -200,28 +203,28 @@ export function ReviewScreen() {
             aria-disabled={Boolean(archiveBlock)}
             title={archiveBlock ?? 'Archive: stopped and put away, with its finished workers'}
           >
-            <Archive className="h-3.5 w-3.5" /> Archive &amp; next <KeyHint>X</KeyHint>
+            <Archive aria-hidden className="size-3.5" /> Archive &amp; next <KeyHint>X</KeyHint>
           </button>
           <button type="button" className={BUTTON} onClick={openInPane} aria-label="Open in a pane" title="Open in a pane">
-            <ExternalLink className="h-3.5 w-3.5" />
+            <ExternalLink aria-hidden className="size-3.5" />
           </button>
           <button type="button" className={BUTTON} onClick={endReview} aria-label="Back to the desks" title="Back to the desks (Esc)">
-            <X className="h-3.5 w-3.5" />
+            <X aria-hidden className="size-3.5" />
           </button>
         </div>
         {current && (
           <div className="mt-1.5 min-w-0 space-y-0.5">
-            <p className="truncate text-sm font-medium text-foreground">{sessionDisplayName(current)}</p>
+            <p className="truncate text-body font-medium text-foreground">{sessionDisplayName(current)}</p>
             {task && (
-              <p className="truncate text-[11px] text-muted-foreground" title={task.waitingOn?.why || undefined}>
+              <p className="truncate text-caption text-muted-foreground" title={task.waitingOn?.why || undefined}>
                 <span className="font-medium text-foreground">Task {task.title}</span>
                 {` · ${[task.status, task.stage, task.checkpoint && `checkpoint ${task.checkpoint}`].filter(Boolean).join(' · ')}`}
-                {task.waitingOn && <span className="text-primary">{` · waiting on ${task.waitingOn.who}: ${task.waitingOn.why}`}</span>}
+                {task.waitingOn && <span className="text-you-ink">{` · waiting on ${task.waitingOn.who}: ${task.waitingOn.why}`}</span>}
               </p>
             )}
-            <p className="truncate text-[11px] text-muted-foreground" title={current.attention?.reason ?? undefined}>
+            <p className="truncate text-caption text-muted-foreground" title={current.attention?.reason ?? undefined}>
               {word && (
-                <span className={cn('font-medium', mark === 'failed' ? 'text-destructive' : mark && NEEDS_YOU.includes(mark) ? 'text-primary' : 'text-foreground')}>
+                <span className={cn('font-medium', mark === 'failed' ? 'text-stopped-ink' : mark && NEEDS_YOU.includes(mark) ? 'text-you-ink' : 'text-foreground')}>
                   {word}{current.attention?.reason ? `: ${current.attention.reason}` : ''}
                 </span>
               )}
@@ -230,7 +233,7 @@ export function ReviewScreen() {
             </p>
           </div>
         )}
-        {error && <p role="alert" className="mt-1 text-[11px] text-destructive">{error}</p>}
+        {error && <p role="alert" className="mt-1 text-caption text-stopped-ink">{error}</p>}
       </div>
       {current?.jobId && <DraftsPanel key={current.id} jobId={current.jobId} />}
       <div className="flex min-h-0 flex-1">
@@ -239,7 +242,7 @@ export function ReviewScreen() {
       )}
       <div ref={bodyRef} className="relative min-h-0 flex-1">
         {!current ? (
-          <p className="p-4 text-xs text-muted-foreground">Loading…</p>
+          <p className="p-4 text-ui text-muted-foreground">Loading…</p>
         ) : (
           <div className="absolute inset-0 flex min-h-0 flex-col"><SessionChat key={current.id} paneId={REVIEW_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={space ? paneSpaceKey(space) : null} borrowed toolbar={{}} /></div>
         )}

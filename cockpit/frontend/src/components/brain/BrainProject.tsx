@@ -14,10 +14,11 @@ import { useEngramPanel } from "@/lib/engram-panel";
 import { useList, useProject, useProjectEngrams, useProjects } from "@/lib/queries";
 import { type Engram, type EngramType } from "@/lib/types";
 import { EngramRow, formatDate } from "@/components/engram-row";
-import { TYPE_COLORS } from "@/components/ui/badge";
 import { canOfferMove, movedMarker } from "@/lib/move";
 import { switchSpace, useActiveSpace, useSpaces } from "@/stores/useSpaceStore";
-import { Button, Input } from "@/shared/view/ui";
+import { Button, FOCUS, Input, LABEL } from "@/shared/view/ui";
+import { cn } from "@/lib/utils";
+import { typeColor } from "@/shared/view/ui/EngramType";
 import BrainLink from "./BrainLink";
 import MoveProjectDialog from "./MoveProjectDialog";
 import { BackLink, useBrainNav } from "./BrainSurface";
@@ -39,7 +40,7 @@ function ScrollColumn({
 }) {
   const ids = engrams.map((e) => e.id);
   return (
-    <ListPanel title={title} accent={TYPE_COLORS[type] ?? "var(--color-muted-foreground)"} count={engrams.length} className="min-h-0">
+    <ListPanel title={title} accent={typeColor(type)} count={engrams.length} className="min-h-0">
       {engrams.length === 0 ? (
         <EmptyNote>{empty}</EmptyNote>
       ) : (
@@ -49,7 +50,7 @@ function ScrollColumn({
   );
 }
 
-const REVIEW_ACCENT = "var(--color-review)"; // amber, same hue as the decision type
+const REVIEW_ACCENT = "var(--color-status-you)"; // flagged for review waits for you: amber
 
 // v0.15: the open-tasks panel (half width, next to pending reviews) — lean task rows, newest update first,
 // filterable by stage. Loads the project's tasks itself: the brain state's
@@ -64,7 +65,7 @@ function OpenTasksPanel({ projectId, live, className }: { projectId: string; liv
   return (
     <ListPanel
       title="Open tasks"
-      accent={TYPE_COLORS.task}
+      accent={typeColor("task")}
       className={`min-h-0 ${className ?? ""}`}
       action={
         <div className="flex items-center gap-2">
@@ -93,7 +94,7 @@ function StatusBanner({ statuses }: { statuses: Engram[] }) {
   if (ordered.length === 0) return null;
   const idx = Math.min(i, ordered.length - 1);
   const s = ordered[idx];
-  const accent = TYPE_COLORS.status;
+  const accent = typeColor("status");
   const isCurrent = s.status === "active";
   const dot = isCurrent ? accent : "var(--color-muted-foreground)";
   const state =
@@ -103,7 +104,7 @@ function StatusBanner({ statuses }: { statuses: Engram[] }) {
   const next = (s.properties?.next_step as string | undefined) ?? null;
 
   return (
-    <BrainCard className="border-l-[3px] p-4" style={{ borderLeftColor: dot }}>
+    <BrainCard className="p-4">
       <SectionHeader
         title={isCurrent ? "Status" : "Status · superseded"}
         accent={dot}
@@ -122,8 +123,8 @@ function StatusBanner({ statuses }: { statuses: Engram[] }) {
         <p className="mt-1 line-clamp-2 text-ui text-muted-foreground">{s.content}</p>
       </Link>
       {next && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg bg-foreground/[0.04] px-3 py-2 text-ui text-muted-foreground">
-          <span className="mt-px shrink-0 text-caption font-semibold tracking-wide uppercase" style={{ color: accent }}>
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-ui text-muted-foreground">
+          <span className={cn(LABEL, "mt-px shrink-0 text-foreground")}>
             Next
           </span>
           <span className="line-clamp-2">{next}</span>
@@ -175,7 +176,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
       {parentId && (
         <>
           <span>/</span>
-          <BrainLink to={{ view: "project", projectId: parentId }} className="truncate hover:text-foreground hover:underline">
+          <BrainLink to={{ view: "project", projectId: parentId }} className={cn("truncate rounded-sm hover:text-foreground hover:underline", FOCUS)}>
             {parentName}
           </BrainLink>
         </>
@@ -192,7 +193,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
           <div className="text-body font-semibold text-foreground">{notFound ? "Project not found" : "Failed to load project"}</div>
           <p className="mt-1 text-ui text-muted-foreground">
             {notFound ? (
-              <>No brain project with id <span className="font-mono">{id}</span>.</>
+              <>No brain project with id <span className="font-code">{id}</span>.</>
             ) : (
               (state.error as Error).message
             )}
@@ -211,7 +212,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
           <h1 className="text-heading font-semibold text-foreground">{project?.name ?? id}</h1>
           {offerMove && (
             <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setMoving(true)}>
-              <ArrowRightLeft className="h-3.5 w-3.5" />
+              <ArrowRightLeft aria-hidden className="size-3.5" />
               Move to shared space…
             </Button>
           )}
@@ -222,7 +223,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
             {movedSpace && (
               <>
                 {" "}
-                <button type="button" className="text-primary hover:underline" onClick={() => switchSpace(movedSpace)}>
+                <button type="button" className={cn("rounded-sm font-medium text-foreground underline underline-offset-2 hover:no-underline", FOCUS)} onClick={() => switchSpace(movedSpace)}>
                   Open {movedSpace.name}
                 </button>
               </>
@@ -230,7 +231,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
           </p>
         )}
         {project?.goal && <p className="mt-1 text-body text-muted-foreground">{project.goal}</p>}
-        {project?.description && <p className="mt-1 text-caption text-muted-foreground/80">{project.description}</p>}
+        {project?.description && <p className="mt-1 text-caption text-muted-foreground">{project.description}</p>}
       </div>
 
       {/* Project-scoped search — filters to this project only */}
@@ -240,7 +241,7 @@ export default function BrainProject({ projectId }: { projectId: string }) {
           <button
             type="button"
             onClick={() => setQ("")}
-            className="absolute top-1/2 right-3 -translate-y-1/2 text-caption text-muted-foreground hover:text-foreground"
+            className={cn("absolute top-1/2 right-2 min-h-(--target-min) -translate-y-1/2 rounded-md px-1 text-caption text-muted-foreground hover:text-foreground", FOCUS)}
           >
             clear ✕
           </button>

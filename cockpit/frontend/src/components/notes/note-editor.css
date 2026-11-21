@@ -1,38 +1,39 @@
 /* The note pane's editor surface (TipTap / ProseMirror): plain document text,
-   Apple-Notes-like checklists. Theme colors come from index.css tokens. */
+   Apple-Notes-like checklists. Tokens v2 only: sizes, corners and colours come
+   from index.css; the em gaps scale with the text. */
 .note-editor {
   outline: none;
   min-height: 100%;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--text-chat);
+  line-height: var(--text-chat--line-height);
   color: var(--color-foreground);
 }
 .note-editor > * + * { margin-top: 0.4em; }
-.note-editor h1 { font-size: 1.45em; font-weight: 700; line-height: 1.25; margin-top: 0.2em; }
-.note-editor h2 { font-size: 1.2em; font-weight: 650; margin-top: 0.9em; }
-.note-editor h3 { font-size: 1.05em; font-weight: 650; margin-top: 0.8em; }
+.note-editor h1 { font-size: var(--text-display); line-height: var(--text-display--line-height); font-weight: 700; letter-spacing: var(--tracking-title); margin-top: 0.2em; }
+.note-editor h2 { font-size: var(--text-title); line-height: var(--text-title--line-height); font-weight: 650; margin-top: 0.9em; }
+.note-editor h3 { font-size: var(--text-chat); font-weight: 650; margin-top: 0.8em; }
 .note-editor ul, .note-editor ol { padding-left: 1.4em; }
 .note-editor ul { list-style: disc; }
 .note-editor ol { list-style: decimal; }
 .note-editor li > p { margin: 0; }
-.note-editor a { color: var(--color-ring); text-decoration: underline; }
+.note-editor a { color: var(--color-foreground); text-decoration: underline; text-underline-offset: 2px; }
 .note-editor code {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
   font-size: 0.9em;
   background: var(--color-muted);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0.1em 0.3em;
 }
 .note-editor pre {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
   background: var(--color-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 0.6em 0.8em;
   overflow-x: auto;
 }
 .note-editor pre code { background: none; padding: 0; }
 .note-editor blockquote {
-  border-left: 2px solid var(--color-border);
+  border-left: var(--width-quote) solid var(--color-border-strong);
   padding-left: 0.8em;
   color: var(--color-muted-foreground);
 }
@@ -44,10 +45,14 @@
 .note-editor ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 0.5em; }
 .note-editor ul[data-type="taskList"] > li > label { flex-shrink: 0; margin-top: 0.22em; user-select: none; }
 .note-editor ul[data-type="taskList"] > li > label input {
-  width: 15px;
-  height: 15px;
+  width: var(--size-note-check);
+  height: var(--size-note-check);
   cursor: pointer;
-  accent-color: var(--color-primary);
+  accent-color: var(--color-foreground);
+}
+.note-editor ul[data-type="taskList"] > li > label input:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: var(--focus-offset);
 }
 .note-editor ul[data-type="taskList"] > li > div { flex: 1; min-width: 0; }
 .note-editor ul[data-type="taskList"] > li[data-checked="true"] > div {

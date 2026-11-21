@@ -1,25 +1,3 @@
 {
-  "components/brain/ActivityHeatmap.tsx": 3,
-  "components/brain/BrainHome.tsx": 4,
-  "components/brain/BrainProject.tsx": 2,
-  "components/brain/BrainSurface.tsx": 1,
-  "components/brain/GraphPanel.tsx": 1,
-  "components/brain/ui.tsx": 1,
-  "components/command-palette/CommandPalette.tsx": 3,
-  "components/engram-detail.tsx": 4,
-  "components/engram-drawer.tsx": 3,
-  "components/engram-row.tsx": 1,
-  "components/graph/subject-graph.tsx": 1,
-  "components/graph/tag-graph.tsx": 1,
-  "components/jobs/JobsView.tsx": 4,
-  "components/review-actions.tsx": 5,
-  "components/review/DraftsPanel.tsx": 4,
-  "components/review/ReviewScreen.tsx": 4,
-  "components/review/YourTurnList.tsx": 2,
-  "components/task-run.tsx": 1,
-  "components/task-sections.tsx": 12,
-  "components/timeline/timeline.tsx": 4,
-  "components/worktrees/WorktreesPane.tsx": 8,
-  "index.css": 36,
-  "lib/tag-graph.ts": 1
+  "index.css": 22
 }
