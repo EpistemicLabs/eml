@@ -9,6 +9,7 @@
 //   dist/core-log.cjs core's op-log tools (move, verify) for the agent upgrade — esbuild, CJS
 //   dist/channel-bridge.cjs      channel bridge process  — esbuild, CJS, better-sqlite3 external
 //   dist/channel-bridge-mcp.cjs  a job's bridge tools    — esbuild, CJS
+//   dist/gmail-mcp.cjs           the gmail plugin's MCP part — esbuild, CJS
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
 //   plugins/<id>/plugin.json  official plugins' manifests — copied from the repo's plugins/
@@ -31,6 +32,7 @@ const server = pkgRoot('@engramprotocol/server')
 const core = pkgRoot('@engramprotocol/core')
 const frontend = pkgRoot('@engramprotocol/cockpit-frontend')
 const channelBridge = pkgRoot('@engramprotocol/channel-bridge')
+const gmailMcp = pkgRoot('@engramprotocol/plugin-gmail-mcp')
 
 for (const p of ['dist', 'ui', 'migrations', 'plugins', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
 
@@ -55,6 +57,7 @@ const bundles = [
   }),
   await build({ ...common, entryPoints: [path.join(channelBridge, 'dist', 'entrypoints', 'main.js')], outfile: path.join(HOST, 'dist', 'channel-bridge.cjs') }),
   await build({ ...common, entryPoints: [path.join(channelBridge, 'dist', 'entrypoints', 'mcp-server.js')], outfile: path.join(HOST, 'dist', 'channel-bridge-mcp.cjs') }),
+  await build({ ...common, entryPoints: [path.join(gmailMcp, 'dist', 'main.js')], outfile: path.join(HOST, 'dist', 'gmail-mcp.cjs') }),
 ]
 // esbuild metafile inputs are relative to the working directory.
 const bundledFiles = bundles.flatMap((result) => Object.keys(result.metafile.inputs).map((input) => path.resolve(input)))

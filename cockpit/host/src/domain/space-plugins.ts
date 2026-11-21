@@ -1,10 +1,11 @@
 import { z } from 'zod'
-import { serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
+import { secretsOf, serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
 
 /**
  * Which plugins each space has (plan cockpit-plugins-mcp-channels-plan, item 4). A plugin is all or
  * nothing per space: switched on, the space gets every part of it that is on for the cockpit. A
- * plugin with a sign-in uses one of the user's connections in each space where it is on.
+ * plugin with a sign-in uses one or more of the user's connections in each space where it is on
+ * (decision plugin-several-sign-ins-per-space: two mailboxes in one space).
  *
  * The claude.ai connectors and Claude Code's own plugin servers are not cockpit plugins: they load
  * in every space whose agent shares the cockpit's Claude config, unless switched off there by name
@@ -13,11 +14,24 @@ import { serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKin
 
 export const PART_KINDS = ['pane', 'mcp', 'channel'] as const
 
+/**
+ * A plugin on in a space: the user's sign-ins it uses there (none for a plugin without one). A file
+ * written before several sign-ins per space names a single `connection`; it still reads.
+ */
+const pluginInSpaceSchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== 'object' || 'connections' in raw || !('connection' in raw)) return raw
+    const single = (raw as { connection: unknown }).connection
+    return { connections: typeof single === 'string' ? [single] : [] }
+  },
+  z.object({ connections: z.array(z.string()).default([]) }),
+)
+
 export const spacePluginsSchema = z.object({
   version: z.literal(1),
   spaces: z.record(z.string(), z.object({
-    /** pluginId → the connection it uses here; null for a plugin without a sign-in. */
-    plugins: z.record(z.string(), z.object({ connection: z.string().nullable() })).default({}),
+    /** pluginId → the sign-ins it uses here. */
+    plugins: z.record(z.string(), pluginInSpaceSchema).default({}),
     /** claude.ai connectors and Claude Code plugin servers switched off here, by server name. */
     off: z.array(z.string()).default([]),
   })).default({}),
@@ -39,6 +53,8 @@ export const connectionSchema = z.object({
   plugin: z.string(),
   /** What the user recognises it by ("work mailbox"); never a secret. */
   label: z.string().max(80),
+  /** Names its MCP server next to the plugin's own (gmail-invoice); the plugin's name when left out. */
+  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/).optional(),
   /** Secret name → value; owner-only on disk, never sent to the page. */
   values: z.record(z.string(), z.string()).default({}),
 })
@@ -57,11 +73,16 @@ export function spacesOf(state: SpacePlugins, pluginId: string): string[] {
   return Object.entries(state.spaces).filter(([, space]) => space.plugins[pluginId] !== undefined).map(([id]) => id)
 }
 
-/** Switch a plugin on (with its connection) or off in a space. Pure: returns the new state. */
-export function setPlugin(state: SpacePlugins, spaceId: string, pluginId: string, on: { connection: string | null } | null): SpacePlugins {
+/** The sign-ins a plugin uses in a space; none when it is off there. */
+export function connectionsIn(state: SpacePlugins, spaceId: string, pluginId: string): string[] {
+  return state.spaces[spaceId]?.plugins[pluginId]?.connections ?? []
+}
+
+/** Switch a plugin on (with the sign-ins it uses) or off in a space. Pure: returns the new state. */
+export function setPlugin(state: SpacePlugins, spaceId: string, pluginId: string, on: { connections: string[] } | null): SpacePlugins {
   const space = state.spaces[spaceId] ?? { plugins: {}, off: [] }
   const plugins = { ...space.plugins }
-  if (on) plugins[pluginId] = { connection: on.connection }
+  if (on) plugins[pluginId] = { connections: [...new Set(on.connections)] }
   else delete plugins[pluginId]
   return { ...state, spaces: { ...state.spaces, [spaceId]: { ...space, plugins } } }
 }
@@ -94,30 +115,53 @@ export function mcpServersFor(
   state: SpacePlugins,
   manifests: PluginManifest[],
   connections: Connection[],
+  /** Placeholders a manifest may use in its command and arguments (${NODE}, ${COCKPIT_DIST}). */
+  vars: Record<string, string> = {},
 ): ResolvedServers {
   const servers: Record<string, McpServerConfig> = {}
+  /** Which plugin a server name belongs to: an official plugin, listed first, keeps its names. */
+  const owner = new Map<string, string>()
   const problems: string[] = []
+  const expand = (text: string) => text.replace(/\$\{([A-Z_]+)\}/g, (whole, name: string) => vars[name] ?? whole)
   for (const manifest of manifests) {
     const part = manifest.parts.mcp
-    const name = serverNameOf(manifest)
-    if (!part || !name || !isOn(state, spaceId, manifest.id) || !partOn(state, manifest.id, 'mcp')) continue
-    const connectionId = state.spaces[spaceId]?.plugins[manifest.id]?.connection ?? null
-    const connection = connectionId ? connections.find((c) => c.id === connectionId && c.plugin === manifest.id) ?? null : null
-    const missing: string[] = []
-    const fill = (value: ConfigValue): string => {
-      if (typeof value === 'string') return value
-      const filled = connection?.values[value.secret]
-      if (filled === undefined) missing.push(value.secret)
-      return filled ?? ''
+    const base = serverNameOf(manifest)
+    if (!part || !base || !isOn(state, spaceId, manifest.id) || !partOn(state, manifest.id, 'mcp')) continue
+    const picked = connectionsIn(state, spaceId, manifest.id)
+    // A server without secrets runs once; one with secrets once per sign-in the space picked.
+    const targets: Array<Connection | null> = secretsOf(part).length === 0 ? [null] : picked.flatMap((id) => {
+      const found = connections.find((c) => c.id === id && c.plugin === manifest.id)
+      if (!found) problems.push(`${manifest.name}: a sign-in it should use here is gone`)
+      return found ? [found] : []
+    })
+    if (secretsOf(part).length > 0 && picked.length === 0) problems.push(`${manifest.name}: no sign-in picked for this space`)
+    for (const connection of targets) {
+      const missing: string[] = []
+      const fill = (value: ConfigValue): string => {
+        if (typeof value === 'string') return expand(value)
+        const filled = connection?.values[value.secret]
+        if (filled === undefined) missing.push(value.secret)
+        return filled ?? ''
+      }
+      const config: McpServerConfig = part.transport === 'stdio'
+        ? { type: 'stdio', command: expand(part.command), args: part.args.map(fill), env: mapValues(part.env, fill) }
+        : { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
+      if (missing.length > 0) {
+        problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.label} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
+        continue
+      }
+      // The first sign-in (or one without a short name) takes the plugin's own name; others add theirs.
+      const wanted = connection?.slug ? `${base}-${connection.slug}` : base
+      if (owner.has(wanted) && owner.get(wanted) !== manifest.id) {
+        // Another plugin has the name (e.g. the gmail plugin replacing an imported gmail server): it stays out.
+        problems.push(`${manifest.name}: left out, ${owner.get(wanted)} serves ${wanted} here`)
+        continue
+      }
+      let name = wanted
+      for (let n = 2; name in servers; n++) name = `${wanted}-${n}`
+      servers[name] = config
+      owner.set(name, manifest.id)
     }
-    const config: McpServerConfig = part.transport === 'stdio'
-      ? { type: 'stdio', command: part.command, args: part.args.map(fill), env: mapValues(part.env, fill) }
-      : { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
-    if (missing.length > 0) {
-      problems.push(`${manifest.name}: ${connection ? `its connection lacks ${missing.join(', ')}` : 'no connection picked for this space'}`)
-      continue
-    }
-    servers[name] = config
   }
   return { servers, problems }
 }
@@ -136,7 +180,7 @@ export type BridgeAccount = { type: string; accountId: string; spaces: string[] 
 
 /**
  * The channel bridge's accounts (plan item 5, no home space): one per connection of a plugin with
- * a channel part, on in every space that picked that connection. The connection's id is the
+ * a channel part, on in every space that picked that connection (a space may pick several). The connection's id is the
  * account's id, so the bridge's cursors and threads carry on; its values are the adapter's
  * settings. A space the bridge has no token for (a shared space) is left out of the list.
  */
@@ -153,14 +197,14 @@ export function bridgeAccountsFor(
     if (!channel || !partOn(state, manifest.id, 'channel')) continue
     const bySpace = Object.entries(state.spaces).flatMap(([spaceId, space]) => {
       const on = space.plugins[manifest.id]
-      return on ? [{ spaceId, connection: on.connection }] : []
+      return on ? [{ spaceId, connections: on.connections }] : []
     })
-    for (const { spaceId, connection } of bySpace) {
-      if (connection === null) problems.push(`${manifest.name}: on in space ${spaceId} without a connection`)
+    for (const { spaceId, connections: picked } of bySpace) {
+      if (picked.length === 0) problems.push(`${manifest.name}: on in space ${spaceId} without a sign-in`)
       else if (!tokenSpaces.includes(spaceId)) problems.push(`${manifest.name}: space ${spaceId} takes no channel messages (no job token)`)
     }
     for (const connection of connections.filter((c) => c.plugin === manifest.id)) {
-      const spaces = bySpace.filter((on) => on.connection === connection.id && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
+      const spaces = bySpace.filter((on) => on.connections.includes(connection.id) && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
       if (spaces.length === 0) continue
       accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.id, spaces: spaces.sort() })
     }

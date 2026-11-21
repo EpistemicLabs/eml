@@ -184,6 +184,9 @@ importers:
       '@engramprotocol/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@engramprotocol/plugin-gmail-mcp':
+        specifier: workspace:*
+        version: link:../../plugins/gmail/mcp
       '@engramprotocol/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -305,6 +308,18 @@ importers:
       '@engramprotocol/channel-bridge-sdk':
         specifier: workspace:*
         version: link:../../../packages/channel-bridge-sdk
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  plugins/gmail/mcp:
+    dependencies:
+      '@engramprotocol/plugin-gmail-channel':
+        specifier: workspace:*
+        version: link:../channel
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.2
+        version: 1.32.2(zod@4.6.7)
       zod:
         specifier: ^4.6.7
         version: 4.6.7

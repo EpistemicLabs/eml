@@ -7,10 +7,11 @@ import * as path from 'node:path'
 import { partsOf, type McpPart, type PluginManifest } from './domain/plugin-manifest.js'
 import { PluginRegistry } from './infrastructure/plugins/plugin-registry.js'
 import { PluginStore } from './infrastructure/plugins/plugin-store.js'
+import { GoogleSignIn } from './infrastructure/plugins/google-sign-in.js'
 import type { OutsideServer } from './infrastructure/plugins/outside-servers.js'
 import { SpacePluginService } from './application/space-plugins.js'
 import { connectionSchema, PART_KINDS, spacesOf, type SpacePlugins } from './domain/space-plugins.js'
-import { CUSTOM_PLUGINS_FILE, OFFICIAL_PLUGINS_DIR, PLUGINS_HOME } from './paths.js'
+import { CUSTOM_PLUGINS_FILE, HOST_ROOT, OFFICIAL_PLUGINS_DIR, PLUGINS_HOME } from './paths.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
@@ -37,7 +38,7 @@ export interface TimeNames {
  * only the pane view; the brain itself and the header's Brain tab stay.
  *
  *   GET    /api/plugins?space=                  → { plugins: [PluginView] }, enabled for that space
- *   PATCH  /api/plugins  { id, enabled, space?, connection? } → in one space, or every open one
+ *   PATCH  /api/plugins  { id, enabled, space?, connections? } → in one space (with the sign-ins it uses), or every open one
  *   PATCH  /api/plugins/parts  { id, part, enabled } → a part off or on for every space
  *   DELETE /api/plugins/import-notice           → the user has seen the notice about the imported servers
  *   GET    /api/plugins/outside                 → { servers: [{ name, kind, off: [space] }] }
@@ -45,6 +46,9 @@ export interface TimeNames {
  *   GET    /api/plugins/connections             → { connections: [{ id, plugin, label, secrets }] }
  *   POST   /api/plugins/connections  { plugin, label, values } → { connection }
  *   DELETE /api/plugins/connections/<id>        → { removed }
+ *   GET|PUT /api/plugins/google/client  { client } → { configured }: the user's own Google OAuth client
+ *   POST   /api/plugins/google/sign-in  { plugin, connection? } → { url }: Google's consent page
+ *   POST   /api/plugins/google/sign-in/finish  { plugin, redirect, slug? } → { connection }
  *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, remotely only with the shell on
  *   DELETE /api/plugins/custom/<id>             → { removed }, remotely only with the shell on
  *   GET    /api/plugins/worktrees/git?projectId= → the project folder's worktrees
@@ -69,15 +73,19 @@ export const pluginRegistry = new PluginRegistry({
 
 /** Which plugin is on in which space, and the user's connections (owner-only, <home>/plugins/). */
 export const pluginStore = new PluginStore(PLUGINS_HOME)
-export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore)
+export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore, { NODE: process.execPath, COCKPIT_DIST: path.join(HOST_ROOT, 'dist') })
+
+/** Google sign-ins with the user's own OAuth client (<home>/plugins/google/, owner-only). */
+export const googleSignIn = new GoogleSignIn({ dir: path.join(PLUGINS_HOME, 'google') })
 
 /** The registry and the per-space state a request works on; the cockpit's own unless a test hands its own. */
 export interface PluginsContext {
   registry: PluginRegistry
   service: SpacePluginService
   store: PluginStore
+  google?: GoogleSignIn
 }
-const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore }
+const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn }
 
 /** Whether each plugin is on in any space: the gate of a pane's routes, which serve every space. */
 export async function pluginStates(ctx: PluginsContext = defaultContext): Promise<Record<string, boolean>> {
@@ -100,8 +108,8 @@ export interface PluginView {
   auth: PluginManifest['auth'] | null
   /** On in the space the page asked about (or in any space, when it named none). */
   enabled: boolean
-  /** Space id → the connection it uses there (null: none), for every space it is on in. */
-  spaces: Record<string, string | null>
+  /** Space id → the sign-ins it uses there, for every space it is on in. */
+  spaces: Record<string, string[]>
   /** Its parts switched off for every space. */
   partsOff: Array<'pane' | 'mcp' | 'channel'>
   /** Made by the one-time import of the servers configured outside the plugins. */
@@ -109,7 +117,7 @@ export interface PluginView {
 }
 
 export function pluginView(manifest: PluginManifest, state: SpacePlugins, space: string | null): PluginView {
-  const spaces = Object.fromEntries(spacesOf(state, manifest.id).map((id) => [id, state.spaces[id]?.plugins[manifest.id]?.connection ?? null]))
+  const spaces = Object.fromEntries(spacesOf(state, manifest.id).map((id) => [id, state.spaces[id]?.plugins[manifest.id]?.connections ?? []]))
   const enabled = space === null ? Object.keys(spaces).length > 0 : space in spaces
   const { pane, mcp, channel } = manifest.parts
   const settings = mcp ? Object.entries(mcp.transport === 'stdio' ? mcp.env : mcp.headers).map(([name, value]) => ({ name, secret: typeof value !== 'string' })) : []
@@ -122,13 +130,20 @@ export function pluginView(manifest: PluginManifest, state: SpacePlugins, space:
     pane: pane && 'builtin' in pane ? pane.builtin : null,
     channel: channel?.adapter ?? null,
     // The command without its arguments: they may carry a token.
-    mcp: mcp ? { transport: mcp.transport, target: mcp.transport === 'stdio' ? mcp.command : typeof mcp.url === 'string' ? new URL(mcp.url).origin : 'a URL kept as a secret', settings } : null,
+    mcp: mcp ? { transport: mcp.transport, target: mcpTarget(mcp), settings } : null,
     auth: manifest.auth ?? null,
     enabled,
     spaces,
     partsOff: state.partsOff[manifest.id] ?? [],
     imported: state.imported.includes(manifest.id),
   }
+}
+
+/** What an MCP part runs or reaches, for the page: a command, a bundled server's file, or a URL's origin. */
+function mcpTarget(mcp: McpPart): string {
+  if (mcp.transport !== 'stdio') return typeof mcp.url === 'string' ? new URL(mcp.url).origin : 'a URL kept as a secret'
+  const first = mcp.args[0]
+  return mcp.command.startsWith('${') && typeof first === 'string' ? path.basename(first) : mcp.command
 }
 
 async function pluginViews(ctx: PluginsContext, space: string | null): Promise<PluginView[]> {
@@ -251,12 +266,14 @@ export async function handlePluginsApi(
       const known = typeof body.id === 'string' && (await registry.get(body.id)) !== null
       if (!known || typeof body.enabled !== 'boolean') return badRequest('id is a plugin this cockpit knows, enabled a boolean')
       if (body.space !== undefined && typeof body.space !== 'string') return badRequest('space is a space id')
-      if (body.connection !== undefined && body.connection !== null && typeof body.connection !== 'string') return badRequest('connection is a connection id or null')
+      // `connections` (the sign-ins it uses there) or, as before, one `connection`.
+      const picked = Array.isArray(body.connections) ? body.connections : body.connection === undefined ? undefined : body.connection === null ? [] : [body.connection]
+      if (picked !== undefined && !picked.every((c): c is string => typeof c === 'string')) return badRequest('connections is a list of connection ids')
       const id = body.id as string
       space = typeof body.space === 'string' ? body.space : null
       const targets = space !== null ? [space] : (deps.spaceIds?.() ?? [])
       for (const target of targets) {
-        const result = await service.setPlugin(target, id, body.enabled, body.connection as string | null | undefined)
+        const result = await service.setPlugin(target, id, body.enabled, picked)
         if (!result.ok) return badRequest(result.reason)
       }
       // A shell switched off everywhere ends with it, not only at its detach timeout.
@@ -301,18 +318,72 @@ export async function handlePluginsApi(
     })
     return true
   }
+  if (pathname.startsWith('/api/plugins/google/') && ctx.google) {
+    // A Google sign-in with the user's own OAuth client: the client once, then consent and the
+    // address the browser ended on (google-sign-in.ts). Like the connections, for the user's own logins.
+    const google = ctx.google
+    if (pathname === '/api/plugins/google/client') {
+      // A sign-in made before (e.g. the bridge's accounts file) names the client it was made with.
+      const fromSignIns = (await service.connections()).filter((c) => c.values.credentialsFile && c.values.credentialsFile !== google.clientFile)
+      if (method === 'PUT') {
+        const body = await readJson(req)
+        const from = typeof body.fromConnection === 'string' ? fromSignIns.find((c) => c.id === body.fromConnection) : undefined
+        let client: unknown = body.client
+        if (from) {
+          try {
+            client = await fs.readFile(from.values.credentialsFile, 'utf8')
+          } catch {
+            return badRequest('The client file of that sign-in cannot be read')
+          }
+        }
+        const saved = await google.saveClient(client)
+        if (!saved.ok) return badRequest(saved.reason)
+      } else if (method !== 'GET') return false
+      json(res, 200, { configured: (await google.client()) !== null, fromSignIns: fromSignIns.map((c) => ({ id: c.id, label: c.label })) })
+      return true
+    }
+    if (pathname === '/api/plugins/google/sign-in' && method === 'POST') {
+      const body = await readJson(req)
+      const manifest = typeof body.plugin === 'string' ? await registry.get(body.plugin) : null
+      if (!manifest || manifest.auth?.kind !== 'google-oauth') return badRequest('plugin is a plugin that signs in with Google')
+      // Signed in again, a mailbox gets a token file of its own in the cockpit home: a file another
+      // program keeps (a sign-in made before the plugins) is never written. finish matches it by address.
+      const started = await google.start(manifest.auth.scopes)
+      if (!started.ok) return badRequest(started.reason)
+      json(res, 200, { url: started.url })
+      return true
+    }
+    if (pathname === '/api/plugins/google/sign-in/finish' && method === 'POST') {
+      const body = await readJson(req)
+      if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin)) || typeof body.redirect !== 'string') return badRequest('plugin and redirect (the address the browser ended on) are needed')
+      if (body.slug !== undefined && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
+      const finished = await google.finish(body.redirect)
+      if (!finished.ok) return badRequest(finished.reason)
+      const { address, credentialsFile, tokenFile } = finished.signedIn
+      const all = await service.connections()
+      const again = all.find((c) => c.plugin === body.plugin && c.values.address?.toLowerCase() === address.toLowerCase())
+      const base = `${body.plugin}-${address.toLowerCase().split('@')[0].replace(/[^a-z0-9]+/g, '-')}`.slice(0, 50).replace(/-+$/, '')
+      let id = again?.id ?? base
+      for (let n = 2; !again && all.some((c) => c.id === id); n++) id = `${base}-${n}`
+      const connection = { id, plugin: body.plugin, label: address, ...(typeof body.slug === 'string' ? { slug: body.slug } : again?.slug ? { slug: again.slug } : {}), values: { address, credentialsFile, tokenFile } }
+      await service.saveConnection(connection)
+      json(res, 200, { connection: { id, plugin: connection.plugin, label: address, slug: connection.slug ?? null, secrets: Object.keys(connection.values), again: !!again } })
+      return true
+    }
+    return false
+  }
   if (pathname === '/api/plugins/connections' || pathname.startsWith('/api/plugins/connections/')) {
     // Sign-ins and secrets: set up by the user here or through remote access (remote.json lets
     // only the user's own tailnet logins in); their values are never sent back.
     if (pathname === '/api/plugins/connections' && method === 'GET') {
-      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, secrets: Object.keys(values) })) })
+      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, slug: rest.slug ?? null, secrets: Object.keys(values), address: values.address ?? null })) })
       return true
     }
     if (pathname === '/api/plugins/connections' && method === 'POST') {
       const body = await readJson(req)
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin))) return badRequest('plugin is a plugin this cockpit knows')
       const id = `${body.plugin}-${randomUUID().slice(0, 8)}`
-      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', values: body.values ?? {} })
+      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), values: body.values ?? {} })
       if (!parsed.success) return badRequest('label is a short text, values maps names to strings')
       await service.saveConnection(parsed.data)
       json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values) } })

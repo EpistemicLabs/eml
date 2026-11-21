@@ -4,7 +4,7 @@ import { Mail, Plug, Puzzle, type LucideIcon } from 'lucide-react';
 import { PANE_VIEW_DEFS } from '@/lib/pane-views';
 import type { PluginPart, PluginTier, PluginView } from '@/lib/plugins-admin';
 import { cn } from '@/lib/utils';
-import { Chip } from '@/shared/view/ui';
+import { Chip, Input } from '@/shared/view/ui';
 
 export const TIER_LABEL: Record<PluginTier, string> = { official: 'Official', custom: 'Custom MCP', community: 'Community', dev: 'Local dev' };
 
@@ -52,4 +52,15 @@ export function trustNote(tier: PluginTier): string {
 /** It needs one of the user's sign-ins to work: a sign-in kind, or a secret setting. */
 export function needsSignIn(plugin: PluginView): boolean {
   return !!plugin.auth || !!plugin.mcp?.settings.some((s) => s.secret);
+}
+
+/** The short name a second sign-in gives its MCP server (gmail-invoice); empty: the plugin's own name. */
+export function SlugField({ plugin, value, onChange }: { plugin: PluginView; value: string; onChange: (slug: string) => void }) {
+  return (
+    <label className="block text-body">
+      <span className="text-muted-foreground">Short name (optional)</span>
+      <Input value={value} onChange={(e) => onChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="invoice" className="mt-1 font-code text-ui" />
+      <span className="text-ui text-muted-foreground">Its tools: mcp__{plugin.id}{value ? `-${value}` : ''}__… — give each further sign-in in a space a name of its own.</span>
+    </label>
+  );
 }

@@ -23,7 +23,7 @@ const plugin = (over: Record<string, unknown>) => ({
 const PLUGINS = [
   plugin({ id: 'note', name: 'Note', pane: 'note', enabled: true, spaces: { 'main-id': null } }),
   plugin({ id: 'stripe', name: 'stripe', tier: 'custom', parts: ['mcp'], mcp: { transport: 'stdio', target: 'npx', settings: [] }, imported: true }),
-  plugin({ id: 'gmail', name: 'Gmail', parts: ['channel'], channel: 'gmail', auth: { kind: 'google-oauth', scopes: [] } }),
+  plugin({ id: 'gmail', name: 'Gmail', parts: ['mcp', 'channel'], channel: 'gmail', mcp: { transport: 'stdio', target: 'node', settings: [{ name: 'GMAIL_ADDRESS', secret: true }] }, auth: { kind: 'google-oauth', scopes: [] }, spaces: { 'main-id': ['work'] } }),
 ];
 
 type Call = { url: string; method: string; body: unknown };
@@ -36,7 +36,8 @@ beforeEach(async () => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     const body = url.startsWith('/api/spaces') ? { spaces: SPACES }
-      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'] }] }
+      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }] }
+      : url === '/api/plugins/google/client' ? { configured: false }
       : url === '/api/plugins/connections' ? { connection: { id: 'lookup-1', plugin: 'lookup', label: 'Settings', secrets: ['API_KEY'] } }
       : url.startsWith('/api/plugins/custom') ? { plugin: {} }
       : url.startsWith('/api/plugins/outside') ? { servers: [{ name: 'claude.ai Slack', kind: 'connector', off: ['other-id'] }] }
@@ -60,7 +61,8 @@ describe('Settings › Plugins', () => {
     renderTab();
     fireEvent.click(await screen.findByRole('button', { name: /Gmail/ }));
     expect(await screen.findByText('Sign-ins')).toBeTruthy();
-    expect(screen.getByText('Work mailbox')).toBeTruthy();
+    expect(screen.getAllByText('Work mailbox').length).toBeGreaterThan(0);
+    expect(screen.getByText(/its tools: gmail-invoice/)).toBeTruthy();
     expect(screen.getByRole('switch', { name: 'Gmail in Other' }).getAttribute('aria-checked')).toBe('false');
   });
 
@@ -102,7 +104,23 @@ describe('Settings › Plugins', () => {
     expect(custom?.body).toEqual({ id: 'lookup', name: 'Lookup', parts: { mcp: { transport: 'stdio', command: 'lookup-mcp', args: ['--region', 'eu'], env: { API_KEY: { secret: 'API_KEY' } } } } });
     expect(JSON.stringify(custom?.body)).not.toContain('placeholder-value');
     expect(calls.find((c) => c.url === '/api/plugins/connections' && c.method === 'POST')?.body).toEqual({ plugin: 'lookup', label: 'Settings', values: { API_KEY: 'placeholder-value' } });
-    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ id: 'lookup', space: 'other-id', enabled: true, connection: 'lookup-1' });
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ id: 'lookup', space: 'other-id', enabled: true, connections: ['lookup-1'] });
+  });
+
+  it('lets a space use several Google accounts at once, each toggled on its own', async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Spaces' }));
+    const invoice = await screen.findByRole('button', { name: 'Gmail Invoices in Main' });
+    expect(invoice.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(invoice);
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ id: 'gmail', space: 'main-id', enabled: true, connections: ['work', 'invoice'] }));
+  });
+
+  it('asks for the own Google OAuth client before the first Google sign-in', async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole('button', { name: /Gmail/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add another Google account' }));
+    expect(await screen.findByRole('textbox', { name: 'OAuth client JSON' })).toBeTruthy();
   });
 
   it('splits a command line at spaces outside quotes', () => {
