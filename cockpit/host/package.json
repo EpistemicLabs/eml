@@ -12,6 +12,7 @@
     "dist",
     "ui",
     "migrations",
+    "plugins",
     "skills",
     "README.md",
     "LICENSE",

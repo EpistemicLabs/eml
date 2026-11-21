@@ -1,0 +1,12 @@
+{
+  "id": "brain",
+  "name": "Brain",
+  "description": "The project's brain: timeline, graph, tasks. Off hides only this view; the header's Brain tab stays.",
+  "tier": "official",
+  "defaultEnabled": true,
+  "parts": {
+    "pane": {
+      "builtin": "brain"
+    }
+  }
+}

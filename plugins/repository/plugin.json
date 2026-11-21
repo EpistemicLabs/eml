@@ -1,0 +1,12 @@
+{
+  "id": "repository",
+  "name": "Repository",
+  "description": "What changed in a checkout of the project — uncommitted, on its branch, per commit — and all its files, read-only.",
+  "tier": "official",
+  "defaultEnabled": false,
+  "parts": {
+    "pane": {
+      "builtin": "repository"
+    }
+  }
+}

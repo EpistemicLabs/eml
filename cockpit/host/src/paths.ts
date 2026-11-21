@@ -27,6 +27,12 @@ export const BRAIN_WATCHDOG_JS = path.join(HOST_ROOT, 'dist', 'brain-watchdog.js
 // The channel bridge, bundled: its process, and the MCP server that gives a job's session its tools.
 export const CHANNEL_BRIDGE_JS = path.join(HOST_ROOT, 'dist', 'channel-bridge.cjs')
 export const CHANNEL_BRIDGE_MCP_JS = path.join(HOST_ROOT, 'dist', 'channel-bridge-mcp.cjs')
+// The official plugins' manifests (plugins/<id>/plugin.json): the repo's own folder in a dev
+// checkout, the copy scripts/build.mjs puts next to dist/ in the package.
+const REPO_ROOT = path.resolve(HOST_ROOT, '..', '..')
+export const OFFICIAL_PLUGINS_DIR = fs.existsSync(path.join(REPO_ROOT, 'pnpm-workspace.yaml')) && fs.existsSync(path.join(REPO_ROOT, 'plugins'))
+  ? path.join(REPO_ROOT, 'plugins')
+  : path.join(HOST_ROOT, 'plugins')
 // CLI a session runs to open a worker session (spawn-cli.ts, skill spawn-session).
 export const SPAWN_CLI_JS = path.join(HOST_ROOT, 'dist', 'spawn-cli.js')
 // CLI a greeted session runs to name itself (session-title-cli.ts, session-greeting.ts).
@@ -156,6 +162,9 @@ export const CHANNEL_BRIDGE_HOME = path.join(COCKPIT_HOME, 'channel-bridge')
 export const CHANNEL_BRIDGE_ACCOUNTS_FILE = path.join(CHANNEL_BRIDGE_HOME, 'accounts.json')
 // One token per space for the channel bridge's /v1 requests (job-tokens.ts): <dir>/<brain id>.
 export const JOB_TOKENS_DIR = path.join(COCKPIT_HOME, 'job-tokens')
+// The user's own plugins and what they need: custom MCP servers (custom.json); owner-only.
+export const PLUGINS_HOME = path.join(COCKPIT_HOME, 'plugins')
+export const CUSTOM_PLUGINS_FILE = path.join(PLUGINS_HOME, 'custom.json')
 // v0.17 task runs: the home of a task's files when its project has no folder of its own.
 export const TASKS_DIR = path.join(COCKPIT_HOME, 'tasks')
 // Cockpit folders: made for brain projects that have no folder of their own

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -95,13 +95,22 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('starts with Brain, Note and Worktrees on and the later plugins off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: false }, { id: 'shell', enabled: false }, { id: 'time', enabled: false }] })
+    const { plugins } = await res.json()
+    expect(Object.fromEntries(plugins.map((p: { id: string; enabled: boolean }) => [p.id, p.enabled]))).toEqual({
+      brain: true, note: true, worktrees: true, repository: false, shell: false, time: false, gmail: false,
+    })
+  })
+
+  it('describes each official plugin by its manifest', async () => {
+    const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
+    expect(plugins.find((p: { id: string }) => p.id === 'note')).toMatchObject({ name: 'Note', tier: 'official', parts: ['pane'], pane: 'note', channel: null, mcp: null })
+    expect(plugins.find((p: { id: string }) => p.id === 'gmail')).toMatchObject({ tier: 'official', parts: ['channel'], pane: null, channel: 'gmail', auth: { kind: 'google-oauth' } })
   })
 
   // Switches every plugin on for the tests below.
   it('keeps what the user chose over the default', async () => {
     await patch({ id: 'brain', enabled: false })
-    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time']) await patch({ id, enabled: true })
+    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time', 'gmail']) await patch({ id, enabled: true })
     const res = await patch({ id: 'brain', enabled: true })
     expect((await res.json()).plugins.every((p: { enabled: boolean }) => p.enabled)).toBe(true)
   })
@@ -113,7 +122,7 @@ describe('plugin switches', () => {
 
   it('keeps a switch in the config and refuses the plugin\'s routes while off', async () => {
     const res = await patch({ id: 'note', enabled: false })
-    expect((await res.json()).plugins).toContainEqual({ id: 'note', enabled: false })
+    expect((await res.json()).plugins).toContainEqual(expect.objectContaining({ id: 'note', enabled: false }))
     expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ note: false })
     expect((await fetch(`${base}/api/notes?projectId=p1`)).status).toBe(404)
     expect((await fetch(`${base}/api/notes/abc`)).status).toBe(404)
@@ -134,6 +143,48 @@ describe('plugin switches', () => {
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(404)
     await patch({ id: 'repository', enabled: true })
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(200)
+  })
+})
+
+describe('custom MCP plugins', () => {
+  const add = (body: unknown) => fetch(`${base}/api/plugins/custom`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const lookup = { id: 'lookup', name: 'Lookup', parts: { mcp: { transport: 'stdio', command: 'lookup-mcp', args: ['--token', 'abc'], env: { LOOKUP_KEY: { secret: 'key' }, LOOKUP_REGION: 'eu' } } } }
+
+  it('adds one owner-only, starts it off and shows its settings by name only', async () => {
+    const res = await add(lookup)
+    expect(res.status).toBe(201)
+    expect((await res.json()).plugin).toMatchObject({
+      id: 'lookup', tier: 'custom', parts: ['mcp'], enabled: false,
+      mcp: { transport: 'stdio', target: 'lookup-mcp', settings: [{ name: 'LOOKUP_KEY', secret: true }, { name: 'LOOKUP_REGION', secret: false }] },
+    })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins`)).json())
+    expect(listed).toContain('"lookup"')
+    expect(listed).not.toContain('abc')
+    expect(listed).not.toContain('"eu"')
+    const file = join(home, 'plugins', 'custom.json')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugins[0]).toMatchObject({ id: 'lookup', tier: 'custom' })
+  })
+
+  it('refuses a taken id, an official one, a channel or a pane, and a bad manifest', async () => {
+    expect((await add(lookup)).status).toBe(400)
+    expect((await add({ ...lookup, id: 'gmail' })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'mail2', parts: { channel: { adapter: 'gmail' } } })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'view2', parts: { pane: { builtin: 'note' } } })).status).toBe(400)
+    expect((await add({ id: 'Bad Id', name: 'x', parts: {} })).status).toBe(400)
+    // It can't make itself official.
+    const official = await add({ ...lookup, id: 'sneaky', tier: 'official' })
+    expect((await official.json()).plugin).toMatchObject({ tier: 'custom' })
+    await fetch(`${base}/api/plugins/custom/sneaky`, { method: 'DELETE' })
+  })
+
+  it('switches like any plugin and forgets the switch when removed', async () => {
+    await patch({ id: 'lookup', enabled: true })
+    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ lookup: true })
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(200)
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(404)
+    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins.lookup).toBeUndefined()
+    expect((await patch({ id: 'lookup', enabled: true })).status).toBe(400)
   })
 })
 

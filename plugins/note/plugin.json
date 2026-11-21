@@ -1,0 +1,12 @@
+{
+  "id": "note",
+  "name": "Note",
+  "description": "Notes of a project, kept as engrams in its brain; the sidebar lists them under each project.",
+  "tier": "official",
+  "defaultEnabled": true,
+  "parts": {
+    "pane": {
+      "builtin": "note"
+    }
+  }
+}

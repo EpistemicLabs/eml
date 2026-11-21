@@ -1,0 +1,12 @@
+{
+  "id": "time",
+  "name": "Time",
+  "description": "Your time at the cockpit per project, counted on its own (5 minutes without input pause it), and the time your agents ran, per session and task.",
+  "tier": "official",
+  "defaultEnabled": false,
+  "parts": {
+    "pane": {
+      "builtin": "time"
+    }
+  }
+}
