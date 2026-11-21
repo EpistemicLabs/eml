@@ -63,6 +63,8 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
   const removeConnection = useRemoveConnection();
   const removeCustom = useRemoveCustom();
   const [confirmRemove, setConfirmRemove] = useState(false);
+  /** The sign-in whose "Sign in again" steps are open, under its line. */
+  const [againFor, setAgainFor] = useState<string | null>(null);
   const own = connections.filter((c) => c.plugin === plugin.id);
   const onIn = Object.keys(plugin.spaces).length;
   const google = plugin.auth?.kind === 'google-oauth';
@@ -104,14 +106,16 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
           {!needsSignIn(plugin) && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
           {needsSignIn(plugin) && own.length === 0 && <p className={cn('text-body', HUE.you.ink)}>No sign-in yet: add one to use it in a space.</p>}
           {own.map((connection) => (
-            <Line
-              key={connection.id}
-              label={connection.label}
-              note={`Connected · ${plugin.mcp ? `its tools: ${plugin.mcp ? `${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · ` : ''}secret stored once, owner only, never shown`}
-            >
-              {google && <GoogleSignInAgain plugin={plugin} connection={connection} />}
-              <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
-            </Line>
+            <div key={connection.id} className="border-t border-border first-of-type:border-t-0">
+              <Line
+                label={connection.label}
+                note={`Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · secret stored once, owner only, never shown`}
+              >
+                {google && againFor !== connection.id && <Button variant="outline" size="sm" onClick={() => setAgainFor(connection.id)}>Sign in again</Button>}
+                <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
+              </Line>
+              {google && againFor === connection.id && <GoogleSignInAgain plugin={plugin} connection={connection} onClose={() => setAgainFor(null)} />}
+            </div>
           ))}
           {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
           {needsSignIn(plugin) && !google && <AddSignIn plugin={plugin} another={own.length > 0} />}

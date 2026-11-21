@@ -99,21 +99,19 @@ export function GoogleSignIn({ plugin, another }: { plugin: PluginView; another:
   );
 }
 
-/** "Sign in again" for a sign-in Google withdrew or that should get new scopes. */
-export function GoogleSignInAgain({ plugin, connection }: { plugin: PluginView; connection: ConnectionView }) {
+/** The steps of "Sign in again", for a sign-in Google withdrew or that should get new scopes; full width, under its line. */
+export function GoogleSignInAgain({ plugin, connection, onClose }: { plugin: PluginView; connection: ConnectionView; onClose: () => void }) {
   const client = useGoogleClient();
-  const [open, setOpen] = useState(false);
-  if (!open) return <Button variant="outline" size="sm" onClick={() => setOpen(true)}>Sign in again</Button>;
   return (
-    <div className="w-full basis-full space-y-2">
+    <div className="space-y-3 border-t border-border pt-3">
       {client.data?.configured === false && <ClientStep fromSignIns={client.data.fromSignIns} />}
       {client.data?.configured === true && (
         <>
           <p className="text-ui text-muted-foreground">Sign in with {connection.address ?? connection.label} on Google's page.</p>
-          <ConsentSteps plugin={plugin} connection={connection} slugField={false} onDone={() => setOpen(false)} />
+          <ConsentSteps plugin={plugin} connection={connection} slugField={false} onDone={onClose} />
         </>
       )}
-      <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+      <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
     </div>
   );
 }
