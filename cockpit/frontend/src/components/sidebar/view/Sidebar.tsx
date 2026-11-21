@@ -5,9 +5,8 @@ import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { cn } from '@/lib/utils';
 import { NavFooter, NavHeader, NavRail, SpacesNav, TaskNav } from '../nav/SidebarNav';
 import type { SidebarDrawer, SidebarProps } from '../types';
-import { useSidebarController } from '../useSidebarController';
+import { useSidebarState } from '../useSidebarState';
 import { SidebarErrorLine } from './subcomponents/SidebarChrome';
-import { SidebarModals } from './subcomponents/SidebarModals';
 import { SidebarNewSession } from './subcomponents/SidebarNewSession';
 
 const CLOSE_GRACE_MS = 200;
@@ -16,8 +15,8 @@ const CLOSE_GRACE_MS = 200;
  * The cockpit's one navigation (decision cockpit-sidebar-replaces-top-bar): pinned open, or a rail
  * that opens over the panes while the pointer is on it; on a phone, a drawer the page opens.
  */
-export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: SidebarDrawer }) {
-  const controller = useSidebarController(props);
+export default function Sidebar({ drawer, onShowSettings }: SidebarProps & { drawer?: SidebarDrawer }) {
+  const controller = useSidebarState();
   const keyboardOpen = useSoftKeyboardOpen();
 
   const [hovered, setHovered] = useState(false);
@@ -42,7 +41,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
   useEffect(() => cancelClose, [cancelClose]);
 
   const isOpen = controller.isPinnedOpen || hovered;
-  const showSettings = props.onShowSettings;
+  const showSettings = onShowSettings;
 
   const panel = (
     <>
@@ -52,7 +51,7 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
         onClose={drawer?.onClose}
         onOpenAbout={() => showSettings('about')}
       />
-      <SidebarNewSession controller={controller} />
+      <SidebarNewSession onError={controller.reportError} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
         <TaskNav onNavigate={drawer?.onClose} />
@@ -66,7 +65,6 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
   if (drawer) {
     return (
       <>
-        <SidebarModals controller={controller} />
         <div
           data-sidebar-drawer
           className={cn(
@@ -101,7 +99,6 @@ export default function Sidebar({ drawer, ...props }: SidebarProps & { drawer?: 
 
   return (
     <>
-      <SidebarModals controller={controller} />
       <div className={cn('relative h-full', controller.isPinnedOpen ? 'w-(--size-sidebar)' : 'w-(--size-sidebar-rail)')}>
         <div
           onMouseEnter={openPanel}

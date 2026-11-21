@@ -9,7 +9,6 @@ import { FIELD, FOCUS } from '@/shared/view/ui';
 import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
-import type { SidebarController } from '../../useSidebarController';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
 
@@ -47,7 +46,7 @@ function writeLastProject(spaceId: string, projectId: string): void {
  * last. Without a prompt it opens an empty session in a pane; with one it runs on the
  * host, in a pane or in the background.
  */
-export function SidebarNewSession({ controller }: { controller: SidebarController }) {
+export function SidebarNewSession({ onError }: { onError: (message: string) => void }) {
   const spaces = useSpaces();
   const openKey = useActiveSpaceId();
   const [open, setOpen] = useState(false);
@@ -112,14 +111,14 @@ export function SidebarNewSession({ controller }: { controller: SidebarControlle
       });
       const body = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
       if (!response.ok || !body?.id) {
-        controller.reportError(body?.error?.message ?? 'The session could not start.');
+        onError(body?.error?.message ?? 'The session could not start.');
         return;
       }
       if (!background) openSessionInSpace(key, { surface: 'terminal', projectId, sessionId: body.id, chat: true });
       window.dispatchEvent(new CustomEvent(SESSIONS_CHANGED_EVENT));
       close();
     } catch {
-      controller.reportError('The cockpit host did not answer. Try again.');
+      onError('The cockpit host did not answer. Try again.');
     } finally {
       setStarting(false);
     }

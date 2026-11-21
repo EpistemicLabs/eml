@@ -18,7 +18,8 @@ import JobsView from '../jobs/JobsView';
 import { TaskBoard } from '../task-board/TaskBoard';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
-import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
+import { ProjectModals } from '../projects/ProjectModals';
+import { useProjectActions } from '../projects/useProjectActions';
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
 import { FirstRunSignIn } from '@/components/first-run/FirstRun';
@@ -270,19 +271,6 @@ function AppContentInner() {
   }, [activeDeskId, desks]);
 
   // ── Sidebar handlers (drive the active pane) ────────────────────────
-  const handleProjectSelect = useCallback((_project: Project) => {
-    // Clicking a project is PURE sidebar navigation — it expands the project
-    // and reveals its sessions (handled inside the sidebar). It must NOT
-    // touch the active pane.
-    //
-    // Re-homing the active pane's projectId here used to silently swap a
-    // running terminal: the project path is part of the host's PTY key, so
-    // changing the pane's project tore down the live PTY and reconnected to
-    // a different one — the "active terminal got swapped" bug.
-    //
-    // A pane only adopts a project when the user opens an actual session in
-    // it (handleSessionSelect) or starts a new one (handleNewSession).
-  }, []);
 
   // The project a sidebar session belongs to. Callers tag it (__projectId);
   // when that is missing, derive it from the projects list so a pane never
@@ -302,9 +290,9 @@ function AppContentInner() {
     else paneStore.openInPane(target);
   }, [projectIdForSession]);
 
-  // "Set folder…" from the sidebar. (A project without a folder no longer
-  // needs one before its first session — the host makes a cockpit folder.)
-  const [folderTarget, setFolderTarget] = React.useState<{ project: Project } | null>(null);
+  // Project management (Plan) and its dialogs: here, so the launcher's "New project…" opens the
+  // wizard from any view.
+  const projectActions = useProjectActions({ onChanged: handleSidebarRefresh, onRemoved: handleProjectDelete });
 
   // A new session never overwrites what the active pane shows.
   const handleNewSession = useCallback((project: Project) => {
@@ -315,9 +303,6 @@ function AppContentInner() {
   const activePaneCtx = usePaneContext(activePaneId, projects);
   useDocumentTitle(activePaneCtx.project?.displayName, unseenTotal);
 
-  // In the drawer a pick is the end of the errand: show what was picked.
-  const closingDrawer = <A extends unknown[]>(handler: (...args: A) => void) =>
-    (...args: A) => { handler(...args); setDrawerOpen(false); };
 
   return (
     <div
@@ -335,19 +320,7 @@ function AppContentInner() {
       <div className={compact ? 'contents' : 'relative z-(--z-chrome) my-2 ml-2 flex-shrink-0 self-stretch'}>
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
-          projects={projects}
-          projectsBySpace={projectsBySpace}
-          selectedProject={activePaneCtx.project}
-          selectedSession={activePaneCtx.session}
-          onProjectSelect={compact ? closingDrawer(handleProjectSelect) : handleProjectSelect}
-          onSessionSelect={compact ? closingDrawer(handleSessionSelect) : handleSessionSelect}
-          onNewSession={compact ? closingDrawer(handleNewSession) : handleNewSession}
-          onSessionDelete={handleSessionDelete}
-          onProjectDelete={handleProjectDelete}
-          isLoading={isLoadingProjects}
-          onRefresh={handleSidebarRefresh}
           onShowSettings={(tab) => { setDrawerOpen(false); openSettings(tab); }}
-          onSetFolder={(project) => setFolderTarget({ project })}
         />
       </div>
 
@@ -382,7 +355,7 @@ function AppContentInner() {
           )}
           {topView === 'tasks' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
-              <TaskBoard />
+              <TaskBoard projects={projectsBySpace} projectActions={projectActions} />
             </div>
           )}
           {/* All visited desks stay mounted, stacked in the same box; only
@@ -425,13 +398,7 @@ function AppContentInner() {
       <EngramDrawer projects={projects} />
       </div>
 
-      {folderTarget && (
-        <ProjectFolderDialog
-          project={folderTarget.project}
-          onClose={() => setFolderTarget(null)}
-          onSaved={() => { void refreshProjectsSilently(); }}
-        />
-      )}
+      <ProjectModals actions={projectActions} />
 
       <Settings
         isOpen={showSettings}
