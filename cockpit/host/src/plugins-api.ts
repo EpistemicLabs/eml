@@ -1,12 +1,16 @@
 import type * as http from 'node:http'
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { readCockpitConfig, updateCockpitConfig } from './config.js'
 import { partsOf, type McpPart, type PluginManifest } from './domain/plugin-manifest.js'
 import { PluginRegistry } from './infrastructure/plugins/plugin-registry.js'
-import { CUSTOM_PLUGINS_FILE, OFFICIAL_PLUGINS_DIR } from './paths.js'
+import { PluginStore } from './infrastructure/plugins/plugin-store.js'
+import type { OutsideServer } from './infrastructure/plugins/outside-servers.js'
+import { SpacePluginService } from './application/space-plugins.js'
+import { connectionSchema, PART_KINDS, spacesOf, type SpacePlugins } from './domain/space-plugins.js'
+import { CUSTOM_PLUGINS_FILE, OFFICIAL_PLUGINS_DIR, PLUGINS_HOME } from './paths.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
@@ -25,14 +29,21 @@ export interface TimeNames {
  * The cockpit's plugins (plan cockpit-plugins-mcp-channels-plan): the official
  * ones in plugins/<id>/plugin.json — the project's views, Brain among them, and
  * services such as Gmail — and the user's own custom MCP servers
- * (infrastructure/plugins/plugin-registry.ts). Settings › EML Plugins switches
- * them on or off for the whole cockpit — every browser of it sees the same.
- * Brain off hides only the pane view; the brain itself and the header's Brain tab stay.
- * A plugin's manifest says whether it starts on (defaultEnabled: Brain, Note
- * and Worktrees, decision cockpit-plugin-defaults); the user's own switch wins.
+ * (infrastructure/plugins/plugin-registry.ts). Each space has its own: a plugin
+ * is on or off per space, all or nothing, with one of the user's connections
+ * where it needs a sign-in (application/space-plugins.ts). A space's sessions
+ * start with exactly the MCP servers of its plugins, and without the claude.ai
+ * connectors and Claude Code plugin servers switched off in it. Brain off hides
+ * only the pane view; the brain itself and the header's Brain tab stay.
  *
- *   GET    /api/plugins                         → { plugins: [PluginView] }
- *   PATCH  /api/plugins  { id, enabled }        → the same, after the change
+ *   GET    /api/plugins?space=                  → { plugins: [PluginView] }, enabled for that space
+ *   PATCH  /api/plugins  { id, enabled, space?, connection? } → in one space, or every open one
+ *   PATCH  /api/plugins/parts  { id, part, enabled } → a part off or on for every space
+ *   GET    /api/plugins/outside                 → { servers: [{ name, kind, off: [space] }] }
+ *   PATCH  /api/plugins/outside  { space, server, enabled } → a connector off or on in a space
+ *   GET    /api/plugins/connections             → { connections: [{ id, plugin, label, secrets }] }, this machine only
+ *   POST   /api/plugins/connections  { plugin, label, values } → { connection }, this machine only
+ *   DELETE /api/plugins/connections/<id>        → { removed }, this machine only
  *   POST   /api/plugins/custom  { id, name, description?, parts: { mcp } } → { plugin }, this machine only
  *   DELETE /api/plugins/custom/<id>             → { removed }, this machine only
  *   GET    /api/plugins/worktrees/git?projectId= → the project folder's worktrees
@@ -45,8 +56,8 @@ export interface TimeNames {
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
  * are shaped like the capabilities a sandboxed plugin would later call
- * (cockpit-plugin-system-implementation-plan). A plugin that is off answers
- * 404 on its routes, Notes included (/api/notes).
+ * (cockpit-plugin-system-implementation-plan). A pane plugin off in every
+ * space answers 404 on its routes, Notes included (/api/notes).
  */
 
 export const pluginRegistry = new PluginRegistry({
@@ -55,10 +66,22 @@ export const pluginRegistry = new PluginRegistry({
   log: (line) => console.log(line),
 })
 
-/** What the user chose, else the plugin's default; every plugin the registry knows. */
-export async function pluginStates(registry: PluginRegistry = pluginRegistry): Promise<Record<string, boolean>> {
-  const chosen = (await readCockpitConfig())?.plugins ?? {}
-  return Object.fromEntries((await registry.list()).map((manifest) => [manifest.id, chosen[manifest.id] ?? manifest.defaultEnabled]))
+/** Which plugin is on in which space, and the user's connections (owner-only, <home>/plugins/). */
+export const pluginStore = new PluginStore(PLUGINS_HOME)
+export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore)
+
+/** The registry and the per-space state a request works on; the cockpit's own unless a test hands its own. */
+export interface PluginsContext {
+  registry: PluginRegistry
+  service: SpacePluginService
+  store: PluginStore
+}
+const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore }
+
+/** Whether each plugin is on in any space: the gate of a pane's routes, which serve every space. */
+export async function pluginStates(ctx: PluginsContext = defaultContext): Promise<Record<string, boolean>> {
+  const state = await ctx.store.spaces()
+  return Object.fromEntries((await ctx.registry.list()).map((manifest) => [manifest.id, spacesOf(state, manifest.id).length > 0]))
 }
 
 /** A plugin as the page sees it: never a value an MCP part passes, only the names. */
@@ -74,10 +97,17 @@ export interface PluginView {
   channel: string | null
   mcp: { transport: McpPart['transport']; target: string; settings: Array<{ name: string; secret: boolean }> } | null
   auth: PluginManifest['auth'] | null
+  /** On in the space the page asked about (or in any space, when it named none). */
   enabled: boolean
+  /** Space id → the connection it uses there (null: none), for every space it is on in. */
+  spaces: Record<string, string | null>
+  /** Its parts switched off for every space. */
+  partsOff: Array<'pane' | 'mcp' | 'channel'>
 }
 
-export function pluginView(manifest: PluginManifest, enabled: boolean): PluginView {
+export function pluginView(manifest: PluginManifest, state: SpacePlugins, space: string | null): PluginView {
+  const spaces = Object.fromEntries(spacesOf(state, manifest.id).map((id) => [id, state.spaces[id]?.plugins[manifest.id]?.connection ?? null]))
+  const enabled = space === null ? Object.keys(spaces).length > 0 : space in spaces
   const { pane, mcp, channel } = manifest.parts
   const settings = mcp ? Object.entries(mcp.transport === 'stdio' ? mcp.env : mcp.headers).map(([name, value]) => ({ name, secret: typeof value !== 'string' })) : []
   return {
@@ -92,12 +122,14 @@ export function pluginView(manifest: PluginManifest, enabled: boolean): PluginVi
     mcp: mcp ? { transport: mcp.transport, target: mcp.transport === 'stdio' ? mcp.command : typeof mcp.url === 'string' ? new URL(mcp.url).origin : 'a URL kept as a secret', settings } : null,
     auth: manifest.auth ?? null,
     enabled,
+    spaces,
+    partsOff: state.partsOff[manifest.id] ?? [],
   }
 }
 
-async function pluginViews(registry: PluginRegistry): Promise<PluginView[]> {
-  const states = await pluginStates(registry)
-  return (await registry.list()).map((manifest) => pluginView(manifest, states[manifest.id] ?? false))
+async function pluginViews(ctx: PluginsContext, space: string | null): Promise<PluginView[]> {
+  const state = await ctx.store.spaces()
+  return (await ctx.registry.list()).map((manifest) => pluginView(manifest, state, space))
 }
 
 export interface Worktree {
@@ -138,8 +170,12 @@ export interface WorktreesGit {
 }
 
 export interface PluginsApiDeps {
-  /** The plugins; the cockpit's own registry when left out. */
-  registry?: PluginRegistry
+  /** The plugins and their per-space state; the cockpit's own when left out. */
+  plugins?: PluginsContext
+  /** The ids of the open spaces: a switch without a space applies to all of them. */
+  spaceIds?: () => string[]
+  /** The claude.ai connectors and Claude Code plugin servers a space can switch off. */
+  outside?: { list(): Promise<OutsideServer[]> }
   /** The pane project's folder in the request's space; null: no such project or no folder. */
   projectFolder: (projectId: string) => string | null
   /** The cockpit sessions' running agent processes, pid → session. */
@@ -195,48 +231,111 @@ export async function handlePluginsApi(
   readJson: ReadJson,
 ): Promise<boolean> {
   const { pathname } = url
-  const registry = deps.registry ?? pluginRegistry
+  const ctx = deps.plugins ?? defaultContext
+  const { registry, service } = ctx
   if (pathname === '/api/notes' || pathname.startsWith('/api/notes/')) {
-    if ((await pluginStates(registry)).note) return false
+    if ((await pluginStates(ctx)).note) return false
     notFound(json, res, 'Notes are switched off (Settings › EML Plugins)')
     return true
   }
+  const badRequest = (message: string) => { json(res, 400, { error: { code: 'BAD_REQUEST', message } }); return true }
+  const localOnly = (what: string) => {
+    if (isLocalRequest(req)) return false
+    json(res, 403, { error: { code: 'FORBIDDEN', message: `${what} on this machine only` } })
+    return true
+  }
   if (pathname === '/api/plugins') {
+    let space = url.searchParams.get('space')
     if (method === 'PATCH') {
+      // { id, enabled, space?, connection? }: on or off in one space, or in every open space without one.
       const body = await readJson(req)
       const known = typeof body.id === 'string' && (await registry.get(body.id)) !== null
-      if (!known || typeof body.enabled !== 'boolean') {
-        json(res, 400, { error: { code: 'BAD_REQUEST', message: 'id is a plugin this cockpit knows, enabled a boolean' } })
-        return true
-      }
+      if (!known || typeof body.enabled !== 'boolean') return badRequest('id is a plugin this cockpit knows, enabled a boolean')
+      if (body.space !== undefined && typeof body.space !== 'string') return badRequest('space is a space id')
+      if (body.connection !== undefined && body.connection !== null && typeof body.connection !== 'string') return badRequest('connection is a connection id or null')
       const id = body.id as string
-      const enabled = body.enabled
-      await updateCockpitConfig((config) => config && { ...config, plugins: { ...config.plugins, [id]: enabled } })
-      // A shell switched off ends with it, not only at its detach timeout.
-      if (id === 'shell' && !enabled) deps.endShells?.()
+      space = typeof body.space === 'string' ? body.space : null
+      const targets = space !== null ? [space] : (deps.spaceIds?.() ?? [])
+      for (const target of targets) {
+        const result = await service.setPlugin(target, id, body.enabled, (body.connection as string | null | undefined) ?? null)
+        if (!result.ok) return badRequest(result.reason)
+      }
+      // A shell switched off everywhere ends with it, not only at its detach timeout.
+      if (id === 'shell' && !body.enabled && !(await pluginStates(ctx)).shell) deps.endShells?.()
     } else if (method !== 'GET') return false
-    json(res, 200, { plugins: await pluginViews(registry) })
+    json(res, 200, { plugins: await pluginViews(ctx, space) })
     return true
+  }
+  if (pathname === '/api/plugins/parts' && method === 'PATCH') {
+    const body = await readJson(req)
+    if (typeof body.id !== 'string' || !(await registry.get(body.id)) || !(PART_KINDS as readonly unknown[]).includes(body.part) || typeof body.enabled !== 'boolean') {
+      return badRequest('id is a plugin, part one of pane, mcp, channel, enabled a boolean')
+    }
+    await service.setPart(body.id, body.part as 'pane' | 'mcp' | 'channel', body.enabled)
+    json(res, 200, { plugins: await pluginViews(ctx, null) })
+    return true
+  }
+  if (pathname === '/api/plugins/outside') {
+    // The claude.ai connectors and Claude Code plugin servers, and the spaces each is off in.
+    if (method === 'PATCH') {
+      const body = await readJson(req)
+      if (typeof body.space !== 'string' || typeof body.server !== 'string' || typeof body.enabled !== 'boolean') return badRequest('space, server and enabled are needed')
+      await service.setOutside(body.space, body.server, body.enabled)
+    } else if (method !== 'GET') return false
+    const state = await ctx.store.spaces()
+    const known = await (deps.outside?.list() ?? Promise.resolve([]))
+    const names = new Set([...known.map((s) => s.name), ...Object.values(state.spaces).flatMap((s) => s.off)])
+    json(res, 200, {
+      servers: [...names].sort().map((name) => ({
+        name,
+        kind: known.find((s) => s.name === name)?.kind ?? (name.startsWith('plugin:') ? 'claude-plugin' : 'connector'),
+        off: Object.entries(state.spaces).filter(([, s]) => s.off.includes(name)).map(([id]) => id),
+      })),
+    })
+    return true
+  }
+  if (pathname === '/api/plugins/connections' || pathname.startsWith('/api/plugins/connections/')) {
+    // Sign-ins and secrets: set up on this machine, never sent back.
+    if (localOnly('Connections are managed')) return true
+    if (pathname === '/api/plugins/connections' && method === 'GET') {
+      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, secrets: Object.keys(values) })) })
+      return true
+    }
+    if (pathname === '/api/plugins/connections' && method === 'POST') {
+      const body = await readJson(req)
+      if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin))) return badRequest('plugin is a plugin this cockpit knows')
+      const id = `${body.plugin}-${randomUUID().slice(0, 8)}`
+      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', values: body.values ?? {} })
+      if (!parsed.success) return badRequest('label is a short text, values maps names to strings')
+      await service.saveConnection(parsed.data)
+      json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values) } })
+      return true
+    }
+    const connectionId = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})$/.exec(pathname)?.[1]
+    if (connectionId && method === 'DELETE') {
+      const removed = await service.removeConnection(connectionId)
+      json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No connection with this id' } })
+      return true
+    }
+    return false
   }
   if (pathname === '/api/plugins/custom' || pathname.startsWith('/api/plugins/custom/')) {
     // A custom MCP server runs with the user's rights in every session that gets it: set up on this machine only.
-    if (!isLocalRequest(req)) {
-      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Custom MCP servers are added and removed on this machine only' } })
-      return true
-    }
+    if (localOnly('Custom MCP servers are added and removed')) return true
     if (pathname === '/api/plugins/custom' && method === 'POST') {
-      const result = await registry.addCustom(await readJson(req))
-      if (!result.ok) {
-        json(res, 400, { error: { code: 'BAD_REQUEST', message: result.reason } })
-        return true
-      }
-      json(res, 201, { plugin: pluginView(result.manifest, (await pluginStates(registry))[result.manifest.id] ?? false) })
+      const body = await readJson(req)
+      const parts = body.parts && typeof body.parts === 'object' ? Object.keys(body.parts) : []
+      // "Add custom MCP": an MCP server only. A custom plugin with a pane comes from promoting a community one.
+      if (parts.some((part) => part !== 'mcp')) return badRequest('A custom MCP plugin has an mcp part only')
+      const result = await registry.addCustom(body)
+      if (!result.ok) return badRequest(result.reason)
+      json(res, 201, { plugin: pluginView(result.manifest, await ctx.store.spaces(), null) })
       return true
     }
     const customId = /^\/api\/plugins\/custom\/([a-z][a-z0-9-]{0,39})$/.exec(pathname)?.[1]
     if (customId && method === 'DELETE') {
       const removed = await registry.removeCustom(customId)
-      if (removed) await updateCockpitConfig((config) => config && { ...config, plugins: Object.fromEntries(Object.entries(config.plugins ?? {}).filter(([id]) => id !== customId)) })
+      if (removed) await service.forget(customId)
       json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No custom plugin with this id' } })
       return true
     }
@@ -255,7 +354,7 @@ export async function handlePluginsApi(
   }
   if (pathname === '/api/plugins/time' || pathname === '/api/plugins/time/beat') {
     if (!deps.time) return false
-    if (!(await pluginStates(registry)).time) {
+    if (!(await pluginStates(ctx)).time) {
       notFound(json, res, 'Time is switched off (Settings › EML Plugins)')
       return true
     }
@@ -278,14 +377,14 @@ export async function handlePluginsApi(
     return true
   }
   if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
-    if (!(await pluginStates(registry)).repository) {
+    if (!(await pluginStates(ctx)).repository) {
       notFound(json, res, 'Repository is switched off (Settings › EML Plugins)')
       return true
     }
     return handleRepositoryApi(res, deps, url, json)
   }
   if (!pathname.startsWith('/api/plugins/worktrees/') || method !== 'GET') return false
-  if (!(await pluginStates(registry)).worktrees) {
+  if (!(await pluginStates(ctx)).worktrees) {
     notFound(json, res, 'Worktrees is switched off (Settings › EML Plugins)')
     return true
   }

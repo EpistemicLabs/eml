@@ -57,7 +57,9 @@ import { applyUpdate, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, 
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { projectKey, type TimeTracker } from './time-tracking.js'
-import { handlePluginsApi, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
+import { handlePluginsApi, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
+import { OutsideServers } from './infrastructure/plugins/outside-servers.js'
+import { CLAUDE_BIN } from './infrastructure/providers/claude/runtime.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
@@ -407,6 +409,9 @@ function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
 }
 
 /** What the cockpit's own plugins read from the host (plugins-api.ts). */
+/** The claude.ai connectors and Claude Code plugin servers of the cockpit's Claude config (names only). */
+const outsideServers = new OutsideServers({ bin: CLAUDE_BIN, configDir: CONFIG_DIR })
+
 function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
   return {
     projectFolder: (projectId) => space.registry.get(projectId)?.path ?? null,
@@ -427,6 +432,8 @@ function pluginsDeps(deps: HostDeps, space: BrainSpace): PluginsApiDeps {
     })),
     endShell: (id) => deps.bridge.endShell(id),
     endShells: () => deps.bridge.endShells(),
+    spaceIds: () => deps.spaces.list().map((s) => s.id),
+    outside: outsideServers,
     time: deps.time,
     sessionName: (sessionId) => {
       const entry = deps.bridge.ledger.get(sessionId)
@@ -609,6 +616,8 @@ function openNewSpace(deps: HostDeps, opts: { id: string; name: string; agent: s
     turnHookConfig: deps.turnHookConfig, mcpUrl: deps.mcpUrl, hooksUrl: deps.hooksUrl,
   })
   deps.spaces.add(space)
+  // It starts with the main space's panes; servers only once switched on for it.
+  void spacePlugins.adoptSpace(space.id, deps.spaces.main.id).catch(() => undefined)
   return space
 }
 

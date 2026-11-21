@@ -43,7 +43,12 @@ beforeAll(async () => {
   execFileSync('git', ['-C', wtX, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'second'])
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
-  const { handlePluginsApi } = await import('../src/plugins-api.js')
+  const { handlePluginsApi, spacePlugins } = await import('../src/plugins-api.js')
+  // A home's first boot: the switches of before (none here) carry over to both spaces.
+  await spacePlugins.setup(
+    [{ id: 'main', agent: null, ownRuntime: false }, { id: 'other', agent: null, ownRuntime: false }],
+    {}, { claudeJson: join(home, 'claude-config', '.claude.json'), agents: [] }, join(home, 'plugins', 'backups'),
+  )
   const { TimeTracker } = await import('../src/time-tracking.js')
   const folders: Record<string, string> = { p1: repo, p2: plain }
   const deps = {
@@ -58,6 +63,8 @@ beforeAll(async () => {
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
     endShell: (id: string) => shells.delete(id),
+    spaceIds: () => ['main', 'other'],
+    outside: { list: async () => [{ name: 'claude.ai Slack', kind: 'connector' as const }] },
     time: new TimeTracker(() => ({ spaceId: null, projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
     sessionName: (id: string) => (id === 's1' ? 'Dev server session' : null),
     timeNames: async ({ projects }: { projects: Array<{ spaceId: string | null; projectId: string | null }> }) => ({
@@ -123,7 +130,7 @@ describe('plugin switches', () => {
   it('keeps a switch in the config and refuses the plugin\'s routes while off', async () => {
     const res = await patch({ id: 'note', enabled: false })
     expect((await res.json()).plugins).toContainEqual(expect.objectContaining({ id: 'note', enabled: false }))
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ note: false })
+    expect(JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces.main.plugins.note).toBeUndefined()
     expect((await fetch(`${base}/api/notes?projectId=p1`)).status).toBe(404)
     expect((await fetch(`${base}/api/notes/abc`)).status).toBe(404)
 
@@ -179,12 +186,57 @@ describe('custom MCP plugins', () => {
   })
 
   it('switches like any plugin and forgets the switch when removed', async () => {
-    await patch({ id: 'lookup', enabled: true })
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ lookup: true })
+    await patch({ id: 'lookup', enabled: true, space: 'other' })
+    const spaces = () => JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces
+    expect(spaces().other.plugins.lookup).toEqual({ connection: null })
+    expect(spaces().main.plugins.lookup).toBeUndefined()
     expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(200)
     expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(404)
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins.lookup).toBeUndefined()
+    expect(spaces().other.plugins.lookup).toBeUndefined()
     expect((await patch({ id: 'lookup', enabled: true })).status).toBe(400)
+  })
+})
+
+describe('plugins per space', () => {
+  const view = async (space: string, id: string) =>
+    (await (await fetch(`${base}/api/plugins?space=${space}`)).json()).plugins.find((p: { id: string }) => p.id === id)
+
+  it('switches a plugin in one space only and tells each space its own state', async () => {
+    await patch({ id: 'time', enabled: false, space: 'other' })
+    expect(await view('main', 'time')).toMatchObject({ enabled: true })
+    expect(await view('other', 'time')).toMatchObject({ enabled: false, spaces: { main: null } })
+    await patch({ id: 'time', enabled: true, space: 'other' })
+  })
+
+  it('keeps connections owner-only and never sends their values back', async () => {
+    const res = await fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: 'gmail', label: 'Test mailbox', values: { token: 'placeholder-value' } }),
+    })
+    expect(res.status).toBe(201)
+    const { connection } = await res.json()
+    expect(connection).toMatchObject({ plugin: 'gmail', label: 'Test mailbox', secrets: ['token'] })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins/connections`)).json())
+    expect(listed).not.toContain('placeholder-value')
+    expect(statSync(join(home, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
+    // A connection of another plugin can't be picked.
+    expect((await patch({ id: 'time', enabled: true, space: 'main', connection: connection.id })).status).toBe(400)
+    expect((await patch({ id: 'gmail', enabled: true, space: 'main', connection: connection.id })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: connection.id } })
+    // Removed, the space keeps the plugin without one.
+    expect((await fetch(`${base}/api/plugins/connections/${connection.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: null } })
+    await patch({ id: 'gmail', enabled: false, space: 'main' })
+  })
+
+  it('switches a claude.ai connector off in one space', async () => {
+    const res = await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: false }),
+    })
+    expect((await res.json()).servers).toEqual([{ name: 'claude.ai Slack', kind: 'connector', off: ['other'] }])
+    await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: true }),
+    })
   })
 })
 
