@@ -1,4 +1,4 @@
-// Inbox: only what is the viewer's turn — questions, results to review, tasks a session proposed.
+// Inbox: only what is the viewer's turn — questions and results to review.
 // An item clears itself when its session is answered, the result reviewed or the task closed.
 import { useState } from 'react';
 
@@ -9,8 +9,7 @@ import { Chip, FOCUS, LABEL, MINI, Who } from './parts';
 
 export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }
-  | { kind: 'review'; item: InboxItem }
-  | { kind: 'triage'; item: InboxItem; action: 'accept' | 'merge' | 'close' };
+  | { kind: 'review'; item: InboxItem };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dayOf = (iso: string, now: number) => {
@@ -18,10 +17,9 @@ const dayOf = (iso: string, now: number) => {
   return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : new Date(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
 };
 
-const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' | 'mark' }> = {
+const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' }> = {
   question: { label: 'question', hue: 'you' },
   review: { label: 'review', hue: 'review' },
-  new_task: { label: 'new task', hue: 'mark' },
 };
 
 export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction }: {
@@ -95,29 +93,17 @@ function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
       <span aria-hidden className="mt-1.5 size-2 rounded-full bg-mark" />
       <button type="button" onClick={() => onOpen(item)} className={cn('flex min-w-0 flex-col gap-1 text-left', FOCUS)}>
         <span className="text-heading font-semibold">{readable(item.title)}</span>
-        {item.kind !== 'new_task' && <span className={cn('text-body text-muted-foreground', compact && 'line-clamp-2')}>{item.text}</span>}
+        <span className={cn('text-body text-muted-foreground', compact && 'line-clamp-2')}>{item.text}</span>
         <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-ui text-muted-foreground">
           <Chip hue={kind.hue}>{kind.label}</Chip>
-          {task ? <Who task={task} viewer={viewer} /> : item.kind === 'new_task' ? <span>proposed by a session</span> : <span>no task</span>}
+          {task ? <Who task={task} viewer={viewer} /> : <span>no task</span>}
           <time className="tabular-nums text-caption">{when(item.since, now)}</time>
         </span>
       </button>
       <span className={cn('flex flex-wrap gap-1.5', compact ? 'col-start-2 justify-start' : 'self-center justify-end')}>
         {item.kind === 'review' && <button type="button" className={MINI} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
-        {item.kind === 'new_task'
-          ? (
-            <>
-              <button type="button" className={MINI} onClick={() => onAction({ kind: 'triage', item, action: 'accept' })}>Accept</button>
-              <button type="button" className={MINI} onClick={() => onAction({ kind: 'triage', item, action: 'merge' })}>Merge…</button>
-              <button type="button" className={MINI} onClick={() => onAction({ kind: 'triage', item, action: 'close' })}>Close</button>
-            </>
-          )
-          : (
-            <>
-              <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Snooze to tomorrow</button>
-              <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Snooze to Monday</button>
-            </>
-          )}
+        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Snooze to tomorrow</button>
+        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Snooze to Monday</button>
       </span>
     </div>
   );

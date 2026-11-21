@@ -8,12 +8,12 @@ import {
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
-import { Chip, Dot, FOCUS, LABEL, Who } from './parts';
+import { Chip, Dot, FOCUS, LABEL, MINI, Who } from './parts';
 
 const SEGMENT = cn('min-h-(--target-min) px-2.5 text-ui text-muted-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2';
 
-export function PlanView({ board, now, onOpen }: { board: Board; now: number; onOpen: (task: BoardTask) => void }) {
+export function PlanView({ board, now, onOpen, onCloseTask }: { board: Board; now: number; onOpen: (task: BoardTask) => void; onCloseTask: (task: BoardTask) => void }) {
   const [filter, setFilter] = useState<PlanFilter>({ everyone: false, spaceId: null });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showQuiet, setShowQuiet] = useState(false);
@@ -94,7 +94,7 @@ export function PlanView({ board, now, onOpen }: { board: Board; now: number; on
                 </button>
                 {isOpen && (
                   <div className="flex flex-col border-t border-border bg-background py-1 pl-10 pr-3">
-                    {r.tasks.map(({ task, step }) => <PlanTask key={task.id} task={task} step={step} viewer={board.viewer} now={now} onOpen={onOpen} />)}
+                    {r.tasks.map(({ task, step }) => <PlanTask key={task.id} task={task} step={step} viewer={board.viewer} now={now} onOpen={onOpen} onClose={onCloseTask} />)}
                   </div>
                 )}
               </div>
@@ -130,19 +130,22 @@ function FocusItem({ task, onOpen, chip, side }: { task: BoardTask; onOpen: (tas
   );
 }
 
-function PlanTask({ task, step, viewer, now, onOpen }: { task: BoardTask; step: boolean; viewer: string; now: number; onOpen: (task: BoardTask) => void }) {
+function PlanTask({ task, step, viewer, now, onOpen, onClose }: { task: BoardTask; step: boolean; viewer: string; now: number; onOpen: (task: BoardTask) => void; onClose: (task: BoardTask) => void }) {
   const hue = hueOf(task);
   const state = task.group === 'nobody' ? 'nobody on it' : task.group === 'asked' ? 'asked you' : task.group === 'parent' ? 'waits for parent' : task.turn ? TURN_META[task.turn].name.toLowerCase() : task.status;
   return (
-    <button type="button" onClick={() => onOpen(task)} className={cn('grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 text-left text-body hover:border-border hover:bg-card', FOCUS, step && 'ml-6')}>
-      <Dot hue={hue} />
-      <span className="min-w-0 truncate">{step && <span className="text-ui text-muted-foreground">↳ </span>}{readable(task.title)}</span>
-      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
-        <Chip hue={hue}>{state}</Chip>
-        {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
-        {task.due && <Chip hue="mark">{dueLabel(task.due, now)}</Chip>}
-        <Who task={task} viewer={viewer} />
-      </span>
-    </button>
+    <div className={cn('flex items-center gap-2 rounded-lg border border-transparent pr-2 hover:border-border hover:bg-card', step && 'ml-6')}>
+      <button type="button" onClick={() => onOpen(task)} className={cn('grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body', FOCUS)}>
+        <Dot hue={hue} />
+        <span className="min-w-0 truncate">{step && <span className="text-ui text-muted-foreground">↳ </span>}{readable(task.title)}</span>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
+          <Chip hue={hue}>{state}</Chip>
+          {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
+          {task.due && <Chip hue="mark">{dueLabel(task.due, now)}</Chip>}
+          <Who task={task} viewer={viewer} />
+        </span>
+      </button>
+      {task.status !== 'resolved' && <button type="button" className={MINI} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
+    </div>
   );
 }

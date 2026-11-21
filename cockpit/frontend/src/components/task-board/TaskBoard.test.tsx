@@ -6,8 +6,19 @@ import { MemoryRouter } from 'react-router';
 
 import type { Board, BoardTask } from '@/lib/task-board';
 
-vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: [], queued: [], refresh: () => {} }) }));
+const live = vi.hoisted(() => ({ sessions: [] as unknown[], seen: [] as string[][] }));
+vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: live.sessions, queued: [], refresh: () => {} }) }));
+vi.mock('@/components/ui/session-chat', () => ({ SessionChat: ({ sessionId }: { sessionId: string }) => <div data-testid="session-chat">{sessionId}</div> }));
+vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useTurnStore: () => ({ turns: { s1: { state: 'done', since: 'x' } }, seen: {} }),
+  markSeen: (ids: string[]) => { live.seen.push(ids); },
+}));
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
+
+import { setTaskView } from '@/stores/useTaskViewStore';
+import { TaskViewSwitch } from '@/components/top-bar/TaskViewSwitch';
+import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
 
 import { TaskBoard } from './TaskBoard';
 
@@ -33,7 +44,9 @@ const board = (): Board => ({
 let posts: Array<{ url: string; body: Record<string, unknown> }>;
 beforeEach(() => {
   posts = [];
-  try { localStorage.setItem('cockpit-task-board-view', 'now'); } catch { /* jsdom */ }
+  live.sessions = [];
+  live.seen = [];
+  setTaskView('now');
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
     if (init?.method === 'POST') {
@@ -46,27 +59,33 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TaskBoard /></QueryClientProvider></MemoryRouter>);
+// The board with the top bar's view switch and the app's shortcuts, as the cockpit mounts them.
+function WithBar() {
+  useCockpitShortcuts(() => {});
+  return <><TaskViewSwitch /><TaskBoard /></>;
+}
+const mount = () => render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><WithBar /></QueryClientProvider></MemoryRouter>);
 
 describe('the task board', () => {
-  it('shows one Needs-you count in the header and sorts cards by whose turn it is', async () => {
+  it('sorts cards by whose turn it is', async () => {
     mount();
-    const headline = await screen.findByRole('button', { name: /Needs you 2/ });
-    expect(headline).toBeTruthy();
-    const needsYou = screen.getByRole('region', { name: 'Needs you' });
+    const needsYou = await screen.findByRole('region', { name: 'Needs you' });
     expect(within(needsYou).getByText('Acme cancellation rescue')).toBeTruthy();
     expect(within(needsYou).getByText('Asked you · 1')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Agent working' })).getByText('Kit v4 rollout')).toBeTruthy();
   });
 
-  it('switches views with 1 · 2 · 3 and shows the Inbox count on its tab', async () => {
+  it('follows the view picked in the top bar or with G then I / N / P; the Inbox tab shows its count; bare digits do nothing', async () => {
     mount();
-    await screen.findByRole('tab', { name: /Now/ });
-    expect(screen.getByRole('tab', { name: /Inbox/ }).textContent).toContain('1');
-    fireEvent.keyDown(document, { key: '3' });
+    await screen.findByRole('region', { name: 'Needs you' });
+    expect((await screen.findByRole('tab', { name: /Inbox/ })).textContent).toContain('1');
+    fireEvent.click(screen.getByRole('tab', { name: /Plan/ }));
     expect(await screen.findByText(/Stuck until you act/)).toBeTruthy();
-    fireEvent.keyDown(document, { key: '1' });
-    expect(await screen.findByText(/Inbox zero|One last check on Thursday\?/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: '2' });
+    expect(screen.getByText(/Stuck until you act/)).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'g' });
+    fireEvent.keyDown(document, { key: 'i' });
+    expect(await screen.findByText(/One last check on Thursday\?/)).toBeTruthy();
   });
 
   it('opens a card as a slide-over with focus on its title, answering first; Escape closes it', async () => {
@@ -78,6 +97,15 @@ describe('the task board', () => {
     // No session on it in this fixture: the box says how to answer instead of offering Reply.
     expect(within(sheet).getByText(/Its session is gone/)).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('closes with the pane toolbar\'s ×, like a desk pane', async () => {
+    mount();
+    fireEvent.click(await screen.findByText('Acme cancellation rescue'));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText(/Esc closes/)).toBeNull();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close this pane' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
@@ -98,12 +126,39 @@ describe('the task board', () => {
   });
 
   it('snoozes an Inbox item to tomorrow 09:00', async () => {
-    try { localStorage.setItem('cockpit-task-board-view', 'inbox'); } catch { /* jsdom */ }
+    setTaskView('inbox');
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Snooze to tomorrow' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/asked/snooze'));
     const until = new Date(String(posts[0].body.until));
     expect([until.getHours(), until.getMinutes()]).toEqual([9, 0]);
     expect(posts[0].body.key).toBe('task:asked@x');
+  });
+
+  it('counts a session shown in the task panel as seen, as on its desk', async () => {
+    live.sessions = [{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: iso(1) }];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, sessionIds: ['s1'] } : t)) }), { status: 200 });
+      return new Response('{}', { status: 404 });
+    }));
+    mount();
+    fireEvent.click(await screen.findByText('Demo meeting prep'));
+    expect(await screen.findByTestId('session-chat')).toBeTruthy();
+    expect(live.seen).toContainEqual(['s1']);
+  });
+
+  it('closes a task that is not needed from its project in Plan, with Undo', async () => {
+    setTaskView('plan');
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+    const closers = screen.getAllByTitle('Close: the task is not needed');
+    expect(closers).toHaveLength(3);
+    fireEvent.click(closers[0]);
+    await waitFor(() => expect(posts[0]?.url).toMatch(/^\/api\/v1\/tasks\/(asked|mine|running)\/close$/));
+    expect(posts[0].body).toMatchObject({ spaceId: 'main' });
+    const status = await screen.findByRole('status');
+    await waitFor(() => expect(status.textContent).toContain('Closed: not needed.'));
+    await act(async () => { fireEvent.click(within(status).getByRole('button', { name: 'Undo' })); });
+    await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
   });
 });

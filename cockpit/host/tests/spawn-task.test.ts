@@ -53,14 +53,12 @@ describe('spawning a worker with a task', () => {
     const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'reply', fromSession: 'lord', newTask: { title: 'Lohmann custom tracking', in: 'Lohmann', text: 'Answer the custom tracking request.' } })
     expect(out.status).toBe(202)
     expect((out.payload as { taskId?: string }).taskId).toBe('new-task')
-    expect(created).toEqual([{ title: 'Lohmann custom tracking', content: 'Answer the custom tracking request. Started by session Email Lord.', scope: 'project.lohmann', approved: false }])
+    expect(created).toEqual([{ title: 'Lohmann custom tracking', content: 'Answer the custom tracking request. Started by session Email Lord.', scope: 'project.lohmann' }])
     expect(spawns.list()[0].taskId).toBe('new-task')
     // Without --in the worker's project; one of task, step and newTask only.
     await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'Other' } })
     expect(created.at(-1)!.scope).toBe('project.eml')
     expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'A' }, task: 't' })).status).toBe(400)
-    await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'Asked for', approved: true } })
-    expect(created.at(-1)).toMatchObject({ title: 'Asked for', approved: true })
     expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: '' } })).status).toBe(400)
   })
 

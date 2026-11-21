@@ -14,7 +14,9 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - The session's handoff (domain/handoff.ts) goes into the task's history.
  *   - A question for the user, or a session that said question or failed
  *     (session_status), puts the task on the user: waiting_on { who, why,
- *     since, session_id } — the Your turn panel lists it and opens the session.
+ *     since, session_id } — the Inbox lists it and opens the session. The
+ *     session itself is not marked as waiting: it finished its turn, and the
+ *     question is the task's (decision handoff-questions-inbox-only).
  *   - A step with checkpoint "after" that handed over a result, or any session
  *     that said review, waits for the user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
@@ -28,20 +30,13 @@ import type { SessionLedger } from '../session-ledger.js'
  */
 
 export interface TaskRouterDeps {
-  ledger: Pick<SessionLedger, 'get' | 'setAttention'>
+  ledger: Pick<SessionLedger, 'get'>
   spaces: Pick<BrainSpaces, 'resolve'>
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
-  /** The session now waits for the user: its turn state shows it (turn-state.ts). */
-  waiting(sessionId: string): void
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
-  /**
-   * A task still in triage (application/triage.ts): keep the handoff and whose turn it is for the task
-   * it becomes; the real task's id once it is resolved, else null.
-   */
-  keepPending?(taskId: string, text: string | null, waitingOn: WaitingOn | null): string | null
   log(line: string): void
   now?: () => Date
 }
@@ -117,21 +112,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const key = handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
     if (lastRouted.get(sessionId) === key) return
 
-    let taskId = entry.taskId
-    if (taskId.startsWith('pending-')) {
-      const waiting = decideWaiting({ handoff, attention, checkpoint: undefined, owner: deps.owner, sessionId, now: now() })
-      const resolved = deps.keepPending?.(taskId, handoff?.text ?? null, waiting) ?? null
-      if (!resolved) {
-        lastRouted.set(sessionId, key)
-        if (waiting && !(attention && needsAnswer(attention.kind))) {
-          deps.ledger.setAttention(sessionId, { kind: 'question', reason: waiting.why })
-          deps.waiting(sessionId)
-        }
-        deps.log(`[router] ${sessionId.slice(0, 8)} task in triage: handoff kept`)
-        return
-      }
-      taskId = resolved
-    }
+    const taskId = entry.taskId
     const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
@@ -155,11 +136,6 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     lastRouted.set(sessionId, key)
     if (Object.keys(patch).length === 0) return
     await brain.post(`/task/${task.id}/track`, patch)
-    // The session waits for the user too, so it is at the top of Your turn and the push says so.
-    if (waiting && !(attention && needsAnswer(attention.kind))) {
-      deps.ledger.setAttention(sessionId, { kind: 'question', reason: waiting.why })
-      deps.waiting(sessionId)
-    }
     deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} ${waiting ? `waiting on ${waiting.who}` : clear ? 'cleared' : 'handoff'}`)
   }
 
@@ -167,7 +143,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     async answered(sessionId) {
       try {
         const entry = deps.ledger.get(sessionId)
-        if (!entry?.taskId || entry.taskId.startsWith('pending-')) return
+        if (!entry?.taskId) return
         const space = deps.spaces.resolve(entry.spaceId)
         if (!taskSystemOn(space)) return
         const brain = deps.brain(space)

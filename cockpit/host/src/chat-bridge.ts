@@ -17,7 +17,8 @@ import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { greetingFor } from './session-greeting.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -66,7 +67,7 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
 
-// Without this a session started by hand stays nameless: the greeting that used to ask has gone.
+// A session started by hand without the greeting (it is off, or the session predates it) names itself this way.
 const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
 
 const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your closing summary as visible text.'
@@ -153,6 +154,10 @@ export interface ChatContext {
 
 type ClientMessage = {
   id?: unknown
+  /** Settings › Preferences › Sessions: a plain new chat opens with the greeting (session-greeting.ts). */
+  greet?: unknown
+  /** A new chat started from the empty pane's launcher: its first message, sent once the session starts. */
+  prompt?: unknown
   readOnly?: unknown
   whenIdle?: unknown
   images?: unknown
@@ -457,11 +462,18 @@ export class ChatBridge {
     const after = typeof data.after === 'number' ? data.after : 0
     const epoch = typeof data.epoch === 'number' ? data.epoch : null
     const path = project.path
+    // As in the terminal: only a plain new session greets. One the ledger knows is a resume or a worker
+    // (spawned work is recorded before its view opens), and a chat never brings a first prompt of its own.
+    const isNew = !this.ctx.ledger.has(sessionId)
+    // A new chat from the launcher brings its first message (and model); a known session never does.
+    const prompt = isNew ? text(data.prompt).trim() || null : null
+    const model = isNew && SAFE_MODEL.test(text(data.model)) ? text(data.model) : null
+    const greeting = greetingFor({ resume: !isNew, initialPrompt: prompt, greet: data.greet === true, worker: false })
     const handoff = this.handoff()
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
-      readOnly,
+      readOnly, greeting, firstPrompt: prompt, model,
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -482,6 +494,12 @@ export class ChatBridge {
     after: number
     /** Show the conversation and start no process until it is used. */
     readOnly: boolean
+    /** A plain new chat's first prompt (session-greeting.ts): the session starts at once and sends it. */
+    greeting: string | null
+    /** A new chat's own first message (the launcher): sent like the greeting, which it replaces. */
+    firstPrompt: string | null
+    /** The model a new chat starts with. */
+    model: string | null
     onSwitch: () => void
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
@@ -514,19 +532,28 @@ export class ChatBridge {
       for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.runtime)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
-    if (opts.readOnly) {
+    const first = resume ? null : opts.firstPrompt ?? opts.greeting
+    if (first) {
+      if (opts.model) {
+        this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, first === opts.greeting)
+        this.ctx.ledger.setChatSettings(sessionId, { model: opts.model })
+      }
+      this.startEntry(entry, provider, space, paneId, false, first === opts.greeting)
+      this.sendMessage(entry, first)
+    } else if (opts.readOnly) {
       if (!entry.runtime) this.emit(entry, { kind: 'process', state: 'stopped' })
     } else this.startEntry(entry, provider, space, paneId, resume)
     send(ws, { type: 'joined' })
   }
 
   /** The session gets its process here, once someone uses it. */
-  private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean): void {
+  private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean, greeted = false): void {
     // A message can arrive while the view still loads, and it starts the session first.
     if (entry.runtime) return
     const { sessionId, projectId, projectPath } = entry
     provider.trustProject(projectPath, sessionSpaceOf(space))
-    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey)
+    // greeted: the title and summary logic skip the greeting as a first prompt, as in the terminal.
+    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, greeted)
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
     // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
     const stored = this.ctx.ledger.get(sessionId)
@@ -693,7 +720,8 @@ export class ChatBridge {
     return {
       onPrompt: () => {
         const stored = this.ctx.ledger.get(entry.sessionId)
-        const name = stored && !stored.worker && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+        // A greeted session was already told to name itself once the user's reply shows the topic.
+        const name = stored && !stored.worker && !stored.greeted && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
         // The agent saw a tool die (exit 137) without a reason: this is the reason.
         const ceiling = entry.ceilingNote ? `The cockpit: ${entry.ceilingNote}` : null
         entry.ceilingNote = null
@@ -703,8 +731,8 @@ export class ChatBridge {
         entry.declared = true
         entry.status = status
         entry.textAfterStatus = ''
+        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
-        if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
@@ -760,7 +788,6 @@ export class ChatBridge {
         })
         if (attention) {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
-          if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
@@ -826,7 +853,8 @@ export class ChatBridge {
     entry.status = null
     entry.textAfterStatus = ''
     entry.askedSummary = false
-    if (this.ctx.ledger.get(entry.sessionId)?.attention) this.ctx.answered?.(entry.sessionId)
+    const asked = this.ctx.ledger.get(entry.sessionId)
+    if (asked?.attention || asked?.taskId) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)

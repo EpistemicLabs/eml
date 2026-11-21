@@ -774,7 +774,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (createMatch && method === 'POST' && (ENGRAM_TYPES as readonly string[]).includes(createMatch[1])) {
       const type = createMatch[1] as EngramType
       const body = await readBody(req)
-      // The cockpit's triage flag (mcp-server eml_create_task): read by the cockpit, not stored.
+      // The old cockpit triage flag: older eml_create_task clients still send it; never stored.
       delete body.approved_by_user
       rejectNestedProperties(type, body)
       // The default-brain seeds are written in-process only; over HTTP that origin

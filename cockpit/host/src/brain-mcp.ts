@@ -2,7 +2,6 @@ import type * as http from 'node:http'
 import { EmlApiError, HttpClient, McpHttpEndpoint, Provenance, RoutedClient, type EmlApi } from '@engramprotocol/mcp-server'
 import type { AgentBrain, AgentBrains } from './agents.js'
 import { taskSystemOn, type BrainSpace, type BrainSpaces } from './brain-space.js'
-import { triagedClient, type Triage, type TriageStore } from './application/triage.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { MCP_SESSION_HEADER, MCP_TOKEN_HEADER } from './infrastructure/providers/shared.js'
@@ -49,8 +48,6 @@ export interface BrainMcpDeps {
   ledger: SessionLedger
   providers: ProviderRegistry
   serverVersion?: string
-  /** Task system: a session's new standalone tasks wait for the user's triage (application/triage.ts). */
-  triage?: { triage: Triage; store: TriageStore }
 }
 
 /** The model a cockpit session runs with, from its transcript (null when unknown). */
@@ -196,10 +193,7 @@ export function createBrainMcpHandler(deps: BrainMcpDeps) {
       if ('refused' in agent) throw new Error(agent.refused)
       const provenance = Provenance.forSession(sessionId, async () => sessionModel(deps, sessionId))
       const client = sessionClient(space, agent, provenance)
-      if (!taskSystemOn(space)) return { client: withoutDelegate(client), provenance }
-      if (!deps.triage) return { client, provenance }
-      const sessionName = () => { const e = deps.ledger.get(sessionId); return e?.title ?? e?.agentTitle ?? null }
-      return { client: triagedClient(client, { ...deps.triage, spaceId: space.id, sessionId, sessionName }), provenance }
+      return { client: taskSystemOn(space) ? client : withoutDelegate(client), provenance }
     },
   })
 

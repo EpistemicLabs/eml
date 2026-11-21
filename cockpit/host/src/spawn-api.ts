@@ -47,7 +47,7 @@ export interface SpawnDeps {
   /** A session named itself: its placeholder task takes the name (application/session-task.ts). */
   sessionNamed?: (sessionId: string, title: string) => void
   /** Task system: create a brain task in the space (spawn newTask); its id, or an error text. */
-  createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string; approved?: boolean }) => Promise<{ id: string } | { error: string }>
+  createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string }) => Promise<{ id: string } | { error: string }>
 }
 
 const MAX_PROMPT = 50_000
@@ -124,8 +124,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     const requester = fromSessionId ? deps.ledger.get(fromSessionId) : undefined
     const from = fromSessionId ? ` Started by session ${requester?.title ?? requester?.agentTitle ?? fromSessionId}.` : ''
     const text = typeof newTask.text === 'string' && newTask.text.trim() ? newTask.text.trim() : title
-    // approved: the user asked for this task in the conversation, so it skips triage like eml_create_task's approved_by_user.
-    const created = await deps.createTask(space, { title, content: `${text}${from}`, scope: brainId ? `project.${brainId}` : 'global', approved: newTask.approved === true })
+    const created = await deps.createTask(space, { title, content: `${text}${from}`, scope: brainId ? `project.${brainId}` : 'global' })
     if ('error' in created) return fail(400, 'NEW_TASK_FAILED', `The task could not be created: ${created.error}`)
     givenTask = created.id
   }

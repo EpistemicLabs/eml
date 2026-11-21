@@ -1,7 +1,7 @@
 import type * as http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { TaskBoard } from './application/task-board.js'
-import type { CommandInput, CommandRefusal, Submitted, TaskCommands, TriageAction } from './application/task-commands.js'
+import type { CommandInput, CommandRefusal, Submitted, TaskCommands } from './application/task-commands.js'
 import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
 
 /**
@@ -11,7 +11,7 @@ import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/
  *   POST /api/v1/tasks/<id>/hand-over               { opId, spaceId, mode, delegate, checkpoint, schedule?, desk? }
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
- *   POST /api/v1/triage/<pendingId>                 { opId, spaceId, action: accept · merge · close, intoTaskId?, scope? }
+ *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
  * happens at once, and the page opens the session in its desk with the brief. A refusal answers
@@ -42,13 +42,14 @@ const MESSAGES: Record<CommandRefusal, string> = {
   schedule_required: 'Pick when the agent starts.',
   desk_required: 'Pick the desk to open the session in.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
+  open_steps: 'This task still has open steps: close or move them first.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
 }
 
 const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
-  task_closed: 409, bound_items: 409, undo_expired: 409,
+  task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   no_brain: 503,
 }
 
@@ -96,17 +97,12 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze)$/.exec(pathname)
-  const triage = /^\/api\/v1\/triage\/([^/]+)$/.exec(pathname)
-  if ((task || triage) && method === 'POST') {
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close)$/.exec(pathname)
+  if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
     let input: CommandInput
-    if (triage) {
-      const action = str(body.action) as TriageAction | undefined
-      if (action !== 'accept' && action !== 'merge' && action !== 'close') { refuse(json, res, 'invalid', 'action is accept, merge or close'); return true }
-      input = { ...base, kind: 'triage', pendingId: decodeURIComponent(triage[1]), triage: { action, ...(str(body.intoTaskId) ? { intoTaskId: str(body.intoTaskId) } : {}), ...(str(body.scope) ? { scope: str(body.scope) } : {}) } }
-    } else {
+    {
       const taskId = decodeURIComponent(task![1])
       const verb = task![2]
       if (verb === 'hand-over') {
@@ -114,8 +110,8 @@ export async function handleTasksApi(
         const delegate = str(body.delegate)
         if (!mode || !HAND_OVER_MODES.includes(mode) || !delegate) { refuse(json, res, 'invalid', 'mode (now · schedule · together) and delegate are required'); return true }
         input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: schedule(body), desk: str(body.desk) } }
-      } else if (verb === 'review') {
-        input = { ...base, kind: 'review', taskId }
+      } else if (verb === 'review' || verb === 'close') {
+        input = { ...base, kind: verb, taskId }
       } else {
         const key = str(body.key), until = str(body.until)
         if (!key || !until) { refuse(json, res, 'invalid', 'key and until are required'); return true }

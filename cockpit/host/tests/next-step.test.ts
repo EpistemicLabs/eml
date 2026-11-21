@@ -145,12 +145,11 @@ describe('next-step check', () => {
     }
   })
 
-  it('never checks the user\'s own sessions, closed tasks or tasks in triage', async () => {
+  it('never checks the user\'s own sessions or closed tasks', async () => {
     const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} }, t2: { id: 't2', status: 'resolved', properties: {} } })
     ledger.recordSpawn('own-5', null, 'bp-eml', 'claude', false, 't1')
     ledger.recordSpawn('closed-5', null, 'bp-eml', 'claude', true, 't2')
-    ledger.recordSpawn('triage-5', null, 'bp-eml', 'claude', true, 'pending-1')
-    for (const id of ['own-5', 'closed-5', 'triage-5']) await check.turnEnded(id)
+    for (const id of ['own-5', 'closed-5']) await check.turnEnded(id)
     expect(delivered).toEqual([])
   })
 

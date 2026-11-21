@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import { taskSystemOn, type BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
-import { inboxItems, type InboxItem, type PendingTask, type Snooze } from '../domain/inbox.js'
+import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -78,10 +78,6 @@ export interface TaskBoardDeps {
   sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean }>
   /** The next run of a job of the task, if any. */
   nextRunOf(taskId: string): string | null
-  /** Tasks sessions proposed that wait for triage, per space. */
-  pendingTriage(spaceId: string): Array<Pick<PendingTask, 'id' | 'title' | 'createdAt'> & { sessionId?: string }>
-  /** The triage of a proposed task is decided and waits out its undo window. */
-  triagePending(pendingId: string): boolean
   snoozes(): Snooze[]
   pendingCommands(): TaskCommand[]
   now(): number
@@ -128,6 +124,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   const overlay = (row: Row, command: TaskCommand | undefined, agents: string[], runner: boolean): Row => {
     if (!command || command.state !== 'pending') return row
     if (command.kind === 'review') return { ...row, status: 'resolved', updated_at: command.createdAt || row.updated_at }
+    if (command.kind === 'close') return { ...row, status: 'invalidated' }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
       const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents, runner })
@@ -146,7 +143,6 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
     const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
-    const proposed: PendingTask[] = []
 
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
@@ -180,7 +176,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         }
         const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id), runner: onBoard }
         const turn = turnOf(facts, live, deps.viewer, now)
-        if (row.status === 'resolved' && turn === null) continue
+        if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
         const command = commandOf(row.id)
         board.tasks.push({
@@ -212,12 +208,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         })
         if (onBoard && row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: row.title ?? row.id, waitingOn: props.waiting_on })
       }
-      if (onBoard) {
-        for (const p of deps.pendingTriage(space.id)) if (!deps.triagePending(p.id)) proposed.push({ ...p, space: space.id })
-      }
     }
 
-    const inbox = inboxItems(inboxTasks, proposed, deps.viewer, deps.snoozes(), now)
+    const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now)
     board.inbox = inbox.live
     board.snoozed = inbox.snoozed
     board.counts = { needsYou: board.tasks.filter((t) => t.onBoard && t.turn === 'needs_you').length, inbox: inbox.live.length }

@@ -1,7 +1,6 @@
 import type { ProviderRegistry } from '../infrastructure/providers/registry.js'
 import type { SessionLedger } from '../session-ledger.js'
 import type { TurnTracker } from '../turn-state.js'
-import { needsAnswer } from '../domain/session-attention.js'
 
 export interface SessionHookDeps {
   providers: ProviderRegistry
@@ -53,13 +52,13 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   // A prompt typed into a terminal is a new turn, as a chat message is (chat-bridge.ts sendMessage):
   // whoever it waited for has answered, and an archived session is back in the lists.
   if (signal.state === 'working' && terminal) {
-    if (deps.ledger.get(sessionId)?.attention) deps.answered?.(sessionId)
+    const asked = deps.ledger.get(sessionId)
+    if (asked?.attention || asked?.taskId) deps.answered?.(sessionId)
     deps.ledger.setAttention(sessionId, null)
     deps.ledger.unarchive(sessionId)
   }
-  // A session that said it needs an answer still does once its turn is over.
-  const attention = deps.ledger.get(sessionId)?.attention
-  const state = signal.state === 'done' && attention && needsAnswer(attention.kind) ? 'waiting' : signal.state
-  deps.turns.apply({ sessionId, state, settleMs: signal.settleMs })
+  // A turn that ends with a question for the user ends as done: its flag keeps it in Your turn,
+  // the desk dot clears once seen. Only a live prompt is waiting (decision desk-dot-until-seen).
+  deps.turns.apply({ sessionId, state: signal.state, settleMs: signal.settleMs })
   if (signal.state === 'done' && terminal) deps.turnDone?.(sessionId, payload)
 }

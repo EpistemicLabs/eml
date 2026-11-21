@@ -2,27 +2,19 @@ import { waitKind, type WaitingOn } from './task-turn.js'
 
 /**
  * The Inbox holds what waits for the viewer to answer or look at: a question or a go an agent
- * asked for, a result to review, and a task a session proposed (triage, decision triage-in-inbox).
+ * asked for, and a result to review.
  * Items are derived, never stored; an item clears itself when its wait clears. A snooze hides one
  * item until a time and does not change the task's turn. A snooze is keyed by the task and the
  * moment its wait began, so a newer question on the same task shows again.
  */
 
-export type InboxKind = 'question' | 'review' | 'new_task'
+export type InboxKind = 'question' | 'review'
 
 export interface InboxTask {
   id: string
   space: string
   title: string
   waitingOn?: WaitingOn
-}
-
-export interface PendingTask {
-  id: string
-  space: string
-  title: string
-  sessionId?: string
-  createdAt: string
 }
 
 export interface Snooze {
@@ -38,17 +30,16 @@ export interface InboxItem {
   text: string
   since: string
   taskId?: string
-  pendingId?: string
   sessionId?: string
   /** Set on a snoozed item: when it shows again. */
   until?: string
 }
 
-export function itemKey(item: { taskId?: string; since?: string; pendingId?: string }): string {
-  return item.pendingId ? `pending:${item.pendingId}` : `task:${item.taskId}@${item.since ?? ''}`
+export function itemKey(item: { taskId: string; since?: string }): string {
+  return `task:${item.taskId}@${item.since ?? ''}`
 }
 
-export function inboxItems(tasks: InboxTask[], pending: PendingTask[], viewer: string, snoozes: Snooze[], now: number): { live: InboxItem[]; snoozed: InboxItem[] } {
+export function inboxItems(tasks: InboxTask[], viewer: string, snoozes: Snooze[], now: number): { live: InboxItem[]; snoozed: InboxItem[] } {
   const items: InboxItem[] = []
   for (const t of tasks) {
     const w = t.waitingOn
@@ -65,18 +56,6 @@ export function inboxItems(tasks: InboxTask[], pending: PendingTask[], viewer: s
       since,
       taskId: t.id,
       ...(w.session_id ? { sessionId: w.session_id } : {}),
-    })
-  }
-  for (const p of pending) {
-    items.push({
-      key: itemKey({ pendingId: p.id }),
-      kind: 'new_task',
-      space: p.space,
-      title: p.title,
-      text: p.title,
-      since: p.createdAt,
-      pendingId: p.id,
-      ...(p.sessionId ? { sessionId: p.sessionId } : {}),
     })
   }
   items.sort((a, b) => b.since.localeCompare(a.since))
