@@ -149,7 +149,7 @@ export function mcpServersFor(
         ? { type: 'stdio', command: expand(part.command), args: part.args.map(fill), env: mapValues(part.env, fill) }
         : { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
       if (missing.length > 0) {
-        problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.label} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
+        problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.id} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
         continue
       }
       // The first sign-in (or one without a short name) takes the plugin's own name; others add theirs.

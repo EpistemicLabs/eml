@@ -362,9 +362,8 @@ export async function handlePluginsApi(
       const { address, credentialsFile, tokenFile } = finished.signedIn
       const all = await service.connections()
       const again = all.find((c) => c.plugin === body.plugin && c.values.address?.toLowerCase() === address.toLowerCase())
-      const base = `${body.plugin}-${address.toLowerCase().split('@')[0].replace(/[^a-z0-9]+/g, '-')}`.slice(0, 50).replace(/-+$/, '')
-      let id = again?.id ?? base
-      for (let n = 2; !again && all.some((c) => c.id === id); n++) id = `${base}-${n}`
+      // An id that doesn't name the mailbox: it shows up in logs and file names.
+      const id = again?.id ?? `${body.plugin}-${randomUUID().slice(0, 8)}`
       const connection = { id, plugin: body.plugin, label: address, ...(typeof body.slug === 'string' ? { slug: body.slug } : again?.slug ? { slug: again.slug } : {}), values: { address, credentialsFile, tokenFile } }
       await service.saveConnection(connection)
       json(res, 200, { connection: { id, plugin: connection.plugin, label: address, slug: connection.slug ?? null, secrets: Object.keys(connection.values), again: !!again } })

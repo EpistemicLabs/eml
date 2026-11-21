@@ -124,7 +124,8 @@ export class GoogleSignIn {
     const profile = await fetch(`${this.options.gmailApi ?? 'https://gmail.googleapis.com'}/gmail/v1/users/me/profile`, { headers: { authorization: `Bearer ${tokenAnswer.body.access_token}` } })
       .then((r) => (r.ok ? r.json() as Promise<{ emailAddress?: string }> : null)).catch(() => null)
     if (!profile?.emailAddress) return { ok: false, reason: 'Signed in, but Gmail did not name the mailbox' }
-    const tokenFile = pending.tokenFile ?? path.join(this.options.dir, `${profile.emailAddress.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.token.json`)
+    // Named by chance, not by the mailbox: the name shows up in listings and logs.
+    const tokenFile = pending.tokenFile ?? path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
     await this.writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
     return { ok: true, signedIn: { address: profile.emailAddress, credentialsFile: this.clientFile, tokenFile } }
   }
