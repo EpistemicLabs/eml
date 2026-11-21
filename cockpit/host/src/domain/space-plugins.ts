@@ -206,7 +206,10 @@ export function bridgeAccountsFor(
       const on = space.plugins[manifest.id]
       return on ? [{ spaceId, connections: on.connections }] : []
     })
-    for (const { spaceId, connections: picked } of bySpace) {
+    for (const { spaceId, connections: all } of bySpace) {
+      // Sign-ins for other parts only (a service account for the mcp part) ask nothing of the bridge.
+      const picked = all.filter((id) => { const found = connections.find((c) => c.id === id); return !found || serves(found, 'channel') })
+      if (all.length > 0 && picked.length === 0) continue
       if (picked.length === 0) problems.push(`${manifest.name}: on in space ${spaceId} without a sign-in`)
       else if (!tokenSpaces.includes(spaceId)) problems.push(`${manifest.name}: space ${spaceId} takes no channel messages (no job token)`)
     }
