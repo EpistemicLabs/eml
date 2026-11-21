@@ -1,4 +1,4 @@
-// Kept: the Sidebar column + DeskTabBar + per-desk pane grids; every
+// Kept: the Sidebar column (spaces, desks, task views) + per-desk pane grids; every
 // visited desk stays MOUNTED and only the active one is shown
 // (display:none), so a terminal's xterm + WebSocket survive a desk switch;
 // lazy mount on first activation; the sidebar → pane handlers
@@ -39,8 +39,6 @@ import { useTimeBeat } from '@/components/time-plugin/useTimeBeat';
 import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
-import DeskTabBar from '../top-bar/DeskTabBar';
-import { TaskViewSwitch } from '../top-bar/TaskViewSwitch';
 import { ShortcutSheet } from '../top-bar/ShortcutSheet';
 import { useCockpitShortcuts } from '../top-bar/useCockpitShortcuts';
 import { setLauncherProjects } from '../session-launcher/launcher-projects';
@@ -51,13 +49,11 @@ import UpdateBanner from './UpdateBanner';
 import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import TeamBanner from './TeamBanner';
-import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
-import { Brain } from 'lucide-react';
 
 export default function AppContent() {
   return (
@@ -68,7 +64,6 @@ export default function AppContent() {
 }
 
 function AppContentInner() {
-  const { info: about } = useAboutInfo();
   const compact = useCompactLayout();
   useVisibleViewportHeight();
   // The compact layout's sidebar drawer; closed again whenever the layout widens.
@@ -110,9 +105,9 @@ function AppContentInner() {
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
-  // The phone has no way back from the Brain tab or Jobs, so it stays on the desks.
+  // The phone's navigation drawer leads back from the brain and the task views, not from Jobs.
   useEffect(() => {
-    if (compact && (topView === 'brain' || topView === 'jobs' || topView === 'tasks')) setTopView('desks');
+    if (compact && topView === 'jobs') setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
@@ -331,49 +326,6 @@ function AppContentInner() {
       className="fixed inset-x-0 top-0 flex flex-col bg-background"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
     >
-      {/* The top bar (top bar v2, tokens v2): the logo (opens Settings › About), every space with
-          its desks, and Inbox · Now · Plan at the right. The sidebar rail and the pane grid start below it. */}
-      {!compact && (
-      <div className="flex-shrink-0 px-2 pt-[calc(env(safe-area-inset-top)+var(--pad-shell-top))]">
-      <header aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-(--radius-bar) pr-(--pad-bar-end) pl-2">
-        <button
-          type="button"
-          onClick={() => openSettings('about')}
-          aria-label={about ? `EML Cockpit ${about.version}: about` : 'EML Cockpit: about'}
-          title={about ? `EML Cockpit ${about.version}` : 'EML Cockpit'}
-          className="grid size-(--size-logo) flex-shrink-0 place-items-center rounded-lg text-foreground hover:bg-foreground/8 focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring"
-        >
-          <Brain className="size-4" strokeWidth={1.8} aria-hidden />
-        </button>
-        {about?.runMode === 'dev' && (
-          <span
-            className="flex-shrink-0 rounded border border-status-you/40 bg-status-you/12 px-1.5 text-caption font-semibold text-you-ink"
-            title={`Development cockpit (${about.version}), not your production cockpit`}
-          >
-            DEV
-          </span>
-        )}
-        <span aria-hidden className="mx-1 h-5 w-px flex-shrink-0 bg-(--glass-line)" />
-        {/* Every space with all its desks; many spaces scroll sideways, the mouse wheel scrolls it too. */}
-        <div
-          className="scrollbar-hide flex h-full min-w-0 flex-1 items-center overflow-x-auto"
-          onWheel={(e) => { if (e.deltaY !== 0 && e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY; }}
-        >
-          <DeskTabBar />
-        </div>
-        <TaskViewSwitch />
-      </header>
-      </div>
-      )}
-
-      {/* Full width under the header, in this order: update (available → installing → outcome),
-          a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
-      <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
-        <UpdateBanner />
-        <AgentUpgradeBanner />
-        <TeamBanner />
-        <BrainHygieneBanner />
-      </div>
 
       <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
@@ -395,7 +347,7 @@ function AppContentInner() {
           onProjectDelete={handleProjectDelete}
           isLoading={isLoadingProjects}
           onRefresh={handleSidebarRefresh}
-          onShowSettings={() => { setDrawerOpen(false); openSettings(); }}
+          onShowSettings={(tab) => { setDrawerOpen(false); openSettings(tab); }}
           onSetFolder={(project) => setFolderTarget({ project })}
         />
       </div>
@@ -406,6 +358,14 @@ function AppContentInner() {
         className={cn('relative flex min-w-0 flex-1 flex-col', !compact && !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}
         style={compact ? ({ '--bottom-inset': keyboardOpen ? '0px' : 'env(safe-area-inset-bottom)' } as React.CSSProperties) : undefined}
       >
+        {/* Over the panes, in this order: update (available → installing → outcome), a space without
+            an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
+        <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
+          <UpdateBanner />
+          <AgentUpgradeBanner />
+          <TeamBanner />
+          <BrainHygieneBanner />
+        </div>
         {compact && <CompactNavBar onOpenMenu={openDrawer} />}
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is

@@ -1,6 +1,5 @@
 import { DAY_MS } from '@/lib/time';
 import type { Project, ProjectSession } from '@/types/app';
-import { RECENT_WINDOW_MS } from './view/subcomponents/SidebarProjectNotes';
 import type {
   ConversationEntry,
   ConversationGroup,
@@ -131,7 +130,7 @@ export function isSessionRecent(
   if (selectedSessionId !== null && session.id === selectedSessionId) return true;
   if (session.isPinned === true) return true;
   const time = new Date(session.lastActivity || session.createdAt || '').getTime();
-  return Number.isFinite(time) && nowMs - time < RECENT_WINDOW_MS;
+  return Number.isFinite(time) && nowMs - time < DAY_MS;
 }
 
 // ── Projects ─────────────────────────────────────────────────────────

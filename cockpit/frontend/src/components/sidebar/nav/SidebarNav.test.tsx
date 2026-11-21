@@ -35,17 +35,18 @@ vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
 import { getTaskView } from '@/stores/useTaskViewStore';
 import { getTopView, setTopView } from '@/stores/useTopViewStore';
 
-import DeskTabBar from './DeskTabBar';
-import { ShortcutSheet } from './ShortcutSheet';
-import { MOD, SHORTCUTS } from './shortcuts';
-import { useCockpitShortcuts } from './useCockpitShortcuts';
+import { ShortcutSheet } from '@/components/top-bar/ShortcutSheet';
+import { MOD, SHORTCUTS } from '@/components/top-bar/shortcuts';
+import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
+
+import { SpacesNav, TaskNav } from './SidebarNav';
 
 let settingsOpened = 0;
-function Bar() {
+function Nav() {
   useCockpitShortcuts(() => { settingsOpened++; });
-  return <><DeskTabBar /><ShortcutSheet /><input aria-label="Composer" /></>;
+  return <><TaskNav /><SpacesNav /><ShortcutSheet /><input aria-label="Composer" /></>;
 }
-const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Bar /></QueryClientProvider>);
+const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Nav /></QueryClientProvider>);
 const mod = MOD === '⌘' ? { metaKey: true } : { ctrlKey: true };
 
 beforeEach(() => {
@@ -54,31 +55,50 @@ beforeEach(() => {
   fx.sessions = [{ id: 's-failed', attention: { kind: 'failed' } }, { id: 's-asks', attention: { kind: 'question' } }];
   fx.turns = { 's-done': { state: 'done', since: 'a' }, 's-seen': { state: 'done', since: 'b' }, 's-failed': { state: 'done', since: 'c' }, 's-asks': { state: 'done', since: 'd' } };
   vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200 })));
+  try { localStorage.clear(); } catch { /* no storage */ }
   setTopView('desks');
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('the top bar', () => {
-  it('shows every space with its desks; a desk counts what is not seen yet, or "!" for an error', () => {
+describe('the sidebar navigation', () => {
+  it('shows the open space with its desks; a desk counts what is not seen yet, or "!" for an error', () => {
     mount();
-    const main = screen.getByRole('tablist', { name: 'Main' });
-    const eml = screen.getByRole('tablist', { name: 'EML' });
-    expect(within(main).getAllByRole('tab').map((t) => t.textContent)).toEqual(['SEO1', 'Desk 1!']);
-    expect(within(eml).getByRole('tab').textContent).toBe('Desk 11');
+    const main = screen.getByRole('group', { name: 'Main' });
+    const desks = within(main).getAllByRole('button', { name: /^(SEO|Desk 1)(?! actions)/ });
+    expect(desks.map((d) => d.textContent)).toEqual(['SEO1', 'Desk 1!']);
     expect(within(main).getByTitle('1 session stopped with an error')).toBeTruthy();
-    expect(within(main).getByRole('tab', { name: /SEO/ }).getAttribute('aria-selected')).toBe('true');
+    expect(within(main).getByRole('button', { name: /^SEO(?! actions)/ }).getAttribute('aria-current')).toBe('page');
   });
 
-  it('opens a space\'s brain from its name', () => {
+  it('folds a space shut and open; folded, it shows the sum of its desks', () => {
     mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Main' }));
+    const eml = screen.getByRole('group', { name: 'EML' });
+    const header = within(eml).getByRole('button', { name: /^EML(?! actions)/ });
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(within(eml).getByTitle('1 session to look at: finished or asking you')).toBeTruthy();
+    fireEvent.click(header);
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(within(eml).getByRole('button', { name: /^Desk 1(?! actions)/ })).toBeTruthy();
+  });
+
+  it("opens a space's brain from its menu", () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Main actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Open its brain/ }));
     expect(getTopView()).toBe('brain');
   });
 
-  it('jumps to the Nth desk across the bar with the modifier and shows the numbers while it is held', () => {
+  it('opens the task views; the Inbox row is the current page while it is open', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: /^Plan/ }));
+    expect([getTopView(), getTaskView()]).toEqual(['tasks', 'plan']);
+    expect(screen.getByRole('button', { name: /^Plan/ }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('jumps to the Nth desk with the modifier and shows the numbers while it is held', () => {
     mount();
     fireEvent.keyDown(document, { key: MOD === '⌘' ? 'Meta' : 'Control' });
-    expect(screen.getByRole('tablist', { name: 'EML' }).textContent).toContain(`${MOD}3`);
+    expect(screen.getByRole('group', { name: 'Main' }).textContent).toContain(`${MOD}2`);
     fireEvent.keyDown(document, { code: 'Digit3', key: '3', ...mod });
     expect(fx.activated).toEqual(['d3']);
   });
@@ -101,6 +121,7 @@ describe('the top bar', () => {
     await act(async () => { fireEvent.keyDown(document, { key: '?' }); });
     const sheet = await screen.findByText('Keyboard shortcuts');
     expect(sheet).toBeTruthy();
-    for (const s of SHORTCUTS) expect(screen.getByText(s.label)).toBeTruthy();
+    const sheetDialog = screen.getByRole('dialog');
+    for (const s of SHORTCUTS) expect(within(sheetDialog).getByText(s.label)).toBeTruthy();
   });
 });

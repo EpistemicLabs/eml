@@ -20,7 +20,8 @@ export interface SidebarProps {
   onProjectDelete?: (projectId: string) => void;
   isLoading: boolean;
   onRefresh: () => Promise<void> | void;
-  onShowSettings: () => void;
+  /** Settings, optionally open on one tab (the account row opens Account). */
+  onShowSettings: (tab?: string) => void;
   onSetFolder: (project: Project) => void;
 }
 
