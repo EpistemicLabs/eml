@@ -19,6 +19,8 @@ import { isPaneProtected, usePane, renamePane } from '@/stores/usePaneStore';
 import { endPaneDrag, startPaneDrag } from '@/components/app/paneDrag';
 import type { Project, ProjectSession } from '@/types/app';
 import { api } from '@/utils/api';
+import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 
 type MainContentTitleProps = {
   /** Owning pane id — enables inline rename. */
@@ -196,7 +198,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
               }}
               placeholder="Pane name"
               aria-label="Pane name"
-              className="w-full min-w-0 rounded border border-border bg-transparent px-1 py-0.5 text-body leading-tight font-semibold text-foreground outline-none focus:border-foreground/40"
+              className={cn('w-full min-w-0 rounded border border-input bg-transparent px-1 py-0.5 text-body leading-tight font-semibold text-foreground', FOCUS)}
             />
           ) : (
             // Drag the title onto another pane to swap the two (PaneGrid), or onto a
@@ -209,7 +211,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
             >
             {showProvider && (
               <span className="ml-1 flex-shrink-0 text-muted-foreground" title={providers.find((p) => p.id === provider)?.label}>
-                <SessionProviderLogo provider={provider} className="h-3 w-3" />
+                <SessionProviderLogo provider={provider} className="size-3" />
               </span>
             )}
             <h2
@@ -226,7 +228,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
                 canRename && (isNoteView ? 'Click to rename the note' : 'Click to rename'),
                 !pane?.pinned && (isPaneProtected(paneId) ? 'drag onto a pane to swap' : 'drag onto a pane to swap, onto a desk tab to move'),
               ].filter(Boolean).join(' · ') || undefined}
-              className={`${canRename ? 'cursor-text hover:bg-foreground/5' : ''} truncate rounded px-1 text-body leading-tight font-semibold text-foreground transition-colors`}
+              className={cn(canRename && 'cursor-text hover:bg-muted', 'truncate rounded px-1 text-body leading-tight font-semibold text-foreground transition-colors', FOCUS)}
             >
               {title}
             </h2>

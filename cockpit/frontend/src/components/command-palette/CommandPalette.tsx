@@ -48,8 +48,8 @@ import { keysHint, MOD, orderedDesks, setShortcutSheet, SHORTCUTS } from '@/comp
 import { openTaskView } from '@/components/top-bar/useCockpitShortcuts';
 import type { LLMProvider, Project } from '@/types/app';
 import { SETTINGS_MAIN_TABS } from '@/components/settings/constants/constants';
-import { TypeBadge } from '@/components/ui/badge';
 import { preview } from '@/components/engram-row';
+import { TypeBadge } from '@/shared/view/ui/EngramType';
 
 import {
   collectSessions,
@@ -120,7 +120,7 @@ function PaletteRow({
 }) {
   return (
     <CommandItem value={value} onSelect={onSelect}>
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
+      <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
       <span className={muted ? 'min-w-0 flex-1 truncate text-muted-foreground' : 'min-w-0 flex-1 truncate'}>
         {label}
       </span>
@@ -130,7 +130,7 @@ function PaletteRow({
 }
 
 function AsideText({ children }: { children: ReactNode }) {
-  return <span className="max-w-48 shrink-0 truncate text-[11px] text-foreground/45">{children}</span>;
+  return <span className="max-w-48 shrink-0 truncate text-caption text-muted-foreground">{children}</span>;
 }
 
 export default function CommandPalette({
@@ -373,16 +373,16 @@ export default function CommandPalette({
         <DialogTitle>Command palette</DialogTitle>
         <Command label="Command palette" shouldFilter={false} onKeyDown={handleKeyDown}>
           {page && (
-            <div className="flex items-center border-b border-foreground/10 px-3 py-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 py-0.5 pr-1 pl-2.5 text-[11px] font-medium text-foreground/70">
+            <div className="flex items-center border-b border-border px-3 py-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted pr-0.5 pl-2.5 text-caption font-medium text-foreground">
                 {PAGE_LABEL[page]}
                 <button
                   type="button"
                   aria-label="Back"
                   onClick={goBack}
-                  className="inline-flex h-4 w-4 items-center justify-center rounded-full opacity-50 transition-opacity hover:opacity-100"
+                  className="inline-flex size-(--target-min) items-center justify-center rounded-full text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring"
                 >
-                  <X aria-hidden className="h-3 w-3" />
+                  <X aria-hidden className="size-3" />
                 </button>
               </span>
             </div>
@@ -403,7 +403,7 @@ export default function CommandPalette({
                     key={`${session.projectId}:${session.id}`}
                     value={`${session.label} ${session.projectName} ${session.id}`.trim()}
                     onSelect={() => run(() => onOpenSession(session.id, session.projectId))}
-                    icon={<MessageSquare className="h-4 w-4" />}
+                    icon={<MessageSquare className="size-4" />}
                     label={session.label}
                     aside={session.projectName ? <AsideText>{session.projectName}</AsideText> : undefined}
                   />
@@ -412,7 +412,7 @@ export default function CommandPalette({
                   <PaletteRow
                     value={sessionBrowseRow.label}
                     onSelect={() => pushPage('sessions', sessionBrowseRow.keepSearch)}
-                    icon={<ChevronRight className="h-4 w-4" />}
+                    icon={<ChevronRight className="size-4" />}
                     label={sessionBrowseRow.label}
                     muted
                   />
@@ -427,7 +427,7 @@ export default function CommandPalette({
                     key={project.projectId}
                     value={`${project.displayName} ${project.projectId}`}
                     onSelect={() => selectProject(project)}
-                    icon={<Folder className="h-4 w-4" />}
+                    icon={<Folder className="size-4" />}
                     label={project.displayName}
                     aside={<AsideText>{projectHint}</AsideText>}
                   />
@@ -436,7 +436,7 @@ export default function CommandPalette({
                   <PaletteRow
                     value={projectBrowseLabel}
                     onSelect={() => pushPage('projects')}
-                    icon={<ChevronRight className="h-4 w-4" />}
+                    icon={<ChevronRight className="size-4" />}
                     label={projectBrowseLabel}
                     muted
                   />
@@ -477,11 +477,11 @@ export default function CommandPalette({
                       key={action.label}
                       value={action.label}
                       onSelect={action.onSelect}
-                      icon={<Icon className="h-4 w-4" />}
+                      icon={<Icon className="size-4" />}
                       label={action.label}
                       aside={
                         action.hint ? (
-                          <span className="shrink-0 text-[11px] text-muted-foreground">{action.hint}</span>
+                          <span className="shrink-0 font-code text-caption text-muted-foreground">{action.hint}</span>
                         ) : undefined
                       }
                     />
@@ -499,7 +499,7 @@ export default function CommandPalette({
                       key={entry.view}
                       value={`${entry.label} ${entry.keywords}`}
                       onSelect={() => run(() => onShowView?.(entry.view))}
-                      icon={<Icon className="h-4 w-4" />}
+                      icon={<Icon className="size-4" />}
                       label={entry.label}
                     />
                   );
@@ -516,7 +516,7 @@ export default function CommandPalette({
                       key={tab.id}
                       value={`Settings ${tab.label} ${tab.keywords}`}
                       onSelect={() => run(() => onOpenSettings(tab.id))}
-                      icon={<Icon className="h-4 w-4" />}
+                      icon={<Icon className="size-4" />}
                       label={`Settings: ${tab.label}`}
                     />
                   );

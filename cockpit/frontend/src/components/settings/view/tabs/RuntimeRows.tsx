@@ -3,9 +3,8 @@
 // Independent of any copy installed on this computer; updates apply to new
 // sessions, running ones keep their version. Rows for a SettingsCard.
 import { useRuntimeAction, type AgentProviderInfo, type RuntimeResult } from '@/lib/providers';
-import { Button } from '@/shared/view/ui';
+import { Button, Switch } from '@/shared/view/ui';
 import SettingsRow from '../SettingsRow';
-import SettingsToggle from '../SettingsToggle';
 
 function when(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : 'never';
@@ -58,7 +57,7 @@ export default function RuntimeRows({ provider, notSetUpHint }: RuntimeRowsProps
               : 'On — the cockpit checks every few hours and switches new sessions to a verified new version.'
           }
         >
-          <SettingsToggle
+          <Switch
             checked={state.autoUpdate !== false}
             onChange={(checked: boolean) => action.mutate({ autoUpdate: checked })}
             ariaLabel={`Update ${provider.label} in the background`}
@@ -77,7 +76,7 @@ export default function RuntimeRows({ provider, notSetUpHint }: RuntimeRowsProps
         </SettingsRow>
       )}
       {(result || error) && (
-        <p className={`px-4 py-3 text-sm ${error || state.lastResult?.outcome === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        <p className={`px-4 py-3 text-body ${error || state.lastResult?.outcome === 'failed' ? 'text-stopped-ink' : 'text-muted-foreground'}`}>
           {error ?? result}
         </p>
       )}

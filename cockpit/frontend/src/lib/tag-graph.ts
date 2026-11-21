@@ -14,11 +14,12 @@ export function tagColor(tag: string): string {
 }
 
 /**
- * Deterministic muted hue per id — the palette for tags and subjects. The
- * lightness is a CSS variable (index.css), so the hue reads on both themes.
+ * Deterministic muted hue per id — the palette for tags and subjects. Only the
+ * hue is computed; saturation and lightness are tokens (index.css), so the hue
+ * reads on both themes.
  */
 export function hashColor(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return `hsl(${h} 45% var(--hash-lightness))`;
+  return `hsl(${h} var(--hash-saturation) var(--hash-lightness))`;
 }

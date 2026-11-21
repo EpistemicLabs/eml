@@ -20,11 +20,13 @@ import {
   useActiveDeskId,
   useDesks,
 } from "@/stores/usePaneStore";
+import { cn } from "@/lib/utils";
+import { BUTTON, FIELD, LABEL, PRIMARY } from "@/shared/view/ui";
 
 const NEW_DESK = "__new__";
 
 function CardTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">{children}</div>;
+  return <div className={cn(LABEL, "mb-2")}>{children}</div>;
 }
 
 /** The run session of a task, across all projects. */
@@ -89,9 +91,9 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
               openInPane({ surface: "terminal", projectId: run.project.projectId, sessionId: run.session.id });
               onStarted?.();
             }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-ui text-foreground transition-colors hover:bg-accent/60"
+            className={cn(BUTTON, "shrink-0 gap-1.5 px-3 text-ui")}
           >
-            <SquareTerminal className="h-3.5 w-3.5" />
+            <SquareTerminal aria-hidden className="size-3.5" />
             Open run
           </button>
         </div>
@@ -154,9 +156,9 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
             onClick={() => setOpen(true)}
             disabled={!brain.writable}
             title={brain.reason ?? undefined}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className={cn(PRIMARY, "shrink-0 gap-1.5 px-3 text-ui")}
           >
-            <Play className="h-3.5 w-3.5" />
+            <Play aria-hidden className="size-3.5" />
             Advance task
           </button>
         </div>
@@ -167,7 +169,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
             <select
               value={deskId}
               onChange={(e) => setDeskId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             >
               {desks.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -184,7 +186,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             >
               {!projectId && <option value="">Choose a project…</option>}
               {projects.map((p) => (
@@ -196,7 +198,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
           </label>
           <label className="flex flex-col gap-1 text-caption text-muted-foreground">
             First message
-            <div className="rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap text-foreground">
+            <div className="rounded-lg border border-border bg-muted px-3 py-1.5 font-code text-caption whitespace-pre-wrap text-foreground">
               {runPrompt(engram, "")}
             </div>
             <textarea
@@ -204,7 +206,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
               onChange={(e) => setExtra(e.target.value)}
               placeholder="Optional: add a line for the run"
               rows={2}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             />
           </label>
           {deskId === NO_DESK && (
@@ -212,12 +214,12 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
               It runs without a pane and stops at each checkpoint with a question in Your turn. Its chat shows next to the task in the Tasks view.
             </p>
           )}
-          {error && <p role="alert" className="text-caption text-destructive">{error}</p>}
+          {error && <p role="alert" className="text-caption text-stopped-ink">{error}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-md border border-border px-2.5 py-1 text-ui text-muted-foreground transition-colors hover:bg-accent/60"
+              className={cn(BUTTON, "px-3 text-ui")}
             >
               Cancel
             </button>
@@ -225,9 +227,9 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
               type="button"
               onClick={start}
               disabled={!projectId}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              className={cn(PRIMARY, "gap-1.5 px-3 text-ui")}
             >
-              <Play className="h-3.5 w-3.5" />
+              <Play aria-hidden className="size-3.5" />
               Start run
             </button>
           </div>

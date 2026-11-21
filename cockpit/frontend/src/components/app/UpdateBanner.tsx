@@ -78,7 +78,7 @@ export default function UpdateBanner() {
             </>
           }
           below={open && (
-            <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-background/70 p-2 font-mono text-[11px] text-foreground">
+            <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-card p-2 font-code text-caption text-foreground">
               {JSON.stringify(report, null, 2)}
             </pre>
           )}

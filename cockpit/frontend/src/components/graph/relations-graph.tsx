@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -9,13 +9,17 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { HoverContext, nodeTypes, type EngramNodeData } from "./nodes";
+import { edgeStyle, GRAPH_PANEL, HoverContext, nodeTypes, type EngramNodeData } from "./nodes";
 import { useEngramPanel } from "@/lib/engram-panel";
-import { buildGraph, relationColors, RELATION_COLORS } from "@/lib/graph";
+import { buildGraph, readRelationColors } from "@/lib/graph";
 import { useTheme } from "@/contexts/ThemeContext";
-import type { Engram, Relation } from "@/lib/types";
+import type { Engram, Relation, RelationType } from "@/lib/types";
 
 // Ported from packages/web/components/graph/relations-graph.tsx (+ xyflow dark colour mode).
+// Edge colours come from the --relation-* tokens, read where the graph renders.
+
+/** The arrow head, in React Flow's marker units (a number: it becomes the marker's viewBox). */
+const ARROW = 12;
 
 export function RelationsGraph({
   engrams,
@@ -31,7 +35,11 @@ export function RelationsGraph({
   const { open } = useEngramPanel();
   const [hovered, setHovered] = useState<string | null>(null);
   const { isDarkMode } = useTheme();
-  const colors = relationColors(isDarkMode);
+  const frame = useRef<HTMLDivElement>(null);
+  const [colors, setColors] = useState<Record<RelationType, string> | null>(null);
+  useLayoutEffect(() => {
+    if (frame.current) setColors(readRelationColors(frame.current));
+  }, [isDarkMode]);
 
   const graph = useMemo(
     () => buildGraph(engrams, relations, { showHistory }),
@@ -41,7 +49,7 @@ export function RelationsGraph({
   const usedRelations = useMemo(() => {
     const seen = new Set<string>();
     for (const e of graph.edges) seen.add(e.relation);
-    return [...seen] as (keyof typeof RELATION_COLORS)[];
+    return [...seen] as RelationType[];
   }, [graph.edges]);
 
   const neighborhood = useMemo(() => {
@@ -70,14 +78,15 @@ export function RelationsGraph({
   }, [graph, showIsolated]);
 
   const edges: Edge[] = useMemo(() => {
+    if (!colors) return [];
     return graph.edges.map((e) => {
-      const color = colors[e.relation] ?? colors.related_to;
+      const color = colors[e.relation] || colors.related_to;
       return {
         id: e.id,
         source: e.source,
         target: e.target,
-        style: { stroke: color, strokeWidth: e.relation === "related_to" ? 1 : 1.5, opacity: 0.55 },
-        markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
+        style: { ...edgeStyle(color), strokeWidth: e.relation === "related_to" ? "var(--width-graph-line)" : "var(--width-graph-line-strong)", opacity: "var(--opacity-graph-relation)" },
+        markerEnd: { type: MarkerType.ArrowClosed, color, width: ARROW, height: ARROW },
       } satisfies Edge;
     });
   }, [graph.edges, colors]);
@@ -86,6 +95,7 @@ export function RelationsGraph({
 
   return (
     <HoverContext.Provider value={hoverValue}>
+      <div ref={frame} className="size-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -103,7 +113,7 @@ export function RelationsGraph({
         <Controls />
         <Panel
           position="top-left"
-          className="rounded-md border border-border bg-card/90 px-3 py-2 text-xs shadow-sm backdrop-blur"
+          className={GRAPH_PANEL}
         >
           <div className="mb-1 font-medium text-foreground">
             {graph.nodes.length} connected · {graph.edges.length} edges
@@ -116,13 +126,14 @@ export function RelationsGraph({
           <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5">
             {usedRelations.map((r) => (
               <span key={r} className="inline-flex items-center gap-1">
-                <span className="inline-block h-2 w-3 rounded-sm" style={{ background: colors[r] }} />
+                <span aria-hidden className="inline-block h-2 w-3 rounded-xs" style={{ background: colors?.[r] }} />
                 <span className="text-muted-foreground">{r}</span>
               </span>
             ))}
           </div>
         </Panel>
       </ReactFlow>
+      </div>
     </HoverContext.Provider>
   );
 }

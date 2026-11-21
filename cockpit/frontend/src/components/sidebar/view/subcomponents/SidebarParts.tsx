@@ -2,11 +2,20 @@ import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS, LABEL } from '@/shared/view/ui';
+
+/** A row's hover action: a small bordered square, at the minimum target. */
+export const CHIP = cn(
+  'flex size-(--target-min) items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-card transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground',
+  FOCUS,
+);
+/** The delete action's hover: the stopped hue. */
+export const CHIP_DELETE = 'hover:border-status-stopped/40 hover:text-stopped-ink';
 
 /** Tiny uppercase label above a group of rows. */
 export function SidebarGroupHeader({ children }: { children: ReactNode }) {
   return (
-    <div className="px-2 py-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground/70 uppercase">
+    <div className={cn(LABEL, 'px-2 py-0.5')}>
       {children}
     </div>
   );
@@ -28,13 +37,13 @@ export function SidebarStateBlock({
     <div className="flex flex-col items-center px-4 py-8 text-center">
       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
         {spinner ? (
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+          <div className="size-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
         ) : (
-          Icon && <Icon className="h-6 w-6 text-muted-foreground" />
+          Icon && <Icon aria-hidden className="size-6 text-muted-foreground" />
         )}
       </div>
-      {heading && <h3 className="mb-1 text-base font-medium text-foreground">{heading}</h3>}
-      <p className="text-sm text-muted-foreground">{text}</p>
+      {heading && <h3 className="mb-1 text-heading font-medium text-foreground">{heading}</h3>}
+      <p className="text-body text-muted-foreground">{text}</p>
     </div>
   );
 }
@@ -64,7 +73,8 @@ export function SidebarIconAction({
         onActivate();
       }}
       className={cn(
-        'flex h-6 w-6 items-center justify-center rounded transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none',
+        'flex size-(--target-min) items-center justify-center rounded-md transition-colors duration-(--duration-fast) hover:bg-muted',
+        FOCUS,
         className,
       )}
     >

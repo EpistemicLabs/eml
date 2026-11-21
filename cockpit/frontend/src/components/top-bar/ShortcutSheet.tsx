@@ -1,6 +1,5 @@
 // The shortcut sheet (?): every shortcut from the one list, grouped.
-import { FOCUS } from '@/components/task-board/parts';
-import { Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
+import { Dialog, DialogContent, DialogTitle, FOCUS } from '@/shared/view/ui';
 
 import { SHORTCUTS, setShortcutSheet, useShortcutSheet, type Shortcut } from './shortcuts';
 
@@ -20,7 +19,7 @@ export function ShortcutSheet() {
   const open = useShortcutSheet();
   return (
     <Dialog open={open} onOpenChange={(o) => setShortcutSheet(o)}>
-      <DialogContent data-ui="v2" className="glass-thick flex w-full max-w-dialog flex-col gap-1 rounded-3xl p-5 shadow-modal">
+      <DialogContent className="glass-thick flex w-full max-w-dialog flex-col gap-1 rounded-3xl p-5 shadow-modal">
         <div className="flex items-center justify-between">
           <DialogTitle className="m-0 text-title font-semibold">Keyboard shortcuts</DialogTitle>
           <button type="button" aria-label="Close" onClick={() => setShortcutSheet(false)}

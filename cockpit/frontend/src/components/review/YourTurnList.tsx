@@ -3,6 +3,7 @@ import { compactAge, sessionDisplayName } from '@/components/sidebar/utils';
 import { useSessionTask } from '@/lib/session-task';
 import { readable } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
 
@@ -54,16 +55,16 @@ function YourTurnRow({ session, space, current, turn, onPick }: {
         type="button"
         onClick={() => onPick(session.id)}
         aria-current={current ? 'true' : undefined}
-        className={cn('block w-full px-3 py-2 text-left transition-colors hover:bg-accent', current && 'bg-accent')}
+        className={cn('block w-full px-3 py-2 text-left transition-colors duration-(--duration-fast) hover:bg-muted', current && 'bg-muted', FOCUS)}
       >
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{task ? readable(task.title) : sessionDisplayName(session)}</span>
-          {since && <span className="flex-shrink-0 text-[11px] text-muted-foreground">{compactAge(since, new Date())}</span>}
+          <span className="min-w-0 flex-1 truncate text-body text-foreground">{task ? readable(task.title) : sessionDisplayName(session)}</span>
+          {since && <span className="flex-shrink-0 text-caption tabular-nums text-muted-foreground">{compactAge(since, new Date())}</span>}
         </span>
         {why && (
-          <span className={cn('block truncate text-xs', mark === 'failed' ? 'text-destructive' : 'text-primary')} title={why}>{why}</span>
+          <span className={cn('block truncate text-ui', mark === 'failed' ? 'text-stopped-ink' : 'text-you-ink')} title={why}>{why}</span>
         )}
-        {task && <span className="block truncate text-[11px] text-muted-foreground">{sessionDisplayName(session)}</span>}
+        {task && <span className="block truncate text-caption text-muted-foreground">{sessionDisplayName(session)}</span>}
       </button>
     </li>
   );

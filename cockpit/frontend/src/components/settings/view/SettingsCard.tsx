@@ -12,11 +12,9 @@ export default function SettingsCard({ children, className, divided }: SettingsC
   return (
     <div
       className={cn(
-        // Subtle elevated surface on the modal material — a tinted overlay
-        // (not a solid card fill) so the panel stays glass-like in both
-        // themes while still grouping its rows visually.
-        'rounded-xl border border-foreground/8 bg-foreground/4',
-        divided && 'divide-y divide-foreground/8',
+        // A card on the glass panel: it groups its rows on a solid surface.
+        'rounded-xl border border-border bg-card shadow-card',
+        divided && 'divide-y divide-border',
         className,
       )}
     >

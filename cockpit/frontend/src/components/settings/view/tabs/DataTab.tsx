@@ -38,5 +38,5 @@ export default function DataTab({ tab }: { tab: SettingsMainTabMeta }) {
 }
 
 function Path({ children }: { children: React.ReactNode }) {
-  return <span className="block max-w-sm break-all text-right font-mono text-xs text-foreground">{children}</span>;
+  return <span className="block max-w-sm break-all text-right font-code text-ui text-foreground">{children}</span>;
 }

@@ -1,29 +1,31 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, EyeOff, Trash2 } from 'lucide-react';
 
 import ProjectCreationWizard from '@/components/project-creation-wizard';
-import { Button } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 import type { SidebarController } from '../../useSidebarController';
 
-function ConfirmShell({ title, body, footer }: { title: string; body: ReactNode; footer: ReactNode }) {
+/** A confirm prompt on the kit's Dialog: Escape or a click beside it cancels, never confirms. */
+function ConfirmShell({ title, body, footer, onCancel }: { title: string; body: ReactNode; footer: ReactNode; onCancel: () => void }) {
+  const titleId = useId();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent role="alertdialog" aria-labelledby={titleId} className="overflow-hidden">
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-muted dark:bg-foreground/10">
-              <AlertTriangle className="h-6 w-6 text-foreground" />
+            <div className="flex size-12 flex-shrink-0 items-center justify-center rounded-full bg-muted">
+              <AlertTriangle aria-hidden className="size-6 text-foreground" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="mb-2 text-lg font-semibold text-foreground">{title}</h3>
+              <DialogTitle id={titleId} className="not-sr-only mb-2 text-title font-semibold text-foreground">{title}</DialogTitle>
               {body}
             </div>
           </div>
         </div>
-        <div className="border-t border-border bg-muted/30 p-4">{footer}</div>
-      </div>
-    </div>
+        <div className="border-t border-border p-4">{footer}</div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -34,14 +36,15 @@ function RemoveProjectConfirm({ controller }: { controller: SidebarController })
   return (
     <ConfirmShell
       title="Remove folder from cockpit"
+      onCancel={controller.cancelProjectDelete}
       body={
         <>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             Are you sure you want to remove{' '}
             <span className="font-medium text-foreground">{project.displayName || project.projectId}</span> from the
             cockpit?
           </p>
-          <p className="mt-3 text-sm text-muted-foreground">
+          <p className="mt-3 text-body text-muted-foreground">
             The folder on disk is never touched.
             {sessionCount > 0 &&
               ` ${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} will be stopped and forgotten.`}
@@ -77,12 +80,13 @@ function DeleteSessionConfirm({ controller }: { controller: SidebarController })
   return (
     <ConfirmShell
       title="Delete session"
+      onCancel={controller.cancelSessionDelete}
       body={
         <>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             Are you sure you want to delete <span className="font-medium text-foreground">{pending.title}</span>?
           </p>
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="mt-3 text-ui text-muted-foreground">
             This stops the session and deletes its transcript. It cannot be undone.
           </p>
         </>

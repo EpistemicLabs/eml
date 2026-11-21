@@ -6,12 +6,12 @@
 import { useEffect, useState } from 'react';
 
 import { currentPushSupport, disablePush, enablePush, pushEnabled, sendTestPush } from '@/lib/push';
+import { Switch } from '@/shared/view/ui';
 
 import { SETTINGS_BUTTON_CLASS } from '../../constants/constants';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-import SettingsToggle from '../SettingsToggle';
 
 type Note = 'denied' | 'failed' | 'sent' | 'gone' | 'refused' | 'test-failed' | null;
 
@@ -75,7 +75,7 @@ export default function NotificationsSection() {
           label="Finished-session badges"
           description="Desk tabs, the window title and the sidebar mark sessions that finished while you were elsewhere"
         >
-          <span className="text-sm text-muted-foreground">Always on</span>
+          <span className="text-body text-muted-foreground">Always on</span>
         </SettingsRow>
         <SettingsRow label="Notifications on this device" description={description}>
           <div className="flex items-center gap-3">
@@ -84,7 +84,7 @@ export default function NotificationsSection() {
                 Send test
               </button>
             )}
-            <SettingsToggle
+            <Switch
               checked={enabled}
               onChange={(value) => { void handleToggle(value); }}
               ariaLabel="Notifications on this device"

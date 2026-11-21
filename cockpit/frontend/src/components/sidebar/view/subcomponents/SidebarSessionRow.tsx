@@ -4,15 +4,13 @@ import { Archive, Check, Edit2, MoreHorizontal, Pin, Square, Trash2, X } from 'l
 import SessionProviderLogo from '@/components/llm-logo-provider/SessionProviderLogo';
 import { useLongPress } from '@/hooks/useLongPress';
 import { cn } from '@/lib/utils';
-import { Button } from '@/shared/view/ui';
+import { FIELD, FOCUS, ROW } from '@/shared/view/ui';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
 import { MARK_SYMBOL, MARK_WORD, allSessionState, isRead, type SessionMark } from '../../allSessions';
 import { compactAge, sessionDisplayName, sessionTimeString } from '../../utils';
 import { useRowMenu } from '../rowMenuContext';
-
-const CHIP =
-  'flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-foreground/80 shadow-sm transition-colors hover:bg-accent hover:text-foreground';
+import { CHIP, CHIP_DELETE } from './SidebarParts';
 
 export interface SessionRowProps {
   session: ProjectSession;
@@ -43,6 +41,8 @@ export interface SessionRowProps {
   nested?: boolean;
   /** Before the name: the arrow opening a parent's workers. */
   leading?: ReactNode;
+  /** An older session (behind History): its name in the muted text colour, never dimmed. */
+  older?: boolean;
   /** Row actions for what the session needs (answer, clear, archive, stop). */
   actions?: { onClear?: () => void; onArchive?: () => void; onStop?: () => void };
 }
@@ -58,9 +58,9 @@ function StatusDot({ session, inAllView }: { session: ProjectSession; inAllView:
   const title =
     state === 'working' ? 'Claude is working' : state === 'waiting' ? 'Waiting for your input' : 'Finished — not seen yet';
   return (
-    <span title={title} className="absolute top-1/2 left-1 z-10 flex -translate-y-1/2 items-center">
+    <span title={title} className="absolute top-1/2 left-1 z-(--z-raised) flex -translate-y-1/2 items-center">
       <span
-        className={cn('block h-1.5 w-1.5 rounded-full', state === 'working' ? 'animate-pulse bg-foreground' : 'bg-primary')}
+        className={cn('block size-1.5 rounded-full', state === 'working' ? 'animate-pulse bg-foreground' : state === 'waiting' ? 'bg-status-you' : 'bg-mark')}
       />
     </span>
   );
@@ -87,6 +87,7 @@ export function SidebarSessionRow({
   nested,
   leading,
   actions,
+  older = false,
 }: SessionRowProps) {
   const name = sessionDisplayName(session);
   const messageCount = Number(session.messageCount ?? 0);
@@ -108,14 +109,15 @@ export function SidebarSessionRow({
   return (
     <div ref={rowRef} className="group relative" {...(menu ? longPress : {})}>
       {statusDot && <StatusDot session={session} inAllView={Boolean(agent)} />}
-      <Button
-        variant="ghost"
+      <button
+        type="button"
         className={cn(
-          'w-full justify-start px-2 py-0 text-left font-normal transition-colors duration-200 hover:bg-accent/50 [&_svg]:size-3',
+          ROW,
+          'justify-start py-0 font-normal transition-colors duration-(--duration-fast) [&_svg]:size-3',
           secondLine ? (menu ? 'h-13 pr-10' : 'h-11') : menu ? 'h-10 pr-10' : 'h-7.5',
           // The status dot sits in the left padding, inside the row's highlight.
           nested ? 'pl-6' : statusDot && 'pl-3.5',
-          isSelected && 'bg-accent text-accent-foreground hover:bg-accent',
+          isSelected && 'bg-muted',
         )}
         title={messageCount > 0 ? `${name} · ${messageCount} messages` : name}
         onClick={() => onSelect(session, projectId)}
@@ -126,8 +128,8 @@ export function SidebarSessionRow({
             <span
               aria-hidden="true"
               className={cn(
-                'w-3 flex-shrink-0 text-center text-xs font-semibold',
-                mark === 'failed' ? 'text-destructive' : 'text-primary',
+                'w-3 flex-shrink-0 text-center text-ui font-semibold',
+                mark === 'failed' ? 'text-stopped-ink' : mark === 'question' || mark === 'waiting' ? 'text-you-ink' : 'text-foreground',
                 !unread && 'text-muted-foreground',
               )}
             >
@@ -136,18 +138,18 @@ export function SidebarSessionRow({
           )}
           {running && (
             <span title="Working" className="flex w-3 flex-shrink-0 justify-center">
-              <span className="block h-1.5 w-1.5 animate-pulse rounded-full bg-foreground" />
+              <span className="block size-1.5 animate-pulse rounded-full bg-foreground" />
             </span>
           )}
           {agent && (
             <span
               title={agent.name}
-              className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border text-[9px] font-semibold text-muted-foreground"
+              className="flex size-4 flex-shrink-0 items-center justify-center rounded border border-border text-caption leading-none font-semibold text-muted-foreground"
             >
               {agent.letter}
             </span>
           )}
-          {!mark && <SessionProviderLogo provider={session.__provider} className="h-3 w-3 flex-shrink-0" />}
+          {!mark && <SessionProviderLogo provider={session.__provider} className="size-3 flex-shrink-0" />}
           <div className="min-w-0 flex-1">
             <div
               className={cn(
@@ -155,13 +157,13 @@ export function SidebarSessionRow({
                 !menu && (isRenaming ? 'pr-36' : pin ? 'group-hover:pr-22' : 'group-hover:pr-15'),
               )}
             >
-              <span className={cn('min-w-0 truncate text-xs text-foreground', mark ? (unread ? 'font-semibold' : 'font-normal') : 'font-medium')}>{name}</span>
+              <span className={cn('min-w-0 truncate text-ui', older ? 'text-muted-foreground' : 'text-foreground', mark ? (unread ? 'font-semibold' : 'font-normal') : 'font-medium')}>{name}</span>
               {session.archivedAt && (
-                <span className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground">archived</span>
+                <span className="flex-shrink-0 rounded-full border border-border px-1.5 text-caption text-muted-foreground">archived</span>
               )}
               {session.taskId && (
                 <span
-                  className="flex-shrink-0 rounded-full border border-border px-1.5 text-[9px] leading-4 text-muted-foreground"
+                  className="flex-shrink-0 rounded-full border border-border px-1.5 text-caption text-muted-foreground"
                   title="Task run — advances one task stage by stage"
                 >
                   task
@@ -173,7 +175,7 @@ export function SidebarSessionRow({
               {age && (
                 <span
                   className={cn(
-                    'ml-auto flex-shrink-0 pl-1 text-[10px] text-muted-foreground',
+                    'ml-auto flex-shrink-0 pl-1 text-caption text-muted-foreground tabular-nums',
                     !menu && 'group-hover:hidden',
                     isRenaming && 'hidden',
                   )}
@@ -186,8 +188,8 @@ export function SidebarSessionRow({
               <div
                 title={secondLine}
                 className={cn(
-                  'truncate text-[11px] leading-4 font-normal',
-                  mark === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+                  'truncate text-caption font-normal',
+                  mark === 'failed' ? 'text-stopped-ink' : 'text-muted-foreground',
                   !menu && (pin ? 'group-hover:pr-40' : 'group-hover:pr-32'),
                 )}
               >
@@ -196,22 +198,22 @@ export function SidebarSessionRow({
             )}
           </div>
         </div>
-      </Button>
+      </button>
 
       {menu ? (
         <button
           type="button"
           aria-label={`Actions for ${name}`}
-          className="absolute top-0 right-0 flex h-10 w-10 items-center justify-center text-muted-foreground active:text-foreground"
+          className={cn('absolute top-0 right-0 flex size-10 items-center justify-center rounded-md text-muted-foreground active:text-foreground', FOCUS)}
           onClick={openMenu}
         >
-          <MoreHorizontal className="h-4 w-4" />
+          <MoreHorizontal aria-hidden className="size-4" />
         </button>
       ) : (
       <div
         className={cn(
-          'absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 transition-opacity duration-200',
-          isRenaming ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          'absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1 transition-opacity duration-(--duration-fast)',
+          isRenaming ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
         )}
       >
         {isRenaming ? (
@@ -228,46 +230,46 @@ export function SidebarSessionRow({
                 if (event.key === 'Enter') onSaveRename();
                 else if (event.key === 'Escape') onCancelRename();
               }}
-              className="w-[8ch] rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
+              className={cn(FIELD, 'min-h-(--target-min) w-(--size-rename-field) rounded-md px-1.5 text-ui')}
             />
             <button
               type="button"
               title="Save"
-              className="flex h-6 w-6 items-center justify-center rounded bg-muted text-foreground transition-colors hover:bg-accent dark:bg-foreground/10"
+              className={cn(CHIP, 'bg-muted text-foreground')}
               onClick={(event) => {
                 event.stopPropagation();
                 onSaveRename();
               }}
             >
-              <Check className="h-3 w-3" />
+              <Check className="size-3" />
             </button>
             <button
               type="button"
               title="Cancel"
-              className="flex h-6 w-6 items-center justify-center rounded bg-foreground/5 text-muted-foreground transition-colors hover:text-foreground"
+              className={CHIP}
               onClick={(event) => {
                 event.stopPropagation();
                 onCancelRename();
               }}
             >
-              <X className="h-3 w-3" />
+              <X className="size-3" />
             </button>
           </>
         ) : (
           <>
             {actions?.onStop && (
               <button type="button" title="Stop: ends the process, the conversation stays" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onStop?.(); }}>
-                <Square className="h-3 w-3" />
+                <Square className="size-3" />
               </button>
             )}
             {actions?.onClear && (
               <button type="button" title="Done: nothing left to do here" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onClear?.(); }}>
-                <Check className="h-3 w-3" />
+                <Check className="size-3" />
               </button>
             )}
             {actions?.onArchive && (
               <button type="button" title="Archive: leaves the lists, stays in search" className={CHIP} onClick={(event) => { event.stopPropagation(); actions.onArchive?.(); }}>
-                <Archive className="h-3 w-3" />
+                <Archive className="size-3" />
               </button>
             )}
             {pin && (
@@ -280,7 +282,7 @@ export function SidebarSessionRow({
                   pin.onToggle(session);
                 }}
               >
-                <Pin className={cn('h-3 w-3', pin.isPinned && 'fill-current')} />
+                <Pin className={cn('size-3', pin.isPinned && 'fill-current')} />
               </button>
             )}
             <button
@@ -292,18 +294,18 @@ export function SidebarSessionRow({
                 onStartRename(session);
               }}
             >
-              <Edit2 className="h-3 w-3" />
+              <Edit2 className="size-3" />
             </button>
             <button
               type="button"
               title="Delete session"
-              className={cn(CHIP, 'hover:border-destructive/60 hover:text-destructive')}
+              className={cn(CHIP, CHIP_DELETE)}
               onClick={(event) => {
                 event.stopPropagation();
                 onRequestDelete(projectId, session);
               }}
             >
-              <Trash2 className="h-3 w-3" />
+              <Trash2 className="size-3" />
             </button>
           </>
         )}

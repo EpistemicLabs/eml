@@ -1,29 +1,30 @@
-/* Syntax colours of the repository view (classHighlighter's tok-* classes), from
-   the cockpit's palette so light and dark follow the theme. Used by the diffs
+/* Syntax colours of the repository view (classHighlighter's tok-* classes). Tokens v2 only: the
+   --syntax-* hues (light and dark in index.css); headings and links in the text colour, inserted
+   and deleted in a code editor's green and red (--diff-added, --diff-removed). Used by the diffs
    and the CodeMirror file view alike. */
-.repo-code .tok-keyword { color: var(--color-ring); }
+.repo-code .tok-keyword { color: var(--syntax-keyword); }
 .repo-code .tok-string,
-.repo-code .tok-string2 { color: var(--color-success); }
+.repo-code .tok-string2 { color: var(--syntax-string); }
 .repo-code .tok-number,
 .repo-code .tok-bool,
 .repo-code .tok-atom,
-.repo-code .tok-literal { color: var(--color-warning); }
+.repo-code .tok-literal { color: var(--syntax-number); }
 .repo-code .tok-comment,
 .repo-code .tok-meta { color: var(--color-muted-foreground); font-style: italic; }
 .repo-code .tok-definition,
 .repo-code .tok-variableName2,
 .repo-code .tok-macroName,
-.repo-code .tok-labelName { color: var(--color-info); }
+.repo-code .tok-labelName { color: var(--syntax-definition); }
 .repo-code .tok-typeName,
 .repo-code .tok-className,
-.repo-code .tok-namespace { color: var(--type-decision); }
-.repo-code .tok-propertyName { color: var(--type-task); }
-.repo-code .tok-propertyName.tok-definition { color: var(--color-info); }
-.repo-code .tok-heading { color: var(--color-primary); font-weight: 600; }
+.repo-code .tok-namespace { color: var(--syntax-type); }
+.repo-code .tok-propertyName { color: var(--syntax-property); }
+.repo-code .tok-propertyName.tok-definition { color: var(--syntax-definition); }
+.repo-code .tok-heading { color: var(--color-foreground); font-weight: 600; }
 .repo-code .tok-link,
-.repo-code .tok-url { color: var(--color-info); text-decoration: underline; }
-.repo-code .tok-invalid,
-.repo-code .tok-deleted { color: var(--color-primary); }
-.repo-code .tok-inserted { color: var(--color-success); }
+.repo-code .tok-url { color: var(--color-foreground); text-decoration: underline; }
+.repo-code .tok-invalid { color: var(--color-stopped-ink); }
+.repo-code .tok-deleted { color: var(--diff-removed); }
+.repo-code .tok-inserted { color: var(--diff-added); }
 .repo-code .tok-strong { font-weight: 600; }
 .repo-code .tok-emphasis { font-style: italic; }

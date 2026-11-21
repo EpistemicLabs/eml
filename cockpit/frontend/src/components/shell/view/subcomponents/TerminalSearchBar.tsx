@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
+import { buttonVariants } from '@/shared/view/ui';
+
 import type { ShellSearch } from '../../hooks/useShellRuntime';
 import { stepTerminalFontSize } from '../../utils/terminalFontSize';
 import { matchTerminalShortcut } from '../../utils/terminalShortcuts';
@@ -47,13 +49,12 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
     }
   };
 
-  const iconButton =
-    'flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent';
+  const iconButton = buttonVariants({ variant: 'ghost', size: 'icon-sm' });
 
   return (
     <div
       role="search"
-      className="absolute top-3 right-5 z-10 flex items-center gap-1 rounded-md border border-foreground/20 bg-muted py-1 pr-1 pl-2 shadow-[0_8px_24px_rgba(0,0,0,0.14)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)]"
+      className="glass-thick absolute top-3 right-5 z-(--z-sticky) flex items-center gap-1 rounded-xl py-1 pr-1 pl-2 shadow-overlay"
     >
       <input
         ref={inputRef}
@@ -66,9 +67,9 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
         placeholder="Find in terminal"
         aria-label="Find in terminal"
         spellCheck={false}
-        className="h-6 w-44 bg-transparent text-ui text-foreground outline-none placeholder:text-muted-foreground"
+        className="h-(--target-min) w-44 bg-transparent text-ui text-foreground outline-none placeholder:text-muted-foreground"
       />
-      <span className="min-w-[4.5rem] text-right font-mono text-[11px] text-muted-foreground tabular-nums" aria-live="polite">
+      <span className="min-w-(--size-find-count) text-right text-caption text-muted-foreground tabular-nums" aria-live="polite">
         {resultLabel(term, results)}
       </span>
       <button
@@ -79,7 +80,7 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
         aria-label="Previous match"
         title="Previous match (Shift+Enter)"
       >
-        <ChevronUp className="h-3.5 w-3.5" />
+        <ChevronUp aria-hidden className="size-3.5" />
       </button>
       <button
         type="button"
@@ -89,10 +90,10 @@ export default function TerminalSearchBar({ search }: { search: ShellSearch }) {
         aria-label="Next match"
         title="Next match (Enter)"
       >
-        <ChevronDown className="h-3.5 w-3.5" />
+        <ChevronDown aria-hidden className="size-3.5" />
       </button>
       <button type="button" className={iconButton} onClick={close} aria-label="Close find" title="Close (Escape)">
-        <X className="h-3.5 w-3.5" />
+        <X aria-hidden className="size-3.5" />
       </button>
     </div>
   );

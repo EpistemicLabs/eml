@@ -3,6 +3,7 @@
 // live on the host, not in this browser: they hold for every device.
 import { useEffect, useState } from 'react';
 
+import { Select } from '@/shared/view/ui';
 import SettingsRow from '../SettingsRow';
 
 type Limits = { memoryGb: number; idleHours: number; maxRunning: number };
@@ -11,9 +12,6 @@ type Answer = { limits: Limits; ceilingUnavailable: string | null };
 const MEMORY = [0, 1, 1.5, 2, 3, 4, 6, 8];
 const IDLE = [0.25, 0.5, 1, 2, 4, 8, 24];
 const RUNNING = [0, 4, 6, 8, 10, 12, 16, 20];
-
-const inlineSelectClass =
-  'rounded-md border border-foreground/8 bg-transparent p-2 text-sm text-foreground focus:border-foreground/40 focus:outline-none';
 
 const memoryLabel = (gb: number) => (gb === 0 ? 'No ceiling' : `${gb} GB`);
 const idleLabel = (hours: number) => (hours < 1 ? `${hours * 60} min` : `${hours} h`);
@@ -45,14 +43,14 @@ export default function SessionLimitsRows() {
   if (!answer) return null;
   const { limits, ceilingUnavailable } = answer;
   const select = (label: string, value: number, options: number[], text: (n: number) => string, key: keyof Limits) => (
-    <select
+    <Select
       value={value}
       onChange={(event) => void change({ [key]: Number(event.target.value) })}
-      className={`${inlineSelectClass} w-36`}
+      className="w-36"
       aria-label={label}
     >
       {withValue(options, value).map((n) => <option key={n} value={n}>{text(n)}</option>)}
-    </select>
+    </Select>
   );
 
   return (
@@ -75,7 +73,7 @@ export default function SessionLimitsRows() {
       >
         {select('Sessions running at once', limits.maxRunning, RUNNING, runningLabel, 'maxRunning')}
       </SettingsRow>
-      {problem && <div role="alert" className="px-4 pb-3 text-sm text-destructive">{problem}</div>}
+      {problem && <div role="alert" className="px-4 pb-3 text-body text-stopped-ink">{problem}</div>}
     </>
   );
 }

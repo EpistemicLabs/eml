@@ -3,12 +3,13 @@
 import { useState } from 'react';
 
 import {
-  COVERAGE_META, coverageText, dueLabel, focus, HUE, hueOf, projectRows, quietProjects, readable, TURN_META, visibleInPlan,
+  COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, TURN_META, visibleInPlan,
   type Board, type BoardTask, type PlanFilter,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { Chip, Dot, FOCUS, HUE, LABEL, MINI } from '@/shared/view/ui';
 
-import { Chip, Dot, FOCUS, LABEL, MINI, Who } from './parts';
+import { Who } from './parts';
 
 const SEGMENT = cn('min-h-(--target-min) px-2.5 text-ui text-muted-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2';

@@ -1,36 +1,25 @@
 @import "tailwindcss";
 @source "../node_modules/streamdown/dist/*.js";
 
-/* Two palettes (herdr-style: monospace, coral/purple accents): light in @theme,
-   dark under html.dark. ThemeContext sets the class from the user's choice
-   (System / Light / Dark); the dark variant is class-based so dark: styles
-   resolve under <html class="dark">. */
+/* Tokens v2: monochrome glass, Schibsted Grotesk; code in the monospace. Colour only for meaning:
+   amber is "needs you", red is "stopped". Light in @theme and :root, dark under html.dark.
+   ThemeContext sets the class from the user's choice (System / Light / Dark); the dark variant is
+   class-based so dark: styles resolve under <html class="dark">. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Light palette. Text tokens keep WCAG AA on background, card and muted;
-     coral and purple are deepened — the dark palette's accents are too pale
-     on a light ground (2.4:1). */
-  --color-background: #f6f7f9;
-  --color-foreground: #16191e;
+  /* Light palette. Text tokens keep WCAG AA on background, card and muted (design-tokens.test.ts). */
+  --color-background: #f5f5f7;
+  --color-foreground: #1d1d1f;
   --color-card: #ffffff;
-  --color-muted: #eceef2;
-  --color-muted-foreground: #5a6371;
-  --color-border: #d8dce3;
-  --color-primary: #c93a22;   /* coral */
-  --color-ring: #6d4ee6;      /* purple */
-  /* Status hues (review flags and the DEV badge, update banners). Text-safe
-     on both grounds; fills and borders use them at low alpha. */
-  --color-warning: #b45309;   /* amber */
-  --color-info: #0369a1;      /* sky */
-  --color-success: #047857;   /* emerald */
-  /* Flagged-for-review accent (amber, same hue as the decision type). */
-  --color-review: #7f590c;
+  --color-muted: #ebebef;
+  --color-muted-foreground: #636366;
+  --color-border: #d9d9de;
+  --color-ring: #1d1d1f;
 
-  /* Token names the components reference, mapped onto the
-     palette above so they resolve (an undefined --color-* utility renders
-     transparent). Not the theme port — that is a separate step; these are
-     aliases only. */
+  /* Roles the components name, built from the palette: primary is the text colour, destructive the
+     red of "stopped". */
+  --color-primary: var(--color-foreground);
   --color-card-foreground: var(--color-foreground);
   --color-popover: var(--color-card);
   --color-popover-foreground: var(--color-foreground);
@@ -39,19 +28,16 @@
   --color-secondary-foreground: var(--color-foreground);
   --color-accent: var(--color-muted);
   --color-accent-foreground: var(--color-foreground);
-  --color-destructive: var(--color-primary);
+  --color-destructive: var(--color-status-stopped);
   --color-destructive-foreground: var(--color-background);
-  --color-input: var(--color-border);
+  --color-input: var(--color-border-strong);
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Typography scale (text-caption/-ui/-body/-heading utilities). */
+  /* Type scale (text-caption … text-display utilities), each with its line height. */
   --text-caption: 11px;
   --text-ui: 12px;
   --text-body: 13px;
   --text-heading: 14px;
-
-  /* Tokens v2 (the task views' system, see "Tokens v2" below). New names only: they
-     generate utilities and change nothing outside the v2 scope. */
   --text-caption--line-height: 16px;
   --text-ui--line-height: 16px;
   --text-body--line-height: 20px;
@@ -65,6 +51,9 @@
   --tracking-label: .06em;
   --tracking-title: -.01em;
   --font-ui: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
+  --font-sans: var(--font-ui);
+  /* Code, paths and terminal output keep the monospace; everything else is the UI font. */
+  --font-code: var(--font-mono);
 
   /* Status hues. Text in a hue always uses its -ink token, never the hue itself. */
   --color-status-you: #b35200;
@@ -119,8 +108,8 @@
   --container-content: 112rem;
 
   /* Dialog animations used by the ported Dialog primitive. */
-  --animate-dialog-overlay-show: dialog-overlay-show 150ms ease-out;
-  --animate-dialog-content-show: dialog-content-show 150ms ease-out;
+  --animate-dialog-overlay-show: dialog-overlay-show var(--duration-fast) var(--ease-out);
+  --animate-dialog-content-show: dialog-content-show var(--duration-fast) var(--ease-out);
 
   @keyframes dialog-overlay-show {
     from { opacity: 0; }
@@ -132,8 +121,6 @@
   }
 }
 
-/* Dark palette. Declared on <html> itself, so the alias tokens above (which
-   reference these through var()) resolve against it. */
 /* Engram type colours — shared by badges, chips, timeline and graph
    (TYPE_COLORS in components/ui/badge.tsx). Light: deep enough to read as text
    on its own tint. Dark (below): desaturated and lifted so they sit in the
@@ -152,14 +139,6 @@
   --type-learning: #5f6b12;
   --subject-active: #186c53;
   --hash-lightness: 38%;
-  --glass-bar: rgba(255, 255, 255, .70);
-  --glass-field: rgba(255, 255, 255, .88);
-  --glass-solid: #fff;
-  --glass-rim: rgba(255, 255, 255, .70);
-  --glass-line-bar: rgba(0, 0, 0, .10);
-  --glass-line-field: rgba(0, 0, 0, .42);
-  --glass-shadow: 0 8px 24px rgba(16, 24, 40, .12), 0 1px 2px rgba(16, 24, 40, .08);
-  --glass-edge: 246 247 249;
 }
 
 html.dark {
@@ -175,31 +154,9 @@ html.dark {
   --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
-  --glass-bar: rgba(26, 30, 36, .62);
-  --glass-field: rgba(26, 30, 36, .86);
-  --glass-solid: #1b1f26;
-  --glass-rim: rgba(255, 255, 255, .10);
-  --glass-line-bar: rgba(255, 255, 255, .16);
-  --glass-line-field: rgba(255, 255, 255, .34);
-  --glass-shadow: 0 8px 24px rgba(0, 0, 0, .45), 0 1px 2px rgba(0, 0, 0, .40);
-  --glass-edge: 11 13 16;
-  --color-review: #d9a441;
-  --color-background: #0b0d10;
-  --color-foreground: #e6e8ec;
-  --color-card: #14171c;
-  --color-muted: #1b1f26;
-  --color-muted-foreground: #8a94a3;
-  --color-border: #262b33;
-  --color-primary: #ff7a66;   /* coral */
-  --color-ring: #a78bfa;      /* purple */
-  --color-warning: #fbbf24;
-  --color-info: #7dd3fc;
-  --color-success: #6ee7b7;
 }
 
-/* Tokens v2: the mockup v4 look (monochrome glass, Schibsted Grotesk and Martian Mono).
-   It applies inside [data-ui="v2"]; everything outside keeps v1. Overlays that portal
-   out of a v2 view carry the attribute on their own root. */
+/* Steps, durations, layers, sizes and the area tokens. */
 :root {
   --mix-track: 8%;
   --mix-tint: 10%;
@@ -213,6 +170,11 @@ html.dark {
   --duration-slow: 500ms;
   --duration-highlight: 2000ms;
   --duration-pulse: 1500ms;
+  /* How long a pointer rests on a control before its tooltip shows. */
+  --duration-tooltip: 300ms;
+  /* How long a passing confirmation shows: a toast, and a short one in place ("Copied"). */
+  --duration-toast: 3200ms;
+  --duration-feedback: 1500ms;
   --pulse-iterations: 3;
   /* Layers sit around the app's own: chrome bars at 40, dialogs and drawers at 50. */
   --z-raised: 1;
@@ -240,6 +202,16 @@ html.dark {
   --radius-tab: 7px;
   --shadow-pill: 0 1px 2px rgb(0 0 0 / .12), 0 1px 4px rgb(0 0 0 / .06), 0 0 0 .5px rgb(0 0 0 / .08);
   --focus-offset: 2px;
+  /* A hairline: dividers, rims and the inset edge of a tinted surface. */
+  --width-hairline: 1px;
+  /* How far a scroll edge fades under the phone's status bar. */
+  --size-edge-fade: 28px;
+  /* A dialog sits in the middle of the viewport; the open animation ends on this same transform. */
+  --transform-center: translate(-50%, -50%);
+  /* The command palette's result list: about eight rows before it scrolls. */
+  --size-command-list: 340px;
+  /* A tooltip's gap to what it explains. */
+  --gap-tooltip: 6px;
   --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
   /* The Inbox's task panel fills the board's height, never shorter than this. */
   --size-split-panel-min: 35rem;
@@ -250,32 +222,166 @@ html.dark {
   --glass-blur: 24px;
   --glass-blur-thick: 32px;
   --glass-saturate: 180%;
+  /* Area tokens: one block per area. */
+  /* area: sidebar */
+  /* The sidebar: pinned open, as the rail, and as the phone's drawer (at most 85% of the screen). */
+  --size-sidebar: 17rem;
+  --size-sidebar-rail: 3rem;
+  --size-sidebar-drawer: min(20rem, 85vw);
+  /* A row's inline rename field: about eight characters before it scrolls. */
+  --size-rename-field: 8ch;
+  /* Phone fields: below 16px iOS zooms the page when a field takes the focus. */
+  --text-field-touch: 16px;
+  /* area: settings */
+  /* The settings window: most of the viewport's height, the same on every tab. */
+  --size-settings: 90vh;
+  /* The folder browser opens over the add-project dialog, so it sits one layer above a dialog. */
+  --z-modal-nested: calc(var(--z-modal) + 1);
+  --size-folder-browser: 80vh;
+  /* A settings row keeps its control beside the label down to this label width, else the control wraps under it. */
+  --size-settings-label: 14rem;
+  /* A reading dialog (the release notes): at most this much of the viewport, then it scrolls. */
+  --size-dialog-tall: 85vh;
+  /* area: chat and terminal */
+  /* The chat column: as wide as one of two panes side by side; a sent message takes at most 85% of it. */
+  --size-chat-column: 980px;
+  --size-chat-bubble: min(85%, var(--container-measure));
+  /* A tool call's output and an agent's tools hang under the row's icon. */
+  --indent-chat-work: 11px;
+  /* The chat's text steps: the reply, what is secondary, and a heading in a reply. */
+  --gap-chat-block: 12px;
+  --gap-chat-heading: 20px;
+  --gap-chat-item: 4px;
+  --text-chat-small: var(--text-ui);
+  --text-chat-small--line-height: 18px;
+  /* On a phone the chat's secondary text is a little darker than the muted grey. */
+  --mix-chat-phone-muted: 72%;
+  /* The phone composer: its gap to the keyboard, its height before it is measured, the fade under it. */
+  --composer-gap: 6px;
+  --composer-height-initial: 96px;
+  --pad-composer-bottom: 5px;
+  --pad-chat-compact-top: 60px;
+  --size-chat-menu-max: 80vw;
+  /* The outline around the current search match. */
+  --width-chat-current: 1px;
+  /* Layers inside a chat: the phone fade under the composer, the "Jump to latest" button above both. */
+  --z-chat-fade: 5;
+  --z-chat-jump: 20;
+  /* A pane: the narrowest it gets, its floating toolbar's layer, the phone header it scrolls under. */
+  --size-pane-min: 280px;
+  --z-pane-toolbar: 30;
+  --pad-pane-compact-top: 52px;
+  --pad-pane-compact-bottom: 4px;
+  --size-menu-min: 10rem;
+  /* The terminal status bar: when (shrinks), model, context (never shrinks). */
+  --grid-status-bar: minmax(0, 1fr) auto minmax(max-content, 1fr);
+  /* The MCP server table: name, type, status with its two actions. */
+  --grid-tool-servers: minmax(0, 1fr) 8.5rem 5.5rem;
+  /* The terminal find bar's match count ("12/340"). */
+  --size-find-count: 4.5rem;
+  /* Code changes in the chat: added and removed lines keep a code editor's green and red. */
+  --diff-added: #047857;
+  --diff-removed: #c4281c;
+  /* The terminal: xterm takes concrete colours, read at runtime (terminalTheme.ts). Light: every
+     slot at 4.5:1 on white, yellow a gold, the white slots greys. Search marks are #RRGGBB only. */
+  --term-ansi-black: #1d1d1f;
+  --term-ansi-red: #c41a16;
+  --term-ansi-green: #326d24;
+  --term-ansi-yellow: #a3712e;
+  --term-ansi-blue: #0058c7;
+  --term-ansi-magenta: #ad3da4;
+  --term-ansi-cyan: #1a7b9c;
+  --term-ansi-white: #6e6e73;
+  --term-ansi-bright-black: #8e8e93;
+  --term-ansi-bright-red: #a01007;
+  --term-ansi-bright-green: #22501a;
+  --term-ansi-bright-yellow: #7e570f;
+  --term-ansi-bright-blue: #003f8c;
+  --term-ansi-bright-magenta: #8a2e83;
+  --term-ansi-bright-cyan: #0d5a7d;
+  --term-ansi-bright-white: #3c3c43;
+  --term-match: #e5e5ea;
+  --term-match-active: #aeaeb2;
+  /* area: brain and review */
+  /* A brain list panel scrolls past this height. */
+  --size-brain-list: 420px;
+  /* The project page's graph and the brain home's activity panels. */
+  --size-graph-panel: 560px;
+  /* The brain surface's content column. */
+  --container-brain: 1440px;
+  /* The activity heatmap: day cells, their gap and corner, the picked day's outline, the shade steps. */
+  --size-heat-cell: 13px;
+  --gap-heat: 3px;
+  --radius-heat: 3px;
+  --gap-heat-outline: 1px;
+  --focus-width: 2px;
+  --mix-heat-1: 28%;
+  --mix-heat-2: 50%;
+  --mix-heat-3: 75%;
+  /* Graph nodes: the type edge, the widest hub, and how far nodes fade outside the hovered neighbourhood. */
+  --width-graph-edge: 4px;
+  --size-graph-hub: 220px;
+  --opacity-graph-dim: .12;
+  --opacity-graph-hub-dim: .15;
+  --opacity-graph-isolated: .6;
+  --opacity-graph-closed: .4;
+  --size-graph-legend: 240px;
+  --width-graph-line: 1;
+  --width-graph-line-strong: 1.5;
+  --opacity-graph-edge: .45;
+  --opacity-graph-edge-faint: .2;
+  --opacity-graph-relation: .55;
+  /* Tag and subject hues are hashed from their id; this is their saturation (lightness: --hash-lightness). */
+  --hash-saturation: 45%;
+  /* The engram drawer: full width less its margin on a phone, else up to 600px or 70% of the view; off-screen it sits past its own width and margin. */
+  --size-drawer-narrow: calc(100% - 1rem);
+  --size-drawer: min(600px, 70vw);
+  --offset-drawer-out: calc(100% + 1rem);
+  /* A task journal row: the timeline rail and its entry dot, then the entry. */
+  --grid-journal: 14px 1fr;
+  --size-journal-dot: 7px;
+  /* The review screen's drafts strip takes at most this much of the screen's height. */
+  --size-drafts: 45%;
+  /* A worktree's opened details line up under its name (chevron + branch icon); a session row bleeds into the card's padding. */
+  --indent-worktree: 22px;
+  --size-worktree-row: calc(100% + 0.75rem);
+  /* The note editor: a checklist's box and a quote's rule. */
+  --size-note-check: 15px;
+  --width-quote: 2px;
+  /* Relation edges: the relation type is meaning, so each keeps its hue (light here, dark in the v2 dark scope). */
+  --relation-supersedes: #b45309;
+  --relation-supports: #047857;
+  --relation-contradicts: #dc2626;
+  --relation-derived_from: #4f46e5;
+  --relation-refines: #0369a1;
+  --relation-related_to: #64748b;
+  --relation-blocks: #be123c;
+  --relation-part_of: #0f766e;
+  /* area: repository and plugins */
+  /* The repository view's code: its line height (diffs and the file view), and the Files tab's tree beside the open file. */
+  --leading-code: 18px;
+  --grid-repo-files: minmax(200px, 280px) 1fr;
+  /* Syntax colours (classHighlighter's tok-* classes in repository.css), each at 4.5:1 on the card and on a diff line's tint. */
+  --syntax-keyword: #9b2393;
+  --syntax-string: #116b5f;
+  --syntax-number: #3a2fc4;
+  --syntax-definition: #0058c7;
+  --syntax-type: #0b6378;
+  --syntax-property: #4b5a8a;
+  /* The Time view: a day with any time still shows a sliver of a bar. */
+  --size-time-bar-min: 2px;
+  /* area: app shell */
+  /* The gap above the top bar, under the status bar on a phone. */
+  --pad-shell-top: 6px;
+  /* The phone's floating buttons: their row sits this far below the status bar, and a chat fades out
+     under a band this tall. */
+  --size-phone-edge: 56px;
+  /* The space menu: wide enough for a space's name and its marks. */
+  --size-menu: 12rem;
 }
-/* v1's type tokens carry no line height: outside the scope a text-* utility keeps the
-   inherited one (an invalid custom property falls back to inheritance). Unlayered, so it
-   wins over the theme layer. */
+
+/* Glass and the scrim behind dialogs, light. */
 :root {
-  --text-caption--line-height: initial;
-  --text-ui--line-height: initial;
-  --text-body--line-height: initial;
-  --text-heading--line-height: initial;
-}
-
-[data-ui="v2"] {
-  --color-background: #f5f5f7;
-  --color-card: #ffffff;
-  --color-muted: #ebebef;
-  --color-foreground: #1d1d1f;
-  --color-muted-foreground: #636366;
-  --color-border: #d9d9de;
-  --color-border-strong: #86868b;
-  --color-ring: #1d1d1f;
-  --text-caption--line-height: 16px;
-  --text-ui--line-height: 16px;
-  --text-body--line-height: 20px;
-  --text-heading--line-height: 20px;
-  --font-sans: var(--font-ui);
-
   --glass-fill: rgb(255 255 255 / .64);
   --glass-fill-thick: rgb(250 250 252 / .84);
   --glass-solid: #ffffff;
@@ -283,38 +389,10 @@ html.dark {
   --glass-line-strong: rgb(0 0 0 / .42);
   --glass-rim: rgb(255 255 255 / .80);
   --scrim: rgb(0 0 0 / .18);
-
-  /* Built from other tokens, so declared again here: a var() is resolved where the
-     property is declared, and the :root copies would keep v1's values. */
-  --color-primary: var(--color-foreground);
-  --color-primary-foreground: var(--color-background);
-  --color-card-foreground: var(--color-foreground);
-  --color-popover: var(--color-card);
-  --color-popover-foreground: var(--color-foreground);
-  --color-secondary: var(--color-muted);
-  --color-secondary-foreground: var(--color-foreground);
-  --color-accent: var(--color-muted);
-  --color-accent-foreground: var(--color-foreground);
-  --color-destructive: var(--color-status-stopped);
-  --color-destructive-foreground: var(--color-background);
-  --color-input: var(--color-border-strong);
-  --color-you-ink: color-mix(in srgb, var(--color-status-you) var(--mix-ink), var(--color-foreground));
-  --color-stopped-ink: color-mix(in srgb, var(--color-status-stopped) var(--mix-ink), var(--color-foreground));
-  --color-review-ink: color-mix(in srgb, var(--color-status-review) var(--mix-ink), var(--color-foreground));
-  --color-agent-ink: color-mix(in srgb, var(--color-status-agent) var(--mix-ink), var(--color-foreground));
-  --color-scheduled-ink: color-mix(in srgb, var(--color-status-scheduled) var(--mix-ink), var(--color-foreground));
-  --color-waiting-ink: color-mix(in srgb, var(--color-status-waiting) var(--mix-ink), var(--color-foreground));
-  --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
-  --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
-
-  /* No background here: overlays carry the scope on full-screen portal roots that stay see-through. */
-  font-family: var(--font-ui);
-  font-size: var(--text-body);
-  line-height: var(--text-body--line-height);
-  color: var(--color-foreground);
 }
 
-.dark [data-ui="v2"], [data-ui="v2"].dark {
+/* Dark: the neutrals, the status hues lifted for a black ground, glass, shadows and the area tokens. */
+html.dark {
   --color-background: #000000;
   --color-card: #1c1c1e;
   --color-muted: #2c2c2e;
@@ -344,7 +422,44 @@ html.dark {
   --shadow-overlay: 0 8px 24px rgb(0 0 0 / .55);
   --shadow-modal: 0 24px 60px rgb(0 0 0 / .60);
   --shadow-sheet: -20px 0 60px rgb(0 0 0 / .55);
-  color-scheme: dark;
+  /* area: chat and terminal */
+  --diff-added: #34d399;
+  --diff-removed: #ff6961;
+  /* Based on VS Code's default dark terminal colours (MIT licence, see NOTICE), bright white pure white: vivid, for a black ground. */
+  --term-ansi-black: #000000;
+  --term-ansi-red: #cd3131;
+  --term-ansi-green: #0dbc79;
+  --term-ansi-yellow: #e5e510;
+  --term-ansi-blue: #2472c8;
+  --term-ansi-magenta: #bc3fbc;
+  --term-ansi-cyan: #11a8cd;
+  --term-ansi-white: #e5e5e5;
+  --term-ansi-bright-black: #666666;
+  --term-ansi-bright-red: #f14c4c;
+  --term-ansi-bright-green: #23d18b;
+  --term-ansi-bright-yellow: #f5f543;
+  --term-ansi-bright-blue: #3b8eea;
+  --term-ansi-bright-magenta: #d670d6;
+  --term-ansi-bright-cyan: #29b8db;
+  --term-ansi-bright-white: #ffffff;
+  --term-match: #3a3a3c;
+  --term-match-active: #636366;
+  /* area: brain and review */
+  --relation-supersedes: #f59e0b;
+  --relation-supports: #10b981;
+  --relation-contradicts: #ef4444;
+  --relation-derived_from: #6366f1;
+  --relation-refines: #0ea5e9;
+  --relation-related_to: #94a3b8;
+  --relation-blocks: #e11d48;
+  --relation-part_of: #2fb5a5;
+  /* area: repository and plugins */
+  --syntax-keyword: #ff7ab2;
+  --syntax-string: #5fd3bc;
+  --syntax-number: #a59bff;
+  --syntax-definition: #6cb6ff;
+  --syntax-type: #5dd8ff;
+  --syntax-property: #a8b8e8;
 }
 
 /* Glass only on the control layer: header, slide-over, dialog, toast, composer. The blur is
@@ -364,6 +479,12 @@ html.dark {
   -webkit-backdrop-filter: blur(32px) saturate(180%);
   backdrop-filter: blur(32px) saturate(180%);
 }
+/* Opaque glass: the same rim and edge, nothing blurred, for controls over terminal text. */
+@utility glass-solid {
+  background: var(--glass-solid);
+  border: var(--width-hairline) solid var(--glass-line);
+  box-shadow: inset 0 var(--width-hairline) 0 var(--glass-rim), var(--shadow-glass);
+}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass, .glass-thick { background: var(--glass-solid); }
 }
@@ -376,9 +497,9 @@ html.dark {
   }
 }
 
-/* v2 moves only when the viewer allows it; pulses stop after three (--pulse-iterations). */
+/* Motion only when the viewer allows it; pulses stop after three (--pulse-iterations). */
 @media (prefers-reduced-motion: reduce) {
-  [data-ui="v2"], [data-ui="v2"] * { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 html, body, #root { height: 100%; }
@@ -417,111 +538,69 @@ html.dark {
 /* A space in the header: a soft surface in its colour, stronger while it is the open one. */
 .space-band {
   background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 7%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 12%, transparent);
+  box-shadow: inset 0 0 0 var(--width-hairline) color-mix(in srgb, var(--space-tone, var(--space-slate)) 12%, transparent);
 }
 .space-band[data-active] {
   background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 13%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--space-tone, var(--space-slate)) 38%, transparent);
+  box-shadow: inset 0 0 0 var(--width-hairline) color-mix(in srgb, var(--space-tone, var(--space-slate)) 38%, transparent);
 }
 .space-tab-active { background: color-mix(in srgb, var(--space-tone, var(--space-slate)) 26%, transparent); }
 body {
   margin: 0;
   background: var(--color-background);
   color: var(--color-foreground);
-  font-family: var(--font-mono);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 
-/* The chat view's type: 14px text, 16px headings, 12px for everything secondary,
-   which is what is muted, plus preformatted output. Gaps sit on a 4px grid. Not in
-   a layer, so it wins over the utilities the markdown renderer brings. */
+/* The chat view's type (tokens v2): the UI font at --text-chat, headings at --text-title, everything
+   secondary (what is muted, plus preformatted output) at the small step; code stays monospace. Gaps
+   sit on a 4px grid. Not in a layer, so it wins over the utilities the markdown renderer brings. */
 .chat-pane {
-  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 22px;
+  font-family: var(--font-ui);
+  font-size: var(--text-chat);
+  line-height: var(--text-chat--line-height);
   font-variant-numeric: tabular-nums;
 }
 .chat-pane * { font-size: inherit; line-height: inherit; }
-.chat-pane .text-muted-foreground, .chat-pane pre { font-size: 12px; line-height: 18px; }
-.chat-pane [class*="font-mono"], .chat-pane code, .chat-pane pre { font-family: var(--font-mono); font-variant-ligatures: none; }
-.chat-pane [data-streamdown^="heading-"] { margin-top: 20px; margin-bottom: 8px; font-size: 16px; line-height: 24px; font-weight: 600; }
+.chat-pane .text-muted-foreground, .chat-pane pre { font-size: var(--text-chat-small); line-height: var(--text-chat-small--line-height); }
+.chat-pane [class*="font-code"], .chat-pane code, .chat-pane pre { font-family: var(--font-code); font-variant-ligatures: none; }
+.chat-pane [data-streamdown^="heading-"] { margin-top: var(--gap-chat-heading); margin-bottom: calc(var(--spacing) * 2); font-size: var(--text-title); line-height: var(--text-title--line-height); font-weight: 600; }
 .chat-pane [data-streamdown="ordered-list"], .chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="code-block"],
-.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: 12px; margin-bottom: 12px; }
-.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: 4px; margin-bottom: 4px; }
-.chat-pane p { margin-top: 12px; margin-bottom: 12px; }
+.chat-pane [data-streamdown="table-wrapper"], .chat-pane [data-streamdown="blockquote"] { margin-top: var(--gap-chat-block); margin-bottom: var(--gap-chat-block); }
+.chat-pane [data-streamdown="list-item"] { padding-top: 0; padding-bottom: 0; margin-top: var(--gap-chat-item); margin-bottom: var(--gap-chat-item); }
+.chat-pane p { margin-top: var(--gap-chat-block); margin-bottom: var(--gap-chat-block); }
 /* Prose stays at about 100 characters a line; code, tables and tools take the pane. */
 .chat-pane p, .chat-pane [data-streamdown^="heading-"], .chat-pane [data-streamdown="ordered-list"],
-.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: 720px; }
+.chat-pane [data-streamdown="unordered-list"], .chat-pane [data-streamdown="blockquote"] { max-width: var(--container-measure); }
 .chat-pane p:first-child, .chat-pane [data-streamdown^="heading-"]:first-child { margin-top: 0; }
 .chat-pane p:last-child { margin-bottom: 0; }
 /* What the agent did reads as one stream; the wider gaps stay around the conversation. */
 /* A quote in a reply is text to read, however the markdown renderer mutes it. */
-.chat-pane [data-streamdown="blockquote"] { font-size: 14px; line-height: 22px; font-style: normal; color: var(--color-foreground); }
-.chat-pane .chat-work + .chat-work { margin-top: 4px; }
+.chat-pane [data-streamdown="blockquote"] { font-size: var(--text-chat); line-height: var(--text-chat--line-height); font-style: normal; color: var(--color-foreground); }
+.chat-pane .chat-work + .chat-work { margin-top: var(--gap-chat-item); }
 /* Tables keep one line per row and show all their rows: wide ones scroll sideways, none scrolls down. */
 .chat-pane [data-streamdown="table-wrapper"] > div:has(> table) { max-height: none !important; overflow-y: hidden; }
 .chat-pane [data-streamdown="table-cell"] { white-space: nowrap; }
-.chat-pane [data-chat-current] { outline: 1px solid var(--color-warning); outline-offset: 2px; border-radius: 2px; }
-::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-warning) 35%, transparent); }
-/* Below 16px, iOS zooms the page when a field takes the focus. */
-@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: 16px; } }
+/* Search marks are neutral (amber means "needs you"): a grey wash, the current match outlined in the text colour. */
+.chat-pane [data-chat-current] { outline: var(--width-chat-current) solid var(--color-foreground); outline-offset: var(--focus-offset); border-radius: calc(var(--spacing) * .5); }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-foreground) var(--mix-flash), transparent); }
+/* Below --text-field-touch (16px), iOS zooms the page when a field takes the focus. */
+@media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: var(--text-field-touch); } }
 
-/* Structural utilities the sidebar uses; they resolve against the current
-   palette. */
-@utility frosted {
-  background-color: color-mix(in srgb, var(--color-card) 85%, transparent);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid var(--color-border);
-}
 
-/* Frosted glass on the phone. The filter values are literal: Safari is reported not
-   to resolve custom properties inside -webkit-backdrop-filter. */
-.glass-bar, .glass-field { box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
-.glass-bar { background: var(--glass-bar); border: 1px solid var(--glass-line-bar); }
-.glass-field { background: var(--glass-field); border: 1px solid var(--glass-line-field); }
-.glass-solid { background: var(--glass-solid); border: 1px solid var(--glass-line-field); box-shadow: inset 0 1px 0 var(--glass-rim), var(--glass-shadow); }
-.glass-bar, .glass-field {
-  -webkit-backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
-  backdrop-filter: blur(18px) saturate(170%) contrast(.6) brightness(1.25);
-}
-html.dark .glass-bar, html.dark .glass-field {
-  -webkit-backdrop-filter: blur(18px) saturate(170%) brightness(.55);
-  backdrop-filter: blur(18px) saturate(170%) brightness(.55);
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass-bar, .glass-field { background: var(--glass-solid); border-color: var(--glass-line-field); }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .glass-bar, .glass-field, html.dark .glass-bar, html.dark .glass-field {
-    background: var(--glass-solid);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    border-color: var(--glass-line-field);
-  }
-}
 /* Scroll edges fade without blur: a gradient costs almost nothing. */
-.glass-edge-top { background: linear-gradient(to bottom, rgb(var(--glass-edge)) 0, rgb(var(--glass-edge) / .96) env(safe-area-inset-top), rgb(var(--glass-edge) / .55) calc(env(safe-area-inset-top) + 28px), rgb(var(--glass-edge) / 0) 100%); }
-.glass-edge-bottom { background: linear-gradient(to top, rgb(var(--glass-edge) / .92) 0, rgb(var(--glass-edge) / .6) 45%, rgb(var(--glass-edge) / 0) 100%); }
-/* Readable secondary text in the chat, phone only. */
-@media (max-width: 767px) {
-  .chat-pane { --color-muted-foreground: #4a5260; }
-  html.dark .chat-pane { --color-muted-foreground: #9aa4b1; }
+.glass-edge-top { background: linear-gradient(to bottom, var(--color-background) 0, color-mix(in srgb, var(--color-background) 96%, transparent) env(safe-area-inset-top), color-mix(in srgb, var(--color-background) 55%, transparent) calc(env(safe-area-inset-top) + var(--size-edge-fade)), transparent 100%); }
+.glass-edge-bottom { background: linear-gradient(to top, color-mix(in srgb, var(--color-background) 92%, transparent) 0, color-mix(in srgb, var(--color-background) 60%, transparent) 45%, transparent 100%); }
+/* Readable secondary text in the chat, phone only: a step closer to the text colour than muted. */
+.chat-pane {
+  @variant max-md { --color-muted-foreground: color-mix(in srgb, var(--color-foreground) var(--mix-chat-phone-muted), var(--color-background)); }
 }
 
 @utility nav-divider {
-  height: 1px;
+  height: var(--width-hairline);
   background: linear-gradient(90deg, transparent, var(--color-border) 20%, var(--color-border) 80%, transparent);
-}
-
-/* Settings modal: content fades in on tab switch. */
-@utility settings-content-enter {
-  animation: settings-fade-in 150ms ease-out;
-}
-
-@keyframes settings-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 @utility scrollbar-hide {

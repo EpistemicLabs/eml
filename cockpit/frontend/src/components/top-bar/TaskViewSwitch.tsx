@@ -1,18 +1,14 @@
 // The bar's right end: Inbox · Now · Plan as one tab switch. A tab shows as picked only while
 // the task view is open; the Inbox tab carries how many items wait for the viewer.
-import { FOCUS } from '@/components/task-board/parts';
 import { useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { TAB, TRACK } from '@/shared/view/ui';
 import { useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { useTopView } from '@/stores/useTopViewStore';
 
 import { openTaskView } from './useCockpitShortcuts';
 
 const VIEWS: Array<[TaskView, string, string]> = [['inbox', 'Inbox', 'I'], ['now', 'Now', 'N'], ['plan', 'Plan', 'P']];
-
-export const TAB = cn('flex h-(--size-tab) items-center gap-1.5 whitespace-nowrap rounded-(--radius-tab) px-3 text-body font-medium text-muted-foreground hover:text-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-(--shadow-pill)', FOCUS);
-/** The track around the space you are in and around the open task view. */
-export const TRACK = 'flex items-center gap-0.5 rounded-(--radius-track) p-(--pad-track)';
 
 /** A count next to a tab's name: grey, or red for something that stopped with an error. */
 export function Count({ children, label, stopped = false }: { children: React.ReactNode; label: string; stopped?: boolean }) {

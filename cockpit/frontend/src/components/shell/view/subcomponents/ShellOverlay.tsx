@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { cn } from '@/lib/utils';
+import { buttonVariants } from '@/shared/view/ui';
+
 import type { ShellOverlay as ShellOverlayState } from '../../hooks/useShellRuntime';
 
 const TITLE_LIMIT = 50;
@@ -50,22 +53,22 @@ export default function ShellOverlay({ state, sessionTitle, onConnect }: ShellOv
 
   switch (state.kind) {
     case 'loading':
-      content = <p className="text-sm text-foreground">Loading terminal…</p>;
+      content = <p className="text-body text-foreground">Loading terminal…</p>;
       break;
     case 'error':
-      content = <p className="max-w-sm text-center text-xs text-muted-foreground">{state.message}</p>;
+      content = <p className="max-w-sm text-center text-ui text-stopped-ink">{state.message}</p>;
       break;
     case 'connecting':
       content = (
         <div className="flex flex-col items-center gap-1 text-center">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <div className="flex items-center gap-2 text-body font-medium text-foreground">
             <span
               aria-hidden="true"
               className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
             />
             Connecting…
           </div>
-          <p className="text-xs text-muted-foreground">Starting session…</p>
+          <p className="text-ui text-muted-foreground">Starting session…</p>
         </div>
       );
       break;
@@ -77,12 +80,12 @@ export default function ShellOverlay({ state, sessionTitle, onConnect }: ShellOv
             type="button"
             title={copy.tooltip}
             onClick={onConnect}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 active:bg-primary/80 sm:w-auto"
+            className={cn(buttonVariants(), 'w-full sm:w-auto')}
           >
             <BoltIcon />
             {copy.label}
           </button>
-          <p className="text-xs text-muted-foreground">{copy.description}</p>
+          <p className="text-ui text-muted-foreground">{copy.description}</p>
         </div>
       );
       break;
@@ -90,6 +93,6 @@ export default function ShellOverlay({ state, sessionTitle, onConnect }: ShellOv
   }
 
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/90 p-4">{content}</div>
+    <div className="absolute inset-0 z-(--z-sticky) flex items-center justify-center bg-background p-4">{content}</div>
   );
 }

@@ -11,13 +11,11 @@ const SRC = import.meta.dirname;
 const CSS = readFileSync(join(SRC, 'index.css'), 'utf8');
 const BASELINE_FILE = join(SRC, 'design-tokens.baseline.json');
 
-/** Directories built on tokens v2: no literal values at all. */
-const V2_DIRS = ['components/task-board', 'components/top-bar', 'components/session-launcher'];
+/** Everything the UI is built from is on tokens v2: no literal values at all. */
+const V2_DIRS = ['components', 'shared'];
 /** Files that may hold colour literals, and why. */
 const COLOUR_EXCEPTIONS: Record<string, string> = {
-  'lib/graph.ts': 'canvas drawing reads concrete colours',
-  'components/graph/nodes.tsx': 'graph node colours are computed per engram type',
-  'components/shell/utils/terminalTheme.ts': 'xterm takes a concrete colour theme',
+  'lib/tag-graph.ts': 'a tag hue is hashed per tag, so its hsl() is computed (saturation and lightness are tokens)',
 };
 const MIX_STEPS = new Set(['8', '10', '12', '20', '40', '60']);
 
@@ -29,12 +27,10 @@ function sourceFiles(dir = SRC): string[] {
   });
 }
 
-/** The body of the first block whose selector line matches. */
-function block(selector: RegExp): string {
-  const m = selector.exec(CSS);
-  if (!m) return '';
+/** The body of the block whose opening brace follows `from`. */
+function bodyAt(from: number): string {
   let depth = 0;
-  const start = CSS.indexOf('{', m.index);
+  const start = CSS.indexOf('{', from);
   for (let i = start; i < CSS.length; i++) {
     if (CSS[i] === '{') depth++;
     if (CSS[i] === '}' && --depth === 0) return CSS.slice(start + 1, i);
@@ -48,9 +44,16 @@ function props(body: string): Map<string, string> {
   return out;
 }
 
-const THEME = props(block(/^@theme \{/m));
-const SCOPE_LIGHT = props(block(/^\[data-ui="v2"\] \{/m));
-const SCOPE_DARK = props(block(/^\.dark \[data-ui="v2"\], \[data-ui="v2"\]\.dark \{/m));
+/** The custom properties of every block whose selector line matches, merged in order. */
+function tokens(selector: RegExp): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of CSS.matchAll(new RegExp(selector.source, 'gm'))) for (const [k, v] of props(bodyAt(m.index))) out.set(k, v);
+  return out;
+}
+
+const THEME = tokens(/^@theme \{/);
+const LIGHT = new Map([...THEME, ...tokens(/^:root \{/)]);
+const DARK = tokens(/^html\.dark \{/);
 
 // ---- WCAG contrast, the same formula as review-ui-ux/scripts/contrast.py ----
 type Rgb = [number, number, number];
@@ -70,15 +73,15 @@ const ratio = (a: Rgb, b: Rgb) => {
 
 function palette(dark: boolean) {
   const get = (name: string): Rgb => {
-    const v = (dark && SCOPE_DARK.get(name)) || SCOPE_LIGHT.get(name) || THEME.get(name);
-    if (!v || !v.startsWith('#')) throw new Error(`${name} has no hex value in the v2 scope (${v})`);
+    const v = (dark && DARK.get(name)) || LIGHT.get(name);
+    if (!v || !v.startsWith('#')) throw new Error(`${name} has no hex value (${v})`);
     return hex(v);
   };
   return get;
 }
 
 const HUES = ['you', 'stopped', 'review', 'agent', 'scheduled', 'waiting', 'done'];
-const INK_MIX = Number.parseFloat(props(block(/^:root \{\n\s*--mix-/m)).get('--mix-ink') ?? 'NaN') / 100;
+const INK_MIX = Number.parseFloat(LIGHT.get('--mix-ink') ?? 'NaN') / 100;
 
 describe('tokens v2 contrast', () => {
   for (const dark of [false, true]) {
@@ -117,30 +120,19 @@ describe('tokens v2 contrast', () => {
     for (const h of [...HUES, 'mark']) {
       const name = h === 'mark' ? '--color-mark-ink' : `--color-${h}-ink`;
       const source = h === 'mark' ? '--color-mark' : `--color-status-${h}`;
-      expect(SCOPE_LIGHT.get(name), name).toBe(
+      expect(THEME.get(name), name).toBe(
         `color-mix(in srgb, var(${source}) var(--mix-ink), var(--color-foreground))`,
       );
     }
   });
 });
 
-describe('tokens v2 scope', () => {
-  it('re-declares every colour token built from another token', () => {
-    // A custom property that uses var() is computed where it is declared, so an alias declared only
-    // on :root keeps its v1 value inside the scope.
-    const missing = [...THEME]
-      .filter(([name, value]) => name.startsWith('--color-') && value.includes('var('))
-      .map(([name]) => name)
-      .filter((name) => !SCOPE_LIGHT.has(name));
-    expect(missing).toEqual([]);
-  });
-
+describe('tokens v2 dark mode', () => {
   it('gives every hue and neutral a dark value', () => {
-    const needDark = [...SCOPE_LIGHT.keys(), ...THEME.keys()].filter(
-      (n) => /^--color-(status-|mark$|background|card$|muted|foreground|border|ring)/.test(n)
-        && !(SCOPE_LIGHT.get(n) ?? THEME.get(n) ?? '').includes('var('),
+    const needDark = [...LIGHT.keys()].filter(
+      (n) => /^--color-(status-|mark$|background|card$|muted|foreground|border|ring)/.test(n) && !(LIGHT.get(n) ?? '').includes('var('),
     );
-    expect(needDark.filter((n) => !SCOPE_DARK.has(n))).toEqual([]);
+    expect(needDark.filter((n) => !DARK.has(n))).toEqual([]);
   });
 });
 
@@ -158,7 +150,7 @@ function count(re: RegExp, text: string) {
 
 /** Lines of index.css outside the token blocks and the two glass utilities that hold a literal. */
 function cssLiterals(): number {
-  const allowed = [/^@theme \{/m, /^:root \{/gm, /^html\.dark \{/gm, /^\[data-ui="v2"\] \{/m, /^\.dark \[data-ui="v2"\]/m, /^@utility glass \{/m, /^@utility glass-thick \{/m];
+  const allowed = [/^@theme \{/m, /^:root \{/gm, /^html\.dark \{/gm, /^@utility glass \{/m, /^@utility glass-thick \{/m];
   let rest = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   for (const re of allowed) {
     for (const m of [...rest.matchAll(new RegExp(re.source, 'gm'))].reverse()) {

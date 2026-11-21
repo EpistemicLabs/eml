@@ -69,12 +69,12 @@ export function SidebarScrollRegion({
         aria-hidden
         className={cn(
           'flex items-center justify-center overflow-hidden',
-          !pulling && 'transition-[height] duration-200',
+          !pulling && 'transition-[height] duration-(--duration-fast)',
         )}
         style={{ height }}
       >
         <RefreshCw
-          className={cn('h-3.5 w-3.5 text-muted-foreground', spinning && 'animate-spin')}
+          className={cn('size-3.5 text-muted-foreground', spinning && 'animate-spin')}
           style={{ opacity: refreshing ? 1 : Math.min(distance / PULL_THRESHOLD, 1) }}
         />
       </div>

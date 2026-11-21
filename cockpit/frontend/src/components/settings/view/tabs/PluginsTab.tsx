@@ -14,12 +14,13 @@ import {
   type ConnectionView,
   type PluginView,
 } from '@/lib/plugins-admin';
+import { cn } from '@/lib/utils';
+import { Chip, FOCUS, LABEL, Switch } from '@/shared/view/ui';
 import { useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
 
 import SettingsCard from '../SettingsCard';
 import SettingsSection from '../SettingsSection';
 import SettingsSegmented from '../SettingsSegmented';
-import SettingsToggle from '../SettingsToggle';
 import AddCustomMcp from './plugins/AddCustomMcp';
 import PluginDetail from './plugins/PluginDetail';
 import SpaceCell from './plugins/SpaceCell';
@@ -50,7 +51,7 @@ export default function PluginsTab() {
           { value: 'add', label: 'Add plugin' },
         ]}
       />
-      {plugins.isError && <p className="text-sm text-destructive">{plugins.error.message}</p>}
+      {plugins.isError && <p className="text-body text-stopped-ink">{plugins.error.message}</p>}
       {view === 'installed' && plugins.data && (
         <Installed plugins={plugins.data} spaces={spaces} connections={connections.data ?? []} onOpen={setOpen} />
       )}
@@ -75,28 +76,23 @@ function Installed({ plugins, spaces, connections, onOpen }: { plugins: PluginVi
               key={plugin.id}
               type="button"
               onClick={() => onOpen(plugin.id)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-foreground/4 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className={cn('flex min-h-(--target-min) w-full items-center gap-3 px-4 py-3 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-muted', FOCUS)}
             >
               <PluginIcon plugin={plugin} />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{plugin.name}</span>
+                <span className="block text-body font-medium text-foreground">{plugin.name}</span>
                 <span className="mt-1 flex flex-wrap gap-1"><TierChip tier={plugin.tier} /><PartChips plugin={plugin} /></span>
               </span>
-              <span className="hidden min-w-0 flex-1 text-xs text-muted-foreground md:block">
+              <span className="hidden min-w-0 flex-1 text-ui text-muted-foreground md:block">
                 {plugin.auth || plugin.mcp?.settings.some((s) => s.secret)
                   ? (own.length ? own.map((c) => c.label).join(', ') : 'No sign-in yet')
                   : 'No sign-in needed'}
               </span>
               <span className="hidden flex-wrap justify-end gap-1 lg:flex">
                 {spaces.map((space) => (
-                  <span
-                    key={space.id}
-                    className={space.id in plugin.spaces
-                      ? 'rounded border border-foreground bg-foreground px-1.5 text-xs text-background'
-                      : 'rounded border border-foreground/10 px-1.5 text-xs text-muted-foreground'}
-                  >
+                  <Chip key={space.id} className={cn('py-0.5', space.id in plugin.spaces && 'bg-foreground text-background')}>
                     {space.name}
-                  </span>
+                  </Chip>
                 ))}
               </span>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -104,7 +100,7 @@ function Installed({ plugins, spaces, connections, onOpen }: { plugins: PluginVi
           );
         })}
       </SettingsCard>
-      <p className="text-sm text-muted-foreground">Sending always goes through the channel bridge's outbox; a plugin's tools for jobs only read and look up.</p>
+      <p className="text-body text-muted-foreground">Sending always goes through the channel bridge's outbox; a plugin's tools for jobs only read and look up.</p>
     </SettingsSection>
   );
 }
@@ -115,10 +111,10 @@ function SpacesMatrix({ plugins, spaces, connections, onOpen }: { plugins: Plugi
       title="Plugins per space"
       description="A plugin is all or nothing per space: switched on, a space gets every part that is on for the plugin. The cockpit writes each space's MCP config, its channel accounts and its pane views from this table; a running session keeps what it started with."
     >
-      <div className="overflow-x-auto rounded-xl border border-foreground/8 bg-foreground/4">
-        <table className="w-full min-w-max text-sm">
+      <SettingsCard className="overflow-x-auto">
+        <table className="w-full min-w-max text-body">
           <thead>
-            <tr className="text-left text-xs tracking-wider text-muted-foreground uppercase">
+            <tr className={cn('text-left', LABEL)}>
               <th className="px-4 py-2 font-semibold">Plugin</th>
               {spaces.map((space) => (
                 <th key={space.id} className="px-4 py-2 font-semibold">
@@ -128,11 +124,11 @@ function SpacesMatrix({ plugins, spaces, connections, onOpen }: { plugins: Plugi
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-foreground/8">
+          <tbody className="divide-y divide-border">
             {plugins.map((plugin) => (
               <tr key={plugin.id}>
                 <th scope="row" className="px-4 py-3 text-left font-medium">
-                  <button type="button" onClick={() => onOpen(plugin.id)} className="hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">{plugin.name}</button>
+                  <button type="button" onClick={() => onOpen(plugin.id)} className={cn('inline-flex min-h-(--target-min) items-center text-left hover:underline', FOCUS)}>{plugin.name}</button>
                   <span className="mt-1 flex gap-1"><PartChips plugin={plugin} /></span>
                 </th>
                 {spaces.map((space) => (
@@ -142,8 +138,8 @@ function SpacesMatrix({ plugins, spaces, connections, onOpen }: { plugins: Plugi
             ))}
           </tbody>
         </table>
-      </div>
-      {spaces.some((s) => s.shared) && <p className="text-sm text-muted-foreground">A channel takes no messages in a shared space yet: the bridge routes only to the jobs of your own spaces.</p>}
+      </SettingsCard>
+      {spaces.some((s) => s.shared) && <p className="text-body text-muted-foreground">A channel takes no messages in a shared space yet: the bridge routes only to the jobs of your own spaces.</p>}
     </SettingsSection>
   );
 }
@@ -158,28 +154,28 @@ function Connectors({ spaces }: { spaces: SpaceInfo[] }) {
       title="claude.ai connectors"
       description="Your claude.ai connectors and Claude Code's own plugin servers load in every space that shares the cockpit's Claude login, unless switched off here. A space whose agent has a runtime of its own never gets them."
     >
-      {servers.isPending && <p className="text-sm text-muted-foreground">Asking Claude Code for your connectors…</p>}
-      {servers.isError && <p className="text-sm text-destructive">{servers.error.message}</p>}
-      {servers.data && servers.data.length === 0 && <p className="text-sm text-muted-foreground">Claude Code names no connectors for the cockpit's login.</p>}
+      {servers.isPending && <p className="text-body text-muted-foreground">Asking Claude Code for your connectors…</p>}
+      {servers.isError && <p className="text-body text-stopped-ink">{servers.error.message}</p>}
+      {servers.data && servers.data.length === 0 && <p className="text-body text-muted-foreground">Claude Code names no connectors for the cockpit's login.</p>}
       {servers.data && servers.data.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-foreground/8 bg-foreground/4">
-          <table className="w-full min-w-max text-sm">
+        <SettingsCard className="overflow-x-auto">
+          <table className="w-full min-w-max text-body">
             <thead>
-              <tr className="text-left text-xs tracking-wider text-muted-foreground uppercase">
+              <tr className={cn('text-left', LABEL)}>
                 <th className="px-4 py-2 font-semibold">Connector</th>
                 {open.map((space) => <th key={space.id} className="px-4 py-2 font-semibold">{space.name}</th>)}
               </tr>
             </thead>
-            <tbody className="divide-y divide-foreground/8">
+            <tbody className="divide-y divide-border">
               {servers.data.map((server) => (
                 <tr key={server.name}>
                   <th scope="row" className="px-4 py-3 text-left font-medium">
                     {server.name.replace(/^claude\.ai /, '')}
-                    <span className="block text-xs font-normal text-muted-foreground">{server.kind === 'connector' ? 'claude.ai connector' : 'Claude Code plugin'}</span>
+                    <span className="block text-ui font-normal text-muted-foreground">{server.kind === 'connector' ? 'claude.ai connector' : 'Claude Code plugin'}</span>
                   </th>
                   {open.map((space) => (
                     <td key={space.id} className="px-4 py-3">
-                      <SettingsToggle
+                      <Switch
                         checked={!server.off.includes(space.id)}
                         disabled={setOutside.isPending}
                         onChange={(enabled) => setOutside.mutate({ space: space.id, server: server.name, enabled })}
@@ -191,9 +187,9 @@ function Connectors({ spaces }: { spaces: SpaceInfo[] }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </SettingsCard>
       )}
-      {setOutside.isError && <p className="text-sm text-destructive">{setOutside.error.message}</p>}
+      {setOutside.isError && <p className="text-body text-stopped-ink">{setOutside.error.message}</p>}
     </SettingsSection>
   );
 }

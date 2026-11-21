@@ -9,8 +9,9 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useList, usePendingReviews, useProjects, useStats } from "@/lib/queries";
 import type { Engram, Project } from "@/lib/types";
 import { EngramRow, formatDate } from "@/components/engram-row";
-import { TYPE_COLORS } from "@/components/ui/badge";
-import { Button, Input } from "@/shared/view/ui";
+import { Button, FOCUS, Input } from "@/shared/view/ui";
+import { cn } from "@/lib/utils";
+import { typeColor } from "@/shared/view/ui/EngramType";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 import BrainLink from "./BrainLink";
 import { useBrainNav } from "./BrainSurface";
@@ -27,7 +28,7 @@ const SPACES: ReadonlyArray<{ value: SpaceFilter; label: string }> = [
   { value: "main", label: "main" },
 ];
 
-const REVIEW_ACCENT = "var(--color-review)"; // amber, same hue as the decision type
+const REVIEW_ACCENT = "var(--color-status-you)"; // flagged for review waits for you: amber
 
 function StatStrip({ items }: { items: { n: number; label: string; color?: string }[] }) {
   return (
@@ -36,7 +37,7 @@ function StatStrip({ items }: { items: { n: number; label: string; color?: strin
         <div key={it.label}>
           <div className="text-heading font-semibold leading-tight tabular-nums text-foreground">{it.n}</div>
           <div className="flex items-center gap-1 text-caption text-muted-foreground">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: it.color ?? "var(--color-muted-foreground)" }} />
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ background: it.color ?? "var(--color-muted-foreground)" }} />
             <span className="truncate">{it.label}</span>
           </div>
         </div>
@@ -56,7 +57,7 @@ function ProjectCard({
   openTasks: number;
   lastActivity?: string;
 }) {
-  const green = TYPE_COLORS.status;
+  const green = typeColor("status");
   const headline =
     (status?.properties?.state as string) ??
     status?.content.split("\n").find((l) => l.trim()) ??
@@ -64,17 +65,17 @@ function ProjectCard({
   return (
     <BrainLink
       to={{ view: "project", projectId: project.id }}
-      className="flex items-center gap-4 rounded-lg border border-foreground/8 bg-foreground/[0.03] px-3 py-2.5 transition-colors hover:border-foreground/15 hover:bg-foreground/[0.06]"
+      className={cn("flex items-center gap-4 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors duration-(--duration-fast) hover:border-border-strong hover:bg-muted", FOCUS)}
     >
       <div className="min-w-0 flex-1">
         <div className="truncate text-body font-semibold text-foreground">{project.name}</div>
         {headline ? (
           <div className="mt-1 flex items-start gap-1.5">
-            <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: green }} />
+            <span aria-hidden className="mt-1 inline-block size-2 shrink-0 rounded-full" style={{ background: green }} />
             <span className="line-clamp-1 text-ui text-muted-foreground">{headline}</span>
           </div>
         ) : (
-          <div className="mt-1 text-ui text-muted-foreground/60">No status</div>
+          <div className="mt-1 text-ui text-muted-foreground">No status</div>
         )}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5 text-caption tabular-nums text-muted-foreground">
@@ -192,12 +193,12 @@ export default function BrainHome() {
     <div className="flex flex-col gap-5">
       <form onSubmit={search} className="flex gap-2">
         <Input placeholder="Search the brain…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Button type="submit" variant="secondary" size="sm" className="h-9">Search</Button>
+        <Button type="submit" variant="secondary">Search</Button>
       </form>
 
       {/* Top: snapshot (left) + projects (right), matched height */}
       <div className="grid items-start gap-4 @3xl:grid-cols-3">
-        <BrainCard className="p-4 @3xl:h-[420px]">
+        <BrainCard className="p-4 @3xl:h-(--size-brain-list)">
           <SectionHeader title="Snapshot" />
           {/* Row 1: what the brain holds · row 2: what wants attention.
               The third tile of row 2 stays empty. */}
@@ -205,17 +206,17 @@ export default function BrainHome() {
             items={[
               { n: stats.data?.total_engrams ?? 0, label: "engrams" },
               { n: stats.data?.projects ?? 0, label: "projects" },
-              { n: stats.data?.by_type.log ?? 0, label: "sessions", color: TYPE_COLORS.log },
-              { n: openTasks.length, label: "open tasks", color: TYPE_COLORS.task },
+              { n: stats.data?.by_type.log ?? 0, label: "sessions", color: typeColor("log") },
+              { n: openTasks.length, label: "open tasks", color: typeColor("task") },
               { n: pendingReviewRows.length, label: "pending reviews", color: REVIEW_ACCENT },
             ]}
           />
-          <div className="mt-4 border-t border-foreground/15 pt-4">
+          <div className="mt-4 border-t border-border pt-4">
             <ActivityHeatmap selectedDay={selectedDay} onSelectDay={setSelectedDay} />
           </div>
         </BrainCard>
 
-        <BrainCard className="flex flex-col p-4 @3xl:col-span-2 @3xl:h-[420px]">
+        <BrainCard className="flex flex-col p-4 @3xl:col-span-2 @3xl:h-(--size-brain-list)">
           <SectionHeader
             title="Projects"
             right={
@@ -262,7 +263,7 @@ export default function BrainHome() {
       <div className="grid gap-4 @3xl:grid-cols-2">
         <ListPanel
           title="Open tasks"
-          accent={TYPE_COLORS.task}
+          accent={typeColor("task")}
           action={
             <div className="flex items-center gap-2">
               <Segmented value={taskStageFilter} options={STAGE_FILTER_OPTIONS} onChange={setTaskStageFilter} ariaLabel="Filter open tasks by stage" />
@@ -293,13 +294,13 @@ export default function BrainHome() {
       <div className="grid gap-4 @3xl:grid-cols-3">
         <ListPanel
           title={selectedDay ? `Activity · ${formatDate(selectedDay)}` : "Recent activity"}
-          accent={TYPE_COLORS.status}
+          accent={typeColor("status")}
           action={
             selectedDay ? (
               <button
                 type="button"
                 onClick={() => setSelectedDay(null)}
-                className="text-caption text-muted-foreground hover:text-foreground"
+                className={cn("min-h-(--target-min) rounded-md px-1 text-caption text-muted-foreground hover:text-foreground", FOCUS)}
               >
                 clear ✕
               </button>

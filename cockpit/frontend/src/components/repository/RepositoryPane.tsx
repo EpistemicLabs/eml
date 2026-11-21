@@ -12,6 +12,7 @@ import { ArrowLeft, GitBranch, Loader2, RefreshCw } from 'lucide-react';
 import { BrainCard, SectionHeader } from '@/components/brain/ui';
 import { compactAge } from '@/components/sidebar/utils';
 import { cn } from '@/lib/utils';
+import { FOCUS, TAB, TRACK } from '@/shared/view/ui';
 import { updatePane, usePane, type RepositoryPaneView } from '@/stores/usePaneStore';
 import type { Project } from '@/types/app';
 
@@ -52,13 +53,13 @@ export function RepositoryPane({ paneId, project }: { paneId: string; project: P
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2 px-3 pb-2">
         {git ? (
-          <label className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/[0.03] pl-2" title={checkout?.path}>
+          <label className="flex min-h-(--target-min) min-w-0 max-w-full items-center gap-1.5 rounded-md border border-input bg-card pl-2 focus-within:outline-2 focus-within:outline-offset-(--focus-offset) focus-within:outline-ring" title={checkout?.path}>
             <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
             <select
               value={checkout?.path ?? ''}
               onChange={(e) => setView({ worktree: e.target.value, file: undefined, commit: undefined })}
               aria-label="Checkout"
-              className="min-w-0 max-w-64 truncate bg-transparent py-1 pr-1 text-xs font-medium text-foreground outline-none"
+              className="min-w-0 max-w-64 cursor-pointer truncate bg-transparent py-1 pr-1 text-ui font-medium text-foreground outline-none"
             >
               {worktrees.map((wt) => <option key={wt.path} value={wt.path}>{checkoutLabel(wt)}</option>)}
             </select>
@@ -69,7 +70,7 @@ export function RepositoryPane({ paneId, project }: { paneId: string; project: P
           </span>
         )}
         {git && (
-          <div className="flex items-center rounded-md bg-foreground/[0.05] p-0.5" role="tablist">
+          <div className={cn(TRACK, 'bg-muted')} role="tablist">
             {TABS.map(({ id, label }) => (
               <button
                 key={id}
@@ -77,10 +78,7 @@ export function RepositoryPane({ paneId, project }: { paneId: string; project: P
                 role="tab"
                 aria-selected={tab === id}
                 onClick={() => setView({ tab: id })}
-                className={cn(
-                  'rounded px-2 py-0.5 text-xs transition-colors',
-                  tab === id ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
+                className={cn(TAB, 'transition-colors duration-(--duration-fast)')}
               >
                 {label}
               </button>
@@ -92,9 +90,9 @@ export function RepositoryPane({ paneId, project }: { paneId: string; project: P
           onClick={() => void qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('repository-') })}
           aria-label="Refresh"
           title="Refresh"
-          className="ml-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+          className={cn('ml-auto flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground', FOCUS)}
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
         </button>
       </div>
       <div className="min-h-0 flex-1">
@@ -197,16 +195,16 @@ function CommitsTab({ where, commit, onCommit, onOpenFile }: {
         <button
           type="button"
           onClick={() => onCommit(undefined)}
-          className="flex items-center gap-1 text-caption text-muted-foreground transition-colors hover:text-foreground"
+          className={cn('flex min-h-(--target-min) items-center gap-1 rounded-md text-caption text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground', FOCUS)}
         >
-          <ArrowLeft className="h-3 w-3" /> All commits
+          <ArrowLeft className="size-3" /> All commits
         </button>
         <BrainCard className="p-3">
           <div className="mb-2 min-w-0">
-            <div className="text-sm font-medium text-foreground">{picked?.subject ?? commit}</div>
+            <div className="text-body font-medium text-foreground">{picked?.subject ?? commit}</div>
             {picked && (
               <div className="text-caption text-muted-foreground">
-                <span className="font-mono">{picked.hash}</span> · {picked.author} · {compactAge(picked.at, now)} ago
+                <span className="font-code">{picked.hash}</span> · {picked.author} · {compactAge(picked.at, now)} ago
               </div>
             )}
           </div>
@@ -237,10 +235,10 @@ function CommitsTab({ where, commit, onCommit, onOpenFile }: {
                 key={c.hash}
                 type="button"
                 onClick={() => onCommit(c.hash)}
-                className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors hover:bg-foreground/5"
+                className={cn('-mx-1.5 flex min-h-(--target-min) w-(--size-worktree-row) min-w-0 items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-ui transition-colors duration-(--duration-fast) hover:bg-muted', FOCUS)}
               >
-                <span className="flex-shrink-0 font-mono text-muted-foreground">{c.hash}</span>
-                <span className="min-w-0 flex-1 truncate text-foreground/90" title={c.subject}>{c.subject}</span>
+                <span className="flex-shrink-0 font-code text-muted-foreground">{c.hash}</span>
+                <span className="min-w-0 flex-1 truncate text-foreground" title={c.subject}>{c.subject}</span>
                 <span className="hidden flex-shrink-0 text-caption text-muted-foreground sm:inline">{c.author}</span>
                 <span className="w-8 flex-shrink-0 text-right text-caption tabular-nums text-muted-foreground">{compactAge(c.at, now)}</span>
               </button>
@@ -273,7 +271,7 @@ function FilesWithChanges({ where, git, file, onSelect }: { where: Where; git: b
 
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+    <div className="flex h-full items-center justify-center p-6 text-center text-body text-muted-foreground">
       {children}
     </div>
   );

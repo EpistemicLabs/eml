@@ -10,14 +10,15 @@ import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
 import {
-  agentName, cardLine, dueLabel, HUE, hueOf, readable, TURN_META, when,
+  agentName, cardLine, dueLabel, hueOf, readable, TURN_META, when,
   type Board, type BoardTask, type HandOverMode,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { BUTTON, Chip, Dot, FOCUS, HUE, LABEL, MINI, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
-import { AgentBadge, BUTTON, Chip, Dot, FOCUS, LABEL, MINI, PRIMARY } from './parts';
+import { AgentBadge } from './parts';
 
 export const TASK_TITLE_ID = 'task-board-title';
 /** The surface id the board's chat goes by (scroll and draft are kept per surface). */

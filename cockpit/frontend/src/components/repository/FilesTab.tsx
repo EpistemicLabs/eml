@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, ChevronRight, File, Folder, Loader2, Search } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 
 import { useDir, useFileContent, useTree, type Where } from './api';
 import { CodeView } from './CodeView';
@@ -23,6 +24,8 @@ interface Node {
 }
 
 const SEARCH_RESULTS = 50;
+/** A tree row's indent: two spacing steps, three more a level (8px + 12px a level). */
+const indent = (depth: number) => `calc(var(--spacing) * ${2 + depth * 3})`;
 
 function buildTree(paths: string[], ignored: string[]): Node {
   const root: Node = { name: '', path: '', dir: true, children: new Map() };
@@ -80,15 +83,15 @@ export function FilesTab({ where, git, changed, file, onSelect }: {
 }) {
   return (
     <div className="@container h-full min-h-0">
-      <div className="grid h-full min-h-0 @2xl:grid-cols-[minmax(200px,280px)_1fr]">
-        <div className={cn('min-h-0 border-foreground/8 @2xl:block @2xl:border-r', file ? 'hidden' : 'block')}>
+      <div className="grid h-full min-h-0 @2xl:grid-cols-(--grid-repo-files)">
+        <div className={cn('min-h-0 border-border @2xl:block @2xl:border-r', file ? 'hidden' : 'block')}>
           <Tree where={where} git={git} changed={changed} file={file} onSelect={onSelect} />
         </div>
         <div className={cn('min-h-0 @2xl:block', file ? 'block' : 'hidden')}>
           {file ? (
             <FileView key={`${where.worktree ?? ''}:${file}`} where={where} path={file} status={changed.get(file)} onBack={() => onSelect(undefined)} />
           ) : (
-            <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Pick a file to read it.</div>
+            <div className="flex h-full items-center justify-center p-6 text-body text-muted-foreground">Pick a file to read it.</div>
           )}
         </div>
       </div>
@@ -142,8 +145,8 @@ function Tree({ where, git, changed, file, onSelect }: {
     <div className="flex h-full min-h-0 flex-col">
       {git && (
         <div className="flex flex-shrink-0 items-center gap-1.5 px-2 pb-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/[0.03] px-2 py-1">
-            <Search className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+          <div className="flex min-h-(--target-min) min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-card px-2 focus-within:outline-2 focus-within:outline-offset-(--focus-offset) focus-within:outline-ring">
+            <Search className="size-3 flex-shrink-0 text-muted-foreground" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -153,7 +156,7 @@ function Tree({ where, git, changed, file, onSelect }: {
               }}
               placeholder="Go to file…"
               aria-label="Go to file"
-              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+              className="min-w-0 flex-1 bg-transparent text-ui text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
           <button
@@ -162,8 +165,9 @@ function Tree({ where, git, changed, file, onSelect }: {
             aria-pressed={showIgnored}
             title={showIgnored ? 'Hide what git ignores' : 'Show what git ignores (node_modules, builds …)'}
             className={cn(
-              'flex-shrink-0 rounded-md px-1.5 py-1 text-[10px] font-medium transition-colors',
-              showIgnored ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
+              'flex min-h-(--target-min) flex-shrink-0 items-center rounded-md px-1.5 text-caption font-medium transition-colors duration-(--duration-fast)',
+              showIgnored ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              FOCUS,
             )}
           >
             ignored
@@ -183,10 +187,10 @@ function Tree({ where, git, changed, file, onSelect }: {
               key={path}
               type="button"
               onClick={() => onSelect(path)}
-              className={cn('flex w-full min-w-0 flex-col px-3 py-1 text-left transition-colors hover:bg-foreground/5', path === file && 'bg-foreground/[0.07]')}
+              className={cn('flex min-h-(--target-min) w-full min-w-0 flex-col justify-center px-3 py-1 text-left transition-colors duration-(--duration-fast) hover:bg-muted', FOCUS, path === file && 'bg-muted')}
             >
-              <span className="truncate text-xs text-foreground" style={{ color: statusColor(changed.get(path)) }}>{path.split('/').pop()}</span>
-              <span className="truncate font-mono text-[10px] text-muted-foreground">{path}</span>
+              <span className="truncate text-ui text-foreground" style={{ color: statusColor(changed.get(path)) }}>{path.split('/').pop()}</span>
+              <span className="truncate font-code text-caption text-muted-foreground">{path}</span>
             </button>
           ))
         ) : (
@@ -221,29 +225,31 @@ function TreeNode({ node, depth, ...row }: RowProps & { node: Node; depth: numbe
         type="button"
         onClick={() => (node.dir ? row.toggle(node.path) : row.onSelect(node.path))}
         aria-expanded={node.dir ? isOpen : undefined}
-        style={{ paddingLeft: 8 + depth * 12 }}
+        style={{ paddingLeft: indent(depth) }}
         className={cn(
-          'flex w-full min-w-0 items-center gap-1 py-[3px] pr-2 text-left text-xs transition-colors hover:bg-foreground/5',
-          node.path === row.file && 'bg-foreground/[0.07]',
-          node.ignored && 'opacity-50',
+          'flex min-h-(--target-min) w-full min-w-0 items-center gap-1 pr-2 text-left text-ui transition-colors duration-(--duration-fast) hover:bg-muted',
+          FOCUS,
+          node.path === row.file && 'bg-muted',
+          // What git ignores reads grey (not faded: the row stays a control at full contrast).
+          node.ignored ? 'text-muted-foreground' : 'text-foreground',
         )}
       >
         {node.dir ? (
           <>
-            <ChevronRight className={cn('h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-90')} />
+            <ChevronRight className={cn('size-3 flex-shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', isOpen && 'rotate-90')} />
             <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           </>
         ) : (
           <>
             <span className="w-3 flex-shrink-0" />
-            <File className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/70" />
+            <File className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           </>
         )}
         <span className="min-w-0 truncate" style={{ color: statusColor(status) }}>{node.name}</span>
         {node.dir && !isOpen && row.changedDirs.has(node.path) && (
-          <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: 'var(--color-review)' }} title="Holds changes" />
+          <span className="ml-auto size-1.5 flex-shrink-0 rounded-full bg-foreground" title="Holds changes" />
         )}
-        {status && <span className="ml-auto flex-shrink-0 font-mono text-[10px]" style={{ color: statusColor(status) }}>{status === '?' ? 'U' : status}</span>}
+        {status && <span className="ml-auto flex-shrink-0 font-code text-caption" style={{ color: statusColor(status) }}>{status === '?' ? 'U' : status}</span>}
       </button>
       {node.dir && isOpen && (
         node.children
@@ -257,15 +263,15 @@ function TreeNode({ node, depth, ...row }: RowProps & { node: Node; depth: numbe
 /** A folder's entries, asked for as it opens. */
 function LazyChildren({ path, depth, ignored, ...row }: RowProps & { path: string; depth: number; ignored: boolean }) {
   const dir = useDir(row.where, path);
-  if (dir.isPending) return <div style={{ paddingLeft: 8 + depth * 12 }} className="py-1"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground" /></div>;
-  if (dir.isError) return <div style={{ paddingLeft: 8 + depth * 12 }} className="py-1 text-caption text-muted-foreground">{dir.error.message}</div>;
+  if (dir.isPending) return <div style={{ paddingLeft: indent(depth) }} className="py-1"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground" /></div>;
+  if (dir.isError) return <div style={{ paddingLeft: indent(depth) }} className="py-1 text-caption text-muted-foreground">{dir.error.message}</div>;
   return (
     <>
       {dir.data.entries.map((entry) => {
         const full = path ? `${path}/${entry.name}` : entry.name;
         return <TreeNode key={full} {...row} node={{ name: entry.name, path: full, dir: entry.dir, ignored }} depth={depth} />;
       })}
-      {dir.data.truncated && <div style={{ paddingLeft: 8 + depth * 12 }} className="py-1 text-caption text-muted-foreground">… more entries not shown</div>}
+      {dir.data.truncated && <div style={{ paddingLeft: indent(depth) }} className="py-1 text-caption text-muted-foreground">… more entries not shown</div>}
     </>
   );
 }
@@ -278,21 +284,21 @@ function FileView({ where, path, status, onBack }: { where: Where; path: string;
   const slash = path.lastIndexOf('/');
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-foreground/8 px-2 pb-1.5">
+      <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-border px-2 pb-1.5">
         <button
           type="button"
           onClick={onBack}
           aria-label="Back to the files"
           title="Back to the files"
-          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground @2xl:hidden"
+          className={cn('flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground @2xl:hidden', FOCUS)}
         >
-          <ArrowLeft className="h-3 w-3" />
+          <ArrowLeft className="size-3.5" />
         </button>
-        <span className="min-w-0 truncate font-mono text-xs" title={path}>
+        <span className="min-w-0 truncate font-code text-ui" title={path}>
           <span className="text-muted-foreground">{path.slice(0, slash + 1)}</span>
           <span className="font-medium text-foreground">{path.slice(slash + 1)}</span>
         </span>
-        {status && <span className="flex-shrink-0 text-[10px]" style={{ color: statusColor(status) }}>{(STATUS[status] ?? STATUS.M).word}</span>}
+        {status && <span className="flex-shrink-0 text-caption" style={{ color: statusColor(status) }}>{(STATUS[status] ?? STATUS.M).word}</span>}
         {file.data && <span className="ml-auto flex-shrink-0 text-caption tabular-nums text-muted-foreground">{kilobytes(file.data.size)}</span>}
       </div>
       <div className="min-h-0 flex-1">
@@ -307,7 +313,7 @@ function FileView({ where, path, status, onBack }: { where: Where; path: string;
         ) : file.data.content === null && file.data.secret ? (
           <Note>
             This file looks like it holds secrets.{' '}
-            <button type="button" onClick={() => setReveal(true)} className="text-primary hover:underline">Show its content</button>
+            <button type="button" onClick={() => setReveal(true)} className={cn('rounded-sm text-foreground underline underline-offset-2 hover:no-underline', FOCUS)}>Show its content</button>
           </Note>
         ) : file.data.content === null ? (
           <Note>Not a file.</Note>

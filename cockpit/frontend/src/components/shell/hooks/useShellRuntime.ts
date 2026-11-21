@@ -133,10 +133,8 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
 
   // Values read at init time rather than reacting to them.
   const latestRef = useRef(options);
-  const isDarkRef = useRef(isDarkMode);
   useLayoutEffect(() => {
     latestRef.current = options;
-    isDarkRef.current = isDarkMode;
   });
 
   useEffect(() => {
@@ -354,7 +352,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     const terminal = new Terminal({
       ...TERMINAL_OPTIONS,
       fontSize: getTerminalFontSize(),
-      theme: getXtermTheme(isDarkRef.current),
+      theme: getXtermTheme(container),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -467,7 +465,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     const terminal = terminalRef.current;
     if (!terminal || appliedDarkRef.current === isDarkMode) return;
     appliedDarkRef.current = isDarkMode;
-    terminal.options.theme = getXtermTheme(isDarkMode);
+    terminal.options.theme = getXtermTheme(containerRef.current ?? document.documentElement);
     terminal.clearTextureAtlas();
   }, [isDarkMode]);
 
@@ -493,7 +491,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
       setSearchResults(null);
       return;
     }
-    const searchOptions = { incremental, decorations: getSearchDecorations(isDarkRef.current) };
+    const searchOptions = { incremental, decorations: getSearchDecorations(containerRef.current ?? document.documentElement) };
     if (direction === 'next') search.findNext(term, searchOptions);
     else search.findPrevious(term, searchOptions);
   }, []);

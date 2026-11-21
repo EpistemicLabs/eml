@@ -7,8 +7,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { knownModels, queueChatStart } from '@/components/chat/chat-start';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { Chip, FOCUS, LABEL } from '@/components/task-board/parts';
-import { TAB, TRACK } from '@/components/top-bar/TaskViewSwitch';
+import { Chip, FOCUS, LABEL, TAB, TRACK } from '@/shared/view/ui';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { readable, useTaskBoard, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
@@ -65,7 +64,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
   const continueList = space ? recentSessions(sessions ?? [], space.id, RECENT_SESSIONS) : [];
 
   return (
-    <div data-ui="v2" className="flex h-full flex-col items-center overflow-y-auto bg-background px-5 pt-14 pb-8">
+    <div className="flex h-full flex-col items-center overflow-y-auto bg-background px-5 pt-14 pb-8">
       <div className="flex w-full max-w-(--container-measure) flex-col gap-5">
         <div className="flex flex-col gap-1">
           <h2 className="m-0 text-display font-bold tracking-title">New session</h2>

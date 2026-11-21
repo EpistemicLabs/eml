@@ -6,7 +6,7 @@ import { Trash2 } from 'lucide-react';
 
 import { endPaneDrag, getDraggedPane } from '@/components/app/paneDrag';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
-import { FOCUS } from '@/components/task-board/parts';
+import { FOCUS, TAB, TRACK } from '@/shared/view/ui';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
@@ -17,7 +17,7 @@ import { setTopView, useTopView } from '@/stores/useTopViewStore';
 import { isUnseenDone, useTurnStore } from '@/stores/useTurnStateStore';
 
 import { IS_MAC, MOD } from './shortcuts';
-import { Count, TAB, TRACK } from './TaskViewSwitch';
+import { Count } from './TaskViewSwitch';
 
 /**
  * Top-level desk tabs (called spaces until 0.17.4; "space" now means a brain

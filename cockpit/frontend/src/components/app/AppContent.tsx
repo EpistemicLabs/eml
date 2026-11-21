@@ -334,8 +334,8 @@ function AppContentInner() {
       {/* The top bar (top bar v2, tokens v2): the logo (opens Settings › About), every space with
           its desks, and Inbox · Now · Plan at the right. The sidebar rail and the pane grid start below it. */}
       {!compact && (
-      <div className="flex-shrink-0 px-2 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
-      <header data-ui="v2" aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-(--radius-bar) pr-(--pad-bar-end) pl-2">
+      <div className="flex-shrink-0 px-2 pt-[calc(env(safe-area-inset-top)+var(--pad-shell-top))]">
+      <header aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-(--radius-bar) pr-(--pad-bar-end) pl-2">
         <button
           type="button"
           onClick={() => openSettings('about')}
@@ -378,9 +378,10 @@ function AppContentInner() {
       <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
           renders the icon rail plus a hover overlay that must extend past
-          this wrapper — overflow-hidden here would clip it. z-40 lifts the
-          overlay above the pane grid. */}
-      <div className={compact ? 'contents' : 'relative z-40 my-2 ml-2 h-[calc(100%-1rem)] flex-shrink-0'}>
+          this wrapper — overflow-hidden here would clip it. The chrome layer
+          lifts the overlay above the pane grid; the row stretches it to its
+          height less the margins. */}
+      <div className={compact ? 'contents' : 'relative z-(--z-chrome) my-2 ml-2 flex-shrink-0 self-stretch'}>
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
           projects={projects}

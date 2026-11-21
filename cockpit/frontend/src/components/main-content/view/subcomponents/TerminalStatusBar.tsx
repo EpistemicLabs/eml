@@ -101,11 +101,11 @@ export default function TerminalStatusBar({ session, live, modelSlot, className 
   // Column model: the left column is the only one allowed to shrink (and
   // clips); the right column keeps at least its content width.
   return (
-    <div className={cn('@container flex-shrink-0 border-t border-foreground/15 px-2 pt-1.5 text-caption text-foreground', className)}>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-2 whitespace-nowrap">
+    <div className={cn('@container flex-shrink-0 border-t border-border px-2 pt-1.5 text-caption text-foreground tabular-nums', className)}>
+      <div className="grid grid-cols-(--grid-status-bar) items-center gap-2 whitespace-nowrap">
         {/* left: when · middle: model · right: context */}
         <span className="flex min-w-0 items-center gap-1.5 justify-self-start" title="Last message">
-          <Clock className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
+          <Clock aria-hidden className="size-3 flex-shrink-0" strokeWidth={1.8} />
           {lastMessageAt ? (
             <span className="truncate">
               <span className="hidden @lg:inline">{formatClock(lastMessageAt)} · </span>
@@ -118,13 +118,13 @@ export default function TerminalStatusBar({ session, live, modelSlot, className 
 
         {modelSlot ?? (
           <span className="flex items-center gap-1.5 justify-self-center" title={model ?? 'Model unknown until the first turn'}>
-            <Cpu className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
+            <Cpu aria-hidden className="size-3 flex-shrink-0" strokeWidth={1.8} />
             <span>{model ? modelLabel(model) : '—'}</span>
           </span>
         )}
 
         <span className="flex items-center gap-1.5 justify-self-end" title="Context at the last turn (input + cache tokens) / window">
-          <Gauge className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />
+          <Gauge aria-hidden className="size-3 flex-shrink-0" strokeWidth={1.8} />
           {contextTokens !== null ? (
             <>
               <span>{formatTokens(contextTokens)}</span>
