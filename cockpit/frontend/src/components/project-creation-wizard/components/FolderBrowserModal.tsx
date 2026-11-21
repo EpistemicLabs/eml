@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X } from 'lucide-react';
 
-import { Button, Input } from '@/shared/view/ui';
+import { Button, buttonVariants, Input, ROW } from '@/shared/view/ui';
 import { cn } from '@/lib/utils';
 
 import { createFolder, fetchFolderListing } from '../data/folderApi';
@@ -23,8 +23,7 @@ type FolderBrowserModalProps = {
 
 const HOME = '~';
 
-const headerIconButtonClass =
-  'rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
+const headerIconButtonClass = cn(buttonVariants({ variant: 'ghost', size: 'icon' }), 'aria-pressed:bg-muted aria-pressed:text-foreground');
 
 const errorMessageOf = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
@@ -169,7 +168,7 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
   const hiddenToggleLabel = showHidden ? 'Hide hidden folders' : 'Show hidden folders';
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal-nested) flex items-center justify-center bg-(--scrim) p-4">
       <div
         ref={panelRef}
         role="dialog"
@@ -177,14 +176,14 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
         aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={handlePanelKeyDown}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-card shadow-2xl outline-none"
+        className="glass-thick flex max-h-(--size-folder-browser) w-full max-w-2xl flex-col rounded-3xl shadow-modal outline-none"
       >
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
-              <FolderOpen className="h-4 w-4 text-foreground" />
+            <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
+              <FolderOpen aria-hidden className="size-4 text-foreground" />
             </div>
-            <h3 id={titleId} className="text-lg font-semibold text-foreground">
+            <h3 id={titleId} className="text-title font-semibold text-foreground">
               Select folder
             </h3>
           </div>
@@ -195,9 +194,9 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
               aria-pressed={showHidden}
               aria-label={hiddenToggleLabel}
               title={hiddenToggleLabel}
-              className={cn(headerIconButtonClass, showHidden && 'bg-muted text-foreground')}
+              className={headerIconButtonClass}
             >
-              {showHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              {showHidden ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
             </button>
             <button
               type="button"
@@ -205,18 +204,18 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
               aria-pressed={isNewFolderRowOpen}
               aria-label="Create new folder"
               title="Create new folder"
-              className={cn(headerIconButtonClass, isNewFolderRowOpen && 'bg-muted text-foreground')}
+              className={headerIconButtonClass}
             >
-              <Plus className="h-4 w-4" />
+              <Plus aria-hidden />
             </button>
             <button type="button" onClick={dismiss} aria-label="Close" className={headerIconButtonClass}>
-              <X className="h-5 w-5" />
+              <X aria-hidden />
             </button>
           </div>
         </div>
 
         {isNewFolderRowOpen && (
-          <div className="flex items-center gap-2 border-b border-border bg-foreground/3 px-4 py-2">
+          <div className="flex items-center gap-2 border-b border-border bg-muted px-4 py-2">
             <Input
               type="text"
               value={newFolderName}
@@ -235,12 +234,12 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
           </div>
         )}
 
-        {error && <p className="px-4 pt-3 text-xs text-foreground">{error}</p>}
+        {error && <p className="px-4 pt-3 text-ui text-stopped-ink">{error}</p>}
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           {isLoading ? (
             <div className="flex justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <Loader2 aria-hidden className="size-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
             <div className="space-y-0.5">
@@ -248,26 +247,26 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
                 <button
                   type="button"
                   onClick={() => void loadFolder(parentPath)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-muted"
+                  className={cn(ROW, 'min-h-(--target-comfortable) font-medium text-muted-foreground')}
                 >
-                  <FolderOpen className="h-4 w-4 shrink-0" />
+                  <FolderOpen aria-hidden className="size-4 shrink-0" />
                   <span>..</span>
                 </button>
               )}
               {visibleFolders.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">No subfolders found</p>
+                <p className="py-8 text-center text-body text-muted-foreground">No subfolders found</p>
               ) : (
                 visibleFolders.map((folder) => (
                   <div key={folder.path} className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => void loadFolder(folder.path)}
-                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground hover:bg-muted"
+                      className={cn(ROW, 'min-h-(--target-comfortable) min-w-0 flex-1 font-medium')}
                     >
-                      <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <FolderPlus aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                       <span className="truncate">{folder.name}</span>
                     </button>
-                    <Button variant="ghost" size="sm" className="text-xs" onClick={() => selectFolder(folder.path)}>
+                    <Button variant="ghost" size="sm" onClick={() => selectFolder(folder.path)}>
                       Select
                     </Button>
                   </div>
@@ -278,9 +277,9 @@ export default function FolderBrowserModal({ isOpen, onClose, onFolderSelected }
         </div>
 
         <div className="border-t border-border">
-          <div className="flex items-center gap-2 bg-foreground/3 px-4 py-2">
-            <span className="text-xs text-muted-foreground">Path</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{currentPath}</span>
+          <div className="flex items-center gap-2 bg-muted px-4 py-2">
+            <span className="text-ui text-muted-foreground">Path</span>
+            <span className="min-w-0 flex-1 truncate font-code text-ui text-foreground">{currentPath}</span>
           </div>
           <div className="flex items-center justify-end gap-2 p-4">
             <Button variant="outline" onClick={dismiss}>

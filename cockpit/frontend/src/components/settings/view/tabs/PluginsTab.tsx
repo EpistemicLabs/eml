@@ -2,11 +2,11 @@
 // cockpit-builtin-plugins-first) — project views next to the brain, switched
 // on or off for the whole cockpit. Brain is listed as fixed.
 import { PLUGIN_DEFS, paneViewDef, usePluginStates, useSetPluginEnabled } from '@/lib/pane-views';
+import { Switch } from '@/shared/view/ui';
 
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-import SettingsToggle from '../SettingsToggle';
 
 export default function PluginsTab() {
   const states = usePluginStates();
@@ -21,11 +21,11 @@ export default function PluginsTab() {
       >
         <SettingsCard divided>
           <SettingsRow label={<Label icon={brain.icon} text={brain.label} />} description="The project's brain: timeline, graph, tasks. Always on.">
-            <SettingsToggle checked disabled onChange={() => {}} ariaLabel="Brain is always on" />
+            <Switch checked disabled onChange={() => {}} ariaLabel="Brain is always on" />
           </SettingsRow>
           {PLUGIN_DEFS.map((def) => (
             <SettingsRow key={def.plugin} label={<Label icon={def.icon} text={def.label} />} description={def.description}>
-              <SettingsToggle
+              <Switch
                 checked={states.data?.[def.plugin] ?? true}
                 disabled={!states.data || setEnabled.isPending}
                 onChange={(enabled) => setEnabled.mutate({ id: def.plugin, enabled })}
@@ -34,7 +34,7 @@ export default function PluginsTab() {
             </SettingsRow>
           ))}
         </SettingsCard>
-        {setEnabled.isError && <p className="text-sm text-destructive">{setEnabled.error.message}</p>}
+        {setEnabled.isError && <p className="text-body text-stopped-ink">{setEnabled.error.message}</p>}
       </SettingsSection>
     </div>
   );
@@ -43,7 +43,7 @@ export default function PluginsTab() {
 function Label({ icon: Icon, text }: { icon: React.ComponentType<{ className?: string }>; text: string }) {
   return (
     <span className="flex items-center gap-2">
-      <Icon className="h-4 w-4 text-muted-foreground" />
+      <Icon aria-hidden className="size-4 text-muted-foreground" />
       {text}
     </span>
   );

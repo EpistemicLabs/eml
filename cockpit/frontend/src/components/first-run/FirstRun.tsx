@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
+import { cn } from "@/lib/utils";
+import { FIELD, PRIMARY } from "@/shared/view/ui";
+
 /**
  * First-run setup (host: setup.ts). While the home has no brain, the host
  * serves only this screen: the user names themselves and their agent, the host
@@ -62,8 +65,8 @@ export function FirstRunSignIn() {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md">
-      <div role="dialog" aria-modal="true" aria-labelledby="first-run-sign-in" className="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6">
+    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
+      <div role="dialog" aria-modal="true" aria-labelledby="first-run-sign-in" className="glass-thick w-full max-w-sm space-y-5 rounded-3xl p-6 shadow-modal">
         <div className="space-y-1.5">
           <p className="text-caption text-muted-foreground">Step 2 of 2</p>
           <h1 id="first-run-sign-in" className="text-heading font-semibold">Connect Claude</h1>
@@ -83,7 +86,7 @@ export function FirstRunSignIn() {
               : "A one-time download of Claude Code into the cockpit, usually under a minute."}
           </p>
         )}
-        {error && <p className="text-ui text-primary">{error}</p>}
+        {error && <p className="text-ui text-stopped-ink">{error}</p>}
         {runtime.failed && failures >= 2 && (
           <div className="space-y-1.5 text-caption text-muted-foreground">
             <p>
@@ -92,11 +95,11 @@ export function FirstRunSignIn() {
             </p>
             <p>
               If that's not it, please{" "}
-              <a href={ISSUES_URL} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+              <a href={ISSUES_URL} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring">
                 report the problem
               </a>{" "}
-              with the error above and the host log (<code className="font-mono">host.log</code> in the cockpit home,
-              by default <code className="font-mono">~/.eml-cockpit</code>).
+              with the error above and the host log (<code className="font-code">host.log</code> in the cockpit home,
+              by default <code className="font-code">~/.eml-cockpit</code>).
             </p>
           </div>
         )}
@@ -105,7 +108,7 @@ export function FirstRunSignIn() {
             type="button"
             onClick={() => void retry()}
             autoFocus
-            className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground"
+            className={cn(PRIMARY, 'w-full')}
           >
             Try again
           </button>
@@ -115,7 +118,7 @@ export function FirstRunSignIn() {
             onClick={() => void signIn()}
             disabled={busy || !ready}
             autoFocus
-            className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground disabled:opacity-50"
+            className={cn(PRIMARY, 'w-full')}
           >
             {busy ? "Opening…" : ready ? "Sign in to Claude" : "Downloading Claude Code to the cockpit…"}
           </button>
@@ -230,11 +233,9 @@ function FirstRun() {
     }
   };
 
-  const field = "w-full rounded-md border border-input bg-background px-3 py-2 text-body text-foreground outline-none focus:border-ring";
-
   return (
-    <div className="flex min-h-full items-center justify-center px-4 py-10">
-      <form onSubmit={submit} className="w-full max-w-sm space-y-5 rounded-lg border border-border bg-card p-6">
+    <div data-ui="v2" className="flex min-h-full items-center justify-center bg-background px-4 py-10">
+      <form onSubmit={submit} className="w-full max-w-sm space-y-5 rounded-3xl border border-border bg-card p-6 shadow-card">
         <div className="space-y-1.5">
           <p className="text-caption text-muted-foreground">Step 1 of 2</p>
           <h1 className="text-heading font-semibold">Welcome to EML</h1>
@@ -249,21 +250,21 @@ function FirstRun() {
         </div>
         <label className="block space-y-1.5">
           <span className="text-ui text-muted-foreground">Your name</span>
-          <input className={field} value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus maxLength={60} disabled={submitting} />
+          <input className={FIELD} value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus maxLength={60} disabled={submitting} />
         </label>
         <label className="block space-y-1.5">
           <span className="text-ui text-muted-foreground">Your agent's name</span>
-          <input className={field} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="e.g. Juno" maxLength={60} disabled={submitting} />
+          <input className={FIELD} value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="e.g. Juno" maxLength={60} disabled={submitting} />
         </label>
         <p className="text-caption text-muted-foreground">
           Both names become fixed ids in your brains: yours marks what you wrote, your agent's names its own
           brain. How they're shown can be changed later.
         </p>
-        {error && <p className="text-ui text-primary">{error}</p>}
+        {error && <p className="text-ui text-stopped-ink">{error}</p>}
         <button
           type="submit"
           disabled={submitting || !userName.trim() || !agentName.trim()}
-          className="w-full rounded-md bg-primary px-3 py-2 text-body font-medium text-primary-foreground disabled:opacity-50"
+          className={cn(PRIMARY, 'w-full')}
         >
           {submitting ? "Setting up your brain…" : "Create brain"}
         </button>

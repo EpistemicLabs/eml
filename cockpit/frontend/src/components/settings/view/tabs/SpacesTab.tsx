@@ -9,7 +9,7 @@ import { spaceTone } from '@/lib/space-color';
 import { SPACE_HEADER } from '@/lib/space-header';
 import { cn } from '@/lib/utils';
 import { createSharedSpace, createSpace, joinSharedSpace, loadSpaces, removeSpace, renameSpace, switchSpace, useActiveSpace, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
-import { Button } from '@/shared/view/ui';
+import { Button, Chip, FOCUS, LABEL } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import { SpaceColorPicker } from '../SpaceColorPicker';
 import SettingsRow from '../SettingsRow';
@@ -17,7 +17,7 @@ import SettingsSection from '../SettingsSection';
 import SettingsPicker from '../SettingsPicker';
 import SettingsHeading from '../SettingsHeading';
 import SettingsSegmented from '../SettingsSegmented';
-import type { SettingsMainTabMeta } from '../../constants/constants';
+import { SETTINGS_INPUT_CLASS, type SettingsMainTabMeta } from '../../constants/constants';
 import { useAccount } from '../../hooks/useAccount';
 import { useBrainInfo } from '../../hooks/useBrainInfo';
 import { agentName, useAgents } from '../../hooks/useAgents';
@@ -147,8 +147,8 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
   const brainRows = (
     <>
       <SettingsRow label="Brain file" description={info?.brainFile ?? undefined}>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={reveal} disabled={!info?.brainFile}>
-          <FolderSearch className="h-3.5 w-3.5" />
+        <Button variant="outline" size="sm" onClick={reveal} disabled={!info?.brainFile}>
+          <FolderSearch aria-hidden />
           Show in Finder
         </Button>
       </SettingsRow>
@@ -171,7 +171,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
   const spaceLabel = (space: SpaceInfo) => (
     <>
-      <Brain className="h-3.5 w-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
+      <Brain aria-hidden className="size-3.5 flex-shrink-0" strokeWidth={1.8} style={{ color: spaceTone(space) }} />
       <span className="truncate">{space.name}</span>
     </>
   );
@@ -185,13 +185,13 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
         maxLength={40}
         autoFocus
         aria-label="Space name"
-        className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+        className={cn(SETTINGS_INPUT_CLASS, 'w-40')}
       />
-      <Button size="sm" className="h-8 text-xs" type="submit">Save</Button>
+      <Button size="sm" type="submit">Save</Button>
     </form>
   ) : (
-    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
-      <Pencil className="h-3.5 w-3.5" />
+    <Button variant="outline" size="sm" onClick={() => { setRenaming(space); setRenameDraft(space.name); setRenameError(null); }}>
+      <Pencil aria-hidden />
       Rename
     </Button>
   ));
@@ -200,11 +200,11 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
     <SettingsRow
       key={space.id}
       label={
-        <button type="button" aria-pressed={space.id === shownId} onClick={() => pick(space.id)} className="flex max-w-full items-center gap-2 text-left hover:underline">
+        <button type="button" aria-pressed={space.id === shownId} onClick={() => pick(space.id)} className={cn('flex min-h-(--target-min) max-w-full items-center gap-2 text-left hover:underline', FOCUS)}>
           {spaceLabel(space)}
         </button>
       }
-      className={cn(space.id === shownId && 'bg-foreground/[0.05]')}
+      className={cn(space.id === shownId && 'bg-muted')}
     >
       <SpaceColorPicker space={space} onError={setSpaceError} />
     </SettingsRow>
@@ -233,10 +233,10 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
                   placeholder="Name"
                   maxLength={40}
                   disabled={spaceBusy}
-                  className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                  className={cn(SETTINGS_INPUT_CLASS, 'w-40')}
                 />
-                <Button size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={spaceBusy || !spaceName.trim()}>
-                  {spaceBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                <Button size="sm" type="submit" disabled={spaceBusy || !spaceName.trim()}>
+                  {spaceBusy ? <Loader2 aria-hidden className="animate-spin" /> : <Plus aria-hidden />}
                   Create
                 </Button>
               </form>
@@ -259,7 +259,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
             ariaLabel="Spaces"
           />
           {shown && (
-          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-border bg-card p-4">
             <SettingsSection title="Details">
               <SettingsCard divided>
                 <SettingsRow label={shown.name} description={renameError ?? (shownTeam?.shared ? teamStatus(shownTeam) : shown.agent ? undefined : 'No agent bound — see the banner above')}>{renameControl(shown)}</SettingsRow>
@@ -268,7 +268,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
                     label="Login and tools"
                     description={`Sessions here use ${shown.agentName}'s own Claude login and tools, not the ones in Settings › Models.`}
                   >
-                    <span className="text-sm text-foreground">Own</span>
+                    <span className="text-body text-foreground">Own</span>
                   </SettingsRow>
                 )}
                 {!shown.shared && brainRows}
@@ -283,23 +283,23 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
             >
               <SettingsCard divided>
                 <SettingsRow label="Back up now" description={backupError ?? 'A full copy of the brain as it is right now'}>
-                  <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
-                    {backingUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HardDriveDownload className="h-3.5 w-3.5" />}
+                  <Button size="sm" onClick={() => void backUpNow()} disabled={backingUp || !info?.brainFile}>
+                    {backingUp ? <Loader2 aria-hidden className="animate-spin" /> : <HardDriveDownload aria-hidden />}
                     {backingUp ? 'Backing up…' : 'Back up now'}
                   </Button>
                 </SettingsRow>
                 {backups.length === 0 ? (
-                  <div className="px-4 py-4 text-sm text-muted-foreground">No backups yet.</div>
+                  <div className="px-4 py-4 text-body text-muted-foreground">No backups yet.</div>
                 ) : (
                   backups.map((b) => (
                     <div key={b.name} className="flex items-center justify-between gap-4 px-4 py-3">
                       <span className="flex min-w-0 items-center gap-2">
                         <Mono className="min-w-0 truncate">{b.name}</Mono>
                         {b.kind === 'pre-migration' && (
-                          <span className="flex-shrink-0 rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground">before update</span>
+                          <Chip className="flex-shrink-0 py-0.5">before update</Chip>
                         )}
                       </span>
-                      <span className="flex-shrink-0 text-xs text-muted-foreground">
+                      <span className="flex-shrink-0 text-ui text-muted-foreground">
                         {formatDate(b.createdAt)} · {formatBytes(b.sizeBytes)}
                       </span>
                     </div>
@@ -310,8 +310,8 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
             {shown.shared && (
               <details className="group">
-                <summary className="cursor-pointer list-none text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-                  <span className="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
+                <summary className={cn('flex min-h-(--target-min) cursor-pointer list-none items-center', LABEL, FOCUS)}>
+                  <span className="mr-2 inline-block transition-transform duration-(--duration-fast) group-open:rotate-90">›</span>
                   Technical details
                 </summary>
                 <SettingsCard divided className="mt-3">
@@ -323,7 +323,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
             {shown.shared === false && (
               isMainSpace(shown, spaces)
-                ? <SettingsSection title={`Delete ${shown.name}`}><SettingsCard><div className="px-4 py-4 text-sm text-muted-foreground">{mainSpaceNote(shown)}</div></SettingsCard></SettingsSection>
+                ? <SettingsSection title={`Delete ${shown.name}`}><SettingsCard><div className="px-4 py-4 text-body text-muted-foreground">{mainSpaceNote(shown)}</div></SettingsCard></SettingsSection>
                 : <DeleteSpace key={shown.id} space={shown} onDeleted={() => setPickedId(null)} />
             )}
           </div>
@@ -334,7 +334,7 @@ export default function SpacesTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
   );
 }
 
-const spaceInput = 'h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary';
+const spaceInput = SETTINGS_INPUT_CLASS;
 
 /** A new shared brain on the relay; it needs the EML account in the team-brain beta. */
 function NewSharedSpace() {
@@ -362,8 +362,8 @@ function NewSharedSpace() {
     <SettingsRow label="New shared space" description={error ?? (busy ? 'Talking to the relay…' : 'A brain you share with others.')}>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Shared space name" maxLength={40} disabled={busy} className={`w-40 ${spaceInput}`} />
-        <Button size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={busy || !name.trim()}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        <Button size="sm" type="submit" disabled={busy || !name.trim()}>
+          {busy ? <Loader2 aria-hidden className="animate-spin" /> : <Plus aria-hidden />}
           Create
         </Button>
       </form>
@@ -391,8 +391,8 @@ function JoinSharedSpace() {
   return (
     <SettingsRow label="Join a shared space" description={error ?? (busy ? 'Talking to the relay…' : 'With the invite link you were sent.')}>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void join(); }}>
-        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Invite link" aria-label="Invite link" spellCheck={false} disabled={busy} className={`w-56 font-mono ${spaceInput}`} />
-        <Button size="sm" className="h-8 text-xs" type="submit" disabled={busy || !link.trim()}>Join</Button>
+        <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Invite link" aria-label="Invite link" spellCheck={false} disabled={busy} className={`w-56 font-code ${spaceInput}`} />
+        <Button size="sm" type="submit" disabled={busy || !link.trim()}>Join</Button>
       </form>
     </SettingsRow>
   );
@@ -427,10 +427,10 @@ function DeleteSpace({ space, onDeleted }: { space: SpaceInfo; onDeleted: () => 
               onChange={(e) => setTyped(e.target.value)}
               placeholder={space.name}
               disabled={busy}
-              className="h-8 w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+              className={cn(SETTINGS_INPUT_CLASS, 'w-40')}
             />
-            <Button variant="destructive" size="sm" className="h-8 gap-1.5 text-xs" type="submit" disabled={busy || typed !== space.name}>
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            <Button variant="destructive" size="sm" type="submit" disabled={busy || typed !== space.name}>
+              {busy ? <Loader2 aria-hidden className="animate-spin" /> : <Trash2 aria-hidden />}
               Delete
             </Button>
           </form>
@@ -442,7 +442,7 @@ function DeleteSpace({ space, onDeleted }: { space: SpaceInfo; onDeleted: () => 
 
 function Mono({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <span className={`block font-mono text-xs text-foreground ${className ?? ''}`}>
+    <span className={`block font-code text-ui text-foreground ${className ?? ''}`}>
       {children}
     </span>
   );

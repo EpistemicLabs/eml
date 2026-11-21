@@ -2,13 +2,12 @@
 // (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
 import { useSyncExternalStore } from 'react';
 
-import { ThemeModeSelector } from '@/shared/view/ui';
+import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';
 import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-import SettingsToggle from '../SettingsToggle';
 import NotificationsSection from './NotificationsSection';
 import SessionLimitsRows from './SessionLimitsRows';
 
@@ -21,9 +20,6 @@ type PreferencesTabProps = {
 
 // Apple-style inline select — bg-transparent so it sits ON the form-card
 // surface instead of lifting off as a third visual layer.
-const inlineSelectClass =
-  'rounded-md border border-foreground/8 bg-transparent p-2 text-sm text-foreground focus:border-foreground/40 focus:outline-none';
-
 export default function PreferencesTab({
   projectSortOrder,
   onProjectSortOrderChange,
@@ -50,14 +46,14 @@ export default function PreferencesTab({
             label="Project sorting"
             description="How projects are ordered in the sidebar"
           >
-            <select
+            <Select
               value={projectSortOrder}
               onChange={(event) => onProjectSortOrderChange(event.target.value as ProjectSortOrder)}
-              className={`${inlineSelectClass} w-36`}
+              className="w-36"
             >
               <option value="name">Alphabetical</option>
               <option value="date">Recent Activity</option>
-            </select>
+            </Select>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
@@ -68,7 +64,7 @@ export default function PreferencesTab({
             label="Greeting at session start"
             description="A new session opens with a short greeting and where the project stands. Sessions started with their own task stay as they are."
           >
-            <SettingsToggle
+            <Switch
               checked={greetOnStart}
               onChange={onGreetOnStartChange}
               ariaLabel="Greeting at session start"
@@ -78,16 +74,16 @@ export default function PreferencesTab({
             label="Open sessions in"
             description='Where Claude sessions open in this browser, unless you picked the view for that session. "As the cockpit" follows Settings › Models › Chat view. A turn running in the terminal is not interrupted.'
           >
-            <select
+            <Select
               value={chatOverride === undefined ? 'cockpit' : chatOverride ? 'chat' : 'terminal'}
               onChange={(event) => writeSettings({ chatOverride: event.target.value === 'cockpit' ? null : event.target.value === 'chat' })}
-              className={`${inlineSelectClass} w-36`}
+              className="w-36"
               aria-label="Open sessions in"
             >
               <option value="cockpit">As the cockpit</option>
               <option value="chat">Chat</option>
               <option value="terminal">Terminal</option>
-            </select>
+            </Select>
           </SettingsRow>
           <SessionLimitsRows />
         </SettingsCard>

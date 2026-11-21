@@ -53,7 +53,8 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md"
+      data-ui="v2"
+      className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -62,26 +63,25 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="frosted flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[20px]"
+        className="glass-thick flex h-(--size-settings) w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-modal"
       >
         {/* Header */}
-        <div className="flex flex-shrink-0 items-center justify-between border-b border-foreground/8 px-5 py-3">
-          <h2 className="text-base font-semibold text-foreground">Settings</h2>
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-5 py-3">
+          <h2 className="text-title font-semibold text-foreground">Settings</h2>
           <div className="flex items-center gap-2">
             {saveStatus === 'success' && (
-              <span className="text-xs text-muted-foreground">Settings saved</span>
+              <span className="text-ui text-muted-foreground">Settings saved</span>
             )}
             {saveStatus === 'error' && (
-              <span className="text-xs text-destructive">Failed to save settings</span>
+              <span className="text-ui text-stopped-ink">Failed to save settings</span>
             )}
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={onClose}
               aria-label="Close settings"
-              className="h-10 w-10 p-0 text-muted-foreground hover:text-foreground active:bg-foreground/10"
             >
-              <X className="h-5 w-5" />
+              <X aria-hidden />
             </Button>
           </div>
         </div>
@@ -91,7 +91,7 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
           <SettingsSidebar activeTab={activeTab} onChange={setActiveTab} />
 
           <main className="flex-1 overflow-y-auto">
-            <div key={activeTab} className="settings-content-enter space-y-8 p-6">
+            <div key={activeTab} className="animate-fade-in space-y-8 p-6">
               {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <SettingsHeading tab={activeMeta} />}
 
               {activeTab === 'account' && <AccountTab />}

@@ -4,13 +4,12 @@
 import { useState } from 'react';
 
 import { useSetProviderSettings, type AgentProviderInfo } from '@/lib/providers';
-import { Button } from '@/shared/view/ui';
+import { Button, Switch } from '@/shared/view/ui';
 import { getActivePane, openInPane } from '@/stores/usePaneStore';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import SettingsSegmented from '../SettingsSegmented';
-import SettingsToggle from '../SettingsToggle';
 import RuntimeRows from './RuntimeRows';
 
 type CodexPermissionMode = 'auto' | 'ask' | 'off';
@@ -83,11 +82,11 @@ export default function CodexSettings({ codex, onCloseSettings }: { codex: Agent
           >
             {!codex.signedIn && <Button size="sm" onClick={signIn}>Sign in</Button>}
           </SettingsRow>
-          <div className="px-4 py-3 text-sm text-muted-foreground">
+          <div className="px-4 py-3 text-body text-muted-foreground">
             The first Codex session asks once whether to trust the cockpit’s hooks — choose “Trust all”; they report the
             session’s state to the cockpit and load your brain.
           </div>
-          {error && <p className="px-4 pb-4 text-sm text-destructive">{error}</p>}
+          {error && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
         </SettingsCard>
       </SettingsSection>
 
@@ -115,17 +114,17 @@ export default function CodexSettings({ codex, onCloseSettings }: { codex: Agent
                   : 'Off — commands in the sandbox have no network; one that needs it is a request to go beyond the sandbox.'
             }
           >
-            <SettingsToggle
+            <Switch
               checked={network}
               onChange={(checked: boolean) => setSettings.mutate({ sandboxNetwork: checked })}
               ariaLabel="Network in the Codex sandbox"
               disabled={setSettings.isPending || !sandboxed}
             />
           </SettingsRow>
-          <div className="px-4 py-3 text-sm text-muted-foreground">
+          <div className="px-4 py-3 text-body text-muted-foreground">
             Worker sessions opened by another session always run in Auto — nobody is watching them.
           </div>
-          {setSettings.isError && <p className="px-4 pb-4 text-sm text-destructive">{setSettings.error.message}</p>}
+          {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
         </SettingsCard>
       </SettingsSection>
 

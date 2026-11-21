@@ -12,10 +12,15 @@ import {
   UserRound,
 } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
+import { buttonVariants, FIELD } from '@/shared/view/ui';
+
 import type { ProjectSortOrder, SettingsMainTab } from '../types/types';
 
 /** A small outlined button in a settings row (About, Notifications). */
-export const SETTINGS_BUTTON_CLASS = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
+export const SETTINGS_BUTTON_CLASS = buttonVariants({ variant: 'outline', size: 'sm' });
+/** A small text field in a settings row. */
+export const SETTINGS_INPUT_CLASS = cn(FIELD, 'min-h-(--target-min) px-2 text-ui');
 
 export type SettingsMainTabMeta = {
   id: SettingsMainTab;

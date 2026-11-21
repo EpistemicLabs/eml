@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEventHandler } from 'react';
 import { FolderOpen } from 'lucide-react';
 
-import { Button, Input } from '@/shared/view/ui';
+import { cn } from '@/lib/utils';
+import { Button, Input, POPOVER, ROW } from '@/shared/view/ui';
 
 import FolderBrowserModal from './FolderBrowserModal';
 import { fetchFolderListing } from '../data/folderApi';
@@ -120,16 +121,16 @@ export default function FolderPathField({ value, disabled = false, onChange, onK
             onKeyDown={onKeyDown}
           />
           {isDropdownOpen && suggestions.length > 0 && (
-            <div className="absolute top-full right-0 left-0 z-20 mt-1 max-h-80 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+            <div className={cn(POPOVER, 'absolute top-full right-0 left-0 mt-1 max-h-80 overflow-y-auto')}>
               {suggestions.map((folder) => (
                 <button
                   key={folder.path}
                   type="button"
                   onClick={() => applyChosenPath(folder.path)}
-                  className="flex w-full flex-col items-start px-3 py-2 text-left transition-colors hover:bg-muted"
+                  className={cn(ROW, 'flex-col items-start gap-0 px-3 py-1.5')}
                 >
-                  <span className="text-sm font-medium text-foreground">{folder.name}</span>
-                  <span className="text-xs text-muted-foreground">{folder.path}</span>
+                  <span className="text-body font-medium text-foreground">{folder.name}</span>
+                  <span className="text-ui text-muted-foreground">{folder.path}</span>
                 </button>
               ))}
             </div>
@@ -139,12 +140,12 @@ export default function FolderPathField({ value, disabled = false, onChange, onK
           type="button"
           variant="outline"
           size="icon"
-          className="h-8 w-8 shrink-0"
+          className="shrink-0"
           title="Browse folders"
           disabled={disabled}
           onClick={() => setIsBrowserOpen(true)}
         >
-          <FolderOpen className="h-4 w-4" />
+          <FolderOpen aria-hidden />
         </Button>
       </div>
       <FolderBrowserModal

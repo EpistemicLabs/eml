@@ -269,6 +269,11 @@ html.dark {
   /* Phone fields: below 16px iOS zooms the page when a field takes the focus. */
   --text-field-touch: 16px;
   /* area: settings */
+  /* The settings window: most of the viewport's height, the same on every tab. */
+  --size-settings: 90vh;
+  /* The folder browser opens over the add-project dialog, so it sits one layer above a dialog. */
+  --z-modal-nested: calc(var(--z-modal) + 1);
+  --size-folder-browser: 80vh;
   /* area: chat and terminal */
   /* area: brain and review */
   /* area: app shell */

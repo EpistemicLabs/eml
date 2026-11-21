@@ -9,14 +9,13 @@ import { ChevronRight } from 'lucide-react';
 
 import type { AgentProviderInfo } from '@/lib/providers';
 import { cn } from '@/lib/utils';
-import { Button, Input } from '@/shared/view/ui';
+import { Button, Chip, FOCUS, Input, LABEL, Switch } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import { getActivePane, isEmptyPane } from '@/stores/usePaneStore';
 import { setHostChatView } from '../../utils/settingsStorage';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-import SettingsToggle from '../SettingsToggle';
 import RuntimeRows from './RuntimeRows';
 
 type LoginMode = 'login' | 'token';
@@ -145,7 +144,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
               </Button>
             </SettingsRow>
           )}
-          {error && !showAdvanced && <p className="px-4 pb-4 text-sm text-destructive">{error}</p>}
+          {error && !showAdvanced && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
         </SettingsCard>
       </SettingsSection>
 
@@ -162,14 +161,14 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                 : 'On (recommended) — Claude Code approves what it judges safe and asks before risky actions; the session then shows as waiting.'
             }
           >
-            <SettingsToggle
+            <Switch
               checked={!bypass}
               onChange={(checked: boolean) => void setPermissionMode(checked ? 'auto' : 'bypassPermissions')}
               ariaLabel="Ask before risky actions"
               disabled={busy || status === null}
             />
           </SettingsRow>
-          <div className="px-4 py-3 text-sm text-muted-foreground">
+          <div className="px-4 py-3 text-body text-muted-foreground">
             Worker sessions opened by another session always run in auto mode — nobody is watching them.
           </div>
         </SettingsCard>
@@ -197,7 +196,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                 : 'Off — the input is the last line of the terminal output and scrolls away with it.'
             }
           >
-            <SettingsToggle
+            <Switch
               checked={pinnedInput}
               onChange={(checked: boolean) => void setRenderer(checked ? 'fullscreen' : 'default')}
               ariaLabel="Keep the input at the bottom"
@@ -212,7 +211,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                 : 'Off: sessions and workers start in a terminal. A browser can choose otherwise in Preferences.'
             }
           >
-            <SettingsToggle
+            <Switch
               checked={chatView}
               onChange={(checked: boolean) => void setChatView(checked)}
               ariaLabel="Chat view"
@@ -227,7 +226,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                 : 'Off — sessions are reachable only through this cockpit.'
             }
           >
-            <SettingsToggle
+            <Switch
               checked={remoteControl}
               onChange={(checked: boolean) => void setRemoteControl(checked)}
               ariaLabel="Reachable from the Claude app"
@@ -243,15 +242,15 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
           onClick={() => setAdvancedOpen((open) => !open)}
           disabled={tokenMode}
           aria-expanded={showAdvanced}
-          className="flex items-center gap-1 text-xs font-semibold tracking-wider text-muted-foreground uppercase hover:text-foreground disabled:hover:text-muted-foreground"
+          className={cn('flex min-h-(--target-min) items-center gap-1 hover:text-foreground disabled:hover:text-muted-foreground', LABEL, FOCUS)}
         >
-          <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-90')} />
+          <ChevronRight aria-hidden className={cn('size-3.5 transition-transform duration-(--duration-fast)', showAdvanced && 'rotate-90')} />
           Advanced: setup-token
         </button>
         {showAdvanced && (
           <>
-            <p className="text-sm text-muted-foreground">
-              A long-lived token from <code className="font-mono text-xs text-foreground">claude setup-token</code> for
+            <p className="text-body text-muted-foreground">
+              A long-lived token from <code className="font-code text-ui text-foreground">claude setup-token</code> for
               runtimes without a browser (servers, tests). Also billed to your subscription, but Claude Code then shows
               “Claude API” and its default model.
             </p>
@@ -260,7 +259,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                 label="Use the token for sessions"
                 description={tokenMode ? 'On — new sessions use the setup-token instead of the login.' : 'Off — new sessions use the Claude Code login.'}
               >
-                <SettingsToggle
+                <Switch
                   checked={tokenMode}
                   onChange={(checked: boolean) => void setMode(checked ? 'token' : 'login')}
                   ariaLabel="Use the setup-token for sessions"
@@ -274,7 +273,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
               >
                 {status?.token.set ? (
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-foreground">{status.token.prefix}</span>
+                    <span className="font-code text-ui text-foreground">{status.token.prefix}</span>
                     {!editing && (
                       <Button variant="ghost" size="sm" onClick={() => setEditing(true)} disabled={busy}>
                         Replace
@@ -285,15 +284,15 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                     </Button>
                   </div>
                 ) : (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">none</span>
+                  <Chip className="py-0.5">none</Chip>
                 )}
               </SettingsRow>
 
               {showTokenForm && (
                 <div className="space-y-3 px-4 py-4">
-                  <p className="text-sm text-muted-foreground">
-                    Run <code className="font-mono text-xs text-foreground">claude setup-token</code> in a terminal, sign in,
-                    and paste the token it prints (it starts with <code className="font-mono text-xs text-foreground">sk-ant-oat</code>).
+                  <p className="text-body text-muted-foreground">
+                    Run <code className="font-code text-ui text-foreground">claude setup-token</code> in a terminal, sign in,
+                    and paste the token it prints (it starts with <code className="font-code text-ui text-foreground">sk-ant-oat</code>).
                   </p>
                   <form
                     className="flex items-center gap-2"
@@ -306,7 +305,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                       placeholder="sk-ant-oat…"
                       value={token}
                       onChange={(event) => setToken(event.target.value)}
-                      className="flex-1 font-mono text-xs"
+                      className="flex-1 font-code text-ui"
                     />
                     <Button type="submit" size="sm" disabled={busy || !token.trim()}>
                       Save
@@ -319,7 +318,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                   </form>
                 </div>
               )}
-              {error && <p className="px-4 pb-4 text-sm text-destructive">{error}</p>}
+              {error && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
             </SettingsCard>
           </>
         )}

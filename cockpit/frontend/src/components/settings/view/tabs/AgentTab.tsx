@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'react';
 
 import type { Engram, ListResponse } from '@/lib/types';
+import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import { useActiveSpace } from '@/stores/useSpaceStore';
 import { useAgents, type AgentInfo } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
@@ -82,7 +84,7 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
     return (
       <div className="space-y-4">
         <SettingsHeading tab={meta} />
-        <div className="text-sm text-muted-foreground">
+        <div className="text-body text-muted-foreground">
           This cockpit has no agent yet. The space's banner says what the agent upgrade waits for.
         </div>
       </div>
@@ -91,7 +93,7 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
   return (
     <div className="space-y-8">
-      {agents.length === 0 && <div className="text-sm text-muted-foreground">{fallback}</div>}
+      {agents.length === 0 && <div className="text-body text-muted-foreground">{fallback}</div>}
       <div className="space-y-4">
         <SettingsHeading tab={meta} description="Each agent has its own brain with its persona, rules and learnings. To change any of this, ask your agent in a session." />
         <div>
@@ -102,17 +104,17 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
             ariaLabel="Agents"
           />
           {agent && (
-          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-border bg-card p-4">
             <SettingsSection title="Details">
               <SettingsCard divided>
                 <SettingsRow label="Writes as" description="The agent stamped on every engram its sessions write">
-                  <span className="block font-mono text-xs text-foreground">{agent.id}</span>
+                  <span className="block font-code text-ui text-foreground">{agent.id}</span>
                 </SettingsRow>
                 <div className="px-4 py-4">
-                  <div className="text-sm font-medium text-foreground">Works in the following spaces</div>
-                  {agent.spaces.length === 0 && <div className="mt-1 text-sm text-muted-foreground">No space yet.</div>}
+                  <div className="text-body font-medium text-foreground">Works in the following spaces</div>
+                  {agent.spaces.length === 0 && <div className="mt-1 text-body text-muted-foreground">No space yet.</div>}
                   <ul className="mt-1 space-y-0.5">
-                    {agent.spaces.map((s) => <li key={s.id} className="text-sm text-muted-foreground">{s.name}</li>)}
+                    {agent.spaces.map((s) => <li key={s.id} className="text-body text-muted-foreground">{s.name}</li>)}
                   </ul>
                 </div>
               </SettingsCard>
@@ -120,11 +122,11 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
             <SettingsSection title="Persona" description={`Who ${name} is. Loaded at the start of every session in the spaces it works in.`}>
               <SettingsCard>
-                <div className="px-4 py-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                <div className="px-4 py-4 text-body leading-relaxed whitespace-pre-wrap text-foreground">
                   {data ? data.persona?.content ?? 'No persona yet.' : <span className="text-muted-foreground">{fallback}</span>}
                 </div>
                 {data?.persona && data.persona.content.length > PROFILE_MAX_CHARS && (
-                  <div className="px-4 pb-4 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                  <div className="px-4 pb-4 text-ui text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
                 )}
               </SettingsCard>
             </SettingsSection>
@@ -134,8 +136,8 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
               description={`How ${name} works with you. Loaded in every session.`}
             >
               <SettingsCard divided>
-                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-                {data && data.rules.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No always-on rules.</div>}
+                {!data && <div className="px-4 py-4 text-body text-muted-foreground">{fallback}</div>}
+                {data && data.rules.length === 0 && <div className="px-4 py-4 text-body text-muted-foreground">No always-on rules.</div>}
                 {data?.rules.map((rule) => <RuleRow key={rule.id} rule={rule} agentId={agent.id} />)}
               </SettingsCard>
             </SettingsSection>
@@ -145,15 +147,15 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
               description={`Listed by title in every session; ${name} reads one in full when its trigger applies.`}
             >
               <SettingsCard>
-                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-                {data && data.situational.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">No situational rules.</div>}
+                {!data && <div className="px-4 py-4 text-body text-muted-foreground">{fallback}</div>}
+                {data && data.situational.length === 0 && <div className="px-4 py-4 text-body text-muted-foreground">No situational rules.</div>}
                 {data && data.situational.length > 0 && (
                   <details className="group/all">
-                    <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground">
-                      <span className="mr-2 inline-block text-muted-foreground transition-transform group-open/all:rotate-90">›</span>
+                    <summary className={cn('flex min-h-(--target-comfortable) cursor-pointer list-none items-center px-4 text-body font-medium text-foreground', FOCUS)}>
+                      <span className="mr-2 inline-block text-muted-foreground transition-transform duration-(--duration-fast) group-open/all:rotate-90">›</span>
                       {data.situational.length} situational {data.situational.length === 1 ? 'rule' : 'rules'}
                     </summary>
-                    <div className="divide-y divide-foreground/8 border-t border-foreground/8">
+                    <div className="divide-y divide-border border-t border-border">
                       {data.situational.map((rule) => <RuleRow key={rule.id} rule={rule} agentId={agent.id} />)}
                     </div>
                   </details>
@@ -163,14 +165,14 @@ export default function AgentTab({ tab: meta }: { tab: SettingsMainTabMeta }) {
 
             <SettingsSection title="People" description={`What ${name} knows about the people it works with.`}>
               <SettingsCard divided>
-                {!data && <div className="px-4 py-4 text-sm text-muted-foreground">{fallback}</div>}
-                {data && data.people.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
+                {!data && <div className="px-4 py-4 text-body text-muted-foreground">{fallback}</div>}
+                {data && data.people.length === 0 && <div className="px-4 py-4 text-body text-muted-foreground">Nothing yet — it learns from your sessions.</div>}
                 {data?.people.map((profile) => (
                   <div key={profile.id} className="px-4 py-3">
-                    <div className="font-mono text-xs text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
-                    <div className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
+                    <div className="font-code text-ui text-muted-foreground">{profile.scope.slice('user.'.length)}</div>
+                    <div className="mt-1 text-body leading-relaxed whitespace-pre-wrap text-foreground">{profile.content}</div>
                     {profile.content.length > PROFILE_MAX_CHARS && (
-                      <div className="mt-2 text-xs text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
+                      <div className="mt-2 text-ui text-muted-foreground">{legacyNote('profile', PROFILE_MAX_CHARS)}</div>
                     )}
                   </div>
                 ))}
@@ -189,14 +191,14 @@ function RuleRow({ rule, agentId }: { rule: Engram; agentId: string }) {
   const trigger = typeof rule.properties?.trigger === 'string' ? rule.properties.trigger : null;
   return (
     <details className="group px-4 py-3">
-      <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-        <span className="mr-2 inline-block text-muted-foreground transition-transform group-open:rotate-90">›</span>
+      <summary className={cn('min-h-(--target-min) cursor-pointer list-none text-body font-medium text-foreground', FOCUS)}>
+        <span className="mr-2 inline-block text-muted-foreground transition-transform duration-(--duration-fast) group-open:rotate-90">›</span>
         {ruleLabel(rule, agentId)}
-        {trigger && <div className="mt-0.5 pl-4 text-xs font-normal text-muted-foreground">When: {trigger}</div>}
+        {trigger && <div className="mt-0.5 pl-4 text-ui font-normal text-muted-foreground">When: {trigger}</div>}
       </summary>
-      <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
+      <div className="mt-2 text-body leading-relaxed whitespace-pre-wrap text-muted-foreground">{rule.content}</div>
       {rule.content.length > RULE_MAX_CHARS && (
-        <div className="mt-2 text-xs text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
+        <div className="mt-2 text-ui text-muted-foreground">{legacyNote('rule', RULE_MAX_CHARS)}</div>
       )}
     </details>
   );

@@ -13,8 +13,8 @@ export default function SettingsPlaceholder({ tab }: { tab: SettingsMainTabMeta 
         <div className="flex items-start gap-3 px-4 py-4">
           <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">Coming up</div>
-            <p className="mt-0.5 text-sm text-muted-foreground">{tab.blurb}</p>
+            <div className="text-body font-medium text-foreground">Coming up</div>
+            <p className="mt-0.5 text-body text-muted-foreground">{tab.blurb}</p>
           </div>
         </div>
       </SettingsCard>
