@@ -3,7 +3,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
-import { FOCUS, LABEL, TAB, TRACK } from '@/shared/view/ui';
+import { FOCUS, LABEL, PAGER_BUTTON, TAB, TRACK } from '@/shared/view/ui';
 
 export function BrainCard({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
@@ -143,15 +143,13 @@ export function Pager({
   olderTitle?: string;
   newerTitle?: string;
 }) {
-  const button =
-    cn('flex size-(--target-min) items-center justify-center rounded-md border border-border text-caption text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground disabled:cursor-default disabled:border-transparent disabled:hover:text-muted-foreground', FOCUS);
   return (
     <div className="flex items-center gap-1 text-caption text-muted-foreground">
-      <button type="button" className={button} onClick={() => onChange(index + 1)} disabled={index >= total - 1} title={olderTitle}>
+      <button type="button" className={PAGER_BUTTON} onClick={() => onChange(index + 1)} disabled={index >= total - 1} title={olderTitle}>
         ‹
       </button>
       <span className="tabular-nums">{index + 1}/{total}</span>
-      <button type="button" className={button} onClick={() => onChange(index - 1)} disabled={index <= 0} title={newerTitle}>
+      <button type="button" className={PAGER_BUTTON} onClick={() => onChange(index - 1)} disabled={index <= 0} title={newerTitle}>
         ›
       </button>
     </div>

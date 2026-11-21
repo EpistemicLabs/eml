@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEngramPanel } from "@/lib/engram-panel";
 import { cn } from "@/lib/utils";
-import { FOCUS, LABEL } from "@/shared/view/ui";
+import { FOCUS, LABEL, PAGER_BUTTON } from "@/shared/view/ui";
 import { EngramDetail } from "@/components/engram-detail";
 import type { Project } from "@/types/app";
 
@@ -118,10 +118,6 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
   if (!renderId) return null;
 
   const hasPager = total > 1 && index >= 0;
-  const pagerButton = cn(
-    "flex size-(--target-min) items-center justify-center rounded-md border border-border text-caption text-muted-foreground transition-colors duration-(--duration-fast) hover:text-foreground disabled:cursor-default disabled:border-transparent disabled:hover:text-muted-foreground",
-    FOCUS,
-  );
 
   return (
     // The page behind stays as it is — no dimming, no blur — and
@@ -150,11 +146,11 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
             )}
             {hasPager ? (
               <div className="flex items-center gap-1 text-caption text-muted-foreground">
-                <button type="button" onClick={goPrev} disabled={!prevId} aria-label="Previous" title="Previous (k / ↑)" className={pagerButton}>
+                <button type="button" onClick={goPrev} disabled={!prevId} aria-label="Previous" title="Previous (k / ↑)" className={PAGER_BUTTON}>
                   ‹
                 </button>
                 <span className="tabular-nums">{index + 1}/{total}</span>
-                <button type="button" onClick={goNext} disabled={!nextId} aria-label="Next" title="Next (j / ↓)" className={pagerButton}>
+                <button type="button" onClick={goNext} disabled={!nextId} aria-label="Next" title="Next (j / ↓)" className={PAGER_BUTTON}>
                   ›
                 </button>
               </div>

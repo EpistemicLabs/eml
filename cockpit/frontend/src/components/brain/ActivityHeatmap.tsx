@@ -1,6 +1,6 @@
 // Ported from packages/web/components/home/activity-heatmap.tsx: the same
 // data-driven contribution grid (max 30 weeks, back to the first active day,
-// click a day to filter the activity list). In tokens v2 the
+// click a day to filter the activity list). The
 // intensity scale runs towards the text colour over the muted surface (activity
 // is no status, so it takes no hue); selection outlines in the foreground colour.
 // The grid is wider than its card, so it opens scrolled to today (right end)

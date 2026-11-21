@@ -198,13 +198,13 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
     }, [open, onOpenChange, onEscapeKeyDown]);
 
     // Initial focus, once the panel has painted: a field that took it itself (autoFocus) keeps it,
-    // else the element marked data-autofocus, else the first focusable one.
+    // else the first focusable one.
     React.useEffect(() => {
       if (!open || !panelRef.current) return;
       const frame = window.requestAnimationFrame(() => {
         const panel = panelRef.current;
         if (!panel || panel.contains(document.activeElement)) return;
-        (panel.querySelector<HTMLElement>('[data-autofocus]') ?? focusableWithin(panel)[0])?.focus();
+        focusableWithin(panel)[0]?.focus();
       });
       return () => window.cancelAnimationFrame(frame);
     }, [open]);

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { Button, Dialog, DialogContent, DialogTitle, Field, Input, Select, Switch, Textarea } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, Select, Switch } from '@/shared/view/ui';
 
 afterEach(cleanup);
 
@@ -34,20 +34,7 @@ describe('Button', () => {
   });
 });
 
-describe('Field', () => {
-  it('labels its control and points it at the hint', () => {
-    render(<Field label="Name" hint="Shown in the sidebar">{({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} />}</Field>);
-    const input = screen.getByLabelText('Name');
-    expect(input.getAttribute('aria-describedby')).toBeTruthy();
-    expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe('Shown in the sidebar');
-  });
-
-  it('announces an error in place of the hint', () => {
-    render(<Field label="Path" hint="A folder" error="No such folder">{({ id, describedBy }) => <Textarea id={id} aria-describedby={describedBy} />}</Field>);
-    expect(screen.getByRole('alert').textContent).toBe('No such folder');
-    expect(screen.queryByText('A folder')).toBeNull();
-  });
-
+describe('Select', () => {
   it('dresses the native select like the other fields', () => {
     render(<Select aria-label="Model"><option>A</option></Select>);
     expect(screen.getByRole('combobox', { name: 'Model' }).className).toContain('border-input');

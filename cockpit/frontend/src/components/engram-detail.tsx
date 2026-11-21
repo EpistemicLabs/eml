@@ -96,8 +96,8 @@ function RelationItem({
   );
 }
 
-// v0.14: a subject chip carries its lifecycle — active = a strong edge and a solid dot,
-// closed = grey, hollow dot, struck through (tokens v2: no hue). Rounded-rect (not a pill) with a status dot so
+// A subject chip carries its lifecycle — active = a strong edge and a solid dot,
+// closed = grey, hollow dot, struck through (no hue). Rounded-rect (not a pill) with a status dot so
 // it never reads as a tag pill or the amber review flag. Click = show the other
 // engrams in this subject (across scopes).
 function SubjectChip({ id, subject, open, onClick }: { id: string; subject?: Subject; open: boolean; onClick: () => void }) {

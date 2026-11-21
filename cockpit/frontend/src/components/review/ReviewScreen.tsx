@@ -10,16 +10,13 @@ import { SessionChat } from '@/components/ui/session-chat';
 import { endReview, finishCurrent, jumpReview, liveQueue, stepReview } from '@/lib/review-flow';
 import { useSessionTask } from '@/lib/session-task';
 import { cn } from '@/lib/utils';
-import { FOCUS } from '@/shared/view/ui';
+import { buttonVariants } from '@/shared/view/ui';
 import { openSessionInSpace } from '@/stores/usePaneStore';
 import { REVIEW_PANE_ID, setReviewBarFocus, useReview } from '@/stores/useReviewStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
-const BUTTON = cn(
-  'flex min-h-(--target-comfortable) min-w-(--target-comfortable) items-center justify-center gap-1 rounded-full border border-border bg-card px-2.5 text-ui text-foreground transition-colors duration-(--duration-fast) hover:bg-muted disabled:opacity-60',
-  FOCUS,
-);
+const BUTTON = cn(buttonVariants({ variant: 'outline' }), 'min-w-(--target-comfortable) gap-1 px-2.5 text-ui font-normal');
 
 const NEEDS_YOU: readonly SessionMark[] = ['question', 'failed', 'waiting'];
 // Still waiting for an answer: Done drops it only on a second press.

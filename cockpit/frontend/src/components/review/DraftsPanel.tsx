@@ -4,12 +4,9 @@ import { Check, Save, Send, X } from 'lucide-react';
 import { SESSIONS_CHANGED_EVENT } from '@/lib/session-actions';
 import { decideDraft, listDrafts, saveDraft, type Draft } from '@/lib/drafts';
 import { cn } from '@/lib/utils';
-import { FIELD, FOCUS } from '@/shared/view/ui';
+import { buttonVariants, FIELD, FOCUS } from '@/shared/view/ui';
 
-const BUTTON = cn(
-  'flex min-h-(--target-min) items-center gap-1 rounded-full border border-border bg-card px-2.5 text-ui text-foreground transition-colors duration-(--duration-fast) hover:bg-muted disabled:opacity-60',
-  FOCUS,
-);
+const BUTTON = cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 px-2.5 font-normal');
 // A second click within this time sends: a draft goes out to someone outside.
 const CONFIRM_MS = 4_000;
 

@@ -11,6 +11,8 @@ import { FOCUS } from './styles';
  * sits in toolbars and rows; destructive only for what deletes or stops. Every size keeps the
  * 24px minimum target; icon buttons take an aria-label.
  */
+const OUTLINE = 'border border-border bg-card text-foreground hover:bg-muted';
+
 export const buttonVariants = cva(
   [
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium',
@@ -24,8 +26,8 @@ export const buttonVariants = cva(
       variant: {
         default: 'border border-primary bg-primary text-primary-foreground hover:opacity-90',
         destructive: 'border border-destructive bg-destructive text-destructive-foreground hover:opacity-90',
-        outline: 'border border-border bg-card text-foreground hover:bg-muted',
-        secondary: 'border border-border bg-card text-foreground hover:bg-muted',
+        outline: OUTLINE,
+        secondary: OUTLINE,
         ghost: 'text-muted-foreground hover:bg-muted hover:text-foreground',
         link: 'text-foreground underline underline-offset-2 hover:no-underline',
         glass: 'glass text-foreground hover:bg-card',
@@ -41,6 +43,10 @@ export const buttonVariants = cva(
     defaultVariants: { variant: 'default', size: 'default' },
   },
 );
+
+/** The button classes for elements that are not a <Button> (links, a form's own submit). */
+export const BUTTON = buttonVariants({ variant: 'outline' });
+export const PRIMARY = buttonVariants();
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   VariantProps<typeof buttonVariants> & {

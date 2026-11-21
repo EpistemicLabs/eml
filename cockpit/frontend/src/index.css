@@ -172,7 +172,7 @@ html.dark {
   --color-ring: #a78bfa;      /* purple */
 }
 
-/* Tokens v2: the mockup v4 look (monochrome glass, Schibsted Grotesk; code in the monospace).
+/* Tokens v2: monochrome glass, Schibsted Grotesk; code in the monospace.
    It applies inside [data-ui="v2"], which <html> carries (index.html), so the whole cockpit is on
    v2. The kit's overlays also carry it on their own portal root, so they render the same in tests. */
 :root {
@@ -235,7 +235,7 @@ html.dark {
   --glass-blur: 24px;
   --glass-blur-thick: 32px;
   --glass-saturate: 180%;
-  /* Area tokens (one block per area, added while it moves onto v2). */
+  /* Area tokens: one block per area. */
   /* area: sidebar */
   /* The sidebar: pinned open, as the rail, and as the phone's drawer (at most 85% of the screen). */
   --size-sidebar: 17rem;
@@ -477,7 +477,7 @@ html.dark {
   /* area: chat and terminal */
   --diff-added: #34d399;
   --diff-removed: #ff6961;
-  /* The ANSI colours of VS Code's default (Dark+) terminal (MIT licence, see NOTICE): vivid, for a black ground. */
+  /* Based on VS Code's default dark terminal colours (MIT licence, see NOTICE), bright white pure white: vivid, for a black ground. */
   --term-ansi-black: #000000;
   --term-ansi-red: #cd3131;
   --term-ansi-green: #0dbc79;
