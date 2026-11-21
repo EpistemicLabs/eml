@@ -1,4 +1,4 @@
-// A window (90vh, max-w-4xl) with the sections in a sidebar beside the open one; on a phone a
+// A window (90vh, max-w-settings) with the sections in a sidebar beside the open one; on a phone a
 // full-screen sheet that shows the sections first and opens one with a back button (a navigation
 // stack). Header with title, "saved" flash and close. The kit's Dialog closes it on Escape or a click
 // beside it and keeps the focus inside while it is open.
@@ -50,7 +50,7 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
         aria-labelledby="settings-title"
         data-phone-view={showSection ? 'section' : 'list'}
         className={cn(
-          'flex h-(--size-settings) max-w-4xl flex-col overflow-hidden',
+          'flex h-(--size-settings) max-w-settings flex-col overflow-hidden',
           // Phone: a full-screen sheet clear of the notch and the home indicator.
           'max-md:top-0 max-md:left-0 max-md:h-full max-md:max-w-none max-md:transform-none max-md:animate-fade-in max-md:rounded-none max-md:border-0',
           'max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]',
@@ -92,7 +92,7 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
           <main className={cn('flex-1 overflow-y-auto', !showSection && 'max-md:hidden')}>
             <div key={activeTab} className="animate-fade-in space-y-8 p-6 max-md:p-4">
               {/* On a phone the bar above already names the section. */}
-              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <div className="max-md:hidden"><SettingsHeading tab={activeMeta} /></div>}
+              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && activeTab !== 'plugins' && <div className="max-md:hidden"><SettingsHeading tab={activeMeta} /></div>}
 
               {activeTab === 'account' && <AccountTab />}
 
@@ -115,7 +115,7 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
 
               {activeTab === 'data' && <DataTab tab={activeMeta} />}
 
-              {activeTab === 'plugins' && <PluginsTab />}
+              {activeTab === 'plugins' && <PluginsTab tab={activeMeta} />}
             </div>
           </main>
         </div>

@@ -10,7 +10,7 @@ import { extendTailwindMerge } from 'tailwind-merge'
 const twMerge = extendTailwindMerge({
   extend: {
     theme: {
-      container: ['dialog', 'sheet', 'task-pane', 'board-col', 'board-col-slim', 'plan-table', 'measure', 'content'],
+      container: ['dialog', 'settings', 'sheet', 'task-pane', 'board-col', 'board-col-slim', 'plan-table', 'measure', 'content'],
       shadow: ['card', 'raised', 'glass', 'overlay', 'modal', 'sheet'],
     },
     classGroups: {

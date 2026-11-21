@@ -39,6 +39,7 @@ export interface TimeNames {
  *   GET    /api/plugins?space=                  → { plugins: [PluginView] }, enabled for that space
  *   PATCH  /api/plugins  { id, enabled, space?, connection? } → in one space, or every open one
  *   PATCH  /api/plugins/parts  { id, part, enabled } → a part off or on for every space
+ *   DELETE /api/plugins/import-notice           → the user has seen the notice about the imported servers
  *   GET    /api/plugins/outside                 → { servers: [{ name, kind, off: [space] }] }
  *   PATCH  /api/plugins/outside  { space, server, enabled } → a connector off or on in a space
  *   GET    /api/plugins/connections             → { connections: [{ id, plugin, label, secrets }] }
@@ -103,6 +104,8 @@ export interface PluginView {
   spaces: Record<string, string | null>
   /** Its parts switched off for every space. */
   partsOff: Array<'pane' | 'mcp' | 'channel'>
+  /** Made by the one-time import of the servers configured outside the plugins. */
+  imported: boolean
 }
 
 export function pluginView(manifest: PluginManifest, state: SpacePlugins, space: string | null): PluginView {
@@ -124,6 +127,7 @@ export function pluginView(manifest: PluginManifest, state: SpacePlugins, space:
     enabled,
     spaces,
     partsOff: state.partsOff[manifest.id] ?? [],
+    imported: state.imported.includes(manifest.id),
   }
 }
 
@@ -258,7 +262,15 @@ export async function handlePluginsApi(
       // A shell switched off everywhere ends with it, not only at its detach timeout.
       if (id === 'shell' && !body.enabled && !(await pluginStates(ctx)).shell) deps.endShells?.()
     } else if (method !== 'GET') return false
-    json(res, 200, { plugins: await pluginViews(ctx, space) })
+    const state = await ctx.store.spaces()
+    // The notice about the import, until the user has seen it: how many servers became plugins.
+    const importNotice = !state.importNoticeDone && state.imported.length > 0 ? { count: state.imported.length } : null
+    json(res, 200, { plugins: await pluginViews(ctx, space), importNotice })
+    return true
+  }
+  if (pathname === '/api/plugins/import-notice' && method === 'DELETE') {
+    await ctx.store.updateSpaces((state) => ({ ...state, importNoticeDone: true }))
+    json(res, 200, { importNotice: null })
     return true
   }
   if (pathname === '/api/plugins/parts' && method === 'PATCH') {

@@ -48,3 +48,8 @@ export function trustNote(tier: PluginTier): string {
     case 'dev': return 'Local dev mode: every part runs, unchecked.';
   }
 }
+
+/** It needs one of the user's sign-ins to work: a sign-in kind, or a secret setting. */
+export function needsSignIn(plugin: PluginView): boolean {
+  return !!plugin.auth || !!plugin.mcp?.settings.some((s) => s.secret);
+}

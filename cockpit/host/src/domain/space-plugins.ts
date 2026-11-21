@@ -25,10 +25,13 @@ export const spacePluginsSchema = z.object({
   partsOff: z.record(z.string(), z.array(z.enum(PART_KINDS))).default({}),
   /** One-time steps already taken (the switches carried over, the imports), so none runs twice. */
   done: z.array(z.string()).default([]),
+  /** The plugins the one-time import made, and whether the user has seen the notice about them. */
+  imported: z.array(z.string()).default([]),
+  importNoticeDone: z.boolean().default(false),
 })
 export type SpacePlugins = z.infer<typeof spacePluginsSchema>
 
-export const emptySpacePlugins = (): SpacePlugins => ({ version: 1, spaces: {}, partsOff: {}, done: [] })
+export const emptySpacePlugins = (): SpacePlugins => ({ version: 1, spaces: {}, partsOff: {}, done: [], imported: [], importNoticeDone: false })
 
 /** A sign-in or a set of secrets the user keeps once, for every space that picks it. */
 export const connectionSchema = z.object({

@@ -99,6 +99,8 @@
   }
 
   --container-dialog: 32rem;
+  /* The settings window: wide enough for a table of plugins across several spaces. */
+  --container-settings: 72rem;
   --container-sheet: 75rem;
   --container-task-pane: 27rem;
   --container-board-col: 14rem;
@@ -370,6 +372,10 @@ html.dark {
   --syntax-property: #4b5a8a;
   /* The Time view: a day with any time still shows a sliver of a bar. */
   --size-time-bar-min: 2px;
+  /* Settings › Plugins: an installed plugin's row (icon, name, sign-ins, spaces, chevron), and the
+     plugin page's panels side by side where they fit, one under the other where not. */
+  --grid-plugin-row: auto minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  --grid-plugin-panels: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
   /* area: app shell */
   /* The gap above the top bar, under the status bar on a phone. */
   --pad-shell-top: 6px;

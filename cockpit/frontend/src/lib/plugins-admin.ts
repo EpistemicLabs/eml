@@ -21,6 +21,8 @@ export interface PluginView {
   /** Space id → the connection it uses there (null: none), for every space it is on in. */
   spaces: Record<string, string | null>;
   partsOff: PluginPart[];
+  /** Made by the one-time import of the servers configured outside the plugins. */
+  imported: boolean;
 }
 
 export interface ConnectionView {
@@ -49,8 +51,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 const send = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
+/** The plugins, and the notice about the imported servers until the user has seen it. */
 export function usePluginList() {
-  return useQuery({ queryKey: [...adminKey, 'list'], queryFn: () => request<{ plugins: PluginView[] }>('/api/plugins').then((b) => b.plugins) });
+  return useQuery({
+    queryKey: [...adminKey, 'list'],
+    queryFn: () => request<{ plugins: PluginView[]; importNotice?: { count: number } | null }>('/api/plugins')
+      .then((b) => ({ plugins: b.plugins, importNotice: b.importNotice ?? null })),
+  });
+}
+
+export function useDismissImportNotice() {
+  return useChange(() => request('/api/plugins/import-notice', { method: 'DELETE' }));
 }
 
 /** Connections are managed on this machine only: elsewhere the host answers 403 and the list stays empty. */
