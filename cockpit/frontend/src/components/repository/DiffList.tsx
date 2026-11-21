@@ -5,13 +5,15 @@ import { useMemo, useState } from 'react';
 import { ChevronRight, FileText, Loader2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 
 import { usePatch, type FileChange, type Scope, type Where } from './api';
 import { highlightLines, useLanguage, type Token } from './highlight';
 
-export const ADDED = 'var(--color-success)';
-export const REMOVED = 'var(--color-primary)';
-export const CHANGED = 'var(--color-review)';
+// Added and removed keep a code editor's green and red (as the chat's diffs); any other change is grey.
+export const ADDED = 'var(--diff-added)';
+export const REMOVED = 'var(--diff-removed)';
+export const CHANGED = 'var(--color-review-ink)';
 
 /** A file's patch opens by itself up to this many changed lines, for the first files of a list. */
 const OPEN_LINES = 80;
@@ -55,9 +57,9 @@ export function Totals({ files }: { files: FileChange[] }) {
   const added = files.reduce((sum, f) => sum + (f.additions ?? 0), 0);
   const removed = files.reduce((sum, f) => sum + (f.deletions ?? 0), 0);
   return (
-    <span className="flex items-center gap-1.5 font-mono text-caption tabular-nums">
-      <span style={{ color: ADDED }}>+{added}</span>
-      <span style={{ color: REMOVED }}>−{removed}</span>
+    <span className="flex items-center gap-1.5 font-code text-caption tabular-nums">
+      <span className="text-(--diff-added)">+{added}</span>
+      <span className="text-(--diff-removed)">−{removed}</span>
     </span>
   );
 }
@@ -76,31 +78,31 @@ function FileDiff({ where, scope, file, openAtFirst, onOpenFile }: {
   const slash = file.path.lastIndexOf('/');
 
   return (
-    <div className="overflow-hidden rounded-lg border border-foreground/8 bg-foreground/[0.03]">
-      <div className="group/file flex min-w-0 items-center gap-2 px-2 py-1.5">
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="group/file flex min-w-0 items-center gap-2 px-2 py-1">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className={cn('flex min-h-(--target-min) min-w-0 flex-1 items-center gap-2 rounded-md text-left', FOCUS)}
         >
-          <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
-          <span className="w-3 flex-shrink-0 text-center font-mono text-xs font-semibold" style={{ color: status.color }} title={status.word}>
+          <ChevronRight className={cn('size-3.5 flex-shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90')} />
+          <span className="w-3 flex-shrink-0 text-center font-code text-ui font-semibold" style={{ color: status.color }} title={status.word}>
             {file.status === '?' ? 'U' : file.status}
           </span>
-          <span className="min-w-0 truncate font-mono text-xs" title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+          <span className="min-w-0 truncate font-code text-ui" title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
             {file.oldPath && <span className="text-muted-foreground">{file.oldPath} → </span>}
             <span className="text-muted-foreground">{file.path.slice(0, slash + 1)}</span>
             <span className="font-medium text-foreground">{file.path.slice(slash + 1)}</span>
           </span>
         </button>
-        <span className="flex flex-shrink-0 items-center gap-1.5 font-mono text-caption tabular-nums">
+        <span className="flex flex-shrink-0 items-center gap-1.5 font-code text-caption tabular-nums">
           {file.additions === null ? (
             <span className="text-muted-foreground">binary</span>
           ) : (
             <>
-              <span style={{ color: ADDED }}>+{file.additions}</span>
-              <span style={{ color: REMOVED }}>−{file.deletions ?? 0}</span>
+              <span className="text-(--diff-added)">+{file.additions}</span>
+              <span className="text-(--diff-removed)">−{file.deletions ?? 0}</span>
             </>
           )}
         </span>
@@ -110,14 +112,14 @@ function FileDiff({ where, scope, file, openAtFirst, onOpenFile }: {
             onClick={() => onOpenFile(file.path)}
             title="Show the whole file"
             aria-label="Show the whole file"
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+            className={cn('flex size-(--target-min) flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground', FOCUS)}
           >
-            <FileText className="h-3 w-3" />
+            <FileText className="size-3.5" />
           </button>
         )}
       </div>
       {open && (
-        <div className="border-t border-foreground/8">
+        <div className="border-t border-border">
           {patch.isPending ? (
             <Note><Loader2 className="h-3.5 w-3.5 animate-spin" /></Note>
           ) : patch.isError ? (
@@ -125,7 +127,7 @@ function FileDiff({ where, scope, file, openAtFirst, onOpenFile }: {
           ) : patch.data.secret ? (
             <Note>
               This file looks like it holds secrets.{' '}
-              <button type="button" onClick={() => setReveal(true)} className="text-primary hover:underline">Show its changes</button>
+              <button type="button" onClick={() => setReveal(true)} className={cn('rounded-sm text-foreground underline underline-offset-2 hover:no-underline', FOCUS)}>Show its changes</button>
             </Note>
           ) : patch.data.tooLarge ? (
             <Note>Too large to show.</Note>
@@ -196,31 +198,26 @@ export function PatchLines({ patch, fileName, truncated }: { patch: string; file
     return <Note>{/^Binary/m.test(patch) ? 'Binary file — no lines to show.' : 'No changes to the content (renamed or mode changed).'}</Note>;
   }
   return (
-    <div className="repo-code overflow-x-auto font-mono text-[12px] leading-[18px]">
+    <div className="repo-code overflow-x-auto font-code text-ui leading-(--leading-code)">
       <table className="w-full border-collapse">
         <tbody>
           {lines.map((line, i) =>
             line.kind === 'hunk' ? (
-              <tr key={i} className="bg-foreground/[0.04] text-muted-foreground">
-                <td colSpan={3} className="px-2 py-0.5 text-[11px]">
-                  <span className="opacity-60">⋯</span> {line.text}
+              <tr key={i} className="bg-muted text-muted-foreground">
+                <td colSpan={3} className="px-2 py-0.5 text-caption">
+                  <span>⋯</span> {line.text}
                 </td>
               </tr>
             ) : (
               <tr
                 key={i}
-                style={{
-                  background:
-                    line.kind === 'added' ? `color-mix(in srgb, ${ADDED} 12%, transparent)`
-                      : line.kind === 'removed' ? `color-mix(in srgb, ${REMOVED} 12%, transparent)` : undefined,
-                }}
+                className={line.kind === 'added' ? 'bg-(--diff-added)/12' : line.kind === 'removed' ? 'bg-(--diff-removed)/12' : undefined}
               >
-                <td className="w-px select-none whitespace-nowrap px-1.5 text-right align-top text-muted-foreground/70 tabular-nums">{line.oldNo ?? ''}</td>
-                <td className="w-px select-none whitespace-nowrap px-1.5 text-right align-top text-muted-foreground/70 tabular-nums">{line.newNo ?? ''}</td>
+                <td className="w-px select-none whitespace-nowrap px-1.5 text-right align-top text-muted-foreground tabular-nums">{line.oldNo ?? ''}</td>
+                <td className="w-px select-none whitespace-nowrap px-1.5 text-right align-top text-muted-foreground tabular-nums">{line.newNo ?? ''}</td>
                 <td className="whitespace-pre pr-3 align-top">
                   <span
-                    className="inline-block w-4 select-none text-center"
-                    style={{ color: line.kind === 'added' ? ADDED : line.kind === 'removed' ? REMOVED : undefined }}
+                    className={cn('inline-block w-4 select-none text-center', line.kind === 'added' ? 'text-(--diff-added)' : line.kind === 'removed' && 'text-(--diff-removed)')}
                   >
                     {line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' '}
                   </span>

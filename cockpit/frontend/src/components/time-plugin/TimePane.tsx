@@ -10,6 +10,7 @@ import { Bot, ChevronRight, ListTodo, Loader2, Terminal } from 'lucide-react';
 
 import { BrainCard, SectionHeader } from '@/components/brain/ui';
 import { cn } from '@/lib/utils';
+import { FOCUS, TAB, TRACK } from '@/shared/view/ui';
 
 interface Split {
   user: number;
@@ -90,7 +91,7 @@ export function TimePane() {
 
   if (!time.data) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-body text-muted-foreground">
         {time.error ? time.error.message : <Loader2 className="h-4 w-4 animate-spin" />}
       </div>
     );
@@ -110,19 +111,19 @@ export function TimePane() {
         <BrainCard className="p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-xs text-muted-foreground">{range === 'today' ? 'Today at the cockpit' : `Last ${DAYS} days at the cockpit`}</div>
-              <div className="mt-1 text-3xl font-semibold tabular-nums">{formatSeconds(shown.user)}</div>
-              <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="text-ui text-muted-foreground">{range === 'today' ? 'Today at the cockpit' : `Last ${DAYS} days at the cockpit`}</div>
+              <div className="mt-1 text-display font-semibold tracking-title tabular-nums">{formatSeconds(shown.user)}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-ui text-muted-foreground">
                 <Bot className="h-3.5 w-3.5" /> Agents ran {formatSeconds(agentTotal)}
               </div>
             </div>
-            <div className="flex rounded-md bg-foreground/10 p-0.5 text-xs">
+            <div className={cn(TRACK, 'bg-muted')}>
               {(['today', 'week'] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setRange(value)}
-                  className={cn('rounded px-2 py-1', range === value ? 'bg-foreground/20 text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  className={cn(TAB, range === value && 'bg-card text-foreground shadow-(--shadow-pill)')}
                 >
                   {value === 'today' ? 'Today' : `${DAYS} days`}
                 </button>
@@ -133,13 +134,13 @@ export function TimePane() {
         </BrainCard>
 
         {spaces.length === 0 && (
-          <BrainCard className="p-3 text-sm text-muted-foreground">Nothing counted yet. The clock runs while you work in the cockpit.</BrainCard>
+          <BrainCard className="p-3 text-body text-muted-foreground">Nothing counted yet. The clock runs while you work in the cockpit.</BrainCard>
         )}
         {spaces.map((space) => (
           <BrainCard key={space.spaceId} className="p-3">
             <SectionHeader
               title={spaces.length > 1 ? names.spaces[space.spaceId] ?? 'Space' : 'Projects'}
-              right={<span className="flex gap-4 text-[11px] text-muted-foreground"><span className="w-16 text-right">You</span><span className="w-16 text-right">Agents</span></span>}
+              right={<span className="flex gap-4 text-caption text-muted-foreground"><span className="w-16 text-right">You</span><span className="w-16 text-right">Agents</span></span>}
               className="mb-1.5"
             />
             {space.rows.map(([key, split]) => (
@@ -165,9 +166,9 @@ function WeekBars({ days }: { days: DayTime[] }) {
       {days.map((day) => (
         <div key={day.date} className="flex flex-1 flex-col items-center gap-1" title={`${day.date}: ${formatSeconds(day.user)}`}>
           <div className="flex w-full flex-1 items-end">
-            <div className="w-full rounded-sm bg-primary/70" style={{ height: `${(day.user / max) * 100}%`, minHeight: day.user > 0 ? 2 : 0 }} />
+            <div className="w-full rounded-sm bg-mark" style={{ height: `${(day.user / max) * 100}%`, minHeight: day.user > 0 ? 'var(--size-time-bar-min)' : 0 }} />
           </div>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-caption text-muted-foreground">
             {new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short' })}
           </div>
         </div>
@@ -178,7 +179,7 @@ function WeekBars({ days }: { days: DayTime[] }) {
 
 function Figures({ split }: { split: Split }) {
   return (
-    <span className="flex shrink-0 gap-4 text-sm tabular-nums">
+    <span className="flex shrink-0 gap-4 text-body tabular-nums">
       <span className="w-16 text-right">{formatSeconds(split.user)}</span>
       <span className="w-16 text-right text-muted-foreground">{formatSeconds(split.agent)}</span>
     </span>
@@ -202,10 +203,10 @@ function ProjectRow({ name, split, day, names }: {
         type="button"
         disabled={!hasDetail}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left hover:bg-foreground/5 disabled:hover:bg-transparent"
+        className={cn('flex min-h-(--target-min) w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors duration-(--duration-fast) hover:bg-muted disabled:hover:bg-transparent', FOCUS)}
       >
-        <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90', !hasDetail && 'invisible')} />
-        <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
+        <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--duration-fast)', open && 'rotate-90', !hasDetail && 'invisible')} />
+        <span className="min-w-0 flex-1 truncate text-body">{name}</span>
         <Figures split={split} />
       </button>
       {open && (
@@ -224,7 +225,7 @@ function DetailRow({ icon: Icon, label, split }: { icon: typeof Terminal; label:
   return (
     <div className="flex items-center gap-2 px-1 py-1 text-muted-foreground">
       <Icon className="h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-body">{label}</span>
       <Figures split={split} />
     </div>
   );

@@ -357,6 +357,19 @@ html.dark {
   --relation-related_to: #64748b;
   --relation-blocks: #be123c;
   --relation-part_of: #0f766e;
+  /* area: repository and plugins */
+  /* The repository view's code: its line height (diffs and the file view), and the Files tab's tree beside the open file. */
+  --leading-code: 18px;
+  --grid-repo-files: minmax(200px, 280px) 1fr;
+  /* Syntax colours (classHighlighter's tok-* classes in repository.css), each at 4.5:1 on the card and on a diff line's tint. */
+  --syntax-keyword: #9b2393;
+  --syntax-string: #116b5f;
+  --syntax-number: #3a2fc4;
+  --syntax-definition: #0058c7;
+  --syntax-type: #0b6378;
+  --syntax-property: #4b5a8a;
+  /* The Time view: a day with any time still shows a sliver of a bar. */
+  --size-time-bar-min: 2px;
   /* area: app shell */
   /* The gap above the top bar, under the status bar on a phone. */
   --pad-shell-top: 6px;
@@ -440,6 +453,13 @@ html.dark {
   --relation-related_to: #94a3b8;
   --relation-blocks: #e11d48;
   --relation-part_of: #2fb5a5;
+  /* area: repository and plugins */
+  --syntax-keyword: #ff7ab2;
+  --syntax-string: #5fd3bc;
+  --syntax-number: #a59bff;
+  --syntax-definition: #6cb6ff;
+  --syntax-type: #5dd8ff;
+  --syntax-property: #a8b8e8;
 }
 
 /* Glass only on the control layer: header, slide-over, dialog, toast, composer. The blur is
