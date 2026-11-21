@@ -419,6 +419,15 @@ space, with the sign-in it uses), Connectors (the claude.ai connectors per space
 opens on its own page with its parts, sign-ins, spaces and what its tier lets it do. Sign-ins and
 custom servers are managed on the cockpit's own machine only.
 
+**Gmail** (`plugins/gmail/`) has a channel part (the bridge's mailbox) and an MCP part (mail and
+calendar tools for the user's own sessions, `plugins/gmail/mcp`) on one Google sign-in. The cockpit
+signs in with the user's own OAuth "Desktop app" client (`host/src/infrastructure/plugins/google-sign-in.ts`,
+`<home>/plugins/google/`, owner-only): the client JSON once, then Google's consent page and the
+address the browser ended on pasted back — it needn't load, so this works over remote access too
+(`/api/plugins/google/*`). A space may use several Google accounts at once; each sign-in is its own
+MCP server (`gmail`, `gmail-<short name>`) and its own bridge account. An official plugin keeps its
+server names, so the gmail plugin's servers replace imported servers of the same name.
+
 **Per space** (`host/src/application/space-plugins.ts`, `<home>/plugins/spaces.json`): a plugin is on
 or off in each space, all or nothing; a part can be switched off for every space. A plugin with a
 sign-in uses one of the user's connections there (`<home>/plugins/connections.json`, owner-only:
