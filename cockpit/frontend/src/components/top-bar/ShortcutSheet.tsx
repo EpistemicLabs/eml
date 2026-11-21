@@ -1,6 +1,5 @@
 // The shortcut sheet (?): every shortcut from the one list, grouped.
-import { FOCUS } from '@/components/task-board/parts';
-import { Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
+import { Dialog, DialogContent, DialogTitle, FOCUS } from '@/shared/view/ui';
 
 import { SHORTCUTS, setShortcutSheet, useShortcutSheet, type Shortcut } from './shortcuts';
 

@@ -4,8 +4,9 @@ import { useState } from 'react';
 
 import { fyi, readable, when, type Board, type BoardTask, type InboxItem } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 
-import { Chip, FOCUS, LABEL, MINI, Who } from './parts';
+import { Who } from './parts';
 
 export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }

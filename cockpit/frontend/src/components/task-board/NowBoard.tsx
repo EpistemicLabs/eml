@@ -1,8 +1,9 @@
 // Now: every moving task by whose turn it is, starting with what needs the viewer.
-import { cardLine, columns, dueLabel, GROUP_META, HUE, readable, TURN_META, type Board, type BoardTask } from '@/lib/task-board';
+import { cardLine, columns, dueLabel, GROUP_META, readable, TURN_META, type Board, type BoardTask } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { Chip, Dot, Empty, FOCUS, HUE, LABEL } from '@/shared/view/ui';
 
-import { CardTime, Chip, Dot, Empty, FOCUS, LABEL, Who } from './parts';
+import { CardTime, Who } from './parts';
 
 export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: number; onOpen: (task: BoardTask) => void; movedId: string | null }) {
   const cols = columns(board.tasks);

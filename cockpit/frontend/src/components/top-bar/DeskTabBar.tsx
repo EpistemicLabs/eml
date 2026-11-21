@@ -6,7 +6,7 @@ import { Trash2 } from 'lucide-react';
 
 import { endPaneDrag, getDraggedPane } from '@/components/app/paneDrag';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
-import { FOCUS } from '@/components/task-board/parts';
+import { FOCUS } from '@/shared/view/ui';
 import { cn } from '@/lib/utils';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';

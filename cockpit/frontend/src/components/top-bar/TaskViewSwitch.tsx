@@ -1,6 +1,6 @@
 // The bar's right end: Inbox · Now · Plan as one tab switch. A tab shows as picked only while
 // the task view is open; the Inbox tab carries how many items wait for the viewer.
-import { FOCUS } from '@/components/task-board/parts';
+import { FOCUS } from '@/shared/view/ui';
 import { useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { useTaskView, type TaskView } from '@/stores/useTaskViewStore';

@@ -20,7 +20,7 @@ import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { InboxView, type InboxAction } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
 import { NowBoard } from './NowBoard';
-import { BUTTON, FOCUS, LABEL, PRIMARY } from './parts';
+import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 import { PlanView } from './PlanView';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 

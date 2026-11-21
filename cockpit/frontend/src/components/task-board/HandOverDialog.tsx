@@ -2,11 +2,9 @@
 // An open question is never dropped: the dialog says so, and the host carries it into the brief.
 import { useState } from 'react';
 
-import { Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
+import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 import { agentName, readable, snoozeTimes, type BoardTask, type HandOverInput, type HandOverMode } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-
-import { BUTTON, FOCUS, LABEL, PRIMARY } from './parts';
 
 type When = 'tomorrow' | 'monday' | 'pick';
 type Repeat = 'once' | 'weekdays' | 'mondays';
