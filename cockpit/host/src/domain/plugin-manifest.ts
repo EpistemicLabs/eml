@@ -24,9 +24,10 @@ export const pluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/, 'lower 
 /**
  * A value an MCP part passes to its server: written as it is, or a secret the
  * cockpit fills in from one of the user's connections when it writes the
- * space's MCP config (never stored in the manifest).
+ * space's MCP config (never stored in the manifest). An optional secret a
+ * connection lacks is passed as an empty value instead of leaving the server out.
  */
-export const configValueSchema = z.union([z.string(), z.strictObject({ secret: z.string().min(1).max(64) })])
+export const configValueSchema = z.union([z.string(), z.strictObject({ secret: z.string().min(1).max(64), optional: z.literal(true).optional() })])
 export type ConfigValue = z.infer<typeof configValueSchema>
 
 const envNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)

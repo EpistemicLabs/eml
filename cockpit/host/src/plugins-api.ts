@@ -386,8 +386,8 @@ export async function handlePluginsApi(
       const body = await readJson(req)
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin))) return badRequest('plugin is a plugin this cockpit knows')
       const id = `${body.plugin}-${randomUUID().slice(0, 8)}`
-      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), values: body.values ?? {} })
-      if (!parsed.success) return badRequest('label is a short text, values maps names to strings')
+      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), ...(body.parts ? { parts: body.parts } : {}), values: body.values ?? {} })
+      if (!parsed.success) return badRequest('label is a short text, values maps names to strings, parts lists pane, mcp or channel')
       await service.saveConnection(parsed.data)
       json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values) } })
       return true
