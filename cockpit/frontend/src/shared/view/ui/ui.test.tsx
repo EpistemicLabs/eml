@@ -86,4 +86,43 @@ describe('Dialog', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it('stays open on a click beside it when asked to, and still closes on Escape', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogContent aria-label="New project" dismissOnOutsideClick={false}><input aria-label="Name" /></DialogContent>
+      </Dialog>,
+    );
+    const scrim = screen.getByRole('dialog', { name: 'New project' }).previousElementSibling as HTMLElement;
+    fireEvent.click(scrim);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves Escape to a window stacked on top that holds the focus', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <>
+        <Dialog open onOpenChange={onOpenChange}>
+          <DialogContent aria-label="Wizard"><button type="button">Next</button></DialogContent>
+        </Dialog>
+        <div role="dialog" aria-label="Folder browser"><button type="button">Pick</button></div>
+      </>,
+    );
+    screen.getByRole('button', { name: 'Pick' }).focus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('leaves the focus on a field that took it itself', async () => {
+    render(
+      <Dialog open onOpenChange={() => {}}>
+        <DialogContent aria-label="Add project"><button type="button">Close</button><input aria-label="Name" autoFocus /></DialogContent>
+      </Dialog>,
+    );
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
 });

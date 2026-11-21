@@ -1,29 +1,31 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, EyeOff, Trash2 } from 'lucide-react';
 
 import ProjectCreationWizard from '@/components/project-creation-wizard';
-import { Button } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 import type { SidebarController } from '../../useSidebarController';
 
-function ConfirmShell({ title, body, footer }: { title: string; body: ReactNode; footer: ReactNode }) {
+/** A confirm prompt on the kit's Dialog: Escape or a click beside it cancels, never confirms. */
+function ConfirmShell({ title, body, footer, onCancel }: { title: string; body: ReactNode; footer: ReactNode; onCancel: () => void }) {
+  const titleId = useId();
   return (
-    <div data-ui="v2" className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
-      <div className="glass-thick w-full max-w-dialog overflow-hidden rounded-3xl shadow-modal">
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent role="alertdialog" aria-labelledby={titleId} className="overflow-hidden">
         <div className="p-6">
           <div className="flex items-start gap-4">
             <div className="flex size-12 flex-shrink-0 items-center justify-center rounded-full bg-muted">
               <AlertTriangle aria-hidden className="size-6 text-foreground" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="mb-2 text-title font-semibold text-foreground">{title}</h3>
+              <DialogTitle id={titleId} className="not-sr-only mb-2 text-title font-semibold text-foreground">{title}</DialogTitle>
               {body}
             </div>
           </div>
         </div>
         <div className="border-t border-border p-4">{footer}</div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -34,6 +36,7 @@ function RemoveProjectConfirm({ controller }: { controller: SidebarController })
   return (
     <ConfirmShell
       title="Remove folder from cockpit"
+      onCancel={controller.cancelProjectDelete}
       body={
         <>
           <p className="text-body text-muted-foreground">
@@ -77,6 +80,7 @@ function DeleteSessionConfirm({ controller }: { controller: SidebarController })
   return (
     <ConfirmShell
       title="Delete session"
+      onCancel={controller.cancelSessionDelete}
       body={
         <>
           <p className="text-body text-muted-foreground">

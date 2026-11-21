@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Brain, FolderPlus, X } from 'lucide-react';
 
-import { Button, HUE, Input, TAB, Textarea, TRACK } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, HUE, Input, TAB, Textarea, TRACK } from '@/shared/view/ui';
 import { brainGet, brainPost } from '@/lib/api';
 import { useWritable } from '@/stores/useTeamStore';
 import { cn } from '@/lib/utils';
@@ -131,14 +131,15 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
   };
 
   return (
-    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
-      <div className="glass-thick flex w-full max-w-dialog flex-col rounded-3xl shadow-modal">
+    // Escape closes it, a click beside it does not: that would throw away what was typed. Not while it creates.
+    <Dialog open onOpenChange={(open) => { if (!open && !isCreating) onClose(); }}>
+      <DialogContent aria-labelledby="add-project-title" dismissOnOutsideClick={false} className="flex flex-col">
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-3">
             <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
               {mode === 'brain' ? <Brain aria-hidden className="size-4 text-foreground" /> : <FolderPlus aria-hidden className="size-4 text-foreground" />}
             </div>
-            <h3 className="text-title font-semibold text-foreground">Add project</h3>
+            <DialogTitle id="add-project-title" className="not-sr-only text-title font-semibold text-foreground">Add project</DialogTitle>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X aria-hidden />
@@ -255,7 +256,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
             {mode === 'brain' ? 'Create project' : 'Add folder'}
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

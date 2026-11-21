@@ -1,11 +1,11 @@
 // Kept: backdrop + frosted window (90vh, max-w-4xl), header with title,
-// "saved" flash and close, sidebar + fading content, Escape to close.
+// "saved" flash and close, sidebar + fading content. The kit's Dialog closes it
+// on Escape or a click beside it and keeps the focus inside while it is open.
 // Trimmed: provider login modal, web-push wiring, the tabs the cockpit
 // has no substrate for (Data renders a placeholder until it does).
-import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
-import { Button } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 import SettingsSidebar from './SettingsSidebar';
 import PreferencesTab from './tabs/PreferencesTab';
 import AboutTab from './tabs/AboutTab';
@@ -31,20 +31,6 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
     setGreetOnStart,
   } = useSettingsController({ isOpen, initialTab });
 
-  // Escape closes — registered in the capture phase so a focused terminal
-  // underneath doesn't swallow it (same reason DeskTabBar's ⌘1–9 does).
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
-  }, [isOpen, onClose]);
-
   if (!isOpen) {
     return null;
   }
@@ -52,22 +38,14 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
   const activeMeta = SETTINGS_MAIN_TABS.find((tab) => tab.id === activeTab) ?? SETTINGS_MAIN_TABS[0];
 
   return (
-    <div
-      data-ui="v2"
-      className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        className="glass-thick flex h-(--size-settings) w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-modal"
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        aria-labelledby="settings-title"
+        className="flex h-(--size-settings) max-w-4xl flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-title font-semibold text-foreground">Settings</h2>
+          <DialogTitle id="settings-title" className="not-sr-only text-title font-semibold text-foreground">Settings</DialogTitle>
           <div className="flex items-center gap-2">
             {saveStatus === 'success' && (
               <span className="text-ui text-muted-foreground">Settings saved</span>
@@ -119,8 +97,8 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
             </div>
           </main>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

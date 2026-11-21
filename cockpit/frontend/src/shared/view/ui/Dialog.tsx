@@ -120,6 +120,8 @@ DialogTrigger.displayName = 'DialogTrigger';
 type DialogContentProps = React.HTMLAttributes<HTMLDivElement> & {
   onEscapeKeyDown?: () => void;
   onPointerDownOutside?: () => void;
+  /** False for a form whose typed input a stray click beside it must not throw away; Escape still closes. */
+  dismissOnOutsideClick?: boolean;
   size?: 'default' | 'fullscreen';
 };
 
@@ -134,7 +136,7 @@ const PANEL_CLASS: Record<NonNullable<DialogContentProps['size']>, string> = {
 
 export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
   function DialogContent(
-    { onEscapeKeyDown, onPointerDownOutside, size = 'default', className, children, ...rest },
+    { onEscapeKeyDown, onPointerDownOutside, dismissOnOutsideClick = true, size = 'default', className, children, ...rest },
     ref,
   ) {
     const { open, onOpenChange, triggerRef } = useDialog();
@@ -161,6 +163,10 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
       if (!open) return;
 
       const onKeyDown = (event: KeyboardEvent) => {
+        // Only while focus is in this panel (or nowhere): a window stacked on top handles its own keys.
+        const focused = document.activeElement;
+        const ours = !focused || focused === document.body || panelRef.current?.contains(focused);
+        if (!ours) return;
         if (event.key === 'Escape') {
           event.stopPropagation();
           onEscapeKeyDown?.();
@@ -191,13 +197,14 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
       };
     }, [open, onOpenChange, onEscapeKeyDown]);
 
-    // Initial focus: first focusable descendant, once the panel has painted.
+    // Initial focus, once the panel has painted: a field that took it itself (autoFocus) keeps it,
+    // else the element marked data-autofocus, else the first focusable one.
     React.useEffect(() => {
       if (!open || !panelRef.current) return;
       const frame = window.requestAnimationFrame(() => {
         const panel = panelRef.current;
-        if (!panel) return;
-        focusableWithin(panel)[0]?.focus();
+        if (!panel || panel.contains(document.activeElement)) return;
+        (panel.querySelector<HTMLElement>('[data-autofocus]') ?? focusableWithin(panel)[0])?.focus();
       });
       return () => window.cancelAnimationFrame(frame);
     }, [open]);
@@ -217,7 +224,7 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
           className="animate-dialog-overlay-show fixed inset-0 bg-(--scrim)"
           onClick={() => {
             onPointerDownOutside?.();
-            onOpenChange(false);
+            if (dismissOnOutsideClick) onOpenChange(false);
           }}
         />
         <div

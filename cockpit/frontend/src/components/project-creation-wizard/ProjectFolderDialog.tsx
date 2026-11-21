@@ -7,7 +7,7 @@ import { useCallback, useState } from 'react';
 import { FolderOpen, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { Button, HUE } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, HUE } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import type { Project } from '@/types/app';
 
@@ -59,15 +59,16 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
   };
 
   return (
-    <div data-ui="v2" className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
-      <div className="glass-thick flex w-full max-w-dialog flex-col rounded-3xl shadow-modal">
+    // Escape closes it, a click beside it does not: that would throw away the typed path. Not while it saves.
+    <Dialog open onOpenChange={(open) => { if (!open && !isSaving) onClose(); }}>
+      <DialogContent aria-labelledby="link-folder-title" dismissOnOutsideClick={false} className="flex flex-col">
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-3">
             <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
               <FolderOpen aria-hidden className="size-4 text-foreground" />
             </div>
             <div>
-              <h3 className="text-title font-semibold text-foreground">{project.fullPath && !isCockpitFolder ? 'Change folder' : 'Link folder'}</h3>
+              <DialogTitle id="link-folder-title" className="not-sr-only text-title font-semibold text-foreground">{project.fullPath && !isCockpitFolder ? 'Change folder' : 'Link folder'}</DialogTitle>
               <p className="text-ui text-muted-foreground">{project.displayName}</p>
             </div>
           </div>
@@ -108,7 +109,7 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
             Link folder
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
