@@ -251,6 +251,8 @@ html.dark {
   /* The folder browser opens over the add-project dialog, so it sits one layer above a dialog. */
   --z-modal-nested: calc(var(--z-modal) + 1);
   --size-folder-browser: 80vh;
+  /* A settings row keeps its control beside the label down to this label width, else the control wraps under it. */
+  --size-settings-label: 14rem;
   /* area: chat and terminal */
   /* The chat column: as wide as one of two panes side by side; a sent message takes at most 85% of it. */
   --size-chat-column: 980px;

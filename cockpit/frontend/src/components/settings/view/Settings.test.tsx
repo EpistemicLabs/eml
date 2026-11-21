@@ -33,4 +33,19 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('dialog', { name: 'Settings' }).previousElementSibling as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('on a phone opens on the list of sections and goes into one and back, like a navigation stack', () => {
+    render(<Settings isOpen onClose={() => {}} />);
+    const sheet = screen.getByRole('dialog', { name: 'Settings' });
+    expect(sheet.getAttribute('data-phone-view')).toBe('list');
+    fireEvent.click(screen.getByRole('button', { name: 'Data' }));
+    expect(sheet.getAttribute('data-phone-view')).toBe('section');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to all settings' }));
+    expect(sheet.getAttribute('data-phone-view')).toBe('list');
+  });
+
+  it('opened for a named tab shows that tab on a phone', () => {
+    render(<Settings isOpen onClose={() => {}} initialTab="about" />);
+    expect(screen.getByRole('dialog', { name: /Settings/ }).getAttribute('data-phone-view')).toBe('section');
+  });
 });

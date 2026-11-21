@@ -74,9 +74,10 @@ export function useProjectsState() {
   }, []);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState('account');
+  // No tab: Settings opens on its first tab (on a phone, on the list of sections).
+  const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
 
-  const openSettings = useCallback((tab: string = 'account') => {
+  const openSettings = useCallback((tab?: string) => {
     setSettingsInitialTab(tab);
     setShowSettings(true);
   }, []);
