@@ -2,7 +2,7 @@ import { tmpdir } from 'os'
 import * as path from 'path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { GoogleRefreshToken } from '@engramprotocol/plugin-gmail-channel'
+import { googleAccessTokens } from '@engramprotocol/plugin-gmail-channel'
 import { GoogleApi } from './google-api'
 import { Calendar, Mailbox } from './tools'
 
@@ -19,14 +19,15 @@ const answer = async (run: () => Promise<string>) => {
  * The gmail plugin's MCP server for one mailbox, for a person's own sessions (decision
  * gmail-plugin-mcp-scope-and-sign-in): mail and calendar on the user's Google sign-in. A job's
  * session never gets it; jobs send through the channel bridge. The cockpit sets GMAIL_ADDRESS and
- * the sign-in's files from the connection a space picked.
+ * the sign-in's files from the connection a space picked: an OAuth client with its token file, or a
+ * Workspace service-account key that acts as the mailbox.
  */
 export function createGmailServer(env: NodeJS.ProcessEnv, api?: GoogleApi): McpServer {
   const address = env.GMAIL_ADDRESS
   const credentialsFile = env.GOOGLE_CREDENTIALS_FILE
   const tokenFile = env.GOOGLE_TOKEN_FILE
-  if (!address || ((!credentialsFile || !tokenFile) && !api)) throw new Error('GMAIL_ADDRESS, GOOGLE_CREDENTIALS_FILE and GOOGLE_TOKEN_FILE must be set')
-  const google = api ?? new GoogleApi(new GoogleRefreshToken({ credentialsFile: credentialsFile as string, tokenFile: tokenFile as string }))
+  if (!address || (!credentialsFile && !api)) throw new Error('GMAIL_ADDRESS and GOOGLE_CREDENTIALS_FILE must be set (GOOGLE_TOKEN_FILE too for an OAuth sign-in)')
+  const google = api ?? new GoogleApi(googleAccessTokens({ credentialsFile: credentialsFile as string, tokenFile: tokenFile || undefined, address }))
   const mailbox = new Mailbox({ api: google, address, attachmentsDir: env.GMAIL_ATTACHMENTS_DIR || path.join(tmpdir(), 'eml-gmail-attachments') })
   const calendar = new Calendar(google)
   const server = new McpServer({ name: 'eml-gmail', version: '0.1.0' })
