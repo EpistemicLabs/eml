@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // The review screen's bar holds the keyboard: D, A, E, X, R and Esc act on it alone,
 // a key never lands in an input by itself, and Esc does not reach the session
@@ -43,7 +44,7 @@ describe('the review screen', () => {
   const open = (current: AllSession) => {
     sessions = [current, { ...result, id: 'b' }];
     act(() => setReview({ queue: [current.id, 'b'], index: 0, seen: {} }));
-    render(<ReviewScreen />);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ReviewScreen /></QueryClientProvider>);
   };
 
   it('takes the focus, and D, A and E act on it', () => {

@@ -13,11 +13,10 @@ import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
 import React, { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
-import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
 import { WorktreesPane } from '../../worktrees/WorktreesPane';
-import { ChatPane } from '../../chat/ChatPane';
+import { SessionChat } from '../../ui/session-chat';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
@@ -26,7 +25,6 @@ import { cn } from '@/lib/utils';
 import { useViewEnabled } from '@/lib/pane-views';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
-import TerminalStatusBar from './subcomponents/TerminalStatusBar';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
@@ -121,7 +119,7 @@ function MainContent({
             <MainContentTabSwitcher paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} isMainPane={isMainPane} onToggleMainPane={onToggleMainPane} />
           </div>
         )}
-        <MainContentStateView mode="empty" />
+        <MainContentStateView mode="empty" paneId={paneId} />
       </div>
     );
   }
@@ -168,22 +166,19 @@ function MainContent({
           style={compact && paneView !== 'chat' ? { paddingTop: 'calc(env(safe-area-inset-top) + 52px)', paddingBottom: 'calc(var(--bottom-inset, 0px) + 4px)' } : undefined}
         >
           <ErrorBoundary showDetails>
-            {paneView === 'terminal' ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="min-h-0 flex-1">
-                  <StandaloneShell
-                    paneId={paneId}
-                    projectId={selectedProject?.projectId ?? null}
-                    sessionId={sessionId}
-                    sessionTitle={(selectedSession?.summary as string | undefined) || paneLabel || null}
-                    command={initialShellCommand}
-                    isActive={isActive}
-                  />
-                </div>
-                <TerminalStatusBar session={selectedSession} />
-              </div>
-            ) : paneView === 'chat' && selectedProject && sessionId ? (
-              <ChatPane paneId={paneId} projectId={selectedProject.projectId} sessionId={sessionId} session={selectedSession} whenIdle={chatDefault} isActive={isActive} />
+            {paneView === 'terminal' || (paneView === 'chat' && selectedProject && sessionId) ? (
+              <SessionChat
+                paneId={paneId}
+                projectId={selectedProject?.projectId ?? null}
+                sessionId={sessionId}
+                session={selectedSession}
+                view={paneView}
+                onView={onSetPaneView}
+                isActive={isActive}
+                whenIdle={chatDefault}
+                command={initialShellCommand}
+                title={(selectedSession?.summary as string | undefined) || paneLabel || null}
+              />
             ) : paneView === 'note' ? (
               <NotePane paneId={paneId} project={selectedProject} noteId={noteId} />
             ) : paneView === 'worktrees' ? (

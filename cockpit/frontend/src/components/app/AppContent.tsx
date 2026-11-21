@@ -16,7 +16,7 @@ import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import { ReviewScreen } from '../review/ReviewScreen';
 import JobsView from '../jobs/JobsView';
-import HeaderJobs from '../jobs/HeaderJobs';
+import { TaskBoard } from '../task-board/TaskBoard';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
@@ -38,7 +38,11 @@ import { useNotesLiveSync } from '@/lib/notes';
 import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
-import DeskTabBar from './DeskTabBar';
+import DeskTabBar from '../top-bar/DeskTabBar';
+import { TaskViewSwitch } from '../top-bar/TaskViewSwitch';
+import { ShortcutSheet } from '../top-bar/ShortcutSheet';
+import { useCockpitShortcuts } from '../top-bar/useCockpitShortcuts';
+import { setLauncherProjects } from '../session-launcher/launcher-projects';
 import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
@@ -91,6 +95,11 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
+  // The empty panes' launcher offers the open space's projects.
+  useEffect(() => { setLauncherProjects(projects); }, [projects]);
+  // ⌘. Inbox, ⌘, Settings, G then I / N / P, ? (top-bar/shortcuts.ts lists them all).
+  const openSettingsDefault = useCallback(() => openSettings(), [openSettings]);
+  useCockpitShortcuts(openSettingsDefault);
 
   // Scheduled jobs read their times on the user's clock, not the server's: tell the host this browser's zone.
   useEffect(() => {
@@ -102,7 +111,7 @@ function AppContentInner() {
   const topView = useTopView();
   // The phone has no way back from the Brain tab or Jobs, so it stays on the desks.
   useEffect(() => {
-    if (compact && (topView === 'brain' || topView === 'jobs')) setTopView('desks');
+    if (compact && (topView === 'brain' || topView === 'jobs' || topView === 'tasks')) setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
@@ -166,8 +175,8 @@ function AppContentInner() {
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
-        // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
-        if ((request.fromSessionId || request.origin === 'job') && !request.open) continue;
+        // A session's worker, a job's run and a background task run stay on the host and show in the sidebar, unless they asked for a pane.
+        if ((request.fromSessionId || request.origin === 'job' || request.origin === 'runner') && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };
@@ -319,45 +328,38 @@ function AppContentInner() {
       className="fixed inset-x-0 top-0 flex flex-col bg-background"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
     >
-      {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
-          The sidebar rail and the pane grid start below it, top-aligned. */}
+      {/* The top bar (top bar v2, tokens v2): the logo (opens Settings › About), every space with
+          its desks, and Inbox · Now · Plan at the right. The sidebar rail and the pane grid start below it. */}
       {!compact && (
-      <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-sm box-content">
-        {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
-        <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[18px] font-semibold tracking-wide text-primary">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
-            <Brain className="h-4 w-4 text-primary-foreground" />
+      <div className="flex-shrink-0 px-2 pt-[calc(env(safe-area-inset-top)+0.375rem)]">
+      <header data-ui="v2" aria-label="Cockpit" className="glass flex h-(--size-bar) items-center gap-1 rounded-(--radius-bar) pr-(--pad-bar-end) pl-2">
+        <button
+          type="button"
+          onClick={() => openSettings('about')}
+          aria-label={about ? `EML Cockpit ${about.version}: about` : 'EML Cockpit: about'}
+          title={about ? `EML Cockpit ${about.version}` : 'EML Cockpit'}
+          className="grid size-(--size-logo) flex-shrink-0 place-items-center rounded-lg text-foreground hover:bg-foreground/8 focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring"
+        >
+          <Brain className="size-4" strokeWidth={1.8} aria-hidden />
+        </button>
+        {about?.runMode === 'dev' && (
+          <span
+            className="flex-shrink-0 rounded border border-status-you/40 bg-status-you/12 px-1.5 text-caption font-semibold text-you-ink"
+            title={`Development cockpit (${about.version}), not your production cockpit`}
+          >
+            DEV
           </span>
-          EML COCKPIT
-          {about && (
-            <button
-              type="button"
-              onClick={() => openSettings('about')}
-              title="About EML Cockpit"
-              className="font-mono text-[11px] font-normal tracking-normal text-muted-foreground/70 transition-colors hover:text-foreground"
-            >
-              v{about.version}
-            </button>
-          )}
-          {about?.runMode === 'dev' && (
-            <span
-              className="rounded border border-warning/50 bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-warning"
-              title={`Development cockpit (v${about.version}) — not your production cockpit`}
-            >
-              DEV
-            </span>
-          )}
-        </div>
-        {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        {/* Many spaces scroll sideways; the mouse wheel scrolls it too. */}
+        )}
+        <span aria-hidden className="mx-1 h-5 w-px flex-shrink-0 bg-(--glass-line)" />
+        {/* Every space with all its desks; many spaces scroll sideways, the mouse wheel scrolls it too. */}
         <div
-          className="scrollbar-hide min-w-0 flex-1 overflow-x-auto"
+          className="scrollbar-hide flex h-full min-w-0 flex-1 items-center overflow-x-auto"
           onWheel={(e) => { if (e.deltaY !== 0 && e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY; }}
         >
           <DeskTabBar />
         </div>
-        {/* Scheduled jobs and what the cockpit tells the user about them. */}
-        <HeaderJobs />
+        <TaskViewSwitch />
+      </header>
       </div>
       )}
 
@@ -413,6 +415,11 @@ function AppContentInner() {
           {topView === 'jobs' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
               <JobsView />
+            </div>
+          )}
+          {topView === 'tasks' && (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+              <TaskBoard />
             </div>
           )}
           {/* The review screen lies over the desks the same way: they stay as they are. */}
@@ -472,6 +479,7 @@ function AppContentInner() {
       />
 
       <FirstRunSignIn />
+      <ShortcutSheet />
 
       <CommandPalette
         projects={projects}

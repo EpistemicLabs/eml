@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
+import { GREETING_PROMPT } from '../src/session-greeting.js'
 import { ChatBridge, IDLE_STOP, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
@@ -62,7 +63,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: (id: string, text: string) => void } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -96,7 +97,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
         if (patch.model) entry.chatModel = patch.model
       },
       bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
-      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false }); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
+      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, _task?: unknown, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false, ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
       setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
       touch: () => {},
@@ -113,6 +114,8 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: string) => turns.push([id, state]),
     terminalBusy: opts.busy,
+    handoffBeforeStop: opts.handoffBeforeStop,
+    turnDone: opts.turnDone,
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -135,6 +138,44 @@ function connect(bridge: ChatBridge, init: object = {}): FakeSocket {
 
 describe('ChatBridge', () => {
   beforeEach(() => { vi.useRealTimers() })
+
+  it('opens a plain new chat with the greeting when it is on, as in the terminal, and records it', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    connect(bridge, { readOnly: true, greet: true })
+    await flush()
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].sent).toEqual([GREETING_PROMPT])
+    expect(ledgerEntries.get('s1')).toMatchObject({ greeted: true })
+    // Told to name itself once by the greeting, not again with every prompt.
+    expect(runtimes[0].start.worker?.onPrompt?.() ?? null).toBeNull()
+  })
+
+  it('starts a new chat from the launcher with its own first message and model, without the greeting', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Verapur reply', model: 'opus' })
+    await flush()
+    expect(runtimes[0].sent).toEqual(['Check the Verapur reply'])
+    expect(runtimes[0].start.model).toBe('opus')
+    expect(ledgerEntries.get('s1')).not.toMatchObject({ greeted: true })
+
+    // A known session takes neither: reopening it never sends anything.
+    const known = setup({ runtimeOf: 'sdk', transcript: true })
+    connect(known.bridge, { readOnly: true, prompt: 'again', model: 'opus' })
+    await flush()
+    expect(known.runtimes.flatMap((r) => r.sent)).toEqual([])
+  })
+
+  it('greets no chat when the greeting is off, nor one the ledger knows (a resume or a worker)', async () => {
+    const off = setup()
+    connect(off.bridge, { readOnly: true, greet: false })
+    await flush()
+    expect(off.runtimes).toHaveLength(0)
+
+    const known = setup({ runtimeOf: 'sdk', transcript: true })
+    connect(known.bridge, { readOnly: true, greet: true })
+    await flush()
+    expect(known.runtimes.flatMap((r) => r.sent)).toEqual([])
+  })
 
   it('starts a worker with no client, its prompt as the first message, in auto mode', () => {
     const { bridge, runtimes, ledgerEntries, turns } = setup()
@@ -169,6 +210,39 @@ describe('ChatBridge', () => {
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect(bridge.sweepIdle(Date.now() + 59 * 60 * 1000)).toBe(0)
     expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(1)
+    await flush()
+    expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('task system: an idle session that worked is asked for its handoff first, then stops once that turn is over', async () => {
+    const done: string[] = []
+    const { bridge, runtimes } = setup({ handoffBeforeStop: () => 'write your handoff', turnDone: (_id, text) => done.push(text) })
+    const ws = connect(bridge)
+    await flush()
+    runtimes[0].emit({ kind: 'text', text: 'worked on it' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    ws.emit('close')
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(0)
+    expect(runtimes[0].sent.at(-1)).toBe('write your handoff')
+    expect(runtimes[0].closed).toBe(false)
+    // Still writing it: no stop.
+    expect(bridge.sweepIdle(Date.now() + 3 * 60 * 60 * 1000)).toBe(0)
+    runtimes[0].emit({ kind: 'text', text: '### Handoff\nResult: done' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    await flush()
+    expect(done.at(-1)).toBe('### Handoff\nResult: done')
+    expect(runtimes[0].closed).toBe(true)
+  })
+
+  it('task system: a session with nothing new to hand off, or none to give, stops without asking', async () => {
+    const asked: string[] = []
+    const { bridge, runtimes } = setup({ handoffBeforeStop: (id) => { asked.push(id); return null } })
+    const ws = connect(bridge)
+    await flush()
+    ws.emit('close')
+    // No turn since it started: nothing to hand off, the rule is not even asked.
+    expect(bridge.sweepIdle(Date.now() + 61 * 60 * 1000)).toBe(1)
+    expect(asked).toEqual([])
     await flush()
     expect(runtimes[0].closed).toBe(true)
   })
@@ -334,7 +408,9 @@ describe('ChatBridge', () => {
     expect(entry.attention ?? null).toBeNull()
     expect(entry.result).toBe(true)
     reporting?.report('question', 'A or B?')
-    expect(own.turns).toContainEqual(['s1', 'waiting'])
+    // The flag holds the question; the session is not set to waiting (only a live prompt is).
+    expect(entry.attention).toMatchObject({ kind: 'question', reason: 'A or B?' })
+    expect(own.turns).not.toContainEqual(['s1', 'waiting'])
   })
 
   it('an interrupted turn leaves no result', async () => {

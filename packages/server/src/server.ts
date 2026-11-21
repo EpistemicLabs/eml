@@ -367,6 +367,9 @@ const ALLOWED_LIST_PARAMS = new Set([
   'stage',    // v0.15: filter tasks by stage
   'binding', 'task_id', 'origin', 'session_id', // v0.19
   'state',    // v0.19: learnings by state (ripe · unclear · collecting · paused)
+  'waiting_on', // v0.22: tasks whose turn it is for this handle (task system)
+  'delegate', // v0.22: tasks an agent works on (task system)
+  'with_parent', // v0.22: each task with its parent's id (part_of), for the cockpit's Tasks view
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -771,6 +774,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (createMatch && method === 'POST' && (ENGRAM_TYPES as readonly string[]).includes(createMatch[1])) {
       const type = createMatch[1] as EngramType
       const body = await readBody(req)
+      // The old cockpit triage flag: older eml_create_task clients still send it; never stored.
+      delete body.approved_by_user
       rejectNestedProperties(type, body)
       // The default-brain seeds are written in-process only; over HTTP that origin
       // would skip a rule's agreement (decision v0.19-seed-rules-agreement).
@@ -847,7 +852,17 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         origin: q.origin,
         session_id: q.session_id,
         learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
+        waiting_on: q.waiting_on,
+        delegate: q.delegate,
       })
+      // with_parent=true: a task names its parent task (parent_id), so a list shows plans without a call per task.
+      if (q.with_parent === 'true') {
+        const withParent = results.map((e) => e.type !== 'task' ? e : {
+          ...e,
+          parent_id: eml.engrams.relationsOf(e.id).find((r) => r.relation === 'part_of' && r.source_id === e.id)?.target_id ?? null,
+        })
+        return json(res, 200, { count: withParent.length, engrams: withParent })
+      }
       return json(res, 200, { count: results.length, engrams: results })
     }
 

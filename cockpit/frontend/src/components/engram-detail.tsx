@@ -7,6 +7,7 @@ import { BrainCard } from "@/components/brain/ui";
 import { SUBJECT_STATUS_COLOR } from "@/lib/subject-graph";
 import { withAlpha } from "@/components/ui/badge";
 import { TYPE_FIELD_ORDER, type Engram, type Entry, type LearningState, type Relation, type Subject } from "@/lib/types";
+import { WaitingOnCard } from "@/components/task-sections";
 import { TaskHubBlocks, TaskJournal, TaskOutcome, TaskStageCard, useTaskHub } from "@/components/task-sections";
 import { TaskRunCard } from "@/components/task-run";
 import type { Project } from "@/types/app";
@@ -172,6 +173,7 @@ export function EngramDetail({
   relationHref,
   projects,
   onLeave,
+  runInBackground = false,
 }: {
   id: string;
   relationHref: (otherId: string) => string;
@@ -179,6 +181,8 @@ export function EngramDetail({
   projects?: Project[];
   /** Called when an action moves the user away from the drawer (a task run opens). */
   onLeave?: () => void;
+  /** A task run starts without a desk by default (the Tasks view). */
+  runInBackground?: boolean;
 }) {
   const { data: engram, isLoading, error } = useEngram(id);
   const subjectsQuery = useSubjects();
@@ -243,9 +247,10 @@ export function EngramDetail({
         </div>
       )}
 
+      {isTask && <WaitingOnCard engram={engram} />}
       {isTask && <TaskOutcome engram={engram} />}
       {isTask && <TaskStageCard engram={engram} />}
-      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} />}
+      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} background={runInBackground} />}
 
       <BrainCard className="px-4 py-3">
         <div className="text-body leading-relaxed whitespace-pre-wrap text-foreground">{engram.content}</div>
@@ -269,7 +274,7 @@ function EngramTail({ engram, relationHref }: { engram: Engram; relationHref: (o
   // software's own state (the notes pane's hash), not shown.
   const props = engram.properties ?? {};
   const named = (TYPE_FIELD_ORDER[engram.type] ?? []).filter(
-    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome")),
+    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome" || k === "waiting_on")),
   );
   const other = Object.keys(props).filter((k) => !(TYPE_FIELD_ORDER[engram.type] ?? []).includes(k) && k !== "app");
   const otherEntries = (engram.entries ?? []).filter((e) => e.kind === "evidence" || e.kind === "review" || (!isTask && (e.kind === "note" || e.kind === "change")));
@@ -318,6 +323,7 @@ const FIELD_LABELS: Record<string, string> = {
   next_step: "next step", assignee_ids: "assignees", due_date: "due", review_due_at: "review due",
   occurred_at: "occurred", change_type: "change", source_url: "source url",
   source_name: "source name", checked_at: "checked", rule_type: "rule type", open_threads: "open threads",
+  depends_on: "depends on",
 };
 
 function FieldsCard({ title, keys, props, relationHref }: {

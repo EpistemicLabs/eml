@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EmlApi } from '../http-client'
-import { callTool, writeBanner } from './_helpers'
+import { callTool, handOverBanner, writeBanner } from './_helpers'
 import {
-  BINDINGS, CHANGE_TYPES, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
+  BINDINGS, CHANGE_TYPES, CHECKPOINTS, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
   content, detail, isoDate, optIsoDate, scope, subjects, supersedes, tags, taskId, title,
 } from './_shared'
 
@@ -82,6 +82,8 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       'durable inbox.\n\n' +
       'NOT a task: finished work → eml_event / eml_log · a way of working → eml_rule · a state snapshot → ' +
       'eml_set_status · speculation without commitment → wait.\n\n' +
+      'An agent will do the work (task system): set delegate (that agent) and checkpoint in this same call; the ' +
+      'person who owns the task stays in assignee_ids. The runner starts a task only with both.\n\n' +
       'After this call, everything about the task goes through eml_track_task: progress, stage, status, closing, ' +
       'edits.\n\n' +
       'Larger work: settle the intent with the user first (intent), then make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
@@ -99,11 +101,17 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),
+        checkpoint: z.enum(CHECKPOINTS).optional().describe('Task system: where this step stops for its person — before (prepares, then asks before acting) · after (acts, then waits for review) · none (runs alone). Set it, together with delegate, whenever an agent can do the task: default after; before when the plan needs the user\'s OK first. The runner starts a task only when it has both. Leave both out when the person does it themselves or the user says so. Say in your reply which checkpoint and delegate you set.'),
+        depends_on: z.array(z.string()).optional().describe('Task system: ids of the steps that must be done before this one starts. Steps without dependencies on each other can run at the same time.'),
+        delegate: z.string().optional().describe('Task system: the one agent that works on the task (an agent handle, e.g. atlas). The person who owns it stays in assignee_ids. Set it with a checkpoint when an agent should do the work; the cockpit\'s runner then starts it.'),
+        goal: z.string().optional().describe('Task system: what has to be true for the task to be done, one checkable sentence (e.g. "the customer confirmed the cancellation is withdrawn"). Propose it for any task an agent works on; its sessions check it at every wake-up.'),
       supersedes: supersedes('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),
       subjects: subjects(),
     }).strict(),
-  }, async (args) => callTool(() => http.post('/engram/task', body(args)), { prefix: writeBanner }))
+  }, async (args) => callTool(() => http.post('/engram/task', body(args)), {
+    prefix: (result) => [handOverBanner(args), writeBanner(result)].filter(Boolean).join('\n\n') || null,
+  }))
 }
 
 export function registerNoteTool(server: McpServer, http: EmlApi): void {

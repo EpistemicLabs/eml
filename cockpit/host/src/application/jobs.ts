@@ -7,6 +7,7 @@ import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../do
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
 import type { JobRunner } from './job-runner.js'
+import { limitedJobRefusal } from './limited-job-scope.js'
 
 /**
  * What a session (the schedule tool, its CLI) or the user (the page) does with
@@ -15,7 +16,7 @@ import type { JobRunner } from './job-runner.js'
  * most the tools the session has. Answers are text the agent reads.
  */
 
-export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now'] as const
+export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'] as const
 export type JobAction = typeof JOB_ACTIONS[number]
 
 export interface JobCaller {
@@ -25,6 +26,12 @@ export interface JobCaller {
   /** The caller's project: a worker job runs there unless it names another. */
   projectId: string | null
   toolProfile: ToolProfile | null
+  /** The job whose run started the caller's session, if any. */
+  jobId?: string | null
+  /** That job is limited: the caller reaches only it (limited-job-scope.ts). */
+  limited?: boolean
+  /** The brain task the caller works on (task system): a job it makes belongs to it unless it names another. */
+  taskId?: string | null
 }
 
 export interface JobsDeps {
@@ -68,6 +75,15 @@ export class Jobs {
 
   async handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
     const action = input.action
+    if (caller.limited) {
+      const own = caller.jobId ? this.deps.store.get(caller.jobId) : undefined
+      // The same lookup the action uses, so a key reaches its own job or nothing.
+      const refusal = own
+        ? limitedJobRefusal(input, (key) => { const found = this.findJob(caller.spaceId, key); return !('status' in found) && found.id === own.id })
+        : 'this session\'s job no longer exists'
+      if (refusal) return { status: 403, text: refusal }
+      if (action === 'list') return { status: 200, text: `- ${this.describe(own!)}` }
+    }
     switch (action) {
       case 'create': return this.create(caller, input)
       case 'list': return this.list(caller)
@@ -76,6 +92,7 @@ export class Jobs {
       case 'resume': return this.withJob(caller, input, (job) => this.setPaused(job, false))
       case 'delete': return this.withJob(caller, input, (job) => this.remove(job))
       case 'run_now': return this.withJob(caller, input, (job) => this.runNow(job))
+      case 'finish': return this.withJob(caller, input, (job) => this.finish(job))
       default: return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
     }
   }
@@ -105,21 +122,24 @@ export class Jobs {
     if (typeof trigger === 'string') return bad(trigger)
     const end = this.end(input, trigger?.timeZone ?? this.deps.defaultTimeZone())
     if (typeof end === 'string') return bad(end)
-    // One session that keeps the conversation fits a mail job; a fresh one per run a routine.
-    const target = await this.target(caller, mail && input.target === undefined && input.session === undefined ? { ...input, target: 'job-session' } : input)
+    // A fresh worker per run, mail jobs too: the task's goal and journal carry what earlier runs did
+    // (decision jobs-two-modes-worker-default-drop-job-session).
+    const target = await this.target(caller, input)
     if (typeof target === 'string') return bad(target)
     const notify = this.notify(input.notify)
     if (notify === null) return bad('notify must be needs-me, always or never')
     const toolProfile = narrowed(caller.toolProfile, input.deny_tools)
     if (toolProfile === 'invalid') return bad('deny_tools is a list of tool names')
+    const goal = str(input.goal)
+    if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
 
     const at = new Date(this.now()).toISOString()
     const draft: Job = {
       id: randomUUID(), name, kind: mail && !trigger ? 'standing' : 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
-      taskId: str(input.task_id) ?? null, prompt, target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
+      taskId: str(input.task_id) ?? caller.taskId ?? null, prompt, ...(goal ? { goal } : {}), target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
       // Drafts until the user switches a channel to send in the Jobs view; a session never can.
       reply: mail ? { mail: 'draft' } : {}, end, notify,
-      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true, limited: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
+      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
     }
     const next = nextDue(draft, this.now())
     if (next === null && trigger) return bad('that schedule has no run before its end')
@@ -147,6 +167,11 @@ export class Jobs {
       if (prompt.length > JOB_LIMITS.promptChars) return bad(`prompt: at most ${JOB_LIMITS.promptChars} characters`)
       next.prompt = prompt
     }
+    if (input.goal !== undefined) {
+      const goal = str(input.goal)
+      if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
+      next.goal = goal ?? null
+    }
     const current = job.triggers.find((t): t is ScheduleTrigger => t.type === 'schedule')
     const scheduleChanged = input.cron !== undefined || input.at !== undefined || input.timezone !== undefined
     if (scheduleChanged) {
@@ -165,6 +190,12 @@ export class Jobs {
       next.notify = notify
     }
     if (input.task_id !== undefined) next.taskId = str(input.task_id) ?? null
+    // The one target change: a job-session job moves to a fresh worker per run in the same project.
+    if (input.target !== undefined) {
+      if (str(input.target) !== 'worker' || job.target.type !== 'job-session') return bad('target only moves a job-session job to a worker; make a new job for another target')
+      const { projectId, provider } = job.target
+      next.target = { type: 'worker', projectId, ...(provider ? { provider } : {}) }
+    }
     let waits = ''
     if (input.mail !== undefined) {
       const mail = mailTrigger(input.mail)
@@ -205,6 +236,16 @@ export class Jobs {
     return { status: 200, text: `Deleted job "${job.name}" and its history.` }
   }
 
+  /** Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. */
+  private finish(job: Job): JobAnswer {
+    const at = new Date(this.now()).toISOString()
+    const lent = activeGrants(job, this.now()).map((g) => g.tool)
+    const next: Job = { ...job, endedAt: job.endedAt ?? at, nextRunAt: null, grants: [], updatedAt: at }
+    this.deps.store.put(next)
+    if (lent.length) this.deps.onGrantEnd?.(next, lent)
+    return { status: 200, job: next, text: `Finished job "${job.name}": it wakes no more. A new time (update with at) brings it back.` }
+  }
+
   private runNow(job: Job): JobAnswer {
     if (job.endedAt) return bad(`job "${job.name}" has ended`)
     if (job.pendingApproval) return bad(`job "${job.name}" waits for the user's OK in the Jobs view`)
@@ -214,14 +255,20 @@ export class Jobs {
   }
 
   private async withJob(caller: JobCaller, input: Record<string, unknown>, act: (job: Job) => JobAnswer | Promise<JobAnswer>): Promise<JobAnswer> {
-    const key = str(input.job)
+    const found = this.findJob(caller.spaceId, input.job)
+    return 'status' in found ? found : act(found)
+  }
+
+  /** The job a key names in a space: its id (or at least its first 6 characters), else its exact name. */
+  private findJob(spaceId: string | null, input: unknown): Job | JobAnswer {
+    const key = str(input)
     if (!key) return bad('job is required: its id (or the first 8 characters) or its exact name')
-    const jobs = this.jobsOf(caller.spaceId)
+    const jobs = this.jobsOf(spaceId)
     const byId = jobs.filter((job) => job.id === key || (key.length >= 6 && job.id.startsWith(key)))
     const matches = byId.length ? byId : jobs.filter((job) => job.name.toLowerCase() === key.toLowerCase())
     if (matches.length === 0) return { status: 404, text: `No job "${key}" in this space. The list action shows them.` }
     if (matches.length > 1) return bad(`"${key}" fits ${matches.length} jobs; use the id`)
-    return act(matches[0])
+    return matches[0]
   }
 
   /** The schedule trigger from the input; `current` fills in what an update leaves out. */
@@ -278,15 +325,14 @@ export class Jobs {
       const sessionId = this.deps.findSession(caller.spaceId, name)
       return sessionId ? { type: 'session', sessionId } : `no session "${name}" in this space`
     }
-    if (kind !== 'worker' && kind !== 'job-session') return 'target must be worker, job-session, self or session'
+    if (kind === 'job-session') return 'job-session is gone: a worker per run (the default) keeps its memory in the task\'s goal and journal; self wakes this session, session another one'
+    if (kind !== 'worker') return 'target must be worker, self or session'
     const projectInput = str(input.project)
     const projectId = projectInput ? await this.deps.resolveProject(caller.spaceId, projectInput) : caller.projectId
     if (!projectId) return projectInput ? `unknown project "${projectInput}"` : 'project is required for a worker'
     const provider = str(input.provider)
     if (provider && !this.deps.providerKnown(provider)) return `unknown provider "${provider}"`
-    return kind === 'worker'
-      ? { type: 'worker', projectId, ...(provider ? { provider: provider as never } : {}) }
-      : { type: 'job-session', projectId, ...(provider ? { provider: provider as never } : {}), sessionId: null }
+    return { type: 'worker', projectId, ...(provider ? { provider: provider as never } : {}) }
   }
 
   /** The user's OK in the Jobs view: the job's channel addresses may wake it. Only the page calls this. */
@@ -355,9 +401,10 @@ export class Jobs {
       : job.pendingApproval ? "waiting for the user's OK in the Jobs view"
         : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
     if (state) lines.push(`  state: ${state}`)
+    if (job.goal) lines.push(`  goal: ${job.goal}`)
     if (job.limited) {
       const lent = activeGrants(job, this.now()).map((g) => g.tool)
-      lines.push(`  limited: no shell, no messages to sessions, no schedule tool, only the brain MCP${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
+      lines.push(`  limited: no shell, no messages to sessions, only the brain MCP; the schedule tool reaches only this job${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
     }
     else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
     lines.push(`  wakes: ${this.describeTarget(job)}`)

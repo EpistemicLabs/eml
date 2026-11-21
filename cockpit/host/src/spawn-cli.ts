@@ -5,6 +5,7 @@
  *        (--prompt-file <file> | --prompt <text>) [--title <pane title>]
  *        [--provider <claude | codex>] [--open] [--wakeable]
  *        [--deny-tools <a,b>] [--mcp-servers <a,b>]
+ *        [--task <task id> | --step | --new-task <title> [--in <project>] [--task-text <what to do>]]
  *
  * Reads COCKPIT_SESSION_ID next to the variables host-request.ts needs, which
  * the host puts into every session's env; without network (a sandboxed
@@ -16,7 +17,10 @@
  * worker runs with; without it the worker uses the cockpit's default. For a
  * worker that can message other sessions, the CLI prints its address. --wakeable
  * lets an outside service message it; --deny-tools and --mcp-servers limit what it
- * may use, for its whole life.
+ * may use, for its whole life. Task system: --task makes the worker work on that
+ * brain task; --step makes its task a new step of this session's task;
+ * --new-task creates that task first (in --in, else the worker's project) and
+ * puts the worker on it. Without any, it gets a task of its own.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -40,7 +44,7 @@ async function main(): Promise<void> {
   }
   if (!prompt?.trim()) fail(CLI, '--prompt-file or --prompt is required')
 
-  const answer = await requestHost<{ projectId?: string; address?: string }>(CLI, { method: 'POST', path: '/api/spawn' }, {
+  const answer = await requestHost<{ projectId?: string; address?: string; taskId?: string }>(CLI, { method: 'POST', path: '/api/spawn' }, {
     project,
     prompt,
     title: arg('title'),
@@ -50,6 +54,9 @@ async function main(): Promise<void> {
     ...(process.argv.includes('--wakeable') ? { wakeable: true } : {}),
     ...(list('deny-tools') ? { deniedTools: list('deny-tools') } : {}),
     ...(list('mcp-servers') ? { mcpServers: list('mcp-servers') } : {}),
+    ...(arg('task') ? { task: arg('task') } : {}),
+    ...(process.argv.includes('--step') ? { step: true } : {}),
+    ...(arg('new-task') ? { newTask: { title: arg('new-task'), ...(arg('in') ? { in: arg('in') } : {}), ...(arg('task-text') ? { text: arg('task-text') } : {}) } } : {}),
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
@@ -57,6 +64,7 @@ async function main(): Promise<void> {
     ? `Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds and it shows in the sidebar.\n`
     : `Worker requested in project ${answer.body.projectId} — it runs without a pane and shows in the sidebar under this session. It starts as soon as the machine has room.\n`)
   if (answer.body.address) process.stdout.write(`Worker address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
+  if (answer.body.taskId) process.stdout.write(`Its task: ${answer.body.taskId}\n`)
 }
 
 void main()

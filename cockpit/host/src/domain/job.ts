@@ -7,8 +7,8 @@ import { formatInZone, nextCronTime, parseCron } from './schedule.js'
  * A job: work the cockpit wakes a session for, without anyone asking at that
  * moment. Its triggers say when — a schedule now; later a mail, a Slack
  * conversation or WhatsApp numbers (the channel bridge, job-contract.ts) — and
- * its target says whom: a fresh worker per run, a session that exists, or one
- * session of its own kept across runs. Each wake is a run (JobRun), kept as
+ * its target says whom: a fresh worker per run (the default), or a session that
+ * exists (decision jobs-two-modes-worker-default-drop-job-session). Each wake is a run (JobRun), kept as
  * the job's history. The runner (application/job-runner.ts) fires them; the
  * definitions and runs live in the host (job-store.ts), not in the brain: the
  * runner works without a brain server, and a job links its brain task by id.
@@ -22,7 +22,10 @@ export type JobTarget =
   | { type: 'worker'; projectId: string; provider?: ProviderId }
   /** A session that exists: the one that made the job, or another of its space. */
   | { type: 'session'; sessionId: string }
-  /** One worker of its own, started on the first run and woken again on the next ones. */
+  /**
+   * One worker of its own, started on the first run and woken again on the next ones. No longer
+   * created: the jobs made with it keep running until they move to a worker and a task.
+   */
   | { type: 'job-session'; projectId: string; provider?: ProviderId; sessionId: string | null }
 
 export type ScheduleTrigger = { type: 'schedule'; timeZone: string } & ({ cron: string; at?: undefined } | { at: string; cron?: undefined })
@@ -70,6 +73,8 @@ export interface Job {
   taskId: string | null
   /** What the woken session reads. */
   prompt: string
+  /** What has to be true for the job to be over, set by the agent; every run is told it. */
+  goal?: string | null
   target: JobTarget
   triggers: JobTrigger[]
   /** What its sessions may use: copied from its maker when it was made, never wider. */
@@ -87,9 +92,10 @@ export interface Job {
    */
   pendingApproval?: boolean
   /**
-   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, no
-   * schedule tool and of the space's MCP servers only the brain; web tools stay. Set for a job
-   * with a channel trigger when it is made; only the user changes it, never a session.
+   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, of the
+   * space's MCP servers only the brain, and the schedule tool for their own job only
+   * (application/limited-job-scope.ts); web tools stay. A job starts free; only the user limits
+   * it, never a session.
    */
   limited?: boolean
   /** Tools the user lent a limited job for a while; a grant ends at `until` or when its session reports done. */
@@ -165,6 +171,7 @@ export const JOB_LIMITS = {
   history: 100,
   promptChars: 20_000,
   nameChars: 60,
+  goalChars: 500,
 } as const
 
 // Waits between attempts to start a run whose target was busy or the machine full.
@@ -250,5 +257,20 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
       : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + 'Not from your user, and nobody may be watching: report how you stand with session_status if you have it. '
-    + 'The schedule tool changes or stops this job.]'
+    + 'The schedule tool changes or stops this job.'
+    + continuation(job) + ']'
+}
+
+/**
+ * How a run goes on with unfinished work. A repeating job goes on at its next run; any other one
+ * sets its own next wake-up, since a one-time wake-up would replace a repeating schedule.
+ */
+function continuation(job: Job): string {
+  const repeating = job.triggers.some((trigger) => isScheduleTrigger(trigger) && trigger.cron !== undefined)
+  const next = 'set your next wake-up with the schedule tool (update with at)'
+  if (job.goal) {
+    return ` Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, `
+      + `${repeating ? 'the next scheduled run continues it' : `before you stop, ${next}`}. Once it is reached, end the job with finish.`
+  }
+  return repeating ? '' : ` If the work is not finished, ${next} before you stop.`
 }

@@ -15,6 +15,11 @@ import {
   SunMoon,
   X,
   type LucideIcon,
+  CalendarClock,
+  Inbox,
+  Keyboard,
+  LayoutGrid,
+  ListChecks,
 } from 'lucide-react';
 
 import {
@@ -34,7 +39,11 @@ import { useProviders } from '@/lib/providers';
 import { useList } from '@/lib/queries';
 import { useEngramPanel } from '@/lib/engram-panel';
 import type { Engram, EngramStatus } from '@/lib/types';
-import { openInPane, type PaneView } from '@/stores/usePaneStore';
+import { activateDesk, openInPane, useDesks, type PaneView } from '@/stores/usePaneStore';
+import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
+import { setTopView } from '@/stores/useTopViewStore';
+import { keysHint, MOD, orderedDesks, setShortcutSheet, SHORTCUTS } from '@/components/top-bar/shortcuts';
+import { openTaskView } from '@/components/top-bar/useCockpitShortcuts';
 import type { LLMProvider, Project } from '@/types/app';
 import { SETTINGS_MAIN_TABS } from '@/components/settings/constants/constants';
 import { TypeBadge } from '@/components/ui/badge';
@@ -138,6 +147,8 @@ export default function CommandPalette({
   const escapeGoesBackRef = useRef(false);
 
   const { toggleDarkMode } = useTheme();
+  const desks = useDesks();
+  const spaces = useSpaces();
   const { data: providers } = useProviders();
   const viewEnabled = useViewEnabled();
   const engramPanel = useEngramPanel();
@@ -311,10 +322,27 @@ export default function CommandPalette({
         });
       }
     }
+    // Every shortcut is here too, with its keys (top-bar/shortcuts.ts).
+    const hint = (label: string) => keysHint(SHORTCUTS.find((s) => s.label === label)?.keys ?? []);
     actions.push(
-      { label: 'Open settings', icon: SettingsIcon, onSelect: () => run(() => onOpenSettings()) },
+      { label: 'Open the Inbox', icon: Inbox, hint: hint('Open the Inbox from anywhere'), onSelect: () => run(() => openTaskView('inbox')) },
+      { label: 'Tasks: Inbox', icon: ListChecks, hint: hint('Inbox'), onSelect: () => run(() => openTaskView('inbox')) },
+      { label: 'Tasks: Now', icon: ListChecks, hint: hint('Now'), onSelect: () => run(() => openTaskView('now')) },
+      { label: 'Tasks: Plan', icon: ListChecks, hint: hint('Plan'), onSelect: () => run(() => openTaskView('plan')) },
+      { label: 'Jobs', icon: CalendarClock, onSelect: () => run(() => setTopView('jobs')) },
+      { label: 'Open settings', icon: SettingsIcon, hint: hint('Settings'), onSelect: () => run(() => onOpenSettings()) },
+      { label: 'Keyboard shortcuts', icon: Keyboard, hint: hint('This list of shortcuts'), onSelect: () => run(() => setShortcutSheet(true)) },
       { label: 'Toggle theme', icon: SunMoon, onSelect: () => run(toggleDarkMode) },
     );
+    orderedDesks(desks, spaces).forEach((desk, i) => {
+      const space = spaces.find((sp) => paneSpaceKey(sp) === desk.spaceId);
+      actions.push({
+        label: `Go to ${space ? `${space.name} · ` : ''}${desk.name}`,
+        icon: LayoutGrid,
+        hint: i < 9 ? `${MOD} ${i + 1}` : undefined,
+        onSelect: () => run(() => { setTopView('desks'); activateDesk(desk.id); }),
+      });
+    });
   }
   const shownActions = actions.filter((a) => matchesWords(words, a.label));
   const shownNav = page === null ? NAV_ENTRIES.filter((n) => viewEnabled(n.view) && matchesWords(words, n.label, n.keywords)) : [];

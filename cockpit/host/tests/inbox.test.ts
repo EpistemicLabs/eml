@@ -1,0 +1,42 @@
+import { describe, it, expect } from 'vitest'
+import { inboxItems, itemKey, type InboxTask } from '../src/domain/inbox.js'
+
+const NOW = Date.parse('2026-11-19T10:00:00Z')
+const t = (id: string, waitingOn?: InboxTask['waitingOn']): InboxTask => ({ id, space: 'main', title: id, waitingOn })
+
+describe('the Inbox', () => {
+  const tasks = [
+    t('asked', { who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T09:00:00Z', session_id: 's1' }),
+    t('finished', { who: 'lasse', kind: 'review', why: 'result ready', since: '2026-11-19T08:00:00Z' }),
+    t('go', { who: 'lasse', kind: 'go', why: 'ready to send', since: '2026-11-19T07:00:00Z' }),
+    t('customer', { who: 'kim', kind: 'outside', since: '2026-11-18T07:00:00Z' }),
+    t('stopped', { who: 'lasse', kind: 'stopped', since: '2026-11-18T06:00:00Z' }),
+    t('quiet'),
+  ]
+  it('holds questions, gos and results to review, newest first', () => {
+    const { live } = inboxItems(tasks, 'lasse', [], NOW)
+    expect(live.map((i) => [i.kind, i.taskId])).toEqual([
+      ['question', 'asked'],
+      ['review', 'finished'],
+      ['question', 'go'],
+    ])
+    expect(live[0]).toMatchObject({ text: 'Which list?', sessionId: 's1', since: '2026-11-19T09:00:00Z' })
+  })
+
+  it('a snooze hides an item until its time; a newer question on the same task is a new item', () => {
+    const snoozes = [{ key: itemKey({ taskId: 'asked', since: '2026-11-19T09:00:00Z' }), until: '2026-11-20T01:00:00Z' }]
+    const hidden = inboxItems(tasks, 'lasse', snoozes, NOW)
+    expect(hidden.live.map((i) => i.taskId)).not.toContain('asked')
+    expect(hidden.snoozed.map((i) => [i.taskId, i.until])).toEqual([['asked', '2026-11-20T01:00:00Z']])
+
+    const later = inboxItems(tasks, 'lasse', snoozes, Date.parse('2026-11-20T02:00:00Z'))
+    expect(later.live.map((i) => i.taskId)).toContain('asked')
+
+    const newer = [t('asked', { who: 'lasse', kind: 'question', why: 'And the other list?', since: '2026-11-19T09:45:00Z' })]
+    expect(inboxItems(newer, 'lasse', snoozes, NOW).live.map((i) => i.text)).toEqual(['And the other list?'])
+  })
+
+  it('keys an item by its task and the moment its wait began', () => {
+    expect(itemKey({ taskId: 'a', since: 's' })).toBe('task:a@s')
+  })
+})

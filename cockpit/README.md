@@ -297,14 +297,19 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
   devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in
   `frontend/public/sw.js`.
+- **Goal and wake-ups:** a job carries the goal its agent set (`goal`); every run's first line states it and asks
+  the session to report done only once it is reached, and until then to set its next wake-up (`update` with `at`)
+  unless a repeating schedule continues it. `finish` ends a job whose goal is reached. Nothing wakes a job on its own
+  beyond its triggers.
 - **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
   mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
   clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
   view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
   channel tools act for that job on every resume.
-- **Limited jobs and grants:** a job with a channel trigger starts **limited** (the Jobs view's switch, the user's
-  alone): its sessions get no shell, no messages to other sessions, no schedule tool and of the space's MCP servers
-  only the brain; web tools stay. The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
+- **Limited jobs and grants:** every job starts with its maker's tools; the user can mark one **limited** (the Jobs
+  view's switch, the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
+  servers only the brain; web tools stay, and the schedule tool reaches only their own job (next wake-up, goal,
+  finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
   ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same

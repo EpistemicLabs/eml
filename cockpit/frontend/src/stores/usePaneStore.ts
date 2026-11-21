@@ -1297,3 +1297,34 @@ export function consumePendingShellCommand(paneId: string): string | null {
   persistPending();
   return entry;
 }
+
+// ── The empty pane's launcher (components/session-launcher) ─────────────
+/**
+ * Start a new session in this (empty) pane: a chat or a terminal in the project. A
+ * terminal's first message waits in the pending queue like a worker's; a chat's goes
+ * with its init (components/chat/chat-start.ts). Returns the new session's id.
+ */
+export function startSessionInPane(paneId: string, opts: { projectId: string; view: 'chat' | 'terminal'; prompt?: string | null; sessionId?: string }): string {
+  setTopView('desks');
+  const sessionId = opts.sessionId ?? newCliSessionId();
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId, paneView: opts.view, title: undefined, provider: undefined }));
+  setSnapshot({ ...snapshot, desks, sessionViews: { ...snapshot.sessionViews, [sessionId]: opts.view } });
+  if (opts.view === 'terminal' && opts.prompt) enqueuePendingShellCommand(paneId, opts.prompt);
+  activatePane(paneId);
+  return sessionId;
+}
+
+/** Continue a session in this (empty) pane, in the view it was last shown in. */
+export function resumeSessionInPane(paneId: string, opts: { projectId: string; sessionId: string; chat: boolean }): void {
+  setTopView('desks');
+  const view: PaneView = opts.chat || snapshot.sessionViews[opts.sessionId] === 'chat' ? 'chat' : 'terminal';
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId: opts.sessionId, paneView: view, title: undefined, provider: undefined }));
+  setSnapshot({ ...snapshot, desks });
+  activatePane(paneId);
+}
+
+/** The project this desk last started a session in: the launcher's default pick. */
+export function lastProjectOfDesk(paneId: string): string | null {
+  const desk = getDeskOfPane(paneId);
+  return desk?.panes.find((pane) => pane.id !== paneId && pane.projectId)?.projectId ?? desk?.defaultProjectId ?? null;
+}

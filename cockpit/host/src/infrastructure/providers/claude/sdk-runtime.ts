@@ -432,32 +432,35 @@ const SCHEDULE_TOOL = 'schedule'
 const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
   + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
   + 'not for work you can do now. '
-  + 'Actions: create, list, update, pause, resume, delete, run_now (the last five take job: its id or exact name). '
+  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
   + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
   + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own; pass it when the user names another. '
-  + 'target: worker (default; a new session per run in project, by default this one\'s), job-session (one session of its own, woken again on every run: it remembers earlier runs), '
-  + 'self (this session), or session (another session of this space, by address). '
+  + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
+  + 'self (this session, to continue here later), or session (another session of this space, by address). '
+  + 'A job made earlier with its own session moves to a worker with update and target worker. '
   + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
-  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then wakes its own session when such mail arrives. '
+  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
   + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
+  + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
   + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
   + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
-  + 'A job runs in this space with at most this session\'s tools. The answer shows the next run times in words: check them against what the user asked.'
+  + 'A job runs in this space with at most this session\'s tools; a limited job\'s session reaches only its own job (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
 const SCHEDULE_TOOL_INPUT = {
-  action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now']),
+  action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish']),
   job: z.string().optional().describe('The job to act on: its id (or the first 8 characters) or its exact name.'),
   name: z.string().optional().describe('A short name the user recognizes, e.g. "Daily brief".'),
   prompt: z.string().optional().describe('What the woken session should do; it reads nothing else.'),
   cron: z.string().optional(),
   at: z.string().optional(),
   timezone: z.string().optional(),
-  target: z.enum(['worker', 'job-session', 'self', 'session']).optional(),
+  target: z.enum(['worker', 'self', 'session']).optional(),
   session: z.string().optional().describe('With target session: the session\'s address.'),
-  project: z.string().optional().describe('For a worker or job-session: the project it runs in.'),
+  project: z.string().optional().describe('For a worker: the project it runs in.'),
   provider: z.string().optional(),
   max_runs: z.number().int().optional(),
   ends_at: z.string().optional(),
   task_id: z.string().optional(),
+  goal: z.string().optional().describe('What has to be true for the job to be over; every run is told it.'),
   deny_tools: z.array(z.string()).optional(),
   notify: z.enum(['needs-me', 'always', 'never']).optional(),
   mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()

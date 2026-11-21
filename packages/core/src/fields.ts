@@ -34,6 +34,8 @@ export const RULE_TYPES = ['constraint', 'process', 'convention', 'behavior', 's
 export const APPLIES = ['always', 'situational'] as const
 export const TASK_PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const
 export const STAGES = ['ideation', 'planning', 'ready', 'implementation'] as const
+/** v0.22 task system: where a step stops for its person (before it acts, after it acted, not at all). */
+export const CHECKPOINTS = ['before', 'after', 'none'] as const
 /** v0.19: the checked list (launched → released; incident and other for what the list does not cover). */
 export const CHANGE_TYPES = [
   'created', 'started', 'completed', 'released', 'deployed', 'failed', 'incident', 'paused', 'resumed', 'deleted', 'other',
@@ -86,6 +88,20 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     blockers: list(),
     stage: oneOf(STAGES),
     outcome: text(),
+    // v0.22 task system (cockpit spaces that switch it on): the steps that must
+    // be done before this one starts, where it stops for its person, and who
+    // has to act next ({ who, why, since, session_id }, written by the cockpit's router).
+    depends_on: list(),
+    checkpoint: oneOf(CHECKPOINTS),
+    // Who acts next, written by the cockpit: who, kind (question · go · review · stopped ·
+    // outside), why, since, session_id.
+    waiting_on: { kind: 'map' },
+    // What has to be true for the task to be done; the agent proposes it and
+    // checks it at every wake-up (decision agent-schedules-own-follow-ups).
+    goal: text(),
+    // The one agent that works on the task; the owner stays in assignee_ids
+    // (decision task-delegate-one-agent).
+    delegate: text(),
   },
   event: {
     occurred_at: date({ required: true }),

@@ -82,7 +82,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -200,6 +200,16 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   if (input.blockers !== undefined && JSON.stringify(input.blockers ?? []) !== JSON.stringify(old.blockers ?? [])) {
     change(`blockers ${show(old.blockers)} → ${show(input.blockers)}`)
   }
+  if (input.depends_on !== undefined && JSON.stringify(input.depends_on ?? []) !== JSON.stringify(old.depends_on ?? [])) {
+    change(`depends_on ${show(old.depends_on)} → ${show(input.depends_on)}`)
+  }
+  if (input.checkpoint !== undefined && (input.checkpoint ?? undefined) !== old.checkpoint) change(`checkpoint ${show(old.checkpoint)} → ${show(input.checkpoint)}`)
+  if (input.waiting_on !== undefined && JSON.stringify(input.waiting_on ?? null) !== JSON.stringify(old.waiting_on ?? null)) {
+    const who = (w: unknown) => (w && typeof w === 'object' ? `${(w as Record<string, string>).who ?? '?'} · ${(w as Record<string, string>).why ?? '?'}` : 'nobody')
+    change(`waiting on ${who(old.waiting_on)} → ${who(input.waiting_on)}`)
+  }
+  if (input.delegate !== undefined && (input.delegate ?? undefined) !== old.delegate) change(`delegate ${show(old.delegate)} → ${show(input.delegate)}`)
+  if (input.goal !== undefined && (input.goal ?? undefined) !== old.goal) change(input.goal === null ? 'goal cleared' : old.goal === undefined ? 'goal set' : 'goal changed')
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
   if (contentChanged) change('content rewritten')

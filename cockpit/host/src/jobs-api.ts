@@ -2,6 +2,7 @@ import type * as http from 'node:http'
 import type { JobCaller, Jobs } from './application/jobs.js'
 import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
+import type { WorkerStatus } from './domain/session-attention.js'
 import { JOB_ACTIONS } from './application/jobs.js'
 import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 
@@ -10,9 +11,10 @@ import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
  *   POST /api/jobs            from a session (schedule-cli.ts); X-Cockpit-Token = the
  *                             per-boot spawn token. Body: fromSession plus the schedule
  *                             tool's input. Answer: { text, job? }.
- *   GET  /api/jobs            the page: every space's jobs with their runs.
+ *   GET  /api/jobs            the page: every space's jobs (with their goal) and runs; each run's
+ *                             session as it stands now, with its attention (Needs you, Check this).
  *   PUT  /api/jobs/time-zone  the page: the user's time zone, from their browser.
- *   POST /api/jobs/<id>/<pause|resume|delete|run_now>   the page (Jobs view).
+ *   POST /api/jobs/<id>/<pause|resume|delete|run_now|finish>   the page (Jobs view).
  *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
  *                             for new channel addresses, and send vs draft per channel.
  *   POST /api/jobs/<id>/limited { limited }, /grant { tool, minutes?, reason? }, /revoke { tool }
@@ -29,7 +31,8 @@ export interface JobsApiDeps {
   /** A space's name for the page; null = main. */
   spaceName(spaceId: string | null): string
   /** Where the page opens a session: its project and whether it runs in the chat view; null when unknown. */
-  sessionInfo(sessionId: string): { projectId: string | null; chat: boolean } | null
+  /** The run's session as it stands now; attention: what it waits for from the user (Needs you, Check this). */
+  sessionInfo(sessionId: string): { projectId: string | null; chat: boolean; attention: WorkerStatus | null } | null
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -37,9 +40,11 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
 
 /** A session's request — the one rule for both ways it arrives. The caller has checked the token. */
 export async function requestJobs(deps: { jobs: Pick<Jobs, 'handle'>; callerOf: JobsApiDeps['callerOf'] }, body: Record<string, unknown>): Promise<{ status: number; payload: unknown }> {
-  const caller = typeof body.fromSession === 'string' ? deps.callerOf(body.fromSession) : null
+  // The envelope says who asks and how it came; the job tool gets only the tool's own fields.
+  const { fromSession, kind: _kind, token: _token, ...input } = body
+  const caller = typeof fromSession === 'string' ? deps.callerOf(fromSession) : null
   if (!caller) return { status: 403, payload: { error: { code: 'UNKNOWN_SESSION', message: 'Only a cockpit session can schedule jobs' } } }
-  const answer = await deps.jobs.handle(caller, body)
+  const answer = await deps.jobs.handle(caller, input)
   return { status: answer.status, payload: { text: answer.text, ...(answer.job ? { job: answer.job } : {}) } }
 }
 

@@ -111,8 +111,8 @@ export type SpawnRequest = {
   provider?: LLMProvider;
   /** It asked for a pane. Without one a session's worker just runs and shows under its parent. */
   open?: boolean;
-  /** 'job': a scheduled job's run; it runs on the host like a session's worker. */
-  origin?: 'job';
+  /** 'job': a scheduled job's run; 'runner': a task step or a task run started in the background. Both run on the host like a session's worker. */
+  origin?: 'job' | 'runner';
 };
 
 export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {
@@ -130,6 +130,11 @@ export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void)
   // Note changes (host notes-api.ts) go to whoever listens — lib/notes.ts.
   source.addEventListener('notes', (message) => {
     window.dispatchEvent(new CustomEvent('cockpit:notes', { detail: JSON.parse((message as MessageEvent<string>).data) }));
+  });
+
+  // The task board moved (host application/task-board.ts): lib/task-board.ts reloads it.
+  source.addEventListener('tasks', (message) => {
+    window.dispatchEvent(new CustomEvent('cockpit:tasks', { detail: JSON.parse((message as MessageEvent<string>).data) }));
   });
 
   source.addEventListener('snapshot', (message) => {

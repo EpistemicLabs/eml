@@ -29,6 +29,8 @@ type MainContentTabSwitcherProps = {
   onToggleMainPane?: () => void;
   // A terminal/chat handoff is under way: why those two can't be switched now.
   switchBlocked?: string | null;
+  // Which groups of views it offers: outside a pane only the session's own (terminal, chat).
+  groups?: ReadonlyArray<PaneViewDef['group']>;
 };
 
 const GROUPS = [
@@ -52,6 +54,7 @@ export default function MainContentTabSwitcher({
   isMainPane = false,
   onToggleMainPane,
   switchBlocked = null,
+  groups = ['session', 'plugin'],
 }: MainContentTabSwitcherProps) {
   const closeLabel = 'Close this pane';
   const addLabel = 'New pane next to this one';
@@ -59,7 +62,7 @@ export default function MainContentTabSwitcher({
   const sessionEntries = newSessionEntries(useProviders().data ?? []);
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
-  const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view));
+  const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
   // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
   // terminal entries come from newSessionEntries, one per ready agent CLI.
@@ -88,8 +91,8 @@ export default function MainContentTabSwitcher({
   return (
     <div className="flex items-center gap-2">
       {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
-      <div role="radiogroup" className="flex items-center gap-1.5">
-        {GROUPS.map(({ group }) => (
+      {groups.length > 0 && <div role="radiogroup" className="flex items-center gap-1.5">
+        {GROUPS.filter(({ group }) => groups.includes(group)).map(({ group }) => (
           <div key={group} className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10">
             {modes.filter((mode) => mode.group === group).map((mode) => {
               const isActive = paneView === mode.view;
@@ -117,9 +120,9 @@ export default function MainContentTabSwitcher({
             })}
           </div>
         ))}
-      </div>
+      </div>}
 
-      {(onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
+      {groups.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
 
       {onToggleMainPane && (
         <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">

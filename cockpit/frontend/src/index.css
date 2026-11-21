@@ -50,6 +50,74 @@
   --text-body: 13px;
   --text-heading: 14px;
 
+  /* Tokens v2 (the task views' system, see "Tokens v2" below). New names only: they
+     generate utilities and change nothing outside the v2 scope. */
+  --text-caption--line-height: 16px;
+  --text-ui--line-height: 16px;
+  --text-body--line-height: 20px;
+  --text-heading--line-height: 20px;
+  --text-chat: 14px;
+  --text-chat--line-height: 22px;
+  --text-title: 16px;
+  --text-title--line-height: 22px;
+  --text-display: 18px;
+  --text-display--line-height: 24px;
+  --tracking-label: .06em;
+  --tracking-title: -.01em;
+  --font-ui: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
+
+  /* Status hues. Text in a hue always uses its -ink token, never the hue itself. */
+  --color-status-you: #b35200;
+  --color-status-stopped: #c4281c;
+  --color-status-review: #2c2c2e;
+  --color-status-agent: #48484a;
+  --color-status-scheduled: #6e6e73;
+  --color-status-waiting: #77777c;
+  --color-status-done: #636366;
+  --color-mark: #3a3a3c;
+  --color-border-strong: #86868b;
+  --color-person-2: #8a5a2b;
+  --color-you-ink: color-mix(in srgb, var(--color-status-you) var(--mix-ink), var(--color-foreground));
+  --color-stopped-ink: color-mix(in srgb, var(--color-status-stopped) var(--mix-ink), var(--color-foreground));
+  --color-review-ink: color-mix(in srgb, var(--color-status-review) var(--mix-ink), var(--color-foreground));
+  --color-agent-ink: color-mix(in srgb, var(--color-status-agent) var(--mix-ink), var(--color-foreground));
+  --color-scheduled-ink: color-mix(in srgb, var(--color-status-scheduled) var(--mix-ink), var(--color-foreground));
+  --color-waiting-ink: color-mix(in srgb, var(--color-status-waiting) var(--mix-ink), var(--color-foreground));
+  --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
+  --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .04);
+  --shadow-raised: 0 1px 3px rgb(0 0 0 / .12), 0 0 0 1px rgb(0 0 0 / .04);
+  --shadow-glass: 0 10px 30px rgb(0 0 0 / .10), 0 1px 2px rgb(0 0 0 / .06);
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / .20);
+  --shadow-modal: 0 24px 60px rgb(0 0 0 / .25);
+  --shadow-sheet: -20px 0 60px rgb(0 0 0 / .18);
+
+  --ease-emphasized: cubic-bezier(.2, .7, .2, 1);
+  --animate-sheet-in: sheet-in var(--duration-base) var(--ease-emphasized);
+  --animate-fade-in: fade-in var(--duration-base) var(--ease-out);
+  --animate-arrive: arrive var(--duration-highlight) var(--ease-out);
+  --animate-live: live var(--duration-pulse) var(--ease-out) var(--pulse-iterations);
+  @keyframes sheet-in { from { transform: translateX(100%); } to { transform: none; } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes arrive {
+    from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-foreground) var(--mix-glow), transparent); }
+    to { box-shadow: 0 0 0 0 transparent; }
+  }
+  @keyframes live {
+    from { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor var(--mix-glow), transparent); }
+    to { box-shadow: 0 0 0 7px transparent; }
+  }
+
+  --container-dialog: 32rem;
+  --container-sheet: 75rem;
+  --container-task-pane: 27rem;
+  --container-board-col: 14rem;
+  --container-board-col-slim: 8rem;
+  --container-plan-table: 52rem;
+  --container-measure: 45rem;
+  --container-content: 112rem;
+
   /* Dialog animations used by the ported Dialog primitive. */
   --animate-dialog-overlay-show: dialog-overlay-show 150ms ease-out;
   --animate-dialog-content-show: dialog-content-show 150ms ease-out;
@@ -127,6 +195,190 @@ html.dark {
   --color-warning: #fbbf24;
   --color-info: #7dd3fc;
   --color-success: #6ee7b7;
+}
+
+/* Tokens v2: the mockup v4 look (monochrome glass, Schibsted Grotesk and Martian Mono).
+   It applies inside [data-ui="v2"]; everything outside keeps v1. Overlays that portal
+   out of a v2 view carry the attribute on their own root. */
+:root {
+  --mix-track: 8%;
+  --mix-tint: 10%;
+  --mix-chip: 12%;
+  --mix-flash: 20%;
+  --mix-edge: 40%;
+  --mix-glow: 60%;
+  --mix-ink: 74%;
+  --duration-fast: 150ms;
+  --duration-base: 300ms;
+  --duration-slow: 500ms;
+  --duration-highlight: 2000ms;
+  --duration-pulse: 1500ms;
+  --pulse-iterations: 3;
+  /* Layers sit around the app's own: chrome bars at 40, dialogs and drawers at 50. */
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-chrome: 40;
+  --z-sheet: 45;
+  --z-modal: 50;
+  --z-popover: 60;
+  --z-toast: 70;
+  --z-top: 100;
+  --target-min: 24px;
+  --target-comfortable: 32px;
+  --target-touch: 44px;
+  /* The top bar (mockup top bar v2): a dense bar, its tabs still above the 24px minimum target. */
+  --size-bar: 42px;
+  --size-tab: 28px;
+  --size-logo: 26px;
+  --size-add: 26px;
+  --pad-bar-end: 5px;
+  --pad-track: 3px;
+  --gap-spaces: 22px;
+  /* Concentric corners: the track's radius is the tab's plus the track's padding. */
+  --radius-bar: 13px;
+  --radius-track: 10px;
+  --radius-tab: 7px;
+  --shadow-pill: 0 1px 2px rgb(0 0 0 / .12), 0 1px 4px rgb(0 0 0 / .06), 0 0 0 .5px rgb(0 0 0 / .08);
+  --focus-offset: 2px;
+  --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
+  /* The Inbox's task panel fills the board's height, never shorter than this. */
+  --size-split-panel-min: 35rem;
+  /* The opened task: the task on the left, its session's chat on the right. */
+  --grid-task: minmax(0, var(--container-task-pane)) minmax(0, 1fr);
+  /* Plan's project table: caret, project, space, five counts, next due. */
+  --grid-plan-row: calc(var(--spacing) * 6) minmax(0, 2.2fr) calc(var(--spacing) * 20) repeat(5, calc(var(--spacing) * 18)) calc(var(--spacing) * 24);
+  --glass-blur: 24px;
+  --glass-blur-thick: 32px;
+  --glass-saturate: 180%;
+}
+/* v1's type tokens carry no line height: outside the scope a text-* utility keeps the
+   inherited one (an invalid custom property falls back to inheritance). Unlayered, so it
+   wins over the theme layer. */
+:root {
+  --text-caption--line-height: initial;
+  --text-ui--line-height: initial;
+  --text-body--line-height: initial;
+  --text-heading--line-height: initial;
+}
+
+[data-ui="v2"] {
+  --color-background: #f5f5f7;
+  --color-card: #ffffff;
+  --color-muted: #ebebef;
+  --color-foreground: #1d1d1f;
+  --color-muted-foreground: #636366;
+  --color-border: #d9d9de;
+  --color-border-strong: #86868b;
+  --color-ring: #1d1d1f;
+  --text-caption--line-height: 16px;
+  --text-ui--line-height: 16px;
+  --text-body--line-height: 20px;
+  --text-heading--line-height: 20px;
+  --font-sans: var(--font-ui);
+
+  --glass-fill: rgb(255 255 255 / .64);
+  --glass-fill-thick: rgb(250 250 252 / .84);
+  --glass-solid: #ffffff;
+  --glass-line: rgb(0 0 0 / .08);
+  --glass-line-strong: rgb(0 0 0 / .42);
+  --glass-rim: rgb(255 255 255 / .80);
+  --scrim: rgb(0 0 0 / .18);
+
+  /* Built from other tokens, so declared again here: a var() is resolved where the
+     property is declared, and the :root copies would keep v1's values. */
+  --color-primary: var(--color-foreground);
+  --color-primary-foreground: var(--color-background);
+  --color-card-foreground: var(--color-foreground);
+  --color-popover: var(--color-card);
+  --color-popover-foreground: var(--color-foreground);
+  --color-secondary: var(--color-muted);
+  --color-secondary-foreground: var(--color-foreground);
+  --color-accent: var(--color-muted);
+  --color-accent-foreground: var(--color-foreground);
+  --color-destructive: var(--color-status-stopped);
+  --color-destructive-foreground: var(--color-background);
+  --color-input: var(--color-border-strong);
+  --color-you-ink: color-mix(in srgb, var(--color-status-you) var(--mix-ink), var(--color-foreground));
+  --color-stopped-ink: color-mix(in srgb, var(--color-status-stopped) var(--mix-ink), var(--color-foreground));
+  --color-review-ink: color-mix(in srgb, var(--color-status-review) var(--mix-ink), var(--color-foreground));
+  --color-agent-ink: color-mix(in srgb, var(--color-status-agent) var(--mix-ink), var(--color-foreground));
+  --color-scheduled-ink: color-mix(in srgb, var(--color-status-scheduled) var(--mix-ink), var(--color-foreground));
+  --color-waiting-ink: color-mix(in srgb, var(--color-status-waiting) var(--mix-ink), var(--color-foreground));
+  --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
+  --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
+
+  /* No background here: overlays carry the scope on full-screen portal roots that stay see-through. */
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  color: var(--color-foreground);
+}
+
+.dark [data-ui="v2"], [data-ui="v2"].dark {
+  --color-background: #000000;
+  --color-card: #1c1c1e;
+  --color-muted: #2c2c2e;
+  --color-foreground: #f5f5f7;
+  --color-muted-foreground: #a1a1a6;
+  --color-border: #38383a;
+  --color-border-strong: #757579;
+  --color-ring: #f5f5f7;
+  --color-status-you: #ffb340;
+  --color-status-stopped: #ff6961;
+  --color-status-review: #f2f2f7;
+  --color-status-agent: #d1d1d6;
+  --color-status-scheduled: #aeaeb2;
+  --color-status-waiting: #8e8e93;
+  --color-status-done: #aeaeb2;
+  --color-mark: #e5e5ea;
+  --glass-fill: rgb(36 36 38 / .58);
+  --glass-fill-thick: rgb(30 30 32 / .82);
+  --glass-solid: #1c1c1e;
+  --glass-line: rgb(255 255 255 / .12);
+  --glass-line-strong: rgb(255 255 255 / .34);
+  --glass-rim: rgb(255 255 255 / .08);
+  --scrim: rgb(0 0 0 / .45);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .30);
+  --shadow-raised: 0 1px 3px rgb(0 0 0 / .50);
+  --shadow-glass: 0 10px 30px rgb(0 0 0 / .50), 0 1px 2px rgb(0 0 0 / .40);
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / .55);
+  --shadow-modal: 0 24px 60px rgb(0 0 0 / .60);
+  --shadow-sheet: -20px 0 60px rgb(0 0 0 / .55);
+  color-scheme: dark;
+}
+
+/* Glass only on the control layer: header, slide-over, dialog, toast, composer. The blur is
+   written out because Safari is reported not to resolve var() in -webkit-backdrop-filter;
+   these two utilities are the only place it appears (--glass-blur, --glass-blur-thick). */
+@utility glass {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-rim), var(--shadow-glass);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+@utility glass-thick {
+  background: var(--glass-fill-thick);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-rim), var(--shadow-modal);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  backdrop-filter: blur(32px) saturate(180%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .glass-thick { background: var(--glass-solid); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass, .glass-thick {
+    background: var(--glass-solid);
+    border-color: var(--glass-line-strong);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* v2 moves only when the viewer allows it; pulses stop after three (--pulse-iterations). */
+@media (prefers-reduced-motion: reduce) {
+  [data-ui="v2"], [data-ui="v2"] * { animation: none !important; transition: none !important; }
 }
 
 html, body, #root { height: 100%; }

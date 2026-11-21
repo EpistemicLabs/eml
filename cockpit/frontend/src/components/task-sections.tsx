@@ -117,6 +117,43 @@ function MiniStatus({ status }: { status: string }) {
   );
 }
 
+/** A step's place in its plan: whose turn it is, what it still waits for, its checkpoint, its status. */
+function StepSide({ step, steps }: { step: Engram; steps: Engram[] }) {
+  const props = step.properties ?? {};
+  const waiting = props.waiting_on as { who?: string } | undefined;
+  const dependsOn = Array.isArray(props.depends_on) ? (props.depends_on as string[]) : [];
+  const blockedBy = dependsOn
+    .map((id) => steps.find((s) => s.id === id))
+    .filter((s): s is Engram => !!s && s.status !== "resolved");
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {waiting?.who && <span className="text-[10px] text-primary">{waiting.who}'s turn</span>}
+      {OPEN.has(step.status) && blockedBy.length > 0 && (
+        <span className="max-w-40 truncate text-[10px] text-muted-foreground" title={blockedBy.map(label).join(", ")}>
+          after {blockedBy.map(label).join(", ")}
+        </span>
+      )}
+      {typeof props.checkpoint === "string" && props.checkpoint !== "none" && (
+        <span className="text-[10px] text-muted-foreground">{props.checkpoint === "before" ? "go first" : "review after"}</span>
+      )}
+      <MiniStatus status={step.status} />
+    </span>
+  );
+}
+
+/** Whose turn it is on this task (the cockpit's router writes it): only shown while someone has to act. */
+export function WaitingOnCard({ engram }: { engram: Engram }) {
+  const waiting = engram.properties?.waiting_on as { who?: string; why?: string; since?: string } | undefined;
+  if (!waiting?.who || !OPEN.has(engram.status)) return null;
+  return (
+    <BrainCard className="px-4 py-3">
+      <CardTitle>Waiting on {waiting.who}</CardTitle>
+      <div className="text-ui text-foreground">{waiting.why}</div>
+      {waiting.since && <div className="mt-1 text-caption text-muted-foreground">since {waiting.since.slice(0, 16).replace("T", " ")}</div>}
+    </BrainCard>
+  );
+}
+
 /**
  * Hub blocks for a task + the relations left for the generic card. Loads the
  * linked engrams in one batch (react-query cached — opening one is instant).
@@ -168,6 +205,9 @@ export function TaskHubBlocks({
   ParentRef: (props: { id: string }) => React.ReactNode;
 }) {
   const open = hub.children.filter((c) => OPEN.has(c.status)).length;
+  // A plan (task system): steps with a checkpoint. Its rows say how far each one is and what it waits for.
+  const plan = hub.children.some((c) => typeof c.properties?.checkpoint === "string");
+  const done = hub.children.filter((c) => c.status === "resolved").length;
   return (
     <>
       {(hub.parentId || hub.children.length > 0) && (
@@ -182,12 +222,16 @@ export function TaskHubBlocks({
             <>
               <div className="px-1">
                 <CardTitle>
-                  Sub-tasks <span className="font-normal tracking-normal normal-case">· {open} of {hub.children.length} open</span>
+                  {plan ? (
+                    <>Plan <span className="font-normal tracking-normal normal-case">· {done} of {hub.children.length} done</span></>
+                  ) : (
+                    <>Sub-tasks <span className="font-normal tracking-normal normal-case">· {open} of {hub.children.length} open</span></>
+                  )}
                 </CardTitle>
               </div>
               <div className="flex flex-col gap-0.5">
                 {hub.children.map((c) => (
-                  <HubRow key={c.id} e={c} href={relationHref(c.id)} side={<MiniStatus status={c.status} />} />
+                  <HubRow key={c.id} e={c} href={relationHref(c.id)} side={plan ? <StepSide step={c} steps={hub.children} /> : <MiniStatus status={c.status} />} />
                 ))}
               </div>
             </>

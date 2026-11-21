@@ -30,7 +30,7 @@ describe('withChannelTools', () => {
       channelJobOf: (id) => (id === 's-job' ? { jobId: 'job-1', limited: true, granted: [] } : null), bridgeServer: server,
     })
     wrapped.launch(request('s-job'))
-    expect(launches[0]?.toolProfile).toEqual({ deniedTools: ['WebFetch', 'Bash', 'SendMessage', 'mcp__cockpit__schedule'], mcpServers: [] })
+    expect(launches[0]?.toolProfile).toEqual({ deniedTools: ['WebFetch', 'Bash', 'SendMessage'], mcpServers: [] })
     expect(launches[0]?.extraMcpServers).toEqual({ channel_bridge: { type: 'stdio', ...server('job-1') } })
   })
 
@@ -79,8 +79,8 @@ describe('channelJobFacts', () => {
   const now = Date.parse('2026-11-08T10:00:00.000Z')
   const job = { id: 'job-1', triggers: [{ type: 'mail' as const, match: [] }] }
 
-  it('counts a channel job as limited unless the user took the limits off', () => {
-    expect(channelJobFacts(job, now).limited).toBe(true)
+  it('counts a channel job as limited only once the user limited it', () => {
+    expect(channelJobFacts(job, now).limited).toBe(false)
     expect(channelJobFacts({ ...job, limited: true }, now).limited).toBe(true)
     expect(channelJobFacts({ ...job, limited: false }, now).limited).toBe(false)
   })
