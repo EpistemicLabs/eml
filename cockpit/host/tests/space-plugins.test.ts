@@ -124,6 +124,15 @@ describe('importMcpServers', () => {
     expect(Object.keys((await service.snapshot()).filesFor('sachi-space').mcpServers)).toEqual(['qonto'])
   })
 
+  it('makes no second plugin when a run was cut off before it was marked done', async () => {
+    await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
+    // As if the cockpit had stopped before writing the steps: the config still lists the servers.
+    await store.updateSpaces((state) => ({ ...state, done: [] }))
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ mcpServers: { stripe: { command: 'npx', args: ['-y', 'stripe-mcp'], env: { STRIPE_KEY: 'placeholder-b' } } } }))
+    await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
+    expect((await registry.custom()).map((m) => m.id).sort()).toEqual(['gmail-claude-config', 'qonto', 'stripe'])
+  })
+
   it('changes nothing when it runs again', async () => {
     await importMcpServers(source(), spaces, { registry, store, backupsDir: join(dir, 'plugins', 'backups') })
     const before = ['custom.json', 'connections.json', 'spaces.json'].map((f) => readFileSync(join(dir, 'plugins', f), 'utf8'))

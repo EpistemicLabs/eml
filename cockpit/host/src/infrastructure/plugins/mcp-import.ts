@@ -102,14 +102,15 @@ async function importOne(
 ): Promise<Outcome> {
   const split = splitDefinition(definition)
   if (!split) return { ok: false, reason: 'not a stdio or http server definition the cockpit can read' }
-  const id = await freeId(serverName, origin, deps.registry)
-  const added = await deps.registry.addCustom({
-    id,
-    name: serverName,
-    description: origin === 'claude-config' ? 'Imported from the cockpit\'s Claude config.' : `Imported from agent ${origin.slice('agent-'.length)}'s MCP file.`,
-    parts: { mcp: { ...split.part, serverName } },
-  })
-  if (!added.ok) return { ok: false, reason: added.reason }
+  const description = origin === 'claude-config' ? 'Imported from the cockpit\'s Claude config.' : `Imported from agent ${origin.slice('agent-'.length)}'s MCP file.`
+  // A run cut off before it was marked done made some plugins already: the same server again is that one.
+  const before = (await deps.store.spaces()).imported
+  const earlier = (await deps.registry.custom()).find((m) => before.includes(m.id) && m.description === description && m.parts.mcp?.serverName === serverName)
+  const id = earlier?.id ?? await freeId(serverName, origin, deps.registry)
+  if (!earlier) {
+    const added = await deps.registry.addCustom({ id, name: serverName, description, parts: { mcp: { ...split.part, serverName } } })
+    if (!added.ok) return { ok: false, reason: added.reason }
+  }
   const hasSecrets = Object.keys(split.values).length > 0
   const connection: Connection | null = hasSecrets ? { id: `${id}-imported`, plugin: id, label: 'Imported settings', values: split.values } : null
   if (connection) await deps.store.updateConnections((connections) => [...connections.filter((c) => c.id !== connection.id), connection])
