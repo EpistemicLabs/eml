@@ -1,29 +1,25 @@
 @import "tailwindcss";
 @source "../node_modules/streamdown/dist/*.js";
 
-/* Two palettes (herdr-style: monospace, coral/purple accents): light in @theme,
-   dark under html.dark. ThemeContext sets the class from the user's choice
-   (System / Light / Dark); the dark variant is class-based so dark: styles
-   resolve under <html class="dark">. */
+/* Tokens v2: monochrome glass, Schibsted Grotesk; code in the monospace. Colour only for meaning:
+   amber is "needs you", red is "stopped". Light in @theme and :root, dark under html.dark.
+   ThemeContext sets the class from the user's choice (System / Light / Dark); the dark variant is
+   class-based so dark: styles resolve under <html class="dark">. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* Light palette. Text tokens keep WCAG AA on background, card and muted;
-     coral and purple are deepened — the dark palette's accents are too pale
-     on a light ground (2.4:1). */
-  --color-background: #f6f7f9;
-  --color-foreground: #16191e;
+  /* Light palette. Text tokens keep WCAG AA on background, card and muted (design-tokens.test.ts). */
+  --color-background: #f5f5f7;
+  --color-foreground: #1d1d1f;
   --color-card: #ffffff;
-  --color-muted: #eceef2;
-  --color-muted-foreground: #5a6371;
-  --color-border: #d8dce3;
-  --color-primary: #c93a22;   /* coral */
-  --color-ring: #6d4ee6;      /* purple */
+  --color-muted: #ebebef;
+  --color-muted-foreground: #636366;
+  --color-border: #d9d9de;
+  --color-ring: #1d1d1f;
 
-  /* Token names the components reference, mapped onto the
-     palette above so they resolve (an undefined --color-* utility renders
-     transparent). Not the theme port — that is a separate step; these are
-     aliases only. */
+  /* Roles the components name, built from the palette: primary is the text colour, destructive the
+     red of "stopped". */
+  --color-primary: var(--color-foreground);
   --color-card-foreground: var(--color-foreground);
   --color-popover: var(--color-card);
   --color-popover-foreground: var(--color-foreground);
@@ -32,19 +28,16 @@
   --color-secondary-foreground: var(--color-foreground);
   --color-accent: var(--color-muted);
   --color-accent-foreground: var(--color-foreground);
-  --color-destructive: var(--color-primary);
+  --color-destructive: var(--color-status-stopped);
   --color-destructive-foreground: var(--color-background);
-  --color-input: var(--color-border);
+  --color-input: var(--color-border-strong);
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Typography scale (text-caption/-ui/-body/-heading utilities). */
+  /* Type scale (text-caption … text-display utilities), each with its line height. */
   --text-caption: 11px;
   --text-ui: 12px;
   --text-body: 13px;
   --text-heading: 14px;
-
-  /* Tokens v2 (the task views' system, see "Tokens v2" below). New names only: they
-     generate utilities and change nothing outside the v2 scope. */
   --text-caption--line-height: 16px;
   --text-ui--line-height: 16px;
   --text-body--line-height: 20px;
@@ -58,6 +51,7 @@
   --tracking-label: .06em;
   --tracking-title: -.01em;
   --font-ui: "Schibsted Grotesk Variable", "Schibsted Grotesk", system-ui, sans-serif;
+  --font-sans: var(--font-ui);
   /* Code, paths and terminal output keep the monospace; everything else is the UI font. */
   --font-code: var(--font-mono);
 
@@ -127,8 +121,6 @@
   }
 }
 
-/* Dark palette. Declared on <html> itself, so the alias tokens above (which
-   reference these through var()) resolve against it. */
 /* Engram type colours — shared by badges, chips, timeline and graph
    (TYPE_COLORS in components/ui/badge.tsx). Light: deep enough to read as text
    on its own tint. Dark (below): desaturated and lifted so they sit in the
@@ -162,19 +154,9 @@ html.dark {
   --type-learning: #a8b54a;
   --subject-active: #4fb894;
   --hash-lightness: 60%;
-  --color-background: #0b0d10;
-  --color-foreground: #e6e8ec;
-  --color-card: #14171c;
-  --color-muted: #1b1f26;
-  --color-muted-foreground: #8a94a3;
-  --color-border: #262b33;
-  --color-primary: #ff7a66;   /* coral */
-  --color-ring: #a78bfa;      /* purple */
 }
 
-/* Tokens v2: monochrome glass, Schibsted Grotesk; code in the monospace.
-   It applies inside [data-ui="v2"], which <html> carries (index.html), so the whole cockpit is on
-   v2. The kit's overlays also carry it on their own portal root, so they render the same in tests. */
+/* Steps, durations, layers, sizes and the area tokens. */
 :root {
   --mix-track: 8%;
   --mix-tint: 10%;
@@ -377,31 +359,9 @@ html.dark {
   /* The space menu: wide enough for a space's name and its marks. */
   --size-menu: 12rem;
 }
-/* v1's type tokens carry no line height: outside the scope a text-* utility keeps the
-   inherited one (an invalid custom property falls back to inheritance). Unlayered, so it
-   wins over the theme layer. */
+
+/* Glass and the scrim behind dialogs, light. */
 :root {
-  --text-caption--line-height: initial;
-  --text-ui--line-height: initial;
-  --text-body--line-height: initial;
-  --text-heading--line-height: initial;
-}
-
-[data-ui="v2"] {
-  --color-background: #f5f5f7;
-  --color-card: #ffffff;
-  --color-muted: #ebebef;
-  --color-foreground: #1d1d1f;
-  --color-muted-foreground: #636366;
-  --color-border: #d9d9de;
-  --color-border-strong: #86868b;
-  --color-ring: #1d1d1f;
-  --text-caption--line-height: 16px;
-  --text-ui--line-height: 16px;
-  --text-body--line-height: 20px;
-  --text-heading--line-height: 20px;
-  --font-sans: var(--font-ui);
-
   --glass-fill: rgb(255 255 255 / .64);
   --glass-fill-thick: rgb(250 250 252 / .84);
   --glass-solid: #ffffff;
@@ -409,44 +369,10 @@ html.dark {
   --glass-line-strong: rgb(0 0 0 / .42);
   --glass-rim: rgb(255 255 255 / .80);
   --scrim: rgb(0 0 0 / .18);
-
-  /* Built from other tokens, so declared again here: a var() is resolved where the
-     property is declared, and the :root copies would keep v1's values. */
-  --color-primary: var(--color-foreground);
-  --color-primary-foreground: var(--color-background);
-  --color-card-foreground: var(--color-foreground);
-  --color-popover: var(--color-card);
-  --color-popover-foreground: var(--color-foreground);
-  --color-secondary: var(--color-muted);
-  --color-secondary-foreground: var(--color-foreground);
-  --color-accent: var(--color-muted);
-  --color-accent-foreground: var(--color-foreground);
-  --color-destructive: var(--color-status-stopped);
-  --color-destructive-foreground: var(--color-background);
-  --color-input: var(--color-border-strong);
-  --color-you-ink: color-mix(in srgb, var(--color-status-you) var(--mix-ink), var(--color-foreground));
-  --color-stopped-ink: color-mix(in srgb, var(--color-status-stopped) var(--mix-ink), var(--color-foreground));
-  --color-review-ink: color-mix(in srgb, var(--color-status-review) var(--mix-ink), var(--color-foreground));
-  --color-agent-ink: color-mix(in srgb, var(--color-status-agent) var(--mix-ink), var(--color-foreground));
-  --color-scheduled-ink: color-mix(in srgb, var(--color-status-scheduled) var(--mix-ink), var(--color-foreground));
-  --color-waiting-ink: color-mix(in srgb, var(--color-status-waiting) var(--mix-ink), var(--color-foreground));
-  --color-done-ink: color-mix(in srgb, var(--color-status-done) var(--mix-ink), var(--color-foreground));
-  --color-mark-ink: color-mix(in srgb, var(--color-mark) var(--mix-ink), var(--color-foreground));
-
-}
-/* The scope's base type, in the base layer so a text-* utility on the same element still wins (an
-   unlayered rule would beat every utility). No background: overlays carry the scope on full-screen
-   portal roots that stay see-through. */
-@layer base {
-  [data-ui="v2"] {
-    font-family: var(--font-ui);
-    font-size: var(--text-body);
-    line-height: var(--text-body--line-height);
-    color: var(--color-foreground);
-  }
 }
 
-.dark [data-ui="v2"], [data-ui="v2"].dark {
+/* Dark: the neutrals, the status hues lifted for a black ground, glass, shadows and the area tokens. */
+html.dark {
   --color-background: #000000;
   --color-card: #1c1c1e;
   --color-muted: #2c2c2e;
@@ -507,7 +433,6 @@ html.dark {
   --relation-related_to: #94a3b8;
   --relation-blocks: #e11d48;
   --relation-part_of: #2fb5a5;
-  color-scheme: dark;
 }
 
 /* Glass only on the control layer: header, slide-over, dialog, toast, composer. The blur is
@@ -545,9 +470,9 @@ html.dark {
   }
 }
 
-/* v2 moves only when the viewer allows it; pulses stop after three (--pulse-iterations). */
+/* Motion only when the viewer allows it; pulses stop after three (--pulse-iterations). */
 @media (prefers-reduced-motion: reduce) {
-  [data-ui="v2"], [data-ui="v2"] * { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 html, body, #root { height: 100%; }
@@ -597,6 +522,9 @@ body {
   margin: 0;
   background: var(--color-background);
   color: var(--color-foreground);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
 }
 
 /* The chat view's type (tokens v2): the UI font at --text-chat, headings at --text-title, everything

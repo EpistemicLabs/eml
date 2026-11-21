@@ -217,8 +217,7 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
     };
 
     return createPortal(
-      // Carries the v2 scope itself: it portals out of whatever view opened it.
-      <div data-ui="v2" className="fixed inset-0 z-(--z-modal)">
+      <div className="fixed inset-0 z-(--z-modal)">
         <div
           aria-hidden
           className="animate-dialog-overlay-show fixed inset-0 bg-(--scrim)"

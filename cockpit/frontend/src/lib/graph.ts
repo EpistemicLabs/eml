@@ -180,7 +180,7 @@ export const RELATION_TYPES: readonly RelationType[] = [
 
 /**
  * Relation colours as concrete values, read from the --relation-* tokens of the element the graph
- * renders in (so the theme and the v2 scope apply). React Flow builds the arrow marker's id from
+ * renders in (so the theme applies). React Flow builds the arrow marker's id from
  * the colour, so a var() would not do here; read again when the theme changes.
  */
 export function readRelationColors(el: Element): Record<RelationType, string> {

@@ -24,7 +24,7 @@ export function Toast({ message, onDone }: { message: ToastMessage | null; onDon
   }, [message, onDone]);
 
   return createPortal(
-    <div data-ui="v2" role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-5 z-(--z-toast) flex justify-center px-4">
+    <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-5 z-(--z-toast) flex justify-center px-4">
       {message && (
         <div className="animate-fade-in glass-thick pointer-events-auto flex max-w-dialog items-center gap-3 rounded-2xl px-4 py-2 text-body shadow-overlay">
           <span>{message.text}</span>

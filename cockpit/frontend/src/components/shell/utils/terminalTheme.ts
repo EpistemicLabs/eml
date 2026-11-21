@@ -15,9 +15,9 @@ export function ansiToken(slot: AnsiSlot): string {
 
 /**
  * xterm takes concrete colours, so the theme is read live from the tokens v2 in effect on the
- * terminal's element (`scope`, inside the v2 scope): the surface follows the v2 neutrals, the ANSI
+ * terminal's element (`scope`): the surface follows the v2 neutrals, the ANSI
  * palette comes from the --term-ansi-* tokens (light: every slot at 4.5:1 on white; dark: the
- * VS Code Dark+ colours, see NOTICE). Called again after a theme switch.
+ * colours of VS Code's default dark terminal, see NOTICE). Called again after a theme switch.
  */
 export function getXtermTheme(scope: Element): ITheme {
   const style = getComputedStyle(scope);

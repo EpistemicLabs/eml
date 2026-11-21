@@ -61,7 +61,7 @@ describe('Switch', () => {
 });
 
 describe('Dialog', () => {
-  it('portals into the v2 scope and closes on Escape', () => {
+  it('portals to the body and closes on Escape', () => {
     const onOpenChange = vi.fn();
     render(
       <Dialog open onOpenChange={onOpenChange}>
@@ -69,7 +69,7 @@ describe('Dialog', () => {
       </Dialog>,
     );
     const dialog = screen.getByRole('dialog', { name: 'Move project' });
-    expect(dialog.closest('[data-ui="v2"]')).not.toBeNull();
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });

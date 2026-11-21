@@ -9,7 +9,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), in
  * A slide-over from the right (tokens v2): the view it opened over stays behind a scrim. Escape
  * or a click on the scrim closes it; focus moves to the element marked data-autofocus (else the
  * first focusable one), stays inside while it is open and goes back to the opener on close. It
- * portals to the body and carries the v2 token scope itself.
+ * portals to the body.
  */
 export function Sheet({ open, onClose, labelledBy, className, children }: {
   open: boolean;
@@ -47,7 +47,7 @@ export function Sheet({ open, onClose, labelledBy, className, children }: {
 
   if (!open) return null;
   return createPortal(
-    <div data-ui="v2" className="fixed inset-0 z-(--z-sheet)">
+    <div className="fixed inset-0 z-(--z-sheet)">
       <div aria-hidden className="animate-fade-in fixed inset-0 bg-(--scrim)" onClick={onClose} />
       <section
         ref={panel}

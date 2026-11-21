@@ -169,7 +169,6 @@ export default function Tooltip({
       {canPortal &&
         createPortal(
           <div
-            data-ui="v2"
             role="tooltip"
             style={bubbleStyle ?? PARKED_STYLE}
             className={cn(
