@@ -44,6 +44,16 @@ describe('mcpServersFor', () => {
     expect(mcpServersFor('a', off, [remote], []).servers).toEqual({})
   })
 
+  it('passes an optional secret a connection lacks as empty, and skips a sign-in that serves other parts', () => {
+    const mail = manifest({ id: 'mail', name: 'Mail', tier: 'custom', parts: { mcp: { transport: 'stdio', command: 'mail-mcp', args: [], env: { KEY: { secret: 'key' }, TOKEN: { secret: 'token', optional: true } } } } })
+    const state = setPlugin(emptySpacePlugins(), 'a', 'mail', { connections: ['keyed', 'channel-only'] })
+    const connections = [
+      { id: 'keyed', plugin: 'mail', label: 'x', values: { key: 'placeholder-key' }, parts: ['mcp' as const] },
+      { id: 'channel-only', plugin: 'mail', label: 'y', values: { key: 'placeholder-2', token: 'placeholder-3' }, parts: ['channel' as const] },
+    ]
+    expect(mcpServersFor('a', state, [mail], connections)).toEqual({ servers: { mail: { type: 'stdio', command: 'mail-mcp', args: [], env: { KEY: 'placeholder-key', TOKEN: '' } } }, problems: [] })
+  })
+
   it('lists the outside servers switched off in a space', () => {
     let state = setOutsideServer(emptySpacePlugins(), 'a', 'claude.ai Slack', false)
     state = setOutsideServer(state, 'a', 'claude.ai Drive', false)
@@ -205,6 +215,8 @@ describe('the channel bridge accounts', () => {
     expect(problems).toHaveLength(2)
     // The channel part switched off for every space: no account at all.
     expect(bridgeAccountsFor({ ...state, partsOff: { gmail: ['channel'] } }, [gmail], [work], ['main']).accounts).toEqual([])
+    // A sign-in for the mcp part only (a service account) is no bridge account.
+    expect(bridgeAccountsFor(state, [gmail], [{ ...work, parts: ['mcp' as const] }], ['main']).accounts).toEqual([])
   })
 
   it('turns the accounts file of an older cockpit into connections once, keeping each account id', async () => {

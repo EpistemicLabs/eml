@@ -59,7 +59,12 @@ export const connectionSchema = z.object({
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/).optional(),
   /** Secret name → value; owner-only on disk, never sent to the page. */
   values: z.record(z.string(), z.string()).default({}),
+  /** The parts this sign-in serves (a service account for the mcp part only); every part when left out. */
+  parts: z.array(z.enum(['pane', 'mcp', 'channel'])).optional(),
 })
+
+/** Whether a connection serves a plugin's part. */
+export const serves = (connection: Connection, part: PluginPartKind): boolean => connection.parts?.includes(part) ?? true
 export type Connection = z.infer<typeof connectionSchema>
 
 export function isOn(state: SpacePlugins, spaceId: string, pluginId: string): boolean {
@@ -134,7 +139,7 @@ export function mcpServersFor(
     const targets: Array<Connection | null> = secretsOf(part).length === 0 ? [null] : picked.flatMap((id) => {
       const found = connections.find((c) => c.id === id && c.plugin === manifest.id)
       if (!found) problems.push(`${manifest.name}: a sign-in it should use here is gone`)
-      return found ? [found] : []
+      return found && serves(found, 'mcp') ? [found] : []
     })
     if (secretsOf(part).length > 0 && picked.length === 0) problems.push(`${manifest.name}: no sign-in picked for this space`)
     for (const connection of targets) {
@@ -142,7 +147,7 @@ export function mcpServersFor(
       const fill = (value: ConfigValue): string => {
         if (typeof value === 'string') return expand(value)
         const filled = connection?.values[value.secret]
-        if (filled === undefined) missing.push(value.secret)
+        if (filled === undefined && !value.optional) missing.push(value.secret)
         return filled ?? ''
       }
       const config: McpServerConfig = part.transport === 'stdio'
@@ -205,7 +210,7 @@ export function bridgeAccountsFor(
       if (picked.length === 0) problems.push(`${manifest.name}: on in space ${spaceId} without a sign-in`)
       else if (!tokenSpaces.includes(spaceId)) problems.push(`${manifest.name}: space ${spaceId} takes no channel messages (no job token)`)
     }
-    for (const connection of connections.filter((c) => c.plugin === manifest.id)) {
+    for (const connection of connections.filter((c) => c.plugin === manifest.id && serves(c, 'channel'))) {
       const spaces = bySpace.filter((on) => on.connections.includes(connection.id) && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
       if (spaces.length === 0) continue
       accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.accountId ?? connection.id, spaces: spaces.sort() })
