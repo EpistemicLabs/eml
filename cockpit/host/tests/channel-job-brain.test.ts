@@ -38,3 +38,18 @@ describe('a limited channel job reaches its brain through the host endpoint', ()
     if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 })
+
+describe('a space\'s session files follow its plugins', () => {
+  it('puts the plugin servers next to the brain and the switched-off connectors into deniedMcpServers', () => {
+    const space = '0b6f7e7a-0000-4bb3-a3b4-d5261f93e165'
+    const plugins = { mcpServers: { lookup: { type: 'stdio', command: 'lookup-mcp', args: [], env: {} } }, denied: ['claude.ai Slack'] }
+    const files = writeSpaceFiles(space, join(home, 'turn-hook.json'), host, undefined, plugins)
+    const mcp = JSON.parse(readFileSync(files.mcpConfig, 'utf8')) as { mcpServers: Record<string, unknown> }
+    expect(Object.keys(mcp.mcpServers).sort()).toEqual(['eml_brain', 'lookup'])
+    const settings = JSON.parse(readFileSync(files.settings, 'utf8')) as { deniedMcpServers?: unknown }
+    expect(settings.deniedMcpServers).toEqual([{ serverName: 'claude.ai Slack' }])
+    // Nothing switched off: no list at all.
+    const plain = writeSpaceFiles(space, join(home, 'turn-hook.json'), host, undefined, { mcpServers: {}, denied: [] })
+    expect(JSON.parse(readFileSync(plain.settings, 'utf8')).deniedMcpServers).toBeUndefined()
+  })
+})

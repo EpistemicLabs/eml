@@ -15,6 +15,8 @@ import { asAgentRuntime } from '../managed-runtime.js'
 import { codexRuntime } from './runtime.js'
 import { codexSettings, readCodexSettings } from './settings.js'
 import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from './toml.js'
+import { codexPluginArgs, codexPluginTables } from './plugin-servers.js'
+import type { McpServerConfig } from '../../../domain/space-plugins.js'
 
 /**
  * Codex CLI as an agent provider (ARCHITECTURE.md, "Spike findings").
@@ -76,6 +78,27 @@ const TURN_HOOK_CONFIG = path.join(CODEX_CONFIG_DIR, 'turn-hook.json')
 
 function readConfig(): string {
   try { return fs.readFileSync(CONFIG_TOML, 'utf8') } catch { return '' }
+}
+
+/** The plugin servers config.toml holds now, by space (writeCodexPluginServers). */
+let pluginServerNames: Record<string, string[]> = {}
+/** Which tables of config.toml are plugin servers, so the next write replaces exactly those. */
+const PLUGIN_SERVERS_FILE = path.join(CODEX_CONFIG_DIR, 'plugin-servers.json')
+
+/**
+ * Writes the spaces' plugin servers into the shared config.toml, each off until a session of its
+ * space switches it on (plugin-servers.ts). Called at boot once the spaces are open and after every
+ * change of a space's plugins.
+ */
+export function writeCodexPluginServers(bySpace: Record<string, Record<string, McpServerConfig>>): void {
+  // Without Codex set up (prepare writes config.toml) there is nothing to switch on.
+  if (!fs.existsSync(CONFIG_TOML)) return
+  const { tables, names } = codexPluginTables(bySpace)
+  let previous: string[] = []
+  try { previous = JSON.parse(fs.readFileSync(PLUGIN_SERVERS_FILE, 'utf8')) as string[] } catch { /* none yet */ }
+  writeConfig(upsertTables(removeTables(readConfig(), previous.map((name) => `mcp_servers.${name}`)), tables))
+  fs.writeFileSync(PLUGIN_SERVERS_FILE, JSON.stringify(tables.map((table) => table.header.slice('mcp_servers.'.length))), { mode: 0o600 })
+  pluginServerNames = names
 }
 
 function writeConfig(text: string): void {
@@ -235,6 +258,8 @@ class CodexProvider implements AgentProvider {
       '--no-alt-screen',
       ...permissions,
       ...(sandboxed && settings.sandboxNetwork ? ['--config', 'sandbox_workspace_write.network_access=true'] : []),
+      // The plugin servers switched on for the session's space.
+      ...codexPluginArgs(pluginServerNames[req.space.id] ?? []),
     ]
     const args = req.resume && req.providerSessionId
       ? ['resume', req.providerSessionId, ...options]

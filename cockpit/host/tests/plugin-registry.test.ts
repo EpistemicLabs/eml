@@ -17,10 +17,9 @@ describe('readManifest', () => {
     expect(result).toMatchObject({ ok: true, manifest: { description: '', defaultEnabled: false } })
   })
 
-  it('keeps server parts away from community plugins and channels and panes away from custom ones', () => {
+  it('keeps server parts away from community plugins; a custom one (a promoted community plugin) may have all parts', () => {
     expect(readManifest({ id: 'x', name: 'X', tier: 'community', parts: { mcp } }, 'community')).toMatchObject({ ok: false })
-    expect(readManifest({ id: 'x', name: 'X', tier: 'custom', parts: { channel: { adapter: 'gmail' } } }, 'custom')).toMatchObject({ ok: false })
-    expect(readManifest({ id: 'x', name: 'X', tier: 'custom', parts: { mcp } }, 'custom')).toMatchObject({ ok: true })
+    expect(readManifest({ id: 'x', name: 'X', tier: 'custom', parts: { pane: { entry: 'index.html' }, mcp } }, 'custom')).toMatchObject({ ok: true })
   })
 
   it('refuses a plugin claiming another tier than where it was found, or one without parts', () => {

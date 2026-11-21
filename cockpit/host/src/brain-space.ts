@@ -6,6 +6,7 @@ import { NotesWatcher } from './notes-api.js'
 import { ProjectRegistry, MAIN_REGISTRY_FILE } from './project-registry.js'
 import { removeSpaceFiles, runtimeMcpConfigPath, writeRuntimeFiles, writeSpaceFiles, type SpaceFiles } from './infrastructure/providers/claude/isolation.js'
 import { openSpaceRuntime, type SpaceRuntime } from './agent-runtime.js'
+import type { SpacePluginFiles } from './application/space-plugins.js'
 import type { SessionSpace } from './domain/agent-provider.js'
 import { DEFAULT_SPACE_COLOR, type SpaceColor } from './domain/space-color.js'
 import { COCKPIT_FOLDERS_DIR, COCKPIT_HOME, spaceConfigDir, spaceEmlDir } from './paths.js'
@@ -70,6 +71,8 @@ export interface BrainSpace {
   registry: ProjectRegistry
   /** Note changes of this brain for the UI's `notes` event. */
   notes: NotesWatcher
+  /** Writes its session files again with what the plugins now give it, keeping this boot's MCP token. */
+  rewriteFiles?: (plugins: SpacePluginFiles) => void
 }
 
 /** The agent upgrade's word on a space it could not bind: the reason, where its report is, and what it waits for. */
@@ -144,6 +147,8 @@ export interface OpenSpaceOptions {
   hooksUrl: string
   /** The bound agent runs in a runtime of its own (agents.ts expectsRuntime); absent = the home's. */
   ownRuntime?: boolean
+  /** What its session files get from the plugins on in it (application/space-plugins.ts); absent = none of them. */
+  plugins?: SpacePluginFiles
 }
 
 /** Where a non-main space keeps its local state. */
@@ -156,16 +161,17 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
   const runtime = opts.agent && opts.ownRuntime
     ? openSpaceRuntime(opts.agent, (configDir) => runtimeMcpConfigPath(configDir, opts.id))
     : null
-  let files: SpaceFiles
-  if (runtime) {
-    // A copy of the session files left from before the runtime has no reader anymore.
-    fs.rmSync(spaceConfigDir(opts.id), { recursive: true, force: true })
-    writeRuntimeFiles(runtime, opts.id, opts.turnHookConfig, host)
-    const dir = path.dirname(runtimeMcpConfigPath(runtime.configDirs.claude ?? '', opts.id))
-    files = { mcpConfig: path.join(dir, 'mcp.json'), settings: path.join(dir, 'settings.json'), emlConfig: path.join(spaceEmlDir(opts.id), 'config') }
-  } else {
-    files = writeSpaceFiles(opts.id, opts.turnHookConfig, host)
+  const write = (plugins: SpacePluginFiles | undefined): SpaceFiles => {
+    if (runtime) {
+      writeRuntimeFiles(runtime, opts.id, opts.turnHookConfig, host, plugins?.mcpServers)
+      const dir = path.dirname(runtimeMcpConfigPath(runtime.configDirs.claude ?? '', opts.id))
+      return { mcpConfig: path.join(dir, 'mcp.json'), settings: path.join(dir, 'settings.json'), emlConfig: path.join(spaceEmlDir(opts.id), 'config') }
+    }
+    return writeSpaceFiles(opts.id, opts.turnHookConfig, host, undefined, plugins)
   }
+  // A copy of the session files left from before the runtime has no reader anymore.
+  if (runtime) fs.rmSync(spaceConfigDir(opts.id), { recursive: true, force: true })
+  const files = write(opts.plugins)
   // The main space keeps the pre-spaces locations (projects.json, workspaces/)
   // so an existing home carries on unchanged; other spaces live under spaces/<id>/.
   const registry = opts.main
@@ -189,6 +195,7 @@ export function openBrainSpace(opts: OpenSpaceOptions): BrainSpace {
     projects: new BrainProjectsClient(opts.url, opts.token),
     registry,
     notes: new NotesWatcher({ loopbackUrl: opts.url, brainToken: opts.token }),
+    rewriteFiles: (plugins) => { write(plugins) },
   }
 }
 

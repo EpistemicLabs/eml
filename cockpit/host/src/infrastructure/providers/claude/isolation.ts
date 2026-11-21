@@ -158,6 +158,7 @@ export function writeSpaceFiles(
   turnHookConfig: string,
   host: SpaceHost,
   runtime?: { id: string; configDir: string; mcpServers: Record<string, unknown> },
+  plugins?: { mcpServers: Record<string, unknown>; denied: string[] },
 ): SpaceFiles {
   const dir = runtime ? runtimeSpaceDir(runtime.configDir, spaceId) : spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -169,7 +170,7 @@ export function writeSpaceFiles(
   writeEmlHookConfig(emlConfig, host.hooksUrl, host.mcpToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { ...runtime?.mcpServers, eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
+    JSON.stringify({ mcpServers: { ...(runtime?.mcpServers ?? plugins?.mcpServers), eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)
@@ -186,6 +187,8 @@ export function writeSpaceFiles(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
+      // The claude.ai connectors and Claude Code plugin servers switched off in this space (space-plugins.ts).
+      ...(!runtime && plugins?.denied.length ? { deniedMcpServers: plugins.denied.map((serverName) => ({ serverName })) } : {}),
       hooks: {
         SessionStart: [eml('session-start'), eml('project-block'), entry(taskHookCommand(), TASK_HOOK_OPTIONS)],
         UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
@@ -281,11 +284,18 @@ export function syncAgentSkills(allowed: string[], configDir: string): string[] 
  * creates the folder: a missing one is the agent's problem to report. On a
  * problem nothing is written and the problem goes to the agent.
  */
-export function writeRuntimeFiles(runtime: SpaceRuntime, spaceId: string, turnHookConfig: string, host: SpaceHost): void {
+export function writeRuntimeFiles(
+  runtime: SpaceRuntime,
+  spaceId: string,
+  turnHookConfig: string,
+  host: SpaceHost,
+  /** The space's plugin servers (space-plugins.ts); without them, the agent.json list of before. */
+  pluginServers?: Record<string, unknown>,
+): void {
   const configDir = runtime.configDirs.claude
   if (!configDir || runtime.record === null || !fs.existsSync(configDir)) return
   try {
-    const mcpServers = allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
+    const mcpServers = pluginServers ?? allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
     const missing = syncAgentSkills(runtime.record.skills, configDir)
     if (missing.length > 0) throw new Error(`the listed skills ${missing.join(', ')} are not in its folder (run eml-cockpit agent sync-skills)`)
     seedClaudeJson(configDir)
