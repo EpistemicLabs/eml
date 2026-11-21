@@ -92,7 +92,7 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
           <main className={cn('flex-1 overflow-y-auto', !showSection && 'max-md:hidden')}>
             <div key={activeTab} className="animate-fade-in space-y-8 p-6 max-md:p-4">
               {/* On a phone the bar above already names the section. */}
-              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <div className="max-md:hidden"><SettingsHeading tab={activeMeta} /></div>}
+              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && activeTab !== 'plugins' && <div className="max-md:hidden"><SettingsHeading tab={activeMeta} /></div>}
 
               {activeTab === 'account' && <AccountTab />}
 
@@ -115,7 +115,7 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
 
               {activeTab === 'data' && <DataTab tab={activeMeta} />}
 
-              {activeTab === 'plugins' && <PluginsTab />}
+              {activeTab === 'plugins' && <PluginsTab tab={activeMeta} />}
             </div>
           </main>
         </div>
