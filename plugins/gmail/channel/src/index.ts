@@ -20,10 +20,10 @@ const gmailConfigSchema = z.object({
 export const gmailChannel = defineChannelAdapter({
   type: 'gmail',
   configSchema: gmailConfigSchema,
-  create: (config, { accountId, space }) =>
+  create: (config, { accountId, spaces }) =>
     new GmailAccount({
       accountId,
-      space,
+      spaces,
       address: config.address,
       tokens: new GoogleRefreshToken({ credentialsFile: config.credentialsFile, tokenFile: config.tokenFile }),
     }),

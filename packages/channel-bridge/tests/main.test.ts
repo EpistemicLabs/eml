@@ -70,6 +70,15 @@ describe('main', () => {
         { type: 'gmail', accountId: 'a', space: 'elsewhere', address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
       ]))
       await expect(main(env)).rejects.toThrow('space')
+      // The spaces its plugin is on in: every one needs a token, and it names spaces or one space, not both.
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([
+        { type: 'gmail', accountId: 'a', spaces: ['support', 'elsewhere'], address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
+      ]))
+      await expect(main(env)).rejects.toThrow('space without a token')
+      writeFileSync(join(root, 'accounts.json'), JSON.stringify([
+        { type: 'gmail', accountId: 'a', space: 'support', spaces: ['support'], address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y' },
+      ]))
+      await expect(main(env)).rejects.toThrow('CHANNEL_BRIDGE_ACCOUNTS_FILE')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

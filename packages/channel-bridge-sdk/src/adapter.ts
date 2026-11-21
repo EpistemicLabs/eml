@@ -5,8 +5,8 @@ import type { ChannelAccount } from './account'
 export interface AdapterContext {
   /** Unique across all accounts of the bridge. */
   readonly accountId: string
-  /** The agent space the account belongs to. */
-  readonly space: string
+  /** The agent spaces where its plugin is on: its messages are routed among their jobs. */
+  readonly spaces: readonly string[]
 }
 
 /**
@@ -17,7 +17,7 @@ export interface AdapterContext {
 export interface ChannelAdapter<Config = unknown> {
   /** The `type` of an entry in the accounts file, e.g. "gmail". */
   readonly type: string
-  /** Validates one accounts file entry; `type`, `accountId` and `space` are in it too. */
+  /** Validates one accounts file entry; `type`, `accountId` and `spaces` are in it too. */
   readonly configSchema: z.ZodType<Config>
   create(config: Config, context: AdapterContext): ChannelAccount
 }

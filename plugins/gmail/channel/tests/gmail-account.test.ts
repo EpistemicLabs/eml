@@ -12,7 +12,7 @@ let dir: string
 
 async function account(): Promise<GmailAccount> {
   return new GmailAccount({
-    accountId: 'acc-gmail', space: 'errands', address: 'me@home.example', apiBase: gmail.url,
+    accountId: 'acc-gmail', spaces: ['errands'], address: 'me@home.example', apiBase: gmail.url,
     tokens: new GoogleRefreshToken({ credentialsFile: join(dir, 'credentials.json'), tokenFile: join(dir, 'token.json') }),
   })
 }

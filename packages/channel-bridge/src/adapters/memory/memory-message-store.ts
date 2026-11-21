@@ -48,6 +48,13 @@ export class MemoryMessageStore implements MessageStore {
     return (await this.forJob(jobId)).filter((stored) => !stored.read)
   }
 
+  async inbox(accountIds: string[], limit: number): Promise<StoredMessage[]> {
+    return this.messages
+      .filter((stored) => accountIds.includes(stored.accountId) && stored.routing.kind === 'inbox')
+      .reverse()
+      .slice(0, limit)
+  }
+
   async markRead(ids: string[]): Promise<void> {
     for (const id of ids) this.read.add(id)
   }

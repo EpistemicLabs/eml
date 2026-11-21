@@ -16,7 +16,9 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
-import { pluginStates, spacePlugins } from './plugins-api.js'
+import { pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
+import { importBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
+import { bridgeAccountsFor } from './domain/space-plugins.js'
 import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
 import { writeCodexPluginServers } from './infrastructure/providers/codex/index.js'
 import { readRemoteAccess } from './remote-access.js'
@@ -48,7 +50,7 @@ import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
-import { BACKUPS_DIR, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
+import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
@@ -230,6 +232,8 @@ async function main() {
         return { id, allowed, definitions }
       }),
     }, path.join(PLUGINS_HOME, 'backups'))
+    const accounts = await importBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, pluginStore, path.join(PLUGINS_HOME, 'backups'))
+    if (accounts.length > 0) log(`plugins: the channel bridge's accounts ${accounts.join(', ')} became connections of their plugin`)
     if (imported.imported.length > 0) log(`plugins: imported ${imported.imported.map((i) => i.serverName).join(', ')} as custom MCP plugins${imported.backup ? ` (backup ${imported.backup})` : ''}`)
     for (const skipped of imported.skipped) log(`plugins: ${skipped.serverName} not imported — ${skipped.reason}`)
   } catch (err) {
@@ -277,6 +281,8 @@ async function main() {
     writeCodexPluginServers(Object.fromEntries(spaces.list().map((space) => [space.id, snapshot.filesFor(space.id).mcpServers])))
   }
   await writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+  // Set once the channel bridge runs: a switch may change its accounts.
+  let channelsChanged: () => void = () => {}
   // A switch changed later rewrites that space's session files (its next session starts with it).
   spacePlugins.onRewrite((spaceId, files) => {
     const space = spaces.get(spaceId)
@@ -284,6 +290,7 @@ async function main() {
     space.rewriteFiles(files)
     for (const problem of files.problems) log(`plugins: space ${space.name} — ${problem}`)
     void writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+    channelsChanged()
     return true
   })
   // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
@@ -632,7 +639,25 @@ async function main() {
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())
   // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
-  const channelBridge = await startChannelBridge(url, log)
+  // The bridge's accounts follow the channel plugins' switches and connections (no home space: one
+  // account per connection, on in every space that picked it); the bridge reads them at start.
+  const writeAccounts = async (): Promise<boolean> => {
+    const snapshot = await spacePlugins.snapshot()
+    const { accounts, problems } = bridgeAccountsFor(snapshot.state, snapshot.manifests, await pluginStore.connections(), jobSpaceIds())
+    for (const problem of problems) log(`plugins: ${problem}`)
+    return writeBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, accounts)
+  }
+  await writeAccounts().catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  let channelBridge = await startChannelBridge(url, log)
+  let bridgeRestart: Promise<unknown> = Promise.resolve()
+  channelsChanged = () => {
+    bridgeRestart = bridgeRestart.then(async () => {
+      if (!(await writeAccounts())) return
+      channelBridge?.stop()
+      channelBridge = await startChannelBridge(url, log)
+      log('[bridge] restarted with its new accounts')
+    }).catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  }
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
   // The Time plugin's clocks: the agent's from the turns, the user's from the browser's beats.

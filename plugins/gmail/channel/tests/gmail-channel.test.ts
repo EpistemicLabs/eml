@@ -4,11 +4,11 @@ import { gmailChannel, GmailAccount } from '../src'
 describe('gmailChannel', () => {
   it('creates a mailbox account from an accounts file entry', () => {
     const config = gmailChannel.configSchema.parse({
-      type: 'gmail', accountId: 'a', space: 'support', address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y',
+      type: 'gmail', accountId: 'a', spaces: ['support'], address: 'me@home.example', credentialsFile: '/x', tokenFile: '/y',
     })
-    const account = gmailChannel.create(config, { accountId: 'a', space: 'support' })
+    const account = gmailChannel.create(config, { accountId: 'a', spaces: ['support', 'sales'] })
     expect(account).toBeInstanceOf(GmailAccount)
-    expect(account).toMatchObject({ channel: 'mail', accountId: 'a', space: 'support' })
+    expect(account).toMatchObject({ channel: 'mail', accountId: 'a', spaces: ['support', 'sales'] })
   })
 
   it('refuses an entry without its sign-in files or with a bad address', () => {

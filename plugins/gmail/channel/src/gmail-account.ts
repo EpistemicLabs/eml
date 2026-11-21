@@ -41,7 +41,7 @@ const sentSchema = z.object({ id: z.string() })
 
 export interface GmailAccountOptions {
   accountId: string
-  space: string
+  spaces: readonly string[]
   /** The mailbox's address, the sender of every reply. */
   address: string
   tokens: AccessTokens
@@ -54,12 +54,12 @@ type Call<T> = { ok: true; value: T } | { ok: false; status: number | 'unreachab
 export class GmailAccount implements ChannelAccount {
   readonly channel: Channel = 'mail'
   readonly accountId: string
-  readonly space: string
+  readonly spaces: readonly string[]
   private readonly api: string
 
   constructor(private readonly options: GmailAccountOptions) {
     this.accountId = options.accountId
-    this.space = options.space
+    this.spaces = options.spaces
     this.api = `${options.apiBase ?? 'https://gmail.googleapis.com'}/gmail/v1/users/me`
   }
 

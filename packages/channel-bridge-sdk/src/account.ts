@@ -36,8 +36,11 @@ export type SyncResult =
 export interface ChannelAccount {
   readonly channel: Channel
   readonly accountId: string
-  /** The agent space the account belongs to. */
-  readonly space: string
+  /**
+   * The agent spaces where its plugin is on. There is no home space: a message is routed among the
+   * jobs of all of them, and one no job takes waits in the inbox of each.
+   */
+  readonly spaces: readonly string[]
   /** Messages since the cursor; null starts from now. */
   sync(cursor: string | null): Promise<SyncResult>
   send(message: OutgoingMessage): Promise<SendOutcome>

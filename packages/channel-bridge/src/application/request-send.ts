@@ -47,7 +47,7 @@ export async function requestSend(deps: RequestSendDeps, request: SendRequest): 
   const route = answer.route
   if (!route) return { kind: 'refused', reason: 'unknown_job', retryable: false }
   const account = deps.channels.account(request.accountId)
-  if (!account || account.space !== route.space) return { kind: 'refused', reason: 'unknown_account', retryable: false }
+  if (!account || !account.spaces.includes(route.space)) return { kind: 'refused', reason: 'unknown_account', retryable: false }
 
   const earlier = await deps.outbox.byKey(request.jobId, request.idempotencyKey)
   if (earlier?.state === 'sending') return sendOutboxItem(deps.outbox, account, earlier)

@@ -173,3 +173,73 @@ describe('outside servers and Codex', () => {
     expect(codexPluginArgs(names.two)).toEqual(['--config', 'mcp_servers.qonto_2.enabled=true'])
   })
 })
+
+describe('the channel bridge accounts', () => {
+  const gmail = (() => {
+    const result = readManifest({ id: 'gmail', name: 'Gmail', tier: 'official', parts: { channel: { adapter: 'gmail' } }, auth: { kind: 'google-oauth' } }, 'official')
+    if (!result.ok) throw new Error(result.reason)
+    return result.manifest
+  })()
+  const work = { id: 'work-mail', plugin: 'gmail', label: 'Work', values: { address: 'me@work.example', credentialsFile: '/c', tokenFile: '/t' } }
+  const home = { id: 'home-mail', plugin: 'gmail', label: 'Home', values: { address: 'me@home.example', credentialsFile: '/c2', tokenFile: '/t2' } }
+
+  it('makes one account per connection, on in every space that picked it, leaving out spaces without a token', async () => {
+    const { bridgeAccountsFor } = await import('../src/domain/space-plugins.js')
+    let state = setPlugin(emptySpacePlugins(), 'main', 'gmail', { connection: 'work-mail' })
+    state = setPlugin(state, 'eml', 'gmail', { connection: 'work-mail' })
+    state = setPlugin(state, 'shared', 'gmail', { connection: 'work-mail' })
+    state = setPlugin(state, 'private', 'gmail', { connection: null })
+    const { accounts, problems } = bridgeAccountsFor(state, [gmail], [work, home], ['main', 'eml', 'private'])
+    expect(accounts).toEqual([{ type: 'gmail', accountId: 'work-mail', spaces: ['eml', 'main'], address: 'me@work.example', credentialsFile: '/c', tokenFile: '/t' }])
+    expect(problems).toHaveLength(2)
+    // The channel part switched off for every space: no account at all.
+    expect(bridgeAccountsFor({ ...state, partsOff: { gmail: ['channel'] } }, [gmail], [work], ['main']).accounts).toEqual([])
+  })
+
+  it('turns the accounts file of before into connections once, keeping each account id', async () => {
+    const { importBridgeAccounts, writeBridgeAccounts } = await import('../src/infrastructure/plugins/bridge-accounts.js')
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-bridge-accounts-'))
+    try {
+      const file = join(dir, 'accounts.json')
+      writeFileSync(file, JSON.stringify([{ type: 'gmail', accountId: 'home-mail', space: 'main', address: 'me@home.example', credentialsFile: '/c2', tokenFile: '/t2' }]))
+      const store = new PluginStore(join(dir, 'plugins'))
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual(['home-mail'])
+      expect(await importBridgeAccounts(file, store, join(dir, 'backups'))).toEqual([])
+      expect(await store.connections()).toEqual([{ ...home, label: 'me@home.example' }])
+      expect((await store.spaces()).spaces.main.plugins.gmail).toEqual({ connection: 'home-mail' })
+      expect(readdirSync(join(dir, 'backups'))).toHaveLength(1)
+      // Written by the cockpit from then on: unchanged is no change, none removes the file.
+      const accounts = [{ type: 'gmail', accountId: 'home-mail', spaces: ['main'], address: 'me@home.example' }]
+      expect(await writeBridgeAccounts(file, accounts)).toBe(true)
+      expect(await writeBridgeAccounts(file, accounts)).toBe(false)
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(await writeBridgeAccounts(file, [])).toBe(true)
+      expect(readdirSync(dir)).not.toContain('accounts.json')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('switching a plugin on without naming a connection', () => {
+  it('keeps the one it has in the space, else takes the plugin\'s only one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-space-connection-'))
+    try {
+      const registry = new PluginRegistry({ officialDir: join(dir, 'none'), customFile: join(dir, 'p', 'custom.json') })
+      await registry.addCustom({ id: 'lookup', name: 'Lookup', parts: { mcp: { transport: 'stdio', command: 'x', env: { K: { secret: 'k' } } } } })
+      const store = new PluginStore(join(dir, 'p'))
+      const service = new SpacePluginService(registry, store)
+      await service.saveConnection({ id: 'only', plugin: 'lookup', label: 'x', values: { k: 'placeholder' } })
+      await service.setPlugin('a', 'lookup', true)
+      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connection: 'only' })
+      await service.saveConnection({ id: 'second', plugin: 'lookup', label: 'y', values: { k: 'placeholder-2' } })
+      await service.setPlugin('a', 'lookup', true, 'second')
+      await service.setPlugin('a', 'lookup', true)
+      expect((await store.spaces()).spaces.a.plugins.lookup).toEqual({ connection: 'second' })
+      await service.setPlugin('b', 'lookup', true)
+      expect((await store.spaces()).spaces.b.plugins.lookup).toEqual({ connection: null })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

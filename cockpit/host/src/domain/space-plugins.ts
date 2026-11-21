@@ -127,3 +127,40 @@ export function deniedFor(spaceId: string, state: SpacePlugins): string[] {
 function mapValues(record: Record<string, ConfigValue>, fill: (value: ConfigValue) => string): Record<string, string> {
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, fill(value)]))
 }
+
+/** One entry of the channel bridge's accounts file: its type, id, spaces and the adapter's settings. */
+export type BridgeAccount = { type: string; accountId: string; spaces: string[] } & Record<string, unknown>
+
+/**
+ * The channel bridge's accounts (plan item 5, no home space): one per connection of a plugin with
+ * a channel part, on in every space that picked that connection. The connection's id is the
+ * account's id, so the bridge's cursors and threads carry on; its values are the adapter's
+ * settings. A space the bridge has no token for (a shared space) is left out of the list.
+ */
+export function bridgeAccountsFor(
+  state: SpacePlugins,
+  manifests: PluginManifest[],
+  connections: Connection[],
+  tokenSpaces: string[],
+): { accounts: BridgeAccount[]; problems: string[] } {
+  const accounts: BridgeAccount[] = []
+  const problems: string[] = []
+  for (const manifest of manifests) {
+    const channel = manifest.parts.channel
+    if (!channel || !partOn(state, manifest.id, 'channel')) continue
+    const bySpace = Object.entries(state.spaces).flatMap(([spaceId, space]) => {
+      const on = space.plugins[manifest.id]
+      return on ? [{ spaceId, connection: on.connection }] : []
+    })
+    for (const { spaceId, connection } of bySpace) {
+      if (connection === null) problems.push(`${manifest.name}: on in space ${spaceId} without a connection`)
+      else if (!tokenSpaces.includes(spaceId)) problems.push(`${manifest.name}: space ${spaceId} takes no channel messages (no job token)`)
+    }
+    for (const connection of connections.filter((c) => c.plugin === manifest.id)) {
+      const spaces = bySpace.filter((on) => on.connection === connection.id && tokenSpaces.includes(on.spaceId)).map((on) => on.spaceId)
+      if (spaces.length === 0) continue
+      accounts.push({ ...connection.values, type: channel.adapter, accountId: connection.id, spaces: spaces.sort() })
+    }
+  }
+  return { accounts, problems }
+}
