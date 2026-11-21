@@ -113,7 +113,10 @@ async function importOne(
   const hasSecrets = Object.keys(split.values).length > 0
   const connection: Connection | null = hasSecrets ? { id: `${id}-imported`, plugin: id, label: 'Imported settings', values: split.values } : null
   if (connection) await deps.store.updateConnections((connections) => [...connections.filter((c) => c.id !== connection.id), connection])
-  await deps.store.updateSpaces((state) => spaces.reduce((next, space) => setPlugin(next, space, id, { connection: connection?.id ?? null }), state))
+  await deps.store.updateSpaces((state) => {
+    const next = spaces.reduce((acc, space) => setPlugin(acc, space, id, { connection: connection?.id ?? null }), state)
+    return { ...next, imported: [...new Set([...next.imported, id])] }
+  })
   return { ok: true, entry: { plugin: id, serverName, spaces } }
 }
 

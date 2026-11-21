@@ -104,6 +104,7 @@ describe('importMcpServers', () => {
       { plugin: 'qonto', serverName: 'qonto', spaces: ['sachi-space'] },
     ])
     expect(result.skipped).toEqual([{ serverName: 'broken', reason: expect.any(String) }])
+    expect((await store.spaces()).imported).toEqual(['gmail-claude-config', 'stripe', 'qonto'])
     // No value in the manifests; all of them in connections.json, owner-only.
     const custom = readFileSync(join(dir, 'plugins', 'custom.json'), 'utf8')
     expect(custom).not.toMatch(/placeholder/)
@@ -148,6 +149,7 @@ describe('SpacePluginService.setup', () => {
       const source = { claudeJson: join(dir, 'missing.json'), agents: [] }
       await service.setup(spaces, { time: true, note: false }, source, join(dir, 'backups'))
       expect((await store.spaces()).spaces).toEqual({ a: { plugins: { time: { connection: null } }, off: [] }, b: { plugins: { time: { connection: null } }, off: [] } })
+      expect((await store.spaces()).imported).toEqual([])
       await service.setPlugin('a', 'time', false)
       await service.setup(spaces, { time: true }, source, join(dir, 'backups'))
       expect(await service.enabled('a', 'time')).toBe(false)
