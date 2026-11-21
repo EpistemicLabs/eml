@@ -3,7 +3,8 @@
 EML (Epistemic Memory Layer, brand: Engram Protocol) is a typed memory store for AI agents: typed
 engrams, graph relations, provenance, lifecycle. This repo is the local product — the **EML Cockpit**
 (`cockpit/host` = the `eml-cockpit` package, `cockpit/frontend`) and its building blocks
-(`packages/core`, `packages/server`, `packages/mcp-server`, `packages/channel-bridge`).
+(`packages/core`, `packages/server`, `packages/mcp-server`, `packages/channel-bridge`,
+`packages/channel-bridge-sdk`) and the official plugins (`plugins/<id>`).
 
 ## Where to find what
 
@@ -11,6 +12,7 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `packages/core/migrations/brain/` — `v0.<N>.sql` (fresh-brain schema) + `v0.<N>_migrate.sql` (one step each, from v0.13).
 - `packages/mcp-server/README.md` — MCP tool inventory and hooks.
 - `packages/channel-bridge/README.md` — the channel bridge: routing messages to jobs, drafts, wakes.
+- `packages/channel-bridge-sdk/README.md` — the contract a plugin's channel part implements.
 - `packages/bench/README.md` — the release benchmark (stage 1 is a CI gate against the last release's result).
 - `scripts/bump-version.sh` — the one version bump; `scripts/pack-release.sh` — release assets (tarballs + SHA256SUMS) for the GitHub release the updater reads; `scripts/install-app.sh` — install a release as the app.
 
@@ -19,13 +21,16 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `main` is development; a tag `vX.Y.Z` is a release. One product version for the whole repo.
 - Brain schema N ↔ release v0.N: a schema change is a new minor with a migrate file and an updated
   fresh schema (the `schema-baseline` test keeps both paths identical).
-- A brain schema change is one that needs a SQL migration, or a new hygiene check for existing
-  engrams. A change to validation or a type's format that leaves existing engrams readable ships in a patch.
+- A brain schema change is one that needs a SQL migration, or a new MIGRATION hygiene check
+  (with `since_schema`) for existing engrams — a recurring review check (no `since_schema`) does not
+  bump the schema. A change to validation or a type's format that leaves existing engrams readable ships in a patch.
 - A new requirement for existing engrams: what the migrate SQL can rewrite on its own, it rewrites
   there; what needs judgement becomes a check in `packages/core/src/hygiene.ts` with `since_schema`.
 - English everywhere in the repo (code, comments, docs, commits).
 - No personal data, user-specific paths or private infrastructure in code, tests or docs — this repo is public-facing.
 - Develop against the dev cockpit (`pnpm run cockpit:dev`, home `~/.eml-cockpit-dev`, port 4318), never the production home.
+  For shared-space checks between two members, `cockpit/scripts/dev-home.sh` adds a second fixed dev
+  cockpit (4319) and serves either from any worktree, with snapshot / reset (see its header).
 - Agent-facing texts (MCP tool descriptions, system rules, hook output) are product surface — review changes deliberately.
 - Changes reach `main` through a pull request: one branch per topic, as many commits as it takes. Its author
   merges it with a merge commit once CI is green; an outside PR may be squashed. Read an outside PR's diff
@@ -48,10 +53,12 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
    and must pass. A release that changes how the brain behaves for an agent is also measured:
    `node packages/bench/dist/cli.js release --eml .` writes `packages/bench/results/X.Y.Z.json`
    (commit it) and prints the change from the previous release for the release notes.
-3. PR `vX.Y.Z` → `main` with the release notes as description; CI green; merge with a merge commit.
+3. Write `docs/release-notes/vX.Y.Z.md`: a `### What's new` section of short user-facing bullets (the cockpit
+   shows them after an update; CI checks it), the detailed notes below. PR `vX.Y.Z` → `main` with those
+   notes as description; CI green; merge with a merge commit.
 4. Tag the merge commit on `main`: `git tag vX.Y.Z && git push origin refs/tags/vX.Y.Z` (the branch
    has the same name, so push the tag by its full ref).
-5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file <notes>`.
+5. `bash scripts/pack-release.sh`, then `gh release create vX.Y.Z release/X.Y.Z/* --notes-file docs/release-notes/vX.Y.Z.md`.
    The cockpit updater and the installers download the tarballs and SHA256SUMS by name from the latest release.
 6. Production cockpits update through the in-app banner; check `/api/about` afterwards.
 7. Remove the release worktree and the local `vX.Y.Z` branch.

@@ -1,5 +1,4 @@
-import type { Channel } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
+import type { Channel, InboundMessage } from '@engramprotocol/channel-bridge-sdk'
 import type { ChannelAccount, ChannelAccounts, ChannelUnavailable, OutgoingMessage, SendOutcome, SyncResult } from '../../ports/channel'
 
 /**

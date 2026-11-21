@@ -336,6 +336,19 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(textOf(await call('eml_list', { subject: 'v0-19-build' }))).toContain('wl-source')
     })
 
+    it('eml_relate distinct_from records a dismissed conflict candidate as the marked related_to', async () => {
+      const a = jsonOf(await call('eml_note', { scope: 'global', title: 'dismiss-a', content: 'first dismissal note' }))
+      const b = jsonOf(await call('eml_note', { scope: 'global', title: 'dismiss-b', content: 'second dismissal note' }))
+      const noReason = await call('eml_relate', { source_id: b.id, target_id: a.id, relation: 'distinct_from' })
+      expect(noReason.isError).toBe(true)
+      expect(textOf(noReason)).toContain('distinct_from needs an explanation')
+      const rel = await call('eml_relate', { source_id: b.id, target_id: a.id, relation: 'distinct_from', explanation: 'different subjects' })
+      expect(rel.isError).toBeFalsy()
+      const got = textOf(await call('eml_get', { id: b.id, with_relations: true }))
+      expect(got).toContain('related_to')
+      expect(got).toContain('conflict check: judged distinct — different subjects')
+    })
+
     it('eml_relate offers no supersedes / part_of', async () => {
       const { tools } = await mcpClient.listTools()
       const relate = tools.find(t => t.name === 'eml_relate')!

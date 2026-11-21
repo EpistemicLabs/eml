@@ -80,7 +80,7 @@ node.
 
 Three layers, one local process:
 
-- **`frontend/`** — Vite + React SPA: desks (top tabs) with pane grids — sessions (terminal, chat) and plugins (brain, notes, worktrees) —
+- **`frontend/`** — Vite + React SPA: desks (top tabs) with pane grids — sessions (terminal, chat) and plugins (brain, notes, worktrees, repository, shell) —
   the sidebar with projects and sessions, the brain views. Talks only HTTP + WebSocket to the host.
 - **`host/`** — owns the node-pty session spawns (isolated `claude`) in a persistent PTY registry,
   bundles and launches the brain server (`packages/server`) on loopback, and proxies `/api/brain/*`
@@ -108,6 +108,12 @@ Develop against the separate dev home — never against your real cockpit:
 pnpm run cockpit:dev                                              # terminal 1: host via tsx watch, EML_COCKPIT_HOME=~/.eml-cockpit-dev, port 4318
 pnpm -F @engramprotocol/cockpit-frontend dev                      # terminal 2 (HMR; proxies /api + /ws to the host)
 ```
+
+For checks that need a second member of a shared space, `cockpit/scripts/dev-home.sh` keeps two
+fixed dev cockpits — a (`~/.eml-cockpit-dev`, 4318) and b (`~/.eml-cockpit-dev-b`, 4319), each its
+own person — and serves either from the worktree it is run in (`start a|b`, in tmux). `snapshot`
+and `reset` keep and restore a profile's local brains; a shared space is never part of it, since
+its replica follows the relay. Each home is served by one host at a time.
 
 The real cockpit runs from the default home `~/.eml-cockpit` (`pnpm run cockpit`, or
 `COCKPIT_PORT=4317 pnpm -F eml-cockpit start` after a build). A host started without
@@ -389,11 +395,14 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 ## Cockpit plugins
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
-plugins, the project's views — Brain, Note, Worktrees. The tab bar and the "+" menus (pane and sidebar)
-show both groups. Brain is fixed; Note and Worktrees are the cockpit's own plugins, switched on or off
+plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
+show both groups. All six are the cockpit's own plugins, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
-`host/src/plugins-api.ts`). A plugin switched off leaves the menus, its routes answer 404 (Notes:
-`/api/notes`), and a pane showing it moves to the brain; what it holds stays — notes stay engrams.
+`host/src/plugins-api.ts`). Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
+the user set is kept. A plugin switched off leaves the menus, its routes answer 404 (Notes:
+`/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
+holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
+agents' brain stay. With every plugin off, the tab bar shows only the session's views.
 
 **Worktrees** (`components/worktrees/WorktreesPane.tsx`) shows the project folder's git worktrees
 against the default branch — changes, commits ahead/behind, when it was added, the sessions working
@@ -402,6 +411,34 @@ a cockpit session, another cockpit, the system). Read-only: `GET /api/plugins/wo
 takes the folder from the project registry, never from the request; `…/ports` lists the user's
 listening TCP ports (`lsof` + `ps` on macOS and Linux, none on Windows yet) with command lines whose
 secrets are blacked out. A session's worktree is the cwd its agent's hooks report (ledger `workdir`).
+
+**Repository** (`components/repository/`, loaded on first use: it brings CodeMirror) is a read-only code view of
+one checkout — the project folder or one of its worktrees (a worktree row opens it there): what is
+uncommitted and what the branch committed since the default branch as GitHub-style diffs, the whole tree
+with a file search and any file in it, the commits and each one's diff. `GET /api/plugins/repository/*`
+(`host/src/plugins-repository.ts`) takes the folder from the registry, a checkout only from its
+`git worktree list`, and a path only when it resolves inside the checkout (symlinks too); files that
+look like they hold secrets (`.env`, keys) show only on an explicit reveal. A folder that is no
+repository shows as plain files.
+
+**Shell** (`components/shell-plugin/`) is a terminal on this computer: the user's login shell in the home
+folder, as their terminal app opens it, of no project. It is the sessions' xterm and runs in the same PTY
+bridge (`init` with kind `shell`), with the common variables only — none of the cockpit's (spawn token, brain,
+agent config) — and no ledger entry; a reload reattaches, closing the pane ends it
+(`DELETE /api/plugins/shell/<id>`), and once it exited Enter starts a new one. It opens for a client on this
+machine; remote users get it only after `eml-cockpit remote shell on` (remote.json `shell`), never from the browser.
+
+**Time** (`components/time-plugin/`, `host/src/time-tracking.ts`) counts work time on its own, with no
+start or stop. The user's clock: while a cockpit tab had input in the last 5 minutes, it posts a beat every
+30 seconds (`POST /api/plugins/time/beat`) naming the active pane's session or project; a hidden tab goes on
+for 2 minutes (a look elsewhere still counts), then pauses. The host credits the time between two beats to
+the earlier one, so several tabs feed one clock; a gap over 90 seconds, or a beat marked `fresh` (back after a
+pause), counts nothing. The agents' clock: the time a session's turn runs (turn state `working` until
+any other). One clock per cockpit, across its spaces: a beat names the open space, a session counts in the
+space the ledger keeps it under. Both go to the project, the session and the session's task (task runs), per local day in
+`time/<YYYY-MM-DD>.json` under the cockpit home: ids and seconds only, nothing while the plugin is off. The
+view (`GET /api/plugins/time?days=`) shows today or the last 7 days per space and project, the agents in their own
+column; the host names the spaces, projects and tasks, each in its own space's brain.
 Community plugins (sandboxed, from a catalog) are a later step.
 
 ## Claude Code
@@ -492,7 +529,8 @@ of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_
 cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
 hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills
 (`consolidate`, `checkpoint`, `getting-started`) from the bundled `@engramprotocol/mcp-server` — nothing is read from `~/.claude`
-or `~/.eml`. The Worktrees plugin runs `git` in the projects' folders and `lsof`/`ps` over the user's own
+or `~/.eml`. The Worktrees and Repository plugins run `git` in the projects' folders (Repository without
+external diff tools or textconv filters, so a repository's config can't make a read run a program), Worktrees also `lsof`/`ps` over the user's own
 processes, all read-only. The agent's environment is built from an allowlist (PATH, HOME, locale, proxy/
 cert vars) plus the injected isolation vars — nothing else the host inherited reaches a
 session. Real `~/.claude` is never written. The PTY WS is guarded by a same-origin check + a

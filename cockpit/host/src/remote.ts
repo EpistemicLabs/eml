@@ -114,12 +114,14 @@ function enable(argv: string[]): void {
   writeRemoteAccess({
     origins: [...new Set([...current.origins, origin])],
     users: [...new Set([...current.users, self.login, ...users])],
+    shell: current.shell,
   })
   const access = readRemoteAccess()
   process.stdout.write(
     `remote access on\n` +
     `  open:  ${origin}  (from any device signed in to your tailnet)\n` +
     `  users: ${access.users.join(', ')}\n` +
+    `  shell: ${access.shell ? 'on' : 'off (eml-cockpit remote shell on lets them open a terminal on this machine)'}\n` +
     `  file:  ${REMOTE_FILE}\n` +
     `Only those users get in; anyone else on the tailnet is refused. Off again: eml-cockpit remote disable\n`,
   )
@@ -127,7 +129,7 @@ function enable(argv: string[]): void {
 
 function disable(argv: string[]): void {
   const { httpsPort } = parseArgs(argv)
-  writeRemoteAccess({ origins: [], users: [] })
+  writeRemoteAccess({ origins: [], users: [], shell: false })
   let note = ''
   try {
     const bin = tailscaleBin()
@@ -147,12 +149,28 @@ function status(): void {
     `remote access: on\n` +
     `  origins: ${access.origins.join(', ')}\n` +
     `  users:   ${access.users.length ? access.users.join(', ') : 'every user of the tailnet'}\n` +
+    `  shell:   ${access.shell ? 'on' : 'off'}\n` +
     `  file:    ${REMOTE_FILE}\n`,
   )
   try {
     const out = tailscale(tailscaleBin(), ['serve', 'status'])
     process.stdout.write(`tailscale serve:\n${out.out.split('\n').map((l) => `  ${l}`).join('\n')}\n`)
   } catch { process.stdout.write('tailscale: not found\n') }
+}
+
+/**
+ * The Shell plugin's terminal for remote users: a shell on this machine with
+ * the user's rights, so off unless turned on here — never from the browser.
+ */
+function shell(argv: string[]): void {
+  const on = argv[0] === 'on'
+  if (!on && argv[0] !== 'off') throw new Error('usage: eml-cockpit remote shell <on|off>')
+  const current = readRemoteAccess()
+  if (on && !current.origins.length) throw new Error('remote access is off; turn it on first: eml-cockpit remote enable')
+  if (current.origins.length || current.users.length) writeRemoteAccess({ ...current, shell: on })
+  process.stdout.write(on
+    ? 'remote shell on: the users remote access lets in can open a terminal on this machine, with your rights.\n'
+    : 'remote shell off: the Shell plugin opens on this machine only.\n')
 }
 
 /** Handle a `remote …` invocation; returns true if it consumed the args. */
@@ -164,6 +182,7 @@ export async function runRemoteCommand(argv: string[]): Promise<boolean> {
   if (sub === 'enable') enable(argv.slice(2))
   else if (sub === 'disable') disable(argv.slice(2))
   else if (sub === 'status') status()
-  else throw new Error('usage: eml-cockpit remote <enable|disable|status> [--https-port <port>] [--user <tailscale login>]')
+  else if (sub === 'shell') shell(argv.slice(2))
+  else throw new Error('usage: eml-cockpit remote <enable|disable|status> [--https-port <port>] [--user <tailscale login>] | remote shell <on|off>')
   return true
 }

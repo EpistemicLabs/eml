@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { toInboundMessage, senderAddress, senderVerified, isAutomated, buildReply } from '../src/adapters/gmail/gmail-mapping'
-import type { GmailMessage } from '../src/adapters/gmail/gmail-mapping'
+import { toInboundMessage, senderAddress, senderVerified, isAutomated, buildReply } from '../src/gmail-mapping'
+import type { GmailMessage } from '../src/gmail-mapping'
 
 const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64url')
 

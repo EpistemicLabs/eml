@@ -26,6 +26,8 @@ export const win32: Platform = {
   ],
   // Windows programs don't read LANG.
   fallbackLang: null,
+  // Windows Terminal's default; PowerShell 5 ships with every Windows 10 and later.
+  userShell: () => ({ bin: 'powershell.exe', args: ['-NoLogo'] }),
   // Not `start`: cmd would read the & in a URL's query as a command separator.
   openUrl: (url) => detached('rundll32', ['url.dll,FileProtocolHandler', url]),
   // explorer exits 1 even when it opened the window.

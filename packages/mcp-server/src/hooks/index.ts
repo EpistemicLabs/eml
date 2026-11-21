@@ -194,6 +194,15 @@ export function reminderFor(cwd: string, home: string = HOME_DIR, cwdNudge = tru
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9_.-]+$/
 
+/**
+ * Qwen Code fires UserPromptSubmit again, with an empty prompt, after each
+ * tool batch: no prompt of the user — neither a turn to count nor a reminder
+ * or note edits to deliver.
+ */
+export function isContinuation(input: { prompt?: unknown }): boolean {
+  return input.prompt === ''
+}
+
 export function userPromptSubmit(
   ctx: HookContext,
   input: { session_id?: string; cwd?: string },
@@ -249,7 +258,7 @@ export async function runHook(argv: string[]): Promise<void> {
   const configPath = configFile ? path.resolve(configFile) : EML_CONFIG
   const ctx = contextFor(configPath)
 
-  let input: { session_id?: string; cwd?: string } & CompactionInput = {}
+  let input: { session_id?: string; cwd?: string; prompt?: string } & CompactionInput = {}
   try {
     const raw = await readStdin()
     if (raw.trim()) input = JSON.parse(raw)
@@ -264,6 +273,8 @@ export async function runHook(argv: string[]): Promise<void> {
       const note = compactionNote(input)
       result = await sessionStart(readConfig(configPath), configPath, fetch, BOOT_BUDGET_CHARS - (note ? note.length + 2 : 0))
       if (note) result = { output: `${note}\n\n${result.output}`, log: `${result.log} compact-note=${note.length}` }
+    } else if (name === 'user-prompt-submit' && isContinuation(input)) {
+      result = { output: '', log: 'empty prompt (a continuation), silent' }
     } else if (name === 'user-prompt-submit') {
       result = userPromptSubmit(ctx, input, Date.now(), !argv.includes('--no-cwd-nudge'))
       // The user's note edits since the last prompt (hooks/notes.ts).
@@ -275,7 +286,7 @@ export async function runHook(argv: string[]): Promise<void> {
       result = await projectBlockHook(readConfig(configPath), input)
     } else if (name === 'stop') {
       // Consolidate before the session goes idle (hooks/compaction.ts). The
-      // output is the block decision as JSON, the same for Claude Code and Codex.
+      // output is the block decision as JSON, the same for Claude Code, Codex and Qwen Code.
       const stop = stopHook(ctx.stateDir, input)
       if (stop.output) process.stdout.write(stop.output + '\n')
       logLine(ctx, name, stop.log)

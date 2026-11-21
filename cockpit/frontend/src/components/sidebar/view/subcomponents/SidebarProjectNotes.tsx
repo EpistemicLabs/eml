@@ -18,7 +18,7 @@ import type { Project } from '@/types/app';
 import { useRowMenu } from '../rowMenuContext';
 
 // The project's one "+" (0.15.1): a small menu — the new sessions, then the
-// plugins (brain view, and note / worktrees while on) — like the pane
+// plugins (brain view, and note / worktrees / repository while on) — like the pane
 // toolbar's "+", because a terminal pane starts an agent
 // session the moment it mounts. ⌥-click skips the menu and starts a session.
 // With more than one agent CLI ready, the menu offers a session per CLI
@@ -46,7 +46,7 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
   const brain = useWritable(project.__spaceId);
   const enabled = useViewEnabled();
   type Item = { label: string; Icon: LucideIcon; disabled?: string; run: () => void };
-  const item = (view: 'brain' | 'note' | 'worktrees', rest: Omit<Item, 'label' | 'Icon'>): Item[] =>
+  const item = (view: 'brain' | 'note' | 'worktrees' | 'repository', rest: Omit<Item, 'label' | 'Icon'>): Item[] =>
     enabled(view) ? [{ label: paneViewDef(view).newLabel, Icon: paneViewDef(view).icon, ...rest }] : [];
   const sections: Array<{ title: string; items: Item[] }> = [
     {
@@ -73,6 +73,10 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
         ...item('worktrees', {
           disabled: project.path ? undefined : 'Worktrees need the project\'s folder — this project has none',
           run: () => openInPane({ surface: 'worktrees', projectId: project.projectId }),
+        }),
+        ...item('repository', {
+          disabled: project.path ? undefined : 'The repository view needs the project\'s folder — this project has none',
+          run: () => openInPane({ surface: 'repository', projectId: project.projectId }),
         }),
       ],
     },
@@ -107,7 +111,7 @@ export function NewPaneButton({ project, onNewSession }: { project: Project; onN
           role="menu"
           className="absolute top-full left-0 z-40 mt-1 min-w-[10rem] whitespace-nowrap rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
         >
-          {sections.map(({ title, items }, index) => (
+          {sections.filter(({ items }) => items.length > 0).map(({ title, items }, index) => (
             <Fragment key={title}>
               <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
                 {title}

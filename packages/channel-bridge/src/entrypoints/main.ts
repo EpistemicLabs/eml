@@ -7,9 +7,8 @@ import { SqliteWakeQueue } from '../adapters/sqlite/sqlite-wake-queue'
 import { SqliteOutboxStore } from '../adapters/sqlite/sqlite-outbox-store'
 import { CockpitHttpClient } from '../adapters/cockpit-http/cockpit-http-client'
 import { z } from 'zod'
-import { GmailAccount } from '../adapters/gmail/gmail-account'
-import { GoogleRefreshToken } from '../adapters/gmail/google-refresh-token'
 import type { ChannelAccount, ChannelAccounts } from '../ports/channel'
+import { adapterFor } from './channel-adapters'
 import { createBridgeApi } from './bridge-api'
 import type { Log } from './bridge-api'
 import { startBridgeLoop } from './bridge-loop'
@@ -71,42 +70,34 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
   }
 }
 
+/** What every entry of the accounts file has; the rest belongs to the adapter its `type` names. */
 const accountsSchema = z.array(
-  z.discriminatedUnion('type', [
-    z.object({
-      type: z.literal('gmail'),
-      accountId: z.string().min(1),
-      space: z.string().min(1),
-      address: z.string().email(),
-      /** An OAuth Desktop app client file and the token file of an existing sign-in; both only read. */
-      credentialsFile: z.string().min(1),
-      tokenFile: z.string().min(1),
-    }),
-  ]),
+  z.looseObject({
+    type: z.string().min(1),
+    accountId: z.string().min(1),
+    space: z.string().min(1),
+  }),
 )
 
-/** The mailboxes the bridge watches. Each belongs to a space the bridge has a token for, under a unique id. */
+/** The accounts the bridge watches. Each belongs to a space the bridge has a token for, under a unique id. */
 function channelAccounts(file: string, spaces: string[]): ChannelAccount[] {
-  let parsed: z.infer<typeof accountsSchema>
+  let entries: { accountId: string; space: string; create(): ChannelAccount }[]
   try {
-    parsed = accountsSchema.parse(JSON.parse(readFileSync(file, 'utf8')))
+    entries = accountsSchema.parse(JSON.parse(readFileSync(file, 'utf8'))).map(({ type, accountId, space, ...rest }) => {
+      const adapter = adapterFor(type)
+      if (!adapter) throw new Error('no plugin serves this account type')
+      const config = adapter.configSchema.parse({ type, accountId, space, ...rest })
+      return { accountId, space, create: () => adapter.create(config, { accountId, space }) }
+    })
   } catch {
     throw new Error('CHANNEL_BRIDGE_ACCOUNTS_FILE is not a valid list of accounts')
   }
-  const ids = parsed.map((entry) => entry.accountId)
+  const ids = entries.map((entry) => entry.accountId)
   if (new Set(ids).size !== ids.length) throw new Error('every account needs its own accountId')
-  for (const entry of parsed) {
+  for (const entry of entries) {
     if (!spaces.includes(entry.space)) throw new Error(`account ${entry.accountId} names a space without a token`)
   }
-  return parsed.map(
-    (entry) =>
-      new GmailAccount({
-        accountId: entry.accountId,
-        space: entry.space,
-        address: entry.address,
-        tokens: new GoogleRefreshToken({ credentialsFile: entry.credentialsFile, tokenFile: entry.tokenFile }),
-      }),
-  )
+  return entries.map((entry) => entry.create())
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {

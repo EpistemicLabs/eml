@@ -1,5 +1,5 @@
 // A plain mark per agent CLI — the asterisk for Claude
-// Code, a hexagon for Codex.
+// Code, a hexagon for Codex, a ring for Qwen Code.
 import type { LLMProvider } from '@/types/app';
 
 type SessionProviderLogoProps = {
@@ -13,6 +13,15 @@ export default function SessionProviderLogo({ provider = 'claude', className = '
       <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" aria-hidden>
         <title>Codex</title>
         <path d="M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4z" />
+      </svg>
+    );
+  }
+  if (provider === 'qwen') {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden>
+        <title>Qwen Code</title>
+        <circle cx="12" cy="12" r="8.6" />
+        <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
       </svg>
     );
   }

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { APP_DIR, CLAUDE_RUNTIME_DIR, CODEX_RUNTIME_DIR, COCKPIT_HOME, CONFIG_FILE, HOST_ROOT } from '../paths.js'
+import { APP_DIR, CLAUDE_RUNTIME_DIR, CODEX_RUNTIME_DIR, COCKPIT_HOME, CONFIG_FILE, HOST_ROOT, QWEN_RUNTIME_DIR } from '../paths.js'
 import { MAIN_REGISTRY_FILE } from '../project-registry.js'
 import { platform } from '../infrastructure/platform/index.js'
 import { serviceStatus } from '../service.js'
@@ -107,6 +107,7 @@ export async function diagnose(): Promise<string> {
       : `- autostart: ${service.installed ? 'installed' : 'not installed'} · ${service.running ? 'running' : 'not running'} · port ${service.port} ${service.responds ? 'responds' : 'no response'}`,
     runtimeLine('claude code', CLAUDE_RUNTIME_DIR),
     runtimeLine('codex', CODEX_RUNTIME_DIR),
+    runtimeLine('qwen', QWEN_RUNTIME_DIR),
     update
       ? `- app updates: previous ${update.previous ?? 'none'}, latest seen ${(update.latest as { version?: string } | null)?.version ?? 'none'} · last: ${result(update.lastResult)}${update.lastError ? ` · last check error: ${update.lastError}` : ''}`
       : '- app updates: no state (not an installed app, or never checked)',

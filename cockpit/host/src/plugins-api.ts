@@ -7,18 +7,32 @@ import { readCockpitConfig, updateCockpitConfig } from './config.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
 import { platform } from './infrastructure/platform/index.js'
-import { isLocalRequest } from './remote-access.js'
+import { handleRepositoryApi } from './plugins-repository.js'
+import { isLocalRequest, readRemoteAccess } from './remote-access.js'
+import type { Place, TimeTracker } from './time-tracking.js'
+
+/** Names by space id ('' for the main space), by projectKey and by task id; null when unknown. */
+export interface TimeNames {
+  spaces: Record<string, string>
+  projects: Record<string, string | null>
+  tasks: Record<string, string | null>
+}
 
 /**
- * The cockpit's own plugins (decision cockpit-builtin-plugins-first): project
- * views next to the brain that Settings › EML Plugins switches on or off, for
- * the whole cockpit — every browser of it sees the same. Brain is no plugin
- * here: it can't be switched off.
+ * The cockpit's own plugins (decision cockpit-builtin-plugins-first): the
+ * project's views, Brain among them, that Settings › EML Plugins switches on
+ * or off, for the whole cockpit — every browser of it sees the same. Brain off
+ * hides only the pane view; the brain itself and the header's Brain tab stay.
+ * Brain, Note and Worktrees start on, the others off (PLUGIN_DEFAULTS); the user's own switch wins.
  *
  *   GET   /api/plugins                         → { plugins: [{ id, enabled }] }
  *   PATCH /api/plugins  { id, enabled }        → the same, after the change
  *   GET   /api/plugins/worktrees/git?projectId= → the project folder's worktrees
  *   GET   /api/plugins/worktrees/ports          → the ports the user's processes listen on
+ *   GET   /api/plugins/repository/…            → a checkout's diffs, files and commits (plugins-repository.ts)
+ *   DELETE /api/plugins/shell/<id>              → end a Shell plugin terminal (its pane closed)
+ *   POST  /api/plugins/time/beat { spaceId, projectId, sessionId, fresh? } → the user is at the cockpit (time-tracking.ts)
+ *   GET   /api/plugins/time?days=              → the last days' times, today last, and the sessions' names
  *
  * The Worktrees routes read only: the folder comes from the project registry,
  * never from the request, so a caller can't point them at another path. They
@@ -27,15 +41,22 @@ import { isLocalRequest } from './remote-access.js'
  * 404 on its routes, Notes included (/api/notes).
  */
 
-export const PLUGIN_IDS = ['note', 'worktrees'] as const
+export const PLUGIN_IDS = ['brain', 'note', 'worktrees', 'repository', 'shell', 'time'] as const
 export type PluginId = (typeof PLUGIN_IDS)[number]
 
 const isPluginId = (value: unknown): value is PluginId => (PLUGIN_IDS as readonly unknown[]).includes(value)
 
-/** Every plugin is on until the user switches it off. */
+/**
+ * A plugin's state until the user switches it. The plugins released on by
+ * default stay so, for the cockpits that never touched them; every plugin
+ * after them starts off.
+ */
+export const PLUGIN_DEFAULTS: Record<PluginId, boolean> = { brain: true, note: true, worktrees: true, repository: false, shell: false, time: false }
+
+/** What the user chose, else the plugin's default. */
 export async function pluginStates(): Promise<Record<PluginId, boolean>> {
   const chosen = (await readCockpitConfig())?.plugins ?? {}
-  return Object.fromEntries(PLUGIN_IDS.map((id) => [id, chosen[id] !== false])) as Record<PluginId, boolean>
+  return Object.fromEntries(PLUGIN_IDS.map((id) => [id, chosen[id] ?? PLUGIN_DEFAULTS[id]])) as Record<PluginId, boolean>
 }
 
 export interface Worktree {
@@ -83,6 +104,14 @@ export interface PluginsApiDeps {
   /** Ports the cockpit itself serves, port → what they are ("EML brain server"). */
   ownPorts?: () => Map<number, string>
   ports?: () => Promise<ListeningPort[] | null>
+  /** End the Shell plugin's terminal `id` (pty-bridge.ts); whether one ran. */
+  endShell?: (id: string) => boolean
+  endShells?: () => number
+  time?: TimeTracker
+  /** What the sidebar calls a session; null when it has no name yet. */
+  sessionName?: (sessionId: string) => string | null
+  /** The names of the Time view's spaces, projects and tasks, each looked up in its own space. */
+  timeNames?: (refs: { projects: Place[]; tasks: Array<{ spaceId: string | null; taskId: string }> }) => Promise<TimeNames>
   git?: Git
   home?: string
 }
@@ -106,11 +135,11 @@ export interface PortView extends Omit<ListeningPort, 'commandLine' | 'ancestors
   system: boolean
 }
 
-type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
+export type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
 type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
-type Git = (cwd: string, args: string[]) => Promise<string | null>
+export type Git = (cwd: string, args: string[]) => Promise<string | null>
 
-const notFound = (json: Json, res: http.ServerResponse, message: string) =>
+export const notFound = (json: Json, res: http.ServerResponse, message: string) =>
   json(res, 404, { error: { code: 'NOT_FOUND', message } })
 
 export async function handlePluginsApi(
@@ -137,10 +166,54 @@ export async function handlePluginsApi(
       }
       const { id, enabled } = body
       await updateCockpitConfig((config) => config && { ...config, plugins: { ...config.plugins, [id]: enabled } })
+      // A shell switched off ends with it, not only at its detach timeout.
+      if (id === 'shell' && !enabled) deps.endShells?.()
     } else if (method !== 'GET') return false
     const states = await pluginStates()
     json(res, 200, { plugins: PLUGIN_IDS.map((id) => ({ id, enabled: states[id] })) })
     return true
+  }
+  // The Shell plugin's terminal runs over the terminal socket (pty-bridge.ts); its pane closed, it ends here.
+  const shellId = /^\/api\/plugins\/shell\/([a-zA-Z0-9_.\-:]+)$/.exec(pathname)?.[1]
+  if (shellId && method === 'DELETE') {
+    // Who may open a shell may end one: this machine, remotely only with `eml-cockpit remote shell on`.
+    if (!isLocalRequest(req) && !readRemoteAccess().shell) {
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'The shell is ended on this machine only' } })
+      return true
+    }
+    json(res, 200, { ended: deps.endShell?.(shellId) ?? false })
+    return true
+  }
+  if (pathname === '/api/plugins/time' || pathname === '/api/plugins/time/beat') {
+    if (!deps.time) return false
+    if (!(await pluginStates()).time) {
+      notFound(json, res, 'Time is switched off (Settings › EML Plugins)')
+      return true
+    }
+    if (pathname === '/api/plugins/time/beat' && method === 'POST') {
+      const body = await readJson(req)
+      // Ids as the cockpit makes them; anything else counts as none.
+      const id = (value: unknown) => (typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null)
+      await deps.time.beat({ spaceId: id(body.spaceId), projectId: id(body.projectId), sessionId: id(body.sessionId) }, body.fresh === true)
+      json(res, 200, { ok: true })
+      return true
+    }
+    if (pathname !== '/api/plugins/time' || method !== 'GET') return false
+    const days = deps.time.days(Math.min(Math.max(Number(url.searchParams.get('days')) || 7, 1), 31))
+    const ids = new Set(days.flatMap((day) => Object.keys(day.sessions)))
+    const sessions = Object.fromEntries([...ids].map((sid) => [sid, deps.sessionName?.(sid) ?? null]))
+    const projects = [...new Map(days.flatMap((day) => Object.entries(day.projects))).values()]
+    const tasks = [...new Map(days.flatMap((day) => Object.entries(day.tasks))).entries()].map(([taskId, t]) => ({ spaceId: t.spaceId, taskId }))
+    const names = (await deps.timeNames?.({ projects, tasks })) ?? { spaces: {}, projects: {}, tasks: {} }
+    json(res, 200, { days, names: { ...names, sessions } })
+    return true
+  }
+  if (pathname.startsWith('/api/plugins/repository/') && method === 'GET') {
+    if (!(await pluginStates()).repository) {
+      notFound(json, res, 'Repository is switched off (Settings › EML Plugins)')
+      return true
+    }
+    return handleRepositoryApi(res, deps, url, json)
   }
   if (!pathname.startsWith('/api/plugins/worktrees/') || method !== 'GET') return false
   if (!(await pluginStates()).worktrees) {
@@ -209,9 +282,11 @@ function ownProcess(commandLine: string): string | null {
 // --no-optional-locks: git status would otherwise refresh the index and hold
 // index.lock for a moment, and an agent's git add or commit in that worktree
 // at the same moment would fail.
-const runGit: Git = (cwd, args) => new Promise((resolve) => {
-  execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => resolve(err ? null : String(out)))
+export const gitRunner = (maxBuffer: number): Git => (cwd, args) => new Promise((resolve) => {
+  execFile('git', ['--no-optional-locks', '-C', cwd, ...args], { timeout: 10_000, maxBuffer }, (err, out) => resolve(err ? null : String(out)))
 })
+
+const runGit = gitRunner(4 * 1024 * 1024)
 
 /** The repository's worktrees, each compared with the default branch. */
 export async function worktreesGit(folder: string, git: Git): Promise<WorktreesGit> {
@@ -266,7 +341,7 @@ async function worktreeAdded(gitDir: string): Promise<string | null> {
 }
 
 /** origin's default branch when there is a remote, else a local main or master. */
-async function defaultBranch(folder: string, git: Git): Promise<string | null> {
+export async function defaultBranch(folder: string, git: Git): Promise<string | null> {
   const remote = (await git(folder, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']))?.trim()
   if (remote) return remote
   for (const name of ['main', 'master']) {

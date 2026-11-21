@@ -1,8 +1,14 @@
 import { createHash } from 'crypto'
 import { z } from 'zod'
-import type { Channel } from '../../domain/address'
-import type { InboundMessage } from '../../domain/inbound-message'
-import type { ChannelAccount, ChannelUnavailable, OutgoingMessage, SendOutcome, SyncResult } from '../../ports/channel'
+import type {
+  Channel,
+  ChannelAccount,
+  ChannelUnavailable,
+  InboundMessage,
+  OutgoingMessage,
+  SendOutcome,
+  SyncResult,
+} from '@engramprotocol/channel-bridge-sdk'
 import { buildReply, header, toInboundMessage } from './gmail-mapping'
 import type { GmailMessage } from './gmail-mapping'
 import type { AccessTokens } from './google-refresh-token'

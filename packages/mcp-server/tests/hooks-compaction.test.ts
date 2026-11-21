@@ -18,6 +18,13 @@ const codexTokenCount = (input: number) => JSON.stringify({
   payload: { type: 'token_count', info: { last_token_usage: { input_tokens: input, cached_input_tokens: input - 500, output_tokens: 130, total_tokens: input + 130 }, model_context_window: 258400 } },
 })
 
+// Qwen Code: an assistant record with usageMetadata; promptTokenCount includes the cached ones.
+const qwenAssistant = (prompt: number) => JSON.stringify({
+  type: 'assistant', model: 'qwen/qwen3.8-27b',
+  message: { role: 'model', parts: [{ text: 'ok' }] },
+  usageMetadata: { promptTokenCount: prompt, candidatesTokenCount: 112, thoughtsTokenCount: 15, totalTokenCount: prompt + 112, cachedContentTokenCount: 64 },
+})
+
 const reason = (output: string) => {
   const parsed = JSON.parse(output) as { decision: string; reason: string }
   expect(parsed.decision).toBe('block')
@@ -60,6 +67,16 @@ describe('context size from the transcript', () => {
       JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: null } }),
     )
     expect(contextTokens(file)).toBe(48_130)
+  })
+
+  it('reads a Qwen Code chat file too', () => {
+    const file = transcript(
+      qwenAssistant(10_000),
+      JSON.stringify({ type: 'tool_result', message: { role: 'user', parts: [{ text: 'usageMetadata"' }] } }),
+      qwenAssistant(15_872),
+      JSON.stringify({ type: 'system', subtype: 'ui_telemetry' }),
+    )
+    expect(contextTokens(file)).toBe(15_984)
   })
 
   it('is unknown for a missing file or another format', () => {

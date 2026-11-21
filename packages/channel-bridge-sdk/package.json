@@ -1,0 +1,42 @@
+{
+  "name": "@engramprotocol/channel-bridge-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "EML channel bridge SDK — the contract a plugin's channel part implements: accounts, messages, and the adapter the bridge creates them from",
+  "license": "AGPL-3.0-only",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "testing": [
+        "dist/testing.d.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "vitest": "*"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
+  }
+}

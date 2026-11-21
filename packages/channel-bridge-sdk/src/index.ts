@@ -1,0 +1,6 @@
+export type { Channel } from './address'
+export { normalizeMailAddress, domainOf } from './address'
+export type { InboundMessage } from './inbound-message'
+export type { ChannelAccount, ChannelUnavailable, OutgoingMessage, SendOutcome, SyncResult } from './account'
+export type { AdapterContext, ChannelAdapter } from './adapter'
+export { defineChannelAdapter } from './adapter'
