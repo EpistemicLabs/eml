@@ -53,7 +53,7 @@ settings; the bridge also needs a non-empty token for at least one space.
   {
     "type": "gmail",
     "accountId": "home-mail",
-    "space": "<the space's id>",
+    "spaces": ["<a space's id>", "<another space's id>"],
     "address": "me@home.example",
     "credentialsFile": "<path to the OAuth Desktop app client file>",
     "tokenFile": "<path to the token file of an existing sign-in>"
@@ -61,9 +61,13 @@ settings; the bridge also needs a non-empty token for at least one space.
 ]
 ```
 
-Every entry has `type`, `accountId` and `space`; the adapter its `type` names checks the rest, and
-a type no plugin serves refuses the start. Each account belongs to one space the bridge has a
-token for. A Gmail account (`plugins/gmail/channel`) uses an existing
+Every entry has `type`, `accountId` and `spaces`; the adapter its `type` names checks the rest, and
+a type no plugin serves refuses the start. The cockpit writes this file from the channel plugins'
+switches: one account per connection, listing every space where the plugin is on with it, each a
+space the bridge has a token for (a file of before naming one `space` still reads). There is no
+home space: an account's messages are routed among the jobs of all its spaces (job ids are unique),
+each wake goes to the job's own space, and a message no job takes is stored once and shows in the
+inbox of each of them (`GET /v1/inbox?space=`). A Gmail account (`plugins/gmail/channel`) uses an existing
 sign-in: the bridge only reads its two files and keeps the access token in memory, so another
 program can keep renewing the token file. It needs the Gmail scopes to read, modify and send. On
 its first sync it starts from now; when Gmail's history no longer reaches back to the cursor, it
@@ -79,6 +83,7 @@ until it is renewed.
 | `POST /v1/jobs/<jobId>/messages/new` `{ to, subject, text }` | tool | a new mail from the space's mail account to a contact of the job; `drafted`, `sent`, `failed` or `refused` (`no_account`, `several_accounts` too) |
 | `GET /health` | none | `{ ok: true }` once the bridge listens |
 | `GET /v1/jobs/<jobId>/drafts` | cockpit | the job's drafts waiting for a person, each with the message it answers |
+| `GET /v1/inbox?space=<space>` | cockpit | what no job took of the accounts on in that space, newest first: sender, subject, date and why, never the text |
 | `POST /v1/outbox/<id>/edit` `{ text }` | cockpit | changes a draft's text; `edited` or `refused` |
 | `POST /v1/outbox/<id>/approve` | cockpit | sends a draft; `sent`, `failed` or `refused` |
 | `POST /v1/outbox/<id>/skip` | cockpit | drops a draft; `skipped` or `refused` |

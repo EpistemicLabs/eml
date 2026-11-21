@@ -36,7 +36,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
   const cockpit = new CockpitHttpClient({ url: cockpitUrl, spaces })
   const channels: ChannelAccounts = {
     account: (id) => accounts.find((account) => account.accountId === id) ?? null,
-    inSpace: (space) => accounts.filter((account) => account.space === space),
+    inSpace: (space) => accounts.filter((account) => account.spaces.includes(space)),
   }
   const log: Log = (event, fields) => process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), event, ...fields })}\n`)
   const deps = {
@@ -70,24 +70,30 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
   }
 }
 
-/** What every entry of the accounts file has; the rest belongs to the adapter its `type` names. */
+/**
+ * What every entry of the accounts file has; the rest belongs to the adapter its `type` names. An
+ * account lists the spaces where its plugin is on (`spaces`); a file written before that names one
+ * (`space`), which still reads.
+ */
 const accountsSchema = z.array(
   z.looseObject({
     type: z.string().min(1),
     accountId: z.string().min(1),
-    space: z.string().min(1),
-  }),
+    space: z.string().min(1).optional(),
+    spaces: z.array(z.string().min(1)).min(1).optional(),
+  }).refine((entry) => (entry.space === undefined) !== (entry.spaces === undefined), 'an account names its spaces, or one space'),
 )
 
-/** The accounts the bridge watches. Each belongs to a space the bridge has a token for, under a unique id. */
+/** The accounts the bridge watches. Each lists spaces the bridge has a token for, under a unique id. */
 function channelAccounts(file: string, spaces: string[]): ChannelAccount[] {
-  let entries: { accountId: string; space: string; create(): ChannelAccount }[]
+  let entries: { accountId: string; spaces: string[]; create(): ChannelAccount }[]
   try {
-    entries = accountsSchema.parse(JSON.parse(readFileSync(file, 'utf8'))).map(({ type, accountId, space, ...rest }) => {
+    entries = accountsSchema.parse(JSON.parse(readFileSync(file, 'utf8'))).map(({ type, accountId, space, spaces: listed, ...rest }) => {
       const adapter = adapterFor(type)
       if (!adapter) throw new Error('no plugin serves this account type')
-      const config = adapter.configSchema.parse({ type, accountId, space, ...rest })
-      return { accountId, space, create: () => adapter.create(config, { accountId, space }) }
+      const accountSpaces = [...new Set(listed ?? [space as string])]
+      const config = adapter.configSchema.parse({ type, accountId, spaces: accountSpaces, ...rest })
+      return { accountId, spaces: accountSpaces, create: () => adapter.create(config, { accountId, spaces: accountSpaces }) }
     })
   } catch {
     throw new Error('CHANNEL_BRIDGE_ACCOUNTS_FILE is not a valid list of accounts')
@@ -95,7 +101,7 @@ function channelAccounts(file: string, spaces: string[]): ChannelAccount[] {
   const ids = entries.map((entry) => entry.accountId)
   if (new Set(ids).size !== ids.length) throw new Error('every account needs its own accountId')
   for (const entry of entries) {
-    if (!spaces.includes(entry.space)) throw new Error(`account ${entry.accountId} names a space without a token`)
+    if (entry.spaces.some((space) => !spaces.includes(space))) throw new Error(`account ${entry.accountId} names a space without a token`)
   }
   return entries.map((entry) => entry.create())
 }

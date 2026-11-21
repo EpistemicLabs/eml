@@ -84,6 +84,14 @@ export class SqliteMessageStore implements MessageStore {
     return rows.map(toStoredMessage)
   }
 
+  async inbox(accountIds: string[], limit: number): Promise<StoredMessage[]> {
+    if (accountIds.length === 0) return []
+    const rows = this.db
+      .prepare(`SELECT * FROM messages WHERE account_id IN (${accountIds.map(() => '?').join(', ')}) AND json_extract(routing, '$.kind') = 'inbox' ORDER BY rowid DESC LIMIT ?`)
+      .all(...accountIds, limit) as MessageRow[]
+    return rows.map(toStoredMessage)
+  }
+
   async markRead(ids: string[]): Promise<void> {
     const mark = this.db.prepare('UPDATE messages SET read = 1 WHERE id = ?')
     this.db.transaction(() => {
