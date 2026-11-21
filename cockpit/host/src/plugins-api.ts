@@ -1,6 +1,6 @@
 import type * as http from 'node:http'
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -8,6 +8,8 @@ import { partsOf, type McpPart, type PluginManifest } from './domain/plugin-mani
 import { PluginRegistry } from './infrastructure/plugins/plugin-registry.js'
 import { PluginStore } from './infrastructure/plugins/plugin-store.js'
 import { GoogleSignIn } from './infrastructure/plugins/google-sign-in.js'
+import { McpOAuth } from './infrastructure/plugins/mcp-oauth.js'
+import { McpRelay, RELAY_PATH, stringValues } from './infrastructure/plugins/mcp-relay.js'
 import type { OutsideServer } from './infrastructure/plugins/outside-servers.js'
 import { SpacePluginService } from './application/space-plugins.js'
 import { connectionSchema, PART_KINDS, spacesOf, type SpacePlugins } from './domain/space-plugins.js'
@@ -73,7 +75,28 @@ export const pluginRegistry = new PluginRegistry({
 
 /** Which plugin is on in which space, and the user's connections (owner-only, <home>/plugins/). */
 export const pluginStore = new PluginStore(PLUGINS_HOME)
-export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore, { NODE: process.execPath, COCKPIT_DIST: path.join(HOST_ROOT, 'dist') })
+export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore, {
+  NODE: process.execPath,
+  COCKPIT_DIST: path.join(HOST_ROOT, 'dist'),
+  // Sessions reach a server the user signed in to here through the cockpit's relay.
+  RELAY: `http://127.0.0.1:${Number(process.env.COCKPIT_PORT) || 4317}${RELAY_PATH}`,
+})
+
+/** OAuth sign-ins to remote MCP servers; the tokens live in the connections. */
+export const mcpOAuth = new McpOAuth()
+
+/** The relay sessions reach those servers through (http.ts routes /mcp-relay/ here). */
+export const mcpRelay = new McpRelay({
+  connections: () => pluginStore.connections(),
+  update: async (id, change) => { await pluginStore.updateConnections((all) => all.map((c) => (c.id === id ? change(c) : c))) },
+  serverUrl: async (pluginId) => {
+    const part = (await pluginRegistry.get(pluginId))?.parts.mcp
+    return part && part.transport !== 'stdio' && typeof part.url === 'string' ? part.url : null
+  },
+  oauth: mcpOAuth,
+  isLocal: isLocalRequest,
+  log: (line) => console.log(line),
+})
 
 /** Google sign-ins with the user's own OAuth client (<home>/plugins/google/, owner-only). */
 export const googleSignIn = new GoogleSignIn({ dir: path.join(PLUGINS_HOME, 'google') })
@@ -84,8 +107,21 @@ export interface PluginsContext {
   service: SpacePluginService
   store: PluginStore
   google?: GoogleSignIn
+  oauth?: McpOAuth
 }
-const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn }
+const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn, oauth: mcpOAuth }
+
+/** What an OAuth sign-in started from the page becomes once its callback comes: a new sign-in or one signed in again. */
+const oauthStarted = new Map<string, { plugin: string; label: string; slug?: string; connection?: string; origin: string }>()
+
+/** The small page the browser shows after an OAuth sign-in, with a way back to the cockpit. */
+function oauthPage(res: http.ServerResponse, status: number, title: string, text: string, back: string): void {
+  const escape = (value: string) => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title>`
+    + `<body style="font:16px system-ui;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh;margin:0 16px">`
+    + `<main style="max-width:28rem"><h1 style="font-size:20px">${escape(title)}</h1><p>${escape(text)}</p><p><a style="color:#9cf" href="${escape(back)}">Back to the cockpit</a></p></main>`)
+}
 
 /** Whether each plugin is on in any space: the gate of a pane's routes, which serve every space. */
 export async function pluginStates(ctx: PluginsContext = defaultContext): Promise<Record<string, boolean>> {
@@ -318,6 +354,69 @@ export async function handlePluginsApi(
     })
     return true
   }
+  if (pathname.startsWith('/api/plugins/oauth/') && ctx.oauth) {
+    // OAuth sign-ins to remote MCP servers (mcp-oauth.ts): the server's consent page comes back to
+    // the cockpit's own address, the one the page was opened at (local or through remote access).
+    const oauth = ctx.oauth
+    if (pathname === '/api/plugins/oauth/sign-in' && method === 'POST') {
+      const body = await readJson(req)
+      const manifest = typeof body.plugin === 'string' ? await registry.get(body.plugin) : null
+      const part = manifest?.parts.mcp
+      if (!manifest || !part || part.transport === 'stdio' || typeof part.url !== 'string') return badRequest('plugin is a plugin with a remote MCP server')
+      if (body.slug !== undefined && body.slug !== '' && (typeof body.slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(body.slug))) return badRequest('the short name is lower case letters, digits and dashes')
+      const again = typeof body.connection === 'string' ? (await service.connections()).find((c) => c.id === body.connection && c.plugin === manifest.id) : undefined
+      if (typeof body.connection === 'string' && !again) return badRequest('connection is a sign-in of this plugin')
+      const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 80) : again?.label ?? manifest.name
+      const origin = req.headers.origin
+      if (!origin) return badRequest('the sign-in starts from the cockpit\'s page')
+      const started = await oauth.start(part.url, `${origin}/api/plugins/oauth/callback`)
+      if (!started.ok) {
+        json(res, started.retryable ? 503 : 400, { error: { code: 'OAUTH_REFUSED', message: started.reason, retryable: started.retryable } })
+        return true
+      }
+      oauthStarted.set(started.state, { plugin: manifest.id, label, ...(typeof body.slug === 'string' && body.slug ? { slug: body.slug } : {}), ...(again ? { connection: again.id } : {}), origin })
+      json(res, 200, { url: started.url })
+      return true
+    }
+    if (pathname === '/api/plugins/oauth/callback' && method === 'GET') {
+      const state = url.searchParams.get('state') ?? ''
+      const started = oauthStarted.get(state)
+      const back = started ? `${started.origin}/` : '/'
+      if (!started || !oauth.knows(state)) {
+        oauthPage(res, 400, 'Sign-in not found', 'This sign-in was not started here, or it is older than 15 minutes. Start it again in Settings › Plugins.', back)
+        return true
+      }
+      const error = url.searchParams.get('error')
+      const code = url.searchParams.get('code')
+      if (error || !code) {
+        oauthStarted.delete(state)
+        oauthPage(res, 400, 'Sign-in refused', `The server said: ${error ?? 'no code'}. Nothing was changed.`, back)
+        return true
+      }
+      const finished = await oauth.finish(state, code)
+      if (!finished.ok) {
+        if (!finished.retryable) oauthStarted.delete(state)
+        oauthPage(res, finished.retryable ? 503 : 400, 'Sign-in not finished', finished.reason, back)
+        return true
+      }
+      oauthStarted.delete(state)
+      const all = await service.connections()
+      const previous = started.connection ? all.find((c) => c.id === started.connection) : undefined
+      const id = previous?.id ?? `${started.plugin}-${randomUUID().slice(0, 8)}`
+      // The relay key stays across sign-ins, so the sessions' MCP config doesn't change.
+      const relayKey = previous?.values.relayKey ?? randomBytes(24).toString('base64url')
+      const slug = started.slug ?? previous?.slug
+      await service.saveConnection({ id, plugin: started.plugin, label: started.label, ...(slug ? { slug } : {}), values: { ...stringValues(finished.values), relayKey } })
+      const manifest = await registry.get(started.plugin)
+      if (manifest?.tier === 'custom' && manifest.auth?.kind !== 'mcp-oauth') {
+        await registry.setCustomAuth(manifest.id, { kind: 'mcp-oauth', scopes: [] })
+        await service.refreshAllFiles()
+      }
+      oauthPage(res, 200, 'Signed in', `${started.label} is signed in. Pick it in the spaces that should use it (Settings › Plugins); sessions started from now on use it.`, back)
+      return true
+    }
+    return false
+  }
   if (pathname.startsWith('/api/plugins/google/') && ctx.google) {
     // A Google sign-in with the user's own OAuth client: the client once, then consent and the
     // address the browser ended on (google-sign-in.ts). Like the connections, for the user's own logins.
@@ -379,7 +478,7 @@ export async function handlePluginsApi(
     // Sign-ins and secrets: set up by the user here or through remote access (remote.json lets
     // only the user's own tailnet logins in); their values are never sent back.
     if (pathname === '/api/plugins/connections' && method === 'GET') {
-      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, slug: rest.slug ?? null, secrets: Object.keys(values), address: values.address ?? null })) })
+      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, slug: rest.slug ?? null, secrets: Object.keys(values), address: values.address ?? null, signInNeeded: rest.signInNeeded ?? false, oauth: !!values.relayKey })) })
       return true
     }
     if (pathname === '/api/plugins/connections' && method === 'POST') {

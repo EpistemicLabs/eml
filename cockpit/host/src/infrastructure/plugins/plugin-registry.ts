@@ -68,6 +68,16 @@ export class PluginRegistry {
     })
   }
 
+  /** Sets how a custom plugin signs in (the first OAuth sign-in to its server); false when there is none. */
+  setCustomAuth(id: string, auth: NonNullable<PluginManifest['auth']>): Promise<boolean> {
+    return this.writes.run(async () => {
+      const current = await this.custom()
+      if (!current.some((manifest) => manifest.id === id)) return false
+      await this.writeCustom(current.map((manifest) => (manifest.id === id ? { ...manifest, auth } : manifest)))
+      return true
+    })
+  }
+
   /** Removes a custom plugin; false when there is none with that id. */
   removeCustom(id: string): Promise<boolean> {
     return this.writes.run(async () => {

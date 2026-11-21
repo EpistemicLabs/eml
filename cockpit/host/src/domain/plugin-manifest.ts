@@ -70,8 +70,11 @@ export const channelPartSchema = z.strictObject({
 export type ChannelPart = z.infer<typeof channelPartSchema>
 
 export const pluginAuthSchema = z.strictObject({
-  /** How the user signs in; a connection of this kind serves every space. */
-  kind: z.enum(['google-oauth', 'token']),
+  /**
+   * How the user signs in; a connection of this kind serves every space. mcp-oauth: the cockpit signs
+   * in to the remote MCP server itself and sessions reach it through its relay.
+   */
+  kind: z.enum(['google-oauth', 'token', 'mcp-oauth']),
   /** What the sign-in must allow, as the provider names it. */
   scopes: z.array(z.string()).default([]),
 })

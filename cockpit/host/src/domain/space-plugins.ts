@@ -59,6 +59,8 @@ export const connectionSchema = z.object({
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/).optional(),
   /** Secret name → value; owner-only on disk, never sent to the page. */
   values: z.record(z.string(), z.string()).default({}),
+  /** The server refused to renew this sign-in: the user signs in again. */
+  signInNeeded: z.boolean().optional(),
   /** The parts this sign-in serves (a service account for the mcp part only); every part when left out. */
   parts: z.array(z.enum(['pane', 'mcp', 'channel'])).optional(),
 })
@@ -135,6 +137,27 @@ export function mcpServersFor(
     const base = serverNameOf(manifest)
     if (!part || !base || !isOn(state, spaceId, manifest.id) || !partOn(state, manifest.id, 'mcp')) continue
     const picked = connectionsIn(state, spaceId, manifest.id)
+    // A remote server the cockpit signs in to: each sign-in the space picked through the relay, which
+    // adds the token. Without one, the session reaches the server itself and Claude signs in there.
+    if (manifest.auth?.kind === 'mcp-oauth' && part.transport !== 'stdio' && vars.RELAY && picked.length > 0) {
+      for (const id of picked) {
+        const connection = connections.find((c) => c.id === id && c.plugin === manifest.id)
+        if (!connection?.values.relayKey) {
+          problems.push(`${manifest.name}: a sign-in it should use here is gone`)
+          continue
+        }
+        const wanted = connection.slug ? `${base}-${connection.slug}` : base
+        if (owner.has(wanted) && owner.get(wanted) !== manifest.id) {
+          problems.push(`${manifest.name}: left out, ${owner.get(wanted)} serves ${wanted} here`)
+          continue
+        }
+        let name = wanted
+        for (let n = 2; name in servers; n++) name = `${wanted}-${n}`
+        servers[name] = { type: 'http', url: `${vars.RELAY}/${connection.id}`, headers: { 'x-eml-relay-key': connection.values.relayKey } }
+        owner.set(name, manifest.id)
+      }
+      continue
+    }
     // A server without secrets runs once; one with secrets once per sign-in the space picked.
     const targets: Array<Connection | null> = secretsOf(part).length === 0 ? [null] : picked.flatMap((id) => {
       const found = connections.find((c) => c.id === id && c.plugin === manifest.id)

@@ -175,6 +175,11 @@ export class SpacePluginService {
     this.rewrite(spaceId, snapshot.filesFor(spaceId))
   }
 
+  /** Rewrites every space's session files, after a change outside this service (a plugin's sign-in kind). */
+  refreshAllFiles(): Promise<void> {
+    return this.refreshAll()
+  }
+
   private async refreshAll(): Promise<void> {
     const snapshot = await this.snapshot()
     for (const spaceId of Object.keys(snapshot.state.spaces)) this.rewrite(spaceId, snapshot.filesFor(spaceId))

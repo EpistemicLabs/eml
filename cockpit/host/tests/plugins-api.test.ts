@@ -550,3 +550,50 @@ describe('time', () => {
     await patch({ id: 'time', enabled: true })
   })
 })
+
+describe('OAuth sign-ins to a remote MCP server', () => {
+  let oauthServer: http.Server
+  let remote: string
+
+  beforeAll(async () => {
+    oauthServer = http.createServer((req, res) => {
+      const json = (status: number, value: unknown, headers: Record<string, string> = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(value)) }
+      req.resume()
+      req.on('end', () => {
+        if (req.url === '/mcp') return json(401, {}, { 'www-authenticate': `Bearer resource_metadata="${remote}/.well-known/oauth-protected-resource"` })
+        if (req.url === '/.well-known/oauth-protected-resource') return json(200, { resource: `${remote}/mcp`, authorization_servers: [remote] })
+        if (req.url === '/.well-known/oauth-authorization-server') return json(200, { authorization_endpoint: `${remote}/authorize`, token_endpoint: `${remote}/token`, registration_endpoint: `${remote}/register` })
+        if (req.url === '/register') return json(201, { client_id: 'client-1' })
+        if (req.url === '/token') return json(200, { access_token: 'placeholder-access', refresh_token: 'placeholder-refresh', expires_in: 3600 })
+        json(404, {})
+      })
+    })
+    remote = `http://127.0.0.1:${await listen(oauthServer)}`
+  })
+  afterAll(async () => { await new Promise((r) => oauthServer.close(r)) })
+
+  it('signs in through the server\'s consent page and its callback, then the plugin uses the cockpit\'s sign-ins', async () => {
+    const added = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'bank', name: 'Bank', parts: { mcp: { transport: 'http', url: `${remote}/mcp`, headers: {} } } }),
+    })
+    expect(added.status).toBe(201)
+    const start = await fetch(`${base}/api/plugins/oauth/sign-in`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', origin: 'http://127.0.0.1:4317' }, body: JSON.stringify({ plugin: 'bank', label: 'Company B', slug: 'b' }),
+    })
+    expect(start.status).toBe(200)
+    const consent = new URL((await start.json()).url)
+    expect(consent.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:4317/api/plugins/oauth/callback')
+    const callback = await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)
+    expect(callback.status).toBe(200)
+    expect(await callback.text()).toContain('Company B is signed in')
+    const { connections } = await (await fetch(`${base}/api/plugins/connections`)).json()
+    const signedIn = connections.find((c: { plugin: string }) => c.plugin === 'bank')
+    expect(signedIn).toMatchObject({ label: 'Company B', slug: 'b', oauth: true, signInNeeded: false })
+    expect(JSON.stringify(connections)).not.toContain('placeholder-access')
+    const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
+    expect(plugins.find((p: { id: string }) => p.id === 'bank').auth).toEqual({ kind: 'mcp-oauth', scopes: [] })
+    // A callback a second time, or one never started here, changes nothing.
+    expect((await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)).status).toBe(400)
+    await fetch(`${base}/api/plugins/custom/bank`, { method: 'DELETE' })
+  })
+})

@@ -57,13 +57,14 @@ import { applyUpdate, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, 
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { projectKey, type TimeTracker } from './time-tracking.js'
-import { handlePluginsApi, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
+import { handlePluginsApi, mcpRelay, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
 import { OutsideServers } from './infrastructure/plugins/outside-servers.js'
 import { CLAUDE_BIN } from './infrastructure/providers/claude/runtime.js'
 import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
+import { RELAY_PATH } from './infrastructure/plugins/mcp-relay.js'
 import type { AgentBrains } from './agents.js'
 import { handleAgentsApi } from './agents-api.js'
 import { isPageRoute, NOT_PASSED, SPACE_BRAIN_ROUTES } from './page-brain-routes.js'
@@ -1488,6 +1489,9 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     if (url === MCP_PATH || url.startsWith(`${MCP_PATH}?`)) { void deps.brainMcp.handle(req, res); return }
     // The hook routes (brain-mcp.ts HOOKS_PATH): the session hooks' reads, the space's MCP token as the bearer.
     if (url.startsWith(`${HOOKS_PATH}/`)) { void deps.brainMcp.handleHooks(req, res); return }
+    // The relay to remote MCP servers the user signed in to here (mcp-relay.ts): sessions on this
+    // machine, no Origin; the sign-in's own key in its header is the guard.
+    if (url.startsWith(`${RELAY_PATH}/`)) { void mcpRelay.handle(req, res).catch((err) => fail(res, err)); return }
     // CSRF guard for the whole API surface, including the brain proxy (the host
     // injects the brain token, so a cross-origin write would otherwise reach the
     // real brain): every state-changing /api/* call must carry an allowlisted
