@@ -84,7 +84,7 @@ export function Tree({ label, children, className }: { label: string; children: 
 export type TreeLine = 'solid' | 'dashed';
 
 /**
- * One row and the rows under it. `expanded` is left out for a row without children. `line` is how it
+ * One row and the rows under it; a row with children has its fold arrow at its end. `expanded` is left out for a row without children. `line` is how it
  * hangs from its parent row; a top-level row has none. `content` is the row itself (no buttons inside:
  * the row is the control).
  */
@@ -117,8 +117,7 @@ export function TreeItem({
           'pl-(--tree-indent)',
           // The connector: down along the siblings (to the elbow on the last one), then across to the row.
           'before:absolute before:top-0 before:left-0 before:h-full before:border-l before:border-border-strong last:before:h-(--tree-elbow)',
-          'after:absolute after:top-(--tree-elbow) after:left-0 after:border-t after:border-border-strong',
-          hasChildren ? 'after:w-(--tree-tick)' : 'after:w-(--tree-tick-leaf)',
+          'after:absolute after:top-(--tree-elbow) after:left-0 after:w-(--tree-tick) after:border-t after:border-border-strong',
           line === 'dashed' && 'before:border-dashed after:border-dashed',
         ),
       )}
@@ -128,11 +127,12 @@ export function TreeItem({
         onClick={onSelect}
         className={cn(
           // The picked row has a bar in the text colour and a heavier title, not only a fill (3:1 against the card).
-          'flex min-h-(--target-min) min-w-0 cursor-pointer items-center gap-1 rounded-md border-l-2 border-transparent pr-2 text-ui text-foreground hover:bg-muted',
+          'flex min-h-(--target-min) min-w-0 cursor-pointer items-center gap-1 rounded-md border-l-2 border-transparent pr-1 pl-1 text-ui text-foreground hover:bg-muted',
           selected && 'border-foreground bg-muted font-semibold',
         )}
       >
-        {hasChildren ? (
+        {content}
+        {hasChildren && (
           <span
             data-tree-toggle
             aria-hidden
@@ -141,13 +141,10 @@ export function TreeItem({
           >
             <ChevronRight className={cn('size-3 transition-transform duration-(--duration-fast)', expanded && 'rotate-90')} />
           </span>
-        ) : (
-          <span aria-hidden className="size-(--target-min) flex-shrink-0" />
         )}
-        {content}
       </div>
       {hasChildren && expanded && children && (
-        <ul role="group" className="ml-(--tree-elbow) flex flex-col">
+        <ul role="group" className="ml-(--tree-trunk) flex flex-col">
           <Depth.Provider value={depth + 1}>{children}</Depth.Provider>
         </ul>
       )}
