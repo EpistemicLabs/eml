@@ -66,8 +66,8 @@ export function splitPrompt(input: { title: string; brief: string; fromTitle: st
 export function createSplitSession(deps: SplitSessionDeps) {
   const iso = (ms: number) => new Date(ms).toISOString()
 
-  const titleOf = async (brain: Pick<EmlApi, 'get'>, taskId: string) =>
-    ((await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null } | null)?.title ?? null
+  const taskOf = async (brain: Pick<EmlApi, 'get'>, taskId: string) =>
+    (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null; scope?: string } | null
 
   return {
     async submit(input: SplitInput): Promise<SplitAnswer> {
@@ -81,9 +81,12 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const taskSystem = deps.taskSystem(space)
       const brain = deps.brain(space)
       const sourceTask = taskSystem ? facts.taskId : null
+      const source = sourceTask && brain ? await taskOf(brain, sourceTask) : null
+      // A folder project has no brain project: the new task goes where the session's task is.
+      const scope = brainProject ? `project.${brainProject}` : source?.scope ?? 'global'
       const planned = planSplit(
-        { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: sourceTask && brain ? await titleOf(brain, sourceTask) : null, taskSystem },
-        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope: brainProject ? `project.${brainProject}` : 'global' },
+        { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: source?.title ?? null, taskSystem },
+        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope },
       )
       if (!planned.ok) return planned
       const { plan } = planned

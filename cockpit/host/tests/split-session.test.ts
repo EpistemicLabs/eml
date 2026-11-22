@@ -13,7 +13,7 @@ function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null } = {
   const space = { id: 'main', name: 'Main', taskSystem: opts.taskSystem ?? true, shared: false }
   const brain = {
     async get(path: string) {
-      if (path === '/engram/t-root') return { id: 't-root', title: 'session-review-ui' }
+      if (path === '/engram/t-root') return { id: 't-root', title: 'session-review-ui', scope: 'project.ui' }
       return null
     },
     async post(path: string, body: Record<string, unknown>) {
@@ -54,6 +54,12 @@ describe('splitting off from a session', () => {
     ])
     expect(spawned).toEqual([expect.objectContaining({ fromSessionId: 's1', projectId: 'p-ui', title: 'Media viewer', taskId: 't-new' })])
     expect(String(spawned[0].prompt)).toContain('You get this brief, not that chat.')
+  })
+
+  it('puts a task split into a folder project where the session\'s task is', async () => {
+    const { split, posts } = setup()
+    await split.submit(input({ projectId: 'p-folder' }))
+    expect(posts[0][1]).toMatchObject({ scope: 'project.ui' })
   })
 
   it('does the work once for a retried operation', async () => {
