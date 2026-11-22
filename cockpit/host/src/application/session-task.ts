@@ -3,6 +3,7 @@ import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
+import { kebabTitle } from '../domain/task-title.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session in
@@ -45,14 +46,7 @@ const PLACEHOLDER = /^session-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/
 export const placeholderTitle = (sessionId: string, now: Date) =>
   `session-${now.toISOString().slice(0, 10)}-${sessionId.replace(/-/g, '').slice(0, 8)}`
 
-/** A session title as a task's kebab-case anchor; null when nothing usable is left. */
-export function kebabTitle(title: string): string | null {
-  const kebab = title
-    .replace(/ß/g, 'ss').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-    .slice(0, 60).replace(/-+$/, '')
-  return kebab.length >= 3 ? kebab : null
-}
+export { kebabTitle }
 
 /** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
 export function taskContext(task: Task, placeholder: boolean, unattended = false): string {
