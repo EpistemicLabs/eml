@@ -147,7 +147,8 @@ describe('Tree', () => {
     expect(item('Root').getAttribute('aria-level')).toBe('1');
     expect(item('Sub').getAttribute('aria-level')).toBe('2');
     expect(item('Spun off').getAttribute('aria-selected')).toBe('true');
-    expect(item('Spun off').querySelector('[data-tree-row]')!.className).toContain('border-foreground');
+    expect(item('Spun off').querySelector('[data-tree-row]')!.className).toContain('font-semibold');
+    expect(item('Spun off').querySelector('[data-tree-row]')!.className).not.toContain('border-foreground');
     expect(screen.getAllByRole('treeitem').filter((el) => el.tabIndex === 0)).toHaveLength(1);
     expect(item('Spun off').className).toContain('before:border-dashed');
     expect(item('Sub').className).not.toContain('before:border-dashed');
