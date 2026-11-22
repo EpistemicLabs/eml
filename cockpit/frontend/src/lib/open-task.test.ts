@@ -40,7 +40,7 @@ describe('where a task is now', () => {
   it('has a session that is not open: the newest one opens here', () => {
     const where = locateTask(task('t', { sessionIds: ['s-older', 's-closed'] }), ctx());
     expect(where).toMatchObject({ kind: 'closed', sessionId: 's-closed', projectId: 'p-ui' });
-    expect(locationWords(where)).toEqual({ text: 'Session from 21 Nov, not open', act: 'Open here' });
+    expect(locationWords(where)).toEqual({ text: 'Session from 21 Nov, not open', act: 'Open in a new pane' });
   });
 
   it('has no session yet: Enter starts one on it', () => {

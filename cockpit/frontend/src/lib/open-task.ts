@@ -56,7 +56,7 @@ export function locationWords(where: TaskLocation): { text: string; act: string 
   const space = where.otherSpace;
   const text = where.kind === 'closed' ? `Session from ${day(where.since)}, not open` : 'No session yet';
   if (space) return { text: `In the ${space.name} space · ${text.charAt(0).toLowerCase()}${text.slice(1)}`, act: where.kind === 'closed' ? `Open in ${space.name}` : `Start in ${space.name}` };
-  return { text, act: where.kind === 'closed' ? 'Open here' : 'Start a session here' };
+  return { text, act: where.kind === 'closed' ? 'Open in a new pane' : 'Start a session here' };
 }
 
 export interface TaskGroup { name: string; tasks: BoardTask[] }
