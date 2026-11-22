@@ -8,7 +8,7 @@ import type { TurnInfo, TurnState } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
 
 /** A session as GET /api/sessions/all returns it. */
-export type AllSession = ProjectSession & { spaceId: string };
+export type AllSession = ProjectSession & { spaceId: string; projectId?: string | null };
 
 /** A worker waiting for free memory: it has no session yet (GET /api/sessions/all). */
 export type QueuedWorker = { id: string; parentSessionId: string };

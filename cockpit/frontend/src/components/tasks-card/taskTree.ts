@@ -82,7 +82,7 @@ export interface TreeInput {
 }
 
 type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
-  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId'>> & { closedAncestor?: boolean };
+  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId'>>;
 
 const OPEN_STATUSES = new Set(['planned', 'active']);
 /** A tree deeper than this is a loop in the data, not a real tree. */
@@ -125,7 +125,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     return {
       id: s.id,
       spaceId: s.spaceId,
-      projectId: (s.projectId as string | undefined) ?? null,
+      projectId: s.projectId ?? null,
       title: s.summary || 'Untitled session',
       view: onDesk?.view ?? input.viewOf(s.id),
       open: Boolean(onDesk),
@@ -211,7 +211,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     const kids = path.size < MAX_DEPTH
       ? sessionChildren(s).filter((k) => !nextPath.has(k.id) && (input.allSessions || sessionHoldsDesk(k)))
       : [];
-    const own = (s.projectId as string | undefined) ?? null;
+    const own = s.projectId ?? null;
     return {
       key: `${section}:${s.id}`,
       kind: 'session',
@@ -242,7 +242,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       const rootKey = taskKey(root.spaceId, root.id);
       if (!section.roots.has(rootKey)) section.roots.set(rootKey, () => taskNode(root, key, task.project, new Set()));
     } else {
-      const projectId = (s.projectId as string | undefined) ?? null;
+      const projectId = s.projectId ?? null;
       const key = `s:${s.spaceId}/${projectId ?? ''}`;
       const section = sectionFor(key, cockpitProjectName(s.spaceId, projectId));
       const root = rootOfSession(s);
@@ -253,5 +253,5 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
 }
 
 function fromLineage(t: LineageTask): TaskLike {
-  return { id: t.id, spaceId: t.spaceId, project: t.project, title: t.title, status: t.status, parentId: t.parentId, originId: t.originId, closedAncestor: true };
+  return { id: t.id, spaceId: t.spaceId, project: t.project, title: t.title, status: t.status, parentId: t.parentId, originId: t.originId };
 }

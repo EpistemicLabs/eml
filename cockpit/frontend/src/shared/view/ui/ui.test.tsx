@@ -117,12 +117,12 @@ describe('Dialog', () => {
 });
 
 describe('Dot', () => {
-  it('is a ring while it waits, and says its state when labelled', () => {
-    render(<><Dot hue="waiting" hollow label="Waiting on others" /><Dot hue="you" /></>);
-    const labelled = screen.getByRole('img', { name: 'Waiting on others' });
-    expect(labelled.className).toContain('border-2');
-    expect(labelled.className).toContain('border-status-waiting');
-    expect(document.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
+  it('is a ring while it waits, filled otherwise', () => {
+    const { container } = render(<><Dot hue="waiting" hollow /><Dot hue="you" /></>);
+    const [ring, filled] = [...container.querySelectorAll('span')];
+    expect(ring.className).toContain('border-2');
+    expect(ring.className).toContain('border-status-waiting');
+    expect(filled.className).toContain('bg-status-you');
   });
 });
 

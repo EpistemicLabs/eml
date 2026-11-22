@@ -33,7 +33,7 @@ const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, ...patch,
 });
 const board = (): Board => ({
-  at: '', viewer: 'lasse',
+  at: '', viewer: 'me',
   spaces: [{ id: 'main', name: 'Main', taskSystem: true, agents: [] }],
   projects: [{ spaceId: 'main', id: 'ui', name: 'EML UI/UX', goal: null }],
   tasks: [

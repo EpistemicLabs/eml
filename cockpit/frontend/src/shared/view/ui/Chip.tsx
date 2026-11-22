@@ -14,11 +14,11 @@ export function Chip({ hue, children, className }: { hue?: Hue; children: ReactN
   );
 }
 
-/** Filled while someone acts on it; `hollow` (a ring) while it waits. With `label`, a screen reader says the state. */
-export function Dot({ hue, live = false, hollow = false, label }: { hue: Hue; live?: boolean; hollow?: boolean; label?: string }) {
+/** Filled while someone acts on it; `hollow` (a ring) while it waits. */
+export function Dot({ hue, live = false, hollow = false }: { hue: Hue; live?: boolean; hollow?: boolean }) {
   return (
     <span
-      {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true })}
+      aria-hidden
       className={cn('inline-block size-2 shrink-0 rounded-full', hollow ? cn('border-2', HUE[hue].rule) : HUE[hue].dot, live && cn('animate-live', HUE[hue].ink))}
     />
   );
