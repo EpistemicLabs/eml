@@ -652,7 +652,7 @@ export function ChatPane({
             sessionId={sessionId}
             projectId={projectId}
             upTo={splitFrom.upTo}
-            {...(splitFrom.offer ? { offered: { title: splitFrom.offer.draft.title, relation: splitFrom.offer.draft.relation, projectId: splitFrom.offer.draft.project, brief: splitFrom.offer.draft.brief } } : {})}
+            {...(splitFrom.offer ? { offered: { title: splitFrom.offer.draft.title, relation: splitFrom.offer.draft.relation, projectId: splitFrom.offer.draft.project, brief: splitFrom.offer.draft.brief, existingTaskId: splitFrom.offer.draft.task } } : {})}
             onClose={() => setSplitFrom(null)}
             onDone={(result) => {
               const offerId = splitFrom.offer?.id;

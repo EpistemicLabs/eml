@@ -3,8 +3,14 @@
 export type SplitRelation = 'spun' | 'sub' | 'unrelated';
 export type SplitWhen = 'now' | 'park';
 
+export interface OpenTask { id: string; title: string; project: string | null }
+
 export interface SplitContext {
-  projects: Array<{ id: string; name: string }>;
+  projects: Array<{ id: string; name: string; brainProjectId?: string | null }>;
+  /** The space's open tasks, to split onto one; missing from an older host. */
+  openTasks?: OpenTask[];
+  /** The open task the topic most likely already has. */
+  matchTaskId?: string | null;
   taskSystem: boolean;
   hasTask: boolean;
 }
@@ -14,6 +20,8 @@ export interface SplitDraft {
   relation: SplitRelation;
   projectId: string | null;
   brief: string;
+  /** The open task the agent says the topic already has. */
+  existingTaskId?: string | null;
 }
 
 export type DraftAnswer =
@@ -26,6 +34,8 @@ export interface SplitInput {
   relation: SplitRelation;
   when: SplitWhen;
   projectId: string;
+  /** Split onto this open task instead of making a new one. */
+  existingTaskId?: string;
 }
 
 export type SplitAnswer =
@@ -41,8 +51,8 @@ export async function draftSplit(sessionId: string, upTo?: string): Promise<Draf
 }
 
 /** Only the dialog's context, for a draft the agent wrote itself: no model call on the host. */
-export async function splitContext(sessionId: string): Promise<SplitContext | null> {
-  return (await briefRequest(sessionId, { contextOnly: true })).context;
+export async function splitContext(sessionId: string, title?: string): Promise<SplitContext | null> {
+  return (await briefRequest(sessionId, { contextOnly: true, ...(title ? { title } : {}) })).context;
 }
 
 async function briefRequest(sessionId: string, payload: Record<string, unknown>): Promise<DraftAnswer> {

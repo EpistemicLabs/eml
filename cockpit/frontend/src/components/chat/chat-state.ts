@@ -377,6 +377,8 @@ export interface SplitOffer {
   relation: SplitRelation;
   /** A project id or name, as the agent wrote it. */
   project: string | null;
+  /** The open task the agent says the topic already has. */
+  task: string | null;
   brief: string;
   reason: string;
 }
@@ -384,12 +386,13 @@ export interface SplitOffer {
 /** The agent offered to split a topic off: shown as a card with the choice, not folded away with the tools. */
 export function offerOfTool(item: Extract<ChatItem, { type: 'tool' }>): SplitOffer | null {
   if (!/(^|__)offer_split$/.test(item.name)) return null;
-  const { title, relation, project, brief, reason } = item.input;
+  const { title, relation, project, task, brief, reason } = item.input;
   if (typeof title !== 'string' || typeof brief !== 'string') return null;
   return {
     title,
     relation: relation === 'sub' || relation === 'unrelated' ? relation : 'spun',
     project: typeof project === 'string' && project ? project : null,
+    task: typeof task === 'string' && task ? task : null,
     brief,
     reason: typeof reason === 'string' ? reason : '',
   };

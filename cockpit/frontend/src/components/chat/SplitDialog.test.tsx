@@ -91,9 +91,39 @@ describe('the split dialog', () => {
     render(<SplitDialog sessionId="s1" projectId="p-ui" offered={{ title: 'Owner model', relation: 'unrelated', projectId: 'EML Code', brief: 'Goal: owners.' }} onClose={() => {}} onDone={() => {}} />);
     await waitFor(() => expect(screen.getByText('Written by the agent.')).toBeTruthy());
     await waitFor(() => expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('p-code'));
-    expect(posts.filter((p) => p.url.endsWith('/split-brief')).map((p) => p.body)).toEqual([{ contextOnly: true }]);
+    expect(posts.filter((p) => p.url.endsWith('/split-brief')).map((p) => p.body)).toEqual([{ contextOnly: true, title: 'Owner model' }]);
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Owner model');
     expect((screen.getByRole('radio', { name: /Unrelated/ }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('splitting onto a task that exists', () => {
+  it('preselects the open task the topic looks like, and splits onto it without making a new one', async () => {
+    context = { ...context, openTasks: [{ id: 't-fix', title: 'fix-ended-mail-job', project: null }, { id: 't-other', title: 'other', project: null }], matchTaskId: 't-fix' } as typeof context;
+    const onDone = vi.fn();
+    render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={onDone} />);
+    await waitFor(() => expect((screen.getByRole('radio', { name: /Existing task/ }) as HTMLInputElement).checked).toBe(true));
+    expect((screen.getByLabelText('Which task') as HTMLSelectElement).value).toBe('t-fix');
+    expect(screen.getByRole('option', { name: /Fix ended mail job \(looks like this one\)/i })).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Split off' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(posts.at(-1)!.body).toMatchObject({ existingTaskId: 't-fix' });
+  });
+
+  it('takes the open task the agent named in its offer', async () => {
+    context = { ...context, openTasks: [{ id: 't-fix', title: 'fix-ended-mail-job', project: null }], matchTaskId: null } as typeof context;
+    render(<SplitDialog sessionId="s1" projectId="p-ui" offered={{ title: 'Fix it', relation: 'spun', projectId: null, brief: 'b', existingTaskId: 't-fix' }} onClose={() => {}} onDone={() => {}} />);
+    await waitFor(() => expect((screen.getByLabelText('Which task') as HTMLSelectElement).value).toBe('t-fix'));
+    expect(posts[0].body).toEqual({ contextOnly: true, title: 'Fix it' });
+  });
+
+  it('asks for a task to be picked before splitting onto an existing one', async () => {
+    context = { ...context, openTasks: [{ id: 't-fix', title: 'fix-ended-mail-job', project: null }], matchTaskId: null } as typeof context;
+    render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);
+    await screen.findByDisplayValue('Media viewer');
+    fireEvent.click(screen.getByRole('radio', { name: /Existing task/ }));
+    expect((screen.getByRole('button', { name: 'Split off' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -133,7 +163,7 @@ describe('the chat\'s split parts', () => {
 
   it('reads an offer_split call as an offer, not a folded tool row', () => {
     const tool = { type: 'tool', id: 't1', name: 'mcp__cockpit__offer_split', input: { title: 'Media viewer', relation: 'sideways', brief: 'Goal.', reason: 'new' } } as never;
-    expect(offerOfTool(tool)).toEqual({ title: 'Media viewer', relation: 'spun', project: null, brief: 'Goal.', reason: 'new' });
+    expect(offerOfTool(tool)).toEqual({ title: 'Media viewer', relation: 'spun', project: null, task: null, brief: 'Goal.', reason: 'new' });
     expect(groupItems([tool])).toEqual([{ kind: 'offer', id: 't1', offer: expect.objectContaining({ title: 'Media viewer' }) }]);
   });
 

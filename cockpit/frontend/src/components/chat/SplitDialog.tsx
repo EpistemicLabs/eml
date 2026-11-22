@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 
 import { draftSplit, splitContext, splitOff, type SplitAnswer, type SplitContext, type SplitDraft, type SplitRelation, type SplitWhen } from '@/lib/split';
+import { readable } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Dialog, DialogContent, DialogTitle, Input, LABEL, PRIMARY, RadioCard, Select, Textarea } from '@/shared/view/ui';
 
@@ -36,6 +37,13 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
   const [project, setProject] = useState(offered?.projectId ?? projectId);
   const [brief, setBrief] = useState(offered?.brief ?? '');
   const [when, setWhen] = useState<SplitWhen>('now');
+  // Where it goes: a new task, or an open task the topic already has (no duplicate).
+  const [target, setTarget] = useState<'new' | 'existing'>('new');
+  const [existingId, setExistingId] = useState('');
+  const pickExisting = (found: SplitContext | null, wanted: string | null | undefined) => {
+    const id = wanted && found?.openTasks?.some((t) => t.id === wanted) ? wanted : null;
+    if (id) { setTarget('existing'); setExistingId(id); }
+  };
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // One operation for the dialog: pressing Split off again after an error finishes the same split, not a second one.
@@ -45,9 +53,10 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
     let current = true;
     if (offered) {
       // The agent wrote the draft: only the context is needed, so no second draft is asked for.
-      void splitContext(sessionId).then((found) => {
+      void splitContext(sessionId, offered.title).then((found) => {
         if (!current) return;
         setContext(found);
+        pickExisting(found, offered.existingTaskId ?? found?.matchTaskId);
         // The agent may name the project by id or by name; one the space doesn't have falls back to this chat's.
         const wanted = (offered.projectId ?? '').toLowerCase();
         const match = found?.projects.find((p) => p.id.toLowerCase() === wanted || p.name.toLowerCase() === wanted);
@@ -65,6 +74,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
           setRelation(answer.draft.relation);
           if (answer.draft.projectId) setProject(answer.draft.projectId);
           setBrief(answer.draft.brief);
+          pickExisting(answer.context, answer.context.matchTaskId);
         } else setNote(`${answer.message.replace(/[.!?]?$/, '.')} Write the brief yourself.`);
       }
       setDrafting(false);
@@ -76,13 +86,21 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
   const linksTasks = context?.taskSystem ?? true;
   const relations = RELATIONS.filter(([r]) => r !== 'sub' || (context?.hasTask ?? true));
   const projects = context?.projects.length ? context.projects : [{ id: projectId, name: 'This project' }];
-  const ready = title.trim() !== '' && brief.trim() !== '' && !drafting && !sending;
+  const openTasks = context?.openTasks ?? [];
+  const brainProject = context?.projects.find((p) => p.id === project)?.brainProjectId ?? null;
+  // The project's open tasks first; the picked one stays listed whatever its project.
+  const choices = openTasks.filter((t) => !brainProject || t.project === brainProject || t.id === existingId);
+  const onExisting = target === 'existing' && existingId !== '';
+  const ready = title.trim() !== '' && brief.trim() !== '' && !drafting && !sending && (target === 'new' || onExisting);
 
   const submit = async () => {
     if (!ready) return;
     setSending(true);
     setError(null);
-    const answer = await splitOff(sessionId, { title: title.trim(), brief: brief.trim(), relation: linksTasks ? relation : 'unrelated', when, projectId: project }, opId);
+    const answer = await splitOff(sessionId, {
+      title: title.trim(), brief: brief.trim(), relation: linksTasks ? relation : 'unrelated', when, projectId: project,
+      ...(onExisting ? { existingTaskId: existingId } : {}),
+    }, opId);
     setSending(false);
     if (!answer.ok) { setError(answer.message); return; }
     onDone({ ...answer, title: title.trim(), when });
@@ -102,7 +120,22 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
             <span className={LABEL}>Title</span>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={drafting ? 'Writing a draft…' : 'What the new topic is'} />
           </label>
-          {linksTasks ? (
+          {openTasks.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span id="split-target" className={LABEL}>Where it goes</span>
+              <div role="radiogroup" aria-labelledby="split-target" className="flex flex-col gap-1.5">
+                <RadioCard name="split-target" value="new" checked={target === 'new'} onChange={() => setTarget('new')} title="New task" description="A task of its own for this topic." />
+                <RadioCard name="split-target" value="existing" checked={target === 'existing'} onChange={() => setTarget('existing')} title="Existing task" description="An open task this topic already has: no duplicate." />
+              </div>
+              {target === 'existing' && (
+                <Select aria-label="Which task" value={existingId} onChange={(e) => setExistingId(e.target.value)}>
+                  <option value="">Pick a task…</option>
+                  {choices.map((t) => <option key={t.id} value={t.id}>{readable(t.title)}{t.id === context?.matchTaskId ? ' (looks like this one)' : ''}</option>)}
+                </Select>
+              )}
+            </div>
+          )}
+          {onExisting ? null : linksTasks ? (
             <div className="flex flex-col gap-1.5">
               <span id="split-relation" className={LABEL}>How it relates</span>
               <div role="radiogroup" aria-labelledby="split-relation" className="flex flex-col gap-1.5">
