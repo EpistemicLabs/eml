@@ -134,6 +134,7 @@ describe('the chat\'s split parts', () => {
     const box = container.firstElementChild!;
     expect(box.className).toContain('group-hover/msg:opacity-100');
     expect(box.className).not.toMatch(/(^|\s)group-hover:/);
+    expect(box.className).toContain('h-(--target-min)');
     fireEvent.click(screen.getByRole('button', { name: 'Split from here' }));
     expect(onSplit).toHaveBeenCalled();
   });

@@ -450,7 +450,6 @@ const Messages = memo(function Messages({
           case 'user':
             return (
               <div key={item.id} data-chat-item={item.id} className="group/msg relative flex flex-col items-end gap-1 pt-2">
-                <MessageActions onSplit={() => onSplit(item.id)} />
                 {item.images.length > 0 && (
                   <div className="flex max-w-(--size-chat-bubble) flex-wrap justify-end gap-1">
                     {item.images.map((image, index) => (image.url ? (
@@ -467,13 +466,14 @@ const Messages = memo(function Messages({
                 )}
                 {item.text && <div className="max-w-(--size-chat-bubble) rounded-2xl bg-muted px-3 py-1.5 whitespace-pre-wrap break-words">{item.text}</div>}
                 {item.queued && <span className="text-muted-foreground">queued</span>}
+                <MessageActions onSplit={() => onSplit(item.id)} />
               </div>
             );
           case 'assistant':
             return (
               <div key={item.id} data-chat-item={item.id} className="group/msg relative">
-                {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
                 <Assistant text={item.text} streaming={item.streaming} />
+                {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
               </div>
             );
           case 'permission':
