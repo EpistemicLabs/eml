@@ -11,7 +11,8 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div className="overflow-x-auto pb-1.5">
-        <div className="grid min-w-min grid-flow-col gap-3" style={{ gridTemplateColumns: cols.map((c) => (c.tasks.length ? 'minmax(var(--container-board-col), 1fr)' : 'var(--container-board-col-slim)')).join(' ') }}>
+        {/* On a phone the columns stack: one column per screen width, no sideways scrolling. */}
+        <div className="grid min-w-min grid-flow-col gap-3 max-md:min-w-0 max-md:grid-flow-row max-md:grid-cols-1! max-md:gap-6" style={{ gridTemplateColumns: cols.map((c) => (c.tasks.length ? 'minmax(var(--container-board-col), 1fr)' : 'var(--container-board-col-slim)')).join(' ') }}>
           {cols.map((col) => {
             const meta = TURN_META[col.turn];
             return (

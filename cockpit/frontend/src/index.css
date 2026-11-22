@@ -223,6 +223,8 @@ html.dark {
   --grid-task: minmax(0, var(--container-task-pane)) minmax(0, 1fr);
   /* Plan's project table: caret, project, space, five counts, next due. */
   --grid-plan-row: calc(var(--spacing) * 6) minmax(0, 2.2fr) calc(var(--spacing) * 20) repeat(5, calc(var(--spacing) * 18)) calc(var(--spacing) * 24);
+  /* On a phone: caret and project; the space and the counts wrap under the name, each with its label. */
+  --grid-plan-row-phone: calc(var(--spacing) * 6) minmax(0, 1fr);
   --glass-blur: 24px;
   --glass-blur-thick: 32px;
   --glass-saturate: 180%;

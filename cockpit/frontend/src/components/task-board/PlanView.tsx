@@ -16,7 +16,9 @@ import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { Who } from './parts';
 
 const SEGMENT = cn('min-h-(--target-min) px-2.5 text-ui text-muted-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
-const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2';
+const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2 max-md:grid-cols-(--grid-plan-row-phone) max-md:gap-y-1';
+/** A row's space and counts: the table's own cells on a wide screen, a wrapping line under the name on a phone. */
+const PLAN_CELLS = 'contents max-md:col-start-2 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1';
 
 export function PlanView({ board, now, onOpen, onCloseTask, projects, projectActions }: {
   board: Board;
@@ -40,7 +42,10 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
   const segment = (label: string, pressed: boolean, onClick: () => void) => (
     <button key={label} type="button" aria-pressed={pressed} onClick={onClick} className={SEGMENT}>{label}</button>
   );
-  const num = (n: number, ink?: string) => (n ? <span className={cn('text-ui tabular-nums', ink)}>{n}</span> : <span aria-label="none" className="tabular-nums text-ui text-muted-foreground">·</span>);
+  // On a phone the table header is hidden: each count carries its label, and a zero is left out.
+  const num = (n: number, label: string, ink?: string) => (n
+    ? <span className={cn('text-ui tabular-nums', ink)}>{n}<span className="md:hidden"> {label}</span></span>
+    : <span aria-label="none" className="tabular-nums text-ui text-muted-foreground max-md:hidden">·</span>);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -91,8 +96,8 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
         </label>
       </div>
       <div className="overflow-x-auto">
-        <div className="min-w-plan-table overflow-hidden rounded-xl border border-border bg-card">
-          <div className={cn(PLAN_ROW, LABEL, 'bg-muted')}>
+        <div className="overflow-hidden rounded-xl border border-border bg-card md:min-w-plan-table">
+          <div className={cn(PLAN_ROW, LABEL, 'bg-muted max-md:hidden')}>
             <span /><span>Project</span><span>Space</span><span>Open</span><span>Needs you</span><span>Delegated</span><span>Waiting</span><span>High</span><span>Next due</span>
           </div>
           {rows.map((r) => {
@@ -102,12 +107,14 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
                 <button type="button" aria-expanded={isOpen} onClick={() => toggle(r.key)} className={cn(PLAN_ROW, 'w-full border-t border-border text-left text-body hover:bg-muted', FOCUS)}>
                   <span aria-hidden className={cn('inline-block text-muted-foreground transition-transform duration-(--duration-fast)', isOpen && 'rotate-90')}>›</span>
                   <span className="min-w-0 truncate font-semibold">{r.name}{r.goal && <span className="block truncate text-ui font-normal text-muted-foreground">{r.goal}</span>}</span>
-                  <Chip>{r.spaceName}</Chip>
-                  {num(r.open)}{num(r.needsYou, 'text-you-ink')}{num(r.delegated, 'text-agent-ink')}{num(r.waiting)}{num(r.high, 'text-stopped-ink')}
-                  <span className="tabular-nums text-ui">{r.due ? dueLabel(r.due, now) : '·'}</span>
+                  <span className={PLAN_CELLS}>
+                    <Chip>{r.spaceName}</Chip>
+                    {num(r.open, 'open')}{num(r.needsYou, 'need you', 'text-you-ink')}{num(r.delegated, 'delegated', 'text-agent-ink')}{num(r.waiting, 'waiting')}{num(r.high, 'high', 'text-stopped-ink')}
+                    <span className={cn('tabular-nums text-ui', !r.due && 'max-md:hidden')}>{r.due ? <><span className="md:hidden">due </span>{dueLabel(r.due, now)}</> : '·'}</span>
+                  </span>
                 </button>
                 {isOpen && (
-                  <div className="flex flex-col border-t border-border bg-background py-1 pl-10 pr-3">
+                  <div className="flex flex-col border-t border-border bg-background py-1 pl-10 pr-3 max-md:pl-3">
                     {r.tasks.map(({ task, step }) => <PlanTask key={task.id} task={task} step={step} viewer={board.viewer} now={now} onOpen={onOpen} onClose={onCloseTask} />)}
                   </div>
                 )}
@@ -123,7 +130,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
                 <div key={`${p.spaceId}/${p.id}`} className={cn(PLAN_ROW, 'border-t border-border text-body text-muted-foreground')}>
                   <span />
                   <span className="min-w-0 truncate font-medium">{p.name}{p.goal && <span className="block truncate text-ui font-normal">{p.goal}</span>}</span>
-                  <Chip>{board.spaces.find((s) => s.id === p.spaceId)?.name ?? ''}</Chip>
+                  <Chip className="max-md:col-start-2 max-md:justify-self-start">{board.spaces.find((s) => s.id === p.spaceId)?.name ?? ''}</Chip>
                 </div>
               ))}
             </>
@@ -160,18 +167,20 @@ function PlanTask({ task, step, viewer, now, onOpen, onClose }: { task: BoardTas
   const hue = hueOf(task);
   const state = task.group === 'nobody' ? 'nobody on it' : task.group === 'asked' ? 'asked you' : task.group === 'parent' ? 'waits for parent' : task.turn ? TURN_META[task.turn].name.toLowerCase() : task.status;
   return (
-    <div className={cn('flex items-center gap-2 rounded-lg border border-transparent pr-2 hover:border-border hover:bg-card', step && 'ml-6')}>
-      <button type="button" onClick={() => onOpen(task)} className={cn('grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body', FOCUS)}>
-        <Dot hue={hue} />
-        <span className="min-w-0 truncate">{step && <span className="text-ui text-muted-foreground">↳ </span>}{readable(task.title)}</span>
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground">
+    // On a phone the title wraps, its chips go under it and Close under those.
+    <div className={cn('flex items-center gap-2 rounded-lg border border-transparent pr-2 hover:border-border hover:bg-card max-md:flex-wrap max-md:gap-y-0 max-md:pb-1.5', step && 'ml-6 max-md:ml-4')}>
+      <button type="button" onClick={() => onOpen(task)} className={cn('grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body max-md:basis-full max-md:grid-cols-[auto_minmax(0,1fr)] max-md:items-start max-md:gap-y-1', FOCUS)}>
+        {/* On a phone the dot stays on the title's first line. */}
+        <span className="contents max-md:flex max-md:h-lh max-md:items-center"><Dot hue={hue} /></span>
+        <span className="min-w-0 truncate max-md:whitespace-normal">{step && <span className="text-ui text-muted-foreground">↳ </span>}{readable(task.title)}</span>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground max-md:col-start-2">
           <Chip hue={hue}>{state}</Chip>
           {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
           {task.due && <Chip hue="mark">{dueLabel(task.due, now)}</Chip>}
           <Who task={task} viewer={viewer} />
         </span>
       </button>
-      {task.status !== 'resolved' && <button type="button" className={MINI} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
+      {task.status !== 'resolved' && <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
     </div>
   );
 }
