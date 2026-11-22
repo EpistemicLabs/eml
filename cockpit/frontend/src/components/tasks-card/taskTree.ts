@@ -169,7 +169,9 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     const key = taskKey(t.spaceId, t.id);
     const nextPath = new Set(path).add(key);
     const kids = path.size < MAX_DEPTH
-      ? childrenOf(t).filter((k) => !nextPath.has(taskKey(k.spaceId, k.id)) && (OPEN_STATUSES.has(k.status) || input.showDone || holdsDeskSession(k)))
+      ? childrenOf(t).filter((k) => !nextPath.has(taskKey(k.spaceId, k.id))
+        // Only the desk's sessions: a branch stays only when a session open on the desk is in it.
+        && (input.allSessions ? OPEN_STATUSES.has(k.status) || input.showDone || holdsDeskSession(k) : holdsDeskSession(k)))
       : [];
     const sessions = sessionsOfTask(t).filter((s) => input.allSessions || deskIds.has(s.id)).map(leaf);
     return {

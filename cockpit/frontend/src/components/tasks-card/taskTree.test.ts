@@ -72,6 +72,12 @@ describe('the tasks card tree', () => {
     expect(onlyOpen[0].nodes[0].sessions.map((s) => s.id)).toEqual(['a']);
   });
 
+  it('with only the desk\'s sessions, keeps just the branches that lead to one', () => {
+    const [ui] = buildTaskTree(input({ board: board(tasks), sessions, desk: desk('s-owner'), allSessions: false }));
+    expect(titles(ui.nodes)).toEqual([['root', ['owner']]]);
+    expect(ui.nodes[0].sessions).toEqual([]);
+  });
+
   it('hides done tasks unless asked, but keeps one that holds a desk session', () => {
     const withDone = [
       task('root', { sessionIds: ['s-root'] }),
