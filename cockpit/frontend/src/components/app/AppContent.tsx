@@ -54,6 +54,8 @@ import { cn } from '@/lib/utils';
 import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
+import { TasksCard } from '@/components/tasks-card/TasksCard';
+import { useTasksCard } from '@/stores/useTasksCardStore';
 
 export default function AppContent() {
   return (
@@ -299,6 +301,10 @@ function AppContentInner() {
     paneStore.openInPane({ surface: 'terminal', projectId: project.projectId });
   }, []);
 
+  // The tasks card: next to the sidebar or right of the desk, never on a phone.
+  const tasksCard = useTasksCard();
+  const tasksCardPlace = !compact && tasksCard.shown ? tasksCard.place : null;
+
   // ── Sidebar derives its selection from the active pane.
   const activePaneCtx = usePaneContext(activePaneId, projects);
   useDocumentTitle(activePaneCtx.project?.displayName, unseenTotal);
@@ -323,6 +329,11 @@ function AppContentInner() {
           onShowSettings={(tab) => { setDrawerOpen(false); openSettings(tab); }}
         />
       </div>
+      {tasksCardPlace === 'left' && (
+        <div className="relative my-2 ml-2 flex-shrink-0 self-stretch">
+          <TasksCard projects={projectsBySpace} />
+        </div>
+      )}
 
       {/* The home indicator's inset is only needed at the screen's bottom edge. With the keyboard
           up the app already ends above it, but iOS keeps reporting the inset. */}
@@ -393,6 +404,11 @@ function AppContentInner() {
             })}
         </div>
       </div>
+      {tasksCardPlace === 'right' && (
+        <div className="relative my-2 mr-2 flex-shrink-0 self-stretch">
+          <TasksCard projects={projectsBySpace} />
+        </div>
+      )}
       {/* Inside the row, not on the viewport: the drawer starts and ends
           where the sidebar does, under the header and any banner. */}
       <EngramDrawer projects={projects} />

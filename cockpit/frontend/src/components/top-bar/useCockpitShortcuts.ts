@@ -1,13 +1,15 @@
 // The app-wide shortcuts that are not the desks' (DeskTabBar) or ⌘K's (CommandPalette):
 // ⌘. opens the Inbox and ⌘, Settings, both in the capture phase so a focused terminal cannot
-// swallow them; G then I / N / P picks a task view and ? opens the shortcut sheet, both only
-// when nobody types (inputs, a terminal's hidden textarea, editable text).
+// swallow them, and ⌘T shows or hides the tasks card in an installed app (a browser tab keeps ⌘T);
+// G then I / N / P picks a task view, G then T toggles the tasks card and ? opens the shortcut
+// sheet, all only when nobody types (inputs, a terminal's hidden textarea, editable text).
 import { useEffect } from 'react';
 
+import { toggleTasksCard } from '@/stores/useTasksCardStore';
 import { setTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
-import { IS_MAC, setShortcutSheet } from './shortcuts';
+import { installedApp, IS_MAC, setShortcutSheet } from './shortcuts';
 
 /** How long G waits for its second key. */
 const SEQUENCE_MS = 1200;
@@ -28,6 +30,7 @@ export function useCockpitShortcuts(openSettings: () => void): void {
       if (!mod || e.altKey || e.shiftKey) return;
       if (e.key === '.') { e.preventDefault(); e.stopPropagation(); openTaskView('inbox'); }
       else if (e.key === ',') { e.preventDefault(); e.stopPropagation(); openSettings(); }
+      else if (e.key.toLowerCase() === 't' && installedApp()) { e.preventDefault(); e.stopPropagation(); toggleTasksCard(); }
     };
     let waitingForView = 0;
     const onKey = (e: KeyboardEvent) => {
@@ -38,6 +41,7 @@ export function useCockpitShortcuts(openSettings: () => void): void {
         waitingForView = 0;
         const view = VIEW_KEYS[key];
         if (view) { e.preventDefault(); openTaskView(view); }
+        else if (key === 't') { e.preventDefault(); toggleTasksCard(); }
         return;
       }
       if (key === 'g') { waitingForView = window.setTimeout(() => { waitingForView = 0; }, SEQUENCE_MS); return; }

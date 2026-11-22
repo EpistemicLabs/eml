@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';
+import { setTasksCardPlace, setTasksCardShown, useTasksCard } from '@/stores/useTasksCardStore';
 import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
@@ -27,6 +28,7 @@ export default function PreferencesTab({
   onGreetOnStartChange,
 }: PreferencesTabProps) {
   const chatOverride = useSyncExternalStore(subscribeSettings, () => readSettings().chatOverride);
+  const tasksCard = useTasksCard();
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -53,6 +55,25 @@ export default function PreferencesTab({
             >
               <option value="name">Alphabetical</option>
               <option value="date">Recent Activity</option>
+            </Select>
+          </SettingsRow>
+          <SettingsRow
+            label="Tasks card"
+            description="The task trees of the sessions on a desk. G then T shows or hides it (⌘T in the installed app)."
+          >
+            <Select
+              value={tasksCard.shown ? tasksCard.place : 'hidden'}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === 'hidden') setTasksCardShown(false);
+                else setTasksCardPlace(value === 'right' ? 'right' : 'left');
+              }}
+              className="w-36"
+              aria-label="Tasks card"
+            >
+              <option value="left">Next to the sidebar</option>
+              <option value="right">Right of the desk</option>
+              <option value="hidden">Hidden</option>
             </Select>
           </SettingsRow>
         </SettingsCard>

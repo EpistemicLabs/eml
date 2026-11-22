@@ -29,6 +29,10 @@ export interface BoardTask {
   priority?: string;
   due?: string;
   parentId: string | null;
+  /** The task it was spun off from; missing from an older host. */
+  originId?: string | null;
+  /** How it hangs in its tree: a sub-task, spun off, or a root. */
+  rel?: 'sub' | 'spun' | null;
   waitingOn?: WaitingOn;
   updatedAt: string | null;
   turn: Turn | null;
@@ -56,6 +60,17 @@ export interface InboxItem {
   until?: string;
 }
 
+/** A closed ancestor of a task with a session, which the board's lists leave out (host Board.lineage). */
+export interface LineageTask {
+  id: string;
+  spaceId: string;
+  project: string | null;
+  title: string;
+  status: string;
+  parentId: string | null;
+  originId: string | null;
+}
+
 export interface BoardEvent { at: string; taskId: string; spaceId: string; from: Turn | null; to: Turn | null }
 
 export interface Board {
@@ -64,6 +79,8 @@ export interface Board {
   spaces: Array<{ id: string; name: string; taskSystem: boolean; agents: string[] }>;
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>;
   tasks: BoardTask[];
+  /** Missing from an older host. */
+  lineage?: LineageTask[];
   inbox: InboxItem[];
   snoozed: InboxItem[];
   events: BoardEvent[];

@@ -28,6 +28,8 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: ['G', 'then', 'I'], label: 'Inbox', group: 'Tasks' },
   { keys: ['G', 'then', 'N'], label: 'Now', group: 'Tasks' },
   { keys: ['G', 'then', 'P'], label: 'Plan', group: 'Tasks' },
+  { keys: ['G', 'then', 'T'], label: 'Show or hide the tasks card', group: 'Tasks' },
+  { keys: [MOD, 'T'], label: 'Show or hide the tasks card (installed app)', group: 'Tasks' },
   { keys: ['Esc'], label: 'Close the task panel or a dialog', group: 'Tasks' },
   { keys: [MOD, 'K'], label: 'Search and commands', group: 'Everywhere' },
   { keys: [MOD, ','], label: 'Settings', group: 'Everywhere' },
