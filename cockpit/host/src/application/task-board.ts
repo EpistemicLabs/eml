@@ -133,8 +133,18 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   let events: BoardEvent[] = []
   const listeners = new Set<(events: BoardEvent[]) => void>()
 
-  const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) =>
-    ((await brain.get('/list', { type: 'task', status, with_parent: 'true', limit: OPEN_LIMIT, ...extra }).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
+  const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) => {
+    const query = { type: 'task', status, with_parent: 'true', limit: OPEN_LIMIT, ...extra }
+    try {
+      return ((await brain.get('/list', query)) as { engrams?: Row[] }).engrams ?? []
+    } catch (err) {
+      // A brain server from before with_origin refuses the parameter: the tasks still count, without origins.
+      if (!('with_origin' in query)) return []
+      deps.log(`[board] /list with_origin failed (${(err as Error).message}); listing without origins`)
+      const { with_origin: _origin, ...plain } = query
+      return ((await brain.get('/list', plain).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
+    }
+  }
 
   const projectOf = (scope: string) => scope.startsWith('project.') ? scope.slice('project.'.length) : null
 

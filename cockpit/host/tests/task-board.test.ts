@@ -4,7 +4,7 @@ import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-boa
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; properties?: Record<string, unknown> }
 
 /** A brain with listed tasks and, by id only, tasks the lists leave out (closed long ago). */
-function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = []) {
+function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true) {
   const queries: Array<Record<string, unknown>> = []
   const fetched: string[] = []
   return {
@@ -16,6 +16,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
       if (path === '/object/project') return { objects: projects }
       if (path === '/list') {
         queries.push(query ?? {})
+        if (!knowsOrigin && query && 'with_origin' in query) throw Object.assign(new Error('unknown query params'), { status: 400 })
         return { engrams: rows.filter((r) => r.status === query?.status).map((r) => ({ title: r.id, scope: 'project.acme', parent_id: null, origin_task_id: null, updated_at: '2026-11-19T09:00:00Z', properties: {}, ...r })) }
       }
       if (path.startsWith('/engram/')) {
@@ -34,10 +35,10 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands'] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands'] } ) {
   const main = { id: 'main', name: 'Main', taskSystem: true, shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', taskSystem: false, shared: false }
-  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted)], ['ebisu', brainOf(opts.other ?? [], [])]])
+  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   const deps: TaskBoardDeps = {
@@ -154,5 +155,11 @@ describe('the task board', () => {
       { id: 'oldest', spaceId: 'main', project: 'other', title: 'oldest', status: 'invalidated', parentId: null, originId: null },
     ])
     expect(brains.get('main')!.fetched).not.toContain('gone')
+  })
+
+  it('still lists the tasks when the brain server does not know with_origin yet', async () => {
+    const { board } = setup({ main: [mine('a'), { ...mine('b'), parent_id: 'a' }], oldBrain: true })
+    const model = await board.refresh()
+    expect(model.tasks.map((t) => [t.id, t.rel, t.originId])).toEqual([['a', null, null], ['b', 'sub', null]])
   })
 })
