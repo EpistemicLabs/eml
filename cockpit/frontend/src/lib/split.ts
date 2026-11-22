@@ -73,3 +73,32 @@ export async function undoSplit(opId: string): Promise<{ ok: true } | { ok: fals
     return { ok: false, message: 'The cockpit did not answer.' };
   }
 }
+
+export type SortPick = 'keep' | 'sub' | 'spun' | 'unrelated' | 'drop';
+
+/** One topic of a drifted session as the agent proposed it (propose_sort). */
+export interface SortRow {
+  when?: string;
+  topic: string;
+  summary?: string;
+  today?: string;
+  pick: SortPick;
+  taskId?: string;
+  brief?: string;
+}
+
+export type SortAnswer = { ok: true; linked: number; created: number; closed: number } | { ok: false; message: string };
+
+export async function sortSession(sessionId: string, rows: SortRow[], opId = crypto.randomUUID()): Promise<SortAnswer> {
+  try {
+    const res = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/sort`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ opId, rows: rows.map(({ topic, pick, taskId, brief }) => ({ topic, pick, taskId, brief })) }),
+    });
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, message: errorMessage(body, res.status) };
+    return { ok: true, ...(body as { linked: number; created: number; closed: number }) };
+  } catch {
+    return { ok: false, message: 'The cockpit did not answer.' };
+  }
+}

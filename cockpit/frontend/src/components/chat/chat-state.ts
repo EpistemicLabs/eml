@@ -350,7 +350,34 @@ export type RenderGroup =
   | { kind: 'tools'; id: string; tools: FoldedItem[] }
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
   | { kind: 'status'; id: string; status: string; reason: string | null }
-  | { kind: 'offer'; id: string; offer: SplitOffer };
+  | { kind: 'offer'; id: string; offer: SplitOffer }
+  | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string };
+
+/** One topic of a sort the agent proposed (the cockpit's propose_sort tool). */
+export interface SortProposal {
+  when?: string;
+  topic: string;
+  summary?: string;
+  today?: string;
+  pick: 'keep' | 'sub' | 'spun' | 'unrelated' | 'drop';
+  taskId?: string;
+  brief?: string;
+}
+
+const SORT_PICKS = ['keep', 'sub', 'spun', 'unrelated', 'drop'] as const;
+const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/** The agent proposed sorting this session: shown as a card, its rows read tolerantly. */
+export function sortOfTool(item: Extract<ChatItem, { type: 'tool' }>): { rows: SortProposal[]; reason: string } | null {
+  if (!/(^|__)propose_sort$/.test(item.name) || !Array.isArray(item.input.rows)) return null;
+  const rows = (item.input.rows as Array<Record<string, unknown>>).flatMap((r): SortProposal[] => {
+    const topic = text(r?.topic);
+    if (!topic) return [];
+    const pick = SORT_PICKS.find((p) => p === r.pick) ?? 'keep';
+    return [{ topic, pick, ...(text(r.when) ? { when: text(r.when) } : {}), ...(text(r.summary) ? { summary: text(r.summary) } : {}), ...(text(r.today) ? { today: text(r.today) } : {}), ...(text(r.taskId) ? { taskId: text(r.taskId) } : {}), ...(text(r.brief) ? { brief: text(r.brief) } : {}) }];
+  });
+  return rows.length > 0 ? { rows, reason: text(item.input.reason) ?? '' } : null;
+}
 
 /** A split the agent offered (the cockpit's offer_split tool): its draft for the split dialog. */
 export interface SplitOffer {
@@ -401,12 +428,16 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
     } else if (item.type === 'tool') {
       const said = statusOfTool(item);
       const offer = offerOfTool(item);
+      const sort = sortOfTool(item);
       if (said) {
         flush();
         groups.push({ kind: 'status', id: item.id, ...said });
       } else if (offer) {
         flush();
         groups.push({ kind: 'offer', id: item.id, offer });
+      } else if (sort) {
+        flush();
+        groups.push({ kind: 'sort', id: item.id, ...sort });
       } else if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });

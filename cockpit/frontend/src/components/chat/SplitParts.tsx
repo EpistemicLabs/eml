@@ -1,6 +1,6 @@
 // The chat's parts of splitting a topic off: the hover action on a message, and the marker that says
 // where a topic left the chat, with the way to it and Undo.
-import { Split } from 'lucide-react';
+import { ListTree, Split } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { BUTTON, FOCUS, PRIMARY } from '@/shared/view/ui';
@@ -72,6 +72,27 @@ export function OfferCard({ title, reason, decided, onSplit, onKeep }: { title: 
         <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={onSplit} className={cn(PRIMARY, 'inline-flex items-center gap-1.5')}><Split aria-hidden className="size-3" />Split off…</button>
           <button type="button" onClick={onKeep} className={BUTTON}>Keep it here</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The agent's proposal to sort a drifted session: the choice stays until the user makes it. */
+export function SortCard({ topics, reason, result, onSort, onLater }: { topics: number; reason: string; result: string | null; onSort: () => void; onLater: () => void }) {
+  return (
+    <div className="flex max-w-(--size-chat-bubble) flex-col gap-2 rounded-xl border border-border px-3 py-2.5">
+      <span className="flex items-center gap-1.5 text-caption font-semibold uppercase tracking-label text-muted-foreground">
+        <ListTree aria-hidden className="size-3" />
+        This session moved on
+      </span>
+      <p className="m-0">{topics} topics{reason ? `: ${reason}` : ''}. Sort them so each one lands where it belongs?</p>
+      {result ? (
+        <span className="text-ui text-muted-foreground">{result}</span>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={onSort} className={PRIMARY}>Sort topics…</button>
+          <button type="button" onClick={onLater} className={BUTTON}>Later</button>
         </div>
       )}
     </div>

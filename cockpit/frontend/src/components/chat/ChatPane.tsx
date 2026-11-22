@@ -17,13 +17,14 @@ import { undoSplit } from '@/lib/split';
 import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
-import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SplitOffer, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
 import { SplitDialog } from './SplitDialog';
-import { MessageActions, OfferCard, SplitMarker, type SplitMark } from './SplitParts';
+import { MessageActions, OfferCard, SortCard, SplitMarker, type SplitMark } from './SplitParts';
+import { SortDialog } from './SortDialog';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
 import { useChatShortcuts } from './useChatShortcuts';
@@ -379,7 +380,7 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
 const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
 
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
@@ -396,6 +397,10 @@ const Messages = memo(function Messages({
   offers: Record<string, 'split' | 'kept'>;
   onOffer: (id: string, offer: SplitOffer) => void;
   onKeep: (id: string, offer: SplitOffer) => void;
+  /** What came of each sort the agent proposed, by its tool call's id. */
+  sorts: Record<string, string>;
+  onSort: (id: string, rows: SortProposal[]) => void;
+  onLater: (id: string) => void;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
   const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
@@ -428,6 +433,10 @@ const Messages = memo(function Messages({
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
         if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
+        if (group.kind === 'sort') {
+          const { id, rows, reason } = group;
+          return <SortCard key={id} topics={rows.length} reason={reason} result={sorts[id] ?? null} onSort={() => onSort(id, rows)} onLater={() => onLater(id)} />;
+        }
         if (group.kind === 'offer') {
           const { id, offer } = group;
           return <OfferCard key={id} title={offer.title} reason={offer.reason} decided={offers[id] ?? null} onSplit={() => onOffer(id, offer)} onKeep={() => onKeep(id, offer)} />;
@@ -527,6 +536,9 @@ export function ChatPane({
   const [splitFrom, setSplitFrom] = useState<{ upTo?: string; offer?: { id: string; draft: SplitOffer } } | null>(null);
   const [offers, setOffers] = useState<Record<string, 'split' | 'kept'>>({});
   const openOffer = useCallback((id: string, offer: SplitOffer) => setSplitFrom({ offer: { id, draft: offer } }), []);
+  const [sortOpen, setSortOpen] = useState<{ id: string; rows: SortProposal[] } | null>(null);
+  const [sorts, setSorts] = useState<Record<string, string>>({});
+  const openSort = useCallback((id: string, rows: SortProposal[]) => setSortOpen({ id, rows }), []);
   const [marks, setMarks] = useState<SplitMark[]>([]);
   const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
   const renderMark = useCallback((mark: SplitMark) => (
@@ -553,6 +565,11 @@ export function ChatPane({
   // Keep it here: the agent hears it as the user's reply, so it carries on and does not offer the topic again.
   const keepOffer = useCallback((id: string, offer: SplitOffer) => {
     if (send(`Keep it here: we stay on "${offer.title}" in this chat.`, [])) setOffers((prev) => ({ ...prev, [id]: 'kept' }));
+  }, [send]);
+
+  // Later: the agent hears it, so it does not propose the sort again before the next compaction.
+  const sortLater = useCallback((id: string) => {
+    if (send('Later: no sort now.', [])) setSorts((prev) => ({ ...prev, [id]: 'Later.' }));
   }, [send]);
 
   const onSend = useCallback((text: string, images: string[]) => {
@@ -596,7 +613,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
@@ -645,6 +662,18 @@ export function ChatPane({
               }]);
               setSplitFrom(null);
               // The new task and session show in the tasks card now, not at the next poll.
+              window.dispatchEvent(new Event('cockpit:tasks'));
+            }}
+          />
+        )}
+        {sortOpen && (
+          <SortDialog
+            sessionId={sessionId}
+            rows={sortOpen.rows}
+            onClose={() => setSortOpen(null)}
+            onDone={(result) => {
+              setSorts((prev) => ({ ...prev, [sortOpen.id]: `Sorted: ${result.linked} linked, ${result.created} created, ${result.closed} closed.` }));
+              setSortOpen(null);
               window.dispatchEvent(new Event('cockpit:tasks'));
             }}
           />
