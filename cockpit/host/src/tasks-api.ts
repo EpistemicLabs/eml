@@ -18,7 +18,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId }: split a topic off a session
- *   POST /api/v1/sessions/<id>/split-brief          { upTo? }: a draft (title, relation, projectId, brief) from the turns up to a message
+ *   POST /api/v1/sessions/<id>/split-brief          { upTo?, contextOnly? }: a draft (title, relation, projectId, brief) from the turns up to a message; contextOnly: only the dialog's context, no model call
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
@@ -145,7 +145,14 @@ export async function handleTasksApi(
   const draft = /^\/api\/v1\/sessions\/([^/]+)\/split-brief$/.exec(pathname)
   if (draft && method === 'POST') {
     const body = await readJson(req)
-    const result = await deps.brief.write(decodeURIComponent(draft[1]), str(body.upTo))
+    const sessionId = decodeURIComponent(draft[1])
+    if (body.contextOnly === true) {
+      const context = await deps.brief.context(sessionId)
+      if (context) json(res, 200, { context })
+      else json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
+      return true
+    }
+    const result = await deps.brief.write(sessionId, str(body.upTo))
     if (result.ok) json(res, 200, { ...result.draft, context: result.context })
     else if (result.reason === 'unknown_session') json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
     else {

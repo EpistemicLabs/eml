@@ -105,6 +105,12 @@ export interface SplitBriefDeps {
 
 export function createSplitBrief(deps: SplitBriefDeps) {
   return {
+    /** Only what the dialog needs to offer the choices (the agent wrote the draft itself): no model call. */
+    async context(sessionId: string): Promise<SplitContext | null> {
+      const facts = await deps.facts(sessionId)
+      return facts ? { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask } : null
+    },
+
     async write(sessionId: string, upTo?: string): Promise<
       | { ok: true; draft: DraftBrief; context: SplitContext }
       | { ok: false; reason: 'unknown_session' }

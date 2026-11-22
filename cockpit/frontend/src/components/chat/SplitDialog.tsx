@@ -3,7 +3,7 @@
 // editable; the new session gets the brief, not the whole chat.
 import { useEffect, useState } from 'react';
 
-import { draftSplit, splitOff, type SplitAnswer, type SplitContext, type SplitDraft, type SplitRelation, type SplitWhen } from '@/lib/split';
+import { draftSplit, splitContext, splitOff, type SplitAnswer, type SplitContext, type SplitDraft, type SplitRelation, type SplitWhen } from '@/lib/split';
 import { cn } from '@/lib/utils';
 import { BUTTON, Dialog, DialogContent, DialogTitle, Input, LABEL, PRIMARY, RadioCard, Select, Textarea } from '@/shared/view/ui';
 
@@ -43,16 +43,23 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
 
   useEffect(() => {
     let current = true;
+    if (offered) {
+      // The agent wrote the draft: only the context is needed, so no second draft is asked for.
+      void splitContext(sessionId).then((found) => {
+        if (!current) return;
+        setContext(found);
+        // The agent may name the project by id or by name; one the space doesn't have falls back to this chat's.
+        const wanted = (offered.projectId ?? '').toLowerCase();
+        const match = found?.projects.find((p) => p.id.toLowerCase() === wanted || p.name.toLowerCase() === wanted);
+        setProject(match?.id ?? projectId);
+        setDrafting(false);
+      });
+      return () => { current = false; };
+    }
     void draftSplit(sessionId, upTo).then((answer) => {
       if (!current) return;
       setContext(answer.context);
-      // The agent may name the project by id or by name; one the space doesn't have falls back to this chat's.
-      if (offered && answer.context) {
-        const wanted = (offered.projectId ?? '').toLowerCase();
-        const found = answer.context.projects.find((p) => p.id.toLowerCase() === wanted || p.name.toLowerCase() === wanted);
-        setProject(found?.id ?? projectId);
-      }
-      if (!offered) {
+      {
         if (answer.ok) {
           setTitle(answer.draft.title);
           setRelation(answer.draft.relation);

@@ -59,6 +59,9 @@ describe('the split brief', () => {
     expect(await brief.write('s2')).toEqual({ ok: false, reason: 'failed', message: 'not signed in', context })
     expect(prompts[0]).not.toContain('back to the sidebar')
     expect(await brief.write('nope')).toEqual({ ok: false, reason: 'unknown_session' })
+    prompts.length = 0
+    expect(await brief.context('s1')).toEqual(context)
+    expect(prompts).toEqual([])
   })
 })
 

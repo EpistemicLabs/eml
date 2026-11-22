@@ -91,6 +91,7 @@ describe('the split dialog', () => {
     render(<SplitDialog sessionId="s1" projectId="p-ui" offered={{ title: 'Owner model', relation: 'unrelated', projectId: 'EML Code', brief: 'Goal: owners.' }} onClose={() => {}} onDone={() => {}} />);
     await waitFor(() => expect(screen.getByText('Written by the agent.')).toBeTruthy());
     await waitFor(() => expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('p-code'));
+    expect(posts.filter((p) => p.url.endsWith('/split-brief')).map((p) => p.body)).toEqual([{ contextOnly: true }]);
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Owner model');
     expect((screen.getByRole('radio', { name: /Unrelated/ }) as HTMLInputElement).checked).toBe(true);
   });
