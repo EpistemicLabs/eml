@@ -4,6 +4,8 @@ import type { TaskBoard } from './application/task-board.js'
 import type { CommandInput, CommandRefusal, Submitted, TaskCommands } from './application/task-commands.js'
 import type { SplitBrief } from './application/split-brief.js'
 import type { SplitAnswer, SplitSession } from './application/split-session.js'
+import type { SortSession } from './application/sort-session.js'
+import { SORT_PICKS, type SortPick, type SortRow } from './domain/sort.js'
 import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
 
@@ -17,6 +19,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId }: split a topic off a session
  *   POST /api/v1/sessions/<id>/split-brief          { upTo? }: a draft (title, relation, projectId, brief) from the turns up to a message
+ *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
  * happens at once, and the page opens the session in its desk with the brief. A refusal answers
@@ -29,6 +32,7 @@ export interface TasksApiDeps {
   commands: TaskCommands
   split: SplitSession
   brief: SplitBrief
+  sort: SortSession
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -145,6 +149,26 @@ export async function handleTasksApi(
           : `The brief could not be written: ${result.message ?? 'no answer'}`
       json(res, result.reason === 'failed' ? 502 : 422, { error: { code: result.reason === 'failed' ? 'brief_failed' : result.reason, message, retry: result.reason !== 'empty' }, context: result.context })
     }
+    return true
+  }
+
+  const sort = /^\/api\/v1\/sessions\/([^/]+)\/sort$/.exec(pathname)
+  if (sort && method === 'POST') {
+    const body = await readJson(req)
+    const raw = Array.isArray(body.rows) ? body.rows as Array<Record<string, unknown>> : null
+    const rows: SortRow[] | null = raw && raw.every((r) => typeof r?.topic === 'string' && SORT_PICKS.includes(r.pick as SortPick))
+      ? raw.map((r) => ({ topic: String(r.topic), pick: r.pick as SortPick, ...(str(r.taskId) ? { taskId: str(r.taskId) } : {}), ...(str(r.brief) ? { brief: str(r.brief) } : {}) }))
+      : null
+    if (!rows) { json(res, 400, { error: { code: 'invalid', message: `rows is a list of { topic, pick (${SORT_PICKS.join(' · ')}), taskId?, brief? }`, retry: false } }); return true }
+    const result = await deps.sort.apply({ opId: str(body.opId) ?? randomUUID(), sessionId: decodeURIComponent(sort[1]), rows })
+    if (result.ok) json(res, 200, { opId: result.command.opId, ...result.command.sort })
+    else {
+      const [status, message] = result.refusal === 'unknown_session' ? [404, 'No such session.']
+        : result.refusal === 'no_task' ? [409, 'Sorting needs the task system and a task on the session.']
+          : [503, 'The space has no brain to write to right now.']
+      json(res, status, { error: { code: result.refusal, message, retry: result.refusal === 'no_brain' } })
+    }
+    void deps.board.refresh().catch(() => {})
     return true
   }
 

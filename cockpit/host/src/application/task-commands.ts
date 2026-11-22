@@ -24,8 +24,8 @@ import { stepPrompt } from './task-runner.js'
 export const UNDO_WINDOW_MS = 8000
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 
-/** 'split' is a session's, not the board's: application/split-session.ts carries it out and undoes it. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split'
+/** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split' | 'sort'
 
 export interface CommandInput {
   opId: string
@@ -55,6 +55,8 @@ export interface TaskCommand extends CommandInput {
     createdTaskId: string | null
     spawnedSessionId: string | null
   }
+  /** A sort of a drifted session: what it did. */
+  sort?: { linked: number; created: number; closed: number }
   error?: string
 }
 

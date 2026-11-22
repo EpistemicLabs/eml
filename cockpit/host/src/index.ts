@@ -84,6 +84,7 @@ import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
 import { createSplitSession } from './application/split-session.js'
 import { createSplitBrief } from './application/split-brief.js'
+import { createSortSession } from './application/sort-session.js'
 import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { createTaskBoard } from './application/task-board.js'
 import { projectIdForBrain } from './project-registry.js'
@@ -720,6 +721,20 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  // Sorting a drifted session (application/sort-session.ts).
+  const sortSession = createSortSession({
+    store: taskCommandStore,
+    session: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId, projectId: entry.projectId } : null
+    },
+    space: (spaceId) => spaces.resolve(spaceId),
+    taskSystem: (space) => taskSystemOn(space),
+    brain: taskBrain,
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
   // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
   const claudeConfigOf = (spaceId: string | null) => {
     const space = spaces.resolve(spaceId)
@@ -795,7 +810,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

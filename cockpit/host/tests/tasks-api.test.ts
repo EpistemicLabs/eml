@@ -28,6 +28,12 @@ const deps = {
     owns: (opId: string) => opId.startsWith('split-'),
     undo: async () => { splitUndone++; return { ok: true, command: {} } },
   },
+  sort: {
+    apply: async (input: { opId: string; sessionId: string; rows: unknown[] }) => {
+      sorts.push(input)
+      return input.sessionId === 'notask' ? { ok: false, refusal: 'no_task' } : { ok: true, command: { opId: input.opId, sort: { linked: 1, created: 2, closed: 0 } } }
+    },
+  },
   brief: {
     write: async (sessionId: string, upTo?: string) => {
       if (sessionId === 'nope') return { ok: false, reason: 'unknown_session' }
@@ -37,6 +43,7 @@ const deps = {
   },
 } as unknown as TasksApiDeps
 const splits: Array<Record<string, unknown>> = []
+const sorts: Array<Record<string, unknown>> = []
 let splitUndone = 0
 
 let server: http.Server
@@ -106,5 +113,13 @@ describe('task board routes', () => {
     expect(await post('/api/v1/sessions/s1/split-brief', { upTo: 'u2' })).toEqual({ status: 200, body: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: files (u2).', context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true } } })
     expect((await post('/api/v1/sessions/nope/split-brief', {})).status).toBe(404)
     expect(await post('/api/v1/sessions/broken/split-brief', {})).toMatchObject({ status: 502, body: { error: { code: 'brief_failed', retry: true }, context: { taskSystem: false } } })
+  })
+
+  it('applies a sort of a drifted session, and refuses rows it cannot read', async () => {
+    const r = await post('/api/v1/sessions/s1/sort', { opId: 'sort-1', rows: [{ topic: 'Media viewer', pick: 'spun', brief: 'Goal.' }, { topic: 'Board', pick: 'sub', taskId: 't-b' }] })
+    expect(r).toEqual({ status: 200, body: { opId: 'sort-1', linked: 1, created: 2, closed: 0 } })
+    expect(sorts.at(-1)).toEqual({ opId: 'sort-1', sessionId: 's1', rows: [{ topic: 'Media viewer', pick: 'spun', brief: 'Goal.' }, { topic: 'Board', pick: 'sub', taskId: 't-b' }] })
+    expect((await post('/api/v1/sessions/s1/sort', { rows: [{ topic: 'X', pick: 'park' }] })).status).toBe(400)
+    expect((await post('/api/v1/sessions/notask/sort', { rows: [] })).status).toBe(409)
   })
 })
