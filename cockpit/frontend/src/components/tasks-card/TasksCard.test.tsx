@@ -125,4 +125,15 @@ describe('the tasks card', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'All sessions' }));
     expect(screen.queryByText('Board v3')).toBeNull();
   });
+
+  it('opens the task search from Open task…', async () => {
+    const seen: unknown[] = [];
+    const listener = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener('cockpit:task-search', listener);
+    renderCard();
+    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    fireEvent.click(screen.getByRole('button', { name: /Open task…/ }));
+    window.removeEventListener('cockpit:task-search', listener);
+    expect(seen).toEqual([{ project: null }]);
+  });
 });

@@ -56,6 +56,7 @@ import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
 import { TasksCard } from '@/components/tasks-card/TasksCard';
 import { useTasksCard } from '@/stores/useTasksCardStore';
+import { OpenTaskToast } from '@/components/command-palette/OpenTaskToast';
 
 export default function AppContent() {
   return (
@@ -425,6 +426,7 @@ function AppContentInner() {
       <FirstRunSignIn />
       <ShortcutSheet />
 
+      <OpenTaskToast />
       <CommandPalette
         projects={projects}
         selectedProject={activePaneCtx.project}

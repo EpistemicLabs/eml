@@ -413,15 +413,18 @@ export function snoozeTimes(now: number): { tomorrow: string; monday: string } {
 /**
  * Start a session of the user's own on a task (POST /api/v1/tasks/<id>/start): the host binds the task and
  * queues the session; this page claims it and opens the pane (in chat when that is the user's view).
- * False when the host could not (an older host has no such route): the caller falls back to a terminal pane.
+ * Answers the new session's id, or null when the host could not (an older host has no such route): the
+ * caller falls back to a terminal pane.
  */
-export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<boolean> {
+export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<string | null> {
   try {
     const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: task.spaceId, ...opts }),
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => ({})) as { sessionId?: string };
+    return body.sessionId ?? null;
   } catch {
-    return false;
+    return null;
   }
 }

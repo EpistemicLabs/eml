@@ -1,6 +1,6 @@
 // The cockpit's navigation (decision cockpit-sidebar-replaces-top-bar): the logo, New session,
 // Inbox · Now · Plan, every space with its desks, and Settings with the account at the foot.
-import { Brain, ChevronRight, Inbox, KanbanSquare, ListTree, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, X } from 'lucide-react';
+import { Brain, ChevronRight, Inbox, KanbanSquare, ListTree, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, X, Search } from 'lucide-react';
 
 import { useAgents } from '@/components/settings/hooks/useAgents';
 import { MOD } from '@/components/top-bar/shortcuts';
@@ -16,6 +16,7 @@ import { useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { setTopView, useTopView } from '@/stores/useTopViewStore';
 
 import { useDeskNav, type DeskMark, type Section } from './useDeskNav';
+import { openTaskSearch } from '@/components/command-palette/openTask';
 
 const TASK_VIEWS: Array<{ view: TaskView; label: string; key: string; icon: typeof Inbox }> = [
   { view: 'inbox', label: 'Inbox', key: 'I', icon: Inbox },
@@ -71,6 +72,21 @@ export function NavHeader({ pinned, onTogglePinned, onClose, onOpenAbout }: {
           <X aria-hidden className="size-5" />
         </button>
       )}
+    </div>
+  );
+}
+
+/** Search tasks…: the ⌘K palette on its Open task page, to open an existing task on this desk. */
+export function SearchTasks({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="px-3 pb-1">
+      <NavItem
+        icon={Search}
+        label="Search tasks…"
+        title={`Search tasks (${MOD}K)`}
+        onClick={() => { openTaskSearch(); onNavigate?.(); }}
+        count={<kbd className="font-code text-caption text-muted-foreground">{MOD}K</kbd>}
+      />
     </div>
   );
 }

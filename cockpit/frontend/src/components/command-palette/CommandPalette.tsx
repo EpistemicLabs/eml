@@ -41,7 +41,13 @@ import { useProviders } from '@/lib/providers';
 import { useList } from '@/lib/queries';
 import { useEngramPanel } from '@/lib/engram-panel';
 import type { Engram, EngramStatus } from '@/lib/types';
-import { activateDesk, openInPane, useDesks, type PaneView } from '@/stores/usePaneStore';
+import { activateDesk, openInPane, useActiveDeskId, useActiveSpaceId, useDesks, type PaneView } from '@/stores/usePaneStore';
+import { useAllSessions } from '@/components/sidebar/useAllSessions';
+import { taskState } from '@/components/tasks-card/taskTree';
+import { locateTask, locationWords, searchTasks, type TaskLocation } from '@/lib/open-task';
+import { readable, useTaskBoard, type BoardTask } from '@/lib/task-board';
+import { Dot } from '@/shared/view/ui';
+import { openTask, TASK_SEARCH_EVENT } from './openTask';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { setTopView } from '@/stores/useTopViewStore';
 import { keysHint, MOD, orderedDesks, setShortcutSheet, SHORTCUTS } from '@/components/top-bar/shortcuts';
@@ -60,7 +66,7 @@ import {
   queryWords,
 } from './paletteSearch';
 
-type PalettePage = 'projects' | 'sessions';
+type PalettePage = 'projects' | 'sessions' | 'tasks';
 
 interface CommandPaletteProps {
   projects: Project[];
@@ -74,11 +80,13 @@ interface CommandPaletteProps {
 const PAGE_LABEL: Record<PalettePage, string> = {
   projects: 'New session in',
   sessions: 'Sessions',
+  tasks: 'Open task',
 };
 
 const PAGE_PLACEHOLDER: Record<PalettePage, string> = {
   projects: 'Project…',
   sessions: 'Search sessions…',
+  tasks: 'Open a task… search by title, customer or project',
 };
 
 const ROOT_PLACEHOLDER = 'Type a command or search…';
@@ -129,6 +137,25 @@ function PaletteRow({
   );
 }
 
+/** An open task: its state dot, its title, where it is now, and what Enter does with it. */
+function TaskRow({ task, where, projectName, onSelect }: { task: BoardTask; where: TaskLocation; projectName: string; onSelect: () => void }) {
+  const state = taskState(task);
+  const words = locationWords(where);
+  return (
+    <CommandItem value={`task ${task.spaceId} ${task.id}`} onSelect={onSelect} className="items-start py-1.5">
+      <span className="flex h-(--target-min) shrink-0 items-center"><Dot hue={state.hue} hollow={state.hollow} /></span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-medium">{readable(task.title)}</span>
+        <span className="truncate text-caption text-muted-foreground">{[projectName, state.label, words.text].filter(Boolean).join(' · ')}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5 self-center text-caption text-muted-foreground">
+        {words.act}
+        <kbd className="rounded border border-border px-1 font-code text-caption">↵</kbd>
+      </span>
+    </CommandItem>
+  );
+}
+
 function AsideText({ children }: { children: ReactNode }) {
   return <span className="max-w-48 shrink-0 truncate text-caption text-muted-foreground">{children}</span>;
 }
@@ -147,6 +174,10 @@ export default function CommandPalette({
   const [chosenProvider, setChosenProvider] = useState<LLMProvider | null>(null);
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [heldBrain, setHeldBrain] = useState<Engram[] | null>(null);
+  // Open task: the project the search keeps to (the tasks card's "more open tasks in …"), and whether the
+  // Enter that picked a row held ⌘/Ctrl (open in a new desk).
+  const [taskProject, setTaskProject] = useState<string | null>(null);
+  const newDeskRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const escapeGoesBackRef = useRef(false);
@@ -168,6 +199,21 @@ export default function CommandPalette({
     setSearch('');
     setPages([]);
     setChosenProvider(null);
+    setTaskProject(null);
+  }, []);
+
+  // Opened from the nav's Search tasks, the tasks card's Open task… or its "more open tasks in …" link.
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const project = (event as CustomEvent<{ project?: string | null }>).detail?.project ?? null;
+      setChosenProvider(null);
+      setSearch('');
+      setTaskProject(project);
+      setPages(['tasks']);
+      setOpen(true);
+    };
+    window.addEventListener(TASK_SEARCH_EVENT, onOpen);
+    return () => window.removeEventListener(TASK_SEARCH_EVENT, onOpen);
   }, []);
 
   const closePalette = useCallback(() => {
@@ -235,6 +281,7 @@ export default function CommandPalette({
   }, [pages.length]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter') newDeskRef.current = IS_MAC ? event.metaKey : event.ctrlKey;
     if (event.key === 'Backspace' && search === '' && pages.length > 0) {
       event.preventDefault();
       goBack();
@@ -301,6 +348,33 @@ export default function CommandPalette({
       else onStartNewChat(project);
     });
   };
+
+  // ── Open tasks (root and the Open task page) ────────────────────────
+  const { data: board } = useTaskBoard();
+  const { sessions: liveSessions } = useAllSessions(open);
+  const activeDeskId = useActiveDeskId();
+  const activeSpaceKey = useActiveSpaceId();
+  const showTasks = page === null || page === 'tasks';
+  const taskGroups = useMemo(() => (showTasks && board ? searchTasks(board, query, page === 'tasks' && taskProject ? { project: taskProject } : {}) : []), [showTasks, board, query, page, taskProject]);
+  const locate = (task: BoardTask) => locateTask(task, {
+    activeDeskId,
+    desks: desks.map((d) => ({ id: d.id, name: d.name, spaceId: d.spaceId, panes: d.panes })),
+    sessions: (liveSessions ?? []).filter((s) => !s.archivedAt).map((s) => ({ id: s.id, lastActivity: s.lastActivity ?? null, projectId: s.projectId ?? null })),
+    spaces: spaces.map((s) => ({ id: s.id, name: s.name, key: paneSpaceKey(s) })),
+    activeSpaceKey,
+  });
+  const projectNameOf = (task: BoardTask) => board?.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project)?.name ?? (task.project ? readable(task.project) : '');
+  const taskLimit = page === 'tasks' ? Infinity : searchMode ? ROOT_SEARCH_LIMIT : ROOT_LIMIT;
+  const shownTaskGroups = taskGroups.map((g) => ({ ...g, tasks: g.tasks.slice(0, taskLimit) }));
+  const taskCount = taskGroups.reduce((n, g) => n + g.tasks.length, 0);
+  const taskBrowseLabel = page === null && taskCount > shownTaskGroups.reduce((n, g) => n + g.tasks.length, 0) ? `All ${taskCount} open tasks…` : null;
+  const pickTask = (task: BoardTask) => {
+    const newDesk = newDeskRef.current;
+    newDeskRef.current = false;
+    const where = locate(task);
+    run(() => { void openTask(task, where, { newDesk }); });
+  };
+  const activeDeskName = desks.find((d) => d.id === activeDeskId)?.name ?? 'this desk';
 
   // ── Actions / Navigate / Settings (root only) ───────────────────────
   type ActionEntry = { label: string; icon: LucideIcon; hint?: string; onSelect: () => void };
@@ -394,7 +468,20 @@ export default function CommandPalette({
             placeholder={page ? PAGE_PLACEHOLDER[page] : ROOT_PLACEHOLDER}
           />
           <CommandList>
-            {!brainLoading && <CommandEmpty>No results found.</CommandEmpty>}
+            {!brainLoading && <CommandEmpty>{page === 'tasks' ? 'No open task matches. New tasks come from a chat or the New task bar.' : 'No results found.'}</CommandEmpty>}
+
+            {shownTaskGroups.map((group) => (
+              <CommandGroup key={group.name} heading={page === 'tasks' && taskProject ? `${group.name} · ${board?.projects.find((p) => p.id === taskProject)?.name ?? readable(taskProject)}` : group.name}>
+                {group.tasks.map((task) => (
+                  <TaskRow key={`${task.spaceId}:${task.id}`} task={task} where={locate(task)} projectName={projectNameOf(task)} onSelect={() => pickTask(task)} />
+                ))}
+              </CommandGroup>
+            ))}
+            {taskBrowseLabel && (
+              <CommandGroup>
+                <PaletteRow value={taskBrowseLabel} onSelect={() => pushPage('tasks', true)} icon={<ChevronRight className="size-4" />} label={taskBrowseLabel} muted />
+              </CommandGroup>
+            )}
 
             {showSessions && shownSessions.length > 0 && (
               <CommandGroup heading="Sessions">
@@ -524,6 +611,12 @@ export default function CommandPalette({
               </CommandGroup>
             )}
           </CommandList>
+          {shownTaskGroups.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-3 py-2 text-caption text-muted-foreground">
+              <span><kbd className="font-code">↵</kbd> open on {activeDeskName}</span>
+              <span><kbd className="font-code">{MOD}↵</kbd> open in a new desk</span>
+            </div>
+          )}
         </Command>
       </DialogContent>
     </Dialog>

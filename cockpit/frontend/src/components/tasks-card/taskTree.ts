@@ -63,6 +63,8 @@ export interface TreeSection {
   key: string;
   title: string;
   nodes: TreeNode[];
+  /** A section of tasks: its space and brain project (for "more open tasks in …"); none for a session tree. */
+  project?: { spaceId: string; id: string | null };
 }
 
 export interface TreeInput {
@@ -229,9 +231,9 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
   };
 
   // ---- sections, in the desk's order ----
-  const sections = new Map<string, { title: string; roots: Map<string, () => TreeNode> }>();
-  const sectionFor = (key: string, title: string) => {
-    if (!sections.has(key)) sections.set(key, { title, roots: new Map() });
+  const sections = new Map<string, { title: string; roots: Map<string, () => TreeNode>; project?: TreeSection['project'] }>();
+  const sectionFor = (key: string, title: string, project?: TreeSection['project']) => {
+    if (!sections.has(key)) sections.set(key, { title, roots: new Map(), ...(project ? { project } : {}) });
     return sections.get(key)!;
   };
   for (const d of desk) {
@@ -243,7 +245,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     if (hasTask && !task) continue;
     if (task) {
       const key = `t:${task.spaceId}/${task.project ?? ''}`;
-      const section = sectionFor(key, brainProjectName(task.spaceId, task.project));
+      const section = sectionFor(key, brainProjectName(task.spaceId, task.project), { spaceId: task.spaceId, id: task.project });
       const root = rootOfTask(task);
       const rootKey = taskKey(root.spaceId, root.id);
       if (!section.roots.has(rootKey)) section.roots.set(rootKey, () => taskNode(root, key, task.project, new Set()));
@@ -255,9 +257,18 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       if (!section.roots.has(root.id)) section.roots.set(root.id, () => sessionNode(root, key, projectId, new Set(), false));
     }
   }
-  return [...sections.entries()].map(([key, { title, roots }]) => ({ key, title, nodes: [...roots.values()].map((make) => make()) }));
+  return [...sections.entries()].map(([key, { title, roots, project }]) => ({ key, title, nodes: [...roots.values()].map((make) => make()), ...(project ? { project } : {}) }));
 }
 
 function fromLineage(t: LineageTask): TaskLike {
   return { id: t.id, spaceId: t.spaceId, project: t.project, title: t.title, status: t.status, parentId: t.parentId, originId: t.originId };
+}
+
+/** Open tasks of a section's project that its trees don't show: what "N more open tasks in …" counts. */
+export function moreOpenTasks(section: TreeSection, tasks: Array<Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'status'>>): number {
+  if (!section.project) return 0;
+  const shown = new Set<string>();
+  const walk = (n: TreeNode) => { if (n.kind === 'task') shown.add(n.id); n.children.forEach(walk); };
+  section.nodes.forEach(walk);
+  return tasks.filter((t) => OPEN_STATUSES.has(t.status) && t.spaceId === section.project!.spaceId && t.project === section.project!.id && !shown.has(t.id)).length;
 }
