@@ -111,6 +111,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     const leaves = one ? [] : node.sessions;
     const hasChildren = leaves.length > 0 || node.children.length > 0;
     const title = node.kind === 'task' ? readable(node.title) : node.title;
+    const onDesk = node.sessions.some((s) => s.open);
     return (
       <TreeItem
         key={node.key}
@@ -123,7 +124,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
         content={(
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <Dot hue={node.state.hue} hollow={node.state.hollow} />
-            <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+            {/* On the desk: the text colour; not on the desk: muted (the row's name says it too). */}
+            <span data-on-desk={onDesk} className={cn('min-w-0 flex-1 truncate font-medium', onDesk ? 'text-foreground' : 'text-muted-foreground')}>{title}</span>
             {node.otherProject && <span className="flex-shrink-0 truncate text-caption text-muted-foreground">{node.otherProject}</span>}
           </span>
         )}
@@ -135,7 +137,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
             selected={leaf.current}
             onSelect={() => openSession(leaf)}
             content={(
-              <span className="min-w-0 flex-1 truncate">{leaf.title}</span>
+              <span data-on-desk={leaf.open} className={cn('min-w-0 flex-1 truncate', leaf.open ? 'text-foreground' : 'text-muted-foreground')}>{leaf.title}</span>
             )}
           />
         ))}

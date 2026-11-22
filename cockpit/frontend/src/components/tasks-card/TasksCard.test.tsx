@@ -82,6 +82,9 @@ describe('the tasks card', () => {
     expect(row(/^Media viewer, Parked/).className).toContain('before:border-dashed');
     expect(row(/^Task board mock, Agent working/).getAttribute('aria-expanded')).toBe('true');
     expect(row(/^Board v3, session$/)).toBeTruthy();
+    expect(row(/^Session review ui, Needs you/).querySelector('[data-on-desk]')!.className).toContain('text-foreground');
+    expect(row(/^Board v3, session$/).querySelector('[data-on-desk]')!.className).toContain('text-muted-foreground');
+    expect(row(/^Media viewer, Parked/).querySelector('[data-on-desk]')!.className).toContain('text-muted-foreground');
     expect(row(/^Session review ui, Needs you, session open on this desk/)).toBeTruthy();
   });
 
