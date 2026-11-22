@@ -99,6 +99,8 @@
   }
 
   --container-dialog: 32rem;
+  /* A dialog with a table (sorting a session's topics): room for four columns. */
+  --container-dialog-wide: 48rem;
   /* The settings window: wide enough for a table of plugins across several spaces. */
   --container-settings: 72rem;
   --container-sheet: 75rem;
@@ -234,6 +236,16 @@ html.dark {
   --size-rename-field: 8ch;
   /* Phone fields: below 16px iOS zooms the page when a field takes the focus. */
   --text-field-touch: 16px;
+  /* area: tasks card */
+  /* The tasks card next to the sidebar: the task trees of the sessions on the desk. */
+  --size-tasks-card: 15rem;
+  /* A tree row's children sit this far in; the connector's elbow meets the middle of a one-line row. */
+  --tree-indent: 0.875rem;
+  /* The connector's arm runs to just before the row's dot; the fold arrow sits at the row's end. */
+  --tree-tick: calc(var(--tree-indent) + 0.25rem);
+  --tree-elbow: calc(var(--target-min) / 2);
+  /* The children's line runs down under the middle of their parent's dot (its bar, padding and half the dot). */
+  --tree-trunk: 0.625rem;
   /* area: settings */
   /* The settings window: most of the viewport's height, the same on every tab. */
   --size-settings: 90vh;

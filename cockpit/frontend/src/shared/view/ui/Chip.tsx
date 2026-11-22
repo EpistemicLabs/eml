@@ -14,6 +14,12 @@ export function Chip({ hue, children, className }: { hue?: Hue; children: ReactN
   );
 }
 
-export function Dot({ hue, live = false }: { hue: Hue; live?: boolean }) {
-  return <span aria-hidden className={cn('inline-block size-2 shrink-0 rounded-full', HUE[hue].dot, live && cn('animate-live', HUE[hue].ink))} />;
+/** Filled while someone acts on it; `hollow` (a ring) while it waits. */
+export function Dot({ hue, live = false, hollow = false }: { hue: Hue; live?: boolean; hollow?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn('inline-block size-2 shrink-0 rounded-full', hollow ? cn('border-2', HUE[hue].rule) : HUE[hue].dot, live && cn('animate-live', HUE[hue].ink))}
+    />
+  );
 }

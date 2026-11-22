@@ -82,6 +82,10 @@ import { PushNotifier, notifySessions } from './application/push-notifier.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
+import { createSplitSession } from './application/split-session.js'
+import { createSplitBrief } from './application/split-brief.js'
+import { createSortSession } from './application/sort-session.js'
+import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { createTaskBoard } from './application/task-board.js'
 import { projectIdForBrain } from './project-registry.js'
 
@@ -474,9 +478,10 @@ async function main() {
   // A session flagged for the user (a question, a failure) shows as a new result: its desk dot
   // clears once seen; the flag keeps it in Your turn (decision desk-dot-until-seen).
   const flagged = (sessionId: string) => { if (turns.get(sessionId)?.state !== 'working') turns.apply({ sessionId, state: 'done' }) }
+  const sdkRuntimes = createClaudeSdkRuntimes()
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
-    runtimes: createClaudeSdkRuntimes(),
+    runtimes: sdkRuntimes,
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     turnDone: turnEnded,
@@ -510,7 +515,10 @@ async function main() {
   // Turn state starts empty. A saved question or failure is not turned back into waiting: the desk dot
   // shows what is new until it is seen, the Inbox and Your turn hold what needs an answer, and only a
   // live prompt keeps a session waiting (decision desk-dot-until-seen).
-  spawns.on('spawn', (request: SpawnRequest) => { if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId) })
+  spawns.on('spawn', (request: SpawnRequest) => {
+    if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId)
+    if (request.origin === 'split' || request.origin === 'task') ledger.expectOwn(request.id)
+  })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
     runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
@@ -687,8 +695,9 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  const taskCommandStore = new TaskCommandStore()
   taskCommands = createTaskCommands({
-    store: new TaskCommandStore(),
+    store: taskCommandStore,
     space: (spaceId) => spaces.get(spaceId),
     brain: taskBrain,
     agentsOf: async (space) => {
@@ -712,14 +721,126 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  // A session of the user's own on a task, started from the page (a task row, Advance task): the host binds the
+  // task and queues it; the page claims it and opens it in chat when that is the user's view (application/start-worker.ts).
+  const startOnTask = async (input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }) => {
+    const space = spaces.get(input.spaceId)
+    if (!space) return { ok: false as const, refusal: 'unknown_space' as const }
+    const task = await taskBrain(space)?.get(`/engram/${encodeURIComponent(input.taskId)}`).catch(() => null) as { title?: string | null; status?: string; scope?: string } | null | undefined
+    if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
+    if (task.status !== 'planned' && task.status !== 'active') return { ok: false as const, refusal: 'task_closed' as const }
+    const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
+    const projectId = input.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+    if (!projectId) return { ok: false as const, refusal: 'no_project' as const }
+    const problem = ensureTaskProject(space, projectId)
+    if (problem) return { ok: false as const, refusal: 'no_project' as const, message: problem }
+    const title = input.title ?? task.title ?? input.taskId
+    const request = spawns.add({
+      projectId, title: title.slice(0, 60), fromSessionId: null, open: true, origin: 'task', taskId: input.taskId,
+      prompt: input.prompt ?? `Work on task ${input.taskId} ("${title}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+      ...(input.deskId ? { deskId: input.deskId } : {}),
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    return { ok: true as const, sessionId: request.id }
+  }
+  // What a split or a sort reads about a session.
+  const splitSessionFacts = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId } : null
+  }
+  // Sorting a drifted session (application/sort-session.ts).
+  const sortSession = createSortSession({
+    store: taskCommandStore,
+    session: splitSessionFacts,
+    space: (spaceId) => spaces.resolve(spaceId),
+    taskSystem: (space) => taskSystemOn(space),
+    brain: taskBrain,
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
+  // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
+  const claudeConfigOf = (spaceId: string | null) => {
+    const space = spaces.resolve(spaceId)
+    return space.runtime ? space.runtime.configDirs.claude ?? null : CONFIG_DIR
+  }
+  // The space's open tasks, for splitting onto one instead of making another.
+  const openTasksOf = async (space: BrainSpace) => {
+    const brain = taskBrain(space)
+    if (!brain) return []
+    const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: 200 }).catch(() => ({ engrams: [] }))))
+    return lists.flatMap((l) => ((l as { engrams?: Array<{ id: string; title: string | null; scope: string }> }).engrams ?? []))
+      .map((t) => ({ id: t.id, title: t.title ?? t.id, project: t.scope.startsWith('project.') ? t.scope.slice('project.'.length) : null }))
+  }
+  const splitBrief = createSplitBrief({
+    transcript: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+      const space = spaces.resolve(entry.spaceId)
+      const projectPath = space.registry.get(entry.projectId)?.path
+      if (!projectPath) return null
+      const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
+      return sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
+    },
+    facts: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry) return null
+      const space = spaces.resolve(entry.spaceId)
+      const task = taskSystemOn(space) && entry.taskId
+        ? await taskBrain(space)?.get(`/engram/${entry.taskId}`).catch(() => null) as { title?: string } | null | undefined
+        : null
+      return {
+        sessionTitle: entry.title ?? entry.agentTitle ?? sessionId,
+        taskTitle: task?.title ?? null,
+        projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName, brainProjectId: p.brainProjectId })),
+        openTasks: await openTasksOf(space),
+        taskSystem: taskSystemOn(space),
+        hasTask: taskSystemOn(space) && entry.taskId !== null,
+      }
+    },
+    complete: async (sessionId, prompt) => {
+      const configDir = claudeConfigOf(ledger.get(sessionId)?.spaceId ?? null)
+      if (!configDir) throw new Error('this space has no Claude Code sign-in')
+      return claudeOneShot(configDir, prompt)
+    },
+    today: () => new Date().toISOString().slice(0, 10),
+  })
   taskCommands.every(TASK_COMMAND_TICK_MS)
   taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
+
+  // Split off a topic from a session (application/split-session.ts); its commands share the task commands' file.
+  const splitSession = createSplitSession({
+    store: taskCommandStore,
+    session: splitSessionFacts,
+    space: (spaceId) => spaces.resolve(spaceId),
+    taskSystem: (space) => taskSystemOn(space),
+    brain: taskBrain,
+    brainProject: (space, projectId) => {
+      const project = space.registry.get(projectId)
+      return project ? project.brainProjectId : (brainIdFromProjectId(projectId) ?? undefined)
+    },
+    spawn: ({ fromSessionId, projectId, title, prompt, taskId, space }) => spawns.add({
+      projectId, prompt, title: title.slice(0, 60), fromSessionId, open: true, origin: 'split',
+      ...(taskId ? { taskId } : {}),
+      ...(space.main ? {} : { spaceId: space.id }),
+    }).id,
+    endSession: async (sessionId) => {
+      bridge.killSession(sessionId)
+      await chat.end(sessionId, 'split undone')
+      ledger.setTurnInFlight(sessionId, false)
+      turns.forget(sessionId)
+      ledger.archive(sessionId)
+    },
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
 
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

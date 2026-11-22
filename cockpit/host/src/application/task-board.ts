@@ -32,6 +32,10 @@ export interface BoardTask {
   priority?: string
   due?: string
   parentId: string | null
+  /** The task it was spun off from (a derived_from link); null when none, or outside a task-system space. */
+  originId: string | null
+  /** How it hangs in its tree: a sub-task under parentId, spun off from originId, or a root. */
+  rel: 'sub' | 'spun' | null
   waitingOn?: WaitingOn
   updatedAt: string | null
   turn: Turn | null
@@ -49,6 +53,17 @@ export interface BoardTask {
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
 }
 
+/** A closed task the board leaves out that a tree still needs: an ancestor of a task with a session. */
+export interface LineageTask {
+  id: string
+  spaceId: string
+  project: string | null
+  title: string
+  status: string
+  parentId: string | null
+  originId: string | null
+}
+
 export interface BoardEvent {
   at: string
   taskId: string
@@ -63,6 +78,7 @@ export interface Board {
   spaces: Array<{ id: string; name: string; taskSystem: boolean; agents: string[] }>
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>
   tasks: BoardTask[]
+  lineage: LineageTask[]
   inbox: InboxItem[]
   snoozed: InboxItem[]
   events: BoardEvent[]
@@ -87,6 +103,8 @@ export interface TaskBoardDeps {
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
+/** How far up a tree the board follows closed ancestors that its lists leave out. */
+const LINEAGE_DEPTH = 8
 
 interface Row {
   id: string
@@ -94,6 +112,7 @@ interface Row {
   status: string
   scope: string
   parent_id?: string | null
+  origin_task_id?: string | null
   updated_at?: string
   properties?: {
     assignee_ids?: string[]
@@ -114,8 +133,54 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   let events: BoardEvent[] = []
   const listeners = new Set<(events: BoardEvent[]) => void>()
 
-  const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) =>
-    ((await brain.get('/list', { type: 'task', status, with_parent: 'true', limit: OPEN_LIMIT, ...extra }).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
+  const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) => {
+    const query = { type: 'task', status, with_parent: 'true', limit: OPEN_LIMIT, ...extra }
+    try {
+      return ((await brain.get('/list', query)) as { engrams?: Row[] }).engrams ?? []
+    } catch (err) {
+      // A brain server from before with_origin refuses the parameter: the tasks still count, without origins.
+      if (!('with_origin' in query)) return []
+      deps.log(`[board] /list with_origin failed (${(err as Error).message}); listing without origins`)
+      const { with_origin: _origin, ...plain } = query
+      return ((await brain.get('/list', plain).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
+    }
+  }
+
+  const projectOf = (scope: string) => scope.startsWith('project.') ? scope.slice('project.'.length) : null
+
+  /** One task by id with its parent and origin read from its relations; null when it can't be read. */
+  const fetchLineage = async (brain: Pick<EmlApi, 'get'>, spaceId: string, id: string): Promise<LineageTask | null> => {
+    const row = await brain.get(`/engram/${encodeURIComponent(id)}`, { with_relations: 'true' }).catch(() => null) as
+      | (Row & { type?: string; relations?: Array<{ relation: string; source_id: string; target_id: string; target_engram?: { type?: string } }> })
+      | null
+    if (!row || row.type !== 'task') return null
+    const outgoing = (row.relations ?? []).filter((r) => r.source_id === id)
+    return {
+      id,
+      spaceId,
+      project: projectOf(row.scope),
+      title: row.title ?? id,
+      status: row.status,
+      parentId: outgoing.find((r) => r.relation === 'part_of')?.target_id ?? null,
+      originId: outgoing.find((r) => r.relation === 'derived_from' && r.target_engram?.type === 'task')?.target_id ?? null,
+    }
+  }
+
+  /** The closed ancestors of the space's tasks with a session that the lists left out, up to LINEAGE_DEPTH. */
+  const missingAncestors = async (brain: Pick<EmlApi, 'get'>, spaceId: string, tasks: BoardTask[]): Promise<LineageTask[]> => {
+    const known = new Set(tasks.map((t) => t.id))
+    const found: LineageTask[] = []
+    let wanted = tasks.filter((t) => t.sessionIds.length > 0).flatMap((t) => [t.parentId, t.originId])
+    for (let depth = 0; depth < LINEAGE_DEPTH; depth++) {
+      const ids = [...new Set(wanted.filter((id): id is string => !!id && !known.has(id)))]
+      if (ids.length === 0) break
+      ids.forEach((id) => known.add(id))
+      const next = (await Promise.all(ids.map((id) => fetchLineage(brain, spaceId, id)))).filter((t): t is LineageTask => t !== null)
+      found.push(...next)
+      wanted = next.flatMap((t) => [t.parentId, t.originId])
+    }
+    return found
+  }
 
   const objects = async (brain: Pick<EmlApi, 'get'>, object: string) =>
     ((await brain.get(`/object/${object}`).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
@@ -141,7 +206,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const now = deps.now()
     const pending = deps.pendingCommands()
     const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
-    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
+    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
 
     for (const space of deps.spaces()) {
@@ -153,12 +218,15 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       for (const p of await objects(brain, 'project')) {
         board.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
+      // Origins (spun off from) only where the task system is on; other spaces' trees are built from sessions.
+      const origins: Record<string, string> = onBoard ? { with_origin: 'true' } : {}
       const [planned, active, resolved] = await Promise.all([
-        list(brain, 'planned'), list(brain, 'active'), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT }),
+        list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
       ])
       const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents, onBoard))
       const statusOf = new Map(rows.map((r) => [r.id, r.status]))
 
+      const spaceTasks: BoardTask[] = []
       for (const row of rows) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
@@ -179,14 +247,18 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
         const command = commandOf(row.id)
-        board.tasks.push({
+        const parentId = row.parent_id ?? null
+        const originId = onBoard ? row.origin_task_id ?? null : null
+        spaceTasks.push({
           id: row.id,
           spaceId: space.id,
           spaceName: space.name,
-          project: row.scope.startsWith('project.') ? row.scope.slice('project.'.length) : null,
+          project: projectOf(row.scope),
           title: row.title ?? row.id,
           status: row.status,
-          parentId: row.parent_id ?? null,
+          parentId,
+          originId,
+          rel: parentId ? 'sub' : originId ? 'spun' : null,
           updatedAt: row.updated_at ?? null,
           ...(facts.owner ? { owner: facts.owner } : {}),
           ...(facts.delegate ? { delegate: facts.delegate } : {}),
@@ -208,6 +280,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         })
         if (onBoard && row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: row.title ?? row.id, waitingOn: props.waiting_on })
       }
+      board.tasks.push(...spaceTasks)
+      if (onBoard) board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))
     }
 
     const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now)

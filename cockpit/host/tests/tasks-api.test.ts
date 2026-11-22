@@ -19,7 +19,38 @@ const deps = {
     },
     undo: async (opId: string) => (opId === 'late' ? { ok: false, refusal: 'undo_expired' } : { ok: true }),
   },
+  split: {
+    submit: async (input: Record<string, unknown>) => {
+      splits.push(input)
+      if (input.relation === 'sub') return { ok: false, refusal: 'sub_needs_task' }
+      return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: 't-new', spawnedSessionId: 's-new' } } }
+    },
+    owns: (opId: string) => opId.startsWith('split-'),
+    undo: async () => { splitUndone++; return { ok: true, command: {} } },
+  },
+  startOnTask: async (input: Record<string, unknown>) => {
+    starts.push(input)
+    return input.taskId === 'closed' ? { ok: false, refusal: 'task_closed' } : { ok: true, sessionId: 's-started' }
+  },
+  sort: {
+    apply: async (input: { opId: string; sessionId: string; rows: unknown[] }) => {
+      sorts.push(input)
+      return input.sessionId === 'notask' ? { ok: false, refusal: 'no_task' } : { ok: true, command: { opId: input.opId, sort: { linked: 1, created: 2, closed: 0 } } }
+    },
+  },
+  brief: {
+    context: async (sessionId: string, title?: string) => (sessionId === 'nope' ? null : { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true, title: title ?? null }),
+    write: async (sessionId: string, upTo?: string) => {
+      if (sessionId === 'nope') return { ok: false, reason: 'unknown_session' }
+      if (sessionId === 'broken') return { ok: false, reason: 'failed', message: 'not signed in', context: { projects: [], taskSystem: false, hasTask: false } }
+      return { ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: `Goal: files (${upTo ?? 'end'}).` }, context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true } }
+    },
+  },
 } as unknown as TasksApiDeps
+const splits: Array<Record<string, unknown>> = []
+const sorts: Array<Record<string, unknown>> = []
+const starts: Array<Record<string, unknown>> = []
+let splitUndone = 0
 
 let server: http.Server
 let base: string
@@ -68,5 +99,43 @@ describe('task board routes', () => {
   it('undoes, or says it is too late', async () => {
     expect(await post('/api/v1/commands/op-1/undo', {})).toEqual({ status: 200, body: { state: 'undone' } })
     expect((await post('/api/v1/commands/late/undo', {})).body.error.code).toBe('undo_expired')
+  })
+
+  it('splits a topic off a session and undoes it through the one undo route', async () => {
+    const r = await post('/api/v1/sessions/s1/split', { opId: 'split-1', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui' })
+    expect(r).toEqual({ status: 202, body: { opId: 'split-1', state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', taskId: 't-new', sessionId: 's-new' } })
+    expect(splits.at(-1)).toEqual({ opId: 'split-1', sessionId: 's1', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui' })
+    expect((await post('/api/v1/commands/split-1/undo', {})).body).toEqual({ state: 'undone' })
+    expect(splitUndone).toBe(1)
+  })
+
+  it('refuses a split with a missing field or a sub-task without a task', async () => {
+    expect((await post('/api/v1/sessions/s1/split', { opId: 'x', title: 'T', relation: 'sideways', when: 'now', projectId: 'p' })).status).toBe(400)
+    const sub = await post('/api/v1/sessions/s1/split', { opId: 'y', title: 'T', brief: 'b', relation: 'sub', when: 'now', projectId: 'p' })
+    expect(sub).toMatchObject({ status: 409, body: { error: { code: 'sub_needs_task' } } })
+  })
+
+  it('drafts a split brief up to a picked message, and says why when it cannot', async () => {
+    expect(await post('/api/v1/sessions/s1/split-brief', { upTo: 'u2' })).toEqual({ status: 200, body: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: files (u2).', context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true } } })
+    expect((await post('/api/v1/sessions/nope/split-brief', {})).status).toBe(404)
+    expect(await post('/api/v1/sessions/s1/split-brief', { contextOnly: true, title: 'Media viewer' })).toEqual({ status: 200, body: { context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true, title: 'Media viewer' } } })
+    expect(await post('/api/v1/sessions/broken/split-brief', {})).toMatchObject({ status: 502, body: { error: { code: 'brief_failed', retry: true }, context: { taskSystem: false } } })
+  })
+
+  it('applies a sort of a drifted session, and refuses rows it cannot read', async () => {
+    const r = await post('/api/v1/sessions/s1/sort', { opId: 'sort-1', rows: [{ topic: 'Media viewer', pick: 'spun', brief: 'Goal.' }, { topic: 'Board', pick: 'sub', taskId: 't-b' }] })
+    expect(r).toEqual({ status: 200, body: { opId: 'sort-1', linked: 1, created: 2, closed: 0 } })
+    expect(sorts.at(-1)).toEqual({ opId: 'sort-1', sessionId: 's1', rows: [{ topic: 'Media viewer', pick: 'spun', brief: 'Goal.' }, { topic: 'Board', pick: 'sub', taskId: 't-b' }] })
+    expect((await post('/api/v1/sessions/s1/sort', { rows: [{ topic: 'X', pick: 'park' }] })).status).toBe(400)
+    expect((await post('/api/v1/sessions/notask/sort', { opId: 'sort-2', rows: [] })).status).toBe(409)
+    expect((await post('/api/v1/sessions/s1/sort', { rows: [] })).status).toBe(400)
+  })
+
+  it('starts a session of the user\'s own on a task, opened by the page where it says', async () => {
+    const r = await post('/api/v1/tasks/t1/start', { spaceId: 'main', deskId: 'desk-2', prompt: 'Run the task', projectId: 'bp-ui' })
+    expect(r).toEqual({ status: 202, body: { sessionId: 's-started' } })
+    expect(starts.at(-1)).toEqual({ spaceId: 'main', taskId: 't1', deskId: 'desk-2', prompt: 'Run the task', projectId: 'bp-ui' })
+    expect((await post('/api/v1/tasks/closed/start', { spaceId: 'main' })).status).toBe(409)
+    expect((await post('/api/v1/tasks/t1/start', {})).status).toBe(400)
   })
 })

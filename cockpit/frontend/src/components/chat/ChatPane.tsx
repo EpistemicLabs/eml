@@ -1,6 +1,6 @@
 // The chat view of a session: conversation, tool rows, permission and question
 // cards, input. Everything it shows comes from the session's event log.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import {
@@ -13,13 +13,19 @@ import { cn } from '@/lib/utils';
 import { buttonVariants, Chip, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
+import { undoSplit } from '@/lib/split';
+import { closeTask, readable, useTaskBoard } from '@/lib/task-board';
+import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
-import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, keepItHereMessage, SORT_LATER_MESSAGE, isPaneCommand, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
+import { SplitDialog } from './SplitDialog';
+import { CreatedMarker, MessageActions, OfferCard, SortCard, SplitMarker, type SplitMark } from './SplitParts';
+import { SortDialog } from './SortDialog';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
 import { useChatShortcuts } from './useChatShortcuts';
@@ -371,8 +377,11 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
   );
 }
 
+/** The newest item's id: where a split from the end of the chat is marked. */
+const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
+
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
@@ -381,11 +390,36 @@ const Messages = memo(function Messages({
   onToggle: (id: string) => void;
   onAnswer: (id: string, reply: PermissionReply) => void;
   onStopAgent: (taskId: string) => void;
+  /** Split the topic off from this message on (SplitDialog). */
+  onSplit: (itemId: string) => void;
+  marks: SplitMark[];
+  renderMark: (mark: SplitMark) => React.ReactNode;
+  /** The user's choice on each offer the agent made, by its tool call's id. */
+  offers: Record<string, 'split' | 'kept'>;
+  onOffer: (id: string, offer: SplitOffer) => void;
+  onKeep: (id: string, offer: SplitOffer) => void;
+  /** What came of each sort the agent proposed, by its tool call's id. */
+  sorts: Record<string, string>;
+  onSort: (id: string, rows: SortProposal[]) => void;
+  onLater: (id: string) => void;
+  /** A task the agent created, as a bar with Undo. */
+  renderCreated: (taskId: string, title: string) => React.ReactNode;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
+  const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
+  const known = new Set(items.map((i) => i.id));
   return (
     <div role="log" aria-live="off" className={cn(COLUMN, 'space-y-4 pt-4 pb-1')}>
       {groups.map((group) => {
+        const rendered = renderGroup(group);
+        const id = group.kind === 'item' ? group.item.id : null;
+        return id ? <Fragment key={`g-${id}`}>{rendered}{marksAfter(id)}</Fragment> : rendered;
+      })}
+      {marks.filter((m) => m.afterItemId === null || !known.has(m.afterItemId)).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>)}
+    </div>
+  );
+
+  function renderGroup(group: ReturnType<typeof groupItems>[number]) {
         if (group.kind === 'agent') {
           const { tool } = group;
           return (
@@ -402,11 +436,21 @@ const Messages = memo(function Messages({
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
         if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
+        if (group.kind === 'created') return <Fragment key={group.id}>{renderCreated(group.taskId, group.title)}</Fragment>;
+        if (group.kind === 'sort') {
+          const { id, rows, reason } = group;
+          return <SortCard key={id} topics={rows.length} reason={reason} result={sorts[id] ?? null} onSort={() => onSort(id, rows)} onLater={() => onLater(id)} />;
+        }
+        if (group.kind === 'offer') {
+          const { id, offer } = group;
+          return <OfferCard key={id} title={offer.title} reason={offer.reason} decided={offers[id] ?? null} onSplit={() => onOffer(id, offer)} onKeep={() => onKeep(id, offer)} />;
+        }
         const { item } = group;
         switch (item.type) {
           case 'user':
             return (
-              <div key={item.id} data-chat-item={item.id} className="flex flex-col items-end gap-1 pt-2">
+              <div key={item.id} data-chat-item={item.id} className="group/msg relative flex flex-col items-end gap-1 pt-2">
+                <MessageActions onSplit={() => onSplit(item.id)} />
                 {item.images.length > 0 && (
                   <div className="flex max-w-(--size-chat-bubble) flex-wrap justify-end gap-1">
                     {item.images.map((image, index) => (image.url ? (
@@ -426,7 +470,12 @@ const Messages = memo(function Messages({
               </div>
             );
           case 'assistant':
-            return <div key={item.id} data-chat-item={item.id}><Assistant text={item.text} streaming={item.streaming} /></div>;
+            return (
+              <div key={item.id} data-chat-item={item.id} className="group/msg relative">
+                {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
+                <Assistant text={item.text} streaming={item.streaming} />
+              </div>
+            );
           case 'permission':
             return <PermissionCard key={item.id} item={item} onAnswer={onAnswer} />;
           case 'question':
@@ -440,9 +489,7 @@ const Messages = memo(function Messages({
           default:
             return null;
         }
-      })}
-    </div>
-  );
+  }
 });
 
 export function ChatPane({
@@ -490,8 +537,71 @@ export function ChatPane({
   const status = switching
     ?? (connection === 'closed' ? 'Reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
+  const [splitFrom, setSplitFrom] = useState<{ upTo?: string; offer?: { id: string; draft: SplitOffer } } | null>(null);
+  const [offers, setOffers] = useState<Record<string, 'split' | 'kept'>>({});
+  const openOffer = useCallback((id: string, offer: SplitOffer) => setSplitFrom({ offer: { id, draft: offer } }), []);
+  const [sortOpen, setSortOpen] = useState<{ id: string; rows: SortProposal[] } | null>(null);
+  const [sorts, setSorts] = useState<Record<string, string>>({});
+  const openSort = useCallback((id: string, rows: SortProposal[]) => setSortOpen({ id, rows }), []);
+  // Tasks the agent created: Undo drops one through the board's close (it waits out the board's undo window).
+  const { data: board } = useTaskBoard();
+  const [dropped, setDropped] = useState<Record<string, 'undoing' | 'undone' | { error: string }>>({});
+  const renderCreated = useCallback((taskId: string, title: string) => {
+    const task = board?.tasks.find((t) => t.id === taskId);
+    const local = dropped[taskId];
+    const state = local ?? (!task ? 'unknown' : task.status === 'planned' || task.status === 'active' ? 'open' : 'undone');
+    return (
+      <CreatedMarker
+        title={readable(title)}
+        state={state}
+        onUndo={() => {
+          if (!task) return;
+          setDropped((prev) => ({ ...prev, [taskId]: 'undoing' }));
+          void closeTask(task).then((answer) => {
+            setDropped((prev) => ({ ...prev, [taskId]: answer.ok ? 'undone' : { error: answer.message } }));
+            window.dispatchEvent(new Event('cockpit:tasks'));
+          });
+        }}
+      />
+    );
+  }, [board, dropped]);
+  const [marks, setMarks] = useState<SplitMark[]>([]);
+  const [announced, setAnnounced] = useState('');
+  const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
+  const renderMark = useCallback((mark: SplitMark) => (
+    <SplitMarker
+      mark={mark}
+      now={Date.now()}
+      onOpen={() => {
+        if (!mark.sessionId) return;
+        const pane = paneHoldingSession(mark.sessionId);
+        if (pane) activatePane(pane.id);
+        else openInPane({ surface: 'terminal', projectId, sessionId: mark.sessionId });
+      }}
+      onUndo={() => {
+        void undoSplit(mark.opId).then((answer) => {
+          if (!answer.ok) return;
+          const pane = mark.sessionId ? paneHoldingSession(mark.sessionId) : undefined;
+          if (pane) removePane(pane.id);
+          setMarks((prev) => prev.map((m) => (m.opId === mark.opId ? { ...m, undone: true } : m)));
+        });
+      }}
+    />
+  ), [projectId]);
+
+  // Keep it here: the agent hears it as the user's reply, so it carries on and does not offer the topic again.
+  const keepOffer = useCallback((id: string, offer: SplitOffer) => {
+    if (send(keepItHereMessage(offer.title), [])) setOffers((prev) => ({ ...prev, [id]: 'kept' }));
+  }, [send]);
+
+  // Later: the agent hears it, so it does not propose the sort again before the next compaction.
+  const sortLater = useCallback((id: string) => {
+    if (send(SORT_LATER_MESSAGE, [])) setSorts((prev) => ({ ...prev, [id]: 'Later.' }));
+  }, [send]);
+
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
+    if (isPaneCommand(text, 'split') && images.length === 0) { setSplitFrom({}); return true; }
     const sent = send(text, images);
     if (sent) pinWhenSentArrives.current = true;
     return sent;
@@ -530,7 +640,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
@@ -561,6 +671,40 @@ export function ChatPane({
             onReveal={reveal}
             onUnpin={() => unpinRef.current?.()}
             onClose={closeSearch}
+          />
+        )}
+        {splitFrom && (
+          <SplitDialog
+            sessionId={sessionId}
+            projectId={projectId}
+            upTo={splitFrom.upTo}
+            {...(splitFrom.offer ? { offered: { title: splitFrom.offer.draft.title, relation: splitFrom.offer.draft.relation, projectId: splitFrom.offer.draft.project, brief: splitFrom.offer.draft.brief, existingTaskId: splitFrom.offer.draft.task } } : {})}
+            onClose={() => setSplitFrom(null)}
+            onDone={(result) => {
+              const offerId = splitFrom.offer?.id;
+              if (offerId) setOffers((prev) => ({ ...prev, [offerId]: 'split' }));
+              setMarks((prev) => [...prev, {
+                opId: result.opId, title: result.title, afterItemId: splitFrom.upTo ?? latestItemId(chat.items),
+                ...(result.sessionId ? { sessionId: result.sessionId } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,
+              }]);
+              setSplitFrom(null);
+              setAnnounced(`Split off ${result.title}${result.when === 'park' ? ', parked in Plan' : ', opened in a new pane'}.`);
+              // The new task and session show in the tasks card now, not at the next poll.
+              window.dispatchEvent(new Event('cockpit:tasks'));
+            }}
+          />
+        )}
+        <span role="status" className="sr-only">{announced}</span>
+        {sortOpen && (
+          <SortDialog
+            sessionId={sessionId}
+            rows={sortOpen.rows}
+            onClose={() => setSortOpen(null)}
+            onDone={(result) => {
+              setSorts((prev) => ({ ...prev, [sortOpen.id]: `Sorted: ${result.linked} linked, ${result.created} created, ${result.closed} closed.` }));
+              setSortOpen(null);
+              window.dispatchEvent(new Event('cockpit:tasks'));
+            }}
           />
         )}
         {serversOpen && (

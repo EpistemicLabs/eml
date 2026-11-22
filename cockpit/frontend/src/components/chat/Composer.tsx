@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { FOCUS, POPOVER } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 
-import { currentModelOption, matchCommands, sentMessages, stepHistory, type ChatState, type CommandInfo } from './chat-state';
+import { currentModelOption, matchCommands, sentMessages, withPaneCommands, stepHistory, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
 import { pasteTextDirectly } from './pasteText';
 import { TARGET } from './tool-icons';
@@ -278,7 +278,7 @@ export function Composer({
     element.style.height = `${element.scrollHeight}px`;
   }, [draft]);
 
-  const matches = useMemo(() => (dismissed ? [] : matchCommands(chat.commands, draft)), [chat.commands, draft, dismissed]);
+  const matches = useMemo(() => (dismissed ? [] : matchCommands(withPaneCommands(chat.commands), draft)), [chat.commands, draft, dismissed]);
   const selected = Math.min(active, Math.max(matches.length - 1, 0));
 
   const change = (text: string) => {

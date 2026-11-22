@@ -2,7 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { Button, Dialog, DialogContent, DialogTitle, Select, Switch } from '@/shared/view/ui';
+import { useState } from 'react';
+
+import { Button, Dialog, DialogContent, DialogTitle, Dot, RadioCard, Select, Switch, Table, TableCell, TableRow, Tree, TreeItem } from '@/shared/view/ui';
 
 afterEach(cleanup);
 
@@ -111,5 +113,91 @@ describe('Dialog', () => {
     );
     await new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
     expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+});
+
+describe('Dot', () => {
+  it('is a ring while it waits, filled otherwise', () => {
+    const { container } = render(<><Dot hue="waiting" hollow /><Dot hue="you" /></>);
+    const [ring, filled] = [...container.querySelectorAll('span')];
+    expect(ring.className).toContain('border-2');
+    expect(ring.className).toContain('border-status-waiting');
+    expect(filled.className).toContain('bg-status-you');
+  });
+});
+
+describe('Tree', () => {
+  function Sample({ onSelect = () => {} }: { onSelect?: (id: string) => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <Tree label="Tasks">
+        <TreeItem content="Root" expanded={open} onToggle={() => setOpen((o) => !o)} onSelect={() => onSelect('root')}>
+          <TreeItem content="Sub" line="solid" onSelect={() => onSelect('sub')} />
+          <TreeItem content="Spun off" line="dashed" selected onSelect={() => onSelect('spun')} />
+        </TreeItem>
+        <TreeItem content="Other" onSelect={() => onSelect('other')} />
+      </Tree>
+    );
+  }
+  const item = (name: string) => screen.getAllByRole('treeitem').find((el) => el.querySelector('[data-tree-row]')?.textContent === name)!;
+
+  it('names levels, folds, and keeps one row in the tab order', () => {
+    render(<Sample />);
+    expect(screen.getByRole('tree', { name: 'Tasks' })).toBeTruthy();
+    expect(item('Root').getAttribute('aria-level')).toBe('1');
+    expect(item('Sub').getAttribute('aria-level')).toBe('2');
+    expect(item('Spun off').getAttribute('aria-selected')).toBe('true');
+    expect(item('Spun off').querySelector('[data-tree-row]')!.className).toContain('border-foreground');
+    expect(screen.getAllByRole('treeitem').filter((el) => el.tabIndex === 0)).toHaveLength(1);
+    expect(item('Spun off').className).toContain('before:border-dashed');
+    expect(item('Sub').className).not.toContain('before:border-dashed');
+  });
+
+  it('moves with the arrows, folds with Left and opens with Right, activates with Enter', () => {
+    const onSelect = vi.fn();
+    render(<Sample onSelect={onSelect} />);
+    item('Root').focus();
+    fireEvent.keyDown(item('Root'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(item('Sub'));
+    fireEvent.keyDown(item('Sub'), { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledWith('sub');
+    fireEvent.keyDown(item('Sub'), { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(item('Root'));
+    fireEvent.keyDown(item('Root'), { key: 'ArrowLeft' });
+    expect(item('Root').getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Sub')).toBeNull();
+    fireEvent.keyDown(item('Root'), { key: 'End' });
+    expect(document.activeElement).toBe(item('Other'));
+    fireEvent.keyDown(item('Other'), { key: 'Home' });
+    fireEvent.keyDown(item('Root'), { key: 'ArrowRight' });
+    expect(item('Root').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('folds with a click on the chevron without activating the row', () => {
+    const onSelect = vi.fn();
+    render(<Sample onSelect={onSelect} />);
+    fireEvent.click(item('Root').querySelector('[data-tree-toggle]')!);
+    expect(item('Root').getAttribute('aria-expanded')).toBe('false');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('RadioCard', () => {
+  it('is a labelled radio with its description, picked on click', () => {
+    const onChange = vi.fn();
+    render(<div role="radiogroup" aria-label="When"><RadioCard name="when" value="now" checked={false} onChange={onChange} title="Start now" description="Opens in a new pane." /></div>);
+    const radio = screen.getByRole('radio', { name: /Start now/ });
+    expect(screen.getByText('Opens in a new pane.')).toBeTruthy();
+    fireEvent.click(radio);
+    expect(onChange).toHaveBeenCalled();
+  });
+});
+
+describe('Table', () => {
+  it('is a named table with column headers and rows', () => {
+    render(<Table label="Topics" head={['Topic', 'Goes to']}><TableRow><TableCell>Media viewer</TableCell><TableCell>Spun off</TableCell></TableRow></Table>);
+    expect(screen.getByRole('table', { name: 'Topics' })).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').map((h) => h.getAttribute('scope'))).toEqual(['col', 'col']);
+    expect(screen.getByRole('cell', { name: 'Spun off' })).toBeTruthy();
   });
 });

@@ -2,7 +2,7 @@
 // An open question is never dropped: the dialog says so, and the host carries it into the brief.
 import { useState } from 'react';
 
-import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, PRIMARY, RadioCard } from '@/shared/view/ui';
 import { agentName, readable, snoozeTimes, type BoardTask, type HandOverInput, type HandOverMode } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
@@ -19,7 +19,6 @@ type Checkpoint = keyof typeof CHECKPOINTS;
 const MODES: Array<[HandOverMode, string, string]> = [['now', 'Delegate now', 'agent starts'], ['schedule', 'Schedule', 'agent starts later'], ['together', 'Work on it now', 'with an agent']];
 const PILL = cn('min-h-(--target-comfortable) rounded-full border border-border bg-card px-3 text-body aria-pressed:border-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const FIELD = 'rounded-lg border border-input bg-background px-2 py-1.5 text-body text-foreground';
-const RADIO = 'grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-xl border border-border px-2.5 py-2 text-body has-checked:border-foreground has-checked:bg-muted';
 const NEW_DESK = '__new';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -129,10 +128,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                 {choosing ? (
                   <div role="radiogroup" className="flex flex-col gap-1.5">
                     {(Object.keys(CHECKPOINTS) as Checkpoint[]).map((k) => (
-                      <label key={k} className={RADIO}>
-                        <input type="radio" name="checkpoint" value={k} checked={checkpoint === k} onChange={() => setCheckpoint(k)} className="mt-1" />
-                        <span><b>{k}</b><small className="block text-ui text-muted-foreground">{CHECKPOINTS[k]}</small></span>
-                      </label>
+                      <RadioCard key={k} name="checkpoint" value={k} checked={checkpoint === k} onChange={() => setCheckpoint(k)} title={k} description={CHECKPOINTS[k]} />
                     ))}
                   </div>
                 ) : (
@@ -154,20 +150,12 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                 <span className={LABEL}>Open the panel in which desk?</span>
                 <div role="radiogroup" className="flex flex-col gap-1.5">
                   {desks.map((d) => (
-                    <label key={d.id} className={RADIO}>
-                      <input type="radio" name="desk" value={d.id} checked={desk === d.id} onChange={() => setDesk(d.id)} className="mt-1" />
-                      <span><b>{d.name}</b></span>
-                    </label>
+                    <RadioCard key={d.id} name="desk" value={d.id} checked={desk === d.id} onChange={() => setDesk(d.id)} title={d.name} />
                   ))}
-                  <label className={RADIO}>
-                    <input type="radio" name="desk" value={NEW_DESK} checked={desk === NEW_DESK} onChange={() => setDesk(NEW_DESK)} className="mt-1" />
-                    <span>
-                      <b>New desk</b>
-                      {desk === NEW_DESK
-                        ? <input type="text" aria-label="Desk name" value={deskName} onChange={(e) => setDeskName(e.target.value)} className={cn(FIELD, 'mt-1.5 w-full')} />
-                        : <small className="block text-ui text-muted-foreground">a fresh desk just for this task</small>}
-                    </span>
-                  </label>
+                  <RadioCard name="desk" value={NEW_DESK} checked={desk === NEW_DESK} onChange={() => setDesk(NEW_DESK)} title="New desk"
+                    description={desk === NEW_DESK ? undefined : 'a fresh desk just for this task'}>
+                    {desk === NEW_DESK && <input type="text" aria-label="Desk name" value={deskName} onChange={(e) => setDeskName(e.target.value)} className={cn(FIELD, 'mt-1.5 w-full')} />}
+                  </RadioCard>
                 </div>
               </div>
               <p className="m-0 text-caption text-muted-foreground">A session starts on the task with its journal and last handoff, in a new pane on that desk. You work on it together; you stay the owner.</p>

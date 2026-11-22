@@ -6,6 +6,7 @@ import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, typ
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import { COCKPIT_HOME } from '../paths.js'
+import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
 
 /**
@@ -24,7 +25,8 @@ import { stepPrompt } from './task-runner.js'
 export const UNDO_WINDOW_MS = 8000
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close'
+/** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split' | 'sort'
 
 export interface CommandInput {
   opId: string
@@ -44,6 +46,25 @@ export interface TaskCommand extends CommandInput {
   carriedQuestion?: string
   brief?: string
   effects?: { jobId?: string }
+  /** A split off a session: what it made, for Undo. */
+  split?: {
+    sessionId: string
+    title: string
+    relation: SplitRelation
+    when: SplitWhen
+    sourceTaskId: string | null
+    createdTaskId: string | null
+    /** The open task the split went onto instead of making one. */
+    existingTaskId?: string | null
+    spawnedSessionId: string | null
+    /** Steps done so far, so a retry after a failure part-way does each once. */
+    linked?: boolean
+    journaled?: { created?: boolean; source?: boolean; existing?: boolean }
+  }
+  /** A sort of a drifted session: what it did. */
+  sort?: { linked: number; created: number; closed: number }
+  /** A sort's progress: the next action to apply and the tasks its creates made, for a retry. */
+  sortProgress?: { next: number; created: Record<string, string>; createdSteps?: Record<string, { linked?: boolean; journaled?: boolean }>; summed?: boolean }
   error?: string
 }
 
@@ -283,7 +304,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (ticking) return ticking
       const run = async () => {
         const now = deps.now()
-        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && Date.parse(c.undoUntil) < now)) await apply(command)
+        // A session's split or sort pending here is one that failed part-way: its retry resumes it, not the tick.
+        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) await apply(command)
       }
       const current = run().finally(() => { if (ticking === current) ticking = null })
       ticking = current
