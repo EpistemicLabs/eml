@@ -234,6 +234,13 @@ html.dark {
   --size-rename-field: 8ch;
   /* Phone fields: below 16px iOS zooms the page when a field takes the focus. */
   --text-field-touch: 16px;
+  /* area: tasks card */
+  /* The tasks card next to the sidebar: the task trees of the sessions on the desk. */
+  --size-tasks-card: 15rem;
+  /* A tree row's children sit this far in; the connector's elbow meets the middle of a one-line row. */
+  --tree-indent: 0.875rem;
+  --tree-tick: 0.625rem;
+  --tree-elbow: calc(var(--target-min) / 2);
   /* area: settings */
   /* The settings window: most of the viewport's height, the same on every tab. */
   --size-settings: 90vh;
