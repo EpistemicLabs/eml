@@ -2,7 +2,9 @@ import type * as http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { TaskBoard } from './application/task-board.js'
 import type { CommandInput, CommandRefusal, Submitted, TaskCommands } from './application/task-commands.js'
+import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
+import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
 
 /**
  * The task board over HTTP, versioned (decision cockpit-host-routes-versioned-from-now). Page only:
@@ -12,6 +14,7 @@ import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
+ *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId }: split a topic off a session
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
  * happens at once, and the page opens the session in its desk with the brief. A refusal answers
@@ -22,6 +25,7 @@ import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/
 export interface TasksApiDeps {
   board: TaskBoard
   commands: TaskCommands
+  split: SplitSession
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -45,6 +49,26 @@ const MESSAGES: Record<CommandRefusal, string> = {
   open_steps: 'This task still has open steps: close or move them first.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
+}
+
+type SplitRefusalCode = Extract<SplitAnswer, { ok: false }>['refusal']
+
+const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
+  invalid: 'The split needs a title, a brief, how it relates (spun · sub · unrelated) and when (now · park).',
+  sub_needs_task: 'A sub-task needs a task to hang under, and this session has none.',
+  unknown_session: 'No such session.',
+  unknown_project: 'No such project in this session\'s space.',
+  no_brain: 'The space has no brain to write to right now.',
+  unknown_command: 'No such action to undo.',
+  undo_expired: 'Too late to undo the split.',
+}
+
+const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
+  unknown_session: 404, unknown_project: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, no_brain: 503,
+}
+
+function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode): void {
+  json(res, SPLIT_STATUS[refusal] ?? 400, { error: { code: refusal, message: SPLIT_MESSAGES[refusal], retry: refusal === 'no_brain' } })
 }
 
 const STATUS: Partial<Record<CommandRefusal, number>> = {
@@ -90,9 +114,41 @@ export async function handleTasksApi(
 
   const undo = /^\/api\/v1\/commands\/([^/]+)\/undo$/.exec(pathname)
   if (undo && method === 'POST') {
-    const result = await deps.commands.undo(decodeURIComponent(undo[1]))
+    const opId = decodeURIComponent(undo[1])
+    if (deps.split.owns(opId)) {
+      const result = await deps.split.undo(opId)
+      if (!result.ok) refuseSplit(json, res, result.refusal)
+      else json(res, 200, { state: 'undone' })
+      void deps.board.refresh().catch(() => {})
+      return true
+    }
+    const result = await deps.commands.undo(opId)
     if (!result.ok) refuse(json, res, result.refusal)
     else json(res, 200, { state: 'undone' })
+    void deps.board.refresh().catch(() => {})
+    return true
+  }
+
+  const split = /^\/api\/v1\/sessions\/([^/]+)\/split$/.exec(pathname)
+  if (split && method === 'POST') {
+    const body = await readJson(req)
+    const relation = str(body.relation) as SplitRelation | undefined
+    const when = str(body.when) as SplitWhen | undefined
+    const title = str(body.title), brief = str(body.brief), projectId = str(body.projectId)
+    if (!title || !brief || !projectId || !relation || !SPLIT_RELATIONS.includes(relation) || !when || !SPLIT_WHENS.includes(when)) {
+      refuseSplit(json, res, 'invalid')
+      return true
+    }
+    const result = await deps.split.submit({ opId: str(body.opId) ?? randomUUID(), sessionId: decodeURIComponent(split[1]), title, brief, relation, when, projectId })
+    if (!result.ok) refuseSplit(json, res, result.refusal)
+    else {
+      const c = result.command
+      json(res, 202, {
+        opId: c.opId, state: c.state, undoUntil: c.undoUntil,
+        ...(c.split?.createdTaskId ? { taskId: c.split.createdTaskId } : {}),
+        ...(c.split?.spawnedSessionId ? { sessionId: c.split.spawnedSessionId } : {}),
+      })
+    }
     void deps.board.refresh().catch(() => {})
     return true
   }

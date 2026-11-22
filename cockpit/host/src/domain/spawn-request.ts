@@ -30,9 +30,11 @@ export interface SpawnRequest {
   /**
    * 'job': a job's run (application/job-runner.ts); 'runner': a plan step the
    * task runner started (application/task-runner.ts). Both unattended like a
-   * session's worker, also without a requester.
+   * session's worker, also without a requester. 'split': a topic the user split
+   * off a session (application/split-session.ts): their own session, not a
+   * worker, though it remembers the session it came from.
    */
-  origin?: 'job' | 'runner'
+  origin?: 'job' | 'runner' | 'split'
   /** The brain task the session works on from its first hook (task system). */
   taskId?: string
   /** The job whose run this is (origin 'job'): what its session's channel tools act for. */
@@ -42,5 +44,6 @@ export interface SpawnRequest {
 
 /** A session or a job asked for it: it runs unattended on the host, not in a tab the user opens. */
 export function unattended(request: Pick<SpawnRequest, 'fromSessionId' | 'origin'>): boolean {
+  if (request.origin === 'split') return false
   return request.fromSessionId !== null || request.origin === 'job' || request.origin === 'runner'
 }

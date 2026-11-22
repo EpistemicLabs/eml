@@ -168,6 +168,8 @@ export class SessionLedger {
   private expectedParents = new Map<string, string>()
   private expectedTaskParents = new Map<string, string>()
   private expectedLeads = new Map<string, ProjectLead>()
+  /** Sessions split off another one (expectOwn): recorded as the user's own even though they start with a prompt. */
+  private expectedOwn = new Set<string>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -212,7 +214,7 @@ export class SessionLedger {
       agentTitle: prev?.agentTitle ?? null,
       greeted: prev ? prev.greeted : greeted,
       pinned: prev?.pinned ?? false,
-      worker: worker || prev?.worker === true,
+      worker: (worker && !this.expectedOwn.has(sessionId)) || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
       ...(prev?.taskAuto && (taskId === null || taskId === prev.taskId) ? { taskAuto: true as const } : {}),
       ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
@@ -261,6 +263,15 @@ export class SessionLedger {
     entry.attention = attention && { ...attention, at: new Date().toISOString() }
     if (attention?.reason) entry.lastStatus = { kind: attention.kind, reason: attention.reason, at: entry.attention!.at }
     this.persist()
+  }
+
+  /** A session the user split off another one: their own, not a worker, though it starts with a prompt. */
+  expectOwn(sessionId: string): void {
+    this.expectedOwn.add(sessionId)
+  }
+
+  expectsOwn(sessionId: string): boolean {
+    return this.expectedOwn.has(sessionId)
   }
 
   /** A worker was asked for by this session; recorded when it starts, however it starts. */

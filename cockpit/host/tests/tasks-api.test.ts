@@ -19,7 +19,18 @@ const deps = {
     },
     undo: async (opId: string) => (opId === 'late' ? { ok: false, refusal: 'undo_expired' } : { ok: true }),
   },
+  split: {
+    submit: async (input: Record<string, unknown>) => {
+      splits.push(input)
+      if (input.relation === 'sub') return { ok: false, refusal: 'sub_needs_task' }
+      return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: 't-new', spawnedSessionId: 's-new' } } }
+    },
+    owns: (opId: string) => opId.startsWith('split-'),
+    undo: async () => { splitUndone++; return { ok: true, command: {} } },
+  },
 } as unknown as TasksApiDeps
+const splits: Array<Record<string, unknown>> = []
+let splitUndone = 0
 
 let server: http.Server
 let base: string
@@ -68,5 +79,19 @@ describe('task board routes', () => {
   it('undoes, or says it is too late', async () => {
     expect(await post('/api/v1/commands/op-1/undo', {})).toEqual({ status: 200, body: { state: 'undone' } })
     expect((await post('/api/v1/commands/late/undo', {})).body.error.code).toBe('undo_expired')
+  })
+
+  it('splits a topic off a session and undoes it through the one undo route', async () => {
+    const r = await post('/api/v1/sessions/s1/split', { opId: 'split-1', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui' })
+    expect(r).toEqual({ status: 202, body: { opId: 'split-1', state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', taskId: 't-new', sessionId: 's-new' } })
+    expect(splits.at(-1)).toEqual({ opId: 'split-1', sessionId: 's1', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui' })
+    expect((await post('/api/v1/commands/split-1/undo', {})).body).toEqual({ state: 'undone' })
+    expect(splitUndone).toBe(1)
+  })
+
+  it('refuses a split with a missing field or a sub-task without a task', async () => {
+    expect((await post('/api/v1/sessions/s1/split', { opId: 'x', title: 'T', relation: 'sideways', when: 'now', projectId: 'p' })).status).toBe(400)
+    const sub = await post('/api/v1/sessions/s1/split', { opId: 'y', title: 'T', brief: 'b', relation: 'sub', when: 'now', projectId: 'p' })
+    expect(sub).toMatchObject({ status: 409, body: { error: { code: 'sub_needs_task' } } })
   })
 })

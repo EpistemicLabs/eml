@@ -24,7 +24,8 @@ import { stepPrompt } from './task-runner.js'
 export const UNDO_WINDOW_MS = 8000
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close'
+/** 'split' is a session's, not the board's: application/split-session.ts carries it out and undoes it. */
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split'
 
 export interface CommandInput {
   opId: string
@@ -44,6 +45,16 @@ export interface TaskCommand extends CommandInput {
   carriedQuestion?: string
   brief?: string
   effects?: { jobId?: string }
+  /** A split off a session: what it made, for Undo. */
+  split?: {
+    sessionId: string
+    title: string
+    relation: 'spun' | 'sub' | 'unrelated'
+    when: 'now' | 'park'
+    sourceTaskId: string | null
+    createdTaskId: string | null
+    spawnedSessionId: string | null
+  }
   error?: string
 }
 
