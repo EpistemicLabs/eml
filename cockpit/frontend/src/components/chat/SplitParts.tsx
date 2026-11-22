@@ -3,7 +3,7 @@
 import { ListPlus, ListTree, Split } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { BUTTON, FOCUS, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, FOCUS, PRIMARY, Tooltip } from '@/shared/view/ui';
 
 import { TARGET } from './tool-icons';
 
@@ -20,21 +20,23 @@ export interface SplitMark {
 }
 
 /**
- * "Split from here" on a message: shows only while that message is hovered or the keyboard is on it
- * (a named group, so a hovered pane around the chat does not show it on every message). It sits in the
- * gap above the message, clear of its text.
+ * The action row under a message: a split icon (with a tooltip) that shows while that message is hovered or
+ * the keyboard is on it (a named group, so a hovered pane does not show it everywhere). Its height is kept
+ * even while hidden, so the text below never jumps when it appears.
  */
 export function MessageActions({ onSplit }: { onSplit: () => void }) {
   return (
-    <div className="pointer-events-none absolute right-0 bottom-full z-(--z-raised) translate-y-2 opacity-0 transition-opacity duration-(--duration-fast) group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-      <button
-        type="button"
-        onClick={onSplit}
-        className={cn('inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 text-caption text-foreground shadow-card hover:bg-muted', TARGET, FOCUS)}
-      >
-        <Split aria-hidden className="size-3" />
-        Split from here
-      </button>
+    <div className="pointer-events-none flex h-(--target-min) items-center gap-1 opacity-0 transition-opacity duration-(--duration-fast) group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+      <Tooltip content="Split from here" position="bottom">
+        <button
+          type="button"
+          onClick={onSplit}
+          aria-label="Split from here"
+          className={cn('flex size-(--target-min) items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)}
+        >
+          <Split aria-hidden className="size-3.5" />
+        </button>
+      </Tooltip>
     </div>
   );
 }
