@@ -26,7 +26,7 @@ const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' }> 
 export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction }: {
   board: Board;
   now: number;
-  /** The list sits next to an open task (split): actions wrap under the text. */
+  /** The list sits next to an open task (split): actions wrap under the text, as they do whenever the list is narrow. */
   compact: boolean;
   currentTaskId: string | null;
   onOpen: (item: InboxItem) => void;
@@ -40,7 +40,8 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
+      {/* A container: a row's actions sit beside its text only where the list itself is wide enough. */}
+      <div className="@container flex flex-col overflow-hidden rounded-xl border border-border bg-card">
         {board.inbox.length === 0 && <div className="m-3 rounded-xl border border-dashed border-border p-3 text-ui text-muted-foreground">Inbox zero. New questions and results land here.</div>}
         {board.inbox.map((item) => {
           const head = dayOf(item.since, now);
@@ -90,7 +91,8 @@ function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
 }) {
   const kind = KIND[item.kind];
   return (
-    <div className={cn('grid items-start gap-x-3 gap-y-1 border-t border-border px-3 py-3 hover:bg-muted', compact ? 'grid-cols-[auto_minmax(0,1fr)]' : 'grid-cols-[auto_minmax(0,1fr)_auto]', current && 'border-l-2 border-l-mark bg-mark/10')}>
+    // Actions wrap under the text when the list sits next to an open task or is narrow (a phone, a small window).
+    <div className={cn('grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border px-3 py-3 hover:bg-muted', !compact && '@3xl:grid-cols-[auto_minmax(0,1fr)_auto]', current && 'border-l-2 border-l-mark bg-mark/10')}>
       <span aria-hidden className="mt-1.5 size-2 rounded-full bg-mark" />
       <button type="button" onClick={() => onOpen(item)} className={cn('flex min-w-0 flex-col gap-1 text-left', FOCUS)}>
         <span className="text-heading font-semibold">{readable(item.title)}</span>
@@ -101,7 +103,7 @@ function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
           <time className="tabular-nums text-caption">{when(item.since, now)}</time>
         </span>
       </button>
-      <span className={cn('flex flex-wrap gap-1.5', compact ? 'col-start-2 justify-start' : 'self-center justify-end')}>
+      <span className={cn('col-start-2 flex flex-wrap justify-start gap-1.5', !compact && '@3xl:col-start-auto @3xl:self-center @3xl:justify-end')}>
         {item.kind === 'review' && <button type="button" className={MINI} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Snooze to tomorrow</button>
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Snooze to Monday</button>
