@@ -1,6 +1,6 @@
 // The chat view of a session: conversation, tool rows, permission and question
 // cards, input. Everything it shows comes from the session's event log.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import {
@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 import { buttonVariants, Chip, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
+import { undoSplit } from '@/lib/split';
+import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
 import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
@@ -20,6 +22,8 @@ import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
+import { SplitDialog } from './SplitDialog';
+import { MessageActions, SplitMarker, type SplitMark } from './SplitParts';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
 import { useChatShortcuts } from './useChatShortcuts';
@@ -371,8 +375,11 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
   );
 }
 
+/** The newest item's id: where a split from the end of the chat is marked. */
+const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
+
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
@@ -381,11 +388,26 @@ const Messages = memo(function Messages({
   onToggle: (id: string) => void;
   onAnswer: (id: string, reply: PermissionReply) => void;
   onStopAgent: (taskId: string) => void;
+  /** Split the topic off from this message on (SplitDialog). */
+  onSplit: (itemId: string) => void;
+  marks: SplitMark[];
+  renderMark: (mark: SplitMark) => React.ReactNode;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
+  const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
+  const known = new Set(items.map((i) => i.id));
   return (
     <div role="log" aria-live="off" className={cn(COLUMN, 'space-y-4 pt-4 pb-1')}>
       {groups.map((group) => {
+        const rendered = renderGroup(group);
+        const id = group.kind === 'item' ? group.item.id : null;
+        return id ? <Fragment key={`g-${id}`}>{rendered}{marksAfter(id)}</Fragment> : rendered;
+      })}
+      {marks.filter((m) => m.afterItemId === null || !known.has(m.afterItemId)).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>)}
+    </div>
+  );
+
+  function renderGroup(group: ReturnType<typeof groupItems>[number]) {
         if (group.kind === 'agent') {
           const { tool } = group;
           return (
@@ -406,7 +428,8 @@ const Messages = memo(function Messages({
         switch (item.type) {
           case 'user':
             return (
-              <div key={item.id} data-chat-item={item.id} className="flex flex-col items-end gap-1 pt-2">
+              <div key={item.id} data-chat-item={item.id} className="group relative flex flex-col items-end gap-1 pt-2">
+                <MessageActions onSplit={() => onSplit(item.id)} />
                 {item.images.length > 0 && (
                   <div className="flex max-w-(--size-chat-bubble) flex-wrap justify-end gap-1">
                     {item.images.map((image, index) => (image.url ? (
@@ -426,7 +449,12 @@ const Messages = memo(function Messages({
               </div>
             );
           case 'assistant':
-            return <div key={item.id} data-chat-item={item.id}><Assistant text={item.text} streaming={item.streaming} /></div>;
+            return (
+              <div key={item.id} data-chat-item={item.id} className="group relative">
+                {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
+                <Assistant text={item.text} streaming={item.streaming} />
+              </div>
+            );
           case 'permission':
             return <PermissionCard key={item.id} item={item} onAnswer={onAnswer} />;
           case 'question':
@@ -440,9 +468,7 @@ const Messages = memo(function Messages({
           default:
             return null;
         }
-      })}
-    </div>
-  );
+  }
 });
 
 export function ChatPane({
@@ -490,8 +516,33 @@ export function ChatPane({
   const status = switching
     ?? (connection === 'closed' ? 'Reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
+  const [splitFrom, setSplitFrom] = useState<{ upTo?: string } | null>(null);
+  const [marks, setMarks] = useState<SplitMark[]>([]);
+  const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
+  const renderMark = useCallback((mark: SplitMark) => (
+    <SplitMarker
+      mark={mark}
+      now={Date.now()}
+      onOpen={() => {
+        if (!mark.sessionId) return;
+        const pane = paneHoldingSession(mark.sessionId);
+        if (pane) activatePane(pane.id);
+        else openInPane({ surface: 'terminal', projectId, sessionId: mark.sessionId });
+      }}
+      onUndo={() => {
+        void undoSplit(mark.opId).then((answer) => {
+          if (!answer.ok) return;
+          const pane = mark.sessionId ? paneHoldingSession(mark.sessionId) : undefined;
+          if (pane) removePane(pane.id);
+          setMarks((prev) => prev.map((m) => (m.opId === mark.opId ? { ...m, undone: true } : m)));
+        });
+      }}
+    />
+  ), [projectId]);
+
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
+    if (text.trim() === '/split' && images.length === 0) { setSplitFrom({}); return true; }
     const sent = send(text, images);
     if (sent) pinWhenSentArrives.current = true;
     return sent;
@@ -530,7 +581,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
@@ -561,6 +612,23 @@ export function ChatPane({
             onReveal={reveal}
             onUnpin={() => unpinRef.current?.()}
             onClose={closeSearch}
+          />
+        )}
+        {splitFrom && (
+          <SplitDialog
+            sessionId={sessionId}
+            projectId={projectId}
+            upTo={splitFrom.upTo}
+            onClose={() => setSplitFrom(null)}
+            onDone={(result) => {
+              setMarks((prev) => [...prev, {
+                opId: result.opId, title: result.title, afterItemId: splitFrom.upTo ?? latestItemId(chat.items),
+                ...(result.sessionId ? { sessionId: result.sessionId } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,
+              }]);
+              setSplitFrom(null);
+              // The new task and session show in the tasks card now, not at the next poll.
+              window.dispatchEvent(new Event('cockpit:tasks'));
+            }}
           />
         )}
         {serversOpen && (

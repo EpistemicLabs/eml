@@ -541,6 +541,16 @@ export function stepHistory(count: number, index: number | null, step: -1 | 1): 
   return next >= count ? null : next;
 }
 
+/** Commands the chat pane handles itself (ChatPane onSend), listed before the agent's own. */
+export const PANE_COMMANDS: CommandInfo[] = [
+  { name: 'split', description: 'Split the latest topic off into a task and a session of its own', argumentHint: '', aliases: [] },
+];
+
+/** The pane's commands and the agent's, each name once. */
+export function withPaneCommands(commands: CommandInfo[]): CommandInfo[] {
+  return [...PANE_COMMANDS, ...commands.filter((c) => !PANE_COMMANDS.some((p) => p.name === c.name))];
+}
+
 /** The commands a draft is asking for: only while it is a bare `/word`. Name matches first, in the list's order. */
 export function matchCommands(commands: CommandInfo[], draft: string): CommandInfo[] {
   const typed = /^\/(\S*)$/.exec(draft)?.[1];
