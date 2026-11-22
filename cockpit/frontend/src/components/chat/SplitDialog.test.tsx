@@ -33,7 +33,7 @@ describe('the split dialog', () => {
     const onDone = vi.fn();
     render(<SplitDialog sessionId="s1" projectId="p-ui" upTo="u2" onClose={() => {}} onDone={onDone} />);
     await waitFor(() => expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Media viewer'));
-    expect(posts[0]).toEqual({ url: '/api/v1/sessions/s1/split-brief', body: { upTo: 'u2' } });
+    expect(posts.filter((p) => p.url.endsWith('/split-brief')).map((p) => p.body)).toEqual([{ contextOnly: true }, { upTo: 'u2' }]);
     expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('p-code');
     expect((screen.getByRole('radio', { name: /Spun off/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /Park as a task/ }));
@@ -94,6 +94,28 @@ describe('the split dialog', () => {
     expect(posts.filter((p) => p.url.endsWith('/split-brief')).map((p) => p.body)).toEqual([{ contextOnly: true, title: 'Owner model' }]);
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Owner model');
     expect((screen.getByRole('radio', { name: /Unrelated/ }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('the dialog while the brief is written', () => {
+  it('settles its choices from the context at once, before the draft arrives', async () => {
+    let finishDraft: () => void = () => {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      posts.push({ url, body });
+      if (body.contextOnly) return new Response(JSON.stringify({ context: { ...context, taskSystem: false } }), { status: 200 });
+      await new Promise<void>((resolve) => { finishDraft = resolve; });
+      return new Response(JSON.stringify({ title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal.', context: { ...context, taskSystem: false } }), { status: 200 });
+    }));
+    render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);
+    expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
+    expect(await screen.findByText(/no task system/)).toBeTruthy();
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('');
+    expect(screen.getByTestId('brief-spinner').getAttribute('class')).toContain('animate-spin');
+    finishDraft();
+    await screen.findByDisplayValue('Media viewer');
+    expect(screen.queryByTestId('brief-spinner')).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
   });
 });
 
