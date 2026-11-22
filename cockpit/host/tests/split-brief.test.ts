@@ -70,6 +70,9 @@ describe('offering a split', () => {
     const { OFFER_SPLIT_ANSWER, OFFER_SPLIT_TOOL } = await import('../src/infrastructure/providers/claude/sdk-runtime.js')
     expect(OFFER_SPLIT_TOOL).toBe('offer_split')
     expect(OFFER_SPLIT_ANSWER).toMatch(/Nothing is split until they choose/)
+    const { PROPOSE_SORT_ANSWER, PROPOSE_SORT_TOOL } = await import('../src/infrastructure/providers/claude/sdk-runtime.js')
+    expect(PROPOSE_SORT_TOOL).toBe('propose_sort')
+    expect(PROPOSE_SORT_ANSWER).toMatch(/Nothing changes until they apply/)
   })
 
   it('is part of what an attended task session reads, not an unattended one', async () => {

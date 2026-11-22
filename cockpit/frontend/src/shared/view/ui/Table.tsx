@@ -8,9 +8,9 @@ import { LABEL } from './styles';
  * A table of rows to compare and act on: a header row and hairline rows on the card. Narrow screens
  * scroll it sideways inside its frame (a table keeps its two dimensions); the page itself does not.
  */
-export function Table({ label, head, children, className }: { label: string; head: ReactNode[]; children: ReactNode; className?: string }) {
+export function Table({ label, head, children }: { label: string; head: ReactNode[]; children: ReactNode }) {
   return (
-    <div className={cn('overflow-x-auto rounded-xl border border-border', className)}>
+    <div className="overflow-x-auto rounded-xl border border-border">
       <table aria-label={label} className="w-full border-collapse text-left text-body">
         <thead className="bg-muted">
           <tr>{head.map((h, i) => <th key={i} scope="col" className={cn(LABEL, 'px-3 py-2 font-semibold')}>{h}</th>)}</tr>

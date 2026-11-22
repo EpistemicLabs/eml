@@ -43,6 +43,14 @@ export interface SpawnRequest {
 }
 
 /** A session or a job asked for it: it runs unattended on the host, not in a tab the user opens. */
+/**
+ * Whether a terminal session launches unattended: a worker does, and so does one opened with a prompt
+ * (an outside command), except a topic the user split off, which is their own.
+ */
+export function launchesUnattended(session: { worker: boolean; initialPrompt: boolean; own: boolean }): boolean {
+  return session.worker || (session.initialPrompt && !session.own)
+}
+
 export function unattended(request: Pick<SpawnRequest, 'fromSessionId' | 'origin'>): boolean {
   if (request.origin === 'split') return false
   return request.fromSessionId !== null || request.origin === 'job' || request.origin === 'runner'

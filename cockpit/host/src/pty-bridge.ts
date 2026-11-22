@@ -21,6 +21,7 @@ import { greetingFor } from './session-greeting.js'
 import type { ProjectEntry } from './project-registry.js'
 import type { SpawnRequest } from './spawn-queue.js'
 import type { SessionHandoff } from './application/session-handoff.js'
+import { launchesUnattended } from './domain/spawn-request.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
@@ -523,7 +524,7 @@ export class PtyBridge {
     // An externally queued command maps to the agent's initial prompt (the
     // cockpit spawns agents, not shells). The greeting is a first prompt too,
     // but the user is watching: it leaves the session attended, and so does a topic split off a session.
-    const unattended = this.ledger.get(sessionId)?.worker === true || (initialPrompt !== null && !this.ledger.expectsOwn(sessionId))
+    const unattended = launchesUnattended({ worker: this.ledger.get(sessionId)?.worker === true, initialPrompt: initialPrompt !== null, own: this.ledger.expectsOwn(sessionId) })
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({

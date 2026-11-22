@@ -9,7 +9,7 @@ import { kebabTitle } from './task-title.js'
  */
 
 export type SortPick = 'keep' | 'sub' | 'spun' | 'unrelated' | 'drop'
-export const SORT_PICKS: readonly SortPick[] = ['keep', 'sub', 'spun', 'unrelated', 'drop']
+export const SORT_PICKS = ['keep', 'sub', 'spun', 'unrelated', 'drop'] as const satisfies readonly SortPick[]
 
 export interface SortRow {
   topic: string

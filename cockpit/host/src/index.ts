@@ -721,13 +721,15 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  // What a split or a sort reads about a session.
+  const splitSessionFacts = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId } : null
+  }
   // Sorting a drifted session (application/sort-session.ts).
   const sortSession = createSortSession({
     store: taskCommandStore,
-    session: (sessionId) => {
-      const entry = ledger.get(sessionId)
-      return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId, projectId: entry.projectId } : null
-    },
+    session: splitSessionFacts,
     space: (spaceId) => spaces.resolve(spaceId),
     taskSystem: (space) => taskSystemOn(space),
     brain: taskBrain,
@@ -778,10 +780,7 @@ async function main() {
   // Split off a topic from a session (application/split-session.ts); its commands share the task commands' file.
   const splitSession = createSplitSession({
     store: taskCommandStore,
-    session: (sessionId) => {
-      const entry = ledger.get(sessionId)
-      return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId, projectId: entry.projectId } : null
-    },
+    session: splitSessionFacts,
     space: (spaceId) => spaces.resolve(spaceId),
     taskSystem: (space) => taskSystemOn(space),
     brain: taskBrain,

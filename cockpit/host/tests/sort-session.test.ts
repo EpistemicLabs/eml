@@ -11,7 +11,7 @@ function setup(opts: { taskSystem?: boolean; taskId?: string | null; failOnce?: 
   let next = 0
   const sort = createSortSession({
     store: new TaskCommandStore(join(mkdtempSync(join(tmpdir(), 'sort-')), 'task-commands.json')),
-    session: (id) => (id === 's1' ? { spaceId: null, title: 'Session review', taskId: opts.taskId === undefined ? 't-root' : opts.taskId, projectId: 'p-ui' } : null),
+    session: (id) => (id === 's1' ? { spaceId: null, title: 'Session review', taskId: opts.taskId === undefined ? 't-root' : opts.taskId } : null),
     space: () => ({ id: 'main' }) as never,
     taskSystem: () => opts.taskSystem ?? true,
     brain: () => ({

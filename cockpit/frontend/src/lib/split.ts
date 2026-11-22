@@ -83,7 +83,8 @@ export async function undoSplit(opId: string): Promise<{ ok: true } | { ok: fals
   }
 }
 
-export type SortPick = 'keep' | 'sub' | 'spun' | 'unrelated' | 'drop';
+export const SORT_PICKS = ['keep', 'sub', 'spun', 'unrelated', 'drop'] as const;
+export type SortPick = typeof SORT_PICKS[number];
 
 /** One topic of a drifted session as the agent proposed it (propose_sort). */
 export interface SortRow {

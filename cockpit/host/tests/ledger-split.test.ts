@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { unattended } from '../src/domain/spawn-request.js'
+import { launchesUnattended, unattended } from '../src/domain/spawn-request.js'
 
 // paths.ts reads the home at import time — set it before loading the ledger.
 process.env.EML_COCKPIT_HOME = mkdtempSync(join(tmpdir(), 'cockpit-ledger-split-'))
@@ -23,5 +23,12 @@ describe('a session split off another one', () => {
   it('does not run unattended, though another session asked for it', () => {
     expect(unattended({ fromSessionId: 'source', origin: 'split' })).toBe(false)
     expect(unattended({ fromSessionId: 'source' })).toBe(true)
+  })
+
+  it('launches attended in a terminal though it starts with a prompt', () => {
+    expect(launchesUnattended({ worker: false, initialPrompt: true, own: true })).toBe(false)
+    expect(launchesUnattended({ worker: false, initialPrompt: true, own: false })).toBe(true)
+    expect(launchesUnattended({ worker: true, initialPrompt: false, own: false })).toBe(true)
+    expect(launchesUnattended({ worker: false, initialPrompt: false, own: false })).toBe(false)
   })
 })

@@ -17,7 +17,7 @@ import { undoSplit } from '@/lib/split';
 import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
-import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, keepItHereMessage, SORT_LATER_MESSAGE, isPaneCommand, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
@@ -564,17 +564,17 @@ export function ChatPane({
 
   // Keep it here: the agent hears it as the user's reply, so it carries on and does not offer the topic again.
   const keepOffer = useCallback((id: string, offer: SplitOffer) => {
-    if (send(`Keep it here: we stay on "${offer.title}" in this chat.`, [])) setOffers((prev) => ({ ...prev, [id]: 'kept' }));
+    if (send(keepItHereMessage(offer.title), [])) setOffers((prev) => ({ ...prev, [id]: 'kept' }));
   }, [send]);
 
   // Later: the agent hears it, so it does not propose the sort again before the next compaction.
   const sortLater = useCallback((id: string) => {
-    if (send('Later: no sort now.', [])) setSorts((prev) => ({ ...prev, [id]: 'Later.' }));
+    if (send(SORT_LATER_MESSAGE, [])) setSorts((prev) => ({ ...prev, [id]: 'Later.' }));
   }, [send]);
 
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
-    if (text.trim() === '/split' && images.length === 0) { setSplitFrom({}); return true; }
+    if (isPaneCommand(text, 'split') && images.length === 0) { setSplitFrom({}); return true; }
     const sent = send(text, images);
     if (sent) pinWhenSentArrives.current = true;
     return sent;

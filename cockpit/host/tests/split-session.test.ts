@@ -25,7 +25,7 @@ function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null; fail
   }
   const split = createSplitSession({
     store: new TaskCommandStore(join(mkdtempSync(join(tmpdir(), 'split-')), 'task-commands.json')),
-    session: (id) => (id === 's1' ? (opts.session === undefined ? { spaceId: null, title: 'Session review', taskId: 't-root', projectId: 'p-ui' } : opts.session) : null),
+    session: (id) => (id === 's1' ? (opts.session === undefined ? { spaceId: null, title: 'Session review', taskId: 't-root' } : opts.session) : null),
     space: () => space as never,
     taskSystem: (s) => (s as unknown as typeof space).taskSystem,
     brain: () => brain as never,

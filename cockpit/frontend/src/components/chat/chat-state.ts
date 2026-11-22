@@ -1,6 +1,7 @@
 // The chat view's state as a pure fold over the host's events
 // (host domain/session-runtime.ts). One source: a view is rebuilt from the log,
 // never merged with anything else.
+import { SORT_PICKS, type SortRow, type SplitRelation } from '@/lib/split';
 
 export type ToolStatus = 'running' | 'completed' | 'failed' | 'launched' | 'interrupted';
 export type ToolKind = 'read' | 'edit' | 'execute' | 'search' | 'fetch' | 'agent' | 'other';
@@ -354,17 +355,8 @@ export type RenderGroup =
   | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string };
 
 /** One topic of a sort the agent proposed (the cockpit's propose_sort tool). */
-export interface SortProposal {
-  when?: string;
-  topic: string;
-  summary?: string;
-  today?: string;
-  pick: 'keep' | 'sub' | 'spun' | 'unrelated' | 'drop';
-  taskId?: string;
-  brief?: string;
-}
+export type SortProposal = SortRow;
 
-const SORT_PICKS = ['keep', 'sub', 'spun', 'unrelated', 'drop'] as const;
 const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 
 /** The agent proposed sorting this session: shown as a card, its rows read tolerantly. */
@@ -382,7 +374,7 @@ export function sortOfTool(item: Extract<ChatItem, { type: 'tool' }>): { rows: S
 /** A split the agent offered (the cockpit's offer_split tool): its draft for the split dialog. */
 export interface SplitOffer {
   title: string;
-  relation: 'spun' | 'sub' | 'unrelated';
+  relation: SplitRelation;
   /** A project id or name, as the agent wrote it. */
   project: string | null;
   brief: string;
@@ -600,6 +592,14 @@ export function stepHistory(count: number, index: number | null, step: -1 | 1): 
   if (next < 0) return 0;
   return next >= count ? null : next;
 }
+
+/** What the chat sends the agent when the user keeps an offered topic here: it carries on and does not offer it again. */
+export const keepItHereMessage = (title: string) => `Keep it here: we stay on "${title}" in this chat.`;
+/** What the chat sends the agent when the user puts a proposed sort off: no new proposal before the next compaction. */
+export const SORT_LATER_MESSAGE = 'Later: no sort now.';
+
+/** Whether a sent message is one of the pane's own commands (PANE_COMMANDS), e.g. "/split". */
+export const isPaneCommand = (text: string, name: string) => text.trim() === `/${name}`;
 
 /** Commands the chat pane handles itself (ChatPane onSend), listed before the agent's own. */
 export const PANE_COMMANDS: CommandInfo[] = [

@@ -14,7 +14,7 @@ import { kebabTitle } from './task-title.js'
 
 export type SplitRelation = 'spun' | 'sub' | 'unrelated'
 export type SplitWhen = 'now' | 'park'
-export const SPLIT_RELATIONS: readonly SplitRelation[] = ['spun', 'sub', 'unrelated']
+export const SPLIT_RELATIONS = ['spun', 'sub', 'unrelated'] as const satisfies readonly SplitRelation[]
 export const SPLIT_WHENS: readonly SplitWhen[] = ['now', 'park']
 
 export interface SplitSource {

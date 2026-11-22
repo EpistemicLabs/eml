@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import { SplitDialog } from './SplitDialog';
 import { MessageActions, OfferCard, SplitMarker } from './SplitParts';
-import { groupItems, matchCommands, offerOfTool, withPaneCommands } from './chat-state';
+import { groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
 
 let draftStatus = 200;
 let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], taskSystem: true, hasTask: true };
@@ -132,6 +132,13 @@ describe('the chat\'s split parts', () => {
     const tool = { type: 'tool', id: 't1', name: 'mcp__cockpit__offer_split', input: { title: 'Media viewer', relation: 'sideways', brief: 'Goal.', reason: 'new' } } as never;
     expect(offerOfTool(tool)).toEqual({ title: 'Media viewer', relation: 'spun', project: null, brief: 'Goal.', reason: 'new' });
     expect(groupItems([tool])).toEqual([{ kind: 'offer', id: 't1', offer: expect.objectContaining({ title: 'Media viewer' }) }]);
+  });
+
+  it('tells the agent what the user chose, in words it acts on', () => {
+    expect(keepItHereMessage('Media viewer')).toBe('Keep it here: we stay on "Media viewer" in this chat.');
+    expect(SORT_LATER_MESSAGE).toBe('Later: no sort now.');
+    expect(isPaneCommand(' /split ', 'split')).toBe(true);
+    expect(isPaneCommand('/split the board', 'split')).toBe(false);
   });
 
   it('lists /split before the agent\'s commands', () => {

@@ -29,7 +29,6 @@ export interface SessionFacts {
   spaceId: string | null
   title: string
   taskId: string | null
-  projectId: string | null
 }
 
 export interface SplitSessionDeps {

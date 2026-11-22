@@ -6,6 +6,7 @@ import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, typ
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import { COCKPIT_HOME } from '../paths.js'
+import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
 
 /**
@@ -49,8 +50,8 @@ export interface TaskCommand extends CommandInput {
   split?: {
     sessionId: string
     title: string
-    relation: 'spun' | 'sub' | 'unrelated'
-    when: 'now' | 'park'
+    relation: SplitRelation
+    when: SplitWhen
     sourceTaskId: string | null
     createdTaskId: string | null
     spawnedSessionId: string | null

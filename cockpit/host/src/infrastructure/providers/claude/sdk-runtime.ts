@@ -11,6 +11,8 @@ import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
 import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
+import { SPLIT_RELATIONS } from '../../../domain/split.js'
+import { SORT_PICKS } from '../../../domain/sort.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -438,7 +440,7 @@ const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat i
   + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
 const OFFER_SPLIT_TOOL_INPUT = {
   title: z.string().describe('The new topic in two to five words, sentence case.'),
-  relation: z.enum(['spun', 'sub', 'unrelated']),
+  relation: z.enum(SPLIT_RELATIONS),
   project: z.string().optional(),
   brief: z.string(),
   reason: z.string().describe('One line: why this is a new topic.'),
@@ -460,7 +462,7 @@ const PROPOSE_SORT_TOOL_INPUT = {
     topic: z.string(),
     summary: z.string().optional(),
     today: z.string().optional(),
-    pick: z.enum(['keep', 'sub', 'spun', 'unrelated', 'drop']),
+    pick: z.enum(SORT_PICKS),
     taskId: z.string().optional(),
     brief: z.string().optional(),
   })),
