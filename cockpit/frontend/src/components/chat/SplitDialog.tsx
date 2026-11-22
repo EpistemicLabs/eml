@@ -2,6 +2,7 @@
 // drafted for the person (a quick model call over the last turns, or the agent's own offer) and stays
 // editable; the new session gets the brief, not the whole chat.
 import { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 
 import { draftSplit, splitContext, splitOff, type SplitAnswer, type SplitContext, type SplitDraft, type SplitRelation, type SplitWhen } from '@/lib/split';
 import { readable } from '@/lib/task-board';
@@ -65,9 +66,11 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
       });
       return () => { current = false; };
     }
+    // The context answers at once (no model call): the dialog's choices settle before the draft arrives.
+    void splitContext(sessionId).then((found) => { if (current && found) setContext((prev) => prev ?? found); });
     void draftSplit(sessionId, upTo).then((answer) => {
       if (!current) return;
-      setContext(answer.context);
+      if (answer.context) setContext(answer.context);
       {
         if (answer.ok) {
           setTitle(answer.draft.title);
@@ -84,6 +87,8 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
 
   // Where the task system is off there is no task to link: the new session only remembers this one.
   const linksTasks = context?.taskSystem ?? true;
+  // Until the space's context is in, the dialog shows no choice that might change (no jump).
+  const settled = context !== null;
   const relations = RELATIONS.filter(([r]) => r !== 'sub' || (context?.hasTask ?? true));
   const projects = context?.projects.length ? context.projects : [{ id: projectId, name: 'This project' }];
   const openTasks = context?.openTasks ?? [];
@@ -135,7 +140,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
               )}
             </div>
           )}
-          {onExisting ? null : linksTasks ? (
+          {!settled || onExisting ? null : linksTasks ? (
             <div className="flex flex-col gap-1.5">
               <span id="split-relation" className={LABEL}>How it relates</span>
               <div role="radiogroup" aria-labelledby="split-relation" className="flex flex-col gap-1.5">
@@ -158,7 +163,9 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
               <span className={LABEL}>Brief</span>
               <Textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={7} aria-busy={drafting} aria-describedby="split-brief-status" placeholder={drafting ? 'Writing the brief from the last turns…' : 'Goal, what is decided, what is open'} />
             </label>
-            <span id="split-brief-status" role="status" className="text-caption text-muted-foreground">
+            <span id="split-brief-status" role="status" className="flex items-center gap-1.5 text-caption text-muted-foreground">
+              {/* The chat's own working spinner, while the brief is written. */}
+              {drafting && <Loader2 aria-hidden data-testid="brief-spinner" className="size-3.5 flex-shrink-0 animate-spin" />}
               {drafting ? 'Writing the brief from the last turns…' : note ?? (offered ? 'Written by the agent.' : 'Drafted from the last turns. Change what is wrong.')}
             </span>
           </div>
