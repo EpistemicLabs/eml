@@ -10,6 +10,11 @@ export const IS_MAC = detectMac();
 /** The modifier as the user's keyboard names it. */
 export const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
+/** Running as an installed app (standalone window), where the page gets keys a browser tab keeps (⌘/Ctrl N, T). */
+export function installedApp(): boolean {
+  try { return window.matchMedia('(display-mode: standalone)').matches; } catch { return false; }
+}
+
 export interface Shortcut {
   /** The keys, in order; "then" separates a sequence. */
   keys: string[];

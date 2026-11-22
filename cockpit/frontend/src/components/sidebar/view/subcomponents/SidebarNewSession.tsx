@@ -4,7 +4,7 @@ import { Brain, ChevronDown, Folder, Plus, X } from 'lucide-react';
 import { SPACE_HEADER } from '@/lib/space-fetch';
 import { SESSIONS_CHANGED_EVENT } from '@/lib/session-actions';
 import { cn } from '@/lib/utils';
-import { MOD } from '@/components/top-bar/shortcuts';
+import { installedApp, MOD } from '@/components/top-bar/shortcuts';
 import { FIELD, FOCUS } from '@/shared/view/ui';
 import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -27,11 +27,6 @@ function PickField({ icon, children }: { icon: ReactNode; children: ReactNode })
   );
 }
 
-
-/** Running as an installed app (standalone window), where the page gets ⌘/Ctrl N. */
-function installedApp(): boolean {
-  try { return window.matchMedia('(display-mode: standalone)').matches; } catch { return false; }
-}
 
 function readLastProject(spaceId: string): string | null {
   try { return localStorage.getItem(`${LAST_PROJECT_KEY}:${spaceId}`); } catch { return null; }
