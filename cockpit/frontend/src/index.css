@@ -99,6 +99,8 @@
   }
 
   --container-dialog: 32rem;
+  /* A dialog with a table (sorting a session's topics): room for four columns. */
+  --container-dialog-wide: 48rem;
   /* The settings window: wide enough for a table of plugins across several spaces. */
   --container-settings: 72rem;
   --container-sheet: 75rem;

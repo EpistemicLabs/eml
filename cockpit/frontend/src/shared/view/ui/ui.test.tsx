@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { useState } from 'react';
 
-import { Button, Dialog, DialogContent, DialogTitle, Dot, RadioCard, Select, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, Dot, RadioCard, Select, Switch, Table, TableCell, TableRow, Tree, TreeItem } from '@/shared/view/ui';
 
 afterEach(cleanup);
 
@@ -189,5 +189,14 @@ describe('RadioCard', () => {
     expect(screen.getByText('Opens in a new pane.')).toBeTruthy();
     fireEvent.click(radio);
     expect(onChange).toHaveBeenCalled();
+  });
+});
+
+describe('Table', () => {
+  it('is a named table with column headers and rows', () => {
+    render(<Table label="Topics" head={['Topic', 'Goes to']}><TableRow><TableCell>Media viewer</TableCell><TableCell>Spun off</TableCell></TableRow></Table>);
+    expect(screen.getByRole('table', { name: 'Topics' })).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').map((h) => h.getAttribute('scope'))).toEqual(['col', 'col']);
+    expect(screen.getByRole('cell', { name: 'Spun off' })).toBeTruthy();
   });
 });
