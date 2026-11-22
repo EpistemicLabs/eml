@@ -343,7 +343,8 @@ function AppContentInner() {
       >
         {/* Over the panes, in this order: update (available → installing → outcome), a space without
             an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
-        <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
+        {/* On a phone the top banner sits between the floating menu and close buttons. */}
+        <div className={cn('peer', compact && 'pt-[env(safe-area-inset-top)] empty:hidden [&>:first-child]:mx-[calc(var(--inset-phone-nav)+--spacing(1))]')}>
           <UpdateBanner />
           <AgentUpgradeBanner />
           <TeamBanner />
@@ -364,8 +365,9 @@ function AppContentInner() {
               <JobsView />
             </div>
           )}
+          {/* With no banner above, the task views start below the phone's floating buttons, as a pane does. */}
           {topView === 'tasks' && (
-            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+            <div className={cn('absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background', compact && '[.peer:empty~*_&]:pt-[calc(env(safe-area-inset-top)+var(--pad-pane-compact-top))]')}>
               <TaskBoard projects={projectsBySpace} projectActions={projectActions} />
             </div>
           )}

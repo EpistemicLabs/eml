@@ -84,7 +84,7 @@ export function Banner({
   if (dismissed) return null;
   return (
     <div role={tone === 'destructive' ? 'alert' : 'status'} className={cn('mx-2 mt-2 flex-shrink-0 rounded-xl border px-3 py-2 text-body text-foreground', TONE[tone])}>
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 max-md:flex-wrap max-md:gap-y-1.5">
         {busy
           ? <Loader2 aria-hidden className={cn('size-4 flex-shrink-0 animate-spin', INK[tone])} />
           : <Icon aria-hidden className={cn('size-4 flex-shrink-0', INK[tone])} />}
@@ -92,11 +92,16 @@ export function Banner({
           <div className="font-medium">{children}</div>
           {detail && <div className="mt-0.5 break-words font-code text-ui text-muted-foreground">{detail}</div>}
         </div>
-        {actions && <div className="flex flex-shrink-0 items-center gap-3">{actions}</div>}
-        {(onDismiss || dismissKey) && (
-          <button type="button" aria-label="Dismiss" title="Dismiss" className={cn('grid size-(--target-min) place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)} onClick={() => { dismiss(); onDismiss?.(); }}>
-            <X aria-hidden className="size-4" />
-          </button>
+        {/* On a phone the actions go to their own line under the message, which then has the full width. */}
+        {(actions || onDismiss || dismissKey) && (
+          <div className="flex flex-shrink-0 items-center gap-2.5 max-md:basis-full max-md:pl-6.5">
+            {actions && <div className="flex flex-shrink-0 items-center gap-3">{actions}</div>}
+            {(onDismiss || dismissKey) && (
+              <button type="button" aria-label="Dismiss" title="Dismiss" className={cn('grid size-(--target-min) place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground max-md:ml-auto', FOCUS)} onClick={() => { dismiss(); onDismiss?.(); }}>
+                <X aria-hidden className="size-4" />
+              </button>
+            )}
+          </div>
         )}
       </div>
       {below}

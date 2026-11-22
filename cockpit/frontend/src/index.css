@@ -396,6 +396,9 @@ html.dark {
   /* The phone's floating buttons: their row sits this far below the status bar, and a chat fades out
      under a band this tall. */
   --size-phone-edge: 56px;
+  /* How far in from the screen's edge the phone's floating buttons reach (their inset plus their size):
+     the top banner keeps clear of them. */
+  --inset-phone-nav: calc(var(--spacing) * 2 + var(--target-touch));
   /* The space menu: wide enough for a space's name and its marks. */
   --size-menu: 12rem;
 }
