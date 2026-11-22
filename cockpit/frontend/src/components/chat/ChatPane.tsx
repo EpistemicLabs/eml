@@ -445,7 +445,7 @@ const Messages = memo(function Messages({
         switch (item.type) {
           case 'user':
             return (
-              <div key={item.id} data-chat-item={item.id} className="group relative flex flex-col items-end gap-1 pt-2">
+              <div key={item.id} data-chat-item={item.id} className="group/msg relative flex flex-col items-end gap-1 pt-2">
                 <MessageActions onSplit={() => onSplit(item.id)} />
                 {item.images.length > 0 && (
                   <div className="flex max-w-(--size-chat-bubble) flex-wrap justify-end gap-1">
@@ -467,7 +467,7 @@ const Messages = memo(function Messages({
             );
           case 'assistant':
             return (
-              <div key={item.id} data-chat-item={item.id} className="group relative">
+              <div key={item.id} data-chat-item={item.id} className="group/msg relative">
                 {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
                 <Assistant text={item.text} streaming={item.streaming} />
               </div>

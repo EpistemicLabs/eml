@@ -98,9 +98,12 @@ describe('the split dialog', () => {
 });
 
 describe('the chat\'s split parts', () => {
-  it('offers Split from here on a message, reachable by keyboard', () => {
+  it('offers Split from here on a message, reachable by keyboard, shown only for the hovered message', () => {
     const onSplit = vi.fn();
-    render(<MessageActions onSplit={onSplit} />);
+    const { container } = render(<MessageActions onSplit={onSplit} />);
+    const box = container.firstElementChild!;
+    expect(box.className).toContain('group-hover/msg:opacity-100');
+    expect(box.className).not.toMatch(/(^|\s)group-hover:/);
     fireEvent.click(screen.getByRole('button', { name: 'Split from here' }));
     expect(onSplit).toHaveBeenCalled();
   });

@@ -19,10 +19,14 @@ export interface SplitMark {
   undone?: boolean;
 }
 
-/** "Split from here" on a message: shows on hover and when the keyboard reaches it. */
+/**
+ * "Split from here" on a message: shows only while that message is hovered or the keyboard is on it
+ * (a named group, so a hovered pane around the chat does not show it on every message). It sits in the
+ * gap above the message, clear of its text.
+ */
 export function MessageActions({ onSplit }: { onSplit: () => void }) {
   return (
-    <div className="pointer-events-none absolute -top-3 right-1 z-(--z-raised) opacity-0 transition-opacity duration-(--duration-fast) group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+    <div className="pointer-events-none absolute right-0 bottom-full z-(--z-raised) translate-y-2 opacity-0 transition-opacity duration-(--duration-fast) group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
       <button
         type="button"
         onClick={onSplit}
