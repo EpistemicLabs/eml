@@ -413,6 +413,23 @@ describe('v0.19 REST', () => {
       expect(plain.find((r) => r.id === child.id)).not.toHaveProperty('parent_id')
     })
 
+    it('with_origin names the task a task was spun off from (derived_from), and only when asked', async () => {
+      const origin = (await create(validTask({ title: 'origin-task' }))).body as { id: string }
+      const spun = (await create(validTask({ title: 'spun-off-task' }))).body as { id: string }
+      const note = (await create(validNote({ title: 'origin-note' }))).body as { id: string }
+      const fromNote = (await create(validTask({ title: 'derived-from-a-note' }))).body as { id: string }
+      expect((await post('/relate', { source_id: spun.id, target_id: origin.id, relation: 'derived_from', detection_method: 'manual' })).status).toBeLessThan(300)
+      expect((await post('/relate', { source_id: fromNote.id, target_id: note.id, relation: 'derived_from', detection_method: 'manual' })).status).toBeLessThan(300)
+      const rows = ((await get('/list?type=task&with_origin=true&limit=500')).body as { engrams: Array<{ id: string; origin_task_id?: string | null }> }).engrams
+      expect(rows.find((r) => r.id === spun.id)?.origin_task_id).toBe(origin.id)
+      expect(rows.find((r) => r.id === origin.id)?.origin_task_id).toBeNull()
+      expect(rows.find((r) => r.id === fromNote.id)?.origin_task_id).toBeNull()
+      const both = ((await get('/list?type=task&with_parent=true&with_origin=true&limit=500')).body as { engrams: Array<{ id: string; parent_id?: unknown; origin_task_id?: unknown }> }).engrams
+      expect(both.find((r) => r.id === spun.id)).toMatchObject({ parent_id: null, origin_task_id: origin.id })
+      const plain = ((await get('/list?type=task&limit=500')).body as { engrams: Array<{ id: string; origin_task_id?: unknown }> }).engrams
+      expect(plain.find((r) => r.id === spun.id)).not.toHaveProperty('origin_task_id')
+    })
+
     it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {
       const stale = await create(validDecision({ title: 'rest-stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
       const fresh = await create(validDecision({ title: 'rest-fresh' }))
