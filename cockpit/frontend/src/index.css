@@ -241,7 +241,9 @@ html.dark {
   --size-tasks-card: 15rem;
   /* A tree row's children sit this far in; the connector's elbow meets the middle of a one-line row. */
   --tree-indent: 0.875rem;
-  --tree-tick: 0.625rem;
+  /* The connector's arm reaches the fold arrow, or on a row without one the dot, with no gap. */
+  --tree-tick: calc(var(--tree-indent) + 0.25rem);
+  --tree-tick-leaf: calc(var(--tree-indent) + var(--target-min) + 0.125rem);
   --tree-elbow: calc(var(--target-min) / 2);
   /* area: settings */
   /* The settings window: most of the viewport's height, the same on every tab. */

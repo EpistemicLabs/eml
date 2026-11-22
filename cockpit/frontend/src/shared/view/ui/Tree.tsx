@@ -117,7 +117,8 @@ export function TreeItem({
           'pl-(--tree-indent)',
           // The connector: down along the siblings (to the elbow on the last one), then across to the row.
           'before:absolute before:top-0 before:left-0 before:h-full before:border-l before:border-border-strong last:before:h-(--tree-elbow)',
-          'after:absolute after:top-(--tree-elbow) after:left-0 after:w-(--tree-tick) after:border-t after:border-border-strong',
+          'after:absolute after:top-(--tree-elbow) after:left-0 after:border-t after:border-border-strong',
+          hasChildren ? 'after:w-(--tree-tick)' : 'after:w-(--tree-tick-leaf)',
           line === 'dashed' && 'before:border-dashed after:border-dashed',
         ),
       )}

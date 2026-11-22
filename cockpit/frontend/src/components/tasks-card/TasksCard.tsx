@@ -154,8 +154,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
       <div className="flex flex-col gap-1 px-3 pt-3 pb-2">
         <h2 className="truncate text-body font-semibold text-foreground">Tasks · {desk.name}</h2>
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-tick) border-t border-border-strong" />sub-task</span>
-          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-tick) border-t border-dashed border-border-strong" />spun off</span>
+          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-indent) border-t border-border-strong" />sub-task</span>
+          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-indent) border-t border-dashed border-border-strong" />spun off</span>
           <span className="inline-flex items-center gap-1"><Dot hue="you" />needs you</span>
           <span className="inline-flex items-center gap-1"><Dot hue="agent" />working</span>
           <span className="inline-flex items-center gap-1"><Dot hue="waiting" hollow />waiting</span>
