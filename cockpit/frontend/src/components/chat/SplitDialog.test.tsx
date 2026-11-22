@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { SplitDialog } from './SplitDialog';
-import { MessageActions, SplitMarker } from './SplitParts';
-import { matchCommands, withPaneCommands } from './chat-state';
+import { MessageActions, OfferCard, SplitMarker } from './SplitParts';
+import { groupItems, matchCommands, offerOfTool, withPaneCommands } from './chat-state';
 
 let draftStatus = 200;
 let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], taskSystem: true, hasTask: true };
@@ -66,9 +66,10 @@ describe('the split dialog', () => {
     expect(screen.getByText(/no task system/)).toBeTruthy();
   });
 
-  it('takes the agent\'s own draft without asking for another', async () => {
-    render(<SplitDialog sessionId="s1" projectId="p-ui" offered={{ title: 'Owner model', relation: 'unrelated', projectId: 'p-ui', brief: 'Goal: owners.' }} onClose={() => {}} onDone={() => {}} />);
+  it('takes the agent\'s own draft without asking for another, and finds its project by name', async () => {
+    render(<SplitDialog sessionId="s1" projectId="p-ui" offered={{ title: 'Owner model', relation: 'unrelated', projectId: 'EML Code', brief: 'Goal: owners.' }} onClose={() => {}} onDone={() => {}} />);
     await waitFor(() => expect(screen.getByText('Written by the agent.')).toBeTruthy());
+    await waitFor(() => expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('p-code'));
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Owner model');
     expect((screen.getByRole('radio', { name: /Unrelated/ }) as HTMLInputElement).checked).toBe(true);
   });
@@ -91,6 +92,24 @@ describe('the chat\'s split parts', () => {
     expect(screen.getByRole('button', { name: 'Media viewer' })).toBeTruthy();
     rerender(<SplitMarker mark={mark} now={Date.parse('2026-11-22T10:06:00Z')} onOpen={() => {}} onUndo={onUndo} />);
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('shows the agent\'s offer with the choice until it is made', () => {
+    const onSplit = vi.fn();
+    const onKeep = vi.fn();
+    const { rerender } = render(<OfferCard title="Media viewer" reason="not part of the sidebar task" decided={null} onSplit={onSplit} onKeep={onKeep} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Split off…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep it here' }));
+    expect([onSplit.mock.calls.length, onKeep.mock.calls.length]).toEqual([1, 1]);
+    rerender(<OfferCard title="Media viewer" reason="" decided="kept" onSplit={onSplit} onKeep={onKeep} />);
+    expect(screen.queryByRole('button', { name: 'Keep it here' })).toBeNull();
+    expect(screen.getByText('Kept here.')).toBeTruthy();
+  });
+
+  it('reads an offer_split call as an offer, not a folded tool row', () => {
+    const tool = { type: 'tool', id: 't1', name: 'mcp__cockpit__offer_split', input: { title: 'Media viewer', relation: 'sideways', brief: 'Goal.', reason: 'new' } } as never;
+    expect(offerOfTool(tool)).toEqual({ title: 'Media viewer', relation: 'spun', project: null, brief: 'Goal.', reason: 'new' });
+    expect(groupItems([tool])).toEqual([{ kind: 'offer', id: 't1', offer: expect.objectContaining({ title: 'Media viewer' }) }]);
   });
 
   it('lists /split before the agent\'s commands', () => {

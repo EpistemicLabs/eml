@@ -44,6 +44,12 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
     void draftSplit(sessionId, upTo).then((answer) => {
       if (!current) return;
       setContext(answer.context);
+      // The agent may name the project by id or by name; one the space doesn't have falls back to this chat's.
+      if (offered && answer.context) {
+        const wanted = (offered.projectId ?? '').toLowerCase();
+        const found = answer.context.projects.find((p) => p.id.toLowerCase() === wanted || p.name.toLowerCase() === wanted);
+        setProject(found?.id ?? projectId);
+      }
       if (!offered) {
         if (answer.ok) {
           setTitle(answer.draft.title);
@@ -55,7 +61,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
       setDrafting(false);
     });
     return () => { current = false; };
-  }, [sessionId, upTo, offered]);
+  }, [sessionId, upTo, offered, projectId]);
 
   // Where the task system is off there is no task to link: the new session only remembers this one.
   const linksTasks = context?.taskSystem ?? true;

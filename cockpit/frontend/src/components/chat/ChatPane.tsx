@@ -17,13 +17,13 @@ import { undoSplit } from '@/lib/split';
 import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
-import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SplitOffer, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
 import { SplitDialog } from './SplitDialog';
-import { MessageActions, SplitMarker, type SplitMark } from './SplitParts';
+import { MessageActions, OfferCard, SplitMarker, type SplitMark } from './SplitParts';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
 import { useChatShortcuts } from './useChatShortcuts';
@@ -379,7 +379,7 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
 const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
 
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
@@ -392,6 +392,10 @@ const Messages = memo(function Messages({
   onSplit: (itemId: string) => void;
   marks: SplitMark[];
   renderMark: (mark: SplitMark) => React.ReactNode;
+  /** The user's choice on each offer the agent made, by its tool call's id. */
+  offers: Record<string, 'split' | 'kept'>;
+  onOffer: (id: string, offer: SplitOffer) => void;
+  onKeep: (id: string, offer: SplitOffer) => void;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
   const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
@@ -424,6 +428,10 @@ const Messages = memo(function Messages({
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
         if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
+        if (group.kind === 'offer') {
+          const { id, offer } = group;
+          return <OfferCard key={id} title={offer.title} reason={offer.reason} decided={offers[id] ?? null} onSplit={() => onOffer(id, offer)} onKeep={() => onKeep(id, offer)} />;
+        }
         const { item } = group;
         switch (item.type) {
           case 'user':
@@ -516,7 +524,9 @@ export function ChatPane({
   const status = switching
     ?? (connection === 'closed' ? 'Reconnecting…' : connection === 'connecting' ? 'Connecting…' : statusLine(chat));
 
-  const [splitFrom, setSplitFrom] = useState<{ upTo?: string } | null>(null);
+  const [splitFrom, setSplitFrom] = useState<{ upTo?: string; offer?: { id: string; draft: SplitOffer } } | null>(null);
+  const [offers, setOffers] = useState<Record<string, 'split' | 'kept'>>({});
+  const openOffer = useCallback((id: string, offer: SplitOffer) => setSplitFrom({ offer: { id, draft: offer } }), []);
   const [marks, setMarks] = useState<SplitMark[]>([]);
   const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
   const renderMark = useCallback((mark: SplitMark) => (
@@ -539,6 +549,11 @@ export function ChatPane({
       }}
     />
   ), [projectId]);
+
+  // Keep it here: the agent hears it as the user's reply, so it carries on and does not offer the topic again.
+  const keepOffer = useCallback((id: string, offer: SplitOffer) => {
+    if (send(`Keep it here: we stay on "${offer.title}" in this chat.`, [])) setOffers((prev) => ({ ...prev, [id]: 'kept' }));
+  }, [send]);
 
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
@@ -581,7 +596,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
@@ -619,8 +634,11 @@ export function ChatPane({
             sessionId={sessionId}
             projectId={projectId}
             upTo={splitFrom.upTo}
+            {...(splitFrom.offer ? { offered: { title: splitFrom.offer.draft.title, relation: splitFrom.offer.draft.relation, projectId: splitFrom.offer.draft.project, brief: splitFrom.offer.draft.brief } } : {})}
             onClose={() => setSplitFrom(null)}
             onDone={(result) => {
+              const offerId = splitFrom.offer?.id;
+              if (offerId) setOffers((prev) => ({ ...prev, [offerId]: 'split' }));
               setMarks((prev) => [...prev, {
                 opId: result.opId, title: result.title, afterItemId: splitFrom.upTo ?? latestItemId(chat.items),
                 ...(result.sessionId ? { sessionId: result.sessionId } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,

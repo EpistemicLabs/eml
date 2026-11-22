@@ -349,7 +349,32 @@ export type RenderGroup =
   | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' | 'thinking' }> }
   | { kind: 'tools'; id: string; tools: FoldedItem[] }
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
-  | { kind: 'status'; id: string; status: string; reason: string | null };
+  | { kind: 'status'; id: string; status: string; reason: string | null }
+  | { kind: 'offer'; id: string; offer: SplitOffer };
+
+/** A split the agent offered (the cockpit's offer_split tool): its draft for the split dialog. */
+export interface SplitOffer {
+  title: string;
+  relation: 'spun' | 'sub' | 'unrelated';
+  /** A project id or name, as the agent wrote it. */
+  project: string | null;
+  brief: string;
+  reason: string;
+}
+
+/** The agent offered to split a topic off: shown as a card with the choice, not folded away with the tools. */
+export function offerOfTool(item: Extract<ChatItem, { type: 'tool' }>): SplitOffer | null {
+  if (!/(^|__)offer_split$/.test(item.name)) return null;
+  const { title, relation, project, brief, reason } = item.input;
+  if (typeof title !== 'string' || typeof brief !== 'string') return null;
+  return {
+    title,
+    relation: relation === 'sub' || relation === 'unrelated' ? relation : 'spun',
+    project: typeof project === 'string' && project ? project : null,
+    brief,
+    reason: typeof reason === 'string' ? reason : '',
+  };
+}
 
 /** How a session said it stands (the cockpit's status tool): shown as a label, not folded away with the tools. */
 export function statusOfTool(item: Extract<ChatItem, { type: 'tool' }>): { status: string; reason: string | null } | null {
@@ -375,9 +400,13 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       if (item.text) run.push(item);
     } else if (item.type === 'tool') {
       const said = statusOfTool(item);
+      const offer = offerOfTool(item);
       if (said) {
         flush();
         groups.push({ kind: 'status', id: item.id, ...said });
+      } else if (offer) {
+        flush();
+        groups.push({ kind: 'offer', id: item.id, offer });
       } else if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });
