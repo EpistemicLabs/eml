@@ -129,10 +129,10 @@ describe('starting a session on a task', () => {
     expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'no_route' });
   });
 
-  it('refuses without a fallback when the host is down, since it may have started the session already', async () => {
+  it('does not know when the host did not answer, since it may have started the session already', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
-    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toMatchObject({ kind: 'refused' });
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
     answer(502, {});
-    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toMatchObject({ kind: 'refused' });
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
   });
 });

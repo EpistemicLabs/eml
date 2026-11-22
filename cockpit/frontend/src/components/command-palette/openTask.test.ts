@@ -97,6 +97,24 @@ describe('opening a task from the desk', () => {
     expect(result.current[0]?.text).toBe('The task is closed.');
   });
 
+  it('keeps the desk and warns against a second start when the host did not answer', async () => {
+    calls.outcome = { kind: 'unknown' };
+    const { result } = renderHook(() => useOpenTaskToast());
+    await act(() => openTask(task, { kind: 'none' }, { newDesk: true }));
+    expect(names()).not.toContain('removeDesk');
+    expect(names()).not.toContain('addWorkerPane');
+    expect(result.current[0]?.text).toMatch(/may have started; check the task before starting it again/);
+    expect(result.current[0]?.action).toBeUndefined();
+  });
+
+  it('offers no Undo when the host did not say which session it started', async () => {
+    calls.outcome = { kind: 'started', sessionId: null };
+    const { result } = renderHook(() => useOpenTaskToast());
+    await act(() => openTask(task, { kind: 'none' }, { newDesk: false }));
+    expect(result.current[0]?.text).toBe('Started a session on Phone close button.');
+    expect(result.current[0]?.action).toBeUndefined();
+  });
+
   it('starts one session when the task is picked again while it is starting', async () => {
     await Promise.all([openTask(task, { kind: 'none' }, { newDesk: false }), openTask(task, { kind: 'none' }, { newDesk: false })]);
     expect(names().filter((n) => n === 'startTaskSession')).toHaveLength(1);

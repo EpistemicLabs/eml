@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react';
 
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { archiveSession, stopSession } from '@/lib/session-actions';
-import { readable, startTaskSession, type BoardTask } from '@/lib/task-board';
+import { readable, startTaskSession, type BoardTask, type StartOutcome } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import type { TaskLocation } from '@/lib/open-task';
 import type { ToastMessage } from '@/shared/view/ui/Toast';
@@ -33,6 +33,12 @@ export function useOpenTaskToast(): [ToastMessage | null, (id: string) => void] 
 /** A passing word on the desk, such as why a task could not start. */
 export function tellOnDesk(text: string): void {
   say({ id: crypto.randomUUID(), text, ms: durationMs('--duration-toast-undo') });
+}
+
+/** Why a start did not happen, on the desk: the host's refusal, or that it may have started anyway. */
+export function tellStartProblem(outcome: StartOutcome, title: string): void {
+  if (outcome.kind === 'refused') tellOnDesk(outcome.message);
+  if (outcome.kind === 'unknown') tellOnDesk(`The cockpit host did not answer. A session on ${title} may have started; check the task before starting it again.`);
 }
 
 /** Ending a session this opening started (Undo): stopped first, since the host keeps a working session, then archived. */
@@ -89,16 +95,22 @@ export async function openTask(task: BoardTask, where: TaskLocation, opts: { new
       offer(`Started a session on ${title}.`, () => { removePane(paneId); dropDesk(); back(); });
       return;
     }
+    // The host may have queued the session: the desk stays for it, and nothing invites a second start.
+    if (outcome.kind === 'unknown') { tellStartProblem(outcome, title); return; }
     if (outcome.kind !== 'started') {
       dropDesk();
       back();
-      tellOnDesk(outcome.kind === 'refused' ? outcome.message : `${title} has no project to start a session in.`);
+      if (outcome.kind === 'refused') tellStartProblem(outcome, title);
+      else tellOnDesk(`${title} has no project to start a session in.`);
       return;
     }
     const started = outcome.sessionId;
-    offer(opts.newDesk ? `Started a session on ${title} in a new desk.` : `Started a session on ${title}.`, () => {
+    const text = opts.newDesk ? `Started a session on ${title} in a new desk.` : `Started a session on ${title}.`;
+    // Without the session's id there is nothing Undo could end.
+    if (!started) { tellOnDesk(text); return; }
+    offer(text, () => {
       void (async () => {
-        const error = started ? await endSession(started) : null;
+        const error = await endSession(started);
         if (error) { tellOnDesk(`${title} keeps running: ${error}`); return; }
         dropDesk();
         back();

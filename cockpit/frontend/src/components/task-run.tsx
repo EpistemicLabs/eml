@@ -8,7 +8,7 @@ import { Play, SquareTerminal } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
 import { useActiveSpace } from "@/stores/useSpaceStore";
 import { startTaskSession } from "@/lib/task-board";
-import { tellOnDesk } from "@/components/command-palette/openTask";
+import { tellStartProblem } from "@/components/command-palette/openTask";
 
 import { BrainCard } from "@/components/brain/ui";
 import type { Engram } from "@/lib/types";
@@ -143,7 +143,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
     };
     if (activeSpace) void startTaskSession({ id: engram.id, spaceId: activeSpace.id }, { projectId, prompt, title, deskId: target }).then((outcome) => {
       if (outcome.kind === 'no_route') fallback();
-      else if (outcome.kind === 'refused') tellOnDesk(outcome.message);
+      else tellStartProblem(outcome, title);
     });
     else fallback();
     setOpen(false);
