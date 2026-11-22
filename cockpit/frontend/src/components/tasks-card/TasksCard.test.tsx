@@ -73,7 +73,8 @@ describe('the tasks card', () => {
     expect(row(/^Session review ui, Needs you/).getAttribute('aria-selected')).toBe('true');
     expect(row(/^Media viewer, Parked/).className).toContain('before:border-dashed');
     expect(row(/^Task board mock, Agent working/).getAttribute('aria-expanded')).toBe('true');
-    expect(row(/^Board v3, terminal session/)).toBeTruthy();
+    expect(row(/^Board v3, session$/)).toBeTruthy();
+    expect(row(/^Session review ui, Needs you, session open on this desk/)).toBeTruthy();
   });
 
   it('focuses or opens a session on click, and starts one on a task without a session', async () => {

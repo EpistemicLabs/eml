@@ -2,7 +2,6 @@
 // those sessions belong to (taskTree.ts). A row's dot is its state; the active pane's row is marked;
 // a click focuses the session's pane or opens it, and a task without a session starts one on it.
 import { useCallback, useMemo, useState } from 'react';
-import { MessageSquare, SquareTerminal } from 'lucide-react';
 
 import { allSessionState, MARK_WORD, sessionMark, type AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
@@ -101,11 +100,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     });
   };
 
-  const sessionIcon = (leaf: SessionLeaf) => {
-    const Icon = leaf.view === 'chat' ? MessageSquare : SquareTerminal;
-    return <Icon aria-hidden className={cn('size-3 flex-shrink-0', leaf.open ? 'text-foreground' : 'text-muted-foreground')} />;
-  };
-  const sessionWords = (leaf: SessionLeaf) => `${leaf.view === 'chat' ? 'Chat' : 'Terminal'} session${leaf.open ? ', open on this desk' : ''}`;
+  const sessionWords = (leaf: SessionLeaf) => (leaf.open ? 'session open on this desk' : 'session');
 
   const renderNode = (node: TreeNode) => {
     const one = node.sessions.length === 1 ? node.sessions[0] : null;
@@ -116,7 +111,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
       <TreeItem
         key={node.key}
         line={node.rel === 'spun' ? 'dashed' : node.rel === 'sub' ? 'solid' : undefined}
-        label={`${title}, ${node.state.label}${node.otherProject ? `, in ${node.otherProject}` : ''}${one ? `, ${sessionWords(one).toLowerCase()}` : ''}`}
+        label={`${title}, ${node.state.label}${node.otherProject ? `, in ${node.otherProject}` : ''}${one ? `, ${sessionWords(one)}` : ''}`}
         selected={Boolean(one?.current)}
         expanded={hasChildren ? !folded.includes(node.key) : undefined}
         onToggle={() => toggleFold(node.key)}
@@ -126,21 +121,17 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
             <Dot hue={node.state.hue} hollow={node.state.hollow} />
             <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
             {node.otherProject && <span className="flex-shrink-0 truncate text-caption text-muted-foreground">{node.otherProject}</span>}
-            {one && sessionIcon(one)}
           </span>
         )}
       >
         {leaves.map((leaf) => (
           <TreeItem
             key={`${node.key}:${leaf.id}`}
-            label={`${leaf.title}, ${sessionWords(leaf).toLowerCase()}`}
+            label={`${leaf.title}, ${sessionWords(leaf)}`}
             selected={leaf.current}
             onSelect={() => openSession(leaf)}
             content={(
-              <span className="flex min-w-0 flex-1 items-center gap-2">
-                {sessionIcon(leaf)}
-                <span className="min-w-0 flex-1 truncate">{leaf.title}</span>
-              </span>
+              <span className="min-w-0 flex-1 truncate">{leaf.title}</span>
             )}
           />
         ))}
