@@ -83,6 +83,8 @@ import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
 import { createSplitSession } from './application/split-session.js'
+import { createSplitBrief } from './application/split-brief.js'
+import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { createTaskBoard } from './application/task-board.js'
 import { projectIdForBrain } from './project-registry.js'
 
@@ -475,9 +477,10 @@ async function main() {
   // A session flagged for the user (a question, a failure) shows as a new result: its desk dot
   // clears once seen; the flag keeps it in Your turn (decision desk-dot-until-seen).
   const flagged = (sessionId: string) => { if (turns.get(sessionId)?.state !== 'working') turns.apply({ sessionId, state: 'done' }) }
+  const sdkRuntimes = createClaudeSdkRuntimes()
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
-    runtimes: createClaudeSdkRuntimes(),
+    runtimes: sdkRuntimes,
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     turnDone: turnEnded,
@@ -717,6 +720,41 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
+  const claudeConfigOf = (spaceId: string | null) => {
+    const space = spaces.resolve(spaceId)
+    return space.runtime ? space.runtime.configDirs.claude ?? null : CONFIG_DIR
+  }
+  const splitBrief = createSplitBrief({
+    transcript: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+      const space = spaces.resolve(entry.spaceId)
+      const projectPath = space.registry.get(entry.projectId)?.path
+      if (!projectPath) return null
+      const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
+      return sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
+    },
+    facts: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry) return null
+      const space = spaces.resolve(entry.spaceId)
+      const task = taskSystemOn(space) && entry.taskId
+        ? await taskBrain(space)?.get(`/engram/${entry.taskId}`).catch(() => null) as { title?: string } | null | undefined
+        : null
+      return {
+        sessionTitle: entry.title ?? entry.agentTitle ?? sessionId,
+        taskTitle: task?.title ?? null,
+        projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName })),
+      }
+    },
+    complete: async (sessionId, prompt) => {
+      const configDir = claudeConfigOf(ledger.get(sessionId)?.spaceId ?? null)
+      if (!configDir) throw new Error('this space has no Claude Code sign-in')
+      return claudeOneShot(configDir, prompt)
+    },
+    today: () => new Date().toISOString().slice(0, 10),
+  })
   taskCommands.every(TASK_COMMAND_TICK_MS)
   taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
 
@@ -755,7 +793,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

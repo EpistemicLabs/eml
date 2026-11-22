@@ -28,6 +28,13 @@ const deps = {
     owns: (opId: string) => opId.startsWith('split-'),
     undo: async () => { splitUndone++; return { ok: true, command: {} } },
   },
+  brief: {
+    write: async (sessionId: string, upTo?: string) => {
+      if (sessionId === 'nope') return { ok: false, reason: 'unknown_session' }
+      if (sessionId === 'broken') throw new Error('not signed in')
+      return { ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: `Goal: files (${upTo ?? 'end'}).` } }
+    },
+  },
 } as unknown as TasksApiDeps
 const splits: Array<Record<string, unknown>> = []
 let splitUndone = 0
@@ -93,5 +100,11 @@ describe('task board routes', () => {
     expect((await post('/api/v1/sessions/s1/split', { opId: 'x', title: 'T', relation: 'sideways', when: 'now', projectId: 'p' })).status).toBe(400)
     const sub = await post('/api/v1/sessions/s1/split', { opId: 'y', title: 'T', brief: 'b', relation: 'sub', when: 'now', projectId: 'p' })
     expect(sub).toMatchObject({ status: 409, body: { error: { code: 'sub_needs_task' } } })
+  })
+
+  it('drafts a split brief up to a picked message, and says why when it cannot', async () => {
+    expect(await post('/api/v1/sessions/s1/split-brief', { upTo: 'u2' })).toEqual({ status: 200, body: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: files (u2).' } })
+    expect((await post('/api/v1/sessions/nope/split-brief', {})).status).toBe(404)
+    expect(await post('/api/v1/sessions/broken/split-brief', {})).toMatchObject({ status: 502, body: { error: { code: 'brief_failed', retry: true } } })
   })
 })

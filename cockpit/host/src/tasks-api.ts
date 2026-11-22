@@ -2,6 +2,7 @@ import type * as http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { TaskBoard } from './application/task-board.js'
 import type { CommandInput, CommandRefusal, Submitted, TaskCommands } from './application/task-commands.js'
+import type { SplitBrief } from './application/split-brief.js'
 import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
@@ -15,6 +16,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId }: split a topic off a session
+ *   POST /api/v1/sessions/<id>/split-brief          { upTo? }: a draft (title, relation, projectId, brief) from the turns up to a message
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
  * happens at once, and the page opens the session in its desk with the brief. A refusal answers
@@ -26,6 +28,7 @@ export interface TasksApiDeps {
   board: TaskBoard
   commands: TaskCommands
   split: SplitSession
+  brief: SplitBrief
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -126,6 +129,20 @@ export async function handleTasksApi(
     if (!result.ok) refuse(json, res, result.refusal)
     else json(res, 200, { state: 'undone' })
     void deps.board.refresh().catch(() => {})
+    return true
+  }
+
+  const draft = /^\/api\/v1\/sessions\/([^/]+)\/split-brief$/.exec(pathname)
+  if (draft && method === 'POST') {
+    const body = await readJson(req)
+    try {
+      const result = await deps.brief.write(decodeURIComponent(draft[1]), str(body.upTo))
+      if (result.ok) json(res, 200, result.draft)
+      else if (result.reason === 'unknown_session') json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
+      else json(res, 422, { error: { code: result.reason, message: result.reason === 'empty' ? 'The session has nothing to write a brief from yet.' : 'The brief came back unreadable: write it yourself or try again.', retry: result.reason === 'unreadable' } })
+    } catch (err) {
+      json(res, 502, { error: { code: 'brief_failed', message: `The brief could not be written: ${(err as Error).message}`, retry: true } })
+    }
     return true
   }
 
