@@ -4,7 +4,7 @@ import { act, renderHook } from '@testing-library/react';
 
 import type { BoardTask } from '@/lib/task-board';
 
-const calls = vi.hoisted(() => ({ log: [] as unknown[][], started: 's-new' as string | null, desks: ['d1'] }));
+const calls = vi.hoisted(() => ({ log: [] as unknown[][], outcome: { kind: 'started', sessionId: 's-new' } as unknown, desks: ['d1'], stopError: null as string | null }));
 vi.mock('@/stores/usePaneStore', () => {
   const rec = (name: string, ret?: unknown) => (...args: unknown[]) => { calls.log.push([name, ...args]); return ret; };
   return {
@@ -18,15 +18,19 @@ vi.mock('@/stores/usePaneStore', () => {
     getActiveSpaceId: () => 'eml',
     getDesks: () => calls.desks.map((id) => ({ id })),
     openInPane: rec('openInPane', 'p-opened'),
-    paneHoldingSession: (id: string) => (id === 's-new' ? { id: 'p-started' } : undefined),
     removeDesk: rec('removeDesk'),
     removePane: rec('removePane'),
   };
 });
 vi.mock('@/lib/task-board', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  startTaskSession: async (...args: unknown[]) => { calls.log.push(['startTaskSession', ...args]); return calls.started; },
+  startTaskSession: async (...args: unknown[]) => { calls.log.push(['startTaskSession', ...args]); return calls.outcome; },
 }));
+vi.mock('@/lib/session-actions', () => ({
+  stopSession: async (id: string) => { calls.log.push(['stopSession', id]); return calls.stopError; },
+  archiveSession: async (id: string) => { calls.log.push(['archiveSession', id]); return null; },
+}));
+vi.mock('@/lib/time', () => ({ durationMs: () => 8000 }));
 
 const { openTask, useOpenTaskToast } = await import('./openTask');
 
@@ -34,9 +38,9 @@ const task = { id: 't1', spaceId: 'eml', title: 'phone-close-button', project: '
 
 beforeEach(() => {
   calls.log = [];
-  calls.started = 's-new';
+  calls.outcome = { kind: 'started', sessionId: 's-new' };
   calls.desks = ['d1'];
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
+  calls.stopError = null;
 });
 
 const names = () => calls.log.map((c) => c[0]);
@@ -65,14 +69,37 @@ describe('opening a task from the desk', () => {
     expect(names()).not.toContain('removeDesk');
   });
 
-  it('starts a session on a task that has none, bound on the host; Undo ends it', async () => {
+  it('starts a session on a task that has none, bound on the host; Undo stops and archives it', async () => {
     const { result } = renderHook(() => useOpenTaskToast());
     await act(() => openTask(task, { kind: 'none' }, { newDesk: false }));
     expect(calls.log[0]).toEqual(['startTaskSession', task, expect.objectContaining({ projectId: 'bp-ui', deskId: 'd1', title: 'Phone close button' })]);
     expect(result.current[0]?.text).toBe('Started a session on Phone close button.');
-    act(() => result.current[0]!.action!.run());
-    expect(calls.log).toContainEqual(['removePane', 'p-started']);
-    expect(fetch).toHaveBeenCalledWith('/api/sessions/s-new/archive', { method: 'POST' });
+    await act(async () => { result.current[0]!.action!.run(); });
+    expect(calls.log.slice(1, 3)).toEqual([['stopSession', 's-new'], ['archiveSession', 's-new']]);
+  });
+
+  it('says so when Undo cannot end the session, and leaves the desk as it is', async () => {
+    calls.stopError = 'The cockpit host did not answer. Try again.';
+    const { result } = renderHook(() => useOpenTaskToast());
+    await act(() => openTask(task, { kind: 'none' }, { newDesk: false }));
+    await act(async () => { result.current[0]!.action!.run(); });
+    expect(names()).not.toContain('archiveSession');
+    expect(names()).not.toContain('activateDesk');
+    expect(result.current[0]?.text).toBe('Phone close button keeps running: The cockpit host did not answer. Try again.');
+  });
+
+  it('starts nothing when the host refuses, puts the desk back and says why', async () => {
+    calls.outcome = { kind: 'refused', message: 'The task is closed.' };
+    const { result } = renderHook(() => useOpenTaskToast());
+    await act(() => openTask(task, { kind: 'none' }, { newDesk: true }));
+    expect(names()).not.toContain('addWorkerPane');
+    expect(calls.log).toContainEqual(['removeDesk', 'd-new']);
+    expect(result.current[0]?.text).toBe('The task is closed.');
+  });
+
+  it('starts one session when the task is picked again while it is starting', async () => {
+    await Promise.all([openTask(task, { kind: 'none' }, { newDesk: false }), openTask(task, { kind: 'none' }, { newDesk: false })]);
+    expect(names().filter((n) => n === 'startTaskSession')).toHaveLength(1);
   });
 
   it('opens in a new desk named after the task with ⌘↵; Undo removes the desk', async () => {
@@ -89,7 +116,7 @@ describe('opening a task from the desk', () => {
   });
 
   it('falls back to a terminal pane on the task when the host cannot start it', async () => {
-    calls.started = null;
+    calls.outcome = { kind: 'no_route' };
     await openTask(task, { kind: 'none' }, { newDesk: false });
     expect(calls.log).toContainEqual(['addWorkerPane', expect.objectContaining({ taskId: 't1', projectId: 'bp-ui', deskId: 'd1' })]);
   });

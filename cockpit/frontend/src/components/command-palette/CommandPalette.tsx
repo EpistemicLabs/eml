@@ -44,7 +44,7 @@ import type { Engram, EngramStatus } from '@/lib/types';
 import { activateDesk, openInPane, useActiveDeskId, useActiveSpaceId, useDesks, type PaneView } from '@/stores/usePaneStore';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { taskState } from '@/components/tasks-card/taskTree';
-import { locateTask, locationWords, searchTasks, type TaskLocation } from '@/lib/open-task';
+import { locateTask, locationWords, projectNameOf, searchTasks, type TaskLocation } from '@/lib/open-task';
 import { readable, useTaskBoard, type BoardTask } from '@/lib/task-board';
 import { Dot } from '@/shared/view/ui';
 import { openTask, TASK_SEARCH_EVENT } from './openTask';
@@ -363,7 +363,6 @@ export default function CommandPalette({
     spaces: spaces.map((s) => ({ id: s.id, name: s.name, key: paneSpaceKey(s) })),
     activeSpaceKey,
   });
-  const projectNameOf = (task: BoardTask) => board?.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project)?.name ?? (task.project ? readable(task.project) : '');
   const taskLimit = page === 'tasks' ? Infinity : searchMode ? ROOT_SEARCH_LIMIT : ROOT_LIMIT;
   const shownTaskGroups = taskGroups.map((g) => ({ ...g, tasks: g.tasks.slice(0, taskLimit) }));
   const taskCount = taskGroups.reduce((n, g) => n + g.tasks.length, 0);
@@ -473,7 +472,7 @@ export default function CommandPalette({
             {shownTaskGroups.map((group) => (
               <CommandGroup key={group.name} heading={page === 'tasks' && taskProject ? `${group.name} · ${board?.projects.find((p) => p.id === taskProject)?.name ?? readable(taskProject)}` : group.name}>
                 {group.tasks.map((task) => (
-                  <TaskRow key={`${task.spaceId}:${task.id}`} task={task} where={locate(task)} projectName={projectNameOf(task)} onSelect={() => pickTask(task)} />
+                  <TaskRow key={`${task.spaceId}:${task.id}`} task={task} where={locate(task)} projectName={board ? projectNameOf(board, task) : ''} onSelect={() => pickTask(task)} />
                 ))}
               </CommandGroup>
             ))}

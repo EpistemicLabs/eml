@@ -5,12 +5,14 @@
 import { useSyncExternalStore } from 'react';
 
 import { projectIdOfBrain } from '@/lib/project-lead';
+import { archiveSession, stopSession } from '@/lib/session-actions';
 import { readable, startTaskSession, type BoardTask } from '@/lib/task-board';
+import { durationMs } from '@/lib/time';
 import type { TaskLocation } from '@/lib/open-task';
 import type { ToastMessage } from '@/shared/view/ui/Toast';
 import {
   activateDesk, activatePane, activateSpace, addWorkerPane, ensureDeskBySlug, getActiveDeskId, getActivePaneId,
-  getActiveSpaceId, openInPane, paneHoldingSession, removeDesk, removePane, getDesks,
+  getActiveSpaceId, openInPane, removeDesk, removePane, getDesks,
 } from '@/stores/usePaneStore';
 
 /** The palette opens on its Open task page (a project to keep to, or none). */
@@ -19,8 +21,6 @@ export function openTaskSearch(project: string | null = null): void {
   window.dispatchEvent(new CustomEvent(TASK_SEARCH_EVENT, { detail: { project } }));
 }
 
-/** How long Undo stays offered. */
-const UNDO_MS = 8000;
 
 let toast: ToastMessage | null = null;
 const listeners = new Set<() => void>();
@@ -30,8 +30,18 @@ export function useOpenTaskToast(): [ToastMessage | null, (id: string) => void] 
   return [message, (id) => { if (toast?.id === id) say(null); }];
 }
 
-/** Ending a session this opening started (Undo): stopped and archived, like the sidebar's Archive. */
-const archiveSession = (sessionId: string) => fetch(`/api/sessions/${encodeURIComponent(sessionId)}/archive`, { method: 'POST' }).catch(() => undefined);
+/** A passing word on the desk, such as why a task could not start. */
+export function tellOnDesk(text: string): void {
+  say({ id: crypto.randomUUID(), text, ms: durationMs('--duration-toast-undo') });
+}
+
+/** Ending a session this opening started (Undo): stopped first, since the host keeps a working session, then archived. */
+async function endSession(sessionId: string): Promise<string | null> {
+  return (await stopSession(sessionId)) ?? archiveSession(sessionId);
+}
+
+/** Tasks being started right now: a second pick of one waits for the first instead of starting another session. */
+const starting = new Set<string>();
 
 export async function openTask(task: BoardTask, where: TaskLocation, opts: { newDesk: boolean }): Promise<void> {
   const title = readable(task.title);
@@ -41,7 +51,7 @@ export async function openTask(task: BoardTask, where: TaskLocation, opts: { new
     if (getDesks().some((d) => d.id === before.deskId)) activateDesk(before.deskId);
     if (before.paneId) activatePane(before.paneId);
   };
-  const offer = (text: string, undo: () => void) => say({ id: crypto.randomUUID(), text, ms: UNDO_MS, action: { label: 'Undo', run: undo } });
+  const offer = (text: string, undo: () => void) => say({ id: crypto.randomUUID(), text, ms: durationMs('--duration-toast-undo'), action: { label: 'Undo', run: undo } });
 
   // Already in a pane: here it is focused; on another desk that desk opens (the session is never moved there).
   if (where.kind === 'here') { activatePane(where.paneId); return; }
@@ -66,22 +76,35 @@ export async function openTask(task: BoardTask, where: TaskLocation, opts: { new
   }
 
   // No session yet: the host starts one with the task bound (in chat when that is the user's view); an older
-  // host can't, so then a terminal pane starts it.
+  // host can't, so then a terminal pane starts it. Any other failure starts nothing and puts the desk back.
+  const key = `${task.spaceId}:${task.id}`;
+  if (starting.has(key)) return;
   const prompt = `Work on task ${task.id} ("${title}") together with the user. Start by saying where it stands and what you would do next.`;
   const projectId = task.project ? projectIdOfBrain(task.project) : null;
-  const sessionId = await startTaskSession(task, { ...(projectId ? { projectId } : {}), prompt, title, deskId });
-  if (!sessionId && projectId) {
-    const paneId = addWorkerPane({ fromSessionId: null, projectId, prompt, title, deskId, taskId: task.id });
-    offer(`Started a session on ${title}.`, () => { removePane(paneId); dropDesk(); back(); });
-    return;
+  starting.add(key);
+  try {
+    const outcome = await startTaskSession(task, { ...(projectId ? { projectId } : {}), prompt, title, deskId });
+    if (outcome.kind === 'no_route' && projectId) {
+      const paneId = addWorkerPane({ fromSessionId: null, projectId, prompt, title, deskId, taskId: task.id });
+      offer(`Started a session on ${title}.`, () => { removePane(paneId); dropDesk(); back(); });
+      return;
+    }
+    if (outcome.kind !== 'started') {
+      dropDesk();
+      back();
+      tellOnDesk(outcome.kind === 'refused' ? outcome.message : `${title} has no project to start a session in.`);
+      return;
+    }
+    const started = outcome.sessionId;
+    offer(opts.newDesk ? `Started a session on ${title} in a new desk.` : `Started a session on ${title}.`, () => {
+      void (async () => {
+        const error = started ? await endSession(started) : null;
+        if (error) { tellOnDesk(`${title} keeps running: ${error}`); return; }
+        dropDesk();
+        back();
+      })();
+    });
+  } finally {
+    starting.delete(key);
   }
-  if (!sessionId) { say({ id: crypto.randomUUID(), text: `${title} has no project to start a session in.`, ms: UNDO_MS }); return; }
-  const started = sessionId;
-  offer(opts.newDesk ? `Started a session on ${title} in a new desk.` : `Started a session on ${title}.`, () => {
-    const pane = paneHoldingSession(started);
-    if (pane) removePane(pane.id);
-    void archiveSession(started);
-    dropDesk();
-    back();
-  });
 }

@@ -1,8 +1,7 @@
 // Opening an existing task from the desk (⌘K, the nav's Search tasks, the tasks card's Open task): where the task
 // is now and what Enter does with it. Pure, so the rules are tested without a browser; the opening itself is in
-// components/command-palette/openTask.ts. A task already open on another desk is gone to, never moved there
-// (decision open-task-already-open-elsewhere-jumps-to-its-desk).
-import { readable, type Board, type BoardTask } from '@/lib/task-board';
+// components/command-palette/openTask.ts. A task already open on another desk is gone to, never moved there.
+import { OPEN_STATUSES, readable, type Board, type BoardTask } from '@/lib/task-board';
 
 export interface LocateContext {
   activeDeskId: string;
@@ -61,7 +60,11 @@ export function locationWords(where: TaskLocation): { text: string; act: string 
 
 export interface TaskGroup { name: string; tasks: BoardTask[] }
 
-const OPEN = new Set(['planned', 'active']);
+/** A task's project as the board names it, or its id made readable. */
+export function projectNameOf(board: Pick<Board, 'projects'>, task: BoardTask): string {
+  return board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project)?.name ?? (task.project ? readable(task.project) : '');
+}
+
 const needsYou = (t: BoardTask) => t.turn === 'needs_you' || t.turn === 'review';
 
 /**
@@ -70,13 +73,12 @@ const needsYou = (t: BoardTask) => t.turn === 'needs_you' || t.turn === 'review'
  */
 export function searchTasks(board: Pick<Board, 'tasks' | 'projects'>, query: string, opts: { project?: string } = {}): TaskGroup[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const projectName = (t: BoardTask) => board.projects.find((p) => p.spaceId === t.spaceId && p.id === t.project)?.name ?? '';
   const order = (a: BoardTask, b: BoardTask) => Number(needsYou(b)) - Number(needsYou(a)) || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
   const found = board.tasks
-    .filter((t) => OPEN.has(t.status) && (!opts.project || t.project === opts.project))
+    .filter((t) => OPEN_STATUSES.has(t.status) && (!opts.project || t.project === opts.project))
     .filter((t) => {
       if (words.length === 0) return true;
-      const hay = [readable(t.title), t.title, projectName(t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
+      const hay = [readable(t.title), t.title, projectNameOf(board, t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
       return words.every((w) => hay.includes(w));
     })
     .sort(order);

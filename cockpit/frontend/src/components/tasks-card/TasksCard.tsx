@@ -11,7 +11,7 @@ import { readable, startTaskSession, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Dot, Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
 import { Search } from 'lucide-react';
-import { openTaskSearch } from '@/components/command-palette/openTask';
+import { openTaskSearch, tellOnDesk } from '@/components/command-palette/openTask';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { addWorkerPane, getSessionView, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
@@ -98,8 +98,9 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     // A task without a session: the host starts one on it with the task bound, and it opens in chat when that is
     // the user's view; an older host can't, so then a terminal pane starts it (the task-run path).
     const prompt = `Work on task ${task.id} ("${readable(task.title)}") together with the user. Start by saying where it stands and what you would do next.`;
-    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((started) => {
-      if (started) return;
+    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((outcome) => {
+      if (outcome.kind === 'refused') tellOnDesk(outcome.message);
+      if (outcome.kind !== 'no_route') return;
       addWorkerPane({
         fromSessionId: null, projectId: projectIdOfBrain(task.project!), title: readable(task.title), deskId: desk.id, taskId: task.id, prompt,
         ...(spaceKeyOf(task.spaceId) !== null ? { spaceId: spaceKeyOf(task.spaceId) } : {}),

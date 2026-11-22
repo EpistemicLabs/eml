@@ -410,21 +410,27 @@ export function snoozeTimes(now: number): { tomorrow: string; monday: string } {
   return { tomorrow: at9(1), monday: at9(((8 - weekday) % 7) || 7) };
 }
 
+/** The statuses of a task that is still open. */
+export const OPEN_STATUSES: ReadonlySet<string> = new Set(['planned', 'active']);
+
 /**
  * Start a session of the user's own on a task (POST /api/v1/tasks/<id>/start): the host binds the task and
  * queues the session; this page claims it and opens the pane (in chat when that is the user's view).
- * Answers the new session's id, or null when the host could not (an older host has no such route): the
- * caller falls back to a terminal pane.
+ * Only an older host without the route answers no_route, and only then may the caller start the task in a
+ * terminal pane instead; a refusal, or a host that did not answer (it may have started the session), starts nothing.
  */
-export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<string | null> {
+export type StartOutcome = { kind: 'started'; sessionId: string | null } | { kind: 'refused'; message: string } | { kind: 'no_route' };
+const HOST_SILENT = 'The cockpit host did not answer. Try again.';
+export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<StartOutcome> {
   try {
     const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: task.spaceId, ...opts }),
     });
-    if (!res.ok) return null;
-    const body = await res.json().catch(() => ({})) as { sessionId?: string };
-    return body.sessionId ?? null;
+    const body = await res.json().catch(() => null) as { sessionId?: string; error?: { code?: string; message?: string } } | null;
+    if (res.ok) return { kind: 'started', sessionId: body?.sessionId ?? null };
+    if ((res.status === 404 || res.status === 405) && !body?.error?.code) return { kind: 'no_route' };
+    return { kind: 'refused', message: body?.error?.message ?? HOST_SILENT };
   } catch {
-    return null;
+    return { kind: 'refused', message: HOST_SILENT };
   }
 }

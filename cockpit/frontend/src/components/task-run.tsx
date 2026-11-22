@@ -8,6 +8,7 @@ import { Play, SquareTerminal } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
 import { useActiveSpace } from "@/stores/useSpaceStore";
 import { startTaskSession } from "@/lib/task-board";
+import { tellOnDesk } from "@/components/command-palette/openTask";
 
 import { BrainCard } from "@/components/brain/ui";
 import type { Engram } from "@/lib/types";
@@ -140,7 +141,10 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
       addWorkerPane({ fromSessionId: null, projectId, prompt, title, deskId: target, taskId: engram.id });
       if (emptyPaneId) removePane(emptyPaneId);
     };
-    if (activeSpace) void startTaskSession({ id: engram.id, spaceId: activeSpace.id }, { projectId, prompt, title, deskId: target }).then((started) => { if (!started) fallback(); });
+    if (activeSpace) void startTaskSession({ id: engram.id, spaceId: activeSpace.id }, { projectId, prompt, title, deskId: target }).then((outcome) => {
+      if (outcome.kind === 'no_route') fallback();
+      else if (outcome.kind === 'refused') tellOnDesk(outcome.message);
+    });
     else fallback();
     setOpen(false);
     setExtra("");

@@ -4,7 +4,7 @@
 // it is the sessions themselves, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
 // without a browser.
-import { hueOf, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
+import { hueOf, OPEN_STATUSES, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
 import type { Hue } from '@/shared/view/ui/hue';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
@@ -86,7 +86,6 @@ export interface TreeInput {
 type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
   Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId'>>;
 
-const OPEN_STATUSES = new Set(['planned', 'active']);
 /** A tree deeper than this is a loop in the data, not a real tree. */
 const MAX_DEPTH = 32;
 
