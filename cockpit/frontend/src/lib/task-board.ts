@@ -409,3 +409,19 @@ export function snoozeTimes(now: number): { tomorrow: string; monday: string } {
   const weekday = new Date(now).getDay();
   return { tomorrow: at9(1), monday: at9(((8 - weekday) % 7) || 7) };
 }
+
+/**
+ * Start a session of the user's own on a task (POST /api/v1/tasks/<id>/start): the host binds the task and
+ * queues the session; this page claims it and opens the pane (in chat when that is the user's view).
+ * False when the host could not (an older host has no such route): the caller falls back to a terminal pane.
+ */
+export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: task.spaceId, ...opts }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

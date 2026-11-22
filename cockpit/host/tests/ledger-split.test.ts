@@ -23,6 +23,7 @@ describe('a session split off another one', () => {
   it('does not run unattended, though another session asked for it', () => {
     expect(unattended({ fromSessionId: 'source', origin: 'split' })).toBe(false)
     expect(unattended({ fromSessionId: 'source' })).toBe(true)
+    expect(unattended({ fromSessionId: null, origin: 'task' })).toBe(false)
   })
 
   it('launches attended in a terminal though it starts with a prompt', () => {

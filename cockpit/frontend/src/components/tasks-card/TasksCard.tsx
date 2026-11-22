@@ -7,7 +7,7 @@ import { allSessionState, MARK_WORD, sessionMark, type AllSession } from '@/comp
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
-import { readable, useTaskBoard } from '@/lib/task-board';
+import { readable, startTaskSession, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Dot, Empty, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
 import { addWorkerPane, getSessionView, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
@@ -92,11 +92,15 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     if (leaf) { openSession(leaf); return; }
     const task = node.kind === 'task' ? board?.tasks.find((t) => t.id === node.id) : undefined;
     if (!task?.project) return;
-    // A task without a session: start one on it, with the task as its brief (the task-run path).
-    addWorkerPane({
-      fromSessionId: null, projectId: projectIdOfBrain(task.project), title: readable(task.title), deskId: desk.id, taskId: task.id,
-      prompt: `Work on task ${task.id} ("${readable(task.title)}") together with the user. Start by saying where it stands and what you would do next.`,
-      ...(spaceKeyOf(task.spaceId) !== null ? { spaceId: spaceKeyOf(task.spaceId) } : {}),
+    // A task without a session: the host starts one on it with the task bound, and it opens in chat when that is
+    // the user's view; an older host can't, so then a terminal pane starts it (the task-run path).
+    const prompt = `Work on task ${task.id} ("${readable(task.title)}") together with the user. Start by saying where it stands and what you would do next.`;
+    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((started) => {
+      if (started) return;
+      addWorkerPane({
+        fromSessionId: null, projectId: projectIdOfBrain(task.project!), title: readable(task.title), deskId: desk.id, taskId: task.id, prompt,
+        ...(spaceKeyOf(task.spaceId) !== null ? { spaceId: spaceKeyOf(task.spaceId) } : {}),
+      });
     });
   };
 

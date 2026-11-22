@@ -20,6 +20,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId, existingTaskId? }: split a topic off a session (onto an open task, with existingTaskId)
  *   POST /api/v1/sessions/<id>/split-brief          { upTo?, contextOnly? }: a draft (title, relation, projectId, brief) from the turns up to a message; contextOnly: only the dialog's context, no model call
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
+ *   POST /api/v1/tasks/<id>/start                   { spaceId, projectId?, prompt?, title?, deskId? }: a session of the user's own on the task (chat when that is their view)
  *   POST /api/v1/commands/<opId>/undo
  * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
  * happens at once, and the page opens the session in its desk with the brief. A refusal answers
@@ -33,6 +34,10 @@ export interface TasksApiDeps {
   split: SplitSession
   brief: SplitBrief
   sort: SortSession
+  /** Start a session of the user's own on a task: the host binds the task, the page opens the pane (in chat when that is the user's view). */
+  startOnTask(input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }): Promise<
+    { ok: true; sessionId: string } | { ok: false; refusal: 'unknown_space' | 'unknown_task' | 'task_closed' | 'no_project'; message?: string }
+  >
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -221,6 +226,27 @@ export async function handleTasksApi(
       })
     }
     void deps.board.refresh().catch(() => {})
+    return true
+  }
+
+  const startOn = /^\/api\/v1\/tasks\/([^/]+)\/start$/.exec(pathname)
+  if (startOn && method === 'POST') {
+    const body = await readJson(req)
+    const spaceId = str(body.spaceId)
+    if (!spaceId) { json(res, 400, { error: { code: 'invalid', message: 'spaceId is required', retry: false } }); return true }
+    const result = await deps.startOnTask({
+      spaceId, taskId: decodeURIComponent(startOn[1]),
+      ...(str(body.projectId) ? { projectId: str(body.projectId) } : {}),
+      ...(str(body.prompt) ? { prompt: str(body.prompt) } : {}),
+      ...(str(body.title) ? { title: str(body.title) } : {}),
+      ...(str(body.deskId) ? { deskId: str(body.deskId) } : {}),
+    })
+    if (result.ok) json(res, 202, { sessionId: result.sessionId })
+    else {
+      const status = result.refusal === 'task_closed' ? 409 : result.refusal === 'no_project' ? 422 : 404
+      const message = result.message ?? (result.refusal === 'task_closed' ? 'The task is closed.' : result.refusal === 'no_project' ? 'The task has no project to run in.' : result.refusal === 'unknown_space' ? 'No such space.' : 'No such task in this space.')
+      json(res, status, { error: { code: result.refusal, message, retry: false } })
+    }
     return true
   }
 

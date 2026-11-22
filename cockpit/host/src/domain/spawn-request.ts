@@ -32,9 +32,12 @@ export interface SpawnRequest {
    * task runner started (application/task-runner.ts). Both unattended like a
    * session's worker, also without a requester. 'split': a topic the user split
    * off a session (application/split-session.ts): their own session, not a
-   * worker, though it remembers the session it came from.
+   * worker, though it remembers the session it came from. 'task': a session of
+   * the user's own on a task, started from the page (a task row, Advance task).
    */
-  origin?: 'job' | 'runner' | 'split'
+  origin?: 'job' | 'runner' | 'split' | 'task'
+  /** The desk the page should open the pane on (a page id; the page falls back to the active desk). */
+  deskId?: string
   /** The brain task the session works on from its first hook (task system). */
   taskId?: string
   /** The job whose run this is (origin 'job'): what its session's channel tools act for. */
@@ -51,7 +54,12 @@ export function launchesUnattended(session: { worker: boolean; initialPrompt: bo
   return session.worker || (session.initialPrompt && !session.own)
 }
 
+/** The user's own session that the host still starts (a split, a session on a task): it opens in chat when chat is their view. */
+export function ownStart(request: Pick<SpawnRequest, 'origin'>): boolean {
+  return request.origin === 'split' || request.origin === 'task'
+}
+
 export function unattended(request: Pick<SpawnRequest, 'fromSessionId' | 'origin'>): boolean {
-  if (request.origin === 'split') return false
+  if (request.origin === 'split' || request.origin === 'task') return false
   return request.fromSessionId !== null || request.origin === 'job' || request.origin === 'runner'
 }

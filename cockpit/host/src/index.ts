@@ -517,7 +517,7 @@ async function main() {
   // live prompt keeps a session waiting (decision desk-dot-until-seen).
   spawns.on('spawn', (request: SpawnRequest) => {
     if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId)
-    if (request.origin === 'split') ledger.expectOwn(request.id)
+    if (request.origin === 'split' || request.origin === 'task') ledger.expectOwn(request.id)
   })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
@@ -721,6 +721,28 @@ async function main() {
     now: () => Date.now(),
     log,
   })
+  // A session of the user's own on a task, started from the page (a task row, Advance task): the host binds the
+  // task and queues it; the page claims it and opens it in chat when that is the user's view (application/start-worker.ts).
+  const startOnTask = async (input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }) => {
+    const space = spaces.get(input.spaceId)
+    if (!space) return { ok: false as const, refusal: 'unknown_space' as const }
+    const task = await taskBrain(space)?.get(`/engram/${encodeURIComponent(input.taskId)}`).catch(() => null) as { title?: string | null; status?: string; scope?: string } | null | undefined
+    if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
+    if (task.status !== 'planned' && task.status !== 'active') return { ok: false as const, refusal: 'task_closed' as const }
+    const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
+    const projectId = input.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+    if (!projectId) return { ok: false as const, refusal: 'no_project' as const }
+    const problem = ensureTaskProject(space, projectId)
+    if (problem) return { ok: false as const, refusal: 'no_project' as const, message: problem }
+    const title = input.title ?? task.title ?? input.taskId
+    const request = spawns.add({
+      projectId, title: title.slice(0, 60), fromSessionId: null, open: true, origin: 'task', taskId: input.taskId,
+      prompt: input.prompt ?? `Work on task ${input.taskId} ("${title}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+      ...(input.deskId ? { deskId: input.deskId } : {}),
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    return { ok: true as const, sessionId: request.id }
+  }
   // What a split or a sort reads about a session.
   const splitSessionFacts = (sessionId: string) => {
     const entry = ledger.get(sessionId)
@@ -818,7 +840,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)

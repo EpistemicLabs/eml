@@ -6,6 +6,8 @@
 import { useMemo, useState } from "react";
 import { Play, SquareTerminal } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
+import { useActiveSpace } from "@/stores/useSpaceStore";
+import { startTaskSession } from "@/lib/task-board";
 
 import { BrainCard } from "@/components/brain/ui";
 import type { Engram } from "@/lib/types";
@@ -68,6 +70,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
   const [open, setOpen] = useState(false);
   // A shared brain that is not live takes no write; a run would write (useTeamStore).
   const brain = useWritable();
+  const activeSpace = useActiveSpace();
   const [deskId, setDeskId] = useState<string>(background ? NO_DESK : activeDeskId);
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string>(defaultProject?.projectId ?? "");
@@ -128,15 +131,17 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
       const desk = getDesks().find((s) => s.id === target);
       if (desk && desk.panes.length === 1 && isEmptyPane(desk.panes[0])) emptyPaneId = desk.panes[0].id;
     }
-    addWorkerPane({
-      fromSessionId: null,
-      projectId,
-      prompt: runPrompt(engram, extra),
-      title,
-      deskId: target,
-      taskId: engram.id,
-    });
-    if (emptyPaneId) removePane(emptyPaneId);
+    // The host starts it with the task bound (in chat when that is the user's view); an older host can't, so
+    // then the pane starts it in the terminal.
+    const prompt = runPrompt(engram, extra);
+    // In a new desk the starter pane makes way only for a pane opened here; the host's pane arrives a moment later
+    // next to it, and removing the desk's only pane first would leave no desk to open it on.
+    const fallback = () => {
+      addWorkerPane({ fromSessionId: null, projectId, prompt, title, deskId: target, taskId: engram.id });
+      if (emptyPaneId) removePane(emptyPaneId);
+    };
+    if (activeSpace) void startTaskSession({ id: engram.id, spaceId: activeSpace.id }, { projectId, prompt, title, deskId: target }).then((started) => { if (!started) fallback(); });
+    else fallback();
     setOpen(false);
     setExtra("");
     onStarted?.();

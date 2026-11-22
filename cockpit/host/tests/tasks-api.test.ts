@@ -28,6 +28,10 @@ const deps = {
     owns: (opId: string) => opId.startsWith('split-'),
     undo: async () => { splitUndone++; return { ok: true, command: {} } },
   },
+  startOnTask: async (input: Record<string, unknown>) => {
+    starts.push(input)
+    return input.taskId === 'closed' ? { ok: false, refusal: 'task_closed' } : { ok: true, sessionId: 's-started' }
+  },
   sort: {
     apply: async (input: { opId: string; sessionId: string; rows: unknown[] }) => {
       sorts.push(input)
@@ -45,6 +49,7 @@ const deps = {
 } as unknown as TasksApiDeps
 const splits: Array<Record<string, unknown>> = []
 const sorts: Array<Record<string, unknown>> = []
+const starts: Array<Record<string, unknown>> = []
 let splitUndone = 0
 
 let server: http.Server
@@ -124,5 +129,13 @@ describe('task board routes', () => {
     expect((await post('/api/v1/sessions/s1/sort', { rows: [{ topic: 'X', pick: 'park' }] })).status).toBe(400)
     expect((await post('/api/v1/sessions/notask/sort', { opId: 'sort-2', rows: [] })).status).toBe(409)
     expect((await post('/api/v1/sessions/s1/sort', { rows: [] })).status).toBe(400)
+  })
+
+  it('starts a session of the user\'s own on a task, opened by the page where it says', async () => {
+    const r = await post('/api/v1/tasks/t1/start', { spaceId: 'main', deskId: 'desk-2', prompt: 'Run the task', projectId: 'bp-ui' })
+    expect(r).toEqual({ status: 202, body: { sessionId: 's-started' } })
+    expect(starts.at(-1)).toEqual({ spaceId: 'main', taskId: 't1', deskId: 'desk-2', prompt: 'Run the task', projectId: 'bp-ui' })
+    expect((await post('/api/v1/tasks/closed/start', { spaceId: 'main' })).status).toBe(409)
+    expect((await post('/api/v1/tasks/t1/start', {})).status).toBe(400)
   })
 })
