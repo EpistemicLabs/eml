@@ -85,10 +85,19 @@ export function parseBrief(text: string, projectIds: string[]): DraftBrief | nul
   return { title: typeof raw.title === 'string' ? raw.title.trim().slice(0, 80) : '', relation, projectId, brief }
 }
 
+/** What the split dialog needs to offer the right choices, whether or not the draft worked. */
+export interface SplitContext {
+  projects: Array<{ id: string; name: string }>
+  /** The session's space has the task system on. */
+  taskSystem: boolean
+  /** The session works on a task (a sub-task needs one). */
+  hasTask: boolean
+}
+
 export interface SplitBriefDeps {
   /** The session's transcript; null for an unknown session. */
   transcript(sessionId: string): Promise<TranscriptEvent[] | null>
-  facts(sessionId: string): Promise<{ sessionTitle: string; taskTitle: string | null; projects: Array<{ id: string; name: string }> } | null>
+  facts(sessionId: string): Promise<({ sessionTitle: string; taskTitle: string | null } & SplitContext) | null>
   /** One short model call for the session's space; the answer's text. */
   complete(sessionId: string, prompt: string): Promise<string>
   today(): string
@@ -96,14 +105,24 @@ export interface SplitBriefDeps {
 
 export function createSplitBrief(deps: SplitBriefDeps) {
   return {
-    async write(sessionId: string, upTo?: string): Promise<{ ok: true; draft: DraftBrief } | { ok: false; reason: 'unknown_session' | 'empty' | 'unreadable' }> {
-      const [events, facts] = await Promise.all([deps.transcript(sessionId), deps.facts(sessionId)])
-      if (!events || !facts) return { ok: false, reason: 'unknown_session' }
-      const turns = turnsFrom(events, upTo)
-      if (turns.length === 0) return { ok: false, reason: 'empty' }
-      const answer = await deps.complete(sessionId, briefPrompt(turns, { ...facts, today: deps.today() }))
+    async write(sessionId: string, upTo?: string): Promise<
+      | { ok: true; draft: DraftBrief; context: SplitContext }
+      | { ok: false; reason: 'unknown_session' }
+      | { ok: false; reason: 'empty' | 'unreadable' | 'failed'; message?: string; context: SplitContext }
+    > {
+      const facts = await deps.facts(sessionId)
+      if (!facts) return { ok: false, reason: 'unknown_session' }
+      const context: SplitContext = { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask }
+      const turns = turnsFrom((await deps.transcript(sessionId)) ?? [], upTo)
+      if (turns.length === 0) return { ok: false, reason: 'empty', context }
+      let answer: string
+      try {
+        answer = await deps.complete(sessionId, briefPrompt(turns, { ...facts, today: deps.today() }))
+      } catch (err) {
+        return { ok: false, reason: 'failed', message: (err as Error).message, context }
+      }
       const draft = parseBrief(answer, facts.projects.map((p) => p.id))
-      return draft ? { ok: true, draft } : { ok: false, reason: 'unreadable' }
+      return draft ? { ok: true, draft, context } : { ok: false, reason: 'unreadable', context }
     },
   }
 }

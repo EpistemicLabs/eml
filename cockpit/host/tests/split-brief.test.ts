@@ -49,12 +49,14 @@ describe('the split brief', () => {
   it('writes a draft from one model call', async () => {
     const prompts: string[] = []
     const brief = createSplitBrief({
-      transcript: async (id) => (id === 's1' ? transcript : null),
-      facts: async (id) => (id === 's1' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }] } : null),
-      complete: async (_id, prompt) => { prompts.push(prompt); return '{"title":"Media viewer","relation":"spun","projectId":"p-ui","brief":"Goal: open files."}' },
+      transcript: async (id) => (id === 's1' || id === 's2' ? transcript : null),
+      facts: async (id) => (id === 's1' || id === 's2' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true } : null),
+      complete: async (id, prompt) => { if (id === 's2') throw new Error('not signed in'); prompts.push(prompt); return '{"title":"Media viewer","relation":"spun","projectId":"p-ui","brief":"Goal: open files."}' },
       today: () => '2026-11-22',
     })
-    expect(await brief.write('s1', 'u2')).toEqual({ ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: open files.' } })
+    const context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true }
+    expect(await brief.write('s1', 'u2')).toEqual({ ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: open files.' }, context })
+    expect(await brief.write('s2')).toEqual({ ok: false, reason: 'failed', message: 'not signed in', context })
     expect(prompts[0]).not.toContain('back to the sidebar')
     expect(await brief.write('nope')).toEqual({ ok: false, reason: 'unknown_session' })
   })

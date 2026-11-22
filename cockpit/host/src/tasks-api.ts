@@ -135,13 +135,15 @@ export async function handleTasksApi(
   const draft = /^\/api\/v1\/sessions\/([^/]+)\/split-brief$/.exec(pathname)
   if (draft && method === 'POST') {
     const body = await readJson(req)
-    try {
-      const result = await deps.brief.write(decodeURIComponent(draft[1]), str(body.upTo))
-      if (result.ok) json(res, 200, result.draft)
-      else if (result.reason === 'unknown_session') json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
-      else json(res, 422, { error: { code: result.reason, message: result.reason === 'empty' ? 'The session has nothing to write a brief from yet.' : 'The brief came back unreadable: write it yourself or try again.', retry: result.reason === 'unreadable' } })
-    } catch (err) {
-      json(res, 502, { error: { code: 'brief_failed', message: `The brief could not be written: ${(err as Error).message}`, retry: true } })
+    const result = await deps.brief.write(decodeURIComponent(draft[1]), str(body.upTo))
+    if (result.ok) json(res, 200, { ...result.draft, context: result.context })
+    else if (result.reason === 'unknown_session') json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
+    else {
+      // The dialog still opens: it gets what it needs to offer the choices, and the person writes the brief.
+      const message = result.reason === 'empty' ? 'The session has nothing to write a brief from yet.'
+        : result.reason === 'unreadable' ? 'The brief came back unreadable: write it yourself or try again.'
+          : `The brief could not be written: ${result.message ?? 'no answer'}`
+      json(res, result.reason === 'failed' ? 502 : 422, { error: { code: result.reason === 'failed' ? 'brief_failed' : result.reason, message, retry: result.reason !== 'empty' }, context: result.context })
     }
     return true
   }

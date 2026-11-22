@@ -746,6 +746,8 @@ async function main() {
         sessionTitle: entry.title ?? entry.agentTitle ?? sessionId,
         taskTitle: task?.title ?? null,
         projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName })),
+        taskSystem: taskSystemOn(space),
+        hasTask: taskSystemOn(space) && entry.taskId !== null,
       }
     },
     complete: async (sessionId, prompt) => {
