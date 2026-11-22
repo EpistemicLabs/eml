@@ -1,6 +1,6 @@
 // The chat's parts of splitting a topic off: the hover action on a message, and the marker that says
 // where a topic left the chat, with the way to it and Undo.
-import { ListTree, Split } from 'lucide-react';
+import { ListPlus, ListTree, Split } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { BUTTON, FOCUS, PRIMARY } from '@/shared/view/ui';
@@ -98,6 +98,26 @@ export function SortCard({ topics, reason, result, onSort, onLater }: { topics: 
           <button type="button" onClick={onSort} className={PRIMARY}>Sort topics…</button>
           <button type="button" onClick={onLater} className={BUTTON}>Later</button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** A task the agent created: a bar like a split's, with Undo while the task is open. */
+export function CreatedMarker({ title, state, onUndo }: { title: string; state: 'open' | 'undoing' | 'undone' | 'unknown' | { error: string }; onUndo: () => void }) {
+  return (
+    <div role="note" className="flex flex-wrap items-center justify-center gap-2 text-caption text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">
+      <ListPlus aria-hidden className="size-3 flex-shrink-0" />
+      {state === 'undone' ? (
+        <span>Task {title} dropped</span>
+      ) : (
+        <>
+          <span>New task</span>
+          <b className="font-semibold text-foreground">{title}</b>
+          <span>· in Plan</span>
+          {state === 'open' && <button type="button" onClick={onUndo} className={cn('text-foreground underline underline-offset-2', TARGET, FOCUS)}>Undo</button>}
+          {typeof state === 'object' && <span role="alert" className="text-stopped-ink">{state.error}</span>}
+        </>
       )}
     </div>
   );

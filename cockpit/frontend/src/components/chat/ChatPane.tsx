@@ -14,6 +14,7 @@ import { buttonVariants, Chip, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { undoSplit } from '@/lib/split';
+import { closeTask, readable, useTaskBoard } from '@/lib/task-board';
 import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 
 import { AgentCard } from './AgentCard';
@@ -23,7 +24,7 @@ import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { ToolServersPanel } from './ToolServersPanel';
 import { SplitDialog } from './SplitDialog';
-import { MessageActions, OfferCard, SortCard, SplitMarker, type SplitMark } from './SplitParts';
+import { CreatedMarker, MessageActions, OfferCard, SortCard, SplitMarker, type SplitMark } from './SplitParts';
 import { SortDialog } from './SortDialog';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
@@ -380,7 +381,7 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
 const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
 
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater,
+  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
 }: {
   items: ChatItem[];
   agents: AgentTask[];
@@ -401,6 +402,8 @@ const Messages = memo(function Messages({
   sorts: Record<string, string>;
   onSort: (id: string, rows: SortProposal[]) => void;
   onLater: (id: string) => void;
+  /** A task the agent created, as a bar with Undo. */
+  renderCreated: (taskId: string, title: string) => React.ReactNode;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
   const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
@@ -433,6 +436,7 @@ const Messages = memo(function Messages({
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
         if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
+        if (group.kind === 'created') return <Fragment key={group.id}>{renderCreated(group.taskId, group.title)}</Fragment>;
         if (group.kind === 'sort') {
           const { id, rows, reason } = group;
           return <SortCard key={id} topics={rows.length} reason={reason} result={sorts[id] ?? null} onSort={() => onSort(id, rows)} onLater={() => onLater(id)} />;
@@ -539,6 +543,28 @@ export function ChatPane({
   const [sortOpen, setSortOpen] = useState<{ id: string; rows: SortProposal[] } | null>(null);
   const [sorts, setSorts] = useState<Record<string, string>>({});
   const openSort = useCallback((id: string, rows: SortProposal[]) => setSortOpen({ id, rows }), []);
+  // Tasks the agent created: Undo drops one through the board's close (it waits out the board's undo window).
+  const { data: board } = useTaskBoard();
+  const [dropped, setDropped] = useState<Record<string, 'undoing' | 'undone' | { error: string }>>({});
+  const renderCreated = useCallback((taskId: string, title: string) => {
+    const task = board?.tasks.find((t) => t.id === taskId);
+    const local = dropped[taskId];
+    const state = local ?? (!task ? 'unknown' : task.status === 'planned' || task.status === 'active' ? 'open' : 'undone');
+    return (
+      <CreatedMarker
+        title={readable(title)}
+        state={state}
+        onUndo={() => {
+          if (!task) return;
+          setDropped((prev) => ({ ...prev, [taskId]: 'undoing' }));
+          void closeTask(task).then((answer) => {
+            setDropped((prev) => ({ ...prev, [taskId]: answer.ok ? 'undone' : { error: answer.message } }));
+            window.dispatchEvent(new Event('cockpit:tasks'));
+          });
+        }}
+      />
+    );
+  }, [board, dropped]);
   const [marks, setMarks] = useState<SplitMark[]>([]);
   const [announced, setAnnounced] = useState('');
   const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
@@ -614,7 +640,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} />
+          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}

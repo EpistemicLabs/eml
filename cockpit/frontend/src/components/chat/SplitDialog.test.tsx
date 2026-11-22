@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { SplitDialog } from './SplitDialog';
-import { MessageActions, OfferCard, SplitMarker } from './SplitParts';
-import { groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
+import { CreatedMarker, MessageActions, OfferCard, SplitMarker } from './SplitParts';
+import { createdTaskOfTool, groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
 
 let draftStatus = 200;
 let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], taskSystem: true, hasTask: true };
@@ -172,6 +172,26 @@ describe('the chat\'s split parts', () => {
     expect(SORT_LATER_MESSAGE).toBe('Later: no sort now.');
     expect(isPaneCommand(' /split ', 'split')).toBe(true);
     expect(isPaneCommand('/split the board', 'split')).toBe(false);
+  });
+
+  it('shows a task the agent created as a bar, once the brain answered with its id', () => {
+    const id = '0871844f-1111-4222-8333-944455556666';
+    const tool = { type: 'tool', id: 'c1', name: 'mcp__eml_brain__eml_create_task', status: 'completed', input: { title: 'new-mail-jobs' }, output: `{\n  "id": "${id}",\n  "type": "task"\n}` } as never;
+    expect(createdTaskOfTool(tool)).toEqual({ taskId: id, title: 'new-mail-jobs' });
+    expect(groupItems([tool])).toEqual([{ kind: 'created', id: 'c1', taskId: id, title: 'new-mail-jobs' }]);
+    expect(createdTaskOfTool({ ...(tool as object), status: 'running', output: '' } as never)).toBeNull();
+  });
+
+  it('offers Undo on a created task while it is open, and says when it is dropped', () => {
+    const onUndo = vi.fn();
+    const { rerender } = render(<CreatedMarker title="New mail jobs" state="open" onUndo={onUndo} />);
+    expect(screen.getByText('New mail jobs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(onUndo).toHaveBeenCalled();
+    rerender(<CreatedMarker title="New mail jobs" state="undone" onUndo={onUndo} />);
+    expect(screen.getByText('Task New mail jobs dropped')).toBeTruthy();
+    rerender(<CreatedMarker title="New mail jobs" state={{ error: 'This task still has open steps.' }} onUndo={onUndo} />);
+    expect(screen.getByRole('alert').textContent).toBe('This task still has open steps.');
   });
 
   it('lists /split before the agent\'s commands', () => {

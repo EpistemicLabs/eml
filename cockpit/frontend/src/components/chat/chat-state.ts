@@ -352,7 +352,16 @@ export type RenderGroup =
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
   | { kind: 'status'; id: string; status: string; reason: string | null }
   | { kind: 'offer'; id: string; offer: SplitOffer }
-  | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string };
+  | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string }
+  | { kind: 'created'; id: string; taskId: string; title: string };
+
+/** A task the agent created (the brain's eml_create_task, once it answered): shown as a bar with Undo, not folded away. */
+export function createdTaskOfTool(item: Extract<ChatItem, { type: 'tool' }>): { taskId: string; title: string } | null {
+  if (!/(^|__)eml_create_task$/.test(item.name) || item.status !== 'completed') return null;
+  const id = /"id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/.exec(item.output)?.[1];
+  if (!id) return null;
+  return { taskId: id, title: typeof item.input.title === 'string' && item.input.title ? item.input.title : id };
+}
 
 /** One topic of a sort the agent proposed (the cockpit's propose_sort tool). */
 export type SortProposal = SortRow;
@@ -424,6 +433,7 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       const said = statusOfTool(item);
       const offer = offerOfTool(item);
       const sort = sortOfTool(item);
+      const created = createdTaskOfTool(item);
       if (said) {
         flush();
         groups.push({ kind: 'status', id: item.id, ...said });
@@ -433,6 +443,9 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       } else if (sort) {
         flush();
         groups.push({ kind: 'sort', id: item.id, ...sort });
+      } else if (created) {
+        flush();
+        groups.push({ kind: 'created', id: item.id, ...created });
       } else if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });
