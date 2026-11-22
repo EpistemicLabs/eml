@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { useState } from 'react';
 
-import { Button, Dialog, DialogContent, DialogTitle, Dot, Select, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, Dot, RadioCard, Select, Switch, Tree, TreeItem } from '@/shared/view/ui';
 
 afterEach(cleanup);
 
@@ -178,5 +178,16 @@ describe('Tree', () => {
     fireEvent.click(item('Root').querySelector('[data-tree-toggle]')!);
     expect(item('Root').getAttribute('aria-expanded')).toBe('false');
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('RadioCard', () => {
+  it('is a labelled radio with its description, picked on click', () => {
+    const onChange = vi.fn();
+    render(<div role="radiogroup" aria-label="When"><RadioCard name="when" value="now" checked={false} onChange={onChange} title="Start now" description="Opens in a new pane." /></div>);
+    const radio = screen.getByRole('radio', { name: /Start now/ });
+    expect(screen.getByText('Opens in a new pane.')).toBeTruthy();
+    fireEvent.click(radio);
+    expect(onChange).toHaveBeenCalled();
   });
 });
