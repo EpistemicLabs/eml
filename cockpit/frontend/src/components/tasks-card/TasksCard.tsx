@@ -146,17 +146,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
 
   return (
     <aside aria-label={`Tasks on ${desk.name}`} className="glass flex h-full w-(--size-tasks-card) flex-col overflow-hidden rounded-xl">
-      <div className="flex flex-col gap-1 px-3 pt-3 pb-2">
+      <div className="px-3 pt-3 pb-2">
         <h2 className="truncate text-body font-semibold text-foreground">Tasks · {desk.name}</h2>
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-indent) border-t border-border-strong" />sub-task</span>
-          <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-(--tree-indent) border-t border-dashed border-border-strong" />spun off</span>
-          <span className="inline-flex items-center gap-1"><Dot hue="you" />needs you</span>
-          <span className="inline-flex items-center gap-1"><Dot hue="agent" />working</span>
-          <span className="inline-flex items-center gap-1"><Dot hue="waiting" hollow />waiting</span>
-          <span className="inline-flex items-center gap-1"><Dot hue="stopped" />stuck</span>
-          <span className="inline-flex items-center gap-1"><Dot hue="done" />done</span>
-        </p>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2">
         {/* Until the board is in, a task-system session would show as a bare session and then jump. */}
