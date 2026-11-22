@@ -23,12 +23,14 @@ export function SortDialog({ sessionId, rows: proposed, onClose, onDone }: {
   const [rows, setRows] = useState(proposed);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One operation for the dialog: Apply again after an error finishes the same sort.
+  const [opId] = useState(() => crypto.randomUUID());
   const pick = (index: number, value: SortPick) => setRows((prev) => prev.map((r, i) => (i === index ? { ...r, pick: value } : r)));
 
   const apply = async () => {
     setSending(true);
     setError(null);
-    const answer = await sortSession(sessionId, rows);
+    const answer = await sortSession(sessionId, rows, opId);
     setSending(false);
     if (!answer.ok) { setError(answer.message); return; }
     onDone(answer);

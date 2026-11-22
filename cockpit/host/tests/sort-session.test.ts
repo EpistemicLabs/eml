@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { createSortSession } from '../src/application/sort-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
 
-function setup(opts: { taskSystem?: boolean; taskId?: string | null } = {}) {
+function setup(opts: { taskSystem?: boolean; taskId?: string | null; failOnce?: string } = {}) {
+  let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   let next = 0
   const sort = createSortSession({
@@ -15,7 +16,7 @@ function setup(opts: { taskSystem?: boolean; taskId?: string | null } = {}) {
     taskSystem: () => opts.taskSystem ?? true,
     brain: () => ({
       get: async () => ({ title: 'session-review-ui', scope: 'project.ui' }),
-      post: async (path: string, body: Record<string, unknown>) => { posts.push([path, body]); return path === '/engram/task' ? { id: `t-new-${++next}` } : {} },
+      post: async (path: string, body: Record<string, unknown>) => { if (failing && path === failing) { failing = undefined; throw new Error('brain went away') } posts.push([path, body]); return path === '/engram/task' ? { id: `t-new-${++next}` } : {} },
     }) as never,
     changed: () => {},
     now: () => Date.parse('2026-11-22T10:00:00Z'),
@@ -38,6 +39,18 @@ describe('applying a sort', () => {
     expect(posts[1][1]).toEqual({ title: 'media-viewer', content: 'Media viewer\n\nGoal: open files.', scope: 'project.ui', status: 'planned' })
     expect(posts[4][1]).toMatchObject({ status: 'invalidated', outcome: 'Dropped when its session was sorted' })
     expect(posts[5][1]).toEqual({ text: 'This session was sorted: 1 linked, 1 created, 1 closed.' })
+  })
+
+  it('a retry after a failure part-way resumes without repeating a step', async () => {
+    const { sort, posts } = setup({ failOnce: '/task/t-top/track' })
+    const rows = [
+      { topic: 'Media viewer', pick: 'spun' as const },
+      { topic: 'Top bar v2', pick: 'drop' as const, taskId: 't-top' },
+    ]
+    await expect(sort.apply({ opId: 'op', sessionId: 's1', rows })).rejects.toThrow('brain went away')
+    const answer = await sort.apply({ opId: 'op', sessionId: 's1', rows })
+    expect(answer.ok && answer.command.sort).toEqual({ linked: 0, created: 1, closed: 1 })
+    expect(posts.map(([p]) => p)).toEqual(['/engram/task', '/relate', '/task/t-new-1/track', '/task/t-top/track', '/task/t-root/track'])
   })
 
   it('does the work once for a retried operation', async () => {

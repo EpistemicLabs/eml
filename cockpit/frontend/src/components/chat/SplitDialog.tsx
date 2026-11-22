@@ -38,6 +38,8 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
   const [when, setWhen] = useState<SplitWhen>('now');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One operation for the dialog: pressing Split off again after an error finishes the same split, not a second one.
+  const [opId] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     let current = true;
@@ -73,7 +75,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
     if (!ready) return;
     setSending(true);
     setError(null);
-    const answer = await splitOff(sessionId, { title: title.trim(), brief: brief.trim(), relation: linksTasks ? relation : 'unrelated', when, projectId: project });
+    const answer = await splitOff(sessionId, { title: title.trim(), brief: brief.trim(), relation: linksTasks ? relation : 'unrelated', when, projectId: project }, opId);
     setSending(false);
     if (!answer.ok) { setError(answer.message); return; }
     onDone({ ...answer, title: title.trim(), when });

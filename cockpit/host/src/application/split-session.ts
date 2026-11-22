@@ -50,7 +50,7 @@ export interface SplitSessionDeps {
 
 export type SplitAnswer =
   | { ok: true; command: TaskCommand }
-  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'no_brain' | 'unknown_command' | 'undo_expired'; message?: string }
+  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight'; message?: string }
 
 /** The first message of the new session: the brief, not the chat it came from. */
 export function splitPrompt(input: { title: string; brief: string; fromTitle: string; taskId: string | null }): string {
@@ -65,6 +65,8 @@ export function splitPrompt(input: { title: string; brief: string; fromTitle: st
 
 export function createSplitSession(deps: SplitSessionDeps) {
   const iso = (ms: number) => new Date(ms).toISOString()
+  /** Operations running now: a second request with the same id is refused, not done twice. */
+  const running = new Set<string>()
 
   const taskOf = async (brain: Pick<EmlApi, 'get'>, taskId: string) =>
     (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null; scope?: string } | null
@@ -72,7 +74,18 @@ export function createSplitSession(deps: SplitSessionDeps) {
   return {
     async submit(input: SplitInput): Promise<SplitAnswer> {
       const existing = deps.store.get(input.opId)
-      if (existing) return { ok: true, command: existing }
+      if (existing && existing.state !== 'pending') return { ok: true, command: existing }
+      if (running.has(input.opId)) return { ok: false, refusal: 'in_flight' }
+      running.add(input.opId)
+      try {
+        return await this.run(input, existing)
+      } finally {
+        running.delete(input.opId)
+      }
+    },
+
+    /** The split's steps, each recorded once done: a retry of a split that failed part-way picks up where it stopped. */
+    async run(input: SplitInput, existing: TaskCommand | undefined): Promise<SplitAnswer> {
       const facts = deps.session(input.sessionId)
       if (!facts) return { ok: false, refusal: 'unknown_session' }
       const space = deps.space(facts.spaceId)
@@ -92,19 +105,38 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const { plan } = planned
       if ((plan.task || plan.journal.source) && !brain) return { ok: false, refusal: 'no_brain' }
 
-      let createdTaskId: string | null = null
-      if (plan.task) {
-        const created = await brain!.post('/engram/task', plan.task) as { id: string }
-        createdTaskId = created.id
-        if (plan.originLink) {
-          await brain!.post('/relate', { source_id: created.id, target_id: sourceTask, relation: 'derived_from', detection_method: 'manual', explanation: 'spun off from' })
-        }
-        if (plan.journal.created) await brain!.post(`/task/${created.id}/track`, { text: plan.journal.created })
+      const started = deps.now()
+      let command: TaskCommand = existing ?? {
+        opId: input.opId, kind: 'split', spaceId: space.id, createdAt: iso(started), undoUntil: iso(started + SPLIT_UNDO_MS), state: 'pending',
+        split: { sessionId: input.sessionId, title: input.title.trim(), relation: input.relation, when: input.when, sourceTaskId: sourceTask, createdTaskId: null, spawnedSessionId: null },
       }
-      if (plan.journal.source && sourceTask) await brain!.post(`/task/${sourceTask}/track`, { text: plan.journal.source })
+      const record = (patch: Partial<NonNullable<TaskCommand['split']>>, state: TaskCommand['state'] = 'pending') => {
+        command = { ...command, state, split: { ...command.split!, ...patch } }
+        deps.store.put(command, deps.now())
+      }
+      record({})
+      const done = command.split!
 
-      const spawnedSessionId = plan.spawn
-        ? deps.spawn({
+      let createdTaskId = done.createdTaskId
+      if (plan.task && !createdTaskId) {
+        createdTaskId = (await brain!.post('/engram/task', plan.task) as { id: string }).id
+        record({ createdTaskId })
+      }
+      if (createdTaskId && plan.originLink && !command.split!.linked) {
+        await brain!.post('/relate', { source_id: createdTaskId, target_id: sourceTask, relation: 'derived_from', detection_method: 'manual', explanation: 'spun off from' })
+        record({ linked: true })
+      }
+      if (createdTaskId && plan.journal.created && !command.split!.journaled?.created) {
+        await brain!.post(`/task/${createdTaskId}/track`, { text: plan.journal.created })
+        record({ journaled: { ...command.split!.journaled, created: true } })
+      }
+      if (plan.journal.source && sourceTask && !command.split!.journaled?.source) {
+        await brain!.post(`/task/${sourceTask}/track`, { text: plan.journal.source })
+        record({ journaled: { ...command.split!.journaled, source: true } })
+      }
+      let spawnedSessionId = command.split!.spawnedSessionId
+      if (plan.spawn && !spawnedSessionId) {
+        spawnedSessionId = deps.spawn({
           fromSessionId: input.sessionId,
           projectId: input.projectId,
           title: input.title.trim(),
@@ -112,14 +144,8 @@ export function createSplitSession(deps: SplitSessionDeps) {
           taskId: createdTaskId,
           space,
         })
-        : null
-
-      const now = deps.now()
-      const command: TaskCommand = {
-        opId: input.opId, kind: 'split', spaceId: space.id, createdAt: iso(now), undoUntil: iso(now + SPLIT_UNDO_MS), state: 'applied',
-        split: { sessionId: input.sessionId, title: input.title.trim(), relation: input.relation, when: input.when, sourceTaskId: sourceTask, createdTaskId, spawnedSessionId },
       }
-      deps.store.put(command, now)
+      record({ spawnedSessionId }, 'applied')
       deps.changed()
       deps.log(`[split] ${input.opId.slice(0, 8)} ${input.relation}/${input.when} from ${input.sessionId.slice(0, 8)}${createdTaskId ? ` task ${createdTaskId.slice(0, 8)}` : ''}${spawnedSessionId ? ` session ${spawnedSessionId.slice(0, 8)}` : ''}`)
       return { ok: true, command }

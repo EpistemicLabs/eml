@@ -43,6 +43,27 @@ describe('the split dialog', () => {
     expect(onDone.mock.calls[0][0]).toMatchObject({ sessionId: 's-new', title: 'Media viewer', when: 'park' });
   });
 
+  it('sends the same operation again when Split off is pressed after an error', async () => {
+    let fail = true;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      posts.push({ url, body });
+      if (url.endsWith('/split-brief')) return new Response(JSON.stringify({ title: 'T', relation: 'spun', projectId: 'p-ui', brief: 'b', context }), { status: 200 });
+      if (fail) { fail = false; return new Response(JSON.stringify({ error: { code: 'split_failed', message: 'stopped part-way' } }), { status: 502 }); }
+      return new Response(JSON.stringify({ opId: body.opId, state: 'applied', undoUntil: 'x' }), { status: 202 });
+    }));
+    const onDone = vi.fn();
+    render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={onDone} />);
+    await screen.findByDisplayValue('T');
+    fireEvent.click(screen.getByRole('button', { name: 'Split off' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Split off' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    const splits = posts.filter((p) => p.url.endsWith('/split'));
+    expect(splits).toHaveLength(2);
+    expect(splits[0].body.opId).toBe(splits[1].body.opId);
+  });
+
   it('opens editable when no draft could be written, and says why', async () => {
     draftStatus = 502;
     render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);

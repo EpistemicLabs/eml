@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { createSplitSession, SPLIT_UNDO_MS, type SessionFacts, type SplitInput } from '../src/application/split-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
 
-function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null } = {}) {
+function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null; failOnce?: string } = {}) {
+  let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   const spawned: Array<Record<string, unknown>> = []
   const ended: string[] = []
@@ -17,6 +18,7 @@ function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null } = {
       return null
     },
     async post(path: string, body: Record<string, unknown>) {
+      if (failing && path === failing) { failing = undefined; throw new Error('brain went away') }
       posts.push([path, body])
       return path === '/engram/task' ? { id: 't-new' } : {}
     },
@@ -67,6 +69,23 @@ describe('splitting off from a session', () => {
     await split.submit(input())
     await split.submit(input())
     expect(posts.filter(([p]) => p === '/engram/task')).toHaveLength(1)
+  })
+
+  it('a retry after a failure part-way does each step once, and resumes where it stopped', async () => {
+    const { split, posts, spawned } = setup({ failOnce: '/task/t-root/track' })
+    await expect(split.submit(input())).rejects.toThrow('brain went away')
+    expect(spawned).toEqual([])
+    const answer = await split.submit(input())
+    expect(answer.ok && answer.command).toMatchObject({ state: 'applied', split: { createdTaskId: 't-new', spawnedSessionId: 's-new' } })
+    expect(posts.map(([p]) => p)).toEqual(['/engram/task', '/relate', '/task/t-new/track', '/task/t-root/track'])
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('refuses a second request with the same operation while the first still runs', async () => {
+    const { split } = setup()
+    const [first, second] = await Promise.all([split.submit(input()), split.submit(input())])
+    expect(first.ok).toBe(true)
+    expect(second).toEqual({ ok: false, refusal: 'in_flight' })
   })
 
   it('without the task system, starting now writes nothing to the brain', async () => {

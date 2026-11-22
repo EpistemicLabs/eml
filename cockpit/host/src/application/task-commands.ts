@@ -54,9 +54,14 @@ export interface TaskCommand extends CommandInput {
     sourceTaskId: string | null
     createdTaskId: string | null
     spawnedSessionId: string | null
+    /** Steps done so far, so a retry after a failure part-way does each once. */
+    linked?: boolean
+    journaled?: { created?: boolean; source?: boolean }
   }
   /** A sort of a drifted session: what it did. */
   sort?: { linked: number; created: number; closed: number }
+  /** A sort's progress: the next action to apply and the tasks its creates made, for a retry. */
+  sortProgress?: { next: number; created: Record<string, string>; createdSteps?: Record<string, { linked?: boolean; journaled?: boolean }>; summed?: boolean }
   error?: string
 }
 
@@ -296,7 +301,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (ticking) return ticking
       const run = async () => {
         const now = deps.now()
-        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && Date.parse(c.undoUntil) < now)) await apply(command)
+        // A session's split or sort pending here is one that failed part-way: its retry resumes it, not the tick.
+        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) await apply(command)
       }
       const current = run().finally(() => { if (ticking === current) ticking = null })
       ticking = current

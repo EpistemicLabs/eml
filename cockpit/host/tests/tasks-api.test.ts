@@ -120,6 +120,7 @@ describe('task board routes', () => {
     expect(r).toEqual({ status: 200, body: { opId: 'sort-1', linked: 1, created: 2, closed: 0 } })
     expect(sorts.at(-1)).toEqual({ opId: 'sort-1', sessionId: 's1', rows: [{ topic: 'Media viewer', pick: 'spun', brief: 'Goal.' }, { topic: 'Board', pick: 'sub', taskId: 't-b' }] })
     expect((await post('/api/v1/sessions/s1/sort', { rows: [{ topic: 'X', pick: 'park' }] })).status).toBe(400)
-    expect((await post('/api/v1/sessions/notask/sort', { rows: [] })).status).toBe(409)
+    expect((await post('/api/v1/sessions/notask/sort', { opId: 'sort-2', rows: [] })).status).toBe(409)
+    expect((await post('/api/v1/sessions/s1/sort', { rows: [] })).status).toBe(400)
   })
 })

@@ -61,21 +61,27 @@ const MESSAGES: Record<CommandRefusal, string> = {
 type SplitRefusalCode = Extract<SplitAnswer, { ok: false }>['refusal']
 
 const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
-  invalid: 'The split needs a title, a brief, how it relates (spun · sub · unrelated) and when (now · park).',
+  invalid: 'The split needs an opId, a title, a brief, how it relates (spun · sub · unrelated) and when (now · park).',
   sub_needs_task: 'A sub-task needs a task to hang under, and this session has none.',
   unknown_session: 'No such session.',
   unknown_project: 'No such project in this session\'s space.',
   no_brain: 'The space has no brain to write to right now.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo the split.',
+  in_flight: 'This split is still running.',
 }
 
 const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
-  unknown_session: 404, unknown_project: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, no_brain: 503,
+  unknown_session: 404, unknown_project: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
 }
 
 function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode): void {
-  json(res, SPLIT_STATUS[refusal] ?? 400, { error: { code: refusal, message: SPLIT_MESSAGES[refusal], retry: refusal === 'no_brain' } })
+  json(res, SPLIT_STATUS[refusal] ?? 400, { error: { code: refusal, message: SPLIT_MESSAGES[refusal], retry: refusal === 'no_brain' || refusal === 'in_flight' } })
+}
+
+/** A split or sort that failed part-way: what is done is recorded under its opId, so the same opId again resumes it. */
+function failedPartWay(json: Json, res: http.ServerResponse, what: 'split' | 'sort', err: unknown): void {
+  json(res, 502, { error: { code: `${what}_failed`, message: `The ${what} stopped part-way (${(err as Error).message}); try again to finish it.`, retry: true } })
 }
 
 const STATUS: Partial<Record<CommandRefusal, number>> = {
@@ -147,7 +153,7 @@ export async function handleTasksApi(
       const message = result.reason === 'empty' ? 'The session has nothing to write a brief from yet.'
         : result.reason === 'unreadable' ? 'The brief came back unreadable: write it yourself or try again.'
           : `The brief could not be written: ${result.message ?? 'no answer'}`
-      json(res, result.reason === 'failed' ? 502 : 422, { error: { code: result.reason === 'failed' ? 'brief_failed' : result.reason, message, retry: result.reason !== 'empty' }, context: result.context })
+      json(res, result.reason === 'empty' ? 422 : 502, { error: { code: result.reason === 'failed' ? 'brief_failed' : result.reason, message, retry: result.reason !== 'empty' }, context: result.context })
     }
     return true
   }
@@ -159,14 +165,22 @@ export async function handleTasksApi(
     const rows: SortRow[] | null = raw && raw.every((r) => typeof r?.topic === 'string' && SORT_PICKS.includes(r.pick as SortPick))
       ? raw.map((r) => ({ topic: String(r.topic), pick: r.pick as SortPick, ...(str(r.taskId) ? { taskId: str(r.taskId) } : {}), ...(str(r.brief) ? { brief: str(r.brief) } : {}) }))
       : null
-    if (!rows) { json(res, 400, { error: { code: 'invalid', message: `rows is a list of { topic, pick (${SORT_PICKS.join(' · ')}), taskId?, brief? }`, retry: false } }); return true }
-    const result = await deps.sort.apply({ opId: str(body.opId) ?? randomUUID(), sessionId: decodeURIComponent(sort[1]), rows })
+    const opId = str(body.opId)
+    if (!rows || !opId) { json(res, 400, { error: { code: 'invalid', message: `opId and rows (a list of { topic, pick (${SORT_PICKS.join(' · ')}), taskId?, brief? }) are required`, retry: false } }); return true }
+    let result: Awaited<ReturnType<SortSession['apply']>>
+    try {
+      result = await deps.sort.apply({ opId, sessionId: decodeURIComponent(sort[1]), rows })
+    } catch (err) {
+      failedPartWay(json, res, 'sort', err)
+      return true
+    }
     if (result.ok) json(res, 200, { opId: result.command.opId, ...result.command.sort })
     else {
       const [status, message] = result.refusal === 'unknown_session' ? [404, 'No such session.']
         : result.refusal === 'no_task' ? [409, 'Sorting needs the task system and a task on the session.']
-          : [503, 'The space has no brain to write to right now.']
-      json(res, status, { error: { code: result.refusal, message, retry: result.refusal === 'no_brain' } })
+          : result.refusal === 'in_flight' ? [409, 'This sort is still running.']
+            : [503, 'The space has no brain to write to right now.']
+      json(res, status, { error: { code: result.refusal, message, retry: result.refusal === 'no_brain' || result.refusal === 'in_flight' } })
     }
     void deps.board.refresh().catch(() => {})
     return true
@@ -177,12 +191,18 @@ export async function handleTasksApi(
     const body = await readJson(req)
     const relation = str(body.relation) as SplitRelation | undefined
     const when = str(body.when) as SplitWhen | undefined
-    const title = str(body.title), brief = str(body.brief), projectId = str(body.projectId)
-    if (!title || !brief || !projectId || !relation || !SPLIT_RELATIONS.includes(relation) || !when || !SPLIT_WHENS.includes(when)) {
+    const title = str(body.title), brief = str(body.brief), projectId = str(body.projectId), opId = str(body.opId)
+    if (!opId || !title || !brief || !projectId || !relation || !SPLIT_RELATIONS.includes(relation) || !when || !SPLIT_WHENS.includes(when)) {
       refuseSplit(json, res, 'invalid')
       return true
     }
-    const result = await deps.split.submit({ opId: str(body.opId) ?? randomUUID(), sessionId: decodeURIComponent(split[1]), title, brief, relation, when, projectId })
+    let result: SplitAnswer
+    try {
+      result = await deps.split.submit({ opId, sessionId: decodeURIComponent(split[1]), title, brief, relation, when, projectId })
+    } catch (err) {
+      failedPartWay(json, res, 'split', err)
+      return true
+    }
     if (!result.ok) refuseSplit(json, res, result.refusal)
     else {
       const c = result.command
