@@ -54,10 +54,12 @@ export interface TaskCommand extends CommandInput {
     when: SplitWhen
     sourceTaskId: string | null
     createdTaskId: string | null
+    /** The open task the split went onto instead of making one. */
+    existingTaskId?: string | null
     spawnedSessionId: string | null
     /** Steps done so far, so a retry after a failure part-way does each once. */
     linked?: boolean
-    journaled?: { created?: boolean; source?: boolean }
+    journaled?: { created?: boolean; source?: boolean; existing?: boolean }
   }
   /** A sort of a drifted session: what it did. */
   sort?: { linked: number; created: number; closed: number }

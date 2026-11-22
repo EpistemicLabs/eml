@@ -14,7 +14,9 @@ function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null; fail
   const space = { id: 'main', name: 'Main', taskSystem: opts.taskSystem ?? true, shared: false }
   const brain = {
     async get(path: string) {
-      if (path === '/engram/t-root') return { id: 't-root', title: 'session-review-ui', scope: 'project.ui' }
+      if (path === '/engram/t-root') return { id: 't-root', title: 'session-review-ui', scope: 'project.ui', status: 'active' }
+      if (path === '/engram/t-open') return { id: 't-open', title: 'fix-ended-mail-job', scope: 'project.ui', status: 'planned' }
+      if (path === '/engram/t-closed') return { id: 't-closed', title: 'old', scope: 'project.ui', status: 'resolved' }
       return null
     },
     async post(path: string, body: Record<string, unknown>) {
@@ -116,5 +118,21 @@ describe('splitting off from a session', () => {
     await split.submit(input({ opId: 'op-2' }))
     clock.now += SPLIT_UNDO_MS + 1
     expect(await split.undo('op-2')).toEqual({ ok: false, refusal: 'undo_expired' })
+  })
+
+  it('splits onto an existing open task: a session on it, nothing new made, and Undo leaves the task alone', async () => {
+    const { split, posts, spawned, ended } = setup()
+    const answer = await split.submit(input({ existingTaskId: 't-open' }))
+    expect(answer.ok && answer.command.split).toMatchObject({ createdTaskId: null, existingTaskId: 't-open', spawnedSessionId: 's-new' })
+    expect(posts.map(([p]) => p)).toEqual(['/task/t-open/track', '/task/t-root/track'])
+    expect(spawned[0]).toMatchObject({ taskId: 't-open' })
+    await split.undo('op-1')
+    expect(ended).toEqual(['s-new'])
+    expect(posts.some(([p, b]) => p === '/task/t-open/track' && b.status === 'invalidated')).toBe(false)
+  })
+
+  it('refuses an existing task that is closed or unknown', async () => {
+    expect(await setup().split.submit(input({ existingTaskId: 't-closed' }))).toEqual({ ok: false, refusal: 'unknown_task' })
+    expect(await setup().split.submit(input({ existingTaskId: 'nope' }))).toEqual({ ok: false, refusal: 'unknown_task' })
   })
 })

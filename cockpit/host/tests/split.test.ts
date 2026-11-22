@@ -54,4 +54,17 @@ describe('splitting off a topic', () => {
   it('refuses a title that leaves no anchor', () => {
     expect(planSplit(withTask, { ...request, title: '✨', relation: 'spun', when: 'now' })).toEqual({ ok: false, refusal: 'invalid' })
   })
+
+  it('onto an existing task: nothing new is made; starting now opens a session on it', () => {
+    const plan = planSplit(withTask, { ...request, relation: 'spun', when: 'now', existing: { id: 't-fix', title: 'fix-ended-mail-job' } })
+    expect(plan).toEqual({ ok: true, plan: {
+      task: null, originLink: false, spawn: true,
+      journal: { existing: 'Picked up again from session-review-ui (session Session review).', source: 'Media viewer continues in its task fix-ended-mail-job.' },
+    } })
+  })
+
+  it('onto an existing task, parked: the brief goes into its journal', () => {
+    const plan = planSplit(noTask, { ...request, relation: 'unrelated', when: 'park', existing: { id: 't-fix', title: 'fix-ended-mail-job' } })
+    expect(plan.ok && plan.plan).toEqual({ task: null, originLink: false, spawn: false, journal: { existing: 'Came up again in session Session review:\n\nGoal: open files in the cockpit.' } })
+  })
 })

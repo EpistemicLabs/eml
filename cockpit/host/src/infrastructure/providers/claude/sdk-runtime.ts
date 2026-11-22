@@ -433,15 +433,17 @@ const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, when
 
 export const OFFER_SPLIT_TOOL = 'offer_split'
 const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
-  + 'Call it as soon as the user brings up a topic that is not part of what this session works on (its task\'s goal, or its first request), before you start on it; a question that only clarifies the current work is not a new topic. '
+  + 'Call it as soon as the user brings up new work that is not part of what this session works on (its task\'s goal, or its first request), before you start on it, instead of creating a task for it yourself; a question that only clarifies the current work is not a new topic. '
+  + 'Steps of the current work, and a task the user explicitly asks you to note, are not splits: create those yourself. '
   + 'Once per topic: never again for a topic the user kept here. Until they choose, answer briefly or wait; do not start real work on the new topic. '
   + 'relation: sub only if this session\'s task cannot be done without it; spun if it grew out of this work; unrelated if it has nothing to do with it. '
-  + 'project: the project it belongs to (its id or name), if not this one. '
+  + 'project: the project it belongs to (its id or name), if not this one. task: the id of an open task this topic already has (check eml_list first); the split then goes onto that task instead of making a new one. '
   + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
 const OFFER_SPLIT_TOOL_INPUT = {
   title: z.string().describe('The new topic in two to five words, sentence case.'),
   relation: z.enum(SPLIT_RELATIONS),
   project: z.string().optional(),
+  task: z.string().optional().describe('An open task this topic already has: its id.'),
   brief: z.string(),
   reason: z.string().describe('One line: why this is a new topic.'),
 }

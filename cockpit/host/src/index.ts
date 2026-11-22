@@ -742,6 +742,14 @@ async function main() {
     const space = spaces.resolve(spaceId)
     return space.runtime ? space.runtime.configDirs.claude ?? null : CONFIG_DIR
   }
+  // The space's open tasks, for splitting onto one instead of making another.
+  const openTasksOf = async (space: BrainSpace) => {
+    const brain = taskBrain(space)
+    if (!brain) return []
+    const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: 200 }).catch(() => ({ engrams: [] }))))
+    return lists.flatMap((l) => ((l as { engrams?: Array<{ id: string; title: string | null; scope: string }> }).engrams ?? []))
+      .map((t) => ({ id: t.id, title: t.title ?? t.id, project: t.scope.startsWith('project.') ? t.scope.slice('project.'.length) : null }))
+  }
   const splitBrief = createSplitBrief({
     transcript: async (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -762,7 +770,8 @@ async function main() {
       return {
         sessionTitle: entry.title ?? entry.agentTitle ?? sessionId,
         taskTitle: task?.title ?? null,
-        projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName })),
+        projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName, brainProjectId: p.brainProjectId })),
+        openTasks: await openTasksOf(space),
         taskSystem: taskSystemOn(space),
         hasTask: taskSystemOn(space) && entry.taskId !== null,
       }

@@ -74,7 +74,10 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. A task with checkpoint after you only close once the user has reviewed the result. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
-    ...(unattended ? [] : ['- A new topic that is not part of this task: offer to split it off before you start on it, once per topic. In the chat call offer_split; in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.']),
+    ...(unattended ? [] : [
+      '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. In the chat call offer_split (name the open task it belongs to, if one exists); in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.',
+      '- Steps of this task\'s own work, and a task the user explicitly asks you to note, you create yourself; the chat shows each new task to the user with Undo.',
+    ]),
     ...(unattended ? [
       '',
       '## Until it is done',

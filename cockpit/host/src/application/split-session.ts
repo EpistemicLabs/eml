@@ -22,6 +22,8 @@ export interface SplitInput {
   when: SplitWhen
   /** The registry project the new task and session belong to. */
   projectId: string
+  /** An open task to split onto instead of making a new one. */
+  existingTaskId?: string
 }
 
 export interface SessionFacts {
@@ -49,12 +51,13 @@ export interface SplitSessionDeps {
 
 export type SplitAnswer =
   | { ok: true; command: TaskCommand }
-  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight'; message?: string }
+  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'unknown_task' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight'; message?: string }
 
 /** The first message of the new session: the brief, not the chat it came from. */
-export function splitPrompt(input: { title: string; brief: string; fromTitle: string; taskId: string | null }): string {
+export function splitPrompt(input: { title: string; brief: string; fromTitle: string; taskId: string | null; existing?: boolean }): string {
   return [
     `This session was split off from the session "${input.fromTitle}". You get this brief, not that chat.`,
+    input.existing ? 'The topic already had its task: continue it, starting from its journal and last handoff.' : null,
     `Topic: ${input.title}`,
     input.brief.trim(),
     input.taskId ? `Your task is ${input.taskId}: write your handoffs into it.` : null,
@@ -68,7 +71,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
   const running = new Set<string>()
 
   const taskOf = async (brain: Pick<EmlApi, 'get'>, taskId: string) =>
-    (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null; scope?: string } | null
+    (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null; scope?: string; status?: string } | null
 
   return {
     async submit(input: SplitInput): Promise<SplitAnswer> {
@@ -96,18 +99,24 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const source = sourceTask && brain ? await taskOf(brain, sourceTask) : null
       // A folder project has no brain project: the new task goes where the session's task is.
       const scope = brainProject ? `project.${brainProject}` : source?.scope ?? 'global'
+      let existingTask: { id: string; title: string } | undefined
+      if (input.existingTaskId) {
+        const found = brain ? await taskOf(brain, input.existingTaskId) : null
+        if (!found || (found.status !== 'planned' && found.status !== 'active')) return { ok: false, refusal: 'unknown_task' }
+        existingTask = { id: input.existingTaskId, title: found.title ?? input.existingTaskId }
+      }
       const planned = planSplit(
         { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: source?.title ?? null, taskSystem },
-        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope },
+        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope, ...(existingTask ? { existing: existingTask } : {}) },
       )
       if (!planned.ok) return planned
       const { plan } = planned
-      if ((plan.task || plan.journal.source) && !brain) return { ok: false, refusal: 'no_brain' }
+      if ((plan.task || plan.journal.source || plan.journal.existing) && !brain) return { ok: false, refusal: 'no_brain' }
 
       const started = deps.now()
       let command: TaskCommand = existing ?? {
         opId: input.opId, kind: 'split', spaceId: space.id, createdAt: iso(started), undoUntil: iso(started + SPLIT_UNDO_MS), state: 'pending',
-        split: { sessionId: input.sessionId, title: input.title.trim(), relation: input.relation, when: input.when, sourceTaskId: sourceTask, createdTaskId: null, spawnedSessionId: null },
+        split: { sessionId: input.sessionId, title: input.title.trim(), relation: input.relation, when: input.when, sourceTaskId: sourceTask, createdTaskId: null, existingTaskId: existingTask?.id ?? null, spawnedSessionId: null },
       }
       const record = (patch: Partial<NonNullable<TaskCommand['split']>>, state: TaskCommand['state'] = 'pending') => {
         command = { ...command, state, split: { ...command.split!, ...patch } }
@@ -117,6 +126,10 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const done = command.split!
 
       let createdTaskId = done.createdTaskId
+      if (existingTask && plan.journal.existing && !command.split!.journaled?.existing) {
+        await brain!.post(`/task/${existingTask.id}/track`, { text: plan.journal.existing })
+        record({ journaled: { ...command.split!.journaled, existing: true } })
+      }
       if (plan.task && !createdTaskId) {
         createdTaskId = (await brain!.post('/engram/task', plan.task) as { id: string }).id
         record({ createdTaskId })
@@ -139,8 +152,8 @@ export function createSplitSession(deps: SplitSessionDeps) {
           fromSessionId: input.sessionId,
           projectId: input.projectId,
           title: input.title.trim(),
-          prompt: splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId: createdTaskId }),
-          taskId: createdTaskId,
+          prompt: splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId: createdTaskId ?? existingTask?.id ?? null, existing: Boolean(existingTask) }),
+          taskId: createdTaskId ?? existingTask?.id ?? null,
           space,
         })
       }

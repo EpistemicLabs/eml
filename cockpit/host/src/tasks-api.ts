@@ -17,7 +17,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
- *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId }: split a topic off a session
+ *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId, existingTaskId? }: split a topic off a session (onto an open task, with existingTaskId)
  *   POST /api/v1/sessions/<id>/split-brief          { upTo?, contextOnly? }: a draft (title, relation, projectId, brief) from the turns up to a message; contextOnly: only the dialog's context, no model call
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
  *   POST /api/v1/commands/<opId>/undo
@@ -65,6 +65,7 @@ const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
   sub_needs_task: 'A sub-task needs a task to hang under, and this session has none.',
   unknown_session: 'No such session.',
   unknown_project: 'No such project in this session\'s space.',
+  unknown_task: 'That task is not open (or not in this space).',
   no_brain: 'The space has no brain to write to right now.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo the split.',
@@ -72,7 +73,7 @@ const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
 }
 
 const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
-  unknown_session: 404, unknown_project: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
+  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
 }
 
 function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode): void {
@@ -147,7 +148,7 @@ export async function handleTasksApi(
     const body = await readJson(req)
     const sessionId = decodeURIComponent(draft[1])
     if (body.contextOnly === true) {
-      const context = await deps.brief.context(sessionId)
+      const context = await deps.brief.context(sessionId, str(body.title))
       if (context) json(res, 200, { context })
       else json(res, 404, { error: { code: 'unknown_session', message: 'No such session.', retry: false } })
       return true
@@ -205,7 +206,7 @@ export async function handleTasksApi(
     }
     let result: SplitAnswer
     try {
-      result = await deps.split.submit({ opId, sessionId: decodeURIComponent(split[1]), title, brief, relation, when, projectId })
+      result = await deps.split.submit({ opId, sessionId: decodeURIComponent(split[1]), title, brief, relation, when, projectId, ...(str(body.existingTaskId) ? { existingTaskId: str(body.existingTaskId) } : {}) })
     } catch (err) {
       failedPartWay(json, res, 'split', err)
       return true

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BRIEF_TURNS, briefPrompt, createSplitBrief, parseBrief, turnsFrom, type TranscriptEvent } from '../src/application/split-brief.js'
+import { BRIEF_TURNS, briefPrompt, createSplitBrief, matchTask, parseBrief, turnsFrom, type TranscriptEvent } from '../src/application/split-brief.js'
 
 const transcript: TranscriptEvent[] = [
   { kind: 'user_message', id: 'u1', text: 'remove the projects from the sidebar' },
@@ -50,18 +50,35 @@ describe('the split brief', () => {
     const prompts: string[] = []
     const brief = createSplitBrief({
       transcript: async (id) => (id === 's1' || id === 's2' ? transcript : null),
-      facts: async (id) => (id === 's1' || id === 's2' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true } : null),
+      facts: async (id) => (id === 's1' || id === 's2' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }] } : null),
       complete: async (id, prompt) => { if (id === 's2') throw new Error('not signed in'); prompts.push(prompt); return '{"title":"Media viewer","relation":"spun","projectId":"p-ui","brief":"Goal: open files."}' },
       today: () => '2026-11-22',
     })
-    const context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true }
-    expect(await brief.write('s1', 'u2')).toEqual({ ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: open files.' }, context })
+    const context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }], matchTaskId: null }
+    expect(await brief.write('s1', 'u2')).toEqual({ ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: open files.' }, context: { ...context, matchTaskId: 't-mv' } })
     expect(await brief.write('s2')).toEqual({ ok: false, reason: 'failed', message: 'not signed in', context })
     expect(prompts[0]).not.toContain('back to the sidebar')
     expect(await brief.write('nope')).toEqual({ ok: false, reason: 'unknown_session' })
     prompts.length = 0
+    expect(await brief.context('s1', 'Media viewer')).toEqual({ ...context, matchTaskId: 't-mv' })
     expect(await brief.context('s1')).toEqual(context)
     expect(prompts).toEqual([])
+  })
+})
+
+describe('an open task the topic already has', () => {
+  const open = [
+    { id: 't-fix', title: 'fix-ended-mail-test-lasse-job', project: 'mail-jobs' },
+    { id: 't-new', title: 'new-mail-jobs', project: 'mail-jobs' },
+    { id: 't-ui', title: 'media-viewer-mockup', project: 'ui' },
+  ]
+  it('is the one whose title shares most words with the topic', () => {
+    expect(matchTask('Fix ended Mail test Lasse job', open)).toBe('t-fix')
+    expect(matchTask('Media viewer', open)).toBe('t-ui')
+  })
+  it('is none when too little is shared', () => {
+    expect(matchTask('Mail', open)).toBeNull()
+    expect(matchTask('Pricing page copy', open)).toBeNull()
   })
 })
 
@@ -79,6 +96,8 @@ describe('offering a split', () => {
     const { taskContext } = await import('../src/application/session-task.js')
     const task = { id: 't', title: 'session-review-ui', status: 'active', properties: {} } as never
     expect(taskContext(task, false)).toContain('call offer_split')
+    expect(taskContext(task, false)).toContain('do not create a task for it yourself')
+    expect(taskContext(task, false)).toContain('a task the user explicitly asks you to note, you create yourself')
     expect(taskContext(task, false, true)).not.toContain('offer_split')
   })
 })

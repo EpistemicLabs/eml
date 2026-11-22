@@ -85,9 +85,37 @@ export function parseBrief(text: string, projectIds: string[]): DraftBrief | nul
   return { title: typeof raw.title === 'string' ? raw.title.trim().slice(0, 80) : '', relation, projectId, brief }
 }
 
+/** An open task of the session's space, to split onto instead of making a new one. */
+export interface OpenTask {
+  id: string
+  title: string
+  /** Its brain project; null in global scope. */
+  project: string | null
+}
+
+/** Words of a title worth comparing: lower case, three letters or more. */
+const words = (title: string) => new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3))
+
+/** The open task whose title shares the most words with the topic: at least two and most of the shorter title. */
+export function matchTask(title: string, tasks: OpenTask[]): string | null {
+  const wanted = words(title)
+  let best: { id: string; score: number } | null = null
+  for (const task of tasks) {
+    const have = words(task.title)
+    const shared = [...wanted].filter((w) => have.has(w)).length
+    const score = shared / Math.max(1, Math.min(wanted.size, have.size))
+    if (shared >= 2 && score >= 0.6 && (!best || score > best.score)) best = { id: task.id, score }
+  }
+  return best?.id ?? null
+}
+
 /** What the split dialog needs to offer the right choices, whether or not the draft worked. */
 export interface SplitContext {
-  projects: Array<{ id: string; name: string }>
+  projects: Array<{ id: string; name: string; brainProjectId?: string | null }>
+  /** The space's open tasks, for splitting onto one. */
+  openTasks: OpenTask[]
+  /** The open task the topic most likely already has; null when none fits. */
+  matchTaskId: string | null
   /** The session's space has the task system on. */
   taskSystem: boolean
   /** The session works on a task (a sub-task needs one). */
@@ -97,18 +125,22 @@ export interface SplitContext {
 export interface SplitBriefDeps {
   /** The session's transcript; null for an unknown session. */
   transcript(sessionId: string): Promise<TranscriptEvent[] | null>
-  facts(sessionId: string): Promise<({ sessionTitle: string; taskTitle: string | null } & SplitContext) | null>
+  facts(sessionId: string): Promise<({ sessionTitle: string; taskTitle: string | null } & Omit<SplitContext, 'matchTaskId'>) | null>
   /** One short model call for the session's space; the answer's text. */
   complete(sessionId: string, prompt: string): Promise<string>
   today(): string
 }
 
+function contextOf(facts: Omit<SplitContext, 'matchTaskId'>, title?: string): SplitContext {
+  return { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask, openTasks: facts.openTasks, matchTaskId: title ? matchTask(title, facts.openTasks) : null }
+}
+
 export function createSplitBrief(deps: SplitBriefDeps) {
   return {
     /** Only what the dialog needs to offer the choices (the agent wrote the draft itself): no model call. */
-    async context(sessionId: string): Promise<SplitContext | null> {
+    async context(sessionId: string, title?: string): Promise<SplitContext | null> {
       const facts = await deps.facts(sessionId)
-      return facts ? { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask } : null
+      return facts ? contextOf(facts, title) : null
     },
 
     async write(sessionId: string, upTo?: string): Promise<
@@ -118,7 +150,7 @@ export function createSplitBrief(deps: SplitBriefDeps) {
     > {
       const facts = await deps.facts(sessionId)
       if (!facts) return { ok: false, reason: 'unknown_session' }
-      const context: SplitContext = { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask }
+      const context = contextOf(facts)
       const turns = turnsFrom((await deps.transcript(sessionId)) ?? [], upTo)
       if (turns.length === 0) return { ok: false, reason: 'empty', context }
       let answer: string
@@ -128,7 +160,7 @@ export function createSplitBrief(deps: SplitBriefDeps) {
         return { ok: false, reason: 'failed', message: (err as Error).message, context }
       }
       const draft = parseBrief(answer, facts.projects.map((p) => p.id))
-      return draft ? { ok: true, draft, context } : { ok: false, reason: 'unreadable', context }
+      return draft ? { ok: true, draft, context: contextOf(facts, draft.title) } : { ok: false, reason: 'unreadable', context }
     },
   }
 }

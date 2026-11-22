@@ -33,13 +33,15 @@ export interface SplitRequest {
   when: SplitWhen
   /** The brain scope of the new task (project.<id>). */
   scope: string
+  /** An open task the topic already has: the split goes there instead of making a new one. */
+  existing?: { id: string; title: string }
 }
 
 export interface SplitPlan {
   task: { title: string; content: string; scope: string; status: 'active' | 'planned'; parent_id?: string } | null
   /** Link the new task to the session's task as the task it was spun off from (derived_from). */
   originLink: boolean
-  journal: { created?: string; source?: string }
+  journal: { created?: string; source?: string; existing?: string }
   /** Start a session on it now, in a pane next to the one it came from. */
   spawn: boolean
 }
@@ -52,6 +54,24 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   const anchor = kebabTitle(title)
   if (!anchor || !brief) return { ok: false, refusal: 'invalid' }
   const hasTask = source.taskSystem && source.taskId !== null
+  const from = `${source.taskTitle ?? source.taskId} (session ${source.sessionTitle})`
+
+  // Onto a task that exists: nothing new is made and its place stays; its journal says where it came up again.
+  if (request.existing) {
+    const spawn = request.when === 'now'
+    return {
+      ok: true,
+      plan: {
+        task: null,
+        originLink: false,
+        spawn,
+        journal: {
+          existing: spawn ? `Picked up again from ${hasTask ? from : `session ${source.sessionTitle}`}.` : `Came up again in ${hasTask ? from : `session ${source.sessionTitle}`}:\n\n${brief}`,
+          ...(hasTask ? { source: `${title} continues in its task ${request.existing.title}.` } : {}),
+        },
+      },
+    }
+  }
   if (request.relation === 'sub' && !hasTask) return { ok: false, refusal: 'sub_needs_task' }
   const spawn = request.when === 'now'
   const status = spawn ? 'active' as const : 'planned' as const
@@ -70,7 +90,6 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
     }
   }
 
-  const from = `${source.taskTitle ?? source.taskId} (session ${source.sessionTitle})`
   const journal = request.relation === 'spun'
     ? { created: `Spun off from ${from}.`, source: `${title} was spun off here as its own task.` }
     : request.relation === 'sub'
