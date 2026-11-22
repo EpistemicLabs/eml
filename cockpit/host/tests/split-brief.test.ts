@@ -61,3 +61,18 @@ describe('the split brief', () => {
     expect(await brief.write('nope')).toEqual({ ok: false, reason: 'unknown_session' })
   })
 })
+
+describe('offering a split', () => {
+  it('tells the agent nothing happened yet and the user decides', async () => {
+    const { OFFER_SPLIT_ANSWER, OFFER_SPLIT_TOOL } = await import('../src/infrastructure/providers/claude/sdk-runtime.js')
+    expect(OFFER_SPLIT_TOOL).toBe('offer_split')
+    expect(OFFER_SPLIT_ANSWER).toMatch(/Nothing is split until they choose/)
+  })
+
+  it('is part of what an attended task session reads, not an unattended one', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const task = { id: 't', title: 'session-review-ui', status: 'active', properties: {} } as never
+    expect(taskContext(task, false)).toContain('call offer_split')
+    expect(taskContext(task, false, true)).not.toContain('offer_split')
+  })
+})

@@ -10,6 +10,7 @@ import type {
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
+import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -428,6 +429,24 @@ const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, when
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
   + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
 
+export const OFFER_SPLIT_TOOL = 'offer_split'
+const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
+  + 'Call it as soon as the user brings up a topic that is not part of what this session works on (its task\'s goal, or its first request), before you start on it; a question that only clarifies the current work is not a new topic. '
+  + 'Once per topic: never again for a topic the user kept here. Until they choose, answer briefly or wait; do not start real work on the new topic. '
+  + 'relation: sub only if this session\'s task cannot be done without it; spun if it grew out of this work; unrelated if it has nothing to do with it. '
+  + 'project: the project it belongs to (its id or name), if not this one. '
+  + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
+const OFFER_SPLIT_TOOL_INPUT = {
+  title: z.string().describe('The new topic in two to five words, sentence case.'),
+  relation: z.enum(['spun', 'sub', 'unrelated']),
+  project: z.string().optional(),
+  brief: z.string(),
+  reason: z.string().describe('One line: why this is a new topic.'),
+}
+
+/** What the agent reads after offering a split: nothing happened yet, the user decides. */
+export const OFFER_SPLIT_ANSWER = 'Offered: the chat shows the user Split off… and Keep it here. Nothing is split until they choose; do not start on the new topic meanwhile. If they keep it here, carry on with it in this chat and do not offer it again.'
+
 const SCHEDULE_TOOL = 'schedule'
 const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
   + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
@@ -486,11 +505,13 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs:
     const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     return { content: [{ type: 'text', text }] }
   })
-  const server = createSdkMcpServer({ name: 'cockpit', tools: schedule ? [status, schedule] : [status] })
+  // Changes nothing: the chat renders the call as a card, and the user's choice comes back as a message.
+  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => ({ content: [{ type: 'text', text: OFFER_SPLIT_ANSWER }] }))
+  const server = createSdkMcpServer({ name: 'cockpit', tools: schedule ? [status, offerSplit, schedule] : [status, offerSplit] })
   return {
     mcpServers: { cockpit: server },
     // Nobody may be there to answer a card about these tools.
-    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`, ...(schedule ? [`mcp__cockpit__${SCHEDULE_TOOL}`] : [])],
+    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`, `mcp__cockpit__${OFFER_SPLIT_TOOL}`, ...(schedule ? [`mcp__cockpit__${SCHEDULE_TOOL}`] : [])],
     hooks: {
       UserPromptSubmit: [{
         hooks: [async () => {
