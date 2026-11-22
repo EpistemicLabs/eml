@@ -63,8 +63,9 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     const turn = turns[s.id];
     if (allSessionState(s, turn) === 'working') return { hue: 'agent', hollow: false, label: 'Working' };
     const mark = sessionMark(s, turn);
-    if (mark === 'question' || mark === 'failed' || mark === 'waiting') return { hue: 'you', hollow: false, label: MARK_WORD[mark] };
-    if (mark) return { hue: 'review', hollow: false, label: MARK_WORD[mark] };
+    if (mark === 'failed') return { hue: 'stopped', hollow: false, label: MARK_WORD[mark] };
+    // A question, a wait, a result to check: all the person's turn, so all amber.
+    if (mark) return { hue: 'you', hollow: false, label: MARK_WORD[mark] };
     return { hue: 'waiting', hollow: true, label: 'Idle' };
   }, [turns]);
 
@@ -158,6 +159,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
           <span className="inline-flex items-center gap-1"><Dot hue="you" />needs you</span>
           <span className="inline-flex items-center gap-1"><Dot hue="agent" />working</span>
           <span className="inline-flex items-center gap-1"><Dot hue="waiting" hollow />waiting</span>
+          <span className="inline-flex items-center gap-1"><Dot hue="stopped" />stuck</span>
+          <span className="inline-flex items-center gap-1"><Dot hue="done" />done</span>
         </p>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2">
@@ -174,11 +177,11 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
       <div className="flex flex-col gap-1 border-t border-border px-3 py-2">
         <label className="flex min-h-(--target-min) items-center justify-between gap-2 text-ui text-foreground">
           Show done
-          <Switch checked={showDone} onChange={setShowDone} ariaLabel="Show done tasks" />
+          <Switch checked={showDone} onChange={setShowDone} ariaLabel="Show done" />
         </label>
         <label className="flex min-h-(--target-min) items-center justify-between gap-2 text-ui text-foreground">
           All sessions
-          <Switch checked={allSessions} onChange={setAllSessions} ariaLabel="Show sessions not open on this desk" />
+          <Switch checked={allSessions} onChange={setAllSessions} ariaLabel="All sessions" />
         </label>
       </div>
     </aside>

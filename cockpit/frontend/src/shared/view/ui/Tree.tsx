@@ -126,8 +126,9 @@ export function TreeItem({
         data-tree-row
         onClick={onSelect}
         className={cn(
-          'flex min-h-(--target-min) min-w-0 cursor-pointer items-center gap-1 rounded-md pr-2 text-ui text-foreground hover:bg-muted',
-          selected && 'bg-muted',
+          // The picked row has a bar in the text colour and a heavier title, not only a fill (3:1 against the card).
+          'flex min-h-(--target-min) min-w-0 cursor-pointer items-center gap-1 rounded-md border-l-2 border-transparent pr-2 text-ui text-foreground hover:bg-muted',
+          selected && 'border-foreground bg-muted font-semibold',
         )}
       >
         {hasChildren ? (

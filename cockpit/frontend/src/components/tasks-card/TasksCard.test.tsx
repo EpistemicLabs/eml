@@ -100,7 +100,7 @@ describe('the tasks card', () => {
   it('lists only the desk\'s sessions when All sessions is off', async () => {
     renderCard();
     await screen.findByRole('tree', { name: 'EML UI/UX' });
-    fireEvent.click(screen.getByRole('switch', { name: 'Show sessions not open on this desk' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'All sessions' }));
     expect(screen.queryByText('Board v3')).toBeNull();
   });
 });

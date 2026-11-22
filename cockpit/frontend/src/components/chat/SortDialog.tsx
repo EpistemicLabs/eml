@@ -11,7 +11,7 @@ const PICKS: Array<[SortPick, string]> = [
   ['sub', 'Sub-task'],
   ['spun', 'Spun off'],
   ['unrelated', 'Unrelated, own task'],
-  ['drop', 'Close'],
+  ['drop', 'Drop it (close its task)'],
 ];
 
 export function SortDialog({ sessionId, rows: proposed, onClose, onDone }: {

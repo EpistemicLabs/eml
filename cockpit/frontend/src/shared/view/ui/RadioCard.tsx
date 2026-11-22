@@ -16,7 +16,7 @@ export function RadioCard({ name, value, checked, onChange, title, description, 
 }) {
   return (
     <label className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-xl border border-border px-2.5 py-2 text-body has-checked:border-foreground has-checked:bg-muted">
-      <input type="radio" name={name} value={value} checked={checked} onChange={onChange} className="mt-1" />
+      <input type="radio" name={name} value={value} checked={checked} onChange={onChange} className="mt-1 accent-foreground" />
       <span>
         <b>{title}</b>
         {description && <small className="block text-ui text-muted-foreground">{description}</small>}

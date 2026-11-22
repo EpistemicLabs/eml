@@ -92,7 +92,8 @@ const MAX_DEPTH = 32;
 export function taskState(task: TaskLike): NodeState {
   if (task.status === 'resolved') return { hue: 'done', hollow: false, label: 'Done' };
   if (task.status === 'invalidated') return { hue: 'done', hollow: false, label: 'Dropped' };
-  const hue = hueOf({ turn: task.turn ?? null, group: task.group, status: task.status });
+  // Review is the person's turn too: amber like Needs you, so a finished result never looks like work in progress.
+  const hue = task.turn === 'review' ? 'you' : hueOf({ turn: task.turn ?? null, group: task.group, status: task.status });
   if (!task.turn) return task.status === 'planned' ? { hue: 'waiting', hollow: true, label: 'Parked' } : { hue, hollow: false, label: 'Active' };
   const hollow = task.turn === 'agent_scheduled' || task.turn === 'waiting_on_others';
   return { hue, hollow, label: TURN_META[task.turn].name };
@@ -234,7 +235,10 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
   for (const d of desk) {
     const s = sessionById.get(d.sessionId);
     if (!s) continue;
-    const task = s.taskId && taskSpaces.has(s.spaceId) ? tasks.get(taskKey(s.spaceId, s.taskId)) : undefined;
+    const hasTask = Boolean(s.taskId && taskSpaces.has(s.spaceId));
+    const task = hasTask ? tasks.get(taskKey(s.spaceId, s.taskId!)) : undefined;
+    // Its task is not on the board yet (just made): it shows once the board has it, never as a bare session meanwhile.
+    if (hasTask && !task) continue;
     if (task) {
       const key = `t:${task.spaceId}/${task.project ?? ''}`;
       const section = sectionFor(key, brainProjectName(task.spaceId, task.project));

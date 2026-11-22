@@ -540,6 +540,7 @@ export function ChatPane({
   const [sorts, setSorts] = useState<Record<string, string>>({});
   const openSort = useCallback((id: string, rows: SortProposal[]) => setSortOpen({ id, rows }), []);
   const [marks, setMarks] = useState<SplitMark[]>([]);
+  const [announced, setAnnounced] = useState('');
   const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
   const renderMark = useCallback((mark: SplitMark) => (
     <SplitMarker
@@ -661,11 +662,13 @@ export function ChatPane({
                 ...(result.sessionId ? { sessionId: result.sessionId } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,
               }]);
               setSplitFrom(null);
+              setAnnounced(`Split off ${result.title}${result.when === 'park' ? ', parked in Plan' : ', opened in a new pane'}.`);
               // The new task and session show in the tasks card now, not at the next poll.
               window.dispatchEvent(new Event('cockpit:tasks'));
             }}
           />
         )}
+        <span role="status" className="sr-only">{announced}</span>
         {sortOpen && (
           <SortDialog
             sessionId={sessionId}

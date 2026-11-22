@@ -111,10 +111,18 @@ describe('the tasks card tree', () => {
   });
 });
 
+describe('a session waiting for the board', () => {
+  it('does not show as a bare session while its task is not on the board yet', () => {
+    const sections = buildTaskTree(input({ board: board([]), sessions: [session('s1', { taskId: 'new-task' })], desk: desk('s1') }));
+    expect(sections).toEqual([]);
+  });
+});
+
 describe('a task\'s dot', () => {
   it('is filled while someone acts, hollow while it waits, grey when closed', () => {
     expect(taskState(task('t', { turn: 'needs_you', group: 'asked' }))).toEqual({ hue: 'you', hollow: false, label: 'Needs you' });
     expect(taskState(task('t', { turn: 'agent_working' }))).toEqual({ hue: 'agent', hollow: false, label: 'Agent working' });
+    expect(taskState(task('t', { turn: 'review' }))).toEqual({ hue: 'you', hollow: false, label: 'Review' });
     expect(taskState(task('t', { turn: 'waiting_on_others' }))).toMatchObject({ hollow: true });
     expect(taskState(task('t', { turn: null, status: 'planned' }))).toEqual({ hue: 'waiting', hollow: true, label: 'Parked' });
     expect(taskState(task('t', { status: 'invalidated', turn: null }))).toEqual({ hue: 'done', hollow: false, label: 'Dropped' });
