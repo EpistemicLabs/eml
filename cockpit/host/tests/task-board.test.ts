@@ -35,7 +35,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[] } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
@@ -51,7 +51,8 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
     now: () => clock.now,
-    log: () => {},
+    log: (line) => { opts.log?.push(line) },
+    ...(opts.head ? { head: opts.head } : {}),
   }
   const board = createTaskBoard(deps)
   return { board, brains, clock }
@@ -193,3 +194,168 @@ describe('the task board', () => {
     expect(model.tasks.map((t) => [t.id, t.rel, t.originId])).toEqual([['a', null, null], ['b', 'sub', null]])
   })
 })
+
+describe('live updates', () => {
+  const until = async (check: () => boolean, ms = 2000) => {
+    const start = Date.now()
+    while (!check()) {
+      if (Date.now() - start > ms) throw new Error('timed out')
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
+  it('tells the pages when a new task appears or one leaves, not when nothing changed', async () => {
+    const { board, brains } = setup({ main: [mine('t1')] })
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.refresh()
+    await board.refresh()
+    expect(told).toBe(0)
+    brains.get('main')!.rows.push(mine('t2', {}, 'planned'))
+    expect((await board.refresh()).tasks.map((t) => t.id)).toContain('t2')
+    expect(told).toBe(1)
+    brains.get('main')!.rows.pop()
+    await board.refresh()
+    expect(told).toBe(2)
+  })
+
+  it('tells the pages about a new title too', async () => {
+    const { board, brains } = setup({ main: [mine('t1')] })
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.refresh()
+    brains.get('main')!.rows[0].properties!.display_title = 'A clearer name'
+    await board.refresh()
+    expect(told).toBe(1)
+  })
+
+  it('a refresh asked for during a build gets a build after it, which sees the write', async () => {
+    const { board, brains } = setup({ main: [mine('t1')] })
+    await board.refresh()
+    const brain = brains.get('main')!
+    const plainGet = brain.get.bind(brain)
+    let wrote: () => void = () => {}
+    const written = new Promise<void>((resolve) => { wrote = resolve })
+    brain.get = async (path: string, query?: Record<string, unknown>) => {
+      const answer = await plainGet(path, query)
+      // the split writes its task right after the running build read the open tasks
+      if (path === '/list' && query?.status === 'planned' && !brain.rows.some((r) => r.id === 'split-off')) { brain.rows.push(mine('split-off', {}, 'planned')); wrote() }
+      return answer
+    }
+    const running = board.refresh()
+    await written
+    const asked = board.refresh()
+    expect((await running).tasks.map((t) => t.id)).not.toContain('split-off')
+    expect((await asked).tasks.map((t) => t.id)).toContain('split-off')
+  })
+
+  it('get waits for a build under way instead of answering the cached board', async () => {
+    const { board, brains } = setup({ main: [mine('t1')] })
+    await board.get(5000)
+    brains.get('main')!.rows.push(mine('t2', {}, 'planned'))
+    void board.refresh()
+    expect((await board.get(5000)).tasks.map((t) => t.id)).toContain('t2')
+  })
+
+  it('refreshes soon after a space\'s log head moves, and the pages hear of it', async () => {
+    let seq = 10
+    let release: (() => void) | null = null
+    const head: TaskBoardDeps['head'] = async (space, after) => {
+      if (space.id !== 'main' || after === null) return space.id === 'main' ? seq : 1
+      if (after !== seq) return seq
+      await new Promise<void>((resolve) => { release = resolve })
+      return seq
+    }
+    const { board, brains } = setup({ main: [mine('t1')], head })
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, settleMs: 10, restMs: 5, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))) })
+    await until(() => release !== null)
+    brains.get('main')!.rows.push(mine('from-an-agent', {}, 'planned'))
+    seq = 11
+    release!()
+    await until(() => told > 0)
+    expect((await board.get(60_000)).tasks.map((t) => t.id)).toContain('from-an-agent')
+    stop()
+    release?.()
+  })
+
+  it('falls back to the newest task for a brain without /head, and one failing space holds up no other', async () => {
+    const log: string[] = []
+    const head: TaskBoardDeps['head'] = async (space) => {
+      if (space.id === 'main') throw Object.assign(new Error('Not found'), { status: 404 })
+      throw new Error('fetch failed')
+    }
+    const { board, brains } = setup({ main: [mine('t1')], head, log })
+    const list = brains.get('main')!
+    const plainGet = list.get.bind(list)
+    list.get = async (path: string, query?: Record<string, unknown>) =>
+      path === '/list' && query?.limit === 1 ? { engrams: list.rows.slice(-1).map((r) => ({ id: r.id, updated_at: r.updated_at ?? 'x' })) } : plainGet(path, query)
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, settleMs: 10, probeMs: 5, restMs: 5, sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))) })
+    await until(() => log.some((l) => l.includes('Main: its brain has no /head')))
+    await new Promise((r) => setTimeout(r, 20))
+    list.rows.push(mine('t2', {}, 'planned'))
+    await until(() => told > 0)
+    expect(log.some((l) => l.includes('watching Ebisu failed'))).toBe(true)
+    stop()
+  })
+
+  const quickSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 5)))
+
+  it('rests instead of spinning when a brain answers at once without a change', async () => {
+    let calls = 0
+    const rests: number[] = []
+    const head: TaskBoardDeps['head'] = async () => { calls++; return 3 }
+    const { board } = setup({ main: [mine('t1')], head })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 7, sleep: (ms) => { rests.push(ms); return quickSleep(ms) } })
+    await until(() => rests.filter((ms) => ms === 7).length >= 3)
+    stop()
+    expect(calls).toBeLessThan(20)
+  })
+
+  it('a brain that fails for a moment is asked again, not given up on', async () => {
+    const log: string[] = []
+    let fails = 2
+    let seen = 0
+    const head: TaskBoardDeps['head'] = async (space, after) => {
+      if (space.id !== 'main') return 1
+      if (fails > 0) { fails--; throw Object.assign(new Error('Reading the log head failed'), { status: 500, body: { code: 'HEAD_READ_FAILED' } }) }
+      seen++
+      return after === null ? 4 : 4
+    }
+    const { board } = setup({ main: [mine('t1')], head, log })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 5, sleep: quickSleep })
+    await until(() => seen >= 2)
+    stop()
+    expect(log.some((l) => l.includes('no /head'))).toBe(false)
+    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(2)
+  })
+
+  it('falls back on NO_LOG and tries /head again later', async () => {
+    const log: string[] = []
+    let noLog = true
+    let headCalls = 0
+    const head: TaskBoardDeps['head'] = async (space) => {
+      if (space.id !== 'main') return 1
+      headCalls++
+      if (noLog) throw Object.assign(new Error('no op log'), { status: 501, body: { code: 'NO_LOG' } })
+      return 9
+    }
+    const { board, clock } = setup({ main: [mine('t1')], head, log })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 10 * 60_000, probeMs: 5, restMs: 5, headRetryMs: 60_000, sleep: quickSleep })
+    await until(() => log.some((l) => l.includes('Main: its brain has no /head')))
+    const before = headCalls
+    noLog = false
+    clock.now += 60_000
+    await until(() => headCalls > before)
+    stop()
+  })
+})
+

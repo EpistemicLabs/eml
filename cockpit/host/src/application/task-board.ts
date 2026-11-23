@@ -15,8 +15,10 @@ import type { TaskCommand } from './task-commands.js'
  * tasks, the host what runs on them; this joins both once, so Inbox, Now, Plan, the sidebar and the
  * header all count the same thing.
  *
- * The board covers every space. The brain publishes no changes, so the board refreshes on a timer, after every
- * command and after a turn ended, and compares turns to report what moved.
+ * The board covers every space. It refreshes when a brain's log head moves (watch: a long poll on each space's
+ * GET /head; decision task-board-live-updates-via-brain-log-head), after every command and after a turn ended, and
+ * on a slow timer as a safety net. Whenever the board comes out different, onChange tells the pages (the SSE
+ * `tasks` event), with the turns that moved.
  */
 
 export interface BoardTask {
@@ -105,8 +107,31 @@ export interface TaskBoardDeps {
   releasedAgent?(taskId: string): string | null
   now(): number
   log(line: string): void
+  /**
+   * The newest seq of the space's op log (brain GET /head): at once when `after` is null, else once it differs
+   * from `after` or `waitMs` ran out. A brain without /head answers 404 (a server from before it) or 501 with
+   * body.code NO_LOG; any other error is worth another try.
+   */
+  head?(space: BrainSpace, after: number | null, waitMs: number): Promise<number>
 }
 
+/** How the watch runs (watch()). */
+export interface WatchOptions {
+  /** Watch only while a page asked for the board within this long. */
+  viewedMs: number
+  /** How often a brain without /head is asked for its newest task instead. */
+  probeMs?: number
+  /** How long a space checks its newest task before it tries /head again (the brain may have been updated). */
+  headRetryMs?: number
+  /** How long the watch rests while nobody looks, or after a failed call (doubling up to 30 s). */
+  restMs?: number
+  /** Writes that arrive within this long make one refresh. */
+  settleMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** How long one long poll on a brain's /head waits. */
+const HEAD_WAIT_MS = 25_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
@@ -137,6 +162,10 @@ interface Row {
 export function createTaskBoard(deps: TaskBoardDeps) {
   let current: Board | null = null
   let refreshing: Promise<Board> | null = null
+  /** A refresh asked for while one ran: it starts when that one ends, so it sees writes the running one may miss. */
+  let queued: Promise<Board> | null = null
+  /** What the pages saw last (signature()); a build that differs tells them. */
+  let shown: string | null = null
   let askedAt = -Infinity
   const turns = new Map<string, Turn | null>()
   let events: BoardEvent[] = []
@@ -314,25 +343,49 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     for (const key of [...turns.keys()]) if (!seen.has(key)) turns.delete(key)
     events = [...changes, ...events].slice(0, MAX_EVENTS)
     board.events = events
-    if (changes.length > 0) for (const listener of listeners) listener(changes)
+    // Any difference counts — a new task, one that left, a new title or status line — not only a turn that moved.
+    const looks = signature(board)
+    const differs = shown !== null && looks !== shown
+    shown = looks
+    if (differs || changes.length > 0) for (const listener of listeners) listener(changes)
     return board
   }
 
-  return {
-    /** Build the board now; parallel callers share one build. */
-    refresh(): Promise<Board> {
-      if (refreshing) return refreshing
-      const run = build().then((board) => { current = board; return board })
-      const shared = run.finally(() => { if (refreshing === shared) refreshing = null })
-      refreshing = shared
-      return shared
-    },
+  /**
+   * Build the board now. A build that already runs may have read the brain before the write that asks for this
+   * refresh, so the callers that come while it runs share one more build after it.
+   */
+  const refresh = (): Promise<Board> => {
+    if (refreshing) {
+      queued ??= refreshing.catch(() => null).then(() => { queued = null; return refresh() })
+      return queued
+    }
+    const run = build().then((board) => { current = board; return board })
+    const shared = run.finally(() => { if (refreshing === shared) refreshing = null })
+    refreshing = shared
+    return shared
+  }
 
-    /** The board, rebuilt when it is older than `maxAgeMs`. */
+  // Writes come in bursts (a split creates a task, links it and starts a session): one refresh after they settle.
+  let settleTimer: ReturnType<typeof setTimeout> | null = null
+  const refreshSoon = (settleMs: number) => {
+    if (settleTimer) return
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      refresh().catch((err) => deps.log(`[board] refresh failed: ${(err as Error).message}`))
+    }, settleMs)
+    settleTimer.unref?.()
+  }
+
+  return {
+    refresh,
+
+    /** The board, rebuilt when it is older than `maxAgeMs`; a build under way is waited for, not skipped. */
     async get(maxAgeMs: number): Promise<Board> {
       askedAt = deps.now()
+      if (queued || refreshing) return (queued ?? refreshing)!
       if (current && deps.now() - Date.parse(current.at) <= maxAgeMs) return current
-      return this.refresh()
+      return refresh()
     },
 
     onChange(listener: (events: BoardEvent[]) => void): () => void {
@@ -349,7 +402,93 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       timer.unref?.()
       return () => clearInterval(timer)
     },
+
+    /**
+     * Watch every space's log head while a page looks, and refresh soon after it moves: one long poll per space on
+     * GET /head, or — for a brain without it — its newest task every probeMs. Each space has its own loop, so a
+     * slow or unreachable one holds up no other. Spaces that come and go are picked up within a few seconds.
+     */
+    watch(opts: WatchOptions): () => void {
+      const probeMs = opts.probeMs ?? 2_000
+      const headRetryMs = opts.headRetryMs ?? 5 * 60_000
+      const restMs = opts.restMs ?? 2_000
+      const settleMs = opts.settleMs ?? 150
+      const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.() }))
+      let stopped = false
+      const running = new Set<string>()
+      const viewed = () => deps.now() - askedAt <= opts.viewedMs
+
+      const newestTask = async (space: BrainSpace): Promise<string> => {
+        const brain = deps.brain(space)
+        if (!brain) return ''
+        const found = await brain.get('/list', { type: 'task', order_by: 'updated_at', limit: 1 }) as { engrams?: Array<{ id: string; updated_at?: string }> }
+        const top = found.engrams?.[0]
+        return top ? `${top.id}@${top.updated_at ?? ''}` : ''
+      }
+
+      const loop = async (spaceId: string) => {
+        let after: number | null = null
+        let probed: string | null = null
+        let useHead = !!deps.head
+        let probingSince = 0
+        let rest = restMs
+        while (!stopped) {
+          const space = deps.spaces().find((s) => s.id === spaceId)
+          if (!space) break
+          if (!viewed()) { await sleep(restMs); continue }
+          try {
+            if (useHead) {
+              const asked = deps.now()
+              const seq = await deps.head!(space, after, after === null ? 0 : HEAD_WAIT_MS)
+              const quick = deps.now() - asked < 1_000
+              if (after !== null && seq !== after) refreshSoon(settleMs)
+              // A brain that answers at once without a change does not hold the request: rest, don't spin.
+              else if (after !== null && quick) await sleep(restMs)
+              after = seq
+            } else {
+              const top = await newestTask(space)
+              if (probed !== null && top !== probed) refreshSoon(settleMs)
+              probed = top
+              await sleep(probeMs)
+              if (deps.head && deps.now() - probingSince >= headRetryMs) { useHead = true; after = null }
+            }
+            rest = restMs
+          } catch (err) {
+            const { status, body } = err as { status?: number; body?: { code?: string } }
+            if (useHead && (status === 404 || body?.code === 'NO_LOG')) {
+              useHead = false
+              probingSince = deps.now()
+              deps.log(`[board] ${space.name}: its brain has no /head; checking its newest task every ${probeMs} ms instead`)
+              continue
+            }
+            deps.log(`[board] watching ${space.name} failed: ${(err as Error).message}; trying again in ${Math.round(rest / 1000)} s`)
+            await sleep(rest)
+            rest = Math.min(rest * 2, 30_000)
+          }
+        }
+        running.delete(spaceId)
+      }
+
+      const startNew = () => {
+        if (stopped) return
+        for (const space of deps.spaces()) {
+          if (running.has(space.id)) continue
+          running.add(space.id)
+          void loop(space.id)
+        }
+      }
+      startNew()
+      const timer = setInterval(startNew, 5_000)
+      timer.unref?.()
+      return () => { stopped = true; clearInterval(timer) }
+    },
   }
+}
+
+/** What a page shows of the board, as one string: two boards that show the same give the same one. */
+function signature(board: Board): string {
+  const { at: _at, events: _events, ...shown } = board
+  return JSON.stringify(shown)
 }
 
 export type TaskBoard = ReturnType<typeof createTaskBoard>

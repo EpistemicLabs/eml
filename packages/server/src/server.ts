@@ -69,6 +69,7 @@
  * together with the token's handle. Other callers write as 'direct'. The
  * headers are taken as sent: they are attribution, not access control — the
  * token decides what a caller may do.
+ *   GET  /head              ?after=&wait=                            → The op log's newest seq; with after and wait, held until it differs (long poll; head.ts)
  *   GET  /stats                                                      → DB statistics
  *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
  *   GET  /health                                                     → Health check
@@ -114,6 +115,7 @@ import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
 import { applyWrite, SharedWriteError, readOnly, spaceMembers } from './write'
+import { HeadReadError, headFailure, headQuery, logHead, waitForHead } from './head'
 import { InviteError, Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
@@ -517,6 +519,30 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const held = moving.has(routingResult.ctx.brainId)
 
   try {
+    // GET /head ?after=&wait= — the log's newest seq, held until it differs from `after` (head.ts)
+    if (url === '/head' && method === 'GET') {
+      const q = headQuery(parseQuery(req.url))
+      if ('error' in q) return json(res, 400, { error: q.error })
+      const brainId = routingResult.ctx.brainId
+      // the pool may close an idle connection while a request waits: each read routes again
+      const read = () => {
+        const routed = routeMiddleware(controlDb, pool, brainId)
+        if (!routed.ok) throw new HeadReadError(routed.status, routed.code ?? 'ROUTING_FAILED', routed.error)
+        return logHead(routed.ctx.brainDb)
+      }
+      let first: number
+      try { first = read() } catch (err) {
+        const failed = headFailure(err)
+        return json(res, failed.status, failed.body)
+      }
+      if (q.after === null || q.wait === 0 || first !== q.after) return json(res, 200, { seq: first })
+      let closed = false
+      res.on('close', () => { closed = true })
+      const seq = await waitForHead(read, q.after, q.wait, { closed: () => closed }).catch(() => first)
+      if (closed) return
+      return json(res, 200, { seq })
+    }
+
     // POST /boot
     if (url === '/boot' && method === 'POST') {
       const body = await readBody(req)
