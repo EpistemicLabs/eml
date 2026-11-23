@@ -1,0 +1,60 @@
+name: Alpha release
+
+# Every push to alpha publishes an experimental pre-release v<X.Y.Z>-alpha.<N>
+# with the assets pack-release.sh builds. Only cockpits on the Alpha
+# (experimental) update channel are offered it; GitHub never marks a
+# pre-release as the latest release, so stable cockpits and the one-line
+# installers keep seeing the newest stable release.
+on:
+  push:
+    branches: [alpha]
+
+# One release at a time: N comes from the existing tags.
+concurrency:
+  group: alpha-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and its tag
+      pull-requests: read # titles of the merged pull requests for the notes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the tags count N; the history since the last alpha makes the notes
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # The gates of a pull request (ci.yml, build-test) before anything ships.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - run: node packages/bench/dist/cli.js check --eml .
+      - name: Version
+        id: version
+        run: echo "version=$(node scripts/alpha-release.mjs version)" >> "$GITHUB_OUTPUT"
+      # The version is stamped into this checkout only; alpha keeps its X.Y.Z-alpha.<floor>.
+      - run: bash scripts/bump-version.sh "${{ steps.version.outputs.version }}"
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/alpha-release.mjs notes "${{ steps.version.outputs.version }}"
+      - run: bash scripts/pack-release.sh
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" release/"$VERSION"/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "v$VERSION (Experimental)" \
+            --notes-file "docs/release-notes/v$VERSION.md"
