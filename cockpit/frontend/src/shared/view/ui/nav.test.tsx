@@ -70,4 +70,14 @@ describe('Menu', () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
   });
+
+  it('shows what it acts on above the actions and what they do below, and the keys still reach only the actions', () => {
+    render(<Menu label="Limits" header={<p>Gmail · Send email</p>} footer={<p>The session restarts.</p>} align="start" items={[{ label: 'Allow', onSelect: () => {} }]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Limits' }));
+    const menu = screen.getByRole('menu', { name: 'Limits' });
+    expect(menu.textContent).toBe('Gmail · Send emailAllowThe session restarts.');
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Allow' }));
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Allow' }));
+  });
 });
