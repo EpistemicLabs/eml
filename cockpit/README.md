@@ -50,6 +50,12 @@ into their own version folder, switches `current` and restarts. Running sessions
 Settings › About › Updates shows the state, checks now, and goes back to the previous version (not
 across a brain-schema change).
 
+**Update channel:** Settings › About › Updates › Channel. **Stable** (the default) is offered releases
+only. **Alpha (experimental)** is also offered the pre-releases built from the `alpha` branch
+(`v<X.Y.Z>-alpha.<N>`), whichever version is highest. Early builds for testing: things may break, and
+a shared space stays compatible only while every member runs the same alpha. The channel is stored in
+`~/.eml-cockpit/app/update.json`. A cockpit on stable never sees an alpha build.
+
 **Start over:** stop the cockpit and delete `~/.eml-cockpit/`. That removes the brain, the
 session list and the cockpit's Claude login — back it up first (Settings › Spaces › Back up).
 

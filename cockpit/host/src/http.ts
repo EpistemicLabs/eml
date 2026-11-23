@@ -53,7 +53,7 @@ import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgent
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
-import { applyUpdate, changesBrainSchema, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, writeGithubToken } from './app-update.js'
+import { applyUpdate, changesBrainSchema, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, setUpdateChannel, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { projectKey, type TimeTracker } from './time-tracking.js'
@@ -1035,7 +1035,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
 
     // App updates (Settings › About › Updates, the update banner): status, a
-    // check against GitHub Releases, install + restart, go back, and the GitHub
+    // check against GitHub Releases, install + restart, go back, the update
+    // channel (stable | alpha, checked again right away), and the GitHub
     // token — write-only from the browser (GET reports only its source). The
     // banner after an update reads the "What's new" of the releases it brought.
     if (resource === 'app-update') {
@@ -1061,6 +1062,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         } catch (err) {
           json(res, 409, { error: { code: 'UPDATE_FAILED', message: (err as Error).message } })
         }
+        return true
+      }
+      if (id === 'channel' && method === 'PUT') {
+        const body = (await readJson(req)) as { channel?: unknown }
+        const error = setUpdateChannel(body?.channel)
+        if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
+        json(res, 200, await checkForUpdate())
         return true
       }
       if (id === 'token' && (method === 'PUT' || method === 'DELETE')) {

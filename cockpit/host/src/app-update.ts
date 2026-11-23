@@ -8,7 +8,7 @@ import { APP_DIR, COCKPIT_HOME, HOST_ROOT } from './paths.js'
 import { platform } from './infrastructure/platform/index.js'
 import { SERVICE_ENV } from './domain/autostart.js'
 import { FS_RETRY, renameWithRetry } from './fs-retry.js'
-import { compareVersions, isAppVersion, minorOf } from './domain/app-version.js'
+import { compareVersions, isAppVersion, isUpdateChannel, minorOf, type UpdateChannel } from './domain/app-version.js'
 
 /**
  * The cockpit's own updater (decisions app-update-flow, cockpit-update-source).
@@ -19,7 +19,9 @@ import { compareVersions, isAppVersion, minorOf } from './domain/app-version.js'
  *   <home>/app/update.json                             current/previous, last check, last result
  *
  * Releases come from GitHub Releases (tag v<X.Y.Z>; assets: the eml-cockpit and
- * mcp-server tarballs + SHA256SUMS). Nothing installs on its own: the host only
+ * mcp-server tarballs + SHA256SUMS). The channel picks which: stable (the
+ * default) takes GitHub's latest release, which is never a pre-release; alpha
+ * takes the highest of the releases and pre-releases (v<X.Y.Z>-alpha.<N>). Nothing installs on its own: the host only
  * checks; the user clicks Update. An update downloads and verifies both
  * tarballs, installs them into their own version folder, switches `current` in
  * one rename and exits — the service starts the new version, whose brain server
@@ -56,6 +58,7 @@ export interface UpdateResult {
 }
 
 interface UpdateState {
+  channel: UpdateChannel
   previous: string | null
   /** Where the last check got its token from ('gh' is only known after a check). */
   tokenSource: 'file' | 'gh' | 'none'
@@ -70,6 +73,7 @@ interface UpdateState {
 export interface AppUpdateStatus {
   /** This host runs from <home>/app/versions/<v> — only then can it update itself. */
   managed: boolean
+  channel: UpdateChannel
   current: string
   previous: string | null
   latest: UpdateState['latest']
@@ -83,7 +87,7 @@ export interface AppUpdateStatus {
   busy: boolean
 }
 
-const DEFAULT_STATE: UpdateState = { previous: null, tokenSource: 'none', skipVersion: null, lastCheckAt: null, latest: null, lastError: null, lastResult: null }
+const DEFAULT_STATE: UpdateState = { channel: 'stable', previous: null, tokenSource: 'none', skipVersion: null, lastCheckAt: null, latest: null, lastError: null, lastResult: null }
 
 // --- versions -----------------------------------------------------------------
 
@@ -115,7 +119,8 @@ export function isManaged(): boolean {
 
 function readState(): UpdateState {
   try {
-    return { ...DEFAULT_STATE, ...(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as Partial<UpdateState>) }
+    const state = { ...DEFAULT_STATE, ...(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as Partial<UpdateState>) }
+    return isUpdateChannel(state.channel) ? state : { ...state, channel: DEFAULT_STATE.channel }
   } catch {
     return { ...DEFAULT_STATE }
   }
@@ -175,7 +180,7 @@ export function writeGithubToken(token: unknown): string | null {
 }
 
 interface ReleaseAsset { name: string; url: string; size: number }
-interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[]; body: string }
+export interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[]; body: string }
 
 /** One release's "What's new" bullets, for the notes shown after an update. */
 export interface ReleaseNotes { version: string; url: string; highlights: string[] }
@@ -252,12 +257,13 @@ export function extractReleaseHighlights(body: string): string[] {
 
 /**
  * The notes of the releases an update went through: after `from`, up to and
- * including `to`, newest first. Read on demand when the user opens them after
+ * including `to`, newest first; pre-releases only on the alpha channel. Read on demand when the user opens them after
  * an update; nothing is stored. Releases are listed newest first, so the pages
  * stop at the first one at or below `from`.
  */
 export async function releaseNotesBetween(from: string, to: string): Promise<ReleaseNotes[]> {
   if (!isAppVersion(from) || !isAppVersion(to)) throw new Error('from and to must be X.Y.Z')
+  const withPrereleases = readState().channel === 'alpha'
   const { token } = await githubToken()
   const notes: ReleaseNotes[] = []
   for (let page = 1; ; page++) {
@@ -265,7 +271,7 @@ export async function releaseNotesBetween(from: string, to: string): Promise<Rel
     const list = await res.json() as Array<{ draft?: boolean; prerelease?: boolean }>
     let reachedFrom = false
     for (const raw of list) {
-      if (raw.draft || raw.prerelease) continue
+      if (raw.draft || (raw.prerelease && !withPrereleases)) continue
       let release: Release
       try { release = parseRelease(raw) } catch { continue /* not a vX.Y.Z tag */ }
       if (compareVersions(release.version, from) <= 0) reachedFrom = true
@@ -274,6 +280,25 @@ export async function releaseNotesBetween(from: string, to: string): Promise<Rel
     if (reachedFrom || !/rel="next"/.test(res.headers.get('link') ?? '')) break
   }
   return notes.sort((a, b) => compareVersions(b.version, a.version))
+}
+
+/**
+ * The newest release the channel offers. Stable asks GitHub for its latest
+ * release. Alpha takes the highest version among the newest 100 releases,
+ * pre-releases included, drafts and tags that are no version left out.
+ */
+export async function findLatestRelease(channel: UpdateChannel, token: string | null): Promise<Release> {
+  if (channel === 'stable') return parseRelease(await githubJson(`/repos/${REPO}/releases/latest`, token))
+  const list = await githubJson(`/repos/${REPO}/releases?per_page=100`, token) as Array<{ draft?: boolean }>
+  let newest: Release | null = null
+  for (const raw of list) {
+    if (raw.draft) continue
+    let release: Release
+    try { release = parseRelease(raw) } catch { continue /* not a version tag */ }
+    if (!newest || compareVersions(release.version, newest.version) > 0) newest = release
+  }
+  if (!newest) throw new Error(`No release found for ${REPO}.`)
+  return newest
 }
 
 async function download(asset: ReleaseAsset, dest: string, token: string | null): Promise<void> {
@@ -428,6 +453,7 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   }
   return {
     managed,
+    channel: state.channel,
     current,
     previous: previousInstalled ? state.previous : null,
     latest,
@@ -443,13 +469,13 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   }
 }
 
-/** Ask GitHub for the newest release. Records the result; never installs. */
+/** Ask GitHub for the newest release of the channel. Records the result; never installs. */
 export async function checkForUpdate(): Promise<AppUpdateStatus> {
   if (!isManaged()) return readAppUpdateStatus()
   try {
     const { token, source } = await githubToken()
     writeState({ tokenSource: source })
-    const release = parseRelease(await githubJson(`/repos/${REPO}/releases/latest`, token))
+    const release = await findLatestRelease(readState().channel, token)
     writeState({
       lastCheckAt: new Date().toISOString(),
       latest: { version: release.version, url: release.url, publishedAt: release.publishedAt },
@@ -459,6 +485,16 @@ export async function checkForUpdate(): Promise<AppUpdateStatus> {
     writeState({ lastCheckAt: new Date().toISOString(), lastError: (err as Error).message })
   }
   return readAppUpdateStatus()
+}
+
+/**
+ * Switch the update channel. The release found on the other channel is
+ * forgotten; the next check finds this channel's.
+ */
+export function setUpdateChannel(channel: unknown): string | null {
+  if (!isUpdateChannel(channel)) return 'The update channel is stable or alpha.'
+  writeState({ channel, latest: null })
+  return null
 }
 
 /** True when v<version> is another schema minor than the running one: installing it migrates the brains (brain schema N ↔ release v0.N). */
