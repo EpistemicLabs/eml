@@ -291,4 +291,21 @@ describe('the Unread fold', () => {
     expect(posts.find((p) => p.url === '/api/sessions/s3/unread')?.body).toEqual({ id: 's3', readAt: null, resultAt: result });
     expect(await screen.findByText(/Unread · 2/)).toBeTruthy();
   });
+
+  it('on a phone the Inbox tab shows the grey dot, not a number, for unread answers', async () => {
+    const media = (query: string) => ({ matches: !query.includes('pointer'), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} });
+    vi.stubGlobal('matchMedia', media);
+    window.matchMedia = media as never;
+    try {
+      live.sessions = [answer('s2', 3)];
+      withBoard({ inbox: [], counts: { needsYou: 0, inbox: 0 } });
+      setTaskView('inbox');
+      mount();
+      const tab = await screen.findByRole('tab', { name: /Inbox/ });
+      expect(within(tab).getByRole('img', { name: '1 unread answer, nothing to do' })).toBeTruthy();
+      expect(tab.textContent).toBe('Inbox');
+    } finally {
+      delete (window as { matchMedia?: unknown }).matchMedia;
+    }
+  });
 });

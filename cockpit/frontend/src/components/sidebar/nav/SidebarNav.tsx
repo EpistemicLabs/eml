@@ -8,6 +8,7 @@ import { openTaskView } from '@/components/top-bar/useCockpitShortcuts';
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
+import { unreadLabel, UnreadDot } from '@/components/task-board/parts';
 import { useTaskBoard } from '@/lib/task-board';
 import { useUnreadAnswers } from '@/hooks/useUnreadAnswers';
 import { cn } from '@/lib/utils';
@@ -303,19 +304,17 @@ export function NavRail({ onOpen, onShowSettings }: { onOpen: () => void; onShow
   );
 }
 
-/** On the rail a count is a dot in its colour; the number is in its label. */
-const unreadLabel = (n: number) => `${n} unread answer${n === 1 ? '' : 's'}, nothing to do`;
-
 /** The Inbox's marks: the number counts only what waits for you; unread answers add a small grey dot. */
-export function InboxMarks({ inbox, unread }: { inbox: number; unread: number }) {
+function InboxMarks({ inbox, unread }: { inbox: number; unread: number }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5">
       {inbox > 0 && <Count tone="you" label={`${inbox} waiting for you`}>{inbox}</Count>}
-      {unread > 0 && <span role="img" aria-label={unreadLabel(unread)} title={unreadLabel(unread)} className="size-1.5 rounded-full bg-muted-foreground" />}
+      {unread > 0 && <UnreadDot count={unread} />}
     </span>
   );
 }
 
+/** On the rail a count is a dot in its colour; the number is in its label. */
 function RailDot({ tone, label }: { tone: 'plain' | 'you' | 'stopped'; label: string }) {
   return (
     <span

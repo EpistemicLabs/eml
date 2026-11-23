@@ -5,8 +5,10 @@ import { sessionDisplayName } from '@/components/sidebar/utils';
 import { type Board, readable, taskName, when } from '@/lib/task-board';
 import { answerLine, answerTime } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
-import { Chip, FOCUS, LABEL } from '@/shared/view/ui';
+import { Chip, FOCUS } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
+
+import { Fold } from './parts';
 
 /** Where the session sits: its space and its project. */
 function deskOf(session: AllSession, board: Pick<Board, 'projects'>, space: SpaceInfo | undefined): string {
@@ -30,12 +32,7 @@ export function UnreadFold({ sessions, board, spaces, now, open, compact, onTogg
   const tasks = new Map(board.tasks.map((t) => [t.id, t]));
   return (
     <>
-      <div className={cn(LABEL, 'flex flex-wrap items-center justify-between gap-x-3 border-t border-border bg-muted px-3 py-2')}>
-        <span>Unread · {sessions.length} <span className="normal-case tracking-normal font-normal">· answers you haven't opened, nothing to do</span></span>
-        <button type="button" onClick={onToggle} aria-expanded={open} aria-label={open ? 'Hide unread answers' : 'Show unread answers'} className={cn('min-h-(--target-min) text-ui normal-case tracking-normal text-mark-ink underline underline-offset-2', FOCUS)}>
-          {open ? 'Hide' : 'Show'}
-        </button>
-      </div>
+      <Fold label={`Unread · ${sessions.length}`} hint="answers you haven't opened, nothing to do" name="unread answers" open={open} onToggle={onToggle} />
       {open && sessions.map((session) => {
         const space = spaces.find((s) => s.id === session.spaceId);
         const task = session.taskId ? tasks.get(session.taskId) : undefined;

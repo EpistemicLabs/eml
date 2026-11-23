@@ -26,6 +26,7 @@ import { InboxView, type InboxAction, type UnreadProps } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
 import { NowBoard } from './NowBoard';
 import { PlanView } from './PlanView';
+import { UnreadDot } from './parts';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
 type View = TaskView;
@@ -243,7 +244,7 @@ function ControlBar({ board, unread, view, onView }: { board: Board; unread: num
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
             {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions and results to review`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
-            {v === 'inbox' && unread > 0 && <span role="img" aria-label={`${unread} unread answers, nothing to do`} title={`${unread} unread answers, nothing to do`} className="size-1.5 rounded-full bg-muted-foreground" />}
+            {v === 'inbox' && unread > 0 && <UnreadDot count={unread} />}
           </button>
         ))}
       </div>

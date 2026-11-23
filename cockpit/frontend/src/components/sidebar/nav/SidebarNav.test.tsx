@@ -39,7 +39,7 @@ import { ShortcutSheet } from '@/components/top-bar/ShortcutSheet';
 import { MOD, SHORTCUTS } from '@/components/top-bar/shortcuts';
 import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
 
-import { SpacesNav, TaskNav } from './SidebarNav';
+import { NavRail, SpacesNav, TaskNav } from './SidebarNav';
 
 let settingsOpened = 0;
 function Nav() {
@@ -129,5 +129,30 @@ describe('the sidebar navigation', () => {
     expect(sheet).toBeTruthy();
     const sheetDialog = screen.getByRole('dialog');
     for (const s of SHORTCUTS) expect(within(sheetDialog).getByText(s.label)).toBeTruthy();
+  });
+});
+
+describe('the rail\'s Inbox dot', () => {
+  const answered = { id: 's-answer', spaceId: 'main', state: 'ended', resultAt: '2026-02-01T11:00:00.000Z' };
+  const withInbox = (inbox: number) => vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/v1/tasks/board'
+    ? new Response(JSON.stringify({ inbox: [], snoozed: [], tasks: [], spaces: [], projects: [], events: [], counts: { needsYou: inbox, inbox } }), { status: 200 })
+    : new Response('[]', { status: 200 }))));
+  const rail = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><NavRail onOpen={() => {}} onShowSettings={() => {}} /></QueryClientProvider>);
+  const inboxButton = () => screen.getByRole('button', { name: 'Inbox' });
+
+  it('is grey for unread answers when nothing waits for you', async () => {
+    fx.sessions = [answered as never];
+    withInbox(0);
+    rail();
+    expect(await within(inboxButton()).findByRole('img', { name: '1 unread answer, nothing to do' })).toBeTruthy();
+    expect(within(inboxButton()).queryByRole('img', { name: /waiting for you/ })).toBeNull();
+  });
+
+  it('is amber, and only amber, while something waits for you', async () => {
+    fx.sessions = [answered as never];
+    withInbox(2);
+    rail();
+    expect(await within(inboxButton()).findByRole('img', { name: '2 waiting for you' })).toBeTruthy();
+    expect(within(inboxButton()).queryByRole('img', { name: /unread answer/ })).toBeNull();
   });
 });
