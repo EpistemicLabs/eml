@@ -19,6 +19,7 @@ import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
 import { greetingFor } from './session-greeting.js'
+import { toolLabel } from './domain/tool-label.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -89,10 +90,10 @@ export interface SessionLimitsView {
   liftable: boolean
 }
 
-/** What the conversation, and with the next prompt the agent, is told when the user lifts limits. */
-export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpServers'>, jobName: string | null): string {
+/** What the user lifting limits is told as: readable names for the conversation (`label`), the exact ones for the agent. */
+export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpServers'>, jobName: string | null, label: (tool: string) => string = (tool) => tool): string {
   const parts = [
-    ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.join(', ')})`] : []),
+    ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.map(label).join(', ')})`] : []),
     ...(limits.mcpServers !== null ? ['the limit to some MCP servers'] : []),
   ]
   const forJob = jobName ? ` Future runs of the job "${jobName}" start without them too.` : ''
@@ -625,9 +626,8 @@ export class ChatBridge {
     this.ctx.ledger.clearToolProfile(entry.sessionId)
     const job = forJob && limits.job && this.ctx.clearJobProfile ? limits.job : null
     if (job) this.ctx.clearJobProfile!(job.id)
-    const text = liftNotice(limits, job?.name ?? null)
-    entry.liftNote = text
-    this.emit(entry, { kind: 'notice', text })
+    entry.liftNote = liftNotice(limits, job?.name ?? null)
+    this.emit(entry, { kind: 'notice', text: liftNotice(limits, job?.name ?? null, toolLabel) })
     this.log(`limits of ${entry.sessionId} lifted by the user${job ? `, and of job ${job.id}` : ''}`)
     const frame = { type: 'limits', ...this.limitsOf(entry.sessionId) }
     for (const ws of entry.clients) send(ws, frame)

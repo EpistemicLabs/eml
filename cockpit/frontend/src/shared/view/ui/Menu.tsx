@@ -20,15 +20,21 @@ export type MenuItem = {
  * room), takes the arrow keys, Home and End, closes on Escape, Tab or a click beside it, and gives
  * the focus back to the button. It portals to the body, so a scrolling or clipped parent can't cut it.
  */
-export function Menu({ label, items, className, children }: {
+export function Menu({ label, items, className, children, header, footer, align = 'end' }: {
   label: string;
   items: MenuItem[];
   className?: string;
   /** What the button shows; ··· when left out. */
   children?: React.ReactNode;
+  /** Read-only content above the actions, e.g. what they act on. */
+  header?: React.ReactNode;
+  /** Read-only content below the actions, e.g. what choosing one does. */
+  footer?: React.ReactNode;
+  /** Which edge of the button the menu lines up with: its right edge (default) or its left. */
+  align?: 'start' | 'end';
 }) {
   const [open, setOpen] = React.useState(false);
-  const [place, setPlace] = React.useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const [place, setPlace] = React.useState<{ top?: number; bottom?: number; right?: number; left?: number } | null>(null);
   const trigger = React.useRef<HTMLButtonElement>(null);
   const menu = React.useRef<HTMLDivElement>(null);
   const menuId = React.useId();
@@ -42,11 +48,11 @@ export function Menu({ label, items, className, children }: {
   React.useLayoutEffect(() => {
     if (!open || !trigger.current) return;
     const rect = trigger.current.getBoundingClientRect();
-    const right = window.innerWidth - rect.right;
+    const edge = align === 'start' ? { left: rect.left } : { right: window.innerWidth - rect.right };
     const height = menu.current?.offsetHeight ?? 0;
-    setPlace(rect.bottom + height > window.innerHeight ? { bottom: window.innerHeight - rect.top, right } : { top: rect.bottom, right });
+    setPlace(rect.bottom + height > window.innerHeight ? { bottom: window.innerHeight - rect.top, ...edge } : { top: rect.bottom, ...edge });
     enabled()[0]?.focus();
-  }, [open]);
+  }, [open, align]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -96,6 +102,7 @@ export function Menu({ label, items, className, children }: {
           style={place ? { ...place, position: 'fixed' } : { position: 'fixed', visibility: 'hidden' }}
           className={cn(POPOVER, 'min-w-(--size-menu) text-body')}
         >
+          {header}
           {items.map((item) => (
             <button
               key={item.label}
@@ -109,6 +116,7 @@ export function Menu({ label, items, className, children }: {
               {item.label}
             </button>
           ))}
+          {footer}
         </div>,
         document.body,
       )}

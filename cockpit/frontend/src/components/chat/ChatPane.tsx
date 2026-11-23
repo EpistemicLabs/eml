@@ -22,7 +22,7 @@ import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, ke
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
-import { LimitsChip, LimitsPanel } from './LimitsPanel';
+import { LimitsBadge } from './LimitsBadge';
 import { RestartButton } from './RestartButton';
 import { ToolServersPanel } from './ToolServersPanel';
 import { SplitDialog } from './SplitDialog';
@@ -501,12 +501,11 @@ export function ChatPane({
   /** Outside the desks (the task panel): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
 }) {
-  const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError, limits } = useChatSession(sessionId);
-  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, restart, restartUnlimited, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
+  const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
+  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
-  const [limitsOpen, setLimitsOpen] = useState(false);
   const running = chat.activity !== 'idle';
   const unpinRef = useRef<(() => void) | null>(null);
   const [opened, setOpened] = useState<Set<string>>(() => new Set());
@@ -711,14 +710,8 @@ export function ChatPane({
             }}
           />
         )}
-        {limitsOpen && limits && (
-          <LimitsPanel
-            limits={limits}
-            running={running}
-            onLift={(forJob) => { restartUnlimited(forJob); setLimitsOpen(false); }}
-            onClose={() => setLimitsOpen(false)}
-          />
-        )}
+        {/* On a phone the pane has no header for the badge: it sits above the input. */}
+        {compact && <LimitsBadge sessionId={sessionId} />}
         {serversOpen && (
           <ToolServersPanel
             servers={toolServers}
@@ -757,12 +750,7 @@ export function ChatPane({
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
           modelSlot={<div><ModelPicker chat={chat} onSetModel={setModel} /></div>}
-          endSlot={(
-            <span className="flex items-center gap-1 justify-self-end">
-              <LimitsChip limits={limits} open={limitsOpen} onToggle={() => setLimitsOpen((open) => !open)} />
-              <RestartButton running={running} onRestart={restart} />
-            </span>
-          )}
+          endSlot={<RestartButton running={running} onRestart={restart} />}
           className="mt-0 border-t-0 px-1 pt-0.5 text-muted-foreground"
         />}
       </div>

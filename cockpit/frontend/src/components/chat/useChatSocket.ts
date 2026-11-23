@@ -35,6 +35,14 @@ async function mintNonce(): Promise<string | null> {
 const BUSY_RETRY_MS = 3_000;
 
 /** `spaceId` for a view outside the desks (the task panel); a pane's comes from its desk. */
+/** The open chat socket of each session shown in a pane: controls outside the chat pane (the pane header) send through it. */
+const senders = new Map<string, (frame: Record<string, unknown>) => boolean>();
+
+/** The user lifts the session's limits and it restarts; forJob: its job's future runs too. False when no chat view of it is open. */
+export function liftLimits(sessionId: string, forJob: boolean): boolean {
+  return senders.get(sessionId)?.({ type: 'restart', unlimited: true, forJob }) ?? false;
+}
+
 export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false, spaceId?: string | null) {
   const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -153,6 +161,11 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     return true;
   }, []);
 
+  useEffect(() => {
+    senders.set(sessionId, sendFrame);
+    return () => { if (senders.get(sessionId) === sendFrame) senders.delete(sessionId); };
+  }, [sessionId, sendFrame]);
+
   return {
     send: useCallback((text: string, images: string[] = []) => {
       const id = `sent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -171,7 +184,6 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
     restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
-    restartUnlimited: useCallback((forJob: boolean) => sendFrame({ type: 'restart', unlimited: true, forJob }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
     takeOver: useCallback(() => sendInitRef.current?.(false), []),
