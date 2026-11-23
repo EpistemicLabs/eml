@@ -9,7 +9,8 @@ import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState'
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { readable, startTaskSession, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { Dot, Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { lineOf, TaskNodeContent } from '@/components/task-tree/TaskNodeContent';
 import { Search } from 'lucide-react';
 import { openTaskSearch, tellStartProblem } from '@/components/command-palette/openTask';
 import { MOD } from '@/components/top-bar/shortcuts';
@@ -119,20 +120,14 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     return (
       <TreeItem
         key={node.key}
-        line={node.rel === 'spun' ? 'dashed' : node.rel === 'sub' ? 'solid' : undefined}
+        line={lineOf(node.rel)}
         label={`${title}, ${node.state.label}${node.otherProject ? `, in ${node.otherProject}` : ''}${one ? `, ${sessionWords(one)}` : ''}`}
         selected={Boolean(one?.current)}
         expanded={hasChildren ? !folded.includes(node.key) : undefined}
         onToggle={() => toggleFold(node.key)}
         onSelect={() => selectNode(node)}
-        content={(
-          <span className="flex min-w-0 flex-1 items-center gap-2">
-            <Dot hue={node.state.hue} hollow={node.state.hollow} />
-            {/* On the desk: the text colour; not on the desk: muted (the row's name says it too). */}
-            <span data-on-desk={onDesk} className={cn('min-w-0 flex-1 truncate font-medium', onDesk ? 'text-foreground' : 'text-muted-foreground')}>{title}</span>
-            {node.otherProject && <span className="flex-shrink-0 truncate text-caption text-muted-foreground">{node.otherProject}</span>}
-          </span>
-        )}
+        // On the desk: the text colour; not on the desk: muted (the row's name says it too).
+        content={<TaskNodeContent state={node.state} title={title} muted={!onDesk} aside={node.otherProject} titleData={{ 'data-on-desk': onDesk }} />}
       >
         {leaves.map((leaf) => (
           <TreeItem
