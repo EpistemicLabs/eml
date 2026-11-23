@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { useState } from 'react';
 
+import { Sheet } from '@/shared/view/ui/Sheet';
+
 import { Button, Dialog, DialogContent, DialogTitle, Dot, RadioCard, Select, Switch, Table, TableCell, TableRow, Tree, TreeItem } from '@/shared/view/ui';
 
 afterEach(cleanup);
@@ -200,5 +202,43 @@ describe('Table', () => {
     expect(screen.getByRole('table', { name: 'Topics' })).toBeTruthy();
     expect(screen.getAllByRole('columnheader').map((h) => h.getAttribute('scope'))).toEqual(['col', 'col']);
     expect(screen.getByRole('cell', { name: 'Spun off' })).toBeTruthy();
+  });
+});
+
+describe('Sheet', () => {
+  const frame = () => new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
+
+  function Host({ tick }: { tick: number }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>Open task</button>
+        {/* A new onClose on every render, like an inline arrow in a parent that re-renders on a poll. */}
+        <Sheet open={open} onClose={() => setOpen(false)} labelledBy="sheet-title">
+          <h2 id="sheet-title" tabIndex={-1} data-autofocus>Task {tick}</h2>
+          <textarea aria-label="Message" />
+        </Sheet>
+      </>
+    );
+  }
+
+  it('moves focus to the title once on open, keeps it in a field through re-renders, and returns it on close', async () => {
+    const { rerender } = render(<Host tick={0} />);
+    const opener = screen.getByRole('button', { name: 'Open task' });
+    opener.focus();
+    fireEvent.click(opener);
+    await frame();
+    expect(document.activeElement?.id).toBe('sheet-title');
+
+    const box = screen.getByLabelText('Message');
+    box.focus();
+    rerender(<Host tick={1} />);
+    rerender(<Host tick={2} />);
+    await frame();
+    expect(document.activeElement).toBe(box);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(opener);
   });
 });

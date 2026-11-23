@@ -8,8 +8,8 @@ const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), in
 /**
  * A slide-over from the right (tokens v2): the view it opened over stays behind a scrim. Escape
  * or a click on the scrim closes it; focus moves to the element marked data-autofocus (else the
- * first focusable one), stays inside while it is open and goes back to the opener on close. It
- * portals to the body.
+ * first focusable one) once when it opens, stays inside while it is open and goes back to the opener
+ * on close. A parent re-render with a new onClose leaves the focus where it is. It portals to the body.
  */
 export function Sheet({ open, onClose, labelledBy, className, children }: {
   open: boolean;
@@ -19,6 +19,10 @@ export function Sheet({ open, onClose, labelledBy, className, children }: {
   children: React.ReactNode;
 }) {
   const panel = React.useRef<HTMLElement | null>(null);
+  // The latest onClose, read by the effect below: callers often pass an inline arrow, and depending
+  // on it would re-run the focus move on every parent render (focus jumped to the title while typing).
+  const close = React.useRef(onClose);
+  React.useLayoutEffect(() => { close.current = onClose; });
 
   React.useEffect(() => {
     if (!open) return;
@@ -29,7 +33,7 @@ export function Sheet({ open, onClose, labelledBy, className, children }: {
       target?.focus({ preventScroll: true });
     });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); return; }
+      if (event.key === 'Escape') { event.preventDefault(); close.current(); return; }
       if (event.key !== 'Tab' || !panel.current) return;
       const items = [...panel.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
       if (items.length === 0) return;
@@ -43,7 +47,7 @@ export function Sheet({ open, onClose, labelledBy, className, children }: {
       document.removeEventListener('keydown', onKey);
       if (opener instanceof HTMLElement) opener.focus({ preventScroll: true });
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(

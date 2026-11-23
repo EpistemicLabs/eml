@@ -74,6 +74,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const sessionOnly = open && !task ? open.sessionId : undefined;
   const say = useCallback((text: string, action?: ToastMessage['action'], until?: string) => setToast({ id: crypto.randomUUID(), text, action, until, ms: durationMs('--duration-toast') }), []);
 
+  const closePanel = useCallback(() => setOpen(null), []);
   const openTask = useCallback((t: BoardTask, sessionId?: string) => {
     // The task's journal and chat load from its own space.
     const space = spaces.find((s) => s.id === t.spaceId);
@@ -203,10 +204,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
       onReview={async (t) => answered(await reviewDone(t), 'Closed as reviewed.')}
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
-      onClose={() => setOpen(null)}
+      onClose={closePanel}
     />
   ) : sessionOnly ? (
-    <SessionPanel key={sessionOnly} session={sessions?.find((s) => s.id === sessionOnly)} board={board} spaces={spaces} onClose={() => setOpen(null)} />
+    <SessionPanel key={sessionOnly} session={sessions?.find((s) => s.id === sessionOnly)} board={board} spaces={spaces} onClose={closePanel} />
   ) : null;
   const dialogTask = dialog ? byId.get(dialog.taskId) : undefined;
   const spaceAgents = (t: BoardTask) => {
@@ -237,7 +238,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
         )}
       </div>
 
-      <Sheet open={Boolean(panel && !split)} onClose={() => setOpen(null)} labelledBy={TASK_TITLE_ID}>{!split && panel}</Sheet>
+      <Sheet open={Boolean(panel && !split)} onClose={closePanel} labelledBy={TASK_TITLE_ID}>{!split && panel}</Sheet>
 
       {dialog && dialogTask && (
         <HandOverDialog
