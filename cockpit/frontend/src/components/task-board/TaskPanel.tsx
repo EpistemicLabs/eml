@@ -116,8 +116,9 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                 {task.statusLine.next && <span className="text-ui text-muted-foreground">Next: {task.statusLine.next}</span>}
               </div>
             )}
-            {/* Where it came from and what came out of it; a closed ancestor isn't on the board, so its engram opens. */}
-            <TaskRelated key={task.id} task={task} board={board} onOpen={(r) => (r.task ? onOpenTask(r.task) : go(r.id))} />
+            {/* Where it came from and what came out of it; a closed ancestor isn't on the board, so its engram opens.
+                Its key differs from the journal's: siblings sharing a key make React leave copies of the block behind. */}
+            <TaskRelated key={`related-${task.id}`} task={task} board={board} onOpen={(r) => (r.task ? onOpenTask(r.task) : go(r.id))} />
             <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 rounded-xl border border-border px-3 py-2.5 text-body">
               <dt className={LABEL}>Owner</dt>
               <dd className="m-0">{task.owner ? (task.owner === board.viewer ? 'You' : task.owner) : <span className="text-muted-foreground">nobody</span>}</dd>
@@ -148,7 +149,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             ) : null}
 
             {handOver}
-            {engram.data && <TaskJournal key={task.id} engram={engram.data} relationHref={hrefFor} foldable />}
+            {engram.data && <TaskJournal key={`journal-${task.id}`} engram={engram.data} relationHref={hrefFor} foldable />}
           </div>
         </section>
 
