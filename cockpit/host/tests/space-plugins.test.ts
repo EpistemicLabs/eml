@@ -120,12 +120,12 @@ describe('importMcpServers', () => {
     expect(custom).not.toMatch(/placeholder/)
     expect(JSON.parse(custom).plugins[0].parts.mcp).toMatchObject({ serverName: 'gmail' })
     expect(readFileSync(join(dir, 'plugins', 'connections.json'), 'utf8')).toMatch(/placeholder-a/)
-    expect(statSync(join(dir, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
     // The config keeps what couldn't be imported, and everything else it had; a backup holds the rest.
     const left = JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8'))
     expect(left).toEqual({ theme: 'auto', mcpServers: { broken: { type: 'pigeon' } } })
     expect(JSON.parse(readFileSync(result.backup ?? '', 'utf8')).mcpServers.stripe).toBeDefined()
-    expect(statSync(result.backup ?? '').mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(result.backup ?? '').mode & 0o777).toBe(0o600)
     // The space's mcp.json gets the same servers under the same names as before.
     const service = new SpacePluginService(registry, store)
     const files = (await service.snapshot()).filesFor('main')
@@ -237,7 +237,7 @@ describe('the channel bridge accounts', () => {
       const accounts = [{ type: 'gmail', accountId: 'home-mail', spaces: ['main'], address: 'me@home.example' }]
       expect(await writeBridgeAccounts(file, accounts)).toBe(true)
       expect(await writeBridgeAccounts(file, accounts)).toBe(false)
-      expect(statSync(file).mode & 0o777).toBe(0o600)
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
       expect(await writeBridgeAccounts(file, [])).toBe(true)
       expect(readdirSync(dir)).not.toContain('accounts.json')
     } finally {

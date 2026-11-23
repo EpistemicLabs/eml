@@ -27,8 +27,8 @@ describe('main', () => {
         COCKPIT_URL: 'http://127.0.0.1:1', COCKPIT_JOB_TOKENS_DIR: tokens, CHANNEL_BRIDGE_ACCOUNTS_FILE: join(root, 'accounts.json'),
       })
       try {
-        expect(statSync(join(root, 'home', 'tool-token')).mode & 0o777).toBe(0o600)
-        expect(statSync(join(root, 'home', 'cockpit-token')).mode & 0o777).toBe(0o600)
+        if (process.platform !== 'win32') expect(statSync(join(root, 'home', 'tool-token')).mode & 0o777).toBe(0o600)
+        if (process.platform !== 'win32') expect(statSync(join(root, 'home', 'cockpit-token')).mode & 0o777).toBe(0o600)
         expect(readFileSync(join(root, 'home', 'url'), 'utf8')).toBe(`http://127.0.0.1:${port}`)
         const denied = await fetch(`http://127.0.0.1:${port}/v1/jobs/job-1/messages/read`, { method: 'POST' })
         expect(denied.status).toBe(401)

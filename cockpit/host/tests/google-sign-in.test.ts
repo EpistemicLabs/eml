@@ -41,7 +41,7 @@ describe('GoogleSignIn', () => {
     expect(await google.saveClient({ web: { client_id: 'x' } })).toMatchObject({ ok: false })
     expect(await google.saveClient('not json')).toMatchObject({ ok: false })
     expect(await google.saveClient(JSON.stringify(client()))).toEqual({ ok: true })
-    expect(statSync(google.clientFile).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(google.clientFile).mode & 0o777).toBe(0o600)
     expect(await google.client()).toMatchObject({ client_id: 'client-placeholder' })
   })
 
@@ -61,7 +61,7 @@ describe('GoogleSignIn', () => {
     expect(finished.signedIn.address).toBe('Me@Work.example')
     expect(lastTokenRequest?.get('code_verifier')).toBeTruthy()
     expect(JSON.parse(readFileSync(finished.signedIn.tokenFile, 'utf8'))).toEqual({ refresh_token: 'refresh-placeholder' })
-    expect(statSync(finished.signedIn.tokenFile).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(finished.signedIn.tokenFile).mode & 0o777).toBe(0o600)
     // The same address again belongs to no sign-in started here.
     expect(await google.finish(`http://127.0.0.1:53682/?state=${consent.searchParams.get('state')}&code=code-placeholder`)).toMatchObject({ ok: false })
   })

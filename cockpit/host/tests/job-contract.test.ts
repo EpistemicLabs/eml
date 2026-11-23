@@ -76,7 +76,7 @@ describe('job contract v1', () => {
     const before = token(SPACE)
     ensureJobTokens([SPACE], dir)
     expect(token(SPACE)).toBe(before)
-    expect(statSync(join(dir, SPACE)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(dir, SPACE)).mode & 0o777).toBe(0o600)
     expect(token(SPACE)).not.toBe(token(OTHER))
   })
 

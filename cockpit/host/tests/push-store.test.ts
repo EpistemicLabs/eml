@@ -15,7 +15,7 @@ describe('PushStore', () => {
     const first = new PushStore(file, generate).vapid()
     expect(new PushStore(file, generate).vapid()).toEqual(first)
     expect(made).toBe(1)
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 
   it('keeps one entry per endpoint: subscribing again updates it', () => {
@@ -52,7 +52,8 @@ describe('PushStore', () => {
     expect(existsSync(`${garbled}.unreadable`)).toBe(true)
   })
 
-  it('hands out no key and keeps no device it could not write down', () => {
+  // A read-only folder needs POSIX modes; Windows ignores chmod.
+  it.skipIf(process.platform === 'win32')('hands out no key and keeps no device it could not write down', () => {
     const dir = mkdtempSync(join(tmpdir(), 'push-store-'))
     const locked = join(dir, 'locked')
     mkdirSync(locked)
