@@ -143,16 +143,20 @@ export class Replica {
     if (op.schema > CURRENT_BRAIN_SCHEMA_VERSION) {
       return this.halted({ kind: 'update_needed', why: `entry ${seq} is brain schema ${op.schema}; this cockpit knows ${CURRENT_BRAIN_SCHEMA_VERSION}` })
     }
-    // an op replays with the behaviour of its schema only. Once the log has the
-    // checkpoint of this schema, an older op came too late and every replica
-    // refuses it. Before that, this code cannot reach the state the entry
-    // leads to: the brain file was migrated ahead of entries it had not
-    // taken, or a device replays from seq 1 a log that began at an older schema.
+    // an op replays with the behaviour of its schema only. In a log that began
+    // at an older schema than this code replays, an op of an older schema came
+    // too late once the log has the checkpoint of this schema: every replica
+    // refuses it. Before that checkpoint this code cannot reach the state the
+    // entry leads to — the brain file was migrated ahead of entries it had
+    // not taken, or past a schema whose entries are in the log — and a device
+    // cannot replay from seq 1 a log that began at an older schema. A log
+    // that began at this schema keeps what v0.21.4 does with such an op (it
+    // is applied): within a schema, what a replica decides does not change.
     if (op.schema < CURRENT_BRAIN_SCHEMA_VERSION) {
       const older = `entry ${seq} is brain schema ${op.schema}, and this cockpit replays ${CURRENT_BRAIN_SCHEMA_VERSION}`
       if (seq === 1) return this.stop(`${older}: a log that began at an older schema cannot be replayed from its start`)
-      if (this.behindSchema()) return this.stop(`${older}: the brain was updated before it had every entry of the older schema. Restore it from its pre-migration backup with the previous version, let it catch up, then update`)
-      return this.reject(seq, at, op.op_id, opened.payload, opened.sig, `REFUSED: the op is brain schema ${op.schema}, the brain is at ${CURRENT_BRAIN_SCHEMA_VERSION}`)
+      if (this.behindSchema()) return this.stop(`${older}: the brain file was migrated before it had every entry of the older schemas. Restore it from its pre-migration backup with a version of schema ${op.schema}, let it catch up, then update one schema at a time`)
+      if (this.beganOlder()) return this.reject(seq, at, op.op_id, opened.payload, opened.sig, `REFUSED: the op is brain schema ${op.schema}, the brain is at ${CURRENT_BRAIN_SCHEMA_VERSION}`)
     }
 
     if (seq === 1) {
@@ -239,6 +243,12 @@ export class Replica {
   behindSchema(): boolean {
     const schema = snapshotSchemaOf(this.db)
     return schema !== null && schema < CURRENT_BRAIN_SCHEMA_VERSION
+  }
+
+  /** True for a log that began at an older schema than this cockpit replays: its genesis snapshot says so. */
+  private beganOlder(): boolean {
+    const genesis = this.db.prepare('SELECT schema FROM op_snapshots WHERE seq = 1').get() as { schema: number } | undefined
+    return genesis !== undefined && genesis.schema < CURRENT_BRAIN_SCHEMA_VERSION
   }
 
   /** The hash of the brain's state as it is now — what a checkpoint at the head states. */

@@ -26,8 +26,12 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
   state from the same log, so within one schema that behaviour is fixed;
   `packages/core/tests/frozen-log.test.ts` replays the schema's frozen log
   (`tests/fixtures/log-v<N>.json`) and fails when it moves. A schema bump freezes a new log
-  (`EML_FREEZE_LOG=1`, see the test's header); the migration writes the checkpoint a rebuild
-  starts from. What changes only how a brain is read or shown ships in a patch.
+  (`EML_FREEZE_LOG=1`, see the test's header). A rebuild starts from the checkpoint of the
+  migration: a private brain's migrate step writes it, a shared brain's first live device does.
+  What changes only how a brain is read or shown ships in a patch.
+- A migrate file gives the same rows on every device: no clock, no random value, no order that
+  depends on rowids of one copy. In a shared brain each member migrates their own replica, and the
+  second one stops if its state differs from the first one's checkpoint.
 - A new requirement for existing engrams: what the migrate SQL can rewrite on its own, it rewrites
   there; what needs judgement becomes a check in `packages/core/src/hygiene.ts` with `since_schema`.
 - English everywhere in the repo (code, comments, docs, commits).

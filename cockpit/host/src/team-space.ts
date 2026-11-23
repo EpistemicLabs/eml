@@ -83,8 +83,8 @@ export async function loadSharedFlags(spaces: BrainSpace[]): Promise<void> {
   }))
 }
 
-/** Sync states in which a shared brain has, or may have, entries at its relay that this replica has not taken. */
-const BEHIND_RELAY = new Set(['offline', 'catching_up', 'waiting_key'])
+/** Sync states in which a shared brain has, or may have, entries at its relay that this replica has not taken — a join under way has the whole log ahead of it. */
+const BEHIND_RELAY = new Set(['offline', 'catching_up', 'waiting_key', 'joining'])
 
 /**
  * The shared spaces whose brain is not in step with its relay right now, by

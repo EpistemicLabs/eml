@@ -128,6 +128,13 @@ describe('the replica', () => {
       expect(team.deliver(team.addMember(ava))).toMatchObject({ kind: 'rejected', why: expect.stringMatching(/^REFUSED: .*member already/) })
     })
 
+    it('an op stamped with an older brain schema in a log that began at this one is applied, as v0.21.4 does', () => {
+      // within a schema what a replica decides does not change: v0.21.4 does not look at an op's schema below its own
+      const team = founded()
+      expect(team.deliver(team.write(team.owner, 't-stamped-older', { schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }))).toMatchObject({ kind: 'applied' })
+      expect(titles(team.db)).toEqual(['t-stamped-older'])
+    })
+
     it('a checkpoint right after the state it names, by another member\'s device: compared, and it counts', () => {
       const team = founded()
       const mira = person('mira')
@@ -138,12 +145,13 @@ describe('the replica', () => {
       expect(team.replica.state).toEqual({ kind: 'live' })
     })
 
-    it('an op of an older brain schema, once the log has the checkpoint of this one', () => {
-      const team = founded()
+    it('an op of an older brain schema, once a log that began at that schema has the checkpoint of this one', () => {
+      const team = migrated()
+      expect(team.deliver(team.write(team.owner, '', { call: 'brain.checkpoint', args: { seq: 1, state_hash: team.stateHash() } }))).toMatchObject({ kind: 'applied', checkpoint: true })
       expect(team.deliver(team.write(team.owner, 't-late', { schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }))).toMatchObject({ kind: 'rejected', why: `REFUSED: the op is brain schema ${CURRENT_BRAIN_SCHEMA_VERSION - 1}, the brain is at ${CURRENT_BRAIN_SCHEMA_VERSION}` })
       expect(team.deliver(team.write(team.owner, 't-kept'))).toMatchObject({ kind: 'applied' })
       expect(titles(team.db)).toEqual(['t-kept'])
-      expect(verify(team.db)).toMatchObject({ ok: true, entries: 3 })
+      expect(verify(team.db)).toMatchObject({ ok: true, entries: 4 })
     })
 
     it('an op written after its own seq', () => {
@@ -217,7 +225,7 @@ describe('the replica', () => {
     it('on an op of an older brain schema while the log has no checkpoint of this one: the file was migrated ahead of it', () => {
       const team = migrated()
       expect(team.deliver(team.write(team.owner, 't-missed', { schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }))).toMatchObject({ kind: 'stopped' })
-      stopped(team, /updated before it had every entry of the older schema/)
+      stopped(team, /migrated before it had every entry of the older schemas/)
       expect(team.head).toBe(1)
     })
 
