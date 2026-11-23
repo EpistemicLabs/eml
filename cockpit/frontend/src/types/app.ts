@@ -18,6 +18,8 @@ export interface ProjectSession {
   lastActivity?: string;
   messageCount?: number;
   lastMessageAt?: string | null;
+  /** What the last agent reply is about, one line, read from the transcript by the host. */
+  lastReply?: string | null;
   model?: string | null;
   contextTokens?: number | null;
   isPinned?: boolean;

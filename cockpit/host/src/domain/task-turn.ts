@@ -1,3 +1,5 @@
+import type { RunnerBlock } from './runner-gate.js'
+
 /**
  * Whose turn a task is, derived and never stored (decision whose-turn-derived-in-cockpit-host).
  * The brain holds the inputs (status, owner in assignee_ids, delegate, checkpoint, waiting_on);
@@ -15,9 +17,9 @@ export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'outside'
 export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'outside']
 
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner'
+export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked'
 
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner'
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped'
 
 export interface WaitingOn {
   who: string
@@ -41,8 +43,11 @@ export interface TaskFacts {
   closedAt?: string
   /** null: no parent. false: its parent is not active, so the runner won't start it. */
   parentActive: boolean | null
-  /** Every depends_on is resolved. */
-  depsResolved: boolean
+  /**
+   * For a planned delegated task: why the runner does not start it (domain/runner-gate.ts runnerBlock), null when it
+   * would. Left out, the task counts as next in line.
+   */
+  runner?: RunnerBlock | null
 }
 
 /** What the host knows about a task right now. */
@@ -97,12 +102,26 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
       return { turn: 'needs_you', group: 'nobody', reason: 'stopped' }
     }
     if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }
-    return { turn: 'agent_scheduled', group: 'runner' }
+    return runnerTurn(task.runner ?? null)
   }
   if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }
   if (!task.owner) return { turn: 'needs_you', group: 'nobody', reason: 'no_owner' }
   if (task.owner !== viewer) return { turn: 'waiting_on_others' }
   return { turn: 'needs_you', group: 'own' }
+}
+
+/** A planned delegated task's turn from the runner's reason not to start it (or none). */
+function runnerTurn(block: RunnerBlock | null): TurnResult {
+  if (!block || block.kind === 'other_member') return { turn: 'agent_scheduled', group: 'runner' }
+  if (block.kind === 'parent') return { turn: 'needs_you', group: 'parent' }
+  if (block.kind === 'no_project') return { turn: 'needs_you', group: 'nobody', reason: 'no_project' }
+  // A step it depends on that was dropped, replaced or is gone never resolves: someone has to change the plan.
+  if (block.kind === 'depends' && (block.status === null || block.status === 'invalidated' || block.status === 'superseded')) {
+    return { turn: 'needs_you', group: 'nobody', reason: 'step_dropped' }
+  }
+  if (block.kind === 'depends' || block.kind === 'cap' || block.kind === 'held' || block.kind === 'busy') return { turn: 'agent_scheduled', group: 'blocked' }
+  // waiting, scheduled and not_runner_work are read before the runner is asked; should one come through, it is next in line.
+  return { turn: 'agent_scheduled', group: 'runner' }
 }
 
 // ---- Plan: coverage and urgency ----

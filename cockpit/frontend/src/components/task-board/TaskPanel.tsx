@@ -1,5 +1,6 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
-// the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions.
+// the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions,
+// and a closed task's one action is Reopen (decision task-board-reopen-action).
 import { useEffect, useState } from 'react';
 
 import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
@@ -9,9 +10,9 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, CLOSED_STATUSES, closedAsTask, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { BUTTON, Chip, FOCUS, HUE, LABEL, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -20,15 +21,35 @@ import { TaskRelated } from './TaskRelated';
 
 export const TASK_TITLE_ID = 'task-board-title';
 /** The surface id the board's chat goes by (scroll and draft are kept per surface). */
-const TASK_BOARD_PANE_ID = 'tasks';
-const CHAT_ID = 'task-board-chat';
+export const TASK_BOARD_PANE_ID = 'tasks';
+export const CHAT_ID = 'task-board-chat';
+
+/**
+ * Looking at a session here is looking at it, as on its desk: its finished turn counts as seen.
+ * Opening it counts at once; a turn that finishes while it is shown only with the window in front.
+ */
+export function useSeenWhileShown(sessionId: string | null): void {
+  const since = useTurnStore().turns[sessionId ?? '']?.since;
+  useEffect(() => { if (sessionId) markSeen([sessionId]); }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    const run = () => { if (document.visibilityState === 'visible' && document.hasFocus()) markSeen([sessionId]); };
+    run();
+    window.addEventListener('focus', run);
+    document.addEventListener('visibilitychange', run);
+    return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
+  }, [sessionId, since]);
+}
 
 /** Put the cursor in the chat's composer: answering is typing to the session. */
 export function focusReply(): void {
   document.querySelector<HTMLTextAreaElement>(`#${CHAT_ID} textarea`)?.focus();
 }
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview }: {
+/** How a closed task ended, in a word. */
+const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
+
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onReopen }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -41,7 +62,10 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onOpenTask: (task: BoardTask) => void;
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
   onReview: (task: BoardTask) => void;
+  /** Reopen a closed task (owner only), with an optional reason for its journal. */
+  onReopen: (task: BoardTask, reason: string) => void;
 }) {
+  const [reason, setReason] = useState('');
   const { hrefFor, go } = useEngramPanel();
   const spaceKey = (id: string) => { const space = spaces.find((s) => s.id === id); return space ? paneSpaceKey(space) : null; };
   const engram = useEngram(task.id);
@@ -49,22 +73,10 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
   const [pick, setPick] = useState<string | null>(sessionId ?? null);
   const current = own.find((s) => s.id === pick) ?? own[0];
-  // Looking at a session here is looking at it, as on its desk: its finished turn counts as seen.
-  // Opening it counts at once; a turn that finishes while it is shown only with the window in front.
-  const currentId = current?.id ?? null;
-  const since = useTurnStore().turns[currentId ?? '']?.since;
-  useEffect(() => { if (currentId) markSeen([currentId]); }, [currentId]);
-  useEffect(() => {
-    if (!currentId) return;
-    const run = () => { if (document.visibilityState === 'visible' && document.hasFocus()) markSeen([currentId]); };
-    run();
-    window.addEventListener('focus', run);
-    document.addEventListener('visibilitychange', run);
-    return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
-  }, [currentId, since]);
+  useSeenWhileShown(current?.id ?? null);
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
   const hue = hueOf(task);
-  const closed = task.status === 'resolved' || task.status === 'invalidated';
+  const closed = CLOSED_STATUSES.has(task.status);
   const asked = task.group === 'asked';
   const review = task.turn === 'review';
 
@@ -76,6 +88,46 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
       </button>
       <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'schedule')}>Schedule…</button>
       <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'together')}>Work on it now</button>
+    </div>
+  );
+
+  // A closed task: how it ended, and Reopen, or why it can't be reopened here.
+  const parent = task.parentId ? board.tasks.find((t) => t.id === task.parentId) ?? board.closed?.find((c) => c.id === task.parentId) : undefined;
+  const mine = !task.owner || task.owner === board.viewer;
+  const reopen = closed && (
+    <div aria-label="Closed" className="flex flex-col gap-2 rounded-xl border border-border px-3 py-2.5 text-body">
+      <div>
+        <b className="font-semibold">{ENDED[task.status] ?? 'Closed'}</b>
+        {task.closedAt && <span className="tabular-nums text-muted-foreground"> · {when(task.closedAt, now)}</span>}
+        {task.outcome && <span className="text-muted-foreground"> · {task.outcome}</span>}
+      </div>
+      {task.blocked === 'superseded' ? (
+        <span className="text-ui text-muted-foreground">Another task replaced it: go on there.</span>
+      ) : task.blocked === 'parent_closed' ? (
+        <span className="text-ui text-muted-foreground">
+          Its parent{parent ? <> <button type="button" className={cn('underline underline-offset-2', FOCUS)} onClick={() => onOpenTask('turn' in parent ? parent : closedAsTask(parent))}>{taskName(parent)}</button></> : null} is closed: reopen the parent first.
+        </span>
+      ) : !mine ? (
+        <span className="text-ui text-muted-foreground">Only its owner ({task.owner}) can reopen it.</span>
+      ) : (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); onReopen(task, reason); setReason(''); }}>
+          <input type="text" aria-label="Why reopen (optional)" placeholder="Why reopen? (optional)" value={reason} maxLength={500}
+            onChange={(e) => setReason(e.target.value)} className={cn(FIELD, 'min-w-0 flex-1 basis-48')} />
+          <button type="submit" className={PRIMARY}>Reopen</button>
+        </form>
+      )}
+      {!task.blocked && mine && (
+        <span className="text-caption text-muted-foreground">It comes back as active with its owner{task.delegate ? `, delegate ${agentName(task.delegate)}` : ''}{task.checkpoint ? ` and checkpoint ${task.checkpoint}` : ''}. No agent starts; you can undo for 8 s.</span>
+      )}
+    </div>
+  );
+  const broughtBack = !closed && task.reopenedWith && task.reopenedWith.length > 0 && (
+    <div aria-label="Closed with it" className="rounded-xl border border-border px-3 py-2.5 text-body">
+      <div className={cn(LABEL, 'mb-1')}>Closed with it, not back yet</div>
+      <ul className="m-0 list-none p-0 text-ui">
+        {task.reopenedWith.map((i) => <li key={i.id}>{i.type} · {i.title ? readable(i.title) : i.id}</li>)}
+      </ul>
+      <div className="mt-1 text-caption text-muted-foreground">Say in the chat which of them still hold, and the agent brings those back.</div>
     </div>
   );
 
@@ -140,7 +192,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                     : <span className="text-ui text-muted-foreground">Its session is gone: hand the task over or work on it now to answer.</span>}
                 </div>
               </div>
-            ) : task.group !== 'own' && !review ? (
+            ) : !closed && task.group !== 'own' && !review ? (
               // A review's result is in the chat's handoff right next to it; the chip names the state (Lasse 2026-11-23).
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>
                 <div className={cn(LABEL, 'mb-1', HUE[hue].ink)}>{task.group === 'nobody' ? 'Nobody on it' : task.turn ? TURN_META[task.turn].name : task.status}</div>
@@ -149,6 +201,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             ) : null}
 
             {handOver}
+            {reopen}
+            {broughtBack}
             {engram.data && <TaskJournal key={`journal-${task.id}`} engram={engram.data} relationHref={hrefFor} foldable />}
           </div>
         </section>
@@ -172,8 +226,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <MainContentTabSwitcher groups={[]} paneView="chat" onSetPaneView={() => {}} onClosePane={onClose} />
             </div>
             <div className="m-auto flex max-w-dialog flex-col items-center gap-3 px-5 py-10 text-center text-body text-muted-foreground">
-              <b className="text-foreground">No session on this task yet.</b>
-              Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.
+              <b className="text-foreground">{closed ? 'No session on this task.' : 'No session on this task yet.'}</b>
+              {!closed && 'Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.'}
               {handOver}
             </div>
             </>

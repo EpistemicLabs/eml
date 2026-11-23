@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { coverageOf, isImportant, turnOf, urgencyOf, waitKind, type LiveFacts, type TaskFacts } from '../src/domain/task-turn.js'
 
 const NOW = Date.parse('2026-11-19T10:00:00Z')
-const task = (patch: Partial<TaskFacts> = {}): TaskFacts => ({ status: 'active', owner: 'lasse', parentActive: null, depsResolved: true, ...patch })
+const task = (patch: Partial<TaskFacts> = {}): TaskFacts => ({ status: 'active', owner: 'lasse', parentActive: null, ...patch })
 const live = (patch: Partial<LiveFacts> = {}): LiveFacts => ({ working: false, sessions: 0, nextRunAt: null, ...patch })
 const turn = (t: Partial<TaskFacts> = {}, l: Partial<LiveFacts> = {}) => turnOf(task(t), live(l), 'lasse', NOW)
 
@@ -20,7 +20,14 @@ describe('whose turn a task is', () => {
     ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'kim@acme', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
     ['a job starts the delegate at a time', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z' }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'agent_scheduled', group: 'runner' }],
-    ['it waits for the task it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', depsResolved: false }, {}, { turn: 'agent_scheduled', group: 'runner' }],
+    ['it waits for a step it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'depends', stepId: 'pr', title: 'Open the PR', status: 'active', more: 0 } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['the step it depends on was dropped', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'depends', stepId: 'pr', title: null, status: 'invalidated', more: 0 } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'step_dropped' }],
+    ['the runner is at its cap', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'cap', running: 5, max: 5, standalone: true } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['its hand-over can still be undone', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'held' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['a session is open on it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'busy' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['the runner finds its parent not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'parent', parentId: 'p', status: 'planned' } }, {}, { turn: 'needs_you', group: 'parent' }],
+    ['it is in no project', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'no_project', scope: 'global' } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_project' }],
+    ['another member\'s cockpit starts it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', owner: 'dominik', runner: { kind: 'other_member', owner: 'dominik' } }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['delegated without a checkpoint', { delegate: 'atlas', status: 'planned' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],
     ['a delegated step whose parent is not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', parentActive: false }, {}, { turn: 'needs_you', group: 'parent' }],
     ['delegated without a checkpoint, in progress', { delegate: 'atlas', status: 'active' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],

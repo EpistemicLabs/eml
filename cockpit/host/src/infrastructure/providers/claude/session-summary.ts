@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { CONFIG_DIR } from '../../../paths.js'
 import { firstPromptIsGreeting } from '../../../session-greeting.js'
+import { replyLine } from '../../../domain/reply-line.js'
 import type { SessionSummary } from '../../../domain/agent-provider.js'
 
 /**
@@ -21,7 +22,7 @@ import type { SessionSummary } from '../../../domain/agent-provider.js'
 
 const SUMMARY_MAX = 120
 const EMPTY: SessionSummary = {
-  summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, model: null, contextTokens: null,
+  summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, lastReply: null, model: null, contextTokens: null,
 }
 
 const cache = new Map<string, { mtimeMs: number; greeted: boolean | null; value: SessionSummary }>()
@@ -69,6 +70,7 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
   let openedWithGreeting: boolean | null = null
   let messageCount = 0
   let lastMessageAt: string | null = null
+  let lastReply: string | null = null
   let model: string | null = null
   let contextTokens: number | null = null
   try {
@@ -96,6 +98,8 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
       messageCount += 1
       if (typeof record.timestamp === 'string') lastMessageAt = record.timestamp
       if (record.type === 'assistant') {
+        const text = extractText(record.message?.content)
+        if (text) lastReply = replyLine(text) ?? lastReply
         if (typeof record.message?.model === 'string') model = record.message.model
         const usage = record.message?.usage
         if (usage) {
@@ -122,7 +126,7 @@ export function readSessionSummary(projectPath: string | null, sessionId: string
   }
   if (openedWithGreeting) aiTitle = null
   const value: SessionSummary = {
-    summary, aiTitle, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, model, contextTokens,
+    summary, aiTitle, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, lastReply, model, contextTokens,
   }
   cache.set(file, { mtimeMs: stats.mtimeMs, greeted, value })
   return value

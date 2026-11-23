@@ -9,15 +9,16 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, closeTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, closeTask, closedAsTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
-import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, openSessionInSpace, removePane, useDesks } from '@/stores/usePaneStore';
+import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
-import { setTaskView, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
+import { openItemIn, type OpenItem, setFold, setOpenItem, useTaskBoardPage } from '@/stores/useTaskBoardPageStore';
+import { clearTaskPanelRequest, getTaskView, setTaskView, useTaskPanelRequest, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
@@ -26,6 +27,7 @@ import { InboxView, type InboxAction, type UnreadProps } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
 import { NowBoard } from './NowBoard';
 import { PlanView } from './PlanView';
+import { SessionPanel } from './SessionPanel';
 import { UnreadDot } from './parts';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
@@ -35,6 +37,8 @@ const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan
 const NOW_TICK_MS = 30_000;
 /** How long Mark all read can be undone: as long as the host's commands (8 s). */
 const UNREAD_UNDO_MS = 8_000;
+/** Open something in the view that is shown now; it stays open when the board is left and shown again. */
+const setOpen = (item: OpenItem | null) => setOpenItem(item, getTaskView());
 /** A row read here is hidden by its answer: a newer answer of the same session shows again. */
 const readKey = (session: AllSession) => `${session.id}@${answerTime(session)}`;
 
@@ -47,13 +51,14 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   // The view is picked in the top bar (TaskViewSwitch, G then I / N / P); on a phone in the board's own tabs.
   const { view, picks } = useTaskView();
   const compact = useCompactLayout();
-  const [open, setOpen] = useState<{ taskId: string; sessionId?: string } | null>(null);
+  const page = useTaskBoardPage();
+  const open = openItemIn(page, view);
   const [dialog, setDialog] = useState<{ taskId: string; mode: HandOverMode } | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const { turns } = useTurnStore();
-  // The Unread fold: a toggle by hand holds for the visit; rows read here leave at once, before the list refetches.
-  const [unreadPicked, setUnreadPicked] = useState<boolean | null>(null);
+  // The Unread fold: a toggle by hand holds until a reload (the store); rows read here leave at once, before the list refetches.
+  const unreadPicked = page.folds.unread;
   const [readHere, setReadHere] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS); return () => window.clearInterval(t); }, []);
   useEffect(() => { if (board) setNow(Date.now()); }, [board]);
@@ -62,16 +67,29 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const seenPicks = useRef(picks);
   useEffect(() => { if (picks !== seenPicks.current) { seenPicks.current = picks; setOpen(null); } }, [picks]);
 
-  const byId = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.id, t])), [board]);
-  const task = open ? byId.get(open.taskId) : undefined;
+  // A closed task opens in the panel too (Reopen lives there); an open one wins while a reopen is in its undo window.
+  const byId = useMemo(() => new Map([...(board?.closed ?? []).map((c) => [c.id, closedAsTask(c)] as const), ...(board?.tasks ?? []).map((t) => [t.id, t] as const)]), [board]);
+  const task = open?.taskId ? byId.get(open.taskId) : undefined;
+  // A session with no task on the board: it opens on its own where a task would.
+  const sessionOnly = open && !task ? open.sessionId : undefined;
   const say = useCallback((text: string, action?: ToastMessage['action'], until?: string) => setToast({ id: crypto.randomUUID(), text, action, until, ms: durationMs('--duration-toast') }), []);
 
+  const closePanel = useCallback(() => setOpen(null), []);
   const openTask = useCallback((t: BoardTask, sessionId?: string) => {
     // The task's journal and chat load from its own space.
     const space = spaces.find((s) => s.id === t.spaceId);
     if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
     setOpen({ taskId: t.id, ...(sessionId ? { sessionId } : {}) });
   }, [spaces]);
+
+  // ⌘K asked for a task's panel (a closed one): open it once the board has it.
+  const panelRequest = useTaskPanelRequest();
+  useEffect(() => {
+    if (!panelRequest || !board) return;
+    const t = byId.get(panelRequest);
+    clearTaskPanelRequest();
+    if (t) openTask(t);
+  }, [panelRequest, board, byId, openTask]);
 
   /** Show a command's answer: an Undo toast until its deadline, or why it was refused. */
   const answered = useCallback((answer: CommandAnswer, done: string, afterUndo?: () => void) => {
@@ -104,7 +122,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     const space = spaces.find((s) => s.id === t.spaceId);
     const paneId = t.project ? addWorkerPane({
       fromSessionId: null, projectId: projectIdOfBrain(t.project), title: taskName(t), deskId, taskId: t.id,
-      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`].filter(Boolean).join('\n\n'),
+      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+        // Reopened on the board: what closed with it comes back only on the owner's yes.
+        t.reopenedWith?.length ? `The task was reopened. These closed with it and are not back yet: ${t.reopenedWith.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')}. Ask the user which still hold, and bring those back with eml_update status active.` : null,
+      ].filter(Boolean).join('\n\n'),
       ...(space ? { spaceId: paneSpaceKey(space) } : {}),
     }) : null;
     answered(answer, `Opened in desk ${input.desk}.`, () => { if (paneId) removePane(paneId); });
@@ -125,15 +146,15 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     [board, sessions, turns, now, readHere],
   );
 
-  /** Opening an unread answer reads it: a session of a task opens as the Inbox opens its items, any other on its desk. */
+  /** Opening an unread answer reads it, and it opens as the Inbox opens its items: with its task, or on its own. */
   const openUnread = useCallback((session: AllSession) => {
     setReadHere((prev) => new Set(prev).add(readKey(session)));
     void markSessionRead(session.id);
     const t = session.taskId ? byId.get(session.taskId) : undefined;
     if (t?.sessionIds.includes(session.id)) { openTask(t, session.id); return; }
     const space = spaces.find((s) => s.id === session.spaceId);
-    const projectId = session.__projectId ?? session.projectId ?? null;
-    openSessionInSpace(space ? paneSpaceKey(space) : null, { surface: 'terminal', projectId, sessionId: session.id, chat: session.runtime === 'sdk' });
+    if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
+    setOpen({ sessionId: session.id });
   }, [byId, openTask, spaces]);
 
   const markAllRead = useCallback(() => {
@@ -161,16 +182,16 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     );
   }
 
-  const split = view === 'inbox' && task;
+  const split = view === 'inbox' && Boolean(task || sessionOnly);
   const unread: UnreadProps = {
     sessions: unreadSessions,
     spaces,
     open: unreadFoldOpen(unreadPicked, board.inbox.length),
-    onToggle: () => setUnreadPicked(!unreadFoldOpen(unreadPicked, board.inbox.length)),
+    onToggle: () => setFold('unread', !unreadFoldOpen(unreadPicked, board.inbox.length)),
     onOpen: openUnread,
     onMarkAllRead: markAllRead,
   };
-  const panel = task && (
+  const panel = task ? (
     <TaskPanel
       key={task.id}
       task={task}
@@ -182,9 +203,12 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
       onReview={async (t) => answered(await reviewDone(t), 'Closed as reviewed.')}
-      onClose={() => setOpen(null)}
+      onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
+      onClose={closePanel}
     />
-  );
+  ) : sessionOnly ? (
+    <SessionPanel key={sessionOnly} session={sessions?.find((s) => s.id === sessionOnly)} board={board} spaces={spaces} onClose={closePanel} />
+  ) : null;
   const dialogTask = dialog ? byId.get(dialog.taskId) : undefined;
   const spaceAgents = (t: BoardTask) => {
     const agents = board.spaces.find((s) => s.id === t.spaceId)?.agents ?? [];
@@ -199,7 +223,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
         {split ? (
           <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-split)">
             <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">
-              <InboxView board={board} now={now} compact currentTaskId={task.id} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
+              <InboxView board={board} now={now} compact currentTaskId={task?.id ?? null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
             </div>
             <section aria-labelledby={TASK_TITLE_ID} className="flex min-h-(--size-split-panel-min) min-w-0 flex-col gap-2.5">
               {panel}
@@ -214,7 +238,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
         )}
       </div>
 
-      <Sheet open={Boolean(task && !split)} onClose={() => setOpen(null)} labelledBy={TASK_TITLE_ID}>{!split && panel}</Sheet>
+      <Sheet open={Boolean(panel && !split)} onClose={closePanel} labelledBy={TASK_TITLE_ID}>{!split && panel}</Sheet>
 
       {dialog && dialogTask && (
         <HandOverDialog

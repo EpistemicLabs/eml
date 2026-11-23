@@ -139,7 +139,7 @@ describe('the session directory endpoint', () => {
     spaces.add(space('agent-brain', 'second-agent') as never)
     const provider = (id: string, messaging: boolean) => ({
       id, messaging, deleteTranscript: () => {},
-      summary: (ref: { sessionId: string }) => ({ messageCount: 2, lastMessageAt: hoursAgo(3), lastActivity: null, summary: ref.sessionId === 'catalogue-session' ? 'Import the spring catalogue' : 'Something else', aiTitle: null, model: null, contextTokens: null }),
+      summary: (ref: { sessionId: string }) => ({ messageCount: 2, lastMessageAt: hoursAgo(3), lastActivity: null, summary: ref.sessionId === 'catalogue-session' ? 'Import the spring catalogue' : 'Something else', aiTitle: null, lastReply: null, model: null, contextTokens: null }),
     })
     const claude = provider('claude', true)
     const codex = provider('codex', false)

@@ -1,13 +1,14 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
+import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
 } from '../domain/task-turn.js'
-import type { TaskCommand } from './task-commands.js'
+import type { ReopenItem, TaskCommand } from './task-commands.js'
 
 /**
  * The task board's read model (decision whose-turn-derived-in-cockpit-host): the open tasks of every
@@ -47,6 +48,11 @@ export interface BoardTask {
   turn: Turn | null
   group?: TurnGroup
   reason?: NobodyReason
+  /**
+   * A planned delegated task the runner does not start: why (domain/runner-gate.ts, the runner's own checks). A wait
+   * on a step names where that step stands, so the card can say "waits for your review of …".
+   */
+  runner?: BoardRunnerBlock
   coverage: Coverage
   urgency: number
   important: boolean
@@ -56,6 +62,45 @@ export interface BoardTask {
   /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
   handTo?: string
   /** A command on it still in its undo window. */
+  pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
+  /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
+  reopenedWith?: ReopenItem[]
+}
+
+/** Where a step another task waits for stands, as the board shows it. */
+export interface StepState {
+  turn: Turn | null
+  group?: TurnGroup
+  reason?: NobodyReason
+  owner?: string
+  delegate?: string
+  waitingOn?: WaitingOn
+}
+
+export type BoardRunnerBlock = Exclude<RunnerBlock, { kind: 'depends' }> | (Extract<RunnerBlock, { kind: 'depends' }> & { step?: StepState })
+
+/**
+ * A closed task (resolved, dropped or replaced) for the panel's Reopen and ⌘K: the latest CLOSED_LIMIT of each
+ * status. `blocked` says up front why Reopen would be refused, as far as the lists show it; the host checks again.
+ */
+export interface ClosedTask {
+  id: string
+  spaceId: string
+  spaceName: string
+  project: string | null
+  title: string
+  displayTitle?: string
+  status: string
+  closedAt: string | null
+  outcome?: string
+  owner?: string
+  delegate?: string
+  checkpoint?: string
+  stage?: string
+  parentId: string | null
+  originId: string | null
+  sessionIds: string[]
+  blocked?: 'superseded' | 'parent_closed'
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
 }
 
@@ -99,6 +144,8 @@ export interface Board {
   spaces: Array<{ id: string; name: string; agents: string[] }>
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>
   tasks: BoardTask[]
+  /** Closed tasks, newest first per space: what the panel can reopen and ⌘K finds. */
+  closed: ClosedTask[]
   lineage: LineageTask[]
   inbox: InboxItem[]
   snoozed: InboxItem[]
@@ -119,6 +166,14 @@ export interface TaskBoardDeps {
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
+  /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
+  reopenedWith?(taskId: string): ReopenItem[]
+  /** The runner's busy check: a session works on the task already (index.ts shares it with the runner). */
+  runnerBusy?(taskId: string): boolean
+  /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
+  runnerHeld?(taskId: string): boolean
+  /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
+  ledgerSessionsOn?(taskId: string): string[]
   now(): number
   log(line: string): void
   /**
@@ -149,6 +204,9 @@ const HEAD_WAIT_MS = 25_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
+/** How many dropped (invalidated) and replaced (superseded) tasks per space the board keeps for Reopen and ⌘K. */
+const CLOSED_LIMIT = 50
+const CLOSED_STATUSES = new Set(['resolved', 'invalidated', 'superseded'])
 /** The most closed tasks of one project a page may ask for at once. */
 const CLOSED_MAX = 500
 /** How far up a tree the board follows closed ancestors that its lists leave out. */
@@ -159,6 +217,7 @@ interface Row {
   title: string | null
   status: string
   scope: string
+  ingested_by?: string | null
   parent_id?: string | null
   origin_task_id?: string | null
   updated_at?: string
@@ -172,6 +231,8 @@ interface Row {
     due_date?: string
     depends_on?: string[]
     waiting_on?: WaitingOn
+    outcome?: string
+    stage?: string
   }
 }
 
@@ -245,6 +306,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     if (!command || command.state !== 'pending') return row
     if (command.kind === 'review') return { ...row, status: 'resolved', updated_at: command.createdAt || row.updated_at }
     if (command.kind === 'close') return { ...row, status: 'invalidated' }
+    if (command.kind === 'reopen') {
+      const { waiting_on: _wait, outcome: _outcome, ...props } = row.properties ?? {}
+      return { ...row, status: 'active', properties: props }
+    }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
       const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
@@ -261,7 +326,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const now = deps.now()
     const pending = deps.pendingCommands()
     const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
-    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
+    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], closed: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
 
     for (const space of deps.spaces()) {
@@ -273,16 +338,66 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         board.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
       const origins = { with_origin: 'true' }
-      const [planned, active, resolved] = await Promise.all([
-        list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
+      const latest = { order_by: 'updated_at', ...origins }
+      const [planned, active, resolved, invalidated, superseded] = await Promise.all([
+        list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { ...latest, limit: RESOLVED_LIMIT }),
+        list(brain, 'invalidated', { ...latest, limit: CLOSED_LIMIT }), list(brain, 'superseded', { ...latest, limit: CLOSED_LIMIT }),
       ])
-      const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents))
-      const statusOf = new Map(rows.map((r) => [r.id, r.status]))
+      const rows = [...planned, ...active, ...resolved, ...invalidated, ...superseded].map((row) => overlay(row, commandOf(row.id), agents))
+      // What a task's facts read of the others: open and resolved ones, as before closed tasks were listed.
+      const statusOf = new Map(rows.filter((r) => r.status === 'planned' || r.status === 'active' || r.status === 'resolved').map((r) => [r.id, r.status]))
+      const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
+
+      // What the runner's checks read: the space's tasks, and any the lists left out fetched once by id.
+      const byId = new Map(rows.map((r) => [r.id, r as GateTask]))
+      const fetched = new Map<string, Promise<GateTask | null>>()
+      const gateTask = (id: string): Promise<GateTask | null> => {
+        const known = byId.get(id)
+        if (known) return Promise.resolve(known)
+        if (!fetched.has(id)) fetched.set(id, (brain.get(`/engram/${encodeURIComponent(id)}`) as Promise<GateTask & { type?: string }>).then((t) => t ?? null).catch(() => null))
+        return fetched.get(id)!
+      }
+      // The runner's cap groups: a parent's active steps, and the space's standalone delegated tasks, that hold a slot.
+      const holdsSlot = (r: Row) => r.status === 'active' && !deps.nextRunOf(r.id)
+      const runningIn = (parentId: string | null) => parentId
+        ? rows.filter((r) => r.parent_id === parentId && holdsSlot(r)).length
+        : rows.filter((r) => !r.parent_id && r.properties?.checkpoint && r.properties.delegate && holdsSlot(r)).length
+      const blockOf = async (row: Row): Promise<RunnerBlock | null> => {
+        const parentId = row.parent_id ?? null
+        return runnerBlock({
+          task: row as GateTask,
+          ...(parentId ? { parent: { id: parentId, task: await gateTask(parentId) } } : {}),
+          deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
+          running: runningIn(parentId),
+          shared: space.shared, me: deps.viewer,
+          busy: deps.runnerBusy?.(row.id) ?? false, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
+        })
+      }
 
       const spaceTasks: BoardTask[] = []
       for (const row of rows) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
+        if (CLOSED_STATUSES.has(row.status)) {
+          const command = commandOf(row.id)
+          // A parent the open lists don't hold is closed (the board loads every open task).
+          const blocked = row.status === 'superseded' ? 'superseded' as const : row.parent_id && !isOpen(row.parent_id) ? 'parent_closed' as const : undefined
+          board.closed.push({
+            id: row.id, spaceId: space.id, spaceName: space.name, project: projectOf(row.scope), title: row.title ?? row.id,
+            ...(props.display_title ? { displayTitle: props.display_title } : {}),
+            status: row.status, closedAt: row.updated_at ?? null,
+            ...(props.outcome ? { outcome: props.outcome } : {}),
+            ...(props.assignee_ids?.[0] ? { owner: props.assignee_ids[0] } : {}),
+            ...(props.delegate ? { delegate: props.delegate } : {}),
+            ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
+            ...(props.stage ? { stage: props.stage } : {}),
+            parentId: row.parent_id ?? null, originId: row.origin_task_id ?? null,
+            sessionIds: deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId),
+            ...(blocked ? { blocked } : {}),
+            ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
+          })
+          if (row.status === 'superseded') continue
+        }
         const facts: TaskFacts = {
           status: row.status,
           owner: props.assignee_ids?.[0],
@@ -292,9 +407,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           priority: props.priority,
           due: props.due_date,
           closedAt: row.status === 'resolved' ? row.updated_at : undefined,
-          parentActive: row.parent_id ? (statusOf.has(row.parent_id) ? statusOf.get(row.parent_id) === 'active' : null) : null,
-          depsResolved: (props.depends_on ?? []).every((id) => !statusOf.has(id) || statusOf.get(id) === 'resolved'),
+          // The board loads every open task, so a parent it does not hold is closed.
+          parentActive: row.parent_id ? statusOf.get(row.parent_id) === 'active' : null,
         }
+        if (row.status === 'planned' && props.delegate && props.checkpoint) facts.runner = await blockOf(row)
         const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
@@ -324,6 +440,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           turn: turn?.turn ?? null,
           ...(turn?.group ? { group: turn.group } : {}),
           ...(turn?.reason ? { reason: turn.reason } : {}),
+          // A wait on someone or a job's next run already put it in its turn; the card needs the other reasons.
+          ...(facts.runner && !['not_runner_work', 'waiting', 'scheduled'].includes(facts.runner.kind) ? { runner: facts.runner } : {}),
           coverage: coverageOf(facts, live, deps.viewer, now, stepsWaiting),
           urgency: urgencyOf(facts, live, deps.viewer, now),
           important: isImportant(facts, live, deps.viewer, now),
@@ -335,8 +453,25 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return agent ? { handTo: agent } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
+          ...(() => {
+            const items = row.status === 'active' ? deps.reopenedWith?.(row.id) ?? [] : []
+            return items.length ? { reopenedWith: items } : {}
+          })(),
         })
         if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+      }
+      // A wait on a step names where that step stands, read from the step's own card.
+      for (const t of spaceTasks) {
+        if (t.runner?.kind !== 'depends') continue
+        const step = spaceTasks.find((s) => s.id === (t.runner as { stepId: string }).stepId)
+        if (step) {
+          t.runner = { ...t.runner, step: {
+            turn: step.turn,
+            ...(step.group ? { group: step.group } : {}), ...(step.reason ? { reason: step.reason } : {}),
+            ...(step.owner ? { owner: step.owner } : {}), ...(step.delegate ? { delegate: step.delegate } : {}),
+            ...(step.waitingOn ? { waitingOn: step.waitingOn } : {}),
+          } }
+        }
       }
       board.tasks.push(...spaceTasks)
       board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))

@@ -1,7 +1,7 @@
 // Opening an existing task from the desk (⌘K, the nav's Search tasks, the tasks card's Open task): where the task
 // is now and what Enter does with it. Pure, so the rules are tested without a browser; the opening itself is in
 // components/command-palette/openTask.ts. A task already open on another desk is gone to, never moved there.
-import { type Board, type BoardTask, OPEN_STATUSES, readable, taskName } from '@/lib/task-board';
+import { type Board, type BoardTask, closedAsTask, OPEN_STATUSES, readable, taskName } from '@/lib/task-board';
 
 export interface LocateContext {
   activeDeskId: string;
@@ -58,7 +58,8 @@ export function locationWords(where: TaskLocation): { text: string; act: string 
   return { text, act: where.kind === 'closed' ? 'Open in a new pane' : 'Start a session here' };
 }
 
-export interface TaskGroup { name: string; tasks: BoardTask[] }
+/** `closed`: the group of closed tasks, which open in the task board's panel (to reopen) instead of a session. */
+export interface TaskGroup { name: string; tasks: BoardTask[]; closed?: boolean }
 
 /** A task's project as the board names it, or its id made readable. */
 export function projectNameOf(board: Pick<Board, 'projects'>, task: BoardTask): string {
@@ -68,21 +69,29 @@ export function projectNameOf(board: Pick<Board, 'projects'>, task: BoardTask): 
 const needsYou = (t: BoardTask) => t.turn === 'needs_you' || t.turn === 'review';
 
 /**
- * The open tasks a search finds: every word in the title, the anchor, the project's name or id, or the space.
- * Nothing typed: what needs you first, then the other open tasks.
+ * The tasks a search finds: every word in the title, the anchor, the project's name or id, or the space. Open
+ * tasks first, then the closed ones the board keeps (newest closed first), so a closed task can be found to reopen.
+ * Nothing typed: what needs you first, then the other open tasks; closed ones only show for a search.
  */
-export function searchTasks(board: Pick<Board, 'tasks' | 'projects'>, query: string, opts: { project?: string } = {}): TaskGroup[] {
+export function searchTasks(board: Pick<Board, 'tasks' | 'projects' | 'closed'>, query: string, opts: { project?: string } = {}): TaskGroup[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const order = (a: BoardTask, b: BoardTask) => Number(needsYou(b)) - Number(needsYou(a)) || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
-  const found = board.tasks
-    .filter((t) => OPEN_STATUSES.has(t.status) && (!opts.project || t.project === opts.project))
-    .filter((t) => {
-      if (words.length === 0) return true;
-      const hay = [taskName(t), t.title, projectNameOf(board, t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
-      return words.every((w) => hay.includes(w));
-    })
-    .sort(order);
-  if (words.length > 0) return found.length ? [{ name: 'Tasks', tasks: found }] : [];
+  const matches = (t: BoardTask) => {
+    if (opts.project && t.project !== opts.project) return false;
+    if (words.length === 0) return true;
+    const hay = [taskName(t), t.title, projectNameOf(board, t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
+    return words.every((w) => hay.includes(w));
+  };
+  const found = board.tasks.filter((t) => OPEN_STATUSES.has(t.status) && matches(t)).sort(order);
+  if (words.length > 0) {
+    const openIds = new Set(found.map((t) => t.id));
+    const closed = (board.closed ?? []).map(closedAsTask).filter((t) => !openIds.has(t.id) && matches(t))
+      .sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? ''));
+    return [
+      ...(found.length ? [{ name: 'Tasks', tasks: found }] : []),
+      ...(closed.length ? [{ name: 'Closed', tasks: closed, closed: true }] : []),
+    ];
+  }
   return [
     { name: 'Needs you', tasks: found.filter(needsYou) },
     { name: 'Other open tasks', tasks: found.filter((t) => !needsYou(t)) },

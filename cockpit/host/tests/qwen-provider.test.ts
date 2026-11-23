@@ -267,7 +267,7 @@ describe('Qwen Code chat summary', () => {
     ].join('\n'))
     expect(readChatSummary(file, false)).toMatchObject({
       summary: 'Fix the login bug', aiTitle: null, messageCount: 3,
-      lastMessageAt: '2026-11-18T01:00:05.000Z', model: 'qwen/qwen3.8-27b', contextTokens: 16020,
+      lastMessageAt: '2026-11-18T01:00:05.000Z', lastReply: 'Done.', model: 'qwen/qwen3.8-27b', contextTokens: 16020,
     })
     expect(readChatSummary(null, false).messageCount).toBe(0)
     expect(readChatSummary(join(dir, 'missing.jsonl'), false).summary).toBeNull()

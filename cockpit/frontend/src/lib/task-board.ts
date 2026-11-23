@@ -7,14 +7,29 @@ import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner';
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner';
+export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked';
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
 
 export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
+
+/** Where a step another task waits for stands (host StepState). */
+export interface StepState { turn: Turn | null; group?: TurnGroup; reason?: NobodyReason; owner?: string; delegate?: string; waitingOn?: WaitingOn }
+
+/** Why the runner does not start a planned delegated task: the runner's own check (host domain/runner-gate.ts). */
+export type RunnerBlock =
+  | { kind: 'waiting'; who: string }
+  | { kind: 'scheduled' }
+  | { kind: 'held' }
+  | { kind: 'busy' }
+  | { kind: 'parent'; parentId: string; status: string | null }
+  | { kind: 'depends'; stepId: string; title: string | null; status: string | null; more: number; step?: StepState }
+  | { kind: 'cap'; running: number; max: number; standalone: boolean }
+  | { kind: 'no_project'; scope: string }
+  | { kind: 'other_member'; owner: string | null };
 
 export interface BoardTask {
   id: string;
@@ -42,6 +57,8 @@ export interface BoardTask {
   turn: Turn | null;
   group?: TurnGroup;
   reason?: NobodyReason;
+  /** A planned delegated task the runner does not start: why. Missing when it is next in line, or from an older host. */
+  runner?: RunnerBlock;
   coverage: Coverage;
   urgency: number;
   important: boolean;
@@ -51,6 +68,55 @@ export interface BoardTask {
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
   pending?: { opId: string; kind: string; undoUntil: string };
+  /** Reopened on the board: decisions and notes that closed with it and come back only through the chat. */
+  reopenedWith?: ReopenItem[];
+  /** Only on a closed task (from Board.closed): when it closed, how it ended, and why Reopen would be refused. */
+  closedAt?: string | null;
+  outcome?: string;
+  stage?: string;
+  blocked?: 'superseded' | 'parent_closed';
+}
+
+/** A decision or note that closed with a task (host task-commands ReopenItem). */
+export interface ReopenItem { id: string; type: string; title: string | null }
+
+/** A closed task (resolved, dropped or replaced) the panel can reopen and ⌘K finds (host Board.closed). */
+export interface ClosedTask {
+  id: string;
+  spaceId: string;
+  spaceName: string;
+  project: string | null;
+  title: string;
+  displayTitle?: string;
+  status: string;
+  closedAt: string | null;
+  outcome?: string;
+  owner?: string;
+  delegate?: string;
+  checkpoint?: string;
+  stage?: string;
+  parentId: string | null;
+  originId: string | null;
+  sessionIds: string[];
+  blocked?: 'superseded' | 'parent_closed';
+  pending?: { opId: string; kind: string; undoUntil: string };
+}
+
+export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['resolved', 'invalidated', 'superseded']);
+
+/** A closed task in the shape the panel takes: no turn, nothing covering it. */
+export function closedAsTask(c: ClosedTask): BoardTask {
+  return {
+    ...c,
+    rel: c.parentId ? 'sub' : c.originId ? 'spun' : null,
+    updatedAt: c.closedAt,
+    turn: null,
+    coverage: { ok: false, group: 'idle' },
+    urgency: 0,
+    important: false,
+    working: false,
+    nextRunAt: null,
+  };
 }
 
 export interface InboxItem {
@@ -88,6 +154,8 @@ export interface Board {
   spaces: Array<{ id: string; name: string; agents: string[] }>;
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>;
   tasks: BoardTask[];
+  /** Closed tasks for Reopen and ⌘K; missing from an older host. */
+  closed?: ClosedTask[];
   /** Missing from an older host. */
   lineage?: LineageTask[];
   inbox: InboxItem[];
@@ -198,6 +266,9 @@ export const snooze = (item: InboxItem, until: string, opId = newOpId()) =>
 /** Drops a task that is not needed (invalidated), after the undo window. */
 export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/close`, { opId, spaceId: task.spaceId });
+/** Reopens a closed task (active, starts nothing), after the undo window; owner only. */
+export const reopenTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, reason?: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, ...(reason?.trim() ? { reason: reason.trim() } : {}) });
 export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponent(opId)}/undo`, {});
 
 // ---- names and colours ----
@@ -208,7 +279,7 @@ export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> =
   needs_you: { name: 'Needs you', rule: 'You have the next move: answer an agent, do your own task, or decide what happens.', hue: 'you' },
   review: { name: 'Review', rule: 'An agent finished. Stays until you looked at it.', hue: 'review' },
   agent_working: { name: 'Agent working', rule: 'An agent session works on it right now.', hue: 'agent' },
-  agent_scheduled: { name: 'Agent scheduled', rule: 'Delegated. An agent picks it up at a set time, or after the task it waits for.', hue: 'scheduled' },
+  agent_scheduled: { name: 'Agent scheduled', rule: 'Delegated. An agent picks it up at a set time, when the runner has a free slot, or after the step it waits for.', hue: 'scheduled' },
   waiting_on_others: { name: 'Waiting on others', rule: 'Someone outside has the next move. An agent checks back when a job says so.', hue: 'waiting' },
   done: { name: 'Done · 24 h', rule: 'Reviewed by you, or closed in the last 24 hours.', hue: 'done' },
 };
@@ -220,6 +291,7 @@ export const GROUP_META: Record<TurnGroup, { name: string; hue: Hue }> = {
   nobody: { name: 'Nobody on it', hue: 'stopped' },
   at_time: { name: 'At a set time', hue: 'scheduled' },
   runner: { name: 'Next in line for the runner', hue: 'scheduled' },
+  blocked: { name: 'Waits before it starts', hue: 'waiting' },
 };
 
 /** The hue of a task: its turn's, except a stopped or stuck one is red. */
@@ -295,7 +367,51 @@ const NOBODY: Record<NobodyReason, string> = {
   stopped: 'Agent stopped without a next step: continue or close.',
   no_checkpoint: 'Delegated without a checkpoint, so nothing will start it.',
   no_owner: 'Nobody owns it: claim it or drop it.',
+  no_project: 'Delegated outside a project, so the runner has nowhere to start it: move it into a project.',
+  step_dropped: 'Waits for a step that will never finish: change the plan.',
 };
+
+const quoted = (title: string | null) => (title ? `“${readable(title)}”` : 'a step');
+
+/** Where the step a task waits for stands, after "Waits for …". */
+function stepLine(block: Extract<RunnerBlock, { kind: 'depends' }>): string {
+  const name = quoted(block.title);
+  const step = block.step;
+  if (block.status === 'invalidated') return `${name}, which was dropped. Remove the dependency or drop this step`;
+  if (block.status === 'superseded') return `${name}, which was replaced. Point it at the new step`;
+  if (block.status === null) return `a step the brain no longer has. Remove the dependency`;
+  if (!step) return `${name} (${block.status})`;
+  if (step.turn === 'review') {
+    const pr = /\bPR #\d+/.exec(step.waitingOn?.why ?? '')?.[0];
+    return `your review of ${pr ?? name}`;
+  }
+  if (step.group === 'asked') return `your ${step.waitingOn?.kind === 'go' ? 'go' : 'answer'} on ${name}`;
+  if (step.group === 'own') return `your task ${name}`;
+  if (step.group === 'parent') return `${name}, which waits for its parent`;
+  if (step.group === 'nobody') return `${name}, which nobody is on`;
+  if (step.turn === 'agent_working') return `${name}, which ${agentName(step.delegate)} is working on`;
+  if (step.group === 'at_time') return `${name}, which starts at a set time`;
+  if (step.group === 'runner') return `${name}, next in line for the runner`;
+  if (step.group === 'blocked') return `${name}, which waits itself`;
+  if (step.turn === 'waiting_on_others') return `${name}, which waits on ${step.waitingOn?.who ?? step.owner ?? 'someone'}`;
+  return name;
+}
+
+/** Why the runner does not start the task, in words; null when nothing holds it. */
+export function runnerLine(task: Pick<BoardTask, 'runner' | 'delegate'>): string | null {
+  const b = task.runner;
+  const agent = agentName(task.delegate);
+  if (!b) return null;
+  if (b.kind === 'depends') return `Waits for ${stepLine(b)}${b.more > 0 ? ` (and ${b.more} more step${b.more === 1 ? '' : 's'})` : ''}.`;
+  if (b.kind === 'cap') return `Waits for a free slot: ${b.running} of ${b.max} ${b.standalone ? 'delegated tasks' : 'steps of its parent'} run.`;
+  if (b.kind === 'busy') return 'A session is open on it, so the runner leaves it to that session.';
+  if (b.kind === 'held') return `Just handed over, or you work on it with ${agent}: the runner leaves it alone for now.`;
+  if (b.kind === 'parent') return b.status === 'active' || b.status === 'planned' ? 'Starts when its parent task is active.' : 'Its parent task is closed, so it will not start.';
+  if (b.kind === 'no_project') return NOBODY.no_project;
+  if (b.kind === 'other_member') return `${agent} is next in line on ${b.owner ? `${agentName(b.owner)}'s` : 'its owner\'s'} cockpit.`;
+  if (b.kind === 'waiting') return `Waiting on ${b.who}.`;
+  return null;
+}
 
 /** The line under a card's title: what is going on, in words. */
 export function cardLine(task: BoardTask, now: number): string {
@@ -304,15 +420,17 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.pending?.kind === 'review') return 'Closing as reviewed. You can undo this for a few seconds.';
   if (task.turn === 'agent_working') return `${agent} is working on it.`;
   if (task.turn === 'review') return task.waitingOn?.why?.replace(/^Review:\s*/, '') || 'The result is ready for your review.';
+  if (task.reason === 'step_dropped' || task.reason === 'no_project') return runnerLine(task) ?? NOBODY[task.reason];
   if (task.reason) return NOBODY[task.reason];
   if (task.group === 'asked') return task.waitingOn?.why || `${agent} asked you something.`;
-  if (task.group === 'parent') return 'Starts when its parent task is active.';
+  if (task.group === 'parent') return runnerLine(task) ?? 'Starts when its parent task is active.';
+  if (task.group === 'blocked') return runnerLine(task) ?? `${agent} waits before it starts.`;
   if (task.turn === 'waiting_on_others') {
     const who = task.waitingOn?.who ?? task.owner ?? 'someone';
     return task.nextRunAt ? `Waiting on ${who}; ${agent} checks back ${when(task.nextRunAt, now)}.` : `Waiting on ${who}.`;
   }
   if (task.group === 'at_time') return `${agent} starts ${when(task.nextRunAt, now)}.`;
-  if (task.group === 'runner') return `${agent} is next in line for the runner.`;
+  if (task.group === 'runner') return runnerLine(task) ?? `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
   if (task.handTo) return `You worked on it with ${agentName(task.handTo)}. Hand it to ${agentName(task.handTo)} to let it go on alone.`;
   return task.status === 'active' ? 'Your task, in progress.' : 'Your task.';
@@ -323,7 +441,7 @@ export function cardLine(task: BoardTask, now: number): string {
  * urgent says why it sits where it is — an undo window, a question to answer, a stop, a wait for its parent.
  */
 export function statusOrTurn(task: BoardTask, now: number): string {
-  const urgent = task.pending || task.group === 'asked' || task.reason || task.group === 'parent';
+  const urgent = task.pending || task.group === 'asked' || task.reason || task.group === 'parent' || task.group === 'blocked';
   return !urgent && task.statusLine ? task.statusLine.now : cardLine(task, now);
 }
 
@@ -348,7 +466,7 @@ export interface Column {
 }
 
 const NEEDS_YOU_GROUPS: readonly TurnGroup[] = ['asked', 'own', 'parent', 'nobody'];
-const SCHEDULED_GROUPS: readonly TurnGroup[] = ['at_time', 'runner'];
+const SCHEDULED_GROUPS: readonly TurnGroup[] = ['at_time', 'runner', 'blocked'];
 const latest = (t: BoardTask) => t.waitingOn?.since ?? t.updatedAt ?? '';
 
 /** The board's tasks by whose turn it is, newest first, with the groups inside Needs you and Agent scheduled. */
@@ -385,13 +503,23 @@ export function coverageText(task: BoardTask, now: number): string {
     if (c.how === 'working') return `${agent} working now`;
     if (c.how === 'checks_back') return `waiting on ${task.waitingOn?.who ?? 'someone'} · ${agent} checks ${when(c.at, now)}`;
     if (c.how === 'at_time') return `${agent} · ${when(c.at, now)}`;
+    const b = task.runner;
+    if (b?.kind === 'depends') return `${agent} · after ${b.step?.turn === 'review' ? 'your review of ' : ''}${quoted(b.title)}`;
+    if (b?.kind === 'cap') return `${agent} · waits for a free slot (${b.running} of ${b.max} run)`;
+    if (b?.kind === 'busy') return `${agent} · a session is open on it`;
+    if (b?.kind === 'held') return `${agent} · held for now`;
+    if (b?.kind === 'other_member') return `${agent} · next in line on ${b.owner ? `${agentName(b.owner)}'s` : 'its owner\'s'} cockpit`;
     return `${agent} · next in line for the runner`;
   }
   if (c.group === 'ask') return 'answer the agent';
   if (c.group === 'review') return 'review the result';
   if (c.group === 'stopped') return 'agent stopped: continue or close';
   if (c.group === 'blocked') return c.reason === 'steps_wait' ? `start it: ${c.steps} steps wait for it` : 'waits for its parent: start the parent';
-  if (c.group === 'idle') return 'delegated without a checkpoint: set one';
+  if (c.group === 'idle') {
+    if (c.reason === 'no_project') return 'delegated outside a project: move it into one';
+    if (c.reason === 'step_dropped') return 'waits for a step that will never finish: change the plan';
+    return 'delegated without a checkpoint: set one';
+  }
   if (c.group === 'nofollow') return `waiting on ${task.waitingOn?.who ?? 'someone'} · nobody checks back`;
   if (c.group === 'owner') return 'no owner: claim it or drop it';
   if (c.group === 'due') return `due ${task.due ? dueLabel(task.due, now) : ''}`.trim();

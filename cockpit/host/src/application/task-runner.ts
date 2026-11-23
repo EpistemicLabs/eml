@@ -1,6 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
-import { runsHere } from '../domain/task-owner.js'
+import { MAX_RUNNING, runnerBlock } from '../domain/runner-gate.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -21,13 +21,14 @@ import { projectIdForBrain } from '../project-registry.js'
  *     each member's cockpit starts its own member's steps;
  *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
  *     run at most MAX_RUNNING at a time per space.
+ * The checks live in domain/runner-gate.ts, which the task board asks too, so the board names the same reason.
  * Starting it marks it active, so it starts once. Its session gets the task
  * from its first hook: checkpoint before prepares and asks before it acts,
  * after acts and hands the result over for review, none runs to the end.
  * Ticks every interval and when a turn ended.
  */
 
-export const MAX_RUNNING = 5
+export { MAX_RUNNING }
 /** The cap group of the standalone tasks with a checkpoint (steps count per parent). */
 const STANDALONE = '(standalone)'
 
@@ -102,33 +103,33 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     for (const candidate of candidates) {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
-      if (!step.properties?.delegate || step.properties.waiting_on?.who) continue
-      if (!runsHere(space.shared, step, deps.me)) continue
-      if (deps.busy?.(step.id) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
       const group = parentId ?? STANDALONE
       // An active task that only waits for its job's next run holds no slot: nothing runs on it now.
       const holdsSlot = (t: Task) => !deps.scheduled?.(t.id)
-      if (parentId) {
-        const parent = await get(parentId)
-        if (!parent || parent.status !== 'active') continue
-        if (!started.has(group)) {
+      const parent = parentId ? await get(parentId) : undefined
+      if (!started.has(group)) {
+        if (parent) {
           const siblings = await Promise.all(childrenOf(parent).map(get))
           started.set(group, siblings.filter((s) => s?.status === 'active' && holdsSlot(s)).length)
+        } else if (!parentId) {
+          const running = await brain.get('/list', { type: 'task', status: 'active', with_parent: 'true', limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Array<Task & { parent_id?: string | null }> }
+          started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && !t.parent_id && holdsSlot(t)).length)
         }
-      } else if (!started.has(group)) {
-        const running = await brain.get('/list', { type: 'task', status: 'active', with_parent: 'true', limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Array<Task & { parent_id?: string | null }> }
-        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && !t.parent_id && holdsSlot(t)).length)
       }
-      const deps_ = await Promise.all((step.properties?.depends_on ?? []).map(get))
-      if (deps_.some((d) => !d || d.status !== 'resolved')) continue
-      if (started.get(group)! >= MAX_RUNNING) continue
-      const brainProject = step.scope.startsWith('project.') ? step.scope.slice('project.'.length) : null
-      if (!brainProject) {
-        deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
-        continue
-      }
+      const dependsOn = step.properties?.depends_on ?? []
+      const block = runnerBlock({
+        task: step,
+        ...(parentId ? { parent: { id: parentId, task: parent ?? null } } : {}),
+        deps: await Promise.all(dependsOn.map(async (id) => ({ id, task: await get(id) }))),
+        running: started.get(group) ?? 0,
+        shared: space.shared, me: deps.me,
+        busy: deps.busy?.(step.id), held: deps.held?.(step.id), scheduled: deps.scheduled?.(step.id),
+      })
+      if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
+      if (block) continue
+      const brainProject = step.scope.slice('project.'.length)
       const title = step.title ?? step.id
       const brief = deps.brief?.(step.id)
       const problem = deps.start(space, { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) })

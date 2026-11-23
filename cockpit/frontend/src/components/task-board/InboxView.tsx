@@ -1,7 +1,5 @@
 // Inbox: only what is the viewer's turn — questions and results to review.
 // An item clears itself when its session is answered, the result reviewed or the task closed.
-import { useState } from 'react';
-
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
 import { type Board, type BoardTask, fyi, type InboxItem, originName, readable, taskName, when } from '@/lib/task-board';
@@ -9,6 +7,7 @@ import { DAY_MS } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
+import { setFold, useTaskBoardPage } from '@/stores/useTaskBoardPageStore';
 
 import { Fold, FromOrigin, Who } from './parts';
 import { UnreadFold } from './UnreadFold';
@@ -47,8 +46,8 @@ export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, 
   onOpen: (item: InboxItem) => void;
   onAction: (action: InboxAction) => void;
 }) {
-  const [showFyi, setShowFyi] = useState(false);
-  const [showSnoozed, setShowSnoozed] = useState(false);
+  // Kept outside the page: leaving for a desk and coming back finds the folds as they were.
+  const { fyi: showFyi, snoozed: showSnoozed } = useTaskBoardPage().folds;
   const byId = new Map(board.tasks.map((t) => [t.id, t]));
   const results = fyi(board.tasks);
   let day: string | null = null;
@@ -77,14 +76,14 @@ export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, 
             </div>
           );
         })}
-        <Fold label={`FYI · ${results.length} result${results.length === 1 ? '' : 's'}, nothing to do`} open={showFyi} onToggle={() => setShowFyi(!showFyi)} />
+        <Fold label={`FYI · ${results.length} result${results.length === 1 ? '' : 's'}, nothing to do`} open={showFyi} onToggle={() => setFold('fyi', !showFyi)} />
         {showFyi && results.map((t) => (
           <div key={t.id} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
             <time className="w-16 shrink-0 tabular-nums text-caption">{when(t.updatedAt, now)}</time>
             <span><b className="font-medium text-foreground">{taskName(t)}</b> · done by {t.delegate}</span>
           </div>
         ))}
-        {board.snoozed.length > 0 && <Fold label={`Snoozed · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setShowSnoozed(!showSnoozed)} />}
+        {board.snoozed.length > 0 && <Fold label={`Snoozed · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setFold('snoozed', !showSnoozed)} />}
         {showSnoozed && board.snoozed.map((item) => (
           <div key={item.key} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
             <time className="w-16 shrink-0 tabular-nums text-caption">{when(item.until, now)}</time>
