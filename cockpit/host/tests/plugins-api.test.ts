@@ -171,7 +171,7 @@ describe('custom MCP plugins', () => {
     expect(listed).not.toContain('abc')
     expect(listed).not.toContain('"eu"')
     const file = join(home, 'plugins', 'custom.json')
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
     expect(JSON.parse(readFileSync(file, 'utf8')).plugins[0]).toMatchObject({ id: 'lookup', tier: 'custom' })
   })
 
@@ -220,7 +220,7 @@ describe('plugins per space', () => {
     expect(connection).toMatchObject({ plugin: 'gmail', label: 'Test mailbox', secrets: ['token'] })
     const listed = JSON.stringify(await (await fetch(`${base}/api/plugins/connections`)).json())
     expect(listed).not.toContain('placeholder-value')
-    expect(statSync(join(home, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(home, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
     // A connection of another plugin can't be picked.
     expect((await patch({ id: 'time', enabled: true, space: 'main', connection: connection.id })).status).toBe(400)
     expect((await patch({ id: 'gmail', enabled: true, space: 'main', connection: connection.id })).status).toBe(200)
@@ -310,7 +310,7 @@ describe('plugins per space', () => {
     expect((await put(gone)).status).toBe(400)
     expect(await (await put(earlier)).json()).toMatchObject({ configured: true })
     expect(JSON.parse(readFileSync(join(home, 'plugins', 'google', 'client.json'), 'utf8')).installed.client_id).toBe('client-placeholder')
-    expect(statSync(join(home, 'plugins', 'google', 'client.json')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(home, 'plugins', 'google', 'client.json')).mode & 0o777).toBe(0o600)
     for (const id of [earlier, gone]) await fetch(`${base}/api/plugins/connections/${id}`, { method: 'DELETE' })
   })
 

@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // Design tokens v2: every number a component needs comes from a token in index.css.
@@ -168,7 +168,8 @@ function cssLiterals(): number {
 function measure(): Record<string, number> {
   const out: Record<string, number> = {};
   for (const file of sourceFiles()) {
-    const rel = relative(SRC, file);
+    // The baseline names files with '/', on every OS.
+    const rel = relative(SRC, file).split(sep).join('/');
     const text = readFileSync(file, 'utf8');
     let n = count(ARBITRARY, text);
     if (!(rel in COLOUR_EXCEPTIONS)) n += count(COLOUR, text);
@@ -206,7 +207,8 @@ describe('no magic numbers', () => {
   it('allows no literal, raw scale step or off-scale opacity in v2 directories', () => {
     const found: string[] = [];
     for (const file of sourceFiles()) {
-      const rel = relative(SRC, file);
+      // The baseline names files with '/', on every OS.
+    const rel = relative(SRC, file).split(sep).join('/');
       if (!V2_DIRS.some((d) => rel.startsWith(d + '/'))) continue;
       const text = readFileSync(file, 'utf8');
       for (const re of [ARBITRARY, COLOUR, RAW_SCALE]) for (const m of text.matchAll(re)) found.push(`${rel}: ${m[0]}`);
