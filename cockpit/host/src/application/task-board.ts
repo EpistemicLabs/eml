@@ -7,7 +7,7 @@ import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
 } from '../domain/task-turn.js'
-import type { TaskCommand } from './task-commands.js'
+import type { ReopenItem, TaskCommand } from './task-commands.js'
 
 /**
  * The task board's read model (decision whose-turn-derived-in-cockpit-host): the open tasks of every
@@ -57,6 +57,33 @@ export interface BoardTask {
   handTo?: string
   /** A command on it still in its undo window. */
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
+  /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
+  reopenedWith?: ReopenItem[]
+}
+
+/**
+ * A closed task (resolved, dropped or replaced) for the panel's Reopen and ⌘K: the latest CLOSED_LIMIT of each
+ * status. `blocked` says up front why Reopen would be refused, as far as the lists show it; the host checks again.
+ */
+export interface ClosedTask {
+  id: string
+  spaceId: string
+  spaceName: string
+  project: string | null
+  title: string
+  displayTitle?: string
+  status: string
+  closedAt: string | null
+  outcome?: string
+  owner?: string
+  delegate?: string
+  checkpoint?: string
+  stage?: string
+  parentId: string | null
+  originId: string | null
+  sessionIds: string[]
+  blocked?: 'superseded' | 'parent_closed'
+  pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
 }
 
 /** A closed task the board leaves out that a tree still needs: an ancestor of a task with a session. */
@@ -85,6 +112,8 @@ export interface Board {
   spaces: Array<{ id: string; name: string; agents: string[] }>
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>
   tasks: BoardTask[]
+  /** Closed tasks, newest first per space: what the panel can reopen and ⌘K finds. */
+  closed: ClosedTask[]
   lineage: LineageTask[]
   inbox: InboxItem[]
   snoozed: InboxItem[]
@@ -105,6 +134,10 @@ export interface TaskBoardDeps {
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
+  /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
+  reopenedWith?(taskId: string): ReopenItem[]
+  /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
+  ledgerSessionsOn?(taskId: string): string[]
   now(): number
   log(line: string): void
   /**
@@ -135,6 +168,9 @@ const HEAD_WAIT_MS = 25_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
+/** How many dropped (invalidated) and replaced (superseded) tasks per space the board keeps for Reopen and ⌘K. */
+const CLOSED_LIMIT = 50
+const CLOSED_STATUSES = new Set(['resolved', 'invalidated', 'superseded'])
 /** How far up a tree the board follows closed ancestors that its lists leave out. */
 const LINEAGE_DEPTH = 8
 
@@ -156,6 +192,8 @@ interface Row {
     due_date?: string
     depends_on?: string[]
     waiting_on?: WaitingOn
+    outcome?: string
+    stage?: string
   }
 }
 
@@ -229,6 +267,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     if (!command || command.state !== 'pending') return row
     if (command.kind === 'review') return { ...row, status: 'resolved', updated_at: command.createdAt || row.updated_at }
     if (command.kind === 'close') return { ...row, status: 'invalidated' }
+    if (command.kind === 'reopen') {
+      const { waiting_on: _wait, outcome: _outcome, ...props } = row.properties ?? {}
+      return { ...row, status: 'active', properties: props }
+    }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
       const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
@@ -245,7 +287,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const now = deps.now()
     const pending = deps.pendingCommands()
     const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
-    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
+    const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], closed: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
 
     for (const space of deps.spaces()) {
@@ -257,16 +299,40 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         board.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
       const origins = { with_origin: 'true' }
-      const [planned, active, resolved] = await Promise.all([
-        list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
+      const latest = { order_by: 'updated_at', ...origins }
+      const [planned, active, resolved, invalidated, superseded] = await Promise.all([
+        list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { ...latest, limit: RESOLVED_LIMIT }),
+        list(brain, 'invalidated', { ...latest, limit: CLOSED_LIMIT }), list(brain, 'superseded', { ...latest, limit: CLOSED_LIMIT }),
       ])
-      const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents))
-      const statusOf = new Map(rows.map((r) => [r.id, r.status]))
+      const rows = [...planned, ...active, ...resolved, ...invalidated, ...superseded].map((row) => overlay(row, commandOf(row.id), agents))
+      // What a task's facts read of the others: open and resolved ones, as before closed tasks were listed.
+      const statusOf = new Map(rows.filter((r) => r.status === 'planned' || r.status === 'active' || r.status === 'resolved').map((r) => [r.id, r.status]))
+      const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
 
       const spaceTasks: BoardTask[] = []
       for (const row of rows) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
+        if (CLOSED_STATUSES.has(row.status)) {
+          const command = commandOf(row.id)
+          // A parent the open lists don't hold is closed (the board loads every open task).
+          const blocked = row.status === 'superseded' ? 'superseded' as const : row.parent_id && !isOpen(row.parent_id) ? 'parent_closed' as const : undefined
+          board.closed.push({
+            id: row.id, spaceId: space.id, spaceName: space.name, project: projectOf(row.scope), title: row.title ?? row.id,
+            ...(props.display_title ? { displayTitle: props.display_title } : {}),
+            status: row.status, closedAt: row.updated_at ?? null,
+            ...(props.outcome ? { outcome: props.outcome } : {}),
+            ...(props.assignee_ids?.[0] ? { owner: props.assignee_ids[0] } : {}),
+            ...(props.delegate ? { delegate: props.delegate } : {}),
+            ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
+            ...(props.stage ? { stage: props.stage } : {}),
+            parentId: row.parent_id ?? null, originId: row.origin_task_id ?? null,
+            sessionIds: deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId),
+            ...(blocked ? { blocked } : {}),
+            ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
+          })
+          if (row.status === 'superseded') continue
+        }
         const facts: TaskFacts = {
           status: row.status,
           owner: props.assignee_ids?.[0],
@@ -319,6 +385,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return agent ? { handTo: agent } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
+          ...(() => {
+            const items = row.status === 'active' ? deps.reopenedWith?.(row.id) ?? [] : []
+            return items.length ? { reopenedWith: items } : {}
+          })(),
         })
         if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
       }

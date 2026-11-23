@@ -9,7 +9,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 type Task = { id: string; status: string; scope?: string; title?: string; properties: Record<string, unknown>; relations?: Array<{ source_id: string; target_id: string; relation: string }> }
 
-function world(tasks: Task[], opts: { bound?: string[] } = {}) {
+function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id: string; type: string; title: string | null; status: string }> } = {}) {
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
   const brain = {
@@ -28,7 +28,7 @@ function world(tasks: Task[], opts: { bound?: string[] } = {}) {
         else if (v === null) delete t.properties[k]
         else t.properties[k] = v
       }
-      return t
+      return body.status === 'active' && opts.candidates ? { ...t, reopen_candidates: opts.candidates } : t
     },
   }
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
@@ -38,6 +38,7 @@ function world(tasks: Task[], opts: { bound?: string[] } = {}) {
   const store = new TaskCommandStore(join(dir, `${Math.random()}.json`))
   const deps: TaskCommandsDeps = {
     store,
+    viewer: 'lasse',
     space: (id) => (id === 'main' ? (space as never) : undefined),
     brain: () => brain,
     agentsOf: async () => ['atlas', 'motti'],
@@ -189,6 +190,82 @@ describe('looks good, snooze, close', () => {
 
     const bound = world([owned('t3', {}, 'active')], { bound: ['n1'] })
     expect(await bound.commands.submit({ opId: 'op-4', kind: 'close', spaceId: 'main', taskId: 't3' })).toMatchObject({ ok: false, refusal: 'bound_items' })
+  })
+})
+
+describe('reopen', () => {
+  it('reopens a closed task as active after the window: wait cleared, delegate and checkpoint kept, nothing started', async () => {
+    const w = world([owned('t1', { delegate: 'atlas', checkpoint: 'after', waiting_on: { who: 'lasse', kind: 'review' } }, 'resolved')])
+    const r = await w.commands.submit({ opId: 'op-r', kind: 'reopen', spaceId: 'main', taskId: 't1', reason: 'Lasse found a bug' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'pending', kind: 'reopen' } })
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { status: 'active', waiting_on: null, text: 'Reopened on the task board by the owner. Why: Lasse found a bug' } }])
+    expect(w.byId.get('t1')).toMatchObject({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after' } })
+    expect(w.byId.get('t1')!.properties.waiting_on).toBeUndefined()
+    expect(w.jobs).toEqual([])
+  })
+
+  it('undo inside the window leaves the task closed; the same opId twice reopens once', async () => {
+    const w = world([owned('t1', {}, 'invalidated'), owned('t2', {}, 'resolved')])
+    await w.commands.submit({ opId: 'op-u', kind: 'reopen', spaceId: 'main', taskId: 't1' })
+    expect(await w.commands.undo('op-u')).toEqual({ ok: true })
+    await w.commands.submit({ opId: 'op-2', kind: 'reopen', spaceId: 'main', taskId: 't2' })
+    await w.commands.submit({ opId: 'op-2', kind: 'reopen', spaceId: 'main', taskId: 't2' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/t2/track'])
+    expect(w.byId.get('t1')!.status).toBe('invalidated')
+  })
+
+  it('refuses an open task, an unknown one, another owner\'s, a replaced one and one under a closed parent', async () => {
+    const w = world([
+      owned('open', {}, 'active'),
+      { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } },
+      { ...owned('old', {}, 'resolved'), relations: [{ source_id: 'new', target_id: 'old', relation: 'supersedes' }] },
+      { ...owned('new', { display_title: 'The new plan' }, 'active') },
+      owned('gone', {}, 'superseded'),
+      { ...owned('step', {}, 'resolved'), relations: [{ source_id: 'step', target_id: 'parent', relation: 'part_of' }] },
+      owned('parent', { display_title: 'Big parent' }, 'resolved'),
+    ])
+    const reopen = (taskId: string) => w.commands.submit({ opId: `op-${taskId}`, kind: 'reopen', spaceId: 'main', taskId })
+    expect(await reopen('open')).toMatchObject({ ok: false, refusal: 'task_open' })
+    expect(await reopen('nope')).toMatchObject({ ok: false, refusal: 'unknown_task' })
+    expect(await reopen('theirs')).toMatchObject({ ok: false, refusal: 'not_owner', message: expect.stringContaining('dominik') })
+    expect(await reopen('old')).toMatchObject({ ok: false, refusal: 'superseded', message: expect.stringContaining('The new plan') })
+    expect(await reopen('gone')).toMatchObject({ ok: false, refusal: 'superseded' })
+    expect(await reopen('step')).toMatchObject({ ok: false, refusal: 'parent_closed', message: expect.stringContaining('Big parent') })
+    // Once the replacement is dropped and the parent is open again, both may come back.
+    w.byId.get('new')!.status = 'invalidated'
+    w.byId.get('parent')!.status = 'active'
+    expect(await reopen('old')).toMatchObject({ ok: true })
+    expect(await reopen('step')).toMatchObject({ ok: true })
+    expect(w.posts).toEqual([])
+  })
+
+  it('leaves closed steps closed and lists what closed with the task for the chat', async () => {
+    const steps = { relations: [{ source_id: 's1', target_id: 'p1', relation: 'part_of' }, { source_id: 's2', target_id: 'p1', relation: 'part_of' }] }
+    const w = world([{ ...owned('p1', {}, 'resolved'), ...steps }, owned('s1', {}, 'resolved'), owned('s2', {}, 'invalidated')],
+      { candidates: [{ id: 'd1', type: 'decision', title: 'use-postgres', status: 'resolved' }] })
+    await w.commands.submit({ opId: 'op-p', kind: 'reopen', spaceId: 'main', taskId: 'p1' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts[0].body.text).toBe('Reopened on the task board by the owner. 2 closed steps stay closed.')
+    expect(w.posts[1].body.text).toContain('decision use-postgres (d1)')
+    expect(w.byId.get('s1')!.status).toBe('resolved')
+    expect(w.commands.reopenedWith('p1')).toEqual([{ id: 'd1', type: 'decision', title: 'use-postgres' }])
+  })
+
+  it('fails instead of reopening when the task changed in the window', async () => {
+    const w = world([owned('t1', {}, 'resolved')])
+    await w.commands.submit({ opId: 'op-f', kind: 'reopen', spaceId: 'main', taskId: 't1' })
+    w.byId.get('t1')!.status = 'active'
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.store.get('op-f')).toMatchObject({ state: 'failed', error: 'task_open' })
   })
 })
 

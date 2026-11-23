@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, closeTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, closeTask, closedAsTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
@@ -18,7 +18,7 @@ import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
 import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
 import { openItemIn, type OpenItem, setFold, setOpenItem, useTaskBoardPage } from '@/stores/useTaskBoardPageStore';
-import { getTaskView, setTaskView, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
+import { clearTaskPanelRequest, getTaskView, setTaskView, useTaskPanelRequest, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
@@ -67,7 +67,8 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const seenPicks = useRef(picks);
   useEffect(() => { if (picks !== seenPicks.current) { seenPicks.current = picks; setOpen(null); } }, [picks]);
 
-  const byId = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.id, t])), [board]);
+  // A closed task opens in the panel too (Reopen lives there); an open one wins while a reopen is in its undo window.
+  const byId = useMemo(() => new Map([...(board?.closed ?? []).map((c) => [c.id, closedAsTask(c)] as const), ...(board?.tasks ?? []).map((t) => [t.id, t] as const)]), [board]);
   const task = open?.taskId ? byId.get(open.taskId) : undefined;
   // A session with no task on the board: it opens on its own where a task would.
   const sessionOnly = open && !task ? open.sessionId : undefined;
@@ -79,6 +80,15 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
     setOpen({ taskId: t.id, ...(sessionId ? { sessionId } : {}) });
   }, [spaces]);
+
+  // ⌘K asked for a task's panel (a closed one): open it once the board has it.
+  const panelRequest = useTaskPanelRequest();
+  useEffect(() => {
+    if (!panelRequest || !board) return;
+    const t = byId.get(panelRequest);
+    clearTaskPanelRequest();
+    if (t) openTask(t);
+  }, [panelRequest, board, byId, openTask]);
 
   /** Show a command's answer: an Undo toast until its deadline, or why it was refused. */
   const answered = useCallback((answer: CommandAnswer, done: string, afterUndo?: () => void) => {
@@ -111,7 +121,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     const space = spaces.find((s) => s.id === t.spaceId);
     const paneId = t.project ? addWorkerPane({
       fromSessionId: null, projectId: projectIdOfBrain(t.project), title: taskName(t), deskId, taskId: t.id,
-      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`].filter(Boolean).join('\n\n'),
+      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+        // Reopened on the board: what closed with it comes back only on the owner's yes.
+        t.reopenedWith?.length ? `The task was reopened. These closed with it and are not back yet: ${t.reopenedWith.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')}. Ask the user which still hold, and bring those back with eml_update status active.` : null,
+      ].filter(Boolean).join('\n\n'),
       ...(space ? { spaceId: paneSpaceKey(space) } : {}),
     }) : null;
     answered(answer, `Opened in desk ${input.desk}.`, () => { if (paneId) removePane(paneId); });
@@ -189,6 +202,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
       onReview={async (t) => answered(await reviewDone(t), 'Closed as reviewed.')}
+      onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onClose={() => setOpen(null)}
     />
   ) : sessionOnly ? (

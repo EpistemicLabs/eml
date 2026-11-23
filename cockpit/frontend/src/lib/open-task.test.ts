@@ -83,4 +83,20 @@ describe('searching open tasks', () => {
   it('keeps to one project when asked (the tasks card\'s more link)', () => {
     expect(searchTasks(board, '', { project: 'northwind' }).flatMap((g) => g.tasks.map((t) => t.id))).toEqual(['northwind-cancellation-rescue']);
   });
+
+  it('finds closed tasks too, after the open ones and newest closed first, but only for a search', () => {
+    const closed = (id: string, status: string, closedAt: string, project = 'ui') => ({ id, spaceId: 'eml', spaceName: 'EML', project, title: id, status, closedAt, parentId: null, originId: null, sessionIds: [] });
+    const withClosed = { ...board, closed: [
+      closed('phone-close-old-try', 'invalidated', '2026-11-10T10:00:00Z'),
+      closed('phone-close-first', 'resolved', '2026-11-15T10:00:00Z'),
+      closed('northwind-old', 'resolved', '2026-11-16T10:00:00Z', 'northwind'),
+    ] } as unknown as Board;
+    expect(searchTasks(withClosed, 'phone close').map((g) => [g.name, g.closed ?? false, g.tasks.map((t) => t.id)])).toEqual([
+      ['Tasks', false, ['phone-close-button']],
+      ['Closed', true, ['phone-close-first', 'phone-close-old-try']],
+    ]);
+    expect(searchTasks(withClosed, 'old try').map((g) => g.name)).toEqual(['Closed']);
+    expect(searchTasks(withClosed, 'old', { project: 'northwind' }).flatMap((g) => g.tasks.map((t) => t.id))).toEqual(['northwind-old']);
+    expect(searchTasks(withClosed, '').some((g) => g.closed)).toBe(false);
+  });
 });

@@ -39,3 +39,24 @@ export function setTaskView(view: TaskView): void {
 export function useTaskView(): { view: TaskView; picks: number } {
   return useSyncExternalStore(subscribe, () => state);
 }
+
+// A task to open in the board's panel from elsewhere (⌘K on a closed task): the board takes it once it has loaded.
+let panelRequest: string | null = null;
+const panelListeners = new Set<() => void>();
+
+/** Show the Tasks screen with this task open in its panel. */
+export function requestTaskPanel(taskId: string): void {
+  panelRequest = taskId;
+  for (const listener of panelListeners) listener();
+}
+
+/** The board took the request (or it can't be shown). */
+export function clearTaskPanelRequest(): void {
+  if (panelRequest === null) return;
+  panelRequest = null;
+  for (const listener of panelListeners) listener();
+}
+
+export function useTaskPanelRequest(): string | null {
+  return useSyncExternalStore((listener) => { panelListeners.add(listener); return () => { panelListeners.delete(listener); }; }, () => panelRequest);
+}
