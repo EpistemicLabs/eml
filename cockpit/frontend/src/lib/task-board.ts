@@ -353,11 +353,20 @@ export function coverageText(task: BoardTask, now: number): string {
   return 'your task';
 }
 
-export interface PlanFilter { everyone: boolean; spaceId: string | null }
+/** The Owner and Space picks Now and Plan share. */
+export interface TaskFilter { everyone: boolean; spaceId: string | null }
 
-/** Open tasks in Plan: the viewer's and those nobody owns (Everyone: all), in one space or all. */
-export const visibleInPlan = (task: BoardTask, viewer: string, f: PlanFilter) =>
-  task.status !== 'resolved' && (f.everyone || !task.owner || task.owner === viewer) && (!f.spaceId || task.spaceId === f.spaceId);
+/** The filter as the board can use it: a space the board no longer has falls back to All. */
+export const resolveFilter = (f: TaskFilter, spaces: Board['spaces']): TaskFilter =>
+  f.spaceId && !spaces.some((s) => s.id === f.spaceId) ? { ...f, spaceId: null } : f;
+
+/** A task the filter keeps: the viewer's and those nobody owns (Everyone: all), in one space or all. */
+export const inFilter = (task: BoardTask, viewer: string, f: TaskFilter) =>
+  (f.everyone || !task.owner || task.owner === viewer) && (!f.spaceId || task.spaceId === f.spaceId);
+
+/** Open tasks in Plan, as the filter keeps them. */
+export const visibleInPlan = (task: BoardTask, viewer: string, f: TaskFilter) =>
+  task.status !== 'resolved' && inFilter(task, viewer, f);
 
 /** Plan's two boxes: important top-level tasks nothing moves without the viewer (by reason), and those an agent covers. */
 export function focus(tasks: BoardTask[]) {
@@ -420,7 +429,7 @@ export function projectRows(tasks: BoardTask[], projects: Board['projects']): Pr
  * The projects Plan's table leaves out: those without an open task the filter shows (none at all,
  * or only someone else's), in the chosen space, by name. The global scope is not a project.
  */
-export function quietProjects(rows: ProjectRow[], projects: Board['projects'], f: PlanFilter): Board['projects'] {
+export function quietProjects(rows: ProjectRow[], projects: Board['projects'], f: TaskFilter): Board['projects'] {
   const shown = new Set(rows.map((r) => r.key));
   return projects
     .filter((p) => p.id !== 'global' && (!f.spaceId || p.spaceId === f.spaceId) && !shown.has(`${p.spaceId}/${p.id}`))

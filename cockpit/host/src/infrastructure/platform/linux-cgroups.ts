@@ -8,8 +8,10 @@ import { noSessionMemory, type SessionLimits, type SessionMemory } from '../../d
  * unit has Delegate=yes, so its cgroup belongs to the host:
  *
  *   eml-cockpit-<port>.service/
- *     host/                 the host and everything it starts for itself
- *     session-<id>/         one session's process tree, memory.max + memory.swap.max
+ *     host/                 the host and everything it starts for itself (the brain
+ *                           server, the channel bridge); memory.swap.max 0
+ *     session-<id>/         one session's process tree, memory.max + memory.high +
+ *                           memory.swap.max
  *
  * A cgroup with children may hold no processes itself, so the host first moves
  * into host/, then turns the memory and pids controllers on for the children.
@@ -17,6 +19,14 @@ import { noSessionMemory, type SessionLimits, type SessionMemory } from '../../d
  * process of the group, not the whole session. OOMPolicy=continue keeps systemd
  * from failing the unit when that happens. Stopping the unit still ends every
  * group (KillMode=control-group covers the whole subtree).
+ *
+ * Under memory pressure the sessions give way, not the host and the brain:
+ * - host/ may not swap. A brain server whose pages sit in swap stalls every
+ *   request while they come back from disk; its few hundred MB stay in RAM.
+ * - A session slows down and gives back memory at memory.high (a share of its
+ *   ceiling) before the kernel kills anything at memory.max.
+ * - A session's processes rank higher for the kernel's OOM killer than the
+ *   host's (oom_score_adj; children inherit it). Raising it needs no privilege.
  */
 
 export interface CgroupOptions {
@@ -27,8 +37,15 @@ export interface CgroupOptions {
   /** Whether systemd delegated the unit's cgroup (Delegate=yes); without it systemd may reset what the host sets. */
   delegated?: (unit: string) => boolean
   pid?: number
+  /** Where /proc is mounted (oom_score_adj of a session's process). */
+  proc?: string
   log?: (line: string) => void
 }
+
+/** memory.high as a share of the ceiling: past it the session is slowed and reclaimed, not killed. */
+export const HIGH_SHARE = 0.75
+/** oom_score_adj of a session's process tree; systemd starts user units at 200, so the host stays below. */
+export const SESSION_OOM_SCORE_ADJ = 500
 
 const CONTROLLERS = ['memory', 'pids']
 
@@ -44,7 +61,7 @@ function systemdDelegates(unit: string): boolean {
 }
 
 /** The service's own cgroup, with the host moved into host/ and the controllers on for sessions; or why not. */
-function setUp(opts: Required<Omit<CgroupOptions, 'log'>>): { root: string } | { why: string } {
+function setUp(opts: Required<Omit<CgroupOptions, 'log' | 'proc'>>): { root: string } | { why: string } {
   let line: string | undefined
   try { line = opts.selfCgroup().split('\n').find((l) => l.startsWith('0::')) } catch { /* no /proc */ }
   if (!line) return { why: 'no cgroup v2' }
@@ -77,6 +94,11 @@ function setUp(opts: Required<Omit<CgroupOptions, 'log'>>): { root: string } | {
   }
 }
 
+/** Best effort: the setting helps under pressure, nothing depends on it. */
+function tryWrite(file: string, value: string, log: (line: string) => void, what: string): void {
+  try { fs.writeFileSync(file, value) } catch (error) { log(`[memory] ${what}: ${(error as Error).message}`) }
+}
+
 export function cgroupSessionMemory(options: CgroupOptions = {}): SessionMemory {
   const log = options.log ?? (() => {})
   const setup = setUp({
@@ -87,6 +109,8 @@ export function cgroupSessionMemory(options: CgroupOptions = {}): SessionMemory 
   })
   if ('why' in setup) return noSessionMemory(setup.why)
   const { root } = setup
+  const proc = options.proc ?? '/proc'
+  tryWrite(path.join(root, 'host', 'memory.swap.max'), '0', log, 'the host and the brain may still be swapped out')
   const dir = (sessionId: string) => path.join(root, groupName(sessionId))
 
   return {
@@ -97,7 +121,9 @@ export function cgroupSessionMemory(options: CgroupOptions = {}): SessionMemory 
         fs.mkdirSync(group, { recursive: true })
         fs.writeFileSync(path.join(group, 'memory.max'), limits.memoryBytes === null ? 'max' : String(limits.memoryBytes))
         fs.writeFileSync(path.join(group, 'memory.swap.max'), limits.memoryBytes === null ? 'max' : String(limits.swapBytes))
+        tryWrite(path.join(group, 'memory.high'), limits.memoryBytes === null ? 'max' : String(Math.round(limits.memoryBytes * HIGH_SHARE)), log, `session ${sessionId} has no memory.high`)
         fs.writeFileSync(path.join(group, 'cgroup.procs'), String(pid))
+        tryWrite(path.join(proc, String(pid), 'oom_score_adj'), String(SESSION_OOM_SCORE_ADJ), log, `session ${sessionId} keeps the host's OOM rank`)
         return true
       } catch (error) {
         log(`[memory] session ${sessionId} runs without a ceiling: ${(error as Error).message}`)

@@ -39,6 +39,22 @@ export function noSessionMemory(why: string): SessionMemory {
 }
 
 const GB = 1024 ** 3
+const MB = 1024 ** 2
+
+/**
+ * A heap cap for the Node processes a session starts (dev servers, builds,
+ * scripts): half its ceiling. A Node process past it stops with a clear "heap
+ * out of memory" error instead of growing until the kernel kills the largest
+ * process of the session, which can be the agent itself. An explicit
+ * --max-old-space-size in NODE_OPTIONS wins; no ceiling means no cap. Only where
+ * the ceiling is in force (cgroups), so a cap never stands alone.
+ */
+export function heapCapEnv(limits: SessionLimits, nodeOptions: string | undefined): { NODE_OPTIONS?: string } {
+  if (limits.memoryBytes === null) return {}
+  if (nodeOptions && /--max-old-space-size\b/.test(nodeOptions)) return {}
+  const capMb = Math.max(512, Math.floor(limits.memoryBytes / 2 / MB))
+  return { NODE_OPTIONS: [nodeOptions?.trim(), `--max-old-space-size=${capMb}`].filter(Boolean).join(' ') }
+}
 
 /** "2 GB", "1.5 GB" */
 export function formatBytes(bytes: number): string {

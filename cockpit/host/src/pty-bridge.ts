@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { WebSocket, type RawData } from 'ws'
-import type { SessionLimits, SessionMemory } from './domain/session-memory.js'
+import { heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { IPty } from 'node-pty'
 import type { ITerminalAddon as IHeadlessAddon, Terminal as HeadlessTerminalType } from '@xterm/headless'
 import type { SerializeAddon as SerializeAddonType } from '@xterm/addon-serialize'
@@ -550,6 +550,7 @@ export class PtyBridge {
         COLORFGBG: isDarkMode ? '15;0' : '0;15',
         ...launch.env,
         ...this.ctx.sessionEnv,
+        ...(this.ctx.sessionLimits && this.ctx.memory?.unavailable === null ? heapCapEnv(this.ctx.sessionLimits(), { ...baseAgentEnv(), ...launch.env, ...this.ctx.sessionEnv }.NODE_OPTIONS) : {}),
         COCKPIT_SESSION_ID: sessionId,
         ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
       },
