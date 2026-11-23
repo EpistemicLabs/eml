@@ -1,4 +1,4 @@
-import { kebabTitle } from './task-title.js'
+import { displayTitleOf, kebabTitle } from './task-title.js'
 
 /**
  * Sort a drifted session: a long session covered many topics, and each one should land where it
@@ -23,7 +23,7 @@ export interface SortRow {
 export type SortAction =
   | { kind: 'link_sub'; taskId: string }
   | { kind: 'link_spun'; taskId: string }
-  | { kind: 'create'; title: string; content: string; parent: boolean; origin: boolean }
+  | { kind: 'create'; title: string; displayTitle?: string; content: string; parent: boolean; origin: boolean }
   | { kind: 'close'; taskId: string }
 
 /** What applying the rows does, in order; topics kept here, or dropped without a task, do nothing. */
@@ -41,7 +41,8 @@ export function planSort(sessionTaskId: string, rows: SortRow[]): SortAction[] {
     if (row.pick === 'drop') continue
     const title = kebabTitle(topic)
     if (!title) continue
-    actions.push({ kind: 'create', title, content: [topic, row.brief?.trim()].filter(Boolean).join('\n\n'), parent: row.pick === 'sub', origin: row.pick === 'spun' })
+    const displayTitle = displayTitleOf(topic)
+    actions.push({ kind: 'create', title, ...(displayTitle ? { displayTitle } : {}), content: [topic, row.brief?.trim()].filter(Boolean).join('\n\n'), parent: row.pick === 'sub', origin: row.pick === 'spun' })
   }
   return actions
 }

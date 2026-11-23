@@ -148,6 +148,8 @@ describe('session task', () => {
     ledger.setAgentTitle(id(8), 'Email Lord')
     const text = await tasks.context(id(8))
     expect(brain.tasks.get('t1')!.title).toBe('email-lord')
+    // the anchor is the kebab; the name people read is the session's whole name
+    expect(brain.posts.find((p) => p.path === '/task/t1/track')?.body).toMatchObject({ title: 'email-lord', display_title: 'Email Lord' })
     expect(text).toContain('**email-lord** · t1')
     expect(text).not.toContain('takes the session\'s name')
   })

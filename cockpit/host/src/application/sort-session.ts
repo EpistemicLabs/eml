@@ -81,7 +81,7 @@ export function createSortSession(deps: SortSessionDeps) {
           const key = String(i)
           if (!progress.created[key]) {
             progress.created[key] = (await brain.post('/engram/task', {
-              title: action.title, content: action.content, scope: source?.scope ?? 'global', status: 'planned',
+              title: action.title, ...(action.displayTitle ? { display_title: action.displayTitle } : {}), content: action.content, scope: source?.scope ?? 'global', status: 'planned',
               ...(action.parent ? { parent_id: sourceId } : {}),
             }) as { id: string }).id
             save({ sortProgress: progress })

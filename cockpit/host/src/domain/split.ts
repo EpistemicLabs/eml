@@ -10,7 +10,7 @@
  * that holds the brief.
  */
 
-import { kebabTitle } from './task-title.js'
+import { displayTitleOf, kebabTitle } from './task-title.js'
 
 export type SplitRelation = 'spun' | 'sub' | 'unrelated'
 export type SplitWhen = 'now' | 'park'
@@ -38,7 +38,7 @@ export interface SplitRequest {
 }
 
 export interface SplitPlan {
-  task: { title: string; content: string; scope: string; status: 'active' | 'planned'; parent_id?: string } | null
+  task: { title: string; display_title?: string; content: string; scope: string; status: 'active' | 'planned'; parent_id?: string } | null
   /** Link the new task to the session's task as the task it was spun off from (derived_from). */
   originLink: boolean
   journal: { created?: string; source?: string; existing?: string }
@@ -53,6 +53,8 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   const brief = request.brief.trim()
   const anchor = kebabTitle(title)
   if (!anchor || !brief) return { ok: false, refusal: 'invalid' }
+  const display = displayTitleOf(title)
+  const named = display ? { display_title: display } : {}
   const hasTask = source.taskSystem && source.taskId !== null
   const from = `${source.taskTitle ?? source.taskId} (session ${source.sessionTitle})`
 
@@ -82,7 +84,7 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
     return {
       ok: true,
       plan: {
-        task: { title: anchor, content: `${body}\n\nCame up in session ${source.sessionTitle}.`, scope: request.scope, status },
+        task: { title: anchor, ...named, content: `${body}\n\nCame up in session ${source.sessionTitle}.`, scope: request.scope, status },
         originLink: false,
         journal: {},
         spawn: false,
@@ -98,7 +100,7 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   return {
     ok: true,
     plan: {
-      task: { title: anchor, content: body, scope: request.scope, status, ...(request.relation === 'sub' ? { parent_id: source.taskId! } : {}) },
+      task: { title: anchor, ...named, content: body, scope: request.scope, status, ...(request.relation === 'sub' ? { parent_id: source.taskId! } : {}) },
       originLink: request.relation === 'spun',
       journal,
       spawn,

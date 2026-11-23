@@ -3,7 +3,7 @@ import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
-import { kebabTitle } from '../domain/task-title.js'
+import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session in
@@ -37,7 +37,7 @@ interface Task {
   title: string | null
   content: string
   status: string
-  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string; delegate?: string }
+  properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string; delegate?: string; display_title?: string }
 }
 
 /** The name a task gets before its session has one. */
@@ -46,18 +46,23 @@ const PLACEHOLDER = /^session-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/
 export const placeholderTitle = (sessionId: string, now: Date) =>
   `session-${now.toISOString().slice(0, 10)}-${sessionId.replace(/-/g, '').slice(0, 8)}`
 
-export { kebabTitle }
+export { displayTitleOf, kebabTitle }
 
 /** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
 export function taskContext(task: Task, placeholder: boolean, unattended = false): string {
   const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null, task.properties?.delegate ? `delegate ${task.properties.delegate}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
-    `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
+    task.properties?.display_title
+      ? `This session works on task **${task.properties.display_title}** (${task.title ?? task.id} · ${task.id}) [${state}]`
+      : `This session works on task **${task.title ?? task.id}** · ${task.id} [${state}]`,
     task.content,
     task.properties?.goal
       ? `Goal: ${task.properties.goal}`
       : 'Goal: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task goal).',
+    ...(task.properties?.display_title && !placeholder ? [] : [
+      'Name: as soon as the goal is clear, give the task the name people read in their lists with eml_track_task display_title: verb + object + scope, about 60 characters, the customer or product named, the distinguishing words first (e.g. "Fix missing stock answers in Acme\'s chat assistant", not "acme-stock" or "Session 23 Nov").',
+    ]),
     ...(placeholder ? [
       '',
       'The cockpit created this task for the session; it takes the session\'s name once you name the session.',
@@ -74,6 +79,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- A step is done when you close it: eml_track_task with status resolved and the outcome. A task with checkpoint after you only close once the user has reviewed the result. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     '- You do not set who has to act next; the cockpit reads your handoff and does that.',
+    '- When the work drifts from the task\'s name (the scope changed), rename it: eml_track_task display_title, with text saying why. The journal keeps the old name; the kebab title stays.',
     ...(unattended ? [] : [
       '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. In the chat call offer_split (name the open task it belongs to, if one exists); in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.',
       '- Steps of this task\'s own work, and a task the user explicitly asks you to note, you create yourself; the chat shows each new task to the user with Undo.',
@@ -93,7 +99,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
       : 'Do not end every reply with it: the user reads along. Write it only when you close the task, or when the cockpit asks for it before it stops the session (leave out lines that are empty):',
     '```',
     '### Handoff',
-    'Result: <what came out, in one or two sentences>',
+    'Result: <first sentence, at most 100 characters: where the task stands now — the cockpit shows it under the task\'s name in every list; then more if needed>',
     'Checked: <what you verified yourself> · Claimed: <what you took over unverified>',
     'Decided: <decisions made in this session>',
     'Next: <the next step, and who takes it>',
@@ -154,7 +160,9 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
   const rename = async (task: Task, title: string, sessionId: string, brain: Pick<EmlApi, 'post'>) => {
     const name = kebabTitle(title)
     if (!name) return
-    await brain.post(`/task/${task.id}/track`, { title: name, content: `${title} (cockpit session ${sessionId}).`, text: 'Named after its session.' })
+    // The anchor is the name as kebab, cut short; the name people read is the session's whole name.
+    const display = displayTitleOf(title)
+    await brain.post(`/task/${task.id}/track`, { title: name, ...(display ? { display_title: display } : {}), content: `${title} (cockpit session ${sessionId}).`, text: 'Named after its session.' })
   }
 
   return {

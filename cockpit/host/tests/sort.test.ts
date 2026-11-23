@@ -16,9 +16,9 @@ describe('sorting a drifted session', () => {
       { kind: 'link_sub', taskId: 't-board' },
       { kind: 'link_spun', taskId: 't-owner' },
       { kind: 'close', taskId: 't-top' },
-      { kind: 'create', title: 'no-greeting-in-a-new-chat', content: 'No greeting in a new chat\n\nGoal: a new chat opens without a greeting.', parent: true, origin: false },
-      { kind: 'create', title: 'media-viewer', content: 'Media viewer', parent: false, origin: true },
-      { kind: 'create', title: 'plugins-settings', content: 'Plugins settings', parent: false, origin: false },
+      { kind: 'create', title: 'no-greeting-in-a-new-chat', displayTitle: 'No greeting in a new chat', content: 'No greeting in a new chat\n\nGoal: a new chat opens without a greeting.', parent: true, origin: false },
+      { kind: 'create', title: 'media-viewer', displayTitle: 'Media viewer', content: 'Media viewer', parent: false, origin: true },
+      { kind: 'create', title: 'plugins-settings', displayTitle: 'Plugins settings', content: 'Plugins settings', parent: false, origin: false },
     ])
   })
 
