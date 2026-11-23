@@ -780,9 +780,9 @@ describe('ChatBridge', () => {
     expect(profiles).toEqual([{ deniedTools: ['mcp__gmail__send_email'], mcpServers: null }, null])
     expect(cleared).toEqual([])
     expect(ws.frames.filter((f) => f.type === 'limits').at(-1)).toMatchObject({ deniedTools: [], liftable: false })
-    const note = liftNotice({ deniedTools: ['mcp__gmail__send_email'], mcpServers: null }, null)
-    expect(ws.events().some((e) => e.kind === 'notice' && e.text === note)).toBe(true)
-    expect(runtimes[1].start.worker?.onPrompt()).toContain(note)
+    const shown = ws.events().find((e) => e.kind === 'notice' && /lifted/.test(e.text))
+    expect(shown && 'text' in shown ? shown.text : '').toContain('Gmail · Send email')
+    expect(runtimes[1].start.worker?.onPrompt()).toContain(liftNotice({ deniedTools: ['mcp__gmail__send_email'], mcpServers: null }, null))
   })
 
   it('lifting for the job too clears its limits for its future runs', async () => {
