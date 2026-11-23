@@ -71,6 +71,20 @@ export interface LineageTask {
   originId: string | null
 }
 
+/** A closed task of one project, for the tasks card's Show done (GET /api/v1/tasks/closed). */
+export interface ClosedTask extends LineageTask {
+  updatedAt: string | null
+}
+
+/** One page of a project's closed tasks, newest first; `more` when older ones are left. */
+export interface ClosedPage {
+  tasks: ClosedTask[]
+  more: boolean
+}
+
+/** Why closed() has no page: no such space, its brain is not there right now, or the brain did not answer. */
+export type ClosedAnswer = { ok: true; page: ClosedPage } | { ok: false; refusal: 'unknown_space' | 'no_brain' | 'brain_unavailable' }
+
 export interface BoardEvent {
   at: string
   taskId: string
@@ -135,6 +149,8 @@ const HEAD_WAIT_MS = 25_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
+/** The most closed tasks of one project a page may ask for at once. */
+const CLOSED_MAX = 500
 /** How far up a tree the board follows closed ancestors that its lists leave out. */
 const LINEAGE_DEPTH = 8
 
@@ -377,8 +393,48 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     settleTimer.unref?.()
   }
 
+  /**
+   * A project's newest closed tasks, done and dropped, up to `limit`. Unlike the board's build, the answer is
+   * nothing but these lists, so a brain that does not answer fails it instead of reading as "nothing closed".
+   */
+  const closed = async (spaceId: string, project: string, limit: number): Promise<ClosedAnswer> => {
+    const space = deps.spaces().find((s) => s.id === spaceId)
+    if (!space) return { ok: false, refusal: 'unknown_space' }
+    const brain = deps.brain(space)
+    if (!brain) return { ok: false, refusal: 'no_brain' }
+    const want = Math.max(1, Math.min(CLOSED_MAX, Math.floor(limit)))
+    // One more than asked, from each list: a list that has it says older ones are left.
+    const query = { type: 'task', scope: `project.${project}`, order_by: 'updated_at', limit: want + 1, with_origin: 'true' }
+    const strictList = async (status: string): Promise<Row[]> => {
+      const rows = (q: Record<string, string | number>) => brain.get('/list', { ...q, status }).then((r) => (r as { engrams?: Row[] }).engrams ?? [])
+      // A brain server from before with_origin refuses it: the tasks still list, without origins.
+      return rows(query).catch(() => { const { with_origin: _origin, ...plain } = query; return rows(plain) })
+    }
+    let resolved: Row[], dropped: Row[]
+    try {
+      [resolved, dropped] = await Promise.all([strictList('resolved'), strictList('invalidated')])
+    } catch (err) {
+      deps.log(`[board] closed tasks of ${spaceId}/${project} did not load: ${(err as Error).message}`)
+      return { ok: false, refusal: 'brain_unavailable' }
+    }
+    const rows = [...resolved, ...dropped].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
+    const tasks = rows.slice(0, want).map((row): ClosedTask => ({
+      id: row.id,
+      spaceId,
+      project: projectOf(row.scope),
+      title: row.title ?? row.id,
+      ...(row.properties?.display_title ? { displayTitle: row.properties.display_title } : {}),
+      status: row.status,
+      parentId: row.parent_id ?? null,
+      originId: row.origin_task_id ?? null,
+      updatedAt: row.updated_at ?? null,
+    }))
+    return { ok: true, page: { tasks, more: rows.length > want } }
+  }
+
   return {
     refresh,
+    closed,
 
     /** The board, rebuilt when it is older than `maxAgeMs`; a build under way is waited for, not skipped. */
     async get(maxAgeMs: number): Promise<Board> {

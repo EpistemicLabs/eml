@@ -13,6 +13,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  * The task board over HTTP, versioned (decision cockpit-host-routes-versioned-from-now). Page only:
  * the same-origin guard holds the writes.
  *   GET  /api/v1/tasks/board                        the board (application/task-board.ts)
+ *   GET  /api/v1/tasks/closed?spaceId&project&limit  a project's newest closed tasks, done and dropped: { tasks, more }
  *   POST /api/v1/tasks/<id>/hand-over               { opId, spaceId, mode, delegate, checkpoint, schedule?, desk? }
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
@@ -127,6 +128,21 @@ export async function handleTasksApi(
 ): Promise<boolean> {
   if (pathname === '/api/v1/tasks/board' && method === 'GET') {
     json(res, 200, await deps.board.get(BOARD_MAX_AGE_MS))
+    return true
+  }
+
+  if (pathname === '/api/v1/tasks/closed' && method === 'GET') {
+    const params = new URL(req.url ?? '', 'http://host').searchParams
+    const spaceId = str(params.get('spaceId')), project = str(params.get('project'))
+    const limit = Number(params.get('limit'))
+    if (!spaceId || !project || !Number.isInteger(limit) || limit < 1) {
+      json(res, 400, { error: { code: 'invalid', message: 'Name the spaceId and project, and a whole limit of 1 or more.', retry: false } })
+      return true
+    }
+    const answer = await deps.board.closed(spaceId, project, limit)
+    if (answer.ok) json(res, 200, answer.page)
+    else if (answer.refusal === 'brain_unavailable') json(res, 502, { error: { code: answer.refusal, message: 'The space\'s brain did not answer; try again.', retry: true } })
+    else refuse(json, res, answer.refusal)
     return true
   }
 

@@ -2,7 +2,7 @@
 // the commands it takes, and the pure helpers the views share. Whose turn a task is comes from the
 // host; the page never works it out again, so every count agrees.
 import { useEffect } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
@@ -120,6 +120,46 @@ export function useTaskBoard() {
     return () => window.removeEventListener('cockpit:tasks', changed);
   }, [client]);
   return useQuery({ queryKey: BOARD_KEY, queryFn: fetchBoard, refetchInterval: BOARD_POLL_MS });
+}
+
+/** A closed task of one project (host GET /api/v1/tasks/closed). */
+export interface ClosedTask extends LineageTask {
+  updatedAt: string | null;
+}
+
+/** A project's newest closed tasks, done and dropped; `more` when older ones are left. */
+export interface ClosedPage {
+  tasks: ClosedTask[];
+  more: boolean;
+}
+
+export const CLOSED_KEY = ['closed-tasks'] as const;
+
+export async function fetchClosedTasks(spaceId: string, project: string, limit: number): Promise<ClosedPage> {
+  const query = new URLSearchParams({ spaceId, project, limit: String(limit) });
+  const res = await fetch(`/api/v1/tasks/closed?${query}`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`The closed tasks did not load (HTTP ${res.status}).`);
+  return res.json() as Promise<ClosedPage>;
+}
+
+/** The closed tasks of each project, up to its limit, while `enabled`; asked again when the board moves. */
+export function useClosedTasks(projects: Array<{ spaceId: string; project: string; limit: number }>, enabled: boolean) {
+  const client = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    const changed = () => { void client.invalidateQueries({ queryKey: CLOSED_KEY }); };
+    window.addEventListener('cockpit:tasks', changed);
+    return () => window.removeEventListener('cockpit:tasks', changed);
+  }, [client, enabled]);
+  return useQueries({
+    queries: projects.map((p) => ({
+      queryKey: [...CLOSED_KEY, p.spaceId, p.project, p.limit] as const,
+      queryFn: () => fetchClosedTasks(p.spaceId, p.project, p.limit),
+      enabled,
+      // A bigger page keeps the smaller one on screen while it loads.
+      placeholderData: keepPreviousData,
+    })),
+  });
 }
 
 export type CommandAnswer =

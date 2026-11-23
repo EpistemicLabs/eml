@@ -357,5 +357,37 @@ describe('live updates', () => {
     await until(() => headCalls > before)
     stop()
   })
-})
 
+  it('lists a project\'s closed tasks, done and dropped, newest first, and says when older ones are left', async () => {
+    const { board, brains } = setup({ main: [
+      { id: 'done-new', status: 'resolved', updated_at: '2026-11-19T09:00:00Z', parent_id: 'root', properties: { display_title: 'Done new' } },
+      { id: 'dropped', status: 'invalidated', updated_at: '2026-11-18T09:00:00Z', origin_task_id: 'root' },
+      { id: 'done-old', status: 'resolved', updated_at: '2026-11-01T09:00:00Z' },
+      mine('open'),
+    ] })
+    const page = await board.closed('main', 'acme', 2)
+    expect(page).toEqual({ ok: true, page: {
+      tasks: [
+        { id: 'done-new', spaceId: 'main', project: 'acme', title: 'done-new', displayTitle: 'Done new', status: 'resolved', parentId: 'root', originId: null, updatedAt: '2026-11-19T09:00:00Z' },
+        { id: 'dropped', spaceId: 'main', project: 'acme', title: 'dropped', status: 'invalidated', parentId: null, originId: 'root', updatedAt: '2026-11-18T09:00:00Z' },
+      ],
+      more: true,
+    } })
+    expect(brains.get('main')!.queries.at(-1)).toMatchObject({ type: 'task', scope: 'project.acme', order_by: 'updated_at', limit: 3 })
+    expect(await board.closed('main', 'acme', 3)).toMatchObject({ ok: true, page: { more: false } })
+    expect(await board.closed('nowhere', 'acme', 3)).toEqual({ ok: false, refusal: 'unknown_space' })
+  })
+
+  it('fails the closed tasks when the brain does not answer, instead of saying nothing is closed', async () => {
+    const log: string[] = []
+    const { board, brains } = setup({ main: [], log })
+    brains.get('main')!.get = async () => { throw new Error('connect ECONNREFUSED') }
+    expect(await board.closed('main', 'acme', 20)).toEqual({ ok: false, refusal: 'brain_unavailable' })
+    expect(log.at(-1)).toContain('ECONNREFUSED')
+  })
+
+  it('lists closed tasks without origins on a brain server that refuses with_origin', async () => {
+    const { board } = setup({ main: [{ id: 'done', status: 'resolved' }], oldBrain: true })
+    expect(await board.closed('main', 'acme', 20)).toMatchObject({ ok: true, page: { tasks: [{ id: 'done' }] } })
+  })
+})
