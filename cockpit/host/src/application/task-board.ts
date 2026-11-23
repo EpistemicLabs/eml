@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
+import { delegatedNextRun, liveFactsOf, liveRunsByTask, runsOf } from '../domain/run-liveness.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -156,6 +157,7 @@ interface Row {
     due_date?: string
     depends_on?: string[]
     waiting_on?: WaitingOn
+    delegation?: { agent?: string; next_run_at?: string }
   }
 }
 
@@ -261,6 +263,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
       ])
       const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents))
+      // Synced runs with a live lease: sessions on other members' cockpits (domain/run-liveness.ts).
+      const runs = liveRunsByTask(runsOf(await objects(brain, 'run')), now)
       const statusOf = new Map(rows.map((r) => [r.id, r.status]))
 
       const spaceTasks: BoardTask[] = []
@@ -279,7 +283,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           parentActive: row.parent_id ? (statusOf.has(row.parent_id) ? statusOf.get(row.parent_id) === 'active' : null) : null,
           depsResolved: (props.depends_on ?? []).every((id) => !statusOf.has(id) || statusOf.get(id) === 'resolved'),
         }
-        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
+        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? delegatedNextRun(props.delegation, now))
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
