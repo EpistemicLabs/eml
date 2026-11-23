@@ -1,15 +1,20 @@
-// Now: every moving task by whose turn it is, starting with what needs the viewer.
-import { type Board, type BoardTask, columns, dueLabel, GROUP_META, originName, readable, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
+// Now: every moving task by whose turn it is, starting with what needs the viewer; the Owner and
+// Space picks (shared with Plan) narrow every column and its counts.
+import { type Board, type BoardTask, columns, dueLabel, GROUP_META, inFilter, originName, readable, resolveFilter, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Chip, Dot, Empty, FOCUS, HUE, LABEL } from '@/shared/view/ui';
+import { setTaskFilter, useTaskFilter } from '@/stores/useTaskFilterStore';
 
+import { FilterBar } from './FilterBar';
 import { CardTime, FromOrigin, Who } from './parts';
 
 export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: number; onOpen: (task: BoardTask) => void; movedId: string | null }) {
-  const cols = columns(board.tasks);
+  const filter = resolveFilter(useTaskFilter(), board.spaces);
+  const cols = columns(board.tasks.filter((t) => inFilter(t, board.viewer, filter)));
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <FilterBar filter={filter} spaces={board.spaces} onChange={setTaskFilter} />
       <div className="overflow-x-auto pb-1.5">
         {/* On a phone the columns stack: one column per screen width, no sideways scrolling. */}
         <div className="grid min-w-min grid-flow-col gap-3 max-md:min-w-0 max-md:grid-flow-row max-md:grid-cols-1! max-md:gap-6" style={{ gridTemplateColumns: cols.map((c) => (c.tasks.length ? 'minmax(var(--container-board-col), 1fr)' : 'var(--container-board-col-slim)')).join(' ') }}>

@@ -11,13 +11,13 @@ export function FilterBar({ filter, spaces, onChange }: { filter: TaskFilter; sp
   );
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-ui text-muted-foreground">
-      <span className="flex items-center gap-2">Owner
+      <span role="group" aria-label="Owner" className="flex items-center gap-2">Owner
         <span className="inline-flex overflow-hidden rounded-lg border border-border bg-card">
           {segment('Me', !filter.everyone, { everyone: false })}
           {segment('Everyone', filter.everyone, { everyone: true })}
         </span>
       </span>
-      <span className="flex items-center gap-2">Space
+      <span role="group" aria-label="Space" className="flex items-center gap-2">Space
         <span className="inline-flex flex-wrap overflow-hidden rounded-lg border border-border bg-card">
           {segment('All', !filter.spaceId, { spaceId: null })}
           {spaces.map((s) => segment(s.name, filter.spaceId === s.id, { spaceId: s.id }))}

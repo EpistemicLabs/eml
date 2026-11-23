@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -93,6 +93,16 @@ describe('Plan', () => {
     expect(rows[0]).toMatchObject({ name: 'Acme', open: 2 });
     expect(rows[0].tasks.map((r) => [r.task.id, r.step])).toEqual([['p', false], ['s', true]]);
     expect(rows[1].name).toBe('Eml code');
+  });
+
+  it('filters by owner and space for Now too, closed tasks included, and drops a space that is gone', () => {
+    const tasks = [task({ id: 'mine' }), task({ id: 'free', owner: undefined }), task({ id: 'other', owner: 'dominik' }), task({ id: 'ebisu', spaceId: 'ebisu' }), task({ id: 'done', status: 'resolved', turn: 'done' })];
+    const ids = (f: { everyone: boolean; spaceId: string | null }) => tasks.filter((t) => inFilter(t, 'lasse', f)).map((t) => t.id);
+    expect(ids({ everyone: false, spaceId: null })).toEqual(['mine', 'free', 'ebisu', 'done']);
+    expect(ids({ everyone: true, spaceId: 'ebisu' })).toEqual(['ebisu']);
+    const spaces = [{ id: 'main', name: 'Main', agents: [] }];
+    expect(resolveFilter({ everyone: true, spaceId: 'gone' }, spaces)).toEqual({ everyone: true, spaceId: null });
+    expect(resolveFilter({ everyone: false, spaceId: 'main' }, spaces)).toEqual({ everyone: false, spaceId: 'main' });
   });
 
   it('lists the projects the table leaves out, by name, in the chosen space', () => {

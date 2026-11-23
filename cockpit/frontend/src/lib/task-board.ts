@@ -353,8 +353,12 @@ export function coverageText(task: BoardTask, now: number): string {
   return 'your task';
 }
 
-/** The Owner and Space picks above the board. */
+/** The Owner and Space picks Now and Plan share. */
 export interface TaskFilter { everyone: boolean; spaceId: string | null }
+
+/** The filter as the board can use it: a space the board no longer has falls back to All. */
+export const resolveFilter = (f: TaskFilter, spaces: Board['spaces']): TaskFilter =>
+  f.spaceId && !spaces.some((s) => s.id === f.spaceId) ? { ...f, spaceId: null } : f;
 
 /** A task the filter keeps: the viewer's and those nobody owns (Everyone: all), in one space or all. */
 export const inFilter = (task: BoardTask, viewer: string, f: TaskFilter) =>

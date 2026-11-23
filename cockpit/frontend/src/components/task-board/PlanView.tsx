@@ -2,13 +2,14 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, taskName, type TaskFilter, TURN_META, visibleInPlan } from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { cn } from '@/lib/utils';
 import { Chip, Dot, FOCUS, HUE, LABEL, MINI } from '@/shared/view/ui';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
+import { setTaskFilter, useTaskFilter } from '@/stores/useTaskFilterStore';
 
 import { FilterBar } from './FilterBar';
 import { Who } from './parts';
@@ -27,7 +28,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
   projectActions?: ProjectActions;
 }) {
   const knownSpaces = useSpaces();
-  const [filter, setFilter] = useState<TaskFilter>({ everyone: false, spaceId: null });
+  const filter = resolveFilter(useTaskFilter(), board.spaces);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showQuiet, setShowQuiet] = useState(false);
   const open = board.tasks.filter((t) => visibleInPlan(t, board.viewer, filter));
@@ -43,7 +44,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <FilterBar filter={filter} spaces={board.spaces} onChange={(patch) => setFilter({ ...filter, ...patch })} />
+      <FilterBar filter={filter} spaces={board.spaces} onChange={setTaskFilter} />
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <section className="flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-card p-3">
