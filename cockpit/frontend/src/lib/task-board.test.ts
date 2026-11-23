@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, coverageText, statusOrTurn, dueLabel, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -44,6 +44,31 @@ describe('what a card says', () => {
     expect(cardLine(task({ turn: 'review', group: undefined, waitingOn: { who: 'lasse', why: 'Review: draft written' } }), NOW)).toBe('draft written');
     expect(cardLine(task({ pending: { opId: 'o', kind: 'hand_over', undoUntil: '' }, delegate: 'atlas' }), NOW)).toMatch(/^Handed to Atlas/);
     expect(cardLine(task({ turn: 'needs_you', group: 'own', handTo: 'atlas' }), NOW)).toBe('You worked on it with Atlas. Hand it to Atlas to let it go on alone.');
+  });
+
+  it('says why the runner does not start a delegated task, naming the step it waits for and where that step stands', () => {
+    const blocked = (runner: BoardTask['runner'], patch: Partial<BoardTask> = {}) => task({ turn: 'agent_scheduled', group: 'blocked', delegate: 'atlas', runner, ...patch });
+    const dep = (step: NonNullable<Extract<NonNullable<BoardTask['runner']>, { kind: 'depends' }>['step']>, more = 0) =>
+      ({ kind: 'depends' as const, stepId: 'pr', title: 'open-the-pr', status: 'active', more, step });
+    expect(cardLine(blocked(dep({ turn: 'review', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: PR #252 is open against alpha' } })), NOW)).toBe('Waits for your review of PR #252.');
+    expect(cardLine(blocked(dep({ turn: 'review', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: copy done' } })), NOW)).toBe('Waits for your review of “Open the pr”.');
+    expect(cardLine(blocked(dep({ turn: 'needs_you', group: 'asked', waitingOn: { who: 'lasse', kind: 'go' } })), NOW)).toBe('Waits for your go on “Open the pr”.');
+    expect(cardLine(blocked(dep({ turn: 'agent_working', delegate: 'motti' }, 2)), NOW)).toBe('Waits for “Open the pr”, which Motti is working on (and 2 more steps).');
+    expect(cardLine(blocked(dep({ turn: 'waiting_on_others', waitingOn: { who: 'kim@acme' } })), NOW)).toBe('Waits for “Open the pr”, which waits on kim@acme.');
+    expect(cardLine(blocked({ kind: 'cap', running: 5, max: 5, standalone: true }), NOW)).toBe('Waits for a free slot: 5 of 5 delegated tasks run.');
+    expect(cardLine(blocked({ kind: 'cap', running: 5, max: 5, standalone: false }), NOW)).toBe('Waits for a free slot: 5 of 5 steps of its parent run.');
+    expect(cardLine(blocked({ kind: 'busy' }), NOW)).toBe('A session is open on it, so the runner leaves it to that session.');
+    expect(cardLine(blocked({ kind: 'held' }), NOW)).toMatch(/^Just handed over, or you work on it with Atlas/);
+    expect(cardLine(task({ turn: 'needs_you', group: 'parent', delegate: 'atlas', runner: { kind: 'parent', parentId: 'p', status: 'resolved' } }), NOW)).toBe('Its parent task is closed, so it will not start.');
+    expect(cardLine(task({ turn: 'needs_you', group: 'parent', delegate: 'atlas', runner: { kind: 'parent', parentId: 'p', status: 'planned' } }), NOW)).toBe('Starts when its parent task is active.');
+    expect(cardLine(task({ turn: 'needs_you', group: 'nobody', reason: 'step_dropped', delegate: 'atlas', runner: { kind: 'depends', stepId: 'x', title: 'old-step', status: 'invalidated', more: 0 } }), NOW)).toBe('Waits for “Old step”, which was dropped. Remove the dependency or drop this step.');
+    expect(cardLine(task({ turn: 'needs_you', group: 'nobody', reason: 'no_project', delegate: 'atlas', runner: { kind: 'no_project', scope: 'global' } }), NOW)).toMatch(/^Delegated outside a project/);
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'runner', delegate: 'motti', runner: { kind: 'other_member', owner: 'dominik' } }), NOW)).toBe("Motti is next in line on Dominik's cockpit.");
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'runner', delegate: 'atlas' }), NOW)).toBe('Atlas is next in line for the runner.');
+    // The reason wins over a status line, as a question or a stop does.
+    expect(statusOrTurn(blocked({ kind: 'busy' }, { statusLine: { now: 'Planned.' } as BoardTask['statusLine'] }), NOW)).toBe('A session is open on it, so the runner leaves it to that session.');
+    expect(coverageText(blocked(dep({ turn: 'review' }), { coverage: { ok: true, how: 'runner' } }), NOW)).toBe('Atlas · after your review of “Open the pr”');
+    expect(columns([blocked({ kind: 'busy' })]).find((c) => c.turn === 'agent_scheduled')!.groups.map((g) => g.group)).toEqual(['blocked']);
   });
 
   it('colours only Needs you and what is stuck', () => {
