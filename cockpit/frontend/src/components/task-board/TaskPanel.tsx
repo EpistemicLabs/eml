@@ -9,16 +9,13 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import {
-  agentName, cardLine, dueLabel, hueOf, readable, TURN_META, when,
-  type Board, type BoardTask, type HandOverMode,
-} from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Chip, FOCUS, HUE, LABEL, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
-import { AgentBadge } from './parts';
+import { AgentBadge, FromOrigin } from './parts';
 import { TaskRelated } from './TaskRelated';
 
 export const TASK_TITLE_ID = 'task-board-title';
@@ -93,7 +90,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               {task.due && <Chip hue="mark">due {dueLabel(task.due, now)}</Chip>}
               {task.checkpoint && <Chip>checkpoint {task.checkpoint}</Chip>}
             </div>
-            <h2 id={TASK_TITLE_ID} tabIndex={-1} data-autofocus className={cn('m-0 text-display font-semibold tracking-title text-balance', FOCUS)}>{readable(task.title)}</h2>
+            <h2 id={TASK_TITLE_ID} tabIndex={-1} data-autofocus className={cn('m-0 text-display font-semibold tracking-title text-balance', FOCUS)}>{taskName(task)}</h2>
             <details className="group text-ui text-muted-foreground">
               <summary className={cn('inline-flex cursor-pointer list-none gap-1.5', FOCUS)}>
                 <span aria-hidden className="inline-block transition-transform duration-(--duration-fast) group-open:rotate-90">›</span>
@@ -103,6 +100,22 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                 <span>project.{task.project ?? '–'}</span><span>{task.status}</span><span>{task.id}</span>
               </div>
             </details>
+            {(() => {
+              const from = originName(task, board);
+              if (!from || !task.originId) return null;
+              const open = board.tasks.find((t) => t.id === task.originId && t.spaceId === task.spaceId);
+              return <FromOrigin name={from} className="text-ui" onOpen={() => (open ? onOpenTask(open) : go(task.originId!))} />;
+            })()}
+            {task.statusLine && (
+              // Where it stands: the newest handoff's Result and Next (host domain/status-line.ts).
+              <div aria-label="Where it stands" className="flex flex-col gap-0.5 rounded-xl bg-background px-3 py-2 text-body">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span><b className="font-semibold">Now:</b> {task.statusLine.now}</span>
+                  <time className="shrink-0 whitespace-nowrap tabular-nums text-caption text-muted-foreground">{when(task.statusLine.at, now)}</time>
+                </div>
+                {task.statusLine.next && <span className="text-ui text-muted-foreground">Next: {task.statusLine.next}</span>}
+              </div>
+            )}
             {/* Where it came from and what came out of it; a closed ancestor isn't on the board, so its engram opens. */}
             <TaskRelated key={task.id} task={task} board={board} onOpen={(r) => (r.task ? onOpenTask(r.task) : go(r.id))} />
             <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 rounded-xl border border-border px-3 py-2.5 text-body">

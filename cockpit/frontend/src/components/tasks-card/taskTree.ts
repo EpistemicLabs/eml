@@ -4,7 +4,7 @@
 // it is the sessions themselves, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
 // without a browser.
-import { hueOf, OPEN_STATUSES, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
+import { hueOf, OPEN_STATUSES, taskName, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
 import type { Hue } from '@/shared/view/ui/hue';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
@@ -84,7 +84,7 @@ export interface TreeInput {
 }
 
 export type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
-  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId'>>;
+  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId' | 'displayTitle'>>;
 
 /** A tree deeper than this is a loop in the data, not a real tree. */
 const MAX_DEPTH = 32;
@@ -179,7 +179,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       key: `${section}:${key}`,
       kind: 'task',
       id: t.id,
-      title: t.title,
+      title: taskName(t),
       state: taskState(t),
       rel: t.parentId ? 'sub' : t.originId ? 'spun' : null,
       otherProject: t.project !== project ? brainProjectName(t.spaceId, t.project) : null,
@@ -260,7 +260,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
 }
 
 function fromLineage(t: LineageTask): TaskLike {
-  return { id: t.id, spaceId: t.spaceId, project: t.project, title: t.title, status: t.status, parentId: t.parentId, originId: t.originId };
+  return { id: t.id, spaceId: t.spaceId, project: t.project, title: t.title, ...(t.displayTitle ? { displayTitle: t.displayTitle } : {}), status: t.status, parentId: t.parentId, originId: t.originId };
 }
 
 /** Open tasks of a section's project that its trees don't show: what "N more open tasks in …" counts. */

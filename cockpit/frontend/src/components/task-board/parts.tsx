@@ -1,4 +1,6 @@
 // Small pieces the task board's views share (tokens v2 only: components/task-board holds no literal values).
+import { CornerUpLeft } from 'lucide-react';
+
 import { agentName, cardTime, type BoardTask } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
@@ -36,4 +38,18 @@ export function CardTime({ task, now }: { task: BoardTask; now: number }) {
       {t.label}
     </time>
   );
+}
+
+/** Where a task came from: "from <origin task>", as a button when it can be opened. The same task as the origin row of its Related tree. */
+export function FromOrigin({ name, onOpen, className }: { name: string; onOpen?: () => void; className?: string }) {
+  const body = (
+    <>
+      <CornerUpLeft aria-hidden className="size-3 shrink-0" />
+      <span className="min-w-0 truncate">from {onOpen ? <span className="underline decoration-border-strong underline-offset-2">{name}</span> : name}</span>
+    </>
+  );
+  const look = cn('flex min-w-0 items-center gap-1 text-caption text-muted-foreground', className);
+  return onOpen
+    ? <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(); }} title={`Came from: ${name}`} className={cn(look, 'min-h-(--target-min) text-left hover:text-foreground')}>{body}</button>
+    : <span title={`Came from: ${name}`} className={look}>{body}</span>;
 }

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { draftSplit, splitContext, splitOff, type SplitAnswer, type SplitContext, type SplitDraft, type SplitRelation, type SplitWhen } from '@/lib/split';
-import { readable } from '@/lib/task-board';
+import { taskName } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Dialog, DialogContent, DialogTitle, Input, LABEL, PRIMARY, RadioCard, Select, Textarea } from '@/shared/view/ui';
 
@@ -135,7 +135,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
               {target === 'existing' && (
                 <Select aria-label="Which task" value={existingId} onChange={(e) => setExistingId(e.target.value)}>
                   <option value="">Pick a task…</option>
-                  {choices.map((t) => <option key={t.id} value={t.id}>{readable(t.title)}{t.id === context?.matchTaskId ? ' (looks like this one)' : ''}</option>)}
+                  {choices.map((t) => <option key={t.id} value={t.id}>{taskName(t)}{t.id === context?.matchTaskId ? ' (looks like this one)' : ''}</option>)}
                 </Select>
               )}
             </div>

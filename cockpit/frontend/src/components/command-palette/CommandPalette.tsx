@@ -45,7 +45,7 @@ import { activateDesk, openInPane, useActiveDeskId, useActiveSpaceId, useDesks, 
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { taskState } from '@/components/tasks-card/taskTree';
 import { locateTask, locationWords, projectNameOf, searchTasks, type TaskLocation } from '@/lib/open-task';
-import { readable, useTaskBoard, type BoardTask } from '@/lib/task-board';
+import { type BoardTask, readable, taskName, useTaskBoard } from '@/lib/task-board';
 import { Dot } from '@/shared/view/ui';
 import { openTask, TASK_SEARCH_EVENT } from './openTask';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
@@ -145,7 +145,7 @@ function TaskRow({ task, where, projectName, onSelect }: { task: BoardTask; wher
     <CommandItem value={`task ${task.spaceId} ${task.id}`} onSelect={onSelect} className="items-start py-1.5">
       <span className="flex h-(--target-min) shrink-0 items-center"><Dot hue={state.hue} hollow={state.hollow} /></span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate font-medium">{readable(task.title)}</span>
+        <span className="truncate font-medium">{taskName(task)}</span>
         <span className="truncate text-caption text-muted-foreground">{[projectName, state.label, words.text].filter(Boolean).join(' · ')}</span>
       </span>
       <span className="flex shrink-0 items-center gap-1.5 self-center text-caption text-muted-foreground">

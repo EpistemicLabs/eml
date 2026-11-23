@@ -7,7 +7,7 @@ import { allSessionState, MARK_WORD, sessionMark, type AllSession } from '@/comp
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
-import { readable, startTaskSession, useTaskBoard } from '@/lib/task-board';
+import { startTaskSession, taskName, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
 import { lineOf, TaskNodeContent } from '@/components/task-tree/TaskNodeContent';
@@ -98,12 +98,12 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     if (!task?.project) return;
     // A task without a session: the host starts one on it with the task bound, and it opens in chat when that is
     // the user's view; an older host can't, so then a terminal pane starts it (the task-run path).
-    const prompt = `Work on task ${task.id} ("${readable(task.title)}") together with the user. Start by saying where it stands and what you would do next.`;
-    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((outcome) => {
-      tellStartProblem(outcome, readable(task.title));
+    const prompt = `Work on task ${task.id} ("${taskName(task)}") together with the user. Start by saying where it stands and what you would do next.`;
+    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: taskName(task), deskId: desk.id }).then((outcome) => {
+      tellStartProblem(outcome, taskName(task));
       if (outcome.kind !== 'no_route') return;
       addWorkerPane({
-        fromSessionId: null, projectId: projectIdOfBrain(task.project!), title: readable(task.title), deskId: desk.id, taskId: task.id, prompt,
+        fromSessionId: null, projectId: projectIdOfBrain(task.project!), title: taskName(task), deskId: desk.id, taskId: task.id, prompt,
         ...(spaceKeyOf(task.spaceId) !== null ? { spaceId: spaceKeyOf(task.spaceId) } : {}),
       });
     });
@@ -115,7 +115,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     const one = node.sessions.length === 1 ? node.sessions[0] : null;
     const leaves = one ? [] : node.sessions;
     const hasChildren = leaves.length > 0 || node.children.length > 0;
-    const title = node.kind === 'task' ? readable(node.title) : node.title;
+    const title = node.title;
     const onDesk = node.sessions.some((s) => s.open);
     return (
       <TreeItem
@@ -127,7 +127,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
         onToggle={() => toggleFold(node.key)}
         onSelect={() => selectNode(node)}
         // On the desk: the text colour; not on the desk: muted (the row's name says it too).
-        content={<TaskNodeContent state={node.state} title={title} muted={!onDesk} aside={node.otherProject} titleData={{ 'data-on-desk': onDesk }} />}
+        content={<TaskNodeContent state={node.state} title={title} muted={!onDesk} aside={node.otherProject} titleData={{ 'data-on-desk': onDesk }} wrap />}
       >
         {leaves.map((leaf) => (
           <TreeItem

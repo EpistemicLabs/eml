@@ -22,6 +22,10 @@ export interface BoardTask {
   spaceName: string;
   project: string | null;
   title: string;
+  /** The name a person reads (display_title); missing until the agent gave one, or from an older host. */
+  displayTitle?: string;
+  /** Where it stands: the first sentence of its newest handoff's Result (with its Next), else of its newest note. */
+  statusLine?: StatusLine;
   status: string;
   owner?: string;
   delegate?: string;
@@ -66,10 +70,14 @@ export interface LineageTask {
   spaceId: string;
   project: string | null;
   title: string;
+  displayTitle?: string;
   status: string;
   parentId: string | null;
   originId: string | null;
 }
+
+/** A task's status line (host domain/status-line.ts). */
+export interface StatusLine { now: string; next: string | null; at: string }
 
 export interface BoardEvent { at: string; taskId: string; spaceId: string; from: Turn | null; to: Turn | null }
 
@@ -187,6 +195,19 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  * A brain anchor as a title a person reads: a kebab anchor becomes words, a session's placeholder
  * task (session-2026-11-18-fa1d29c3) its date and short id; anything else stays as written.
  */
+/** The name of a task as people read it: its display title, else its anchor as words. */
+export function taskName(task: { title: string; displayTitle?: string }): string {
+  return task.displayTitle?.trim() || readable(task.title);
+}
+
+/** The name of the task a task was spun off from, when the board knows it (open, or a closed ancestor in lineage). */
+export function originName(task: Pick<BoardTask, 'originId' | 'spaceId'>, board: Pick<Board, 'tasks' | 'lineage'>): string | null {
+  if (!task.originId) return null;
+  const origin = board.tasks.find((t) => t.id === task.originId && t.spaceId === task.spaceId)
+    ?? (board.lineage ?? []).find((t) => t.id === task.originId && t.spaceId === task.spaceId);
+  return origin ? taskName(origin) : null;
+}
+
 export function readable(title: string): string {
   const placeholder = /^session-(\d{4})-(\d{2})-(\d{2})-([0-9a-f]{8})$/.exec(title);
   if (placeholder) return `Session ${Number(placeholder[3])} ${MONTHS[Number(placeholder[2]) - 1] ?? placeholder[2]} · ${placeholder[4]}`;
@@ -251,6 +272,15 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.group === 'runner') return `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
   return task.status === 'active' ? 'Your task, in progress.' : 'Your task.';
+}
+
+/**
+ * The line under a task's name on a card: where it stands (its status line), unless something more
+ * urgent says why it sits where it is — an undo window, a question to answer, a stop, a wait for its parent.
+ */
+export function statusOrTurn(task: BoardTask, now: number): string {
+  const urgent = task.pending || task.group === 'asked' || task.reason || task.group === 'parent';
+  return !urgent && task.statusLine ? task.statusLine.now : cardLine(task, now);
 }
 
 /** The time on a card is the event that put it in its column, named; scheduled work shows its next run. */

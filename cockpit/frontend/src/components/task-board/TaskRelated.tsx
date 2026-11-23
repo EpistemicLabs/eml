@@ -4,7 +4,7 @@
 // Every row opens that task here; the task you came from is always in the new task's tree, so it is the way back.
 import { useMemo, useState, type ReactElement } from 'react';
 
-import { readable, type Board, type BoardTask } from '@/lib/task-board';
+import { type Board, type BoardTask } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { FOCUS, LABEL, Tree, TreeItem } from '@/shared/view/ui';
 import { lineOf, relWord, TaskNodeContent, TreeLegend } from '@/components/task-tree/TaskNodeContent';
@@ -36,9 +36,9 @@ export function TaskRelated({ task, board, onOpen }: { task: BoardTask; board: P
     <TreeItem
       key={item.id}
       line={lineOf(item.rel)}
-      label={`${readable(item.title)}, ${item.state.label}${aside ? `, ${aside}` : ''}`}
+      label={`${item.title}, ${item.state.label}${aside ? `, ${aside}` : ''}`}
       onSelect={() => onOpen(item)}
-      content={<TaskNodeContent state={item.state} title={readable(item.title)} muted={muted} aside={aside} />}
+      content={<TaskNodeContent state={item.state} title={item.title} muted={muted} aside={aside} />}
     />
   );
 
@@ -72,11 +72,11 @@ export function TaskRelated({ task, board, onOpen }: { task: BoardTask; board: P
       <TreeItem
         key={o.id}
         line={i > 0 ? lineOf(o.rel) : undefined}
-        label={`${readable(o.title)}, ${o.state.label}${direct ? `, ${related.rel === 'sub' ? 'parent' : 'origin'}` : ''}`}
+        label={`${o.title}, ${o.state.label}${direct ? `, ${related.rel === 'sub' ? 'parent' : 'origin'}` : ''}`}
         onSelect={() => onOpen(o)}
         expanded
         foldable={false}
-        content={<TaskNodeContent state={o.state} title={readable(o.title)} muted={o.state.hue === 'done'} aside={direct ? (related.rel === 'sub' ? 'parent' : 'origin') : undefined} />}
+        content={<TaskNodeContent state={o.state} title={o.title} muted={o.state.hue === 'done'} aside={direct ? (related.rel === 'sub' ? 'parent' : 'origin') : undefined} />}
       >
         {tree}
       </TreeItem>
