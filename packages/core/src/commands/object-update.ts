@@ -1,6 +1,9 @@
 import { assertObject, checkFields, diffOf } from '../objects'
 import { slugifyTag } from '../tags'
-import { updateProject, updateEntity, updateTag, updateSubject, updateUser, updateAgent } from '../write/objects'
+import { updateProject, updateEntity, updateTag, updateSubject, updateUser, updateAgent, updateRunRow } from '../write/objects'
+import { appendTaskChange } from '../write/task-binding'
+import { isoTimestamp } from '../fields'
+import { HANDLE } from '../contract/values'
 import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
@@ -11,7 +14,7 @@ export interface ObjectUpdateInput {
   patch: Record<string, unknown>
 }
 
-/** object.update — a project, entity, tag, subject, user or agent. Was updateObject and the stores' update. */
+/** object.update — a project, entity, tag, subject, user, agent or run. Was updateObject and the stores' update. */
 export const objectUpdate: CommandModule<ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }> = {
   name: 'object.update',
   validate(input) {
@@ -79,6 +82,27 @@ function updateObject(ctx: CommandContext, object: unknown, id: string, patch: R
       const before = ctx.eml.agents.get(id)
       if (!before) return null
       const after = updateAgent(ctx, id, patch as never)!
+      return { object: after, diff: diffOf(before as never, after as never) }
+    }
+    case 'run': {
+      const before = ctx.eml.runs.get(id)
+      if (!before) return null
+      // v0.23: only the member a run names changes it — every replica refuses another member's op
+      if (ctx.stamp.actor.handle !== before.member) {
+        throw new Error(`Invalid object: only its member ${before.member} changes run ${id}.`)
+      }
+      if (typeof patch.agent === 'string' && !HANDLE.test(patch.agent)) throw new Error('Invalid object: a run\'s agent is 1–63 characters of a-z, 0-9, _ and -.')
+      const ts = (k: 'heartbeat_at' | 'lease_until') => typeof patch[k] === 'string' ? isoTimestamp(patch[k] as string) : patch[k] as null | undefined
+      updateRunRow(ctx, id, {
+        agent: patch.agent as string | null | undefined, driver: patch.driver as never, state: patch.state as never,
+        heartbeat_at: ts('heartbeat_at'), lease_until: ts('lease_until'),
+      })
+      const after = ctx.eml.runs.get(id)!
+      // its end (and a resume after it) is journaled on its task; the other states change often and are not
+      // (unless the task has left this brain since)
+      const journaled = !!ctx.db.prepare('SELECT 1 FROM engrams WHERE id = ?').get(after.task_id)
+      if (journaled && before.state !== 'ended' && after.state === 'ended') appendTaskChange(ctx, after.task_id, `run ${id} ended`)
+      if (journaled && before.state === 'ended' && after.state !== 'ended') appendTaskChange(ctx, after.task_id, `run ${id} resumed`)
       return { object: after, diff: diffOf(before as never, after as never) }
     }
   }

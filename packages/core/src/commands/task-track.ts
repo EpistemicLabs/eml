@@ -1,6 +1,7 @@
 import { TASK_OPEN_STATUSES, type StoredEngram, type EngramStatus, type OpenSubtask, type BoundItem } from '../types'
 import { validateNoTemplateLeak } from '../validate'
 import { validateFields, normalizeAssignees, unknownFieldsError, isBlank } from '../fields'
+import { mirrorTaskState, applyPatch } from '../task-state'
 import { appendEntry, bumpRev, type Entry } from '../entries'
 import { reindexEngram } from '../write/insert'
 import { CLOSED_WITH_TASK, TRACK_TASK_KEYS, type TrackTaskInput } from '../engrams'
@@ -84,7 +85,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title', 'delegation', 'waits'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -94,6 +95,8 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
     normalizeAssignees(fieldPatch)
     if (fieldPatch.assignee_ids === undefined) fieldPatch.assignee_ids = null
   }
+  // v0.23: delegate/checkpoint ↔ delegation and waiting_on ↔ waits stay in step
+  mirrorTaskState(old, fieldPatch)
 
   const stageChanged = input.stage !== undefined && (input.stage ?? undefined) !== old.stage
   const contentChanged = input.content !== undefined && input.content !== existing.content
@@ -157,10 +160,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   const scopeChanged = input.scope !== undefined && input.scope !== existing.scope
   const titleChanged = input.title !== undefined && input.title !== existing.title
   const props = { ...old }
-  for (const [k, v] of Object.entries(fieldPatch)) {
-    if (v === null) delete props[k]
-    else props[k] = v
-  }
+  applyPatch(props, fieldPatch)
   if (reopening) delete props.outcome
   const sets: string[] = []
   const params: unknown[] = []
@@ -205,12 +205,22 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   if (input.depends_on !== undefined && JSON.stringify(input.depends_on ?? []) !== JSON.stringify(old.depends_on ?? [])) {
     change(`depends_on ${show(old.depends_on)} → ${show(input.depends_on)}`)
   }
-  if (input.checkpoint !== undefined && (input.checkpoint ?? undefined) !== old.checkpoint) change(`checkpoint ${show(old.checkpoint)} → ${show(input.checkpoint)}`)
-  if (input.waiting_on !== undefined && JSON.stringify(input.waiting_on ?? null) !== JSON.stringify(old.waiting_on ?? null)) {
+  // v0.23: the mirrored fields as they end up, whichever shape the call wrote (task-state.ts)
+  if (props.checkpoint !== old.checkpoint) change(`checkpoint ${show(old.checkpoint)} → ${show(props.checkpoint)}`)
+  if (JSON.stringify(props.waiting_on ?? null) !== JSON.stringify(old.waiting_on ?? null)) {
     const who = (w: unknown) => (w && typeof w === 'object' ? `${(w as Record<string, string>).who ?? '?'} · ${(w as Record<string, string>).why ?? '?'}` : 'nobody')
-    change(`waiting on ${who(old.waiting_on)} → ${who(input.waiting_on)}`)
+    change(`waiting on ${who(old.waiting_on)} → ${who(props.waiting_on)}`)
   }
-  if (input.delegate !== undefined && (input.delegate ?? undefined) !== old.delegate) change(`delegate ${show(old.delegate)} → ${show(input.delegate)}`)
+  if (input.waits !== undefined && JSON.stringify(props.waits ?? null) !== JSON.stringify(old.waits ?? null)) {
+    const waits = (props.waits ?? []) as Array<Record<string, string>>
+    change(`waits → ${waits.length > 0 ? waits.map(w => `${w.who} · ${w.kind ?? 'wait'}`).join(', ') : 'none'}`)
+  }
+  if (props.delegate !== old.delegate) change(`delegate ${show(old.delegate)} → ${show(props.delegate)}`)
+  const was = old.delegation as Record<string, string> | undefined
+  const now = props.delegation as Record<string, string> | undefined
+  if (was !== undefined && now !== undefined && was.mode !== now.mode) change(`mode ${was.mode} → ${now.mode}`)
+  if (was?.requested_at !== now?.requested_at) change(now?.requested_at !== undefined ? 'delegation requested' : 'delegation request cleared')
+  if (was?.next_run_at !== now?.next_run_at) change(now?.next_run_at !== undefined ? `next run ${now.next_run_at}` : 'next run cleared')
   if (input.goal !== undefined && (input.goal ?? undefined) !== old.goal) change(input.goal === null ? 'goal cleared' : old.goal === undefined ? 'goal set' : 'goal changed')
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')

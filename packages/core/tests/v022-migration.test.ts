@@ -32,10 +32,12 @@ describe('v0.22 migration — op_log.verdicts, and a checkpoint at the new schem
 
     const log = db.prepare('SELECT seq, verdicts, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, verdicts: string | null, payload: string }>
     expect(log.map(e => e.verdicts)).toEqual(log.map(() => null))
-    const checkpoint = JSON.parse(log[log.length - 1].payload)
+    const checkpoint = log.map(e => JSON.parse(e.payload)).find(p => p.schema === 22 && p.call === 'brain.checkpoint')
     // the checkpoint of schema 22 names the state the genesis of schema 21 named: no state row changed
+    // (schema 23 adds the runs table after it, so the state now is that one with it)
     expect(checkpoint).toMatchObject({ schema: 22, call: 'brain.checkpoint', args: { state_hash: JSON.parse(log[0].payload).args.state_hash } })
-    expect(checkpoint.args.state_hash).toBe(stateHash(stateDump(db)))
+    const { runs: _runs, ...without23 } = stateDump(db)
+    expect(checkpoint.args.state_hash).toBe(stateHash(without23))
 
     writes(eml).store(validNote({ scope: 'project.p', title: 'after-22' }), eml.env({ handle: 'juno' }))
     expect(verify(db)).toMatchObject({ ok: true, entries: log.length + 1 })
