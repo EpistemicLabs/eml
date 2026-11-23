@@ -3,6 +3,7 @@ import { isBlank } from '../fields'
 import { appendEntry, bumpRev } from '../entries'
 import { addDays } from '../env'
 import { propsOf } from '../write/context'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
 /** engram.confirm_review — the engram and why it still holds. */
@@ -16,6 +17,8 @@ export const engramConfirmReview: CommandModule<EngramConfirmReviewInput, Engram
   name: 'engram.confirm_review',
   validate(input) {
     const o = inputObject('engram.confirm_review', input)
+    const unknown = unknownKeys(o, CALL_KEYS['engram.confirm_review'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — engram.confirm_review takes ${keyList(CALL_KEYS['engram.confirm_review'])}.`)
     requireText(o, 'id', 'Invalid engram: id is required.')
     if (o.text !== undefined && typeof o.text !== 'string') throw new CommandError('INVALID', 'Invalid engram: text must be text.')
     return o as unknown as EngramConfirmReviewInput

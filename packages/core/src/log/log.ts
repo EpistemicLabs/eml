@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { GENESIS_PREV_HASH, chainHash, plainJson, sha256Hex, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { NO_ACTOR } from '../env'
+import { BRAIN_ID } from '../contract/values'
 import { uuidv5 } from './op'
 import { encodeSnapshot, stateDump, stateHash } from './snapshot'
 
@@ -104,7 +105,6 @@ export function needsGenesis(db: Database.Database): boolean {
 
 /** Namespace of the genesis op_id (uuidv5): a genesis draws no random id. */
 const GENESIS_NAMESPACE = '5d3c8e2a-7f41-4b9e-a6d0-2c1f9b8e4a70'
-const BRAIN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Writes seq 1: `brain.genesis` with the brain's id and the hash of its state

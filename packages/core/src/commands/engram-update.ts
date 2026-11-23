@@ -13,6 +13,8 @@ import { planSupersedes, applySupersedes, successorOf, assertNoLiveSuccessor, ac
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects, sameSet } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import { boundTaskOf, assertTaskOpenForBinding } from '../write/task-binding'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { UPDATE_STATUSES } from '../contract/values'
 import { CommandError, assertBaseRev, checkBaseRev, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
 /** engram.update — the /update body: the engram and its patch (flat fields already split into properties). */
@@ -28,6 +30,8 @@ export const engramUpdate: CommandModule<EngramUpdateInput, StoredEngram> = {
   name: 'engram.update',
   validate(input) {
     const o = inputObject('engram.update', input)
+    const unknown = unknownKeys(o, CALL_KEYS['engram.update'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — engram.update takes ${keyList(CALL_KEYS['engram.update'])}.`)
     requireText(o, 'id', 'Invalid engram: id is required.')
     if (!o.patch || typeof o.patch !== 'object' || Array.isArray(o.patch)) throw new CommandError('INVALID', 'Invalid engram: patch must be an object.')
     checkBaseRev(o)
@@ -66,7 +70,7 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
   if (raw.type !== undefined) {
     throw new Error('Invalid engram: the type of an engram does not change — write the new engram of the target type with supersedes=[id].')
   }
-  const unknown = Object.keys(raw).filter(k => !UPDATE_PATCH_KEYS.has(k) && raw[k] !== undefined)
+  const unknown = unknownKeys(raw, CALL_KEYS['engram.update'].patch)
   if (unknown.length > 0) {
     // the list names what this engram takes: review_note only on a reviewable type, app only with an origin
     const universal = [...UPDATE_PATCH_KEYS].filter(k => k !== 'properties'
@@ -92,7 +96,7 @@ function update(ctx: CommandContext, id: string, patch: EngramPatch): StoredEngr
 
   let reactivatesSuperseded = false
   if (patch.status !== undefined) {
-    if (!(['invalidated', 'active'] as string[]).includes(patch.status)) {
+    if (!(UPDATE_STATUSES as readonly string[]).includes(patch.status)) {
       throw new Error(
         'Invalid engram: status can be set to invalidated or active (a reactivation). ' +
         'Superseded comes from supersedes on the new engram.',

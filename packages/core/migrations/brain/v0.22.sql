@@ -1,7 +1,7 @@
 -- ============================================================
--- EML brain schema v0.21 — fresh brain
+-- EML brain schema v0.22 — fresh brain
 --
--- The complete schema a new brain starts with (schema 21). Existing brains
+-- The complete schema a new brain starts with (schema 22). Existing brains
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
 --
@@ -13,6 +13,10 @@
 -- Schema 21 (local op log): op_log and op_snapshots; engrams, relations and
 -- entries carry ord, their insertion order. The runner writes the log's
 -- genesis after this file (database.ts applyMigration).
+--
+-- Schema 22 (the contract of a shared brain): what an entry must look like is
+-- one contract per schema (contracts/v22.json); no state table changes.
+-- op_log gains verdicts, a column of the replica like rejected.
 --
 -- No BEGIN/COMMIT: the runner (database.ts) runs this file and the ledger row
 -- in one transaction.
@@ -258,6 +262,7 @@ CREATE TABLE op_log (
   signature     BLOB,                         -- the author device's signature over payload_hash (shared brains); NULL in a private brain
   rejected      TEXT,                         -- NULL = applied; else why the replica refused it (shared brains): outside the hash and the state
   payload       TEXT NOT NULL,
+  verdicts      TEXT,                         -- shared brains: sha256 chain (64 hex) over this replica's applied / rejected verdicts up to this entry; NULL for entries taken before a build fills it; outside the hash and the state
   CHECK (op_id IS NOT NULL OR rejected IS NOT NULL)
 );
 -- An op_id occurs once in a log (decision shared-log-rejected-entries): the

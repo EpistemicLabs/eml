@@ -1,65 +1,46 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, writeFileSync } from 'fs'
 import Database from 'better-sqlite3'
 import { canonicalJson } from '@engramprotocol/protocol/log'
-import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, type Actor } from '../src'
+import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { COMMAND_NAMES } from '../src/commands'
-import { rebuild, verify } from '../src/log/rebuild'
+import { frozenLogFile, readFrozenLog, type FrozenLog } from '../src/contract/frozen'
+import { verify } from '../src/log/rebuild'
+import { FROZEN_BRAIN, refusalOf, replayFrozenLog, selfTest } from '../src/log/self-test'
 import { stateDump, stateHash } from '../src/log/snapshot'
 import { validDecision, validNote, validRule, validTask, writes, writeEverything } from './fixtures'
 
-// The frozen log of the current brain schema (fixtures/log-v<N>.json): a log
+// The frozen log of the current brain schema (contracts/log-v<N>.json): a log
 // that calls every command, the hash of the state it replays to, and writes
 // the brain refuses on that state with what it answers. What a logged op does
 // is part of the log format — validation, enums, limits, scope patterns, the
 // learning topic gate, defaults, change-entry texts, slugs, wikilinks. Every
 // replica and every later rebuild must derive the same state from the same
 // log, on every platform, so this test replays the file as it was written
-// and compares.
+// and compares. The file ships with every build, which replays it when it
+// starts (log/self-test.ts); the loader here is that one.
 //
 // When it fails, the change under test makes an existing log replay to another
 // state. That is a new brain schema (CLAUDE.md), not a new fixture. The file
 // is written again only with a schema bump or to cover a new command:
 // `EML_FREEZE_LOG=1 pnpm -F @engramprotocol/core test frozen-log`, and the
-// diff is reviewed like code.
+// diff is reviewed like code. The contract document names the log's state
+// hash, so it is generated again after a freeze (tests/contract.test.ts).
 
 const SCHEMA = CURRENT_BRAIN_SCHEMA_VERSION
-const FILE = join(__dirname, 'fixtures', `log-v${SCHEMA}.json`)
-const BRAIN = '6f1d2c3b-4a59-4e68-9b7a-0c1d2e3f4a5b'
+const FILE = frozenLogFile()
 const START = Date.parse('2026-11-19T08:00:00.000Z')
-/** The time the refused writes are tried at: after every entry of the log. */
-const LATER = '2026-11-20T08:00:00.000Z'
 
-interface Entry { seq: number, at: string, op_id: string, prev_hash: string, payload_hash: string, hash: string, payload: string }
-interface Refused { name: string, input: unknown, actor: Actor, error: { code: string, message: string, data: unknown } }
-interface Frozen {
-  schema: number
-  state_hash: string
-  /** the genesis snapshot's stored bytes, base64 */
-  genesis: { state_hash: string, data: string }
-  entries: Entry[]
-  refused: Refused[]
-}
+type Frozen = FrozenLog
 
 const raw = (eml: EML): Database.Database => (eml as any).db
-
-function refusal(eml: EML, name: string, input: unknown, actor: Actor): Refused['error'] {
-  try {
-    eml.apply({ name, input } as never, { now: () => LATER, newId: () => '99999999-0000-4000-8000-000000000000', actor })
-  } catch (err) {
-    const e = err as { code?: string, message: string, data?: unknown }
-    return { code: e.code ?? 'ERROR', message: e.message, data: e.data ?? null }
-  }
-  throw new Error(`${name} was not refused`)
-}
 
 /** The brain the file is written from: writeEverything, learnings on neighbouring topics, an update at a revision. */
 function write(): Frozen {
   let t = START
   let n = 0
   const eml = new EML({
-    dbPath: ':memory:', namespace: 'frozen', brainId: BRAIN,
+    dbPath: ':memory:', namespace: 'frozen', brainId: FROZEN_BRAIN,
     clock: () => new Date(t++).toISOString(),
     newId: () => `00000000-0000-4000-8000-${(n++).toString(16).padStart(12, '0')}`,
   })
@@ -77,6 +58,8 @@ function write(): Frozen {
     const learned = writes(eml).learn({ scope: 'agent.juno', title, content, source: 'observed', happened: 'seen once' }, juno)
     if (!learned.written) throw new Error(`${title} was taken as an existing topic`)
   }
+
+  const task = writes(eml).store(validTask({ scope: 'project.q', title: 'tracked' }), juno)
 
   const actor = juno.actor
   const tries: Array<[string, unknown]> = [
@@ -96,8 +79,21 @@ function write(): Frozen {
     ['object.update', { object: 'tag', id: 'unregistered', patch: { description: 'none' } }],
     ['engram.retag', { ids: [decision.id], add: ['unregistered'], remove: [] }],
     ['engram.rescope', { ids: [decision.id], scope: 'project.nowhere' }],
+    // a key the call does not take is refused, never ignored (schema 22): top level, envelope, nested, a null value, an inherited name
+    ['task.track', { id: task.id, text: 'progress', done_when: 'it ships' }],
+    ['engram.update', { id: decision.id, patch: { content: 'changed' }, note: 'x' }],
+    ['engram.update', { id: decision.id, patch: { properties: { toString: 'x' } } }],
+    ['engram.create', { ...validNote({ scope: 'project.q', title: 'null-field' }), properties: { verdict: null } }],
+    ['engram.create', { ...validNote({ scope: 'project.q', title: 'inherited-name' }), properties: { constructor: 'x' } }],
+    ['engram.create', { type: 'learning', scope: 'agent.juno', title: 'lesson-in-evidence', content: 'Keep the lesson out of the evidence.', new_topic: true, evidence: { source: 'observed', happened: 'once', title: 'another-title' } }],
+    ['engram.confirm_review', { id: decision.id, text: 'still holds', note: 'x' }],
+    ['object.create', { object: 'tag', fields: { name: 'extra' }, note: 'x' }],
+    ['object.create', { object: 'tag', fields: { name: 'extra', valueOf: 'x' } }],
+    ['object.update', { object: 'project', id: 'q', patch: { goal: 'none' }, note: 'x' }],
+    ['engram.import', { source: { brain: 'b', head_seq: 1, note: 'x' }, set_hash: '', rows: {} }],
+    ['engram.move_out', { ids: [decision.id], set_hash: '0'.repeat(64), drop_relations: [], target: { brain: 'b', op_id: 'o', note: 'x' } }],
   ]
-  const refused = tries.map(([name, input]) => ({ name, input, actor, error: refusal(eml, name, input, actor) }))
+  const refused = tries.map(([name, input]) => ({ name, input, actor, error: refusalOf(eml, name, input, actor) }))
 
   const db = raw(eml)
   const genesis = db.prepare('SELECT state_hash, data FROM op_snapshots WHERE seq = 1').get() as { state_hash: string, data: Buffer }
@@ -105,28 +101,11 @@ function write(): Frozen {
     schema: SCHEMA,
     state_hash: eml.stateHash(),
     genesis: { state_hash: genesis.state_hash, data: genesis.data.toString('base64') },
-    entries: db.prepare('SELECT seq, at, op_id, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Entry[],
+    entries: db.prepare('SELECT seq, at, op_id, prev_hash, payload_hash, hash, payload FROM op_log ORDER BY seq').all() as Frozen['entries'],
     refused,
   }
   eml.close()
   return frozen
-}
-
-/** The file as a brain: its log loaded as stored, its state rebuilt from it. */
-function load(frozen: Frozen): Database.Database {
-  const log = initDatabase(':memory:', undefined, BRAIN, { log: false })
-  const insert = log.prepare('INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, signature, rejected, payload) VALUES (@seq, @at, @op_id, @prev_hash, @payload_hash, @hash, NULL, NULL, @payload)')
-  for (const entry of frozen.entries) insert.run(entry)
-  log.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (1, ?, ?, ?)').run(frozen.schema, frozen.genesis.state_hash, Buffer.from(frozen.genesis.data, 'base64'))
-
-  const brain = new Database(':memory:')
-  rebuild(brain, log)
-  for (const entry of frozen.entries) {
-    brain.prepare('INSERT INTO op_log (seq, at, op_id, prev_hash, payload_hash, hash, signature, rejected, payload) VALUES (@seq, @at, @op_id, @prev_hash, @payload_hash, @hash, NULL, NULL, @payload)').run(entry)
-  }
-  brain.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (1, ?, ?, ?)').run(frozen.schema, frozen.genesis.state_hash, Buffer.from(frozen.genesis.data, 'base64'))
-  log.close()
-  return brain
 }
 
 if (process.env.EML_FREEZE_LOG === '1') {
@@ -139,7 +118,7 @@ describe(`the frozen log of brain schema ${SCHEMA}`, () => {
     expect(existsSync(FILE), `no frozen log for schema ${SCHEMA} (${FILE})`).toBe(true)
   })
   if (!existsSync(FILE)) return
-  const frozen = JSON.parse(readFileSync(FILE, 'utf-8')) as Frozen
+  const frozen = readFrozenLog()
 
   it('calls every command', () => {
     const called = new Set(frozen.entries.map(e => (JSON.parse(e.payload) as { call: string }).call))
@@ -147,20 +126,36 @@ describe(`the frozen log of brain schema ${SCHEMA}`, () => {
   })
 
   it('replays to the state hash it was frozen with, and verifies', () => {
-    const brain = load(frozen)
+    const brain = replayFrozenLog(frozen)
     expect(stateHash(stateDump(brain))).toBe(frozen.state_hash)
     expect(verify(brain)).toEqual({ ok: true, entries: frozen.entries.length, state_hash: frozen.state_hash })
     brain.close()
   })
 
   it('refuses the same writes with the same answers', () => {
-    const brain = load(frozen)
+    const brain = replayFrozenLog(frozen)
     const eml = EML.fromConnection(brain, 'frozen')
     for (const { name, input, actor, error } of frozen.refused) {
-      expect(canonicalJson(refusal(eml, name, input, actor) as never), `${name} ${JSON.stringify(input).slice(0, 80)}`).toBe(canonicalJson(error as never))
+      expect(canonicalJson(refusalOf(eml, name, input, actor) as never), `${name} ${JSON.stringify(input).slice(0, 80)}`).toBe(canonicalJson(error as never))
     }
     expect(stateHash(stateDump(brain))).toBe(frozen.state_hash)
     brain.close()
+  })
+
+  it('passes the self-test a build runs when it starts', () => {
+    expect(selfTest()).toEqual({ ok: true, schema: SCHEMA, entries: frozen.entries.length, state_hash: frozen.state_hash })
+  })
+
+  it('fails the self-test of a build that replays it to another state or answers a refused write differently', () => {
+    // another build is stood in for by another file: the log as frozen, with what a build of other rules would have frozen
+    expect(selfTest({ ...frozen, state_hash: '0'.repeat(64) })).toMatchObject({ ok: false, problem: expect.stringContaining('replays to state') })
+    const [first, ...rest] = frozen.refused
+    expect(selfTest({ ...frozen, refused: [{ ...first, error: { ...first.error, message: 'another answer' } }, ...rest] }))
+      .toMatchObject({ ok: false, problem: expect.stringContaining('answered differently') })
+    // a write this build takes, frozen as refused by a build that knows one key less
+    const taken = { name: 'object.create', input: { object: 'tag', fields: { name: 'fresh-tag' } }, actor: first.actor, error: first.error }
+    expect(selfTest({ ...frozen, refused: [taken] })).toMatchObject({ ok: false, problem: expect.stringContaining('was taken') })
+    expect(selfTest({ ...frozen, schema: SCHEMA - 1 })).toMatchObject({ ok: false, problem: `the frozen log is of schema ${SCHEMA - 1}` })
   })
 
   it('is what the same writes give today', () => {

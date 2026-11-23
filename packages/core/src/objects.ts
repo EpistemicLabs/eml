@@ -1,6 +1,7 @@
 import type { EML } from './index'
 import { slugifyTag } from './tags'
 import { fieldProblem, unknownFieldsError } from './fields'
+import { unknownKeys } from './contract/calls'
 
 // --- Objects (v0.19): project · entity · tag · subject · user · agent -------------
 //
@@ -15,7 +16,7 @@ export type ObjectKind = typeof OBJECT_KINDS[number]
 
 type Spec = Record<string, { kind: 'text' | 'text[]' | 'enum' | 'date' | 'map', values?: readonly string[] }>
 
-const OBJECT_FIELDS: Record<ObjectKind, Spec> = {
+export const OBJECT_FIELDS: Record<ObjectKind, Spec> = {
   project: {
     id: { kind: 'text' }, name: { kind: 'text' },
     status: { kind: 'enum', values: ['active', 'paused', 'archived'] },
@@ -48,7 +49,7 @@ const OBJECT_FIELDS: Record<ObjectKind, Spec> = {
 }
 
 /** Fields that cannot be cleared or changed after create. */
-const FIXED_ON_UPDATE: Record<ObjectKind, readonly string[]> = {
+export const FIXED_ON_UPDATE: Record<ObjectKind, readonly string[]> = {
   project: ['id'], entity: ['id'], tag: [], subject: [], user: ['id'], agent: ['id'],
 }
 
@@ -60,7 +61,7 @@ export function assertObject(object: unknown): asserts object is ObjectKind {
 
 export function checkFields(object: ObjectKind, input: Record<string, unknown>, mode: 'create' | 'update'): void {
   const spec = OBJECT_FIELDS[object]
-  const unknown = Object.keys(input).filter(k => !(k in spec) && input[k] !== undefined)
+  const unknown = unknownKeys(input, spec)
   if (unknown.length > 0) {
     const e = unknownFieldsError(object, unknown, Object.keys(spec).filter(k => mode === 'create' || !FIXED_ON_UPDATE[object].includes(k)))
     throw new Error(e.message.replace(/^Invalid engram:/, 'Invalid object:'))

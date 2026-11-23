@@ -33,11 +33,18 @@ function read<T>(file: string, fn: (db: Database.Database) => T): T {
   try { return fn(db) } finally { db.close() }
 }
 
-/** The genesis is the log's only entry, its chain link is valid, and it and its snapshot hold the brain's state. */
-function expectGenesis(file: string, brain?: string): void {
+/**
+ * The genesis starts the log, its chain link is valid, and it and its snapshot
+ * hold the brain's state. In a fresh brain it is the only entry, at the current
+ * schema. A brain migrated from schema 20 got it at schema 21, and each later
+ * step added its checkpoint (schema 22 changes no state row, so it names the
+ * same state).
+ */
+function expectGenesis(file: string, brain?: string, schema = 21): void {
   read(file, db => {
-    const log = db.prepare('SELECT * FROM op_log').all() as Array<Record<string, any>>
-    expect(log).toHaveLength(1)
+    const log = db.prepare('SELECT * FROM op_log ORDER BY seq').all() as Array<Record<string, any>>
+    const steps = Array.from({ length: CURRENT_BRAIN_SCHEMA_VERSION - schema }, (_, i) => schema + 1 + i)
+    expect(log).toHaveLength(1 + steps.length)
     const g = log[0]
     expect(g.seq).toBe(1)
     expect(g.prev_hash).toBe(GENESIS_PREV_HASH)
@@ -46,14 +53,18 @@ function expectGenesis(file: string, brain?: string): void {
     expect(g.signature).toBeNull()
     const state = stateHash(stateDump(db))
     const payload = JSON.parse(g.payload)
-    expect(payload).toMatchObject({ schema: CURRENT_BRAIN_SCHEMA_VERSION, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
+    expect(payload).toMatchObject({ schema, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
     expect(payload.args.brain).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     if (brain !== undefined) expect(payload.args.brain).toBe(brain)
     expect(payload.provenance).toEqual({ handle: null, agent: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
 
-    const snaps = db.prepare('SELECT * FROM op_snapshots').all() as Array<Record<string, any>>
-    expect(snaps).toHaveLength(1)
-    expect(snaps[0]).toMatchObject({ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION, state_hash: state })
+    steps.forEach((step, i) => {
+      expect(JSON.parse(log[1 + i].payload)).toMatchObject({ schema: step, call: 'brain.checkpoint', args: { seq: 1 + i, state_hash: state } })
+    })
+
+    const snaps = db.prepare('SELECT * FROM op_snapshots ORDER BY seq').all() as Array<Record<string, any>>
+    expect(snaps.map(({ seq, schema, state_hash }) => ({ seq, schema, state_hash })))
+      .toEqual([schema, ...steps].map((schema, i) => ({ seq: 1 + i, schema, state_hash: state })))
     const snapshot = decodeSnapshot(snaps[0].data)
     expect(stateHash(snapshot)).toBe(state)
     expect(snapshot).toEqual(JSON.parse(JSON.stringify(stateDump(db))))
@@ -68,10 +79,10 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
   it('a fresh brain starts its log with the genesis of the empty brain', () => {
     const file = join(dir, 'fresh.db')
     new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()
-    expectGenesis(file)
+    expectGenesis(file, undefined, CURRENT_BRAIN_SCHEMA_VERSION)
     read(file, db => {
       expect(Object.values(stateDump(db)).every(rows => rows.length === 0)).toBe(true)
-      expect((db.prepare('SELECT at FROM op_log').get() as { at: string }).at).toBe(NOW)
+      expect((db.prepare('SELECT at FROM op_log WHERE seq = 1').get() as { at: string }).at).toBe(NOW)
     })
   })
 
@@ -82,7 +93,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()
     expectGenesis(file)
     read(file, db => {
-      expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(21)
+      expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
       expect(withoutNew(stateDump(db))).toEqual(before)
       expectOrdInRowidOrder(db)
       for (const table of ['engrams', 'entries']) expect((db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE agent IS NOT NULL`).get() as { n: number }).n, table).toBe(0)
@@ -121,7 +132,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('${ID}', 'test', 'u1', 'brains/b1.db', 20)`).run()
       const report = runForwardMigrations({ control, dataDir, clock: () => NOW })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21, 22] })
     } finally { control.close() }
     expectGenesis(file, ID)
     read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
@@ -134,7 +145,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     new EML({ namespace: 'test', dbPath: a, clock: () => NOW, brainId: ID }).close()
     new EML({ namespace: 'test', dbPath: b, clock: () => NOW, brainId: ID }).close()
     new EML({ namespace: 'test', dbPath: c, clock: () => NOW }).close()
-    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log').get() as { op_id: string })
+    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log WHERE seq = 1').get() as { op_id: string })
     expect(entry(b)).toEqual(entry(a))
     expect(entry(c).op_id).not.toBe(entry(a).op_id)
   }, process.platform === 'win32' ? 15_000 : 5_000)
@@ -148,7 +159,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     a.close(); b.close()
   })
 
-  it('a brain already at 21 keeps its one genesis on the next open', () => {
+  it('a migrated brain keeps its one genesis on the next open', () => {
     const file = join(dir, 'v20.db')
     createV20Brain(file)
     new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()

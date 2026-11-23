@@ -1,6 +1,7 @@
 import { assertObject, checkFields, diffOf } from '../objects'
 import { slugifyTag } from '../tags'
 import { updateProject, updateEntity, updateTag, updateSubject, updateUser, updateAgent } from '../write/objects'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
 /** object.update — the kind, the object's id and the patch. */
@@ -15,6 +16,8 @@ export const objectUpdate: CommandModule<ObjectUpdateInput, { object: unknown, d
   name: 'object.update',
   validate(input) {
     const o = inputObject('object.update', input)
+    const unknown = unknownKeys(o, CALL_KEYS['object.update'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — object.update takes ${keyList(CALL_KEYS['object.update'])}.`)
     requireText(o, 'id', 'Invalid object: id is required.')
     if (!o.patch || typeof o.patch !== 'object' || Array.isArray(o.patch)) throw new CommandError('INVALID', 'Invalid object: patch must be an object.')
     return o as unknown as ObjectUpdateInput

@@ -1,3 +1,5 @@
+import { CALL_KEYS, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { BRAIN_ID } from '../contract/values'
 import { CommandError, inputObject, requireText, type CommandModule } from './types'
 
 // --- relation.move_end (v0.21, spec team-brain-move-project-spec §4) -----------
@@ -23,15 +25,14 @@ export interface RelationMoveEndResult {
   relations: number
 }
 
-const KEYS = ['from_brain', 'to_brain', 'relations']
-const BRAIN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const KEYS = Object.keys(CALL_KEYS['relation.move_end'])
 
 export const relationMoveEnd: CommandModule<RelationMoveEndInput, RelationMoveEndResult> = {
   name: 'relation.move_end',
   validate(input) {
     const o = inputObject('relation.move_end', input)
-    const unknown = Object.keys(o).filter(k => !KEYS.includes(k) && o[k] !== undefined)
-    if (unknown.length > 0) invalid(`unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} — it takes ${KEYS.join(', ')}`)
+    const unknown = unknownKeys(o, CALL_KEYS['relation.move_end'])
+    if (unknown.length > 0) invalid(`${unknownFieldsText(unknown)} — it takes ${KEYS.join(', ')}`)
     const brains: Record<string, string> = {}
     for (const field of ['from_brain', 'to_brain'] as const) {
       const v = requireText(o, field, `Invalid command: relation.move_end needs ${field}.`)

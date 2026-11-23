@@ -1,3 +1,5 @@
+import { CALL_KEYS, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { HANDLE } from '../contract/values'
 import { CommandError, inputObject, requireText, type CommandModule } from './types'
 
 // --- provenance.restamp (v0.21, decision cockpit-identity-agent-brain) ---------
@@ -25,15 +27,12 @@ export interface ProvenanceRestampResult {
   entries: number
 }
 
-/** A handle or an agent as provenance names it (apply-op.ts AGENT, protocol §6). */
-const HANDLE = /^[a-z0-9_-]{1,63}$/
-
 export const provenanceRestamp: CommandModule<ProvenanceRestampInput, ProvenanceRestampResult> = {
   name: 'provenance.restamp',
   validate(input) {
     const o = inputObject('provenance.restamp', input)
-    const unknown = Object.keys(o).filter(k => !['from_handle', 'to_handle', 'agent'].includes(k) && o[k] !== undefined)
-    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} — provenance.restamp takes from_handle, to_handle, agent.`)
+    const unknown = unknownKeys(o, CALL_KEYS['provenance.restamp'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — provenance.restamp takes from_handle, to_handle, agent.`)
     const out: Record<string, string> = {}
     for (const field of ['from_handle', 'to_handle', 'agent'] as const) {
       const v = requireText(o, field, `Invalid command: provenance.restamp needs ${field}.`)
