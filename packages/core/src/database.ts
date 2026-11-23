@@ -3,7 +3,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { CURRENT_BRAIN_SCHEMA_VERSION, OLDEST_MIGRATABLE_BRAIN_SCHEMA } from './control'
 import { type Clock, systemClock, randomId } from './env'
-import { needsGenesis, writeGenesis } from './log/log'
+import { needsGenesis, writeCheckpoint, writeGenesis } from './log/log'
 
 // SQL files ship inside the package, next to src/ and dist/ — the same relative
 // location from a workspace checkout and from a bundled build (dist/server.cjs).
@@ -46,6 +46,10 @@ const LOG_FROM = 21
  * transaction, with the brain's id `brain` — `genesis` says whether this is
  * such a step. A later step never writes one: a brain whose log is empty
  * stays so (it is a shared brain waiting for its genesis from the relay).
+ *
+ * A migrate step past that one continues a log that has started: it writes
+ * the checkpoint a rebuild at the new schema starts from (log/log.ts
+ * writeCheckpoint; a shared brain's comes through its relay).
  */
 export function applyMigration(db: Database.Database, version: number, sql: string, at: () => string, brain: string, genesis = version === LOG_FROM): void {
   if (version >= RUNNER_TRANSACTION_FROM) {
@@ -54,6 +58,7 @@ export function applyMigration(db: Database.Database, version: number, sql: stri
       const now = at()
       recordMigration(db, version, now)
       if (genesis && needsGenesis(db)) writeGenesis(db, version, now, brain)
+      else if (version > LOG_FROM) writeCheckpoint(db, version, now)
     })()
   } else {
     db.exec(sql)

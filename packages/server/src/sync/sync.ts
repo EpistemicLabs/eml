@@ -382,7 +382,7 @@ export class Sync {
         const head = this.replica.head()
         const landed = await this.submit('brain.checkpoint', checkpointArgs(head.seq, this.replica.stateHash()), { ...NO_ACTOR, handle: this.replica.ownHandle() as string }, crypto.randomUUID())
         if (landed.seq === head.seq + 1) return { seq: landed.seq }
-        if (auto && this.sinceCheckpoint < this.checkpointEvery) return { seq: landed.seq - this.sinceCheckpoint }
+        if (auto && !this.checkpointDue()) return { seq: landed.seq - this.sinceCheckpoint }
         if (attempt >= 3) {
           throw new SharedWriteError(409, 'CHECKPOINT_NOT_ADJACENT',
             'The checkpoint did not land right after the state it names; other writes came in between. Try again.')
@@ -395,17 +395,22 @@ export class Sync {
 
   /**
    * The policy: a checkpoint by this device once the log grew by
-   * checkpointEvery entries, while live and none of its own on the way. Asked
+   * checkpointEvery entries, or after a schema bump until the log has the
+   * checkpoint of the new schema, while live and none of its own on the way. Asked
    * again once a checkpoint is done: entries delivered in one burst are taken
    * before the finished one's promise settles, so a checkpoint that fell due
    * meanwhile would otherwise wait for the next entry, or forever.
    */
   private autoCheckpoint(): void {
-    if (this.checkpointing || this.sinceCheckpoint < this.checkpointEvery || this.state.kind !== 'live') return
+    if (this.checkpointing || !this.checkpointDue() || this.state.kind !== 'live') return
     this.writeCheckpoint(true).then(() => this.autoCheckpoint(), (err: unknown) => {
       // by code only: a relay's text never reaches the log unsanitized
       this.log(`the automatic checkpoint did not land (${(err as { code?: string }).code ?? 'error'})`)
     })
+  }
+
+  private checkpointDue(): boolean {
+    return this.sinceCheckpoint >= this.checkpointEvery || this.replica.behindSchema()
   }
 
   /**
