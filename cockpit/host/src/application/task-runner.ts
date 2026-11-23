@@ -27,7 +27,7 @@ import { projectIdForBrain } from '../project-registry.js'
  * Ticks every interval and when a turn ended.
  */
 
-export const MAX_RUNNING = 3
+export const MAX_RUNNING = 5
 /** The cap group of the standalone tasks with a checkpoint (steps count per parent). */
 const STANDALONE = '(standalone)'
 
@@ -108,16 +108,18 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
       const group = parentId ?? STANDALONE
+      // An active task that only waits for its job's next run holds no slot: nothing runs on it now.
+      const holdsSlot = (t: Task) => !deps.scheduled?.(t.id)
       if (parentId) {
         const parent = await get(parentId)
         if (!parent || parent.status !== 'active') continue
         if (!started.has(group)) {
           const siblings = await Promise.all(childrenOf(parent).map(get))
-          started.set(group, siblings.filter((s) => s?.status === 'active').length)
+          started.set(group, siblings.filter((s) => s?.status === 'active' && holdsSlot(s)).length)
         }
       } else if (!started.has(group)) {
         const running = await brain.get('/list', { type: 'task', status: 'active', with_parent: 'true', limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Array<Task & { parent_id?: string | null }> }
-        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && !t.parent_id).length)
+        started.set(group, (running.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && !t.parent_id && holdsSlot(t)).length)
       }
       const deps_ = await Promise.all((step.properties?.depends_on ?? []).map(get))
       if (deps_.some((d) => !d || d.status !== 'resolved')) continue
