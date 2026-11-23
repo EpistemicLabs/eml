@@ -105,7 +105,8 @@ export interface TaskBoardDeps {
   log(line: string): void
   /**
    * The newest seq of the space's op log (brain GET /head): at once when `after` is null, else once it differs
-   * from `after` or `waitMs` ran out. Throws an error with `status` 404 or 501 when the brain has no /head.
+   * from `after` or `waitMs` ran out. A brain without /head answers 404 (a server from before it) or 501 with
+   * body.code NO_LOG; any other error is worth another try.
    */
   head?(space: BrainSpace, after: number | null, waitMs: number): Promise<number>
 }
@@ -114,10 +115,10 @@ export interface TaskBoardDeps {
 export interface WatchOptions {
   /** Watch only while a page asked for the board within this long. */
   viewedMs: number
-  /** How long one long poll on /head waits. */
-  waitMs?: number
   /** How often a brain without /head is asked for its newest task instead. */
   probeMs?: number
+  /** How long a space checks its newest task before it tries /head again (the brain may have been updated). */
+  headRetryMs?: number
   /** How long the watch rests while nobody looks, or after a failed call (doubling up to 30 s). */
   restMs?: number
   /** Writes that arrive within this long make one refresh. */
@@ -125,6 +126,8 @@ export interface WatchOptions {
   sleep?: (ms: number) => Promise<void>
 }
 
+/** How long one long poll on a brain's /head waits. */
+const HEAD_WAIT_MS = 25_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
@@ -398,8 +401,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
      * slow or unreachable one holds up no other. Spaces that come and go are picked up within a few seconds.
      */
     watch(opts: WatchOptions): () => void {
-      const waitMs = opts.waitMs ?? 25_000
       const probeMs = opts.probeMs ?? 2_000
+      const headRetryMs = opts.headRetryMs ?? 5 * 60_000
       const restMs = opts.restMs ?? 2_000
       const settleMs = opts.settleMs ?? 150
       const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.() }))
@@ -419,6 +422,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         let after: number | null = null
         let probed: string | null = null
         let useHead = !!deps.head
+        let probingSince = 0
         let rest = restMs
         while (!stopped) {
           const space = deps.spaces().find((s) => s.id === spaceId)
@@ -426,9 +430,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           if (!viewed()) { await sleep(restMs); continue }
           try {
             if (useHead) {
-              const asked = Date.now()
-              const seq = await deps.head!(space, after, after === null ? 0 : waitMs)
-              const quick = Date.now() - asked < 1_000
+              const asked = deps.now()
+              const seq = await deps.head!(space, after, after === null ? 0 : HEAD_WAIT_MS)
+              const quick = deps.now() - asked < 1_000
               if (after !== null && seq !== after) refreshSoon(settleMs)
               // A brain that answers at once without a change does not hold the request: rest, don't spin.
               else if (after !== null && quick) await sleep(restMs)
@@ -438,12 +442,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
               if (probed !== null && top !== probed) refreshSoon(settleMs)
               probed = top
               await sleep(probeMs)
+              if (deps.head && deps.now() - probingSince >= headRetryMs) { useHead = true; after = null }
             }
             rest = restMs
           } catch (err) {
-            const status = (err as { status?: number }).status
-            if (useHead && (status === 404 || status === 501)) {
+            const { status, body } = err as { status?: number; body?: { code?: string } }
+            if (useHead && (status === 404 || body?.code === 'NO_LOG')) {
               useHead = false
+              probingSince = deps.now()
               deps.log(`[board] ${space.name}: its brain has no /head; checking its newest task every ${probeMs} ms instead`)
               continue
             }

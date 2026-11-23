@@ -290,4 +290,59 @@ describe('live updates', () => {
     expect(log.some((l) => l.includes('watching Ebisu failed'))).toBe(true)
     stop()
   })
+
+  const quickSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 5)))
+
+  it('rests instead of spinning when a brain answers at once without a change', async () => {
+    let calls = 0
+    const rests: number[] = []
+    const head: TaskBoardDeps['head'] = async () => { calls++; return 3 }
+    const { board } = setup({ main: [mine('t1')], head })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 7, sleep: (ms) => { rests.push(ms); return quickSleep(ms) } })
+    await until(() => rests.filter((ms) => ms === 7).length >= 3)
+    stop()
+    expect(calls).toBeLessThan(20)
+  })
+
+  it('a brain that fails for a moment is asked again, not given up on', async () => {
+    const log: string[] = []
+    let fails = 2
+    let seen = 0
+    const head: TaskBoardDeps['head'] = async (space, after) => {
+      if (space.id !== 'main') return 1
+      if (fails > 0) { fails--; throw Object.assign(new Error('Reading the log head failed'), { status: 500, body: { code: 'HEAD_READ_FAILED' } }) }
+      seen++
+      return after === null ? 4 : 4
+    }
+    const { board } = setup({ main: [mine('t1')], head, log })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 5, sleep: quickSleep })
+    await until(() => seen >= 2)
+    stop()
+    expect(log.some((l) => l.includes('no /head'))).toBe(false)
+    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(2)
+  })
+
+  it('falls back on NO_LOG and tries /head again later', async () => {
+    const log: string[] = []
+    let noLog = true
+    let headCalls = 0
+    const head: TaskBoardDeps['head'] = async (space) => {
+      if (space.id !== 'main') return 1
+      headCalls++
+      if (noLog) throw Object.assign(new Error('no op log'), { status: 501, body: { code: 'NO_LOG' } })
+      return 9
+    }
+    const { board, clock } = setup({ main: [mine('t1')], head, log })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 10 * 60_000, probeMs: 5, restMs: 5, headRetryMs: 60_000, sleep: quickSleep })
+    await until(() => log.some((l) => l.includes('Main: its brain has no /head')))
+    const before = headCalls
+    noLog = false
+    clock.now += 60_000
+    await until(() => headCalls > before)
+    stop()
+  })
 })
+
