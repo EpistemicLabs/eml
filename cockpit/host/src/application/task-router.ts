@@ -1,10 +1,12 @@
 import * as fs from 'node:fs'
+import * as path from 'node:path'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { parseHandoff, type Handoff } from '../domain/handoff.js'
 import { needsAnswer } from '../domain/session-attention.js'
 import type { WaitKind } from '../domain/task-turn.js'
 import type { SessionLedger } from '../session-ledger.js'
+import { COCKPIT_HOME } from '../paths.js'
 
 /**
  * The router (decision one-router-for-steps-and-jobs): when a session's turn
@@ -22,8 +24,8 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - Anything else clears a waiting_on this session set: the work goes on.
  *   - A wait another session set stays: while that session is not put
  *     away, this session's wait is held back, and it takes the other one's
- *     place once that is answered or cleared. Held waits live in the host's
- *     memory until the task can hold a list of waits.
+ *     place once that is answered or cleared. Held waits are kept in a file
+ *     (HeldWaitStore), so a host restart does not lose them.
  *   - A session that closed its task and asks nothing is finished: its
  *     handoff and outcome are in the task, so it leaves the lists (finished).
  *
@@ -39,6 +41,8 @@ export interface TaskRouterDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
+  /** Where waits held back behind another session's wait are kept; in memory when not given. */
+  held?: Pick<HeldWaitStore, 'get' | 'set'>
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
   log(line: string): void
@@ -58,6 +62,36 @@ export interface WaitingOn {
   why: string
   since: string
   session_id: string
+}
+
+/** held-waits.json: the waits held back per task, oldest first. Read tolerantly, rewritten whole, owner-only. */
+export class HeldWaitStore {
+  private data: Record<string, WaitingOn[]> = {}
+
+  constructor(readonly file = path.join(COCKPIT_HOME, 'held-waits.json')) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
+      if (parsed && typeof parsed === 'object') {
+        for (const [taskId, waits] of Object.entries(parsed as Record<string, unknown>)) {
+          if (Array.isArray(waits)) this.data[taskId] = waits.filter((w): w is WaitingOn => !!w && typeof w === 'object' && typeof (w as WaitingOn).session_id === 'string')
+        }
+      }
+    } catch { /* none yet */ }
+  }
+
+  get(taskId: string): WaitingOn[] {
+    return this.data[taskId] ?? []
+  }
+
+  set(taskId: string, waits: WaitingOn[]): void {
+    if (waits.length) this.data[taskId] = waits
+    else if (taskId in this.data) delete this.data[taskId]
+    else return
+    fs.mkdirSync(path.dirname(this.file), { recursive: true })
+    const tmp = `${this.file}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { mode: 0o600 })
+    fs.renameSync(tmp, this.file)
+  }
 }
 
 /** A question as the Inbox shows it: up to its first question mark, at most 160 characters. */
@@ -101,7 +135,8 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
   // What was last routed per session, so a turn that changed nothing writes nothing.
   const lastRouted = new Map<string, string>()
   // Waits held back per task while another session's wait is on it, oldest first.
-  const heldWaits = new Map<string, WaitingOn[]>()
+  const memory = new Map<string, WaitingOn[]>()
+  const heldWaits = deps.held ?? { get: (taskId: string) => memory.get(taskId) ?? [], set: (taskId: string, waits: WaitingOn[]) => { if (waits.length) memory.set(taskId, waits); else memory.delete(taskId) } }
 
   /** The session that set a wait still counts: not put away here, or not known here (another machine's). */
   const stillThere = (sessionId: string) => {
@@ -109,18 +144,16 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     return !entry || !entry.archivedAt
   }
   const hold = (taskId: string, wait: WaitingOn) =>
-    heldWaits.set(taskId, [...(heldWaits.get(taskId) ?? []).filter((w) => w.session_id !== wait.session_id), wait])
+    heldWaits.set(taskId, [...heldWaits.get(taskId).filter((w) => w.session_id !== wait.session_id), wait])
   const drop = (taskId: string, sessionId: string) => {
-    const rest = (heldWaits.get(taskId) ?? []).filter((w) => w.session_id !== sessionId)
-    if (rest.length) heldWaits.set(taskId, rest)
-    else heldWaits.delete(taskId)
+    const waits = heldWaits.get(taskId)
+    if (waits.some((w) => w.session_id === sessionId)) heldWaits.set(taskId, waits.filter((w) => w.session_id !== sessionId))
   }
   /** The held wait that takes a cleared wait's place, if one of a session still there is left. */
   const nextHeld = (taskId: string): WaitingOn | null => {
-    const left = (heldWaits.get(taskId) ?? []).filter((w) => stillThere(w.session_id))
+    const left = heldWaits.get(taskId).filter((w) => stillThere(w.session_id))
     const next = left.shift() ?? null
-    if (left.length) heldWaits.set(taskId, left)
-    else heldWaits.delete(taskId)
+    heldWaits.set(taskId, left)
     return next
   }
 
@@ -142,7 +175,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
-      heldWaits.delete(task.id)
+      heldWaits.set(task.id, [])
       // A closed task waits on nobody.
       if (task.properties?.waiting_on) await brain.post(`/task/${task.id}/track`, { waiting_on: null }).catch(() => {})
       const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))

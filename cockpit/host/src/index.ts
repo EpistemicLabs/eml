@@ -44,7 +44,7 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
-import { createTaskRouter } from './application/task-router.js'
+import { createTaskRouter, HeldWaitStore } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createCycles } from './application/cycles.js'
@@ -366,7 +366,7 @@ async function main() {
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
-    ledger, spaces, brain: taskBrain, owner, log,
+    ledger, spaces, brain: taskBrain, owner, log, held: new HeldWaitStore(),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
