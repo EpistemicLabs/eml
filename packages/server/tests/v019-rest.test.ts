@@ -50,6 +50,29 @@ describe('v0.19 REST', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  describe('GET /head', () => {
+    it('answers the newest seq, and holds ?after=&wait= until a write moves it', async () => {
+      const now = await get('/head')
+      expect(now.status).toBe(200)
+      expect(typeof now.body.seq).toBe('number')
+      const started = Date.now()
+      const waiting = get(`/head?after=${now.body.seq}&wait=2500`)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect((await create(validTask({ title: 'head-watch' }))).status).toBe(201)
+      const moved = await waiting
+      expect(moved.status).toBe(200)
+      expect(moved.body.seq).toBeGreaterThan(now.body.seq)
+      expect(Date.now() - started).toBeLessThan(1500)
+    })
+
+    it('answers the same seq when nothing was written in time, and refuses a bad query', async () => {
+      const { body } = await get('/head')
+      const quiet = await get(`/head?after=${body.seq}&wait=300`)
+      expect(quiet.body.seq).toBe(body.seq)
+      expect((await get('/head?after=x')).status).toBe(400)
+    })
+  })
+
   describe('POST /engram/:type', () => {
     it('creates every type except learning with its fields flat in the body', async () => {
       const inputs: EngramInput[] = [
