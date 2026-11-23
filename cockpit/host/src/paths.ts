@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
+import { isAppVersion } from './domain/app-version.js'
 
 /**
  * Central path resolution. The host runs from its own package directory: the
@@ -106,7 +107,7 @@ export function stableAppPath(file: string): string {
   try { real = fs.realpathSync(file) } catch { real = file }
   const rel = path.relative(realVersions, real)
   const [version, ...rest] = rel.split(path.sep)
-  if (rel.startsWith('..') || path.isAbsolute(rel) || !/^\d+\.\d+\.\d+$/.test(version) || rest.length === 0) return file
+  if (rel.startsWith('..') || path.isAbsolute(rel) || !isAppVersion(version) || rest.length === 0) return file
   return path.join(APP_DIR, 'current', ...rest)
 }
 

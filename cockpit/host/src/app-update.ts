@@ -8,6 +8,7 @@ import { APP_DIR, COCKPIT_HOME, HOST_ROOT } from './paths.js'
 import { platform } from './infrastructure/platform/index.js'
 import { SERVICE_ENV } from './domain/autostart.js'
 import { FS_RETRY, renameWithRetry } from './fs-retry.js'
+import { compareVersions, isAppVersion, minorOf } from './domain/app-version.js'
 
 /**
  * The cockpit's own updater (decisions app-update-flow, cockpit-update-source).
@@ -36,7 +37,6 @@ const API = (process.env.EML_COCKPIT_UPDATE_API || 'https://api.github.com').rep
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 60 * 1000
 const LOCK_STALE_MS = 15 * 60 * 1000
-const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 const VERSIONS_DIR = path.join(APP_DIR, 'versions')
 const CURRENT_LINK = path.join(APP_DIR, 'current')
@@ -87,19 +87,6 @@ const DEFAULT_STATE: UpdateState = { previous: null, tokenSource: 'none', skipVe
 
 // --- versions -----------------------------------------------------------------
 
-export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1
-  }
-  return 0
-}
-
-function minorOf(v: string): string {
-  return v.split('.').slice(0, 2).join('.')
-}
-
 /** This host's own version. */
 export function ownVersion(): string {
   try {
@@ -115,7 +102,7 @@ function managedVersion(): string | null {
   try {
     const versions = fs.realpathSync(VERSIONS_DIR)
     const rel = path.relative(versions, fs.realpathSync(HOST_ROOT)).split(path.sep)
-    if (rel.length === 3 && VERSION_RE.test(rel[0]) && rel[1] === 'node_modules' && rel[2] === 'eml-cockpit') return rel[0]
+    if (rel.length === 3 && isAppVersion(rel[0]) && rel[1] === 'node_modules' && rel[2] === 'eml-cockpit') return rel[0]
   } catch { /* no app dir */ }
   return null
 }
@@ -230,7 +217,7 @@ async function githubJson(pathname: string, token: string | null): Promise<unkno
 function parseRelease(raw: unknown): Release {
   const r = raw as { tag_name?: string; html_url?: string; published_at?: string | null; assets?: Array<{ name: string; url: string; size: number }>; body?: string | null }
   const version = (r.tag_name ?? '').replace(/^v/, '')
-  if (!VERSION_RE.test(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z`)
+  if (!isAppVersion(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z`)
   return {
     version,
     url: r.html_url ?? '',
@@ -270,7 +257,7 @@ export function extractReleaseHighlights(body: string): string[] {
  * stop at the first one at or below `from`.
  */
 export async function releaseNotesBetween(from: string, to: string): Promise<ReleaseNotes[]> {
-  if (!VERSION_RE.test(from) || !VERSION_RE.test(to)) throw new Error('from and to must be X.Y.Z')
+  if (!isAppVersion(from) || !isAppVersion(to)) throw new Error('from and to must be X.Y.Z')
   const { token } = await githubToken()
   const notes: ReleaseNotes[] = []
   for (let page = 1; ; page++) {
@@ -476,13 +463,13 @@ export async function checkForUpdate(): Promise<AppUpdateStatus> {
 
 /** True when v<version> is another schema minor than the running one: installing it migrates the brains (brain schema N ↔ release v0.N). */
 export function changesBrainSchema(version: unknown): boolean {
-  return typeof version === 'string' && VERSION_RE.test(version) && minorOf(version) !== minorOf(ownVersion())
+  return isAppVersion(version) && minorOf(version) !== minorOf(ownVersion())
 }
 
 /** Install release v<version> and restart into it. */
 export async function applyUpdate(version: unknown): Promise<{ restarting: boolean; status: AppUpdateStatus }> {
   if (!isManaged()) throw new Error('This cockpit runs from source — update it with git, not the updater.')
-  if (typeof version !== 'string' || !VERSION_RE.test(version)) throw new Error('version must be X.Y.Z')
+  if (!isAppVersion(version)) throw new Error('version must be X.Y.Z')
   const current = ownVersion()
   if (compareVersions(version, current) <= 0) throw new Error(`v${version} is not newer than the running v${current}`)
   await withLock(async () => {
