@@ -20,7 +20,7 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - A step with checkpoint "after" that handed over a result, or any session
  *     that said review, waits for the user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
- *   - A wait another session set stays (B4): while that session is not put
+ *   - A wait another session set stays: while that session is not put
  *     away, this session's wait is held back, and it takes the other one's
  *     place once that is answered or cleared. Held waits live in the host's
  *     memory until the task can hold a list of waits.

@@ -90,7 +90,7 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
     // The runner starts planned tasks only. One in progress is the open session's, between its turns,
     // or nobody's once its session is gone. Sessions are only known on this machine: in a shared space
-    // the delegate may work on the owner's machine, so for anyone else it is the owner's (B1).
+    // the delegate may work on the owner's machine, so for anyone else it is the owner's.
     if (task.status === 'active') {
       if (live.sessions > 0) return { turn: 'agent_working' }
       if (task.owner && task.owner !== viewer) return { turn: 'waiting_on_others' }
