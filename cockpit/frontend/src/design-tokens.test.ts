@@ -207,8 +207,8 @@ describe('no magic numbers', () => {
   it('allows no literal, raw scale step or off-scale opacity in v2 directories', () => {
     const found: string[] = [];
     for (const file of sourceFiles()) {
-      // The baseline names files with '/', on every OS.
-    const rel = relative(SRC, file).split(sep).join('/');
+      // Folders are matched with '/', on every OS.
+      const rel = relative(SRC, file).split(sep).join('/');
       if (!V2_DIRS.some((d) => rel.startsWith(d + '/'))) continue;
       const text = readFileSync(file, 'utf8');
       for (const re of [ARBITRARY, COLOUR, RAW_SCALE]) for (const m of text.matchAll(re)) found.push(`${rel}: ${m[0]}`);
