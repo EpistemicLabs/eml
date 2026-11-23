@@ -26,7 +26,7 @@ function input(patch: Partial<TreeInput>): TreeInput {
     projects: [{ spaceId: 'main', projectId: 'p-ui', brainProjectId: 'ui', name: 'EML UI/UX' }, { spaceId: 'eml', projectId: 'p-eml', name: 'EML' }],
     activeSessionId: null,
     showDone: false,
-    allSessions: true,
+    allTasks: true,
     viewOf: () => 'terminal',
     stateOfSession: () => ({ hue: 'waiting', hollow: true, label: 'Idle' }),
     ...patch,
@@ -67,12 +67,12 @@ describe('the tasks card tree', () => {
     const two = [session('a', { taskId: 'root' }), session('b', { taskId: 'root' })];
     const all = buildTaskTree(input({ board: board(many), sessions: two, desk: desk('a'), activeSessionId: 'a' }));
     expect(all[0].nodes[0].sessions.map((s) => [s.id, s.open, s.current, s.view])).toEqual([['a', true, true, 'chat'], ['b', false, false, 'terminal']]);
-    const onlyOpen = buildTaskTree(input({ board: board(many), sessions: two, desk: desk('a'), allSessions: false }));
+    const onlyOpen = buildTaskTree(input({ board: board(many), sessions: two, desk: desk('a'), allTasks: false }));
     expect(onlyOpen[0].nodes[0].sessions.map((s) => s.id)).toEqual(['a']);
   });
 
   it('with only the desk\'s sessions, keeps just the branches that lead to one', () => {
-    const [ui] = buildTaskTree(input({ board: board(tasks), sessions, desk: desk('s-owner'), allSessions: false }));
+    const [ui] = buildTaskTree(input({ board: board(tasks), sessions, desk: desk('s-owner'), allTasks: false }));
     expect(titles(ui.nodes)).toEqual([['root', ['owner']]]);
     expect(ui.nodes[0].sessions).toEqual([]);
   });
@@ -116,6 +116,40 @@ describe('the tasks card tree', () => {
   });
 });
 
+describe('all tasks', () => {
+  // On the desk: s1 on root (ui). Not on the desk: a separate open tree in ui, a closed one in ui, one in code.
+  const tasks = [
+    task('root', { sessionIds: ['s1'] }),
+    task('lone', { sessionIds: ['s-lone'] }),
+    task('lone-step', { parentId: 'lone', rel: 'sub' }),
+    task('closed', { status: 'resolved', turn: 'done' }),
+    task('elsewhere', { project: 'code' }),
+  ];
+  const sessions = [session('s1', { taskId: 'root' }), session('s-lone', { taskId: 'lone' })];
+
+  it('adds every open tree of the desk\'s projects with all their sessions, after the desk\'s trees', () => {
+    const [ui, ...rest] = buildTaskTree(input({ board: board(tasks), sessions, desk: desk('s1'), allTasks: true }));
+    expect(rest).toEqual([]);
+    expect(titles(ui.nodes)).toEqual(['root', ['lone', ['Lone step']]]);
+    expect(ui.nodes[1].sessions.map((s) => [s.id, s.open])).toEqual([['s-lone', false]]);
+    expect(moreOpenTasks(ui, tasks)).toBe(0);
+  });
+
+  it('shows only the desk\'s trees when off', () => {
+    const [ui] = buildTaskTree(input({ board: board(tasks), sessions, desk: desk('s1'), allTasks: false }));
+    expect(titles(ui.nodes)).toEqual(['root']);
+    expect(moreOpenTasks(ui, tasks)).toBe(2);
+  });
+
+  it('takes the project of a desk session without a task too', () => {
+    const lead = session('lead', { projectId: 'p-ui' });
+    const sections = buildTaskTree(input({ board: board(tasks), sessions: [lead], desk: desk('lead'), allTasks: true }));
+    expect(sections.map((s) => s.title)).toEqual(['EML UI/UX', 'EML UI/UX']);
+    expect(sections[0].nodes[0]).toMatchObject({ kind: 'session', id: 'lead' });
+    expect(titles(sections[1].nodes)).toEqual(['root', ['lone', ['Lone step']]]);
+  });
+});
+
 describe('a session waiting for the board', () => {
   it('does not show as a bare session while its task is not on the board yet', () => {
     const sections = buildTaskTree(input({ board: board([]), sessions: [session('s1', { taskId: 'new-task' })], desk: desk('s1') }));
@@ -137,7 +171,7 @@ describe('a task\'s dot', () => {
 describe('more open tasks of a section\'s project', () => {
   it('counts the open tasks of the project its trees leave out', () => {
     const tasks = [task('root', { sessionIds: ['s1'] }), task('other'), task('closed', { status: 'resolved' }), task('elsewhere', { project: 'code' })];
-    const [ui] = buildTaskTree(input({ board: board(tasks), sessions: [session('s1', { taskId: 'root' })], desk: desk('s1') }));
+    const [ui] = buildTaskTree(input({ board: board(tasks), sessions: [session('s1', { taskId: 'root' })], desk: desk('s1'), allTasks: false }));
     expect(ui.project).toEqual({ spaceId: 'main', id: 'ui' });
     expect(moreOpenTasks(ui, tasks)).toBe(1);
   });

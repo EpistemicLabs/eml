@@ -72,12 +72,18 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+// The card starts with only the desk's trees; most tests look at the whole tree.
+async function renderAll() {
+  renderCard();
+  await screen.findByRole('tree', { name: 'EML UI/UX' });
+  fireEvent.click(screen.getByRole('switch', { name: 'All tasks' }));
+}
+
 const row = (name: RegExp) => screen.getAllByRole('treeitem').find((el) => name.test(el.getAttribute('aria-label') ?? ''))!;
 
 describe('the tasks card', () => {
   it('shows the desk\'s project with its task tree, the active pane\'s row marked', async () => {
-    renderCard();
-    expect(await screen.findByRole('tree', { name: 'EML UI/UX' })).toBeTruthy();
+    await renderAll();
     expect(row(/^Session review ui, Needs you/).getAttribute('aria-selected')).toBe('true');
     expect(row(/^Media viewer, Parked/).className).toContain('before:border-dashed');
     expect(row(/^Task board mock, Agent working/).getAttribute('aria-expanded')).toBe('true');
@@ -89,8 +95,7 @@ describe('the tasks card', () => {
   });
 
   it('focuses or opens a session on click, and starts one on a task without a session', async () => {
-    renderCard();
-    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    await renderAll();
     fireEvent.click(row(/^Board v4/).querySelector('[data-tree-row]')!);
     expect(live.opened).toEqual([[null, { surface: 'terminal', projectId: 'p-ui', sessionId: 's-b', chat: false }]]);
     fireEvent.click(row(/^Media viewer/).querySelector('[data-tree-row]')!);
@@ -101,15 +106,13 @@ describe('the tasks card', () => {
 
   it('falls back to a terminal pane on the task when the host cannot start it', async () => {
     live.startStatus = 404;
-    renderCard();
-    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    await renderAll();
     fireEvent.click(row(/^Media viewer/).querySelector('[data-tree-row]')!);
     await waitFor(() => expect(live.started).toEqual([expect.objectContaining({ taskId: 'media-viewer', projectId: 'bp-ui', deskId: 'desk-1', fromSessionId: null })]));
   });
 
   it('folds a branch and remembers it for the desk', async () => {
-    renderCard();
-    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    await renderAll();
     fireEvent.click(row(/^Task board mock/).querySelector('[data-tree-toggle]')!);
     expect(row(/^Task board mock/).getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('Board v3')).toBeNull();
@@ -119,11 +122,32 @@ describe('the tasks card', () => {
     expect(row(/^Task board mock/).getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('lists only the desk\'s sessions when All sessions is off', async () => {
+  it('shows only the desk\'s trees until All tasks is on, then every open task and no more-link', async () => {
     renderCard();
     await screen.findByRole('tree', { name: 'EML UI/UX' });
-    fireEvent.click(screen.getByRole('switch', { name: 'All sessions' }));
     expect(screen.queryByText('Board v3')).toBeNull();
+    expect(screen.getByRole('button', { name: '2 more open tasks in EML UI/UX' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch', { name: 'All tasks' }));
+    expect(screen.getByText('Board v3')).toBeTruthy();
+    expect(row(/^Media viewer, Parked/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /more open task/ })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'All sessions' })).toBeNull();
+  });
+
+  it('keeps Show done and All tasks per desk', async () => {
+    await renderAll();
+    fireEvent.click(screen.getByRole('switch', { name: 'Show done' }));
+    cleanup();
+    renderCard();
+    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    expect(screen.getByRole('switch', { name: 'All tasks' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('switch', { name: 'Show done' }).getAttribute('aria-checked')).toBe('true');
+    cleanup();
+    live.desk = { ...live.desk, id: 'desk-2', name: 'Desk 2' };
+    renderCard();
+    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    expect(screen.getByRole('switch', { name: 'All tasks' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByRole('switch', { name: 'Show done' }).getAttribute('aria-checked')).toBe('false');
   });
 
   it('opens the task search from Open task…', async () => {
