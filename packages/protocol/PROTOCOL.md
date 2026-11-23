@@ -300,7 +300,7 @@ with checkpoints other members signed.
 At a brain schema bump a checkpoint also marks where replay starts. An op is
 replayed with the behaviour of its schema only, so a cockpit takes every entry
 of the older schema before it is updated; once updated it migrates its replica
-and writes a checkpoint at the new schema before any other write. The migration
+and writes a checkpoint at the new schema. The migration
 is the same on every device: each replica that finds its own migrated state in
 the first such checkpoint right after the state it names keeps that state as a
 snapshot and replays the log from there; one whose state differs has diverged

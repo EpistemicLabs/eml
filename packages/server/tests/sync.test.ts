@@ -620,22 +620,17 @@ describe('checkpoints', () => {
     expect(CHECKPOINT_EVERY).toBe(200)
   })
 
-  it('after a schema bump, a live device writes the checkpoint of the new schema by itself, once, and takes no write before it', async () => {
-    const { team, relay, sync, eml, mira } = await withMira()
+  it('after a schema bump, a live device writes the checkpoint of the new schema by itself, once', async () => {
+    const { team, relay, sync, eml } = await connected()
     // the brain file is migrated; its log began at the schema before and has no checkpoint of this one yet
     team.db.prepare('UPDATE op_snapshots SET schema = ? WHERE seq = 1').run(CURRENT_BRAIN_SCHEMA_VERSION - 1)
-    const early = await failure(sync.write({ name: 'engram.create', input: validNote({ title: 't-too-early' }) }, env(eml)))
-    expect(early).toMatchObject({ code: 'SHARED_BRAIN_READ_ONLY', message: expect.stringMatching(/new brain format/) })
-    expect(relay.log).toHaveLength(2)
-    // the next entry the device takes makes it look again: it writes the checkpoint right after its head
-    relay.inject(team.addMember(person('noor')))
-    await until(() => team.head === 4)
-    checkpoint(team, relay.log[3], 3)
-    expect(opened(team, relay.log[3]).schema).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
-    expect(team.db.prepare('SELECT seq, schema FROM op_snapshots ORDER BY seq').all()).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }, { seq: 4, schema: CURRENT_BRAIN_SCHEMA_VERSION }])
-    await sync.write({ name: 'engram.create', input: validNote({ title: 't-after-the-checkpoint' }) }, env(eml))
-    expect(relay.log).toHaveLength(5)
-    void mira
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-first-after-bump' }) }, env(eml))
+    await until(() => team.head === 3)
+    checkpoint(team, relay.log[2], 2)
+    expect(opened(team, relay.log[2]).schema).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+    expect(team.db.prepare('SELECT seq, schema FROM op_snapshots ORDER BY seq').all()).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }, { seq: 3, schema: CURRENT_BRAIN_SCHEMA_VERSION }])
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-second' }) }, env(eml))
+    expect(relay.log).toHaveLength(4)
   })
 
   it('tries again when another write came in between — three times, then CHECKPOINT_NOT_ADJACENT', async () => {
