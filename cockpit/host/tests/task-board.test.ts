@@ -35,7 +35,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[] } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
@@ -53,6 +53,8 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     now: () => clock.now,
     log: (line) => { opts.log?.push(line) },
     ...(opts.head ? { head: opts.head } : {}),
+    runnerBusy: (taskId) => opts.busy?.includes(taskId) ?? false,
+    runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
   }
   const board = createTaskBoard(deps)
   return { board, brains, clock }
@@ -98,6 +100,59 @@ describe('the task board', () => {
     expect(model.inbox.map((i) => [i.kind, i.taskId])).toEqual([['question', 'asked'], ['review', 'review']])
     expect(model.spaces).toEqual([{ id: 'main', name: 'Main', agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }])
     expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
+  })
+
+  it('says why the runner does not start a delegated task, from the runner\'s own checks', async () => {
+    const step = (id: string, props: Record<string, unknown> = {}, extra: Partial<Row> = {}): Row => ({ ...mine(id, { delegate: 'atlas', checkpoint: 'after', ...props }, 'planned'), ...extra })
+    const { board } = setup({
+      main: [
+        mine('pr', { delegate: 'atlas', checkpoint: 'after', display_title: 'Open PR #252', waiting_on: { who: 'lasse', kind: 'review', why: 'Review: PR #252 is open against alpha' } }),
+        step('after-review', { depends_on: ['pr'] }),
+        step('after-dropped', { depends_on: ['dropped'] }),
+        mine('dropped', {}, 'invalidated'),
+        step('after-old', { depends_on: ['old-done'] }),
+        step('next'),
+        step('busy'),
+        step('held'),
+        step('nowhere', {}, { scope: 'global' }),
+        mine('parked', {}, 'planned'),
+        step('in-parked', {}, { parent_id: 'parked' }),
+        step('in-closed', {}, { parent_id: 'closed-parent' }),
+      ],
+      unlisted: [{ id: 'old-done', status: 'resolved' }, { id: 'closed-parent', status: 'resolved' }],
+      busy: ['busy'],
+      held: ['held'],
+    })
+    const model = await board.refresh()
+    const of = (id: string) => model.tasks.find((t) => t.id === id)!
+    expect(of('after-review')).toMatchObject({
+      turn: 'agent_scheduled', group: 'blocked',
+      runner: { kind: 'depends', stepId: 'pr', title: 'Open PR #252', status: 'active', step: { turn: 'review', waitingOn: { who: 'lasse', kind: 'review' } } },
+    })
+    expect(of('after-dropped')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'step_dropped', runner: { kind: 'depends', status: 'invalidated' } })
+    // A step resolved long ago (beyond the resolved list) is fetched by id and counts as resolved, as for the runner.
+    expect(of('after-old')).toMatchObject({ turn: 'agent_scheduled', group: 'runner' })
+    expect(of('after-old').runner).toBeUndefined()
+    expect(of('next')).toMatchObject({ turn: 'agent_scheduled', group: 'runner' })
+    expect(of('busy')).toMatchObject({ group: 'blocked', runner: { kind: 'busy' } })
+    expect(of('held')).toMatchObject({ group: 'blocked', runner: { kind: 'held' } })
+    expect(of('nowhere')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'no_project', coverage: { ok: false, group: 'idle', reason: 'no_project' } })
+    expect(of('in-parked')).toMatchObject({ turn: 'needs_you', group: 'parent', runner: { kind: 'parent', parentId: 'parked', status: 'planned' } })
+    // A parent the open lists don't hold is closed: the runner won't start the step.
+    expect(of('in-closed')).toMatchObject({ turn: 'needs_you', group: 'parent', runner: { kind: 'parent', status: 'resolved' } })
+  })
+
+  it('names the cap when five delegated tasks run, and another member\'s task in a shared space', async () => {
+    const running = Array.from({ length: 5 }, (_, i) => mine(`run-${i}`, { delegate: 'atlas', checkpoint: 'after' }))
+    const { board } = setup({
+      main: [...running, mine('queued', { delegate: 'atlas', checkpoint: 'after' }, 'planned')],
+      working: running.map((r) => r.id),
+      other: [{ id: 'theirs', status: 'planned', properties: { assignee_ids: ['dominik'], delegate: 'motti', checkpoint: 'after' } }],
+    })
+    const model = await board.refresh()
+    const of = (id: string) => model.tasks.find((t) => t.id === id)!
+    expect(of('queued')).toMatchObject({ turn: 'agent_scheduled', group: 'blocked', runner: { kind: 'cap', running: 5, max: 5, standalone: true } })
+    expect(of('theirs')).toMatchObject({ turn: 'agent_scheduled', group: 'runner', runner: { kind: 'other_member', owner: 'dominik' } })
   })
 
   it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {
