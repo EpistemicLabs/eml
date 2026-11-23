@@ -1,5 +1,5 @@
 // The tasks card's model: for each project with a session open on the desk, the trees those sessions
-// belong to. A tree is tasks from the origin task down (a sub-task under its parent, a spun-off task
+// belong to (with All tasks, every open tree of those projects). A tree is tasks from the origin task down (a sub-task under its parent, a spun-off task
 // under the task it came from) with each task's sessions; a session without a task is a tree of
 // sessions, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
@@ -75,8 +75,8 @@ export interface TreeInput {
   activeSessionId: string | null;
   /** Closed tasks stay in the tree. */
   showDone: boolean;
-  /** Sessions not open on the desk are listed too. */
-  allSessions: boolean;
+  /** Every open task of the desk's projects, with all their sessions; off, only what leads to a desk session. */
+  allTasks: boolean;
   /** The view a session not on the desk opens in. */
   viewOf(sessionId: string): SessionView;
   /** A session's own state, for trees without tasks. */
@@ -170,10 +170,10 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     const nextPath = new Set(path).add(key);
     const kids = path.size < MAX_DEPTH
       ? childrenOf(t).filter((k) => !nextPath.has(taskKey(k.spaceId, k.id))
-        // Only the desk's sessions: a branch stays only when a session open on the desk is in it.
-        && (input.allSessions ? OPEN_STATUSES.has(k.status) || input.showDone || holdsDeskSession(k) : holdsDeskSession(k)))
+        // Off, only the desk's: a branch stays only when a session open on the desk is in it.
+        && (input.allTasks ? OPEN_STATUSES.has(k.status) || input.showDone || holdsDeskSession(k) : holdsDeskSession(k)))
       : [];
-    const sessions = sessionsOfTask(t).filter((s) => input.allSessions || deskIds.has(s.id)).map(leaf);
+    const sessions = sessionsOfTask(t).filter((s) => input.allTasks || deskIds.has(s.id)).map(leaf);
     return {
       key: `${section}:${key}`,
       kind: 'task',
@@ -212,7 +212,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
   const sessionNode = (s: AllSession, section: string, projectId: string | null, path: Set<string>, isChild: boolean): TreeNode => {
     const nextPath = new Set(path).add(s.id);
     const kids = path.size < MAX_DEPTH
-      ? sessionChildren(s).filter((k) => !nextPath.has(k.id) && (input.allSessions || sessionHoldsDesk(k)))
+      ? sessionChildren(s).filter((k) => !nextPath.has(k.id) && (input.allTasks || sessionHoldsDesk(k)))
       : [];
     const own = s.projectId ?? null;
     return {
@@ -253,6 +253,30 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       const section = sectionFor(key, cockpitProjectName(s.spaceId, projectId));
       const root = rootOfSession(s);
       if (!section.roots.has(root.id)) section.roots.set(root.id, () => sessionNode(root, key, projectId, new Set(), false));
+    }
+  }
+  // ---- all tasks: every open tree of each desk project, after the trees the desk holds ----
+  if (input.allTasks && board) {
+    const taskSection = (spaceId: string, project: string) => {
+      const key = `t:${spaceId}/${project}`;
+      return { key, section: sectionFor(key, brainProjectName(spaceId, project), { spaceId, id: project }) };
+    };
+    // A desk session without a task still names its project: that project's open tasks show too.
+    for (const d of desk) {
+      const s = sessionById.get(d.sessionId);
+      if (!s || s.taskId) continue;
+      const brain = input.projects.find((p) => p.spaceId === s.spaceId && p.projectId === (s.projectId ?? null))?.brainProjectId;
+      if (brain) taskSection(s.spaceId, brain);
+    }
+    for (const [key, section] of sections) {
+      if (!section.project?.id) continue;
+      const { spaceId, id: project } = section.project;
+      for (const t of board.tasks) {
+        if (t.spaceId !== spaceId || t.project !== project || !OPEN_STATUSES.has(t.status)) continue;
+        const root = rootOfTask(t);
+        const rootKey = taskKey(root.spaceId, root.id);
+        if (!section.roots.has(rootKey)) section.roots.set(rootKey, () => taskNode(root, key, project, new Set()));
+      }
     }
   }
   return [...sections.entries()].map(([key, { title, roots, project }]) => ({ key, title, nodes: [...roots.values()].map((make) => make()), ...(project ? { project } : {}) }));

@@ -38,6 +38,29 @@ function writeFolds(deskId: string, folds: string[]) {
   } catch { /* storage blocked: folds last for this visit */ }
 }
 
+const SWITCHES_KEY = 'cockpit-tasks-card-switches';
+
+/** The footer switches, kept per desk; both start off. */
+interface Switches { showDone: boolean; allTasks: boolean }
+const NO_SWITCHES: Switches = { showDone: false, allTasks: false };
+
+function readSwitches(deskId: string): Switches {
+  try {
+    const all = JSON.parse(localStorage.getItem(SWITCHES_KEY) ?? '{}') as Record<string, Partial<Switches>>;
+    const mine = all[deskId] ?? {};
+    return { showDone: mine.showDone === true, allTasks: mine.allTasks === true };
+  } catch {
+    return NO_SWITCHES;
+  }
+}
+
+function writeSwitches(deskId: string, switches: Switches) {
+  try {
+    const all = JSON.parse(localStorage.getItem(SWITCHES_KEY) ?? '{}') as Record<string, Switches>;
+    localStorage.setItem(SWITCHES_KEY, JSON.stringify({ ...all, [deskId]: switches }));
+  } catch { /* storage blocked: the switches last for this visit */ }
+}
+
 export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) {
   const desk = useActiveDesk();
   const activePane = useActivePane();
@@ -45,8 +68,13 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
   const { data: board, isPending } = useTaskBoard();
   const { sessions } = useAllSessions(true);
   const { turns } = useTurnStore();
-  const [showDone, setShowDone] = useState(false);
-  const [allSessions, setAllSessions] = useState(true);
+  const [switchState, setSwitchState] = useState<{ deskId: string; value: Switches }>(() => ({ deskId: desk.id, value: readSwitches(desk.id) }));
+  const { showDone, allTasks } = switchState.deskId === desk.id ? switchState.value : readSwitches(desk.id);
+  const setSwitch = useCallback((name: keyof Switches, on: boolean) => {
+    const next = { showDone, allTasks, [name]: on };
+    writeSwitches(desk.id, next);
+    setSwitchState({ deskId: desk.id, value: next });
+  }, [desk.id, showDone, allTasks]);
   const [folds, setFolds] = useState<{ deskId: string; keys: string[] }>(() => ({ deskId: desk.id, keys: readFolds(desk.id) }));
   const folded = folds.deskId === desk.id ? folds.keys : readFolds(desk.id);
 
@@ -79,10 +107,10 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     projects: projectNames,
     activeSessionId: activePane?.sessionId ?? null,
     showDone,
-    allSessions,
+    allTasks,
     viewOf: (id) => (getSessionView(id) === 'chat' ? 'chat' : 'terminal'),
     stateOfSession,
-  }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, allSessions, stateOfSession]);
+  }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, allTasks, stateOfSession]);
 
   const spaceKeyOf = (spaceId: string) => {
     const space = spaces.find((s) => s.id === spaceId);
@@ -179,11 +207,11 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
       <div className="flex flex-col gap-1 border-t border-border px-3 py-2">
         <label className="flex min-h-(--target-min) items-center justify-between gap-2 text-ui text-foreground">
           Show done
-          <Switch checked={showDone} onChange={setShowDone} ariaLabel="Show done" />
+          <Switch checked={showDone} onChange={(on) => setSwitch('showDone', on)} ariaLabel="Show done" />
         </label>
         <label className="flex min-h-(--target-min) items-center justify-between gap-2 text-ui text-foreground">
-          All sessions
-          <Switch checked={allSessions} onChange={setAllSessions} ariaLabel="All sessions" />
+          All tasks
+          <Switch checked={allTasks} onChange={(on) => setSwitch('allTasks', on)} ariaLabel="All tasks" />
         </label>
       </div>
     </aside>
