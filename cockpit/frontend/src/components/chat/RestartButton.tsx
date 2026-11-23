@@ -37,7 +37,7 @@ export function RestartButton({ running, onRestart }: { running: boolean; onRest
       <button
         type="button"
         onClick={click}
-        className={cn('justify-self-end rounded border border-border px-1.5 text-caption hover:bg-foreground/5', FOCUS)}
+        className={cn('justify-self-end rounded border border-border px-1.5 text-caption hover:bg-muted', FOCUS)}
       >
         Stop turn and restart
       </button>
@@ -49,7 +49,7 @@ export function RestartButton({ running, onRestart }: { running: boolean; onRest
         type="button"
         aria-label="Restart session"
         onClick={click}
-        className={cn('flex size-5 items-center justify-center justify-self-end rounded text-foreground/70 hover:bg-foreground/5 hover:text-foreground', FOCUS)}
+        className={cn('flex size-5 items-center justify-center justify-self-end rounded text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)}
       >
         <RotateCcw aria-hidden className="size-3" strokeWidth={1.8} />
       </button>

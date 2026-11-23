@@ -27,7 +27,7 @@ export function LimitsChip({ limits, open, onToggle }: { limits: SessionLimits |
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className={cn('flex items-center gap-1 justify-self-end rounded px-1 text-foreground/70 hover:bg-foreground/5 hover:text-foreground', FOCUS)}
+        className={cn('flex items-center gap-1 justify-self-end rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)}
       >
         <Lock aria-hidden className="size-3" strokeWidth={1.8} />
         <span>{label}</span>
@@ -50,7 +50,7 @@ export function LimitsPanel({ limits, running, onLift, onClose }: {
       <div className="flex items-center justify-between pb-1">
         <span className="font-semibold">Limits of this session</span>
         <Tooltip content="Close limits" position="top">
-          <button type="button" aria-label="Close limits" onClick={onClose} className={cn('flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-foreground/5 hover:text-foreground', FOCUS)}>
+          <button type="button" aria-label="Close limits" onClick={onClose} className={cn('flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)}>
             <X aria-hidden className="size-3.5" />
           </button>
         </Tooltip>
@@ -60,7 +60,7 @@ export function LimitsPanel({ limits, running, onLift, onClose }: {
       {limits.deniedTools.length > 0 && (
         <div className="pt-1">
           <div className="text-muted-foreground">Blocked tools</div>
-          <ul className="font-mono text-caption">
+          <ul className="font-code text-caption">
             {limits.deniedTools.map((tool) => <li key={tool} className="break-all">{tool}</li>)}
           </ul>
         </div>
@@ -68,7 +68,7 @@ export function LimitsPanel({ limits, running, onLift, onClose }: {
       {limits.mcpServers !== null && (
         <div className="pt-1">
           <div className="text-muted-foreground">Only these MCP servers, besides the brain</div>
-          <div className="font-mono text-caption break-all">{limits.mcpServers.length ? limits.mcpServers.join(', ') : 'none'}</div>
+          <div className="font-code text-caption break-all">{limits.mcpServers.length ? limits.mcpServers.join(', ') : 'none'}</div>
         </div>
       )}
       {limits.liftable ? (
