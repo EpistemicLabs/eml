@@ -9,7 +9,7 @@ export type PickReason = 'desk' | 'words' | 'manual';
 
 const activityOf = (s: Pick<AllSession, 'lastActivity' | 'createdAt'>) => s.lastActivity ?? s.createdAt ?? '';
 
-/** Lower case, accents and punctuation gone, so "Steiger-Naturals" matches "steiger naturals". */
+/** Lower case, accents and punctuation gone, so "Fjord-Naturals" matches "fjord naturals". */
 const plain = (text: string) => text.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
 /**

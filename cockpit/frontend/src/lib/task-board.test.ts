@@ -100,12 +100,12 @@ describe('Plan', () => {
     const rows = projectRows([task({ id: 'p' })], []);
     const projects = [
       { spaceId: 'main', id: 'acme', name: 'Acme', goal: null },
-      { spaceId: 'main', id: 'flairmax', name: 'flairmax', goal: null },
-      { spaceId: 'main', id: 'aktivdog', name: 'AktivDog', goal: 'dogs' },
+      { spaceId: 'main', id: 'brightline', name: 'brightline', goal: null },
+      { spaceId: 'main', id: 'pawsome', name: 'Pawsome', goal: 'dogs' },
       { spaceId: 'main', id: 'global', name: 'Global', goal: null },
       { spaceId: 'ebisu', id: 'portfolio', name: 'Portfolio', goal: null },
     ];
-    expect(quietProjects(rows, projects, { everyone: false, spaceId: null }).map((p) => p.name)).toEqual(['AktivDog', 'flairmax', 'Portfolio']);
+    expect(quietProjects(rows, projects, { everyone: false, spaceId: null }).map((p) => p.name)).toEqual(['brightline', 'Pawsome', 'Portfolio']);
     expect(quietProjects(rows, projects, { everyone: false, spaceId: 'ebisu' }).map((p) => p.name)).toEqual(['Portfolio']);
   });
 });

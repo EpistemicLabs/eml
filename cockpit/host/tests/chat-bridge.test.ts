@@ -152,9 +152,9 @@ describe('ChatBridge', () => {
 
   it('starts a new chat from the launcher with its own first message and model, without the greeting', async () => {
     const { bridge, runtimes, ledgerEntries } = setup()
-    connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Verapur reply', model: 'opus' })
+    connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Northwind reply', model: 'opus' })
     await flush()
-    expect(runtimes[0].sent).toEqual(['Check the Verapur reply'])
+    expect(runtimes[0].sent).toEqual(['Check the Northwind reply'])
     expect(runtimes[0].start.model).toBe('opus')
     expect(ledgerEntries.get('s1')).not.toMatchObject({ greeted: true })
 

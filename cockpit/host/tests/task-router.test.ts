@@ -178,7 +178,7 @@ describe('task router', () => {
   })
 
   it('keeps only the question, and clears a wait when the user answers the session that set it', async () => {
-    expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The flairmax task was')).toBe('Close the task despite the open mails?')
+    expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The brightline task was')).toBe('Close the task despite the open mails?')
     const { ledger, brain, r } = setup({ id: 't20', status: 'active', properties: {} })
     ledger.recordSpawn('s20', null, 'bp-eml', 'claude', false, 't20')
     ledger.recordSpawn('s21', null, 'bp-eml', 'claude', false, 't20')
