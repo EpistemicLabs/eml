@@ -65,6 +65,18 @@ describe('v0.19 REST', () => {
       expect(Date.now() - started).toBeLessThan(1500)
     })
 
+    it('lets a caller leave a waiting request; the server keeps answering', async () => {
+      const { body } = await get('/head')
+      const left = new AbortController()
+      const waiting = fetch(`${baseUrl}/head?after=${body.seq}&wait=5000`, { headers: auth(), signal: left.signal }).catch((err: Error) => err.name)
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      left.abort()
+      expect(await waiting).toBe('AbortError')
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect((await get('/head')).status).toBe(200)
+      expect((await get('/health')).status).toBe(200)
+    })
+
     it('answers the same seq when nothing was written in time, and refuses a bad query', async () => {
       const { body } = await get('/head')
       const quiet = await get(`/head?after=${body.seq}&wait=300`)

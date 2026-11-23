@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { EML } from '@engramprotocol/core'
-import { headQuery, logHead, waitForHead, HEAD_WAIT_MAX_MS } from '../src/head'
+import Database from 'better-sqlite3'
+import { HeadReadError, headFailure, headQuery, logHead, waitForHead, HEAD_WAIT_MAX_MS } from '../src/head'
 import { validTask, writes } from '../../core/tests/fixtures'
 
 /** A clock that moves only when the wait sleeps. */
@@ -64,5 +65,20 @@ describe('headQuery', () => {
   it('refuses what is not a whole number', () => {
     expect(headQuery({ after: '-1' })).toHaveProperty('error')
     expect(headQuery({ wait: 'soon' })).toHaveProperty('error')
+  })
+})
+
+describe('headFailure', () => {
+  it('answers 501 NO_LOG only for a brain without an op log', () => {
+    const db = new Database(':memory:')
+    let failure: unknown
+    try { logHead(db) } catch (err) { failure = err }
+    expect(headFailure(failure)).toEqual({ status: 501, body: { error: 'This brain has no op log to watch', code: 'NO_LOG' } })
+  })
+  it('keeps the status and code of a routing refusal, so the caller knows whether to retry', () => {
+    expect(headFailure(new HeadReadError(503, 'BRAIN_BEHIND_CODE', 'brain is on schema v20'))).toEqual({ status: 503, body: { error: 'brain is on schema v20', code: 'BRAIN_BEHIND_CODE' } })
+  })
+  it('answers any other failure with a 500 the caller retries', () => {
+    expect(headFailure(new Error('database is locked'))).toMatchObject({ status: 500, body: { code: 'HEAD_READ_FAILED' } })
   })
 })

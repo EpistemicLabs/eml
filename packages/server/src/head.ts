@@ -51,6 +51,25 @@ export async function waitForHead(read: () => number, after: number, waitMs: num
   }
 }
 
+/** A failure to read the head, with the status and code the route answers it with. */
+export class HeadReadError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message)
+    this.name = 'HeadReadError'
+  }
+}
+
+/**
+ * How the route answers a failed read: 501 NO_LOG only for a brain that has no op_log (nothing to watch, asking
+ * again won't help); a refusal from routing keeps its status and code; anything else is a 500 the caller retries.
+ */
+export function headFailure(err: unknown): { status: number, body: { error: string, code: string } } {
+  if (err instanceof HeadReadError) return { status: err.status, body: { error: err.message, code: err.code } }
+  const message = err instanceof Error ? err.message : String(err)
+  if (/no such table: op_log/.test(message)) return { status: 501, body: { error: 'This brain has no op log to watch', code: 'NO_LOG' } }
+  return { status: 500, body: { error: `Reading the log head failed: ${message}`, code: 'HEAD_READ_FAILED' } }
+}
+
 /** `after` and `wait` from the query: integers ≥ 0, or an error message. */
 export function headQuery(q: Record<string, string | undefined>): { after: number | null, wait: number } | { error: string } {
   const int = (v: string | undefined) => v !== undefined && /^\d+$/.test(v) ? Number(v) : null

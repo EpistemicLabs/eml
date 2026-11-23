@@ -115,7 +115,7 @@ import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
 import { applyWrite, SharedWriteError, readOnly, spaceMembers } from './write'
-import { headQuery, logHead, waitForHead } from './head'
+import { HeadReadError, headFailure, headQuery, logHead, waitForHead } from './head'
 import { InviteError, Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
@@ -527,12 +527,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // the pool may close an idle connection while a request waits: each read routes again
       const read = () => {
         const routed = routeMiddleware(controlDb, pool, brainId)
-        if (!routed.ok) throw new Error(routed.error)
+        if (!routed.ok) throw new HeadReadError(routed.status, routed.code ?? 'ROUTING_FAILED', routed.error)
         return logHead(routed.ctx.brainDb)
       }
       let first: number
-      try { first = read() } catch {
-        return json(res, 501, { error: 'This brain has no op log to watch', code: 'NO_LOG' })
+      try { first = read() } catch (err) {
+        const failed = headFailure(err)
+        return json(res, failed.status, failed.body)
       }
       if (q.after === null || q.wait === 0 || first !== q.after) return json(res, 200, { seq: first })
       let closed = false
