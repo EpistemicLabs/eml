@@ -1,6 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
+import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
@@ -155,6 +156,7 @@ interface Row {
     priority?: string
     due_date?: string
     depends_on?: string[]
+    waits?: unknown
     waiting_on?: WaitingOn
   }
 }
@@ -231,11 +233,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     if (command.kind === 'close') return { ...row, status: 'invalidated' }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props) }, command.handOver, { agents })
       if (!planned.ok) return row
-      const { status, waiting_on, ...fields } = planned.plan.patch
-      const next: Row['properties'] = { ...props, ...fields } as Row['properties']
-      if (waiting_on === null) delete next!.waiting_on
+      const { status, waits, ...fields } = planned.plan.patch
+      const next = { ...props, ...fields } as NonNullable<Row['properties']>
+      if (waits !== undefined) {
+        next.waits = waits ?? undefined
+        next.waiting_on = urgentWaitOf({ waits: waits ?? [] })
+      }
       return { ...row, ...(status ? { status } : {}), properties: next }
     }
     return row
@@ -272,7 +277,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           owner: props.assignee_ids?.[0],
           delegate: props.delegate,
           checkpoint: props.checkpoint,
-          waitingOn: props.waiting_on,
+          waitingOn: urgentWaitOf(props),
           priority: props.priority,
           due: props.due_date,
           closedAt: row.status === 'resolved' ? row.updated_at : undefined,
@@ -320,7 +325,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
         })
-        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
       }
       board.tasks.push(...spaceTasks)
       board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))

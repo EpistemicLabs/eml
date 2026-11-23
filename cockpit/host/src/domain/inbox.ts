@@ -1,4 +1,5 @@
-import { waitKind, type WaitingOn } from './task-turn.js'
+import { waitKind } from './task-turn.js'
+import type { Wait } from './task-waits.js'
 
 /**
  * The Inbox holds what waits for the viewer to answer or look at: a question or a go an agent
@@ -6,6 +7,9 @@ import { waitKind, type WaitingOn } from './task-turn.js'
  * Items are derived, never stored; an item clears itself when its wait clears. A snooze hides one
  * item until a time and does not change the task's turn. A snooze is keyed by the task and the
  * moment its wait began, so a newer question on the same task shows again.
+ *
+ * Every wait of a task on the viewer is an item of its own (brain schema 23): two sessions that
+ * asked on one task are two items, each opening its session.
  */
 
 export type InboxKind = 'question' | 'review'
@@ -14,7 +18,8 @@ export interface InboxTask {
   id: string
   space: string
   title: string
-  waitingOn?: WaitingOn
+  /** The task's waits (domain/task-waits.ts waitsOf). */
+  waits: Wait[]
 }
 
 export interface Snooze {
@@ -41,9 +46,8 @@ export function itemKey(item: { taskId: string; since?: string }): string {
 
 export function inboxItems(tasks: InboxTask[], viewer: string, snoozes: Snooze[], now: number): { live: InboxItem[]; snoozed: InboxItem[] } {
   const items: InboxItem[] = []
-  for (const t of tasks) {
-    const w = t.waitingOn
-    if (!w || w.who !== viewer) continue
+  for (const t of tasks) for (const w of t.waits) {
+    if (w.who !== viewer) continue
     const kind = waitKind(w)
     if (kind === 'stopped' || kind === 'outside') continue
     const since = w.since ?? ''

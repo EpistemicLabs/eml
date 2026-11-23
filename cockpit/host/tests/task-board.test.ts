@@ -100,6 +100,28 @@ describe('the task board', () => {
     expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
   })
 
+  it('reads the turn from the most urgent of a task\'s waits, and lists each wait on the viewer in the Inbox', async () => {
+    const waits = [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:00:00.000Z', session_id: 's1' },
+      { id: 's2', who: 'lasse', kind: 'review', why: 'Review: draft', since: '2026-11-19T09:00:00.000Z', session_id: 's2' },
+    ]
+    const { board } = setup({
+      main: [
+        // waiting_on as an older core left it: the list wins.
+        mine('two', { delegate: 'atlas', waits, waiting_on: { who: 'lasse', kind: 'question', why: 'stale' } }),
+        mine('asked-and-handed', { waits: [waits[0], { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }] }),
+      ],
+      pending: () => [
+        { opId: 'op-h', kind: 'hand_over', spaceId: 'main', taskId: 'asked-and-handed', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } },
+      ],
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'two')).toMatchObject({ turn: 'review', waitingOn: { kind: 'review', session_id: 's2' } })
+    expect(model.inbox.map((i) => [i.kind, i.sessionId])).toEqual([['review', 's2'], ['question', 's1']])
+    // The pending hand-over takes the owner's question off; the customer's wait stays.
+    expect(model.tasks.find((t) => t.id === 'asked-and-handed')).toMatchObject({ turn: 'waiting_on_others', waitingOn: { who: 'kim' } })
+  })
+
   it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {
     const { board } = setup({ main: [], other: [mine('portfolio', {}, 'planned')] })
     const model = await board.refresh()

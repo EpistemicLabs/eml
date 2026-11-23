@@ -102,7 +102,7 @@ describe('hand over', () => {
     expect(r).toMatchObject({ ok: true, command: { carriedQuestion: 'Count it?' } })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toMatchObject({ waiting_on: null, status: 'planned' })
+    expect(w.posts[0].body).toMatchObject({ waits: null, status: 'planned' })
     expect(w.posts[0].body.text).toContain('Handed over with the open question: "Count it?"')
     expect(w.commands.briefOf('t1')).toContain('Count it?')
   })
@@ -121,10 +121,10 @@ describe('hand over', () => {
     const w = world([owned('t1', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } })])
     const r = await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' } })
     expect(r).toMatchObject({ ok: true, command: { state: 'applied', brief: expect.stringContaining('Which list?') } })
-    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', waiting_on: null })
+    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', waits: null })
     expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
-    expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
+    expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waits: [{ id: 'waiting_on', who: 'lasse', kind: 'question', why: 'Which list?' }], status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
   })
 
   it('refuses what cannot be handed over, with a reason', async () => {
@@ -153,7 +153,7 @@ describe('looks good, snooze, close', () => {
     await w.commands.submit({ opId: 'op-ok', kind: 'review', spaceId: 'main', taskId: 't1' })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toEqual({ status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null, text: 'Looks good: the owner reviewed the result and closed the task.' })
+    expect(w.posts[0].body).toEqual({ status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, text: 'Looks good: the owner reviewed the result and closed the task.' })
 
     const bound = world([owned('t2', {}, 'active')], { bound: ['d1'] })
     expect(await bound.commands.submit({ opId: 'op-b', kind: 'review', spaceId: 'main', taskId: 't2' })).toMatchObject({ ok: false, refusal: 'bound_items' })
