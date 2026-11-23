@@ -4,6 +4,19 @@ import { createCodexProvider } from './codex/index.js'
 import { createQwenProvider } from './qwen/index.js'
 import { platform } from '../platform/index.js'
 
+/**
+ * The providers a host on `os` runs sessions with, in their order. The host
+ * passes its own Claude provider when it wraps it (the channel tools).
+ */
+export function defaultProviders(os: string, claude: AgentProvider = createClaudeProvider()): AgentProvider[] {
+  return [
+    claude,
+    createCodexProvider(),
+    // macOS only for now: unattended sessions need Qwen Code's sandbox-exec sandbox.
+    ...(os === 'darwin' ? [createQwenProvider()] : []),
+  ]
+}
+
 export interface RegistryOptions {
   /** The provider a known session runs with (the ledger's record). */
   providerOf?: (sessionId: string) => ProviderId | undefined
@@ -23,12 +36,7 @@ export class ProviderRegistry {
   private readonly preferred: () => ProviderId | undefined
 
   constructor(options: RegistryOptions = {}) {
-    const providers = options.providers ?? [
-      createClaudeProvider(),
-      createCodexProvider(),
-      // macOS only for now: unattended sessions need Qwen Code's sandbox-exec sandbox.
-      ...(platform.os === 'darwin' ? [createQwenProvider()] : []),
-    ]
+    const providers = options.providers ?? defaultProviders(platform.os)
     this.providers = new Map(providers.map((provider) => [provider.id, provider]))
     this.providerOf = options.providerOf ?? (() => undefined)
     this.preferred = options.preferred ?? (() => undefined)
