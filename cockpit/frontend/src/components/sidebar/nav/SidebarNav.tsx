@@ -9,7 +9,7 @@ import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
 import { useTaskBoard } from '@/lib/task-board';
-import { useUnreadAnswers } from '@/lib/use-unread-answers';
+import { useUnreadAnswers } from '@/hooks/useUnreadAnswers';
 import { cn } from '@/lib/utils';
 import { Count, FOCUS, LABEL, Menu, Monogram, monograms, NAV_ROW, NavItem } from '@/shared/view/ui';
 import * as paneStore from '@/stores/usePaneStore';

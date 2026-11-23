@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-import { FromOrigin, Who } from './parts';
+import { Fold, FromOrigin, Who } from './parts';
 import { UnreadFold } from './UnreadFold';
 
 /** The Unread fold's sessions and what the page does with them. */
@@ -93,17 +93,6 @@ export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, 
         ))}
         <UnreadFold sessions={unread.sessions} board={board} spaces={unread.spaces} now={now} open={unread.open} compact={compact} onToggle={unread.onToggle} onOpen={unread.onOpen} onMarkAllRead={unread.onMarkAllRead} />
       </div>
-    </div>
-  );
-}
-
-function Fold({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
-  return (
-    <div className={cn(LABEL, 'flex items-center justify-between border-t border-border bg-muted px-3 py-2')}>
-      <span>{label}</span>
-      <button type="button" onClick={onToggle} aria-expanded={open} className={cn('min-h-(--target-min) text-ui normal-case tracking-normal text-mark-ink underline underline-offset-2', FOCUS)}>
-        {open ? 'Hide' : 'Show'}
-      </button>
     </div>
   );
 }
