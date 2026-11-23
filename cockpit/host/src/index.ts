@@ -69,6 +69,7 @@ import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
+import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
@@ -499,10 +500,7 @@ async function main() {
       const job = jobId ? jobStore.get(jobId) : undefined
       return job ? { id: job.id, name: job.name, limited: job.limited === true } : null
     },
-    clearJobProfile: (jobId) => {
-      const job = jobStore.get(jobId)
-      if (job?.toolProfile) jobStore.put({ ...job, toolProfile: null, updatedAt: new Date().toISOString() })
-    },
+    clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
     // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
     jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
       const caller = jobCaller(sessionId)
