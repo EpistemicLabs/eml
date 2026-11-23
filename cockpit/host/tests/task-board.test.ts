@@ -134,6 +134,35 @@ describe('the task board', () => {
     expect(model.inbox).toEqual([])
   })
 
+  it('lists closed tasks for Reopen and ⌘K, with why a reopen would be refused, and shows a pending reopen as active', async () => {
+    const { board, brains } = setup({
+      main: [
+        mine('open-parent'),
+        mine('done', { outcome: 'Shipped', delegate: 'atlas', checkpoint: 'after' }, 'resolved'),
+        mine('dropped', {}, 'invalidated'),
+        mine('replaced', {}, 'superseded'),
+        { ...mine('orphan', {}, 'invalidated'), parent_id: 'closed-parent' },
+        { ...mine('kept', {}, 'invalidated'), parent_id: 'open-parent' },
+        mine('coming-back', { waiting_on: { who: 'lasse', kind: 'review' } }, 'invalidated'),
+      ],
+      pending: () => [{ opId: 'op-r', kind: 'reopen', spaceId: 'main', taskId: 'coming-back', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '' }],
+    })
+    const model = await board.refresh()
+    const closed = new Map(model.closed.map((t) => [t.id, t]))
+    expect(closed.get('done')).toMatchObject({ status: 'resolved', outcome: 'Shipped', owner: 'lasse', delegate: 'atlas', checkpoint: 'after', closedAt: '2026-11-19T09:00:00Z' })
+    expect(closed.get('done')!.blocked).toBeUndefined()
+    expect(closed.get('dropped')).toMatchObject({ status: 'invalidated' })
+    expect(closed.get('replaced')).toMatchObject({ blocked: 'superseded' })
+    expect(closed.get('orphan')).toMatchObject({ blocked: 'parent_closed' })
+    expect(closed.get('kept')!.blocked).toBeUndefined()
+    expect(closed.has('coming-back')).toBe(false)
+    expect(model.tasks.find((t) => t.id === 'coming-back')).toMatchObject({ status: 'active', pending: { opId: 'op-r', kind: 'reopen' } })
+    expect(model.tasks.find((t) => t.id === 'coming-back')!.waitingOn).toBeUndefined()
+    // Neither dropped nor replaced tasks get a turn on the board.
+    expect(model.tasks.some((t) => t.id === 'dropped' || t.id === 'replaced')).toBe(false)
+    expect(brains.get('main')!.queries.map((q) => q.status)).toEqual(expect.arrayContaining(['invalidated', 'superseded']))
+  })
+
   it('says how a task hangs in its tree: sub-task under its parent, spun off from its origin', async () => {
     const { board } = setup({
       main: [mine('root'), mine('spun', {}, 'active'), mine('step', {}, 'planned')].map((r) =>

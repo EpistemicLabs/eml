@@ -17,6 +17,7 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
+ *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason? }: the owner reopens a closed task (active; starts nothing)
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId, existingTaskId? }: split a topic off a session (onto an open task, with existingTaskId)
  *   POST /api/v1/sessions/<id>/split-brief          { upTo?, contextOnly? }: a draft (title, relation, projectId, brief) from the turns up to a message; contextOnly: only the dialog's context, no model call
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
@@ -58,6 +59,10 @@ const MESSAGES: Record<CommandRefusal, string> = {
   desk_required: 'Pick the desk to open the session in.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
   open_steps: 'This task still has open steps: close or move them first.',
+  task_open: 'The task is open already.',
+  not_owner: 'Only the task\'s owner can reopen it.',
+  superseded: 'Another task replaced this one: go on there.',
+  parent_closed: 'Its parent is closed: reopen the parent first.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
 }
@@ -92,6 +97,7 @@ function failedPartWay(json: Json, res: http.ServerResponse, what: 'split' | 'so
 const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
+  task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
   no_brain: 503,
 }
 
@@ -249,7 +255,7 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close)$/.exec(pathname)
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|reopen)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -264,6 +270,9 @@ export async function handleTasksApi(
         input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: schedule(body), desk: str(body.desk) } }
       } else if (verb === 'review' || verb === 'close') {
         input = { ...base, kind: verb, taskId }
+      } else if (verb === 'reopen') {
+        const reason = str(body.reason)?.trim().slice(0, 500)
+        input = { ...base, kind: 'reopen', taskId, ...(reason ? { reason } : {}) }
       } else {
         const key = str(body.key), until = str(body.until)
         if (!key || !until) { refuse(json, res, 'invalid', 'key and until are required'); return true }

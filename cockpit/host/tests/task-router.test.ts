@@ -136,6 +136,24 @@ describe('task router', () => {
     expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', kind: 'review', why: 'Review: Kim withdrew the cancellation' })
   })
 
+  it('ignores a status the session gave before the task was reopened; a newer one still routes', async () => {
+    const reopened = (at: string) => [{ kind: 'change', at: '2026-11-01T00:00:00.000Z', text: 'status active → resolved' }, { kind: 'change', at, text: 'reopened (active)' }]
+    const stale = setup({ id: 't-ro', status: 'active', properties: {}, entries: reopened(new Date(Date.now() + 60_000).toISOString()) })
+    stale.ledger.recordSpawn('s-ro', null, 'bp-eml', 'claude', true, 't-ro')
+    stale.ledger.setAttention('s-ro', { kind: 'review', reason: 'Old result' })
+    await stale.r.turnEnded('s-ro', 'Reopened it, as asked.')
+    expect(stale.brain.posts).toEqual([])
+    // A handoff in this turn is new: it goes to the journal, but the old status puts no wait.
+    await stale.r.turnEnded('s-ro', '### Handoff\nResult: reopened')
+    expect(stale.brain.posts).toEqual([{ path: '/task/t-ro/track', body: { text: '### Handoff\nResult: reopened' } }])
+
+    const fresh = setup({ id: 't-rn', status: 'active', properties: {}, entries: reopened('2026-11-02T00:00:00.000Z') })
+    fresh.ledger.recordSpawn('s-rn', null, 'bp-eml', 'claude', true, 't-rn')
+    fresh.ledger.setAttention('s-rn', { kind: 'review', reason: 'New result' })
+    await fresh.r.turnEnded('s-rn', 'Done.')
+    expect(fresh.brain.posts[0].body.waiting_on).toMatchObject({ kind: 'review', why: 'Review: New result' })
+  })
+
   it('leaves a quiet reschedule off the user: the handoff goes to the journal, nobody waits', async () => {
     const { ledger, brain, r } = setup({ id: 't-q', status: 'active', properties: {} })
     ledger.recordSpawn('s-q', null, 'bp-eml', 'claude', true, 't-q')

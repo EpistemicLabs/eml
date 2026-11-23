@@ -15,6 +15,7 @@ const deps = {
     submit: async (input: CommandInput) => {
       submitted.push(input)
       if (input.taskId === 'closed') return { ok: false, refusal: 'task_closed' }
+      if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
       return { ok: true, command: { ...input, state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', createdAt: '', ...(input.taskId === 'asked' ? { carriedQuestion: 'Which list?' } : {}) } }
     },
     undo: async (opId: string) => (opId === 'late' ? { ok: false, refusal: 'undo_expired' } : { ok: true }),
@@ -94,6 +95,15 @@ describe('task board routes', () => {
       .toEqual({ status: 409, body: { error: { code: 'task_closed', message: 'The task is closed.', retry: false } } })
     expect((await post('/api/v1/tasks/t1/hand-over', { spaceId: 'main', mode: 'later', delegate: 'atlas' })).body.error.code).toBe('invalid')
     expect((await post('/api/v1/tasks/t1/snooze', { spaceId: 'main' })).body.error.code).toBe('invalid')
+  })
+
+  it('takes a reopen with an optional reason; another owner\'s task is refused with 403', async () => {
+    expect((await post('/api/v1/tasks/t9/reopen', { opId: 'op-r', spaceId: 'main', reason: '  found a bug  ' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-r', spaceId: 'main', kind: 'reopen', taskId: 't9', reason: 'found a bug' })
+    expect((await post('/api/v1/tasks/t9/reopen', { opId: 'op-r2', spaceId: 'main' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-r2', spaceId: 'main', kind: 'reopen', taskId: 't9' })
+    expect(await post('/api/v1/tasks/theirs/reopen', { opId: 'op-r3', spaceId: 'main' }))
+      .toEqual({ status: 403, body: { error: { code: 'not_owner', message: 'Only its owner (dominik) can reopen this task.', retry: false } } })
   })
 
   it('undoes, or says it is too late', async () => {

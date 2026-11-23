@@ -53,6 +53,14 @@ interface Task {
   id: string
   status: string
   properties?: { checkpoint?: string; waiting_on?: Record<string, string> }
+  /** The task's journal (the brain's /engram answer): a reopen is a change entry "reopened (…)". */
+  entries?: Array<{ kind?: string; at?: string; text?: string }>
+}
+
+/** When the task was last reopened (board or chat), from its journal; null when never. */
+export function reopenedAt(task: Pick<Task, 'entries'>): string | null {
+  const last = (task.entries ?? []).filter((e) => e.kind === 'change' && typeof e.text === 'string' && e.text.startsWith('reopened') && e.at).at(-1)
+  return last?.at ?? null
 }
 
 export interface WaitingOn {
@@ -165,7 +173,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     if (!brain) return
 
     const handoff = parseHandoff(message)
-    const attention = entry.attention
+    let attention = entry.attention
     if (!handoff && !attention) return
     // The handoff, or without one the status: not the question the router itself put on the session.
     const key = handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
@@ -184,6 +192,13 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
         deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} closed, finished`)
       }
       return
+    }
+    // A status the session gave before the task was reopened belongs to the closed task: it must not
+    // put a wait on the reopened one (seen on 4df3b729, where an old review wait came back).
+    const reopened = reopenedAt(task)
+    if (attention && reopened && attention.at < reopened) {
+      attention = null
+      if (!handoff) { lastRouted.set(sessionId, key); return }
     }
     const waiting = decideWaiting({ handoff, attention, checkpoint: task.properties?.checkpoint, owner: deps.owner, sessionId, now: now() })
     const current = task.properties?.waiting_on

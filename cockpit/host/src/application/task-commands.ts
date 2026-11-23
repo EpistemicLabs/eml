@@ -11,7 +11,7 @@ import { stepPrompt } from './task-runner.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
- * Looks good, Snooze and Close. Everything else stays in the chat.
+ * Looks good, Snooze, Close and Reopen (decision task-board-reopen-action). Everything else stays in the chat.
  *
  * Each action is a command with the page's operation id, so a retry does the work once. A command
  * waits out its undo window (UNDO_WINDOW_MS) before it touches the brain or a job; Undo
@@ -28,7 +28,7 @@ const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split' | 'sort'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'reopen' | 'split' | 'sort'
 
 export interface CommandInput {
   opId: string
@@ -37,7 +37,12 @@ export interface CommandInput {
   taskId?: string
   handOver?: HandOverRequest
   snooze?: Snooze
+  /** Reopen: the owner's reason, for the journal (optional). */
+  reason?: string
 }
+
+/** A decision or note that closed with the task: a reopen lists it for the chat, which brings it back on the owner's yes. */
+export interface ReopenItem { id: string; type: string; title: string | null }
 
 export interface TaskCommand extends CommandInput {
   createdAt: string
@@ -69,6 +74,8 @@ export interface TaskCommand extends CommandInput {
   sort?: { linked: number; created: number; closed: number }
   /** A sort's progress: the next action to apply and the tasks its creates made, for a retry. */
   sortProgress?: { next: number; created: Record<string, string>; createdSteps?: Record<string, { linked?: boolean; journaled?: boolean }>; summed?: boolean }
+  /** A reopen that was applied: what closed with the task and comes back only through the chat, and the steps that stay closed. */
+  reopened?: { items: ReopenItem[]; closedSteps: number }
   error?: string
 }
 
@@ -80,6 +87,10 @@ export type CommandRefusal =
   | 'no_brain'
   | 'bound_items'
   | 'open_steps'
+  | 'task_open'
+  | 'not_owner'
+  | 'superseded'
+  | 'parent_closed'
   | 'unknown_command'
   | 'undo_expired'
 
@@ -141,11 +152,19 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; waiting_on?: WaitingOn }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; waiting_on?: WaitingOn; display_title?: string }
 }
+
+type Relation = { source_id: string; target_id: string; relation: string }
+type BrainTaskWithRelations = BrainTask & { relations?: Relation[] }
+
+const OPEN = new Set(['planned', 'active'])
+const nameOf = (t: BrainTask) => t.properties?.display_title ?? t.title ?? t.id
 
 export interface TaskCommandsDeps {
   store: TaskCommandStore
+  /** The person at the page: only a task's owner may reopen it. Unset: not checked. */
+  viewer?: string
   space(spaceId: string): BrainSpace | undefined
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   agentsOf(space: BrainSpace): Promise<string[]>
@@ -233,6 +252,34 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     return planned.ok ? { ok: true as const, task, plan: planned.plan } : planned
   }
 
+  /**
+   * Whether a closed task may be reopened from the board, by the rules of note reopen-closed-task-cause-and-proposal:
+   * the owner only; not an open task; not one another task replaced (the refusal names it); not under a closed parent.
+   * Closed steps stay closed: their count goes into the journal.
+   */
+  const checkReopen = async (brain: Pick<EmlApi, 'get'>, taskId: string): Promise<{ ok: true; task: BrainTask; closedSteps: number } | { ok: false; refusal: CommandRefusal; message?: string }> => {
+    const task = await brain.get(`/engram/${taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
+    if (!task) return { ok: false, refusal: 'unknown_task' }
+    if (OPEN.has(task.status)) return { ok: false, refusal: 'task_open' }
+    const owner = task.properties?.assignee_ids?.[0]
+    if (deps.viewer && owner && owner !== deps.viewer) return { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can reopen this task.` }
+    const relations = task.relations ?? []
+    for (const r of relations.filter((r) => r.relation === 'supersedes' && r.target_id === task.id)) {
+      const successor = await taskOf(brain, r.source_id)
+      if (successor && successor.status !== 'invalidated') return { ok: false, refusal: 'superseded', message: `"${nameOf(successor)}" replaced this task: go on there.` }
+    }
+    if (task.status === 'superseded') return { ok: false, refusal: 'superseded', message: 'Another task replaced this one: go on there.' }
+    const parentId = relations.find((r) => r.relation === 'part_of' && r.source_id === task.id)?.target_id
+    const parent = parentId ? await taskOf(brain, parentId) : null
+    if (parent && !OPEN.has(parent.status)) return { ok: false, refusal: 'parent_closed', message: `Its parent "${nameOf(parent)}" is closed: reopen the parent first.` }
+    let closedSteps = 0
+    for (const r of relations.filter((r) => r.relation === 'part_of' && r.target_id === task.id)) {
+      const step = await taskOf(brain, r.source_id)
+      if (step && !OPEN.has(step.status)) closedSteps++
+    }
+    return { ok: true, task, closedSteps }
+  }
+
   const submit = async (input: CommandInput): Promise<Submitted> => {
     const existing = deps.store.get(input.opId)
     if (existing) return { ok: true, command: existing }
@@ -285,6 +332,13 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
       return { ok: true, command: save(base) }
     }
+
+    if (input.kind === 'reopen') {
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      const checked = await checkReopen(brain, input.taskId)
+      if (!checked.ok) return checked
+      return { ok: true, command: save(base) }
+    }
     return { ok: false, refusal: 'invalid' }
   }
 
@@ -321,6 +375,19 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null }, 'Closed on the task board by the owner: not needed.')
         }
         save({ ...command, state: 'applied' })
+      } else if (command.kind === 'reopen') {
+        const checked = await checkReopen(brain, command.taskId!)
+        if (!checked.ok) return fail(checked.message ?? checked.refusal)
+        const steps = checked.closedSteps ? ` ${checked.closedSteps} closed step${checked.closedSteps === 1 ? '' : 's'} stay closed.` : ''
+        const reason = command.reason ? ` Why: ${command.reason}` : ''
+        // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
+        const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `Reopened on the task board by the owner.${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+        const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
+        if (items.length > 0) {
+          const list = items.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')
+          await track(brain, checked.task.id, {}, `Closed with the task and not back yet: ${list}. They come back through the chat on the owner's yes (eml_update status active).`)
+        }
+        save({ ...command, state: 'applied', reopened: { items, closedSteps: checked.closedSteps } })
       }
       deps.log(`[commands] ${command.opId.slice(0, 8)} ${command.kind} applied`)
     } catch (err) {
@@ -391,6 +458,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     releasedAgent(taskId: string): string | null {
       const latest = latestHandOver(taskId)
       return latest?.handOver?.mode === 'together' && latest.released ? latest.released.agent : null
+    },
+
+    /** The decisions and notes the task's latest board reopen listed for the chat (they closed with it). */
+    reopenedWith(taskId: string): ReopenItem[] {
+      return deps.store.commands().filter((c) => c.kind === 'reopen' && c.state === 'applied' && c.taskId === taskId).at(-1)?.reopened?.items ?? []
     },
 
     /** What the delegate of a task handed over with an open question reads first. */

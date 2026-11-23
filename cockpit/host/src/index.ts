@@ -705,6 +705,8 @@ async function main() {
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
+    reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
+    ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
     now: () => Date.now(),
     log,
     // The space's log head, straight from its brain (brain GET /head): what the board watches to refresh live.
@@ -717,6 +719,7 @@ async function main() {
   const taskCommandStore = new TaskCommandStore()
   taskCommands = createTaskCommands({
     store: taskCommandStore,
+    viewer: owner,
     space: (spaceId) => spaces.get(spaceId),
     brain: taskBrain,
     agentsOf: async (space) => {
