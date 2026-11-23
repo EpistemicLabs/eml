@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
 import { GREETING_PROMPT } from '../src/session-greeting.js'
-import { ChatBridge, IDLE_STOP, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
+import { ChatBridge, IDLE_STOP, RESTART_NOTICE, liftNotice, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
@@ -683,6 +683,128 @@ describe('ChatBridge', () => {
     runtimes[0].emit({ kind: 'question', requestId: 'q', questions: [] })
     runtimes[0].emit({ kind: 'request_settled', requestId: 'q', outcome: 'answered' })
     expect(turns).toEqual([['s1', 'waiting'], ['s1', 'working']])
+  })
+
+  it('a restart gives the same conversation a new process, and the view stays on it', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true, runtimeOf: 'sdk' })
+    const ws = connect(bridge)
+    await flush()
+    ledgerEntries.get('s1')!.conversation = 'conv-1'
+    ws.client({ type: 'restart' })
+    await flush()
+    expect(runtimes).toHaveLength(2)
+    expect(runtimes[0].closed).toBe(true)
+    expect(runtimes[1].start.resume).toBe(true)
+    expect(runtimes[1].start.conversationId).toBe('conv-1')
+    expect(ws.closes).toEqual([])
+    expect(ws.events().some((e) => e.kind === 'notice' && e.text === RESTART_NOTICE)).toBe(true)
+    ws.client({ type: 'send', text: 'after' })
+    expect(runtimes[1].sent).toEqual(['after'])
+  })
+
+  it('a restart during a turn stops the turn first, and a message meanwhile is refused, not lost', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true, runtimeOf: 'sdk' })
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'send', text: 'go' })
+    ws.client({ type: 'restart' })
+    ws.client({ type: 'send', text: 'too early' })
+    await flush()
+    expect(runtimes[0].interrupts).toBe(1)
+    expect(runtimes[0].sent).toEqual(['go'])
+    expect(runtimes[1].sent).toEqual([])
+    expect(ws.frames.some((f) => f.type === 'error' && /closing/.test(String(f.message)))).toBe(true)
+    expect((ledgerEntries.get('s1') as unknown as { inFlight?: boolean }).inFlight).toBe(false)
+  })
+
+  it('a restart keeps the session\'s tool profile', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true, runtimeOf: 'sdk' })
+    ;(ledgerEntries.get('s1') as unknown as { toolProfile: unknown }).toolProfile = { deniedTools: ['Bash'], mcpServers: null }
+    const provider = (bridge as unknown as { ctx: ChatContext }).ctx.providers.get('claude') as unknown as { launch: (req: { toolProfile: unknown }) => unknown }
+    const profiles: unknown[] = []
+    const launch = provider.launch
+    provider.launch = (req) => { profiles.push(req.toolProfile); return launch(req) }
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'restart' })
+    await flush()
+    expect(runtimes).toHaveLength(2)
+    expect(profiles).toEqual([{ deniedTools: ['Bash'], mcpServers: null }, { deniedTools: ['Bash'], mcpServers: null }])
+  })
+
+  it('a restart of a session with no process just starts it', async () => {
+    const { bridge, runtimes } = setup({ transcript: true, runtimeOf: 'sdk' })
+    const ws = connect(bridge, { readOnly: true })
+    await flush()
+    expect(runtimes).toHaveLength(0)
+    ws.client({ type: 'restart' })
+    await flush()
+    expect(runtimes).toHaveLength(1)
+    expect(runtimes[0].start.resume).toBe(true)
+  })
+
+  function withJobSession(opts: { limited?: boolean } = {}) {
+    const harness = setup({ transcript: true, runtimeOf: 'sdk' })
+    const entry = harness.ledgerEntries.get('s1') as unknown as { toolProfile: unknown; jobId: string }
+    entry.toolProfile = { deniedTools: ['mcp__gmail__send_email'], mcpServers: null }
+    entry.jobId = 'job-1'
+    const ledger = (harness.bridge as unknown as { ctx: ChatContext }).ctx.ledger as unknown as Record<string, unknown>
+    ledger.clearToolProfile = (id: string) => { (harness.ledgerEntries.get(id) as unknown as { toolProfile: unknown }).toolProfile = null }
+    const cleared: string[] = []
+    const ctx = (harness.bridge as unknown as { ctx: ChatContext }).ctx
+    ctx.jobOf = () => ({ id: 'job-1', name: 'Weekly analysis', limited: opts.limited === true })
+    ctx.clearJobProfile = (id) => { cleared.push(id) }
+    const profiles: unknown[] = []
+    const provider = ctx.providers.get('claude') as unknown as { launch: (req: { toolProfile: unknown }) => unknown }
+    const launch = provider.launch
+    provider.launch = (req) => { profiles.push(req.toolProfile); return launch(req) }
+    return { ...harness, cleared, profiles, entry }
+  }
+
+  it('tells the view what the session may not use, and whether the user can lift it', async () => {
+    const { bridge } = withJobSession()
+    const ws = connect(bridge)
+    await flush()
+    expect(ws.frames.find((f) => f.type === 'limits')).toEqual({
+      type: 'limits', deniedTools: ['mcp__gmail__send_email'], mcpServers: null, job: { id: 'job-1', name: 'Weekly analysis' }, liftable: true,
+    })
+  })
+
+  it('the user lifts the limits: the restart starts without them, the agent is told, and the job keeps its own unless asked', async () => {
+    const { bridge, runtimes, cleared, profiles, entry } = withJobSession()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'restart', unlimited: true })
+    await flush()
+    expect(entry.toolProfile).toBeNull()
+    expect(profiles).toEqual([{ deniedTools: ['mcp__gmail__send_email'], mcpServers: null }, null])
+    expect(cleared).toEqual([])
+    expect(ws.frames.filter((f) => f.type === 'limits').at(-1)).toMatchObject({ deniedTools: [], liftable: false })
+    const note = liftNotice({ deniedTools: ['mcp__gmail__send_email'], mcpServers: null }, null)
+    expect(ws.events().some((e) => e.kind === 'notice' && e.text === note)).toBe(true)
+    expect(runtimes[1].start.worker?.onPrompt()).toContain(note)
+  })
+
+  it('lifting for the job too clears its limits for its future runs', async () => {
+    const { bridge, cleared } = withJobSession()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'restart', unlimited: true, forJob: true })
+    await flush()
+    expect(cleared).toEqual(['job-1'])
+    expect(ws.events().some((e) => e.kind === 'notice' && /Weekly analysis/.test(e.text))).toBe(true)
+  })
+
+  it('a limited channel job\'s limits are not lifted here, and nothing restarts', async () => {
+    const { bridge, runtimes, entry } = withJobSession({ limited: true })
+    const ws = connect(bridge)
+    await flush()
+    expect(ws.frames.find((f) => f.type === 'limits')).toMatchObject({ liftable: false })
+    ws.client({ type: 'restart', unlimited: true })
+    await flush()
+    expect(entry.toolProfile).not.toBeNull()
+    expect(runtimes).toHaveLength(1)
+    expect(ws.frames.some((f) => f.type === 'error')).toBe(true)
   })
 
   it('ending interrupts a running turn, closes, and tells the client not to come back', async () => {

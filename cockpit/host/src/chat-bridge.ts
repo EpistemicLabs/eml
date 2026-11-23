@@ -32,6 +32,7 @@ import { greetingFor } from './session-greeting.js'
  *   client → { type:'send', text, id? }              (`id`: the one the view already shows it under)
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
+ *   client → { type:'restart', unlimited?, forJob? } (a new process for the same conversation; `unlimited`: the user lifts its limits first)
  *   client → { type:'tool_servers' }
  *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
  *   client → { type:'set_mode', mode }
@@ -39,6 +40,7 @@ import { greetingFor } from './session-greeting.js'
  *   client → { type:'stop_agent', taskId }
  *   host   → { type:'terminal_busy', state }        (init with whenIdle refused: send it again later)
  *   host   → { type:'switching', reason }           (the handoff is under way)
+ *   host   → { type:'limits', deniedTools, mcpServers, job, liftable }  (what the session may not use; after joined and on change)
  *   host   → { type:'joined' }                      (the session takes messages from this socket now)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
@@ -77,6 +79,27 @@ const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what change
 const SUMMARY_REMINDER = `Your turn ends without a visible reply. Write your closing summary now, as text, not in thinking. ${SUMMARY_SHAPE}`
 const QUESTIONS_REMINDER = `You said you have a question, but your reply does not ask it. Write the questions as visible text, as a numbered list, each one answerable on its own. ${SUMMARY_SHAPE}`
 
+/** A session's limits as its views get them. */
+export interface SessionLimitsView {
+  deniedTools: string[]
+  /** The only MCP servers it gets besides the brain; null: all its space has. */
+  mcpServers: string[] | null
+  job: { id: string; name: string } | null
+  /** The user can lift them from the chat view. */
+  liftable: boolean
+}
+
+/** What the conversation, and with the next prompt the agent, is told when the user lifts limits. */
+export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpServers'>, jobName: string | null): string {
+  const parts = [
+    ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.join(', ')})`] : []),
+    ...(limits.mcpServers !== null ? ['the limit to some MCP servers'] : []),
+  ]
+  const forJob = jobName ? ` Future runs of the job "${jobName}" start without them too.` : ''
+  return `The user lifted this session's limits: ${parts.join(' and ')}. From this restart it may use all tools its space has.${forJob}`
+}
+
+export const RESTART_NOTICE = 'Restarted. MCP servers, settings and skills were loaded fresh.'
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
 interface ChatEntry {
@@ -115,6 +138,8 @@ interface ChatEntry {
   ceilingNote: string | null
   /** The agent's process; null until it started. */
   pid: number | null
+  /** Limits the user lifted that the agent has not been told of yet: it goes with its next prompt. */
+  liftNote?: string | null
 }
 
 export interface ChatContext {
@@ -148,6 +173,10 @@ export interface ChatContext {
   limits?: () => { session: SessionLimits; idleMs: number }
   /** More sessions run than the cap allows (session-limits.ts). */
   overCap?: () => boolean
+  /** The job a session works for; `limited`: a channel job the user limited, whose limits are its own. */
+  jobOf?: (sessionId: string) => { id: string; name: string; limited: boolean } | null
+  /** The user lifted a job's limits for its future runs too. */
+  clearJobProfile?: (jobId: string) => void
   /** The schedule tool's actions, for the session that calls it (application/jobs.ts); absent: no tool. */
   jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
 }
@@ -176,6 +205,9 @@ type ClientMessage = {
   taskId?: unknown
   name?: unknown
   action?: unknown
+  /** restart: the user lifts the session's limits first; forJob: its job's future runs too. */
+  unlimited?: unknown
+  forJob?: unknown
 }
 
 function send(ws: WebSocket | null, message: Record<string, unknown>): void {
@@ -403,7 +435,11 @@ export class ChatBridge {
           })
         } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
           this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
-        } else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
+        } else if (data.type === 'restart') {
+          if (data.unlimited === true) this.lift(entry, data.forJob === true)
+          void this.restart(entry).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
+        }
+        else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
         else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -543,6 +579,7 @@ export class ChatBridge {
     } else if (opts.readOnly) {
       if (!entry.runtime) this.emit(entry, { kind: 'process', state: 'stopped' })
     } else this.startEntry(entry, provider, space, paneId, resume)
+    send(ws, { type: 'limits', ...this.limitsOf(entry.sessionId) })
     send(ws, { type: 'joined' })
   }
 
@@ -562,6 +599,66 @@ export class ChatBridge {
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
+  }
+
+  /** What the session may not use, as its views show it: from the ledger, so what holds at its next start. */
+  private limitsOf(sessionId: string): SessionLimitsView {
+    const profile = this.ctx.ledger.get(sessionId)?.toolProfile ?? null
+    const job = this.ctx.jobOf?.(sessionId) ?? null
+    const deniedTools = profile?.deniedTools ?? []
+    const mcpServers = profile?.mcpServers ?? null
+    return {
+      deniedTools, mcpServers,
+      job: job ? { id: job.id, name: job.name } : null,
+      // A limited channel job's limits are worked out at each start; the user lends it tools in the Jobs view.
+      liftable: (deniedTools.length > 0 || mcpServers !== null) && !job?.limited,
+    }
+  }
+
+  /**
+   * The user lifts the session's limits, and with forJob those of its job's future runs. Only the
+   * page asks for it, over this socket; no agent tool reaches it. The restart that follows applies it.
+   */
+  private lift(entry: ChatEntry, forJob: boolean): void {
+    const limits = this.limitsOf(entry.sessionId)
+    if (!limits.liftable) throw new Error('This session has no limits that can be lifted here.')
+    this.ctx.ledger.clearToolProfile(entry.sessionId)
+    const job = forJob && limits.job && this.ctx.clearJobProfile ? limits.job : null
+    if (job) this.ctx.clearJobProfile!(job.id)
+    const text = liftNotice(limits, job?.name ?? null)
+    entry.liftNote = text
+    this.emit(entry, { kind: 'notice', text })
+    this.log(`limits of ${entry.sessionId} lifted by the user${job ? `, and of job ${job.id}` : ''}`)
+    const frame = { type: 'limits', ...this.limitsOf(entry.sessionId) }
+    for (const ws of entry.clients) send(ws, frame)
+  }
+
+  /**
+   * A new process for the same conversation, the views staying on it: a running turn is
+   * stopped first, then it resumes under the same id and reads its MCP servers, settings and
+   * skills fresh. What it may use stays as it started (the ledger's tool profile).
+   */
+  private async restart(entry: ChatEntry): Promise<void> {
+    if (entry.closing) return
+    const runtime = entry.runtime
+    if (runtime) {
+      // Closing for the moment: a message now is refused rather than lost with the old process.
+      entry.closing = true
+      try {
+        if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
+        await runtime.close()
+      } finally {
+        entry.runtime = null
+        entry.closing = false
+      }
+      this.ctx.memory?.release(entry.sessionId)
+      this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
+    }
+    // Ended or deleted meanwhile: nothing to bring back.
+    if (entry.closed || this.entries.get(entry.sessionId) !== entry) return
+    this.emit(entry, { kind: 'notice', text: RESTART_NOTICE })
+    this.ensureStarted(entry)
+    this.log(`restarted chat session ${entry.sessionId}`)
   }
 
   /** A read-only view is being used, or a crash left the entry without a process: the conversation goes on. */
@@ -725,7 +822,9 @@ export class ChatBridge {
         // The agent saw a tool die (exit 137) without a reason: this is the reason.
         const ceiling = entry.ceilingNote ? `The cockpit: ${entry.ceilingNote}` : null
         entry.ceilingNote = null
-        return [ceiling, name].filter(Boolean).join('\n\n') || null
+        const lifted = entry.liftNote ? `The cockpit: ${entry.liftNote}` : null
+        entry.liftNote = null
+        return [ceiling, lifted, name].filter(Boolean).join('\n\n') || null
       },
       report: (status, reason) => {
         entry.declared = true
@@ -901,6 +1000,7 @@ export class ChatBridge {
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })
     for (const stored of this.ctx.events.after(entry.sessionId, from)) send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    send(ws, { type: 'limits', ...this.limitsOf(entry.sessionId) })
     send(ws, { type: 'joined' })
   }
 

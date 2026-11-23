@@ -373,6 +373,14 @@ export class SessionLedger {
     this.persist()
   }
 
+  /** The user lifted the session's limits: from its next start it may use all its space has. */
+  clearToolProfile(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.toolProfile) return
+    entry.toolProfile = null
+    this.persist()
+  }
+
   /** Set when a job's run starts the session; it holds on every resume. */
   /** Task system: the brain task the session works on; `auto` when the cockpit created it (application/session-task.ts). */
   setTask(sessionId: string, taskId: string | null, auto = false): void {

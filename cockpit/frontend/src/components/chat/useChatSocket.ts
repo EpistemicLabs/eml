@@ -4,7 +4,7 @@ import * as paneStore from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { clearChatStart, peekChatStart, rememberModels } from './chat-start';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers, showSentMessage } from './chat-store';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
@@ -90,7 +90,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
+        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null } & Partial<SessionLimits>;
         if (frame.type === 'joined') {
           joinedRef.current = true;
           clearChatStart(sessionId);
@@ -113,6 +113,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         }
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
         else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
+        else if (frame.type === 'limits') setLimits(sessionId, { deniedTools: frame.deniedTools ?? [], mcpServers: frame.mcpServers ?? null, job: frame.job ?? null, liftable: frame.liftable === true });
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
       socket.onclose = (event) => {
@@ -169,6 +170,8 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
     setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
+    restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
+    restartUnlimited: useCallback((forJob: boolean) => sendFrame({ type: 'restart', unlimited: true, forJob }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
     takeOver: useCallback(() => sendInitRef.current?.(false), []),
