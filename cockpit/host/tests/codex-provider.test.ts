@@ -272,7 +272,7 @@ describe('Codex rollout summary', () => {
     ].join('\n'))
     expect(readRolloutSummary(file, false)).toMatchObject({
       summary: 'Fix the login bug', aiTitle: null, messageCount: 2,
-      lastMessageAt: '2026-10-12T04:00:05.000Z', model: 'some-model', contextTokens: 16557,
+      lastMessageAt: '2026-10-12T04:00:05.000Z', lastReply: 'Done.', model: 'some-model', contextTokens: 16557,
     })
     expect(readRolloutSummary(null, false).messageCount).toBe(0)
     expect(readRolloutSummary(join(dir, 'missing.jsonl'), false).summary).toBeNull()
