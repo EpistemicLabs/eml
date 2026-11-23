@@ -102,6 +102,9 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     // The one agent that works on the task; the owner stays in assignee_ids
     // (decision task-delegate-one-agent).
     delegate: text(),
+    // v0.22: the task's name as a person reads it in a list (verb + object + scope,
+    // about 60 characters). The kebab title stays the recall anchor and is not shown.
+    display_title: text({ max: 80, notBlank: true }),
   },
   event: {
     occurred_at: date({ required: true }),

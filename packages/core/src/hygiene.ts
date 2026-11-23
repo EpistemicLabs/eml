@@ -350,6 +350,39 @@ const SCHEMA_21_CHECKS: readonly HygieneCheck[] = [
   },
 ]
 
+// --- Schema 22: a task's display title ---------------------------------------
+//
+// An open task gets display_title, the name a person reads in a list (verb +
+// object + scope, about 60 characters). Writing it needs judgement, so it is a
+// check, not a migrate rewrite: the agent proposes one per open task and the
+// user confirms the list.
+
+const OPEN_TASKS = (eml: EML): EngramRow[] => [
+  ...eml.engrams.query({ limit: 100000, status: 'planned', type: 'task' }),
+  ...eml.engrams.query({ limit: 100000, status: 'active', type: 'task' }),
+] as EngramRow[]
+
+const SCHEMA_22_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'task-without-display-title',
+    kind: 'migration',
+    decides: 'user',
+    since_schema: 22,
+    what:
+      'An open task has a display title: its name as a person reads it in a list — verb + object + scope, about ' +
+      '60 characters (at most 80), the customer or product named, the distinguishing words first. The kebab title ' +
+      'stays the recall anchor.',
+    how:
+      'Propose one display title per task from its content, context and journal, all in one list, and ask the user ' +
+      'to confirm or change them; then eml_track_task(display_title=…) for each confirmed one, without text.',
+    detect(eml) {
+      return OPEN_TASKS(eml)
+        .filter(c => c.properties?.display_title === undefined)
+        .map(c => finding(c, 'an open task without a display title.'))
+    },
+  },
+]
+
 // --- Conflicts (recurring, conflict-detection phase 1) ------------------------
 //
 // The write-time scan (write/conflicts.ts) only sees the pair a fresh write
@@ -465,6 +498,7 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
   ...SCHEMA_19_CHECKS,
   ...SCHEMA_21_CHECKS,
+  ...SCHEMA_22_CHECKS,
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
   ...LEARNING_CHECKS,
   ...CONFLICT_CHECKS,
