@@ -14,11 +14,12 @@ import {
   type Board, type BoardTask, type HandOverMode,
 } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { BUTTON, Chip, Dot, FOCUS, HUE, LABEL, MINI, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Chip, FOCUS, HUE, LABEL, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
 import { AgentBadge } from './parts';
+import { TaskRelated } from './TaskRelated';
 
 export const TASK_TITLE_ID = 'task-board-title';
 /** The surface id the board's chat goes by (scroll and draft are kept per surface). */
@@ -44,7 +45,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
   onReview: (task: BoardTask) => void;
 }) {
-  const { hrefFor } = useEngramPanel();
+  const { hrefFor, go } = useEngramPanel();
   const spaceKey = (id: string) => { const space = spaces.find((s) => s.id === id); return space ? paneSpaceKey(space) : null; };
   const engram = useEngram(task.id);
   const own = sessions.filter((s) => task.sessionIds.includes(s.id))
@@ -64,8 +65,6 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     document.addEventListener('visibilitychange', run);
     return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
   }, [currentId, since]);
-  const steps = board.tasks.filter((t) => t.parentId === task.id);
-  const parent = task.parentId ? board.tasks.find((t) => t.id === task.parentId) : undefined;
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
   const hue = hueOf(task);
   const closed = task.status === 'resolved' || task.status === 'invalidated';
@@ -104,6 +103,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                 <span>project.{task.project ?? '–'}</span><span>{task.status}</span><span>{task.id}</span>
               </div>
             </details>
+            {/* Where it came from and what came out of it; a closed ancestor isn't on the board, so its engram opens. */}
+            <TaskRelated key={task.id} task={task} board={board} onOpen={(r) => (r.task ? onOpenTask(r.task) : go(r.id))} />
             <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 rounded-xl border border-border px-3 py-2.5 text-body">
               <dt className={LABEL}>Owner</dt>
               <dd className="m-0">{task.owner ? (task.owner === board.viewer ? 'You' : task.owner) : <span className="text-muted-foreground">nobody</span>}</dd>
@@ -125,7 +126,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                     : <span className="text-ui text-muted-foreground">Its session is gone: hand the task over or work on it now to answer.</span>}
                 </div>
               </div>
-            ) : task.group !== 'own' ? (
+            ) : task.group !== 'own' && !review ? (
+              // A review's result is in the chat's handoff right next to it; the chip names the state (Lasse 2026-11-23).
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>
                 <div className={cn(LABEL, 'mb-1', HUE[hue].ink)}>{task.group === 'nobody' ? 'Nobody on it' : task.turn ? TURN_META[task.turn].name : task.status}</div>
                 {cardLine(task, now)}
@@ -133,23 +135,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             ) : null}
 
             {handOver}
-            {parent && (
-              <div className="flex flex-wrap items-center gap-2 text-ui text-muted-foreground">
-                Part of <button type="button" className={MINI} onClick={() => onOpenTask(parent)}>{readable(parent.title)}</button>
-              </div>
-            )}
-            {steps.length > 0 && (
-              <div className="flex flex-col">
-                <div className={cn(LABEL, 'mb-2')}>Steps · {steps.length}</div>
-                {steps.map((s) => (
-                  <button key={s.id} type="button" onClick={() => onOpenTask(s)} className={cn('grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body hover:bg-muted', FOCUS)}>
-                    <Dot hue={hueOf(s)} /><span className="truncate">{readable(s.title)}</span>
-                    {s.delegate && <AgentBadge handle={s.delegate} />}
-                  </button>
-                ))}
-              </div>
-            )}
-            {engram.data && <TaskJournal engram={engram.data} relationHref={hrefFor} />}
+            {engram.data && <TaskJournal key={task.id} engram={engram.data} relationHref={hrefFor} foldable />}
           </div>
         </section>
 
