@@ -442,24 +442,34 @@ describe('live updates', () => {
     stop()
   })
 
-  it('lists a project\'s closed tasks, done and dropped, newest first, and says when older ones are left', async () => {
+  it('lists a project\'s closed tasks, done, dropped and replaced, newest first, shaped for the panel', async () => {
     const { board, brains } = setup({ main: [
-      { id: 'done-new', status: 'resolved', updated_at: '2026-11-19T09:00:00Z', parent_id: 'root', properties: { display_title: 'Done new' } },
+      { id: 'done-new', status: 'resolved', updated_at: '2026-11-19T09:00:00Z', parent_id: 'root', properties: { display_title: 'Done new', assignee_ids: ['lasse'], outcome: 'Shipped' } },
       { id: 'dropped', status: 'invalidated', updated_at: '2026-11-18T09:00:00Z', origin_task_id: 'root' },
+      { id: 'replaced', status: 'superseded', updated_at: '2026-11-17T09:00:00Z' },
       { id: 'done-old', status: 'resolved', updated_at: '2026-11-01T09:00:00Z' },
       mine('open'),
     ] })
-    const page = await board.closed('main', 'acme', 2)
-    expect(page).toEqual({ ok: true, page: {
+    const answer = await board.closed('main', 'acme', 3)
+    expect(answer).toEqual({ ok: true, page: {
       tasks: [
-        { id: 'done-new', spaceId: 'main', project: 'acme', title: 'done-new', displayTitle: 'Done new', status: 'resolved', parentId: 'root', originId: null, updatedAt: '2026-11-19T09:00:00Z' },
-        { id: 'dropped', spaceId: 'main', project: 'acme', title: 'dropped', status: 'invalidated', parentId: null, originId: 'root', updatedAt: '2026-11-18T09:00:00Z' },
+        { id: 'done-new', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'done-new', displayTitle: 'Done new', status: 'resolved', closedAt: '2026-11-19T09:00:00Z', outcome: 'Shipped', owner: 'lasse', parentId: 'root', originId: null, sessionIds: [], blocked: 'parent_closed' },
+        { id: 'dropped', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'dropped', status: 'invalidated', closedAt: '2026-11-18T09:00:00Z', parentId: null, originId: 'root', sessionIds: [] },
+        { id: 'replaced', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'replaced', status: 'superseded', closedAt: '2026-11-17T09:00:00Z', parentId: null, originId: null, sessionIds: [], blocked: 'superseded' },
       ],
       more: true,
     } })
-    expect(brains.get('main')!.queries.at(-1)).toMatchObject({ type: 'task', scope: 'project.acme', order_by: 'updated_at', limit: 3 })
-    expect(await board.closed('main', 'acme', 3)).toMatchObject({ ok: true, page: { more: false } })
+    expect(brains.get('main')!.queries.at(-1)).toMatchObject({ type: 'task', scope: 'project.acme', order_by: 'updated_at', limit: 4 })
+    expect(await board.closed('main', 'acme', 4)).toMatchObject({ ok: true, page: { more: false } })
     expect(await board.closed('nowhere', 'acme', 3)).toEqual({ ok: false, refusal: 'unknown_space' })
+  })
+
+  it('leaves out a closed task whose Reopen is still in its Undo window', async () => {
+    const { board } = setup({
+      main: [{ id: 'reopening', status: 'resolved' }, { id: 'done', status: 'resolved' }],
+      pending: () => [{ opId: 'op', kind: 'reopen', taskId: 'reopening', spaceId: 'main', state: 'pending', createdAt: '2026-11-19T09:59:58Z', undoUntil: '2026-11-19T10:00:06Z' } as never],
+    })
+    expect(await board.closed('main', 'acme', 20)).toMatchObject({ ok: true, page: { tasks: [{ id: 'done' }] } })
   })
 
   it('fails the closed tasks when the brain does not answer, instead of saying nothing is closed', async () => {

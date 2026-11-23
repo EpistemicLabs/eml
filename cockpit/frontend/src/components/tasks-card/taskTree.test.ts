@@ -165,6 +165,7 @@ describe('a task\'s dot', () => {
     expect(taskState(task('t', { turn: 'waiting_on_others' }))).toMatchObject({ hollow: true });
     expect(taskState(task('t', { turn: null, status: 'planned' }))).toEqual({ hue: 'waiting', hollow: true, label: 'Parked' });
     expect(taskState(task('t', { status: 'invalidated', turn: null }))).toEqual({ hue: 'done', hollow: false, label: 'Dropped' });
+    expect(taskState(task('t', { status: 'superseded', turn: null }))).toEqual({ hue: 'done', hollow: false, label: 'Replaced' });
   });
 });
 

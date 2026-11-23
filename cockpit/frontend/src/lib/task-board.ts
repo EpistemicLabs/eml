@@ -190,12 +190,7 @@ export function useTaskBoard() {
   return useQuery({ queryKey: BOARD_KEY, queryFn: fetchBoard, refetchInterval: BOARD_POLL_MS });
 }
 
-/** A closed task of one project (host GET /api/v1/tasks/closed). */
-export interface ClosedTask extends LineageTask {
-  updatedAt: string | null;
-}
-
-/** A project's newest closed tasks, done and dropped; `more` when older ones are left. */
+/** A project's newest closed tasks (host GET /api/v1/tasks/closed), done, dropped and replaced; `more` when older ones are left. */
 export interface ClosedPage {
   tasks: ClosedTask[];
   more: boolean;

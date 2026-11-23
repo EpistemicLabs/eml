@@ -107,6 +107,7 @@ const MAX_DEPTH = 32;
 export function taskState(task: TaskLike): NodeState {
   if (task.status === 'resolved') return { hue: 'done', hollow: false, label: 'Done' };
   if (task.status === 'invalidated') return { hue: 'done', hollow: false, label: 'Dropped' };
+  if (task.status === 'superseded') return { hue: 'done', hollow: false, label: 'Replaced' };
   // Review is the person's turn too: amber like Needs you, so a finished result never looks like work in progress.
   const hue = task.turn === 'review' ? 'you' : hueOf({ turn: task.turn ?? null, group: task.group, status: task.status });
   if (!task.turn) return task.status === 'planned' ? { hue: 'waiting', hollow: true, label: 'Parked' } : { hue, hollow: false, label: 'Active' };

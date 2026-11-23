@@ -116,12 +116,7 @@ export interface LineageTask {
   originId: string | null
 }
 
-/** A closed task of one project, for the tasks card's Show done (GET /api/v1/tasks/closed). */
-export interface ClosedTask extends LineageTask {
-  updatedAt: string | null
-}
-
-/** One page of a project's closed tasks, newest first; `more` when older ones are left. */
+/** One page of a project's closed tasks, newest first, for the tasks card's Show done (GET /api/v1/tasks/closed); `more` when older ones are left. */
 export interface ClosedPage {
   tasks: ClosedTask[]
   more: boolean
@@ -322,6 +317,26 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     return row
   }
 
+  /** A closed row as the panel's Reopen and ⌘K read it; `isOpen` says whether its parent is open (the host checks again). */
+  const closedTaskOf = (row: Row, space: BrainSpace, isOpen: (id: string) => boolean, command: TaskCommand | undefined, now: number): ClosedTask => {
+    const props = row.properties ?? {}
+    const blocked = row.status === 'superseded' ? 'superseded' as const : row.parent_id && !isOpen(row.parent_id) ? 'parent_closed' as const : undefined
+    return {
+      id: row.id, spaceId: space.id, spaceName: space.name, project: projectOf(row.scope), title: row.title ?? row.id,
+      ...(props.display_title ? { displayTitle: props.display_title } : {}),
+      status: row.status, closedAt: row.updated_at ?? null,
+      ...(props.outcome ? { outcome: props.outcome } : {}),
+      ...(props.assignee_ids?.[0] ? { owner: props.assignee_ids[0] } : {}),
+      ...(props.delegate ? { delegate: props.delegate } : {}),
+      ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
+      ...(props.stage ? { stage: props.stage } : {}),
+      parentId: row.parent_id ?? null, originId: row.origin_task_id ?? null,
+      sessionIds: deps.ledgerSessionsOn?.(row.id) ?? deps.sessionsOn(row.id).map((s) => s.sessionId),
+      ...(blocked ? { blocked } : {}),
+      ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
+    }
+  }
+
   const build = async (): Promise<Board> => {
     const now = deps.now()
     const pending = deps.pendingCommands()
@@ -379,23 +394,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
         if (CLOSED_STATUSES.has(row.status)) {
-          const command = commandOf(row.id)
-          // A parent the open lists don't hold is closed (the board loads every open task).
-          const blocked = row.status === 'superseded' ? 'superseded' as const : row.parent_id && !isOpen(row.parent_id) ? 'parent_closed' as const : undefined
-          board.closed.push({
-            id: row.id, spaceId: space.id, spaceName: space.name, project: projectOf(row.scope), title: row.title ?? row.id,
-            ...(props.display_title ? { displayTitle: props.display_title } : {}),
-            status: row.status, closedAt: row.updated_at ?? null,
-            ...(props.outcome ? { outcome: props.outcome } : {}),
-            ...(props.assignee_ids?.[0] ? { owner: props.assignee_ids[0] } : {}),
-            ...(props.delegate ? { delegate: props.delegate } : {}),
-            ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
-            ...(props.stage ? { stage: props.stage } : {}),
-            parentId: row.parent_id ?? null, originId: row.origin_task_id ?? null,
-            sessionIds: deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId),
-            ...(blocked ? { blocked } : {}),
-            ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
-          })
+          board.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
           if (row.status === 'superseded') continue
         }
         const facts: TaskFacts = {
@@ -529,8 +528,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   }
 
   /**
-   * A project's newest closed tasks, done and dropped, up to `limit`. Unlike the board's build, the answer is
-   * nothing but these lists, so a brain that does not answer fails it instead of reading as "nothing closed".
+   * A project's newest closed tasks (done, dropped and replaced) up to `limit`, shaped like the board's `closed`, so
+   * the panel can open one the board's lists leave out. Unlike the board's build, the answer is nothing but these
+   * lists, so a brain that does not answer fails it instead of reading as "nothing closed".
    */
   const closed = async (spaceId: string, project: string, limit: number): Promise<ClosedAnswer> => {
     const space = deps.spaces().find((s) => s.id === spaceId)
@@ -545,25 +545,22 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       // A brain server from before with_origin refuses it: the tasks still list, without origins.
       return rows(query).catch(() => { const { with_origin: _origin, ...plain } = query; return rows(plain) })
     }
-    let resolved: Row[], dropped: Row[]
+    let listed: Row[][]
     try {
-      [resolved, dropped] = await Promise.all([strictList('resolved'), strictList('invalidated')])
+      listed = await Promise.all([...CLOSED_STATUSES].map(strictList))
     } catch (err) {
       deps.log(`[board] closed tasks of ${spaceId}/${project} did not load: ${(err as Error).message}`)
       return { ok: false, refusal: 'brain_unavailable' }
     }
-    const rows = [...resolved, ...dropped].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
-    const tasks = rows.slice(0, want).map((row): ClosedTask => ({
-      id: row.id,
-      spaceId,
-      project: projectOf(row.scope),
-      title: row.title ?? row.id,
-      ...(row.properties?.display_title ? { displayTitle: row.properties.display_title } : {}),
-      status: row.status,
-      parentId: row.parent_id ?? null,
-      originId: row.origin_task_id ?? null,
-      updatedAt: row.updated_at ?? null,
-    }))
+    const now = deps.now()
+    const pending = deps.pendingCommands()
+    const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
+    // A Reopen still in its Undo window reads as open, as on the board.
+    const rows = listed.flat().map((row) => overlay(row, commandOf(row.id), [])).filter((row) => CLOSED_STATUSES.has(row.status))
+      .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
+    // The board holds every open task: a parent it doesn't list as open is closed.
+    const open = new Set((current?.tasks ?? []).filter((t) => t.spaceId === spaceId && (t.status === 'planned' || t.status === 'active')).map((t) => t.id))
+    const tasks = rows.slice(0, want).map((row) => closedTaskOf(row, space, (id) => open.has(id), commandOf(row.id), now))
     return { ok: true, page: { tasks, more: rows.length > want } }
   }
 
