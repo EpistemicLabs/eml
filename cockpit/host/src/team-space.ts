@@ -83,6 +83,26 @@ export async function loadSharedFlags(spaces: BrainSpace[]): Promise<void> {
   }))
 }
 
+/** Sync states in which a shared brain has, or may have, entries at its relay that this replica has not taken. */
+const BEHIND_RELAY = new Set(['offline', 'catching_up', 'waiting_key'])
+
+/**
+ * The shared spaces whose brain is not in step with its relay right now, by
+ * name — asked before an update that changes the brain schema (decision
+ * team-brain-schema-crossing-sync-then-update): the new version cannot replay
+ * entries of the older schema, so a replica takes them all before it is
+ * migrated. A brain that stopped or waits for this very update is not held
+ * back by it; a brain server that does not answer says nothing either way.
+ */
+export async function spacesBehindRelay(spaces: BrainSpace[]): Promise<string[]> {
+  const behind = await Promise.all(spaces.filter(space => space.shared !== false).map(async (space) => {
+    const answer = await ask(space, 'GET', '/team', undefined, BOOT_TIMEOUT_MS)
+    const state = answer.status === 200 && answer.body.shared === true ? asObject(answer.body.state).kind : undefined
+    return typeof state === 'string' && BEHIND_RELAY.has(state) ? space.name : null
+  }))
+  return behind.filter((name): name is string => name !== null)
+}
+
 // --- create and join ---
 
 /** What creating or joining needs of the home: the brain server, the binding every new space gets, the member handle. */

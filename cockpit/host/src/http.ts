@@ -16,7 +16,7 @@ import type { ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
 import { homeHuman, provisionSpace, type AgentNames, type Human } from './provision.js'
-import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, teamSnapshot } from './team-space.js'
+import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, spacesBehindRelay, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
   browseFolders,
@@ -43,7 +43,7 @@ import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgent
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
-import { applyUpdate, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, writeGithubToken } from './app-update.js'
+import { applyUpdate, changesBrainSchema, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
 import { handleNotesApi, type NotesChange } from './notes-api.js'
 import { projectKey, type TimeTracker } from './time-tracking.js'
@@ -907,6 +907,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       if ((id === 'apply' || id === 'rollback') && method === 'POST') {
         try {
           const body = id === 'apply' ? ((await readJson(req)) as { version?: unknown }) : {}
+          // a shared brain takes every entry of the older schema before the update migrates it
+          if (id === 'apply' && changesBrainSchema(body?.version)) {
+            const behind = await spacesBehindRelay(deps.spaces.list())
+            if (behind.length > 0) throw new Error(`This update changes the brain format, and ${behind.length === 1 ? `the shared space "${behind[0]}" is` : `the shared spaces ${behind.map(n => `"${n}"`).join(', ')} are`} not in sync with the relay yet. Update once ${behind.length === 1 ? 'it is' : 'they are'} connected and caught up.`)
+          }
           json(res, 200, id === 'apply' ? await applyUpdate(body?.version) : await rollbackUpdate())
         } catch (err) {
           json(res, 409, { error: { code: 'UPDATE_FAILED', message: (err as Error).message } })

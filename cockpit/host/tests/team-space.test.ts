@@ -311,6 +311,27 @@ describe('loadSharedFlags', () => {
   })
 })
 
+describe('spacesBehindRelay', () => {
+  it('names the shared spaces that may miss entries of their relay; live, stopped, waiting for the update, local and unreachable ones are not held back', async () => {
+    const states: Record<string, unknown> = {
+      'tok-live': { shared: true, state: { kind: 'live' } },
+      'tok-offline': { shared: true, state: { kind: 'offline' } },
+      'tok-catching': { shared: true, state: { kind: 'catching_up' } },
+      'tok-key': { shared: true, state: { kind: 'waiting_key', epoch: 1 } },
+      'tok-stopped': { shared: true, state: { kind: 'stopped', why: 'x' } },
+      'tok-update': { shared: true, state: { kind: 'update_needed', why: 'x' } },
+      'tok-local': { shared: false },
+    }
+    brainAnswers.set('GET /team', (call) => ({ status: 200, body: states[String(call.auth).replace('Bearer ', '')] }))
+    const space = (name: string, token: string, shared: boolean | null = true, at = url) => ({ name, url: at, token, shared }) as unknown as import('../src/brain-space.js').BrainSpace
+    const spaces = [
+      space('Live', 'tok-live'), space('Offline', 'tok-offline'), space('Catching', 'tok-catching', null), space('Key', 'tok-key'),
+      space('Stopped', 'tok-stopped'), space('Update', 'tok-update'), space('Local', 'tok-local', false), space('Gone', 'tok-gone', true, 'http://127.0.0.1:1'),
+    ]
+    expect(await mods.team.spacesBehindRelay(spaces)).toEqual(['Offline', 'Catching', 'Key'])
+  })
+})
+
 describe('sweepOrphanBrains', () => {
   it('asks the server to discard every brain no config token holds, through a token it issues and revokes; a brain with a log or in need of intervention is left', async () => {
     const config = await mods.config.readCockpitConfig()

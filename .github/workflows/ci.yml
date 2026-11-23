@@ -88,6 +88,11 @@ jobs:
       - run: pnpm build
       - run: pnpm -F @engramprotocol/cockpit-frontend build
       - run: pnpm -F eml-cockpit build
+      # The frozen log of the brain schema must replay to the same state on every
+      # OS (packages/core/tests/frozen-log.test.ts). Linux and Windows run it with
+      # all tests above; this is the macOS run.
+      - run: pnpm -F @engramprotocol/core exec vitest run frozen-log
+        if: ${{ runner.os == 'macOS' }}
       - run: node scripts/smoke-test.mjs
       # Windows: the one-line installer, from assets packed from this checkout,
       # with the autostart it registers (scripts/install-test.ps1).

@@ -297,6 +297,18 @@ index's internal tables). A replica whose own hash differs has diverged and
 stops. A new device replays the whole log from seq 1 and compares its state
 with checkpoints other members signed.
 
+At a brain schema bump a checkpoint also marks where replay starts. An op is
+replayed with the behaviour of its schema only, so a cockpit takes every entry
+of the older schema before it is updated; once updated it migrates its replica
+and writes a checkpoint at the new schema. Each replica that finds its own
+migrated state in the first such checkpoint right after the state it names
+keeps that state as a snapshot and replays the log from there. An op of an
+older schema after that checkpoint is a rejected entry on every replica. A
+cockpit still on the older schema stops at the checkpoint until it is updated
+(§11). A device that would have to replay older-schema entries with newer
+code — one updated before it had them all, or one joining after a bump —
+stops.
+
 ## 11. Versions
 
 Every record, message, link and signature tag carries protocol version 1. A

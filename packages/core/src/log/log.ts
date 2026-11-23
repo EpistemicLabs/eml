@@ -10,6 +10,11 @@ import { encodeSnapshot, stateDump, stateHash } from './snapshot'
 // the caller's transaction; an entry, once written, is never changed. A private
 // brain sequences its own writes (appendOp); a shared brain takes every entry
 // in the order and at the time its relay gave it (appendRelayed).
+//
+// A schema bump changes what the commands do, so a log is replayed within one
+// schema only: the migration step states the brain's state after it as a
+// checkpoint with a snapshot (writeCheckpoint, storeCheckpointSnapshot), and a
+// rebuild starts from the latest snapshot of the schema the code replays.
 
 /**
  * Appends `op` as the next entry of the chain. Its time is `now`, or the head
@@ -122,4 +127,59 @@ export function writeGenesis(db: Database.Database, schema: number, at: string, 
   const { seq } = appendOp(db, op, at)
   db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (?, ?, ?, ?)')
     .run(seq, schema, state_hash, encodeSnapshot(dump))
+}
+
+/** Namespace of a migration checkpoint's op_id (uuidv5): like a genesis, it draws no random id. */
+const CHECKPOINT_NAMESPACE = '8b1e6f04-3a5d-4c27-9e1b-6d0a4f7c2e93'
+
+/**
+ * Writes the checkpoint of a migration step in a private brain: `brain.checkpoint`
+ * at `schema` for the state as it is now — the state after the head entry, as
+ * the new schema holds it — and that state as the snapshot at the checkpoint's
+ * seq, what a rebuild at `schema` starts from. Its op_id is derived from the
+ * brain, the schema, the time and the state, so the migration preflight and
+ * the live run write the same entry. A shared brain's checkpoint goes through
+ * its relay; a brain without a genesis has no log to continue. Returns whether
+ * it wrote one.
+ */
+export function writeCheckpoint(db: Database.Database, schema: number, at: string): boolean {
+  const head = headOf(db)
+  if (!head || teamBrainOf(db) !== null) return false
+  const dump = stateDump(db)
+  const state_hash = stateHash(dump)
+  const op: OpEnvelope = {
+    op_id: uuidv5(CHECKPOINT_NAMESPACE, `${brainIdOf(db)}\n${schema}\n${at}\n${state_hash}`),
+    schema,
+    call: 'brain.checkpoint',
+    args: { seq: head.seq, state_hash },
+    provenance: { ...NO_ACTOR, ingestion_method: 'other' },
+  }
+  const { seq } = appendOp(db, op, at)
+  db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (?, ?, ?, ?)')
+    .run(seq, schema, state_hash, encodeSnapshot(dump))
+  return true
+}
+
+/** The schema of the latest snapshot — the schema the log was last replayed from — or null before a genesis. */
+export function snapshotSchemaOf(db: Database.Database): number | null {
+  const row = db.prepare('SELECT schema FROM op_snapshots ORDER BY seq DESC LIMIT 1').get() as { schema: number } | undefined
+  return row?.schema ?? null
+}
+
+/**
+ * A shared brain's side of a schema bump: the checkpoint entry at `seq`, just
+ * appended, states the state after the entry before it at a schema above the
+ * latest snapshot's. When this replica's state is the one it names, that state
+ * becomes the snapshot at `seq`. Returns whether it stored one.
+ */
+export function storeCheckpointSnapshot(db: Database.Database, seq: number, op: OpEnvelope): boolean {
+  const args = op.args as { seq?: unknown, state_hash?: unknown }
+  const latest = snapshotSchemaOf(db)
+  if (op.call !== 'brain.checkpoint' || args.seq !== seq - 1 || latest === null || op.schema <= latest) return false
+  const dump = stateDump(db)
+  const state_hash = stateHash(dump)
+  if (state_hash !== args.state_hash) return false
+  db.prepare('INSERT INTO op_snapshots (seq, schema, state_hash, data) VALUES (?, ?, ?, ?)')
+    .run(seq, op.schema, state_hash, encodeSnapshot(dump))
+  return true
 }

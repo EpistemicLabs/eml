@@ -18,9 +18,16 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
 - `main` is development; a tag `vX.Y.Z` is a release. One product version for the whole repo.
 - Brain schema N ↔ release v0.N: a schema change is a new minor with a migrate file and an updated
   fresh schema (the `schema-baseline` test keeps both paths identical).
-- A brain schema change is one that needs a SQL migration, or a new MIGRATION hygiene check
+- A brain schema change is one that needs a SQL migration, a new MIGRATION hygiene check
   (with `since_schema`) for existing engrams — a recurring review check (no `since_schema`) does not
-  bump the schema. A change to validation or a type's format that leaves existing engrams readable ships in a patch.
+  bump the schema — or changes what a logged op does when it is replayed: a command's validation,
+  enums, limits, scope patterns, defaults, the learning topic gate, change-entry texts, slugs,
+  wikilinks; a new field or value counts too. Every replica and every rebuild must derive the same
+  state from the same log, so within one schema that behaviour is fixed;
+  `packages/core/tests/frozen-log.test.ts` replays the schema's frozen log
+  (`tests/fixtures/log-v<N>.json`) and fails when it moves. A schema bump freezes a new log
+  (`EML_FREEZE_LOG=1`, see the test's header); the migration writes the checkpoint a rebuild
+  starts from. What changes only how a brain is read or shown ships in a patch.
 - A new requirement for existing engrams: what the migrate SQL can rewrite on its own, it rewrites
   there; what needs judgement becomes a check in `packages/core/src/hygiene.ts` with `since_schema`.
 - English everywhere in the repo (code, comments, docs, commits).
