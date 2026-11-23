@@ -76,7 +76,11 @@ describe('unreadAnswers', () => {
 });
 
 describe('answerLine', () => {
-  it('is the first line of the reported status, or "Answered" without one', () => {
+  it('is the reply\'s own line first', () => {
+    expect(answerLine(session('a', { lastReply: 'The fold is merged.', attention: { kind: 'done', reason: 'Report ready.', at: LATE } }))).toBe('The fold is merged.');
+  });
+
+  it('is the first line of the reported status without a reply line, or "Answered" without either', () => {
     expect(answerLine(session('a', { attention: { kind: 'done', reason: 'Report ready.\nMore below.', at: LATE } }))).toBe('Report ready.');
     expect(answerLine(session('a', { attention: null, resultAt: LATE }))).toBe('Answered');
   });

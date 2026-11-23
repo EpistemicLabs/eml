@@ -16,6 +16,7 @@ vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
 }));
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
 
+import { resetTaskBoardPage } from '@/stores/useTaskBoardPageStore';
 import { setTaskView } from '@/stores/useTaskViewStore';
 import { DEFAULT_TASK_FILTER, setTaskFilter } from '@/stores/useTaskFilterStore';
 import { TaskNav } from '@/components/sidebar/nav/SidebarNav';
@@ -50,6 +51,7 @@ beforeEach(() => {
   live.sessions = [];
   live.seen = [];
   setTaskView('now');
+  resetTaskBoardPage();
   setTaskFilter(DEFAULT_TASK_FILTER);
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
@@ -273,6 +275,32 @@ describe('the Unread fold', () => {
     await waitFor(() => expect(posts.map((p) => p.url)).toContain('/api/sessions/s2/read'));
     expect(screen.queryByText('Answer of s2')).toBeNull();
     expect(screen.getByText(/Unread · 1/)).toBeTruthy();
+  });
+
+  it('a row without a task opens beside the list with its chat, not on its desk', async () => {
+    live.sessions = [answer('s2', 3), answer('s3', 10)];
+    withBoard({ inbox: [], counts: { needsYou: 0, inbox: 0 } });
+    setTaskView('inbox');
+    mount();
+    fireEvent.click(await screen.findByText('Answer of s2'));
+    expect((await screen.findByTestId('session-chat')).textContent).toBe('s2');
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Session s2');
+    expect(screen.getByText('Answer of s3')).toBeTruthy();
+    expect(live.seen).toContainEqual(['s2']);
+  });
+
+  it('leaving the board and coming back finds the fold and the open session as they were', async () => {
+    live.sessions = [answer('s2', 3), answer('s3', 10)];
+    withBoard({});
+    setTaskView('inbox');
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Show unread answers', expanded: false }));
+    fireEvent.click(screen.getByText('Answer of s2'));
+    expect((await screen.findByTestId('session-chat')).textContent).toBe('s2');
+    cleanup();
+    mount();
+    expect((await screen.findByTestId('session-chat')).textContent).toBe('s2');
+    expect(screen.getByRole('button', { name: 'Hide unread answers', expanded: true })).toBeTruthy();
   });
 
   it('Mark all read empties it, and Undo puts back what each session had', async () => {

@@ -20,8 +20,25 @@ import { TaskRelated } from './TaskRelated';
 
 export const TASK_TITLE_ID = 'task-board-title';
 /** The surface id the board's chat goes by (scroll and draft are kept per surface). */
-const TASK_BOARD_PANE_ID = 'tasks';
-const CHAT_ID = 'task-board-chat';
+export const TASK_BOARD_PANE_ID = 'tasks';
+export const CHAT_ID = 'task-board-chat';
+
+/**
+ * Looking at a session here is looking at it, as on its desk: its finished turn counts as seen.
+ * Opening it counts at once; a turn that finishes while it is shown only with the window in front.
+ */
+export function useSeenWhileShown(sessionId: string | null): void {
+  const since = useTurnStore().turns[sessionId ?? '']?.since;
+  useEffect(() => { if (sessionId) markSeen([sessionId]); }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    const run = () => { if (document.visibilityState === 'visible' && document.hasFocus()) markSeen([sessionId]); };
+    run();
+    window.addEventListener('focus', run);
+    document.addEventListener('visibilitychange', run);
+    return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
+  }, [sessionId, since]);
+}
 
 /** Put the cursor in the chat's composer: answering is typing to the session. */
 export function focusReply(): void {
@@ -49,19 +66,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
   const [pick, setPick] = useState<string | null>(sessionId ?? null);
   const current = own.find((s) => s.id === pick) ?? own[0];
-  // Looking at a session here is looking at it, as on its desk: its finished turn counts as seen.
-  // Opening it counts at once; a turn that finishes while it is shown only with the window in front.
-  const currentId = current?.id ?? null;
-  const since = useTurnStore().turns[currentId ?? '']?.since;
-  useEffect(() => { if (currentId) markSeen([currentId]); }, [currentId]);
-  useEffect(() => {
-    if (!currentId) return;
-    const run = () => { if (document.visibilityState === 'visible' && document.hasFocus()) markSeen([currentId]); };
-    run();
-    window.addEventListener('focus', run);
-    document.addEventListener('visibilitychange', run);
-    return () => { window.removeEventListener('focus', run); document.removeEventListener('visibilitychange', run); };
-  }, [currentId, since]);
+  useSeenWhileShown(current?.id ?? null);
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
   const hue = hueOf(task);
   const closed = task.status === 'resolved' || task.status === 'invalidated';
