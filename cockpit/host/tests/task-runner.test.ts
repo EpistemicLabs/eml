@@ -107,6 +107,21 @@ describe('task runner', () => {
     expect(started.map((s) => s.id)).toEqual(['free-1'])
   })
 
+  it('does not count an active task that only waits on its scheduled job towards the cap', async () => {
+    const { started } = await run([
+      { id: 'job-1', status: 'active', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'job-2', status: 'active', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'job-3', status: 'active', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'free', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'plan', status: 'active' },
+      { id: 'step-job-1', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
+      { id: 'step-job-2', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
+      { id: 'step-job-3', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
+      { id: 'step-free', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
+    ], undefined, () => null, () => false, { scheduled: (id) => id.includes('job-') })
+    expect(started.map((s) => s.id).sort()).toEqual(['free', 'step-free'])
+  })
+
   it('runs at most three steps of one task at a time', async () => {
     const { started } = await run([
       { id: 'plan', status: 'active' },
