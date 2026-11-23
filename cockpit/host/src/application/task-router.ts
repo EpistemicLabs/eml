@@ -20,6 +20,10 @@ import type { SessionLedger } from '../session-ledger.js'
  *   - A step with checkpoint "after" that handed over a result, or any session
  *     that said review, waits for the user's review the same way.
  *   - Anything else clears a waiting_on this session set: the work goes on.
+ *   - A wait another session set stays (B4): while that session is not put
+ *     away, this session's wait is held back, and it takes the other one's
+ *     place once that is answered or cleared. Held waits live in the host's
+ *     memory until the task can hold a list of waits.
  *   - A session that closed its task and asks nothing is finished: its
  *     handoff and outcome are in the task, so it leaves the lists (finished).
  *
@@ -96,6 +100,29 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
   const now = () => deps.now?.() ?? new Date()
   // What was last routed per session, so a turn that changed nothing writes nothing.
   const lastRouted = new Map<string, string>()
+  // Waits held back per task while another session's wait is on it, oldest first.
+  const heldWaits = new Map<string, WaitingOn[]>()
+
+  /** The session that set a wait still counts: not put away here, or not known here (another machine's). */
+  const stillThere = (sessionId: string) => {
+    const entry = deps.ledger.get(sessionId)
+    return !entry || !entry.archivedAt
+  }
+  const hold = (taskId: string, wait: WaitingOn) =>
+    heldWaits.set(taskId, [...(heldWaits.get(taskId) ?? []).filter((w) => w.session_id !== wait.session_id), wait])
+  const drop = (taskId: string, sessionId: string) => {
+    const rest = (heldWaits.get(taskId) ?? []).filter((w) => w.session_id !== sessionId)
+    if (rest.length) heldWaits.set(taskId, rest)
+    else heldWaits.delete(taskId)
+  }
+  /** The held wait that takes a cleared wait's place, if one of a session still there is left. */
+  const nextHeld = (taskId: string): WaitingOn | null => {
+    const left = (heldWaits.get(taskId) ?? []).filter((w) => stillThere(w.session_id))
+    const next = left.shift() ?? null
+    if (left.length) heldWaits.set(taskId, left)
+    else heldWaits.delete(taskId)
+    return next
+  }
 
   const route = async (sessionId: string, message: string) => {
     const entry = deps.ledger.get(sessionId)
@@ -115,6 +142,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const task = await brain.get(`/engram/${taskId}`) as Task
     if (task.status !== 'planned' && task.status !== 'active') {
       lastRouted.set(sessionId, key)
+      heldWaits.delete(task.id)
       // A closed task waits on nobody.
       if (task.properties?.waiting_on) await brain.post(`/task/${task.id}/track`, { waiting_on: null }).catch(() => {})
       const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))
@@ -126,16 +154,23 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     }
     const waiting = decideWaiting({ handoff, attention, checkpoint: task.properties?.checkpoint, owner: deps.owner, sessionId, now: now() })
     const current = task.properties?.waiting_on
-    // Another session's wait stays until that session or the user moves on.
+    // Another session's wait stays until that session or the user moves on; this one's waits behind it.
+    const othersWait = Boolean(current?.who && current.session_id && current.session_id !== sessionId && stillThere(current.session_id))
+    const held = Boolean(waiting && othersWait)
     const clear = !waiting && current?.session_id === sessionId
     const patch: Record<string, unknown> = {}
     if (handoff) patch.text = handoff.text
-    if (waiting && (current?.why !== waiting.why || current?.session_id !== sessionId)) patch.waiting_on = waiting
-    if (clear) patch.waiting_on = null
+    if (held) {
+      hold(task.id, waiting!)
+      if (!handoff) patch.text = `Another session's question is still open, so this one waits behind it: "${waiting!.why}"`
+    } else if (waiting && (current?.why !== waiting.why || current?.session_id !== sessionId)) patch.waiting_on = waiting
+    if (!held) drop(task.id, sessionId)
+    if (clear) patch.waiting_on = nextHeld(task.id)
     lastRouted.set(sessionId, key)
     if (Object.keys(patch).length === 0) return
     await brain.post(`/task/${task.id}/track`, patch)
-    deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} ${waiting ? `waiting on ${waiting.who}` : clear ? 'cleared' : 'handoff'}`)
+    const what = held ? `held behind ${current!.session_id!.slice(0, 8)}` : waiting ? `waiting on ${waiting.who}` : clear ? (patch.waiting_on ? 'cleared, next wait up' : 'cleared') : 'handoff'
+    deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} ${what}`)
   }
 
   return {
@@ -146,11 +181,13 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
         const space = deps.spaces.resolve(entry.spaceId)
         const brain = deps.brain(space)
         if (!brain) return
+        drop(entry.taskId, sessionId)
         const task = await brain.get(`/engram/${entry.taskId}`) as Task
         if (task.properties?.waiting_on?.session_id !== sessionId) return
-        await brain.post(`/task/${task.id}/track`, { waiting_on: null })
+        const next = nextHeld(task.id)
+        await brain.post(`/task/${task.id}/track`, { waiting_on: next })
         lastRouted.delete(sessionId)
-        deps.log(`[router] ${sessionId.slice(0, 8)} answered: wait on task ${task.id.slice(0, 8)} cleared`)
+        deps.log(`[router] ${sessionId.slice(0, 8)} answered: wait on task ${task.id.slice(0, 8)} cleared${next ? `, ${next.session_id.slice(0, 8)}'s wait up next` : ''}`)
       } catch (err) {
         deps.log(`[router] ${sessionId.slice(0, 8)} answered failed: ${(err as Error).message}`)
       }
