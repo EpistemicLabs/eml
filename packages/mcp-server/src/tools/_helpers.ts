@@ -209,3 +209,19 @@ export function handOverBanner(args: { delegate?: string; checkpoint?: string })
   }
   return null
 }
+
+/** A goal whose last words are a PR opened or merged, e.g. "tests green; PR open against alpha" or "merged to alpha". */
+const ENDS_AT_PR = /(?:\b(?:PR|pull request)s?\s+(?:is\s+|are\s+)?(?:open|opened|up)|\bmerged)(?:\s+(?:against|into|in|to|on)\s+[\w./-]+)?$/i
+
+/**
+ * Decision task-closing-and-continuation-rules: a task with a checkpoint is done once its owner has
+ * reviewed the result where it runs, not when its PR is open or merged. A goal that stops at the PR
+ * lets an agent meet it and close early, so say how to extend it.
+ */
+export function goalBanner(args: { goal?: string | null; checkpoint?: string | null }): string | null {
+  if (!args.goal || (args.checkpoint !== 'before' && args.checkpoint !== 'after')) return null
+  const goal = args.goal.trim().replace(/[.!;,\s]+$/, '')
+  const end = goal.match(ENDS_AT_PR)
+  if (!end) return null
+  return `⚠ goal ends at "${end[0]}", but checkpoint ${args.checkpoint} means the owner reviews the result before the task is done: an open or merged PR does not run anywhere yet. Extend the goal (eml_track_task goal): "${goal}, it runs in the owner's cockpit and they have reviewed it there."`
+}

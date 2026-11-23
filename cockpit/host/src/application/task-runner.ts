@@ -64,21 +64,32 @@ interface Task {
 const parentOf = (task: Task) => task.relations?.find((r) => r.relation === 'part_of' && r.source_id === task.id)?.target_id ?? null
 const childrenOf = (task: Task) => (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
 
+/**
+ * Decision task-closing-and-continuation-rules: an agent hands finished work over for review and
+ * closes a task with a checkpoint only on its owner's explicit word. Code is ready for review only
+ * once it runs in the owner's cockpit, not when its PR is open or merged.
+ */
+export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
+
 /** The prompt a step's session starts with; its task and the rules come with its start hook. */
 export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string }, checkpoint: string): string {
   const how = checkpoint === 'before'
-    ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it and the work is done, close the task.'
+    ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it, do the work and hand the result over for review.'
     : checkpoint === 'after'
-      ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review, with a [lasse] question asking him to review it. Do NOT close the task yourself: it stays open until the user has reviewed the result and told you it is done; then close it.'
+      ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review, with a [lasse] question asking him to review it.'
       : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
+  const reviewed = checkpoint === 'before' || checkpoint === 'after'
   return [
     `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
     ...(step.brief ? [step.brief] : []),
     step.content,
     '',
     how,
+    ...(reviewed ? [CLOSING_RULE] : []),
     'Until the task is done, every wake-up checks its goal: reached, hand the result over; not reached, schedule your next check (schedule tool, task_id of this task) and stop quietly.',
-    'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
+    reviewed
+      ? 'Closing, once the owner told you to: eml_track_task with status resolved and the outcome. End every stop with the handoff.'
+      : 'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
   ].join('\n')
 }
 

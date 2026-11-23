@@ -32,7 +32,7 @@ import type { SessionLedger } from '../session-ledger.js'
  * a restart forgets them, and the next turn starts over.
  */
 
-export const NEXT_STEP_PROMPT = 'Your task is still open but has no next step. Set a check, ask Lasse, or close the task.'
+export const NEXT_STEP_PROMPT = 'Your task is still open but has no next step. Set a check, ask Lasse, or hand the result over for review. Close it only when Lasse told you to.'
 export const NO_NEXT_STEP = 'Agent stopped without a next step'
 
 export type Trigger = 'question' | 'job' | 'session' | 'step'

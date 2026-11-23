@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EmlApi } from '../http-client'
-import { callTool, handOverBanner, writeBanner } from './_helpers'
+import { callTool, goalBanner, handOverBanner, writeBanner } from './_helpers'
 import {
   BINDINGS, CHANGE_TYPES, CHECKPOINTS, PRIORITIES, RULE_TYPES, STAGES, SCOPE_ANY,
   content, detail, isoDate, optIsoDate, scope, subjects, supersedes, tags, taskId, title,
@@ -111,7 +111,7 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       subjects: subjects(),
     }).strict(),
   }, async (args) => callTool(() => http.post('/engram/task', body(args)), {
-    prefix: (result) => [handOverBanner(args), writeBanner(result)].filter(Boolean).join('\n\n') || null,
+    prefix: (result) => [handOverBanner(args), goalBanner(args), writeBanner(result)].filter(Boolean).join('\n\n') || null,
   }))
 }
 

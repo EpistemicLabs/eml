@@ -14,4 +14,13 @@ describe('what a session reads about its task', () => {
     expect(text).toContain('Never put an agent into assignee_ids.')
     expect(text).toContain('a checkpoint (default after; before when it needs the user\'s OK first) and a delegate')
   })
+
+  it('tells the session to hand finished work over for review and close only on the owner\'s word', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const text = taskContext({ id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: { checkpoint: 'before', delegate: 'atlas' } } as never, false)
+    expect(text).toContain('a task with checkpoint before or after you never close on your own')
+    expect(text).toContain('tells you explicitly in the chat to close it')
+    expect(text).toContain('not when its PR is open or merged')
+    expect(text).not.toContain('A task with checkpoint after you only close once')
+  })
 })
