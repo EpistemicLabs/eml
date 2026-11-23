@@ -258,8 +258,15 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   } else if (action === 'unread') {
     // Undo of Mark all read: the read state the page saw before it marked the session read.
     const body = await readJson(req)
-    const stamp = (value: unknown) => (typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null)
-    ledger.restoreRead(id, { readAt: stamp(body.readAt), resultAt: stamp(body.resultAt) })
+    const stamp = (value: unknown) => value === null || (typeof value === 'string' && !Number.isNaN(Date.parse(value)))
+    if (!('readAt' in body) || !('resultAt' in body) || !stamp(body.readAt) || !stamp(body.resultAt)) {
+      json(res, 400, { error: { code: 'INVALID', message: 'readAt and resultAt must each be an ISO timestamp or null' } })
+      return true
+    }
+    if (!ledger.restoreRead(id, { readAt: body.readAt as string | null, resultAt: body.resultAt as string | null })) {
+      json(res, 409, { error: { code: 'CHANGED', message: 'That session answered again since. It stays unread.' } })
+      return true
+    }
   } else if (action === 'desk-main') {
     const body = await readJson(req)
     ledger.setDeskMain(id, body.main === true)
