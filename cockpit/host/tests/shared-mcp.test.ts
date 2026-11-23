@@ -59,7 +59,7 @@ describe('SharedMcpHost', () => {
     const first = newHost(keyFile).keyFor('gmail-a')
     expect(newHost(keyFile).keyFor('gmail-a')).toBe(first)
     expect(newHost(keyFile).keyFor('gmail-b')).not.toBe(first)
-    expect(statSync(keyFile).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(keyFile).mode & 0o777).toBe(0o600)
   })
 
   it('runs one process per sign-in, however many ask at once', async () => {
