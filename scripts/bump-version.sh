@@ -7,14 +7,16 @@
 # "## Tools (vX.Y.Z)" header, then verifies they all agree. core and the
 # cockpit frontend are internal workspace packages and stay 0.0.0.
 #
-# Usage: bash scripts/bump-version.sh <X.Y.Z>
+# A pre-release suffix is accepted: 0.22.0-alpha.1 (the alpha line).
+#
+# Usage: bash scripts/bump-version.sh <X.Y.Z[-pre]>
 set -euo pipefail
 
 VERSION="${1:-}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "Error: usage: bump-version.sh <X.Y.Z> (got: '${VERSION}')" >&2
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+  echo "Error: usage: bump-version.sh <X.Y.Z[-pre]> (got: '${VERSION}')" >&2
   exit 1
 fi
 cd "$REPO_DIR"
@@ -23,7 +25,7 @@ echo "[bump] target version: $VERSION"
 for dir in . cockpit/host packages/server packages/mcp-server packages/protocol; do
   (cd "$dir" && npm pkg set version="$VERSION")
 done
-perl -pi -e "s/^## Tools \(v[0-9]+\.[0-9]+\.[0-9]+\)/## Tools (v${VERSION})/" packages/mcp-server/README.md
+perl -pi -e "s/^## Tools \(v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*\)/## Tools (v${VERSION})/" packages/mcp-server/README.md
 
 FAIL=0
 check() { # check <label> <actual> <expected>
@@ -32,7 +34,7 @@ check() { # check <label> <actual> <expected>
 for dir in . cockpit/host packages/server packages/mcp-server packages/protocol; do
   check "$dir" "$(node -p "require('./$dir/package.json').version")" "$VERSION"
 done
-check "mcp-server README ## Tools" "$(grep -m1 -oE '^## Tools \(v[0-9]+\.[0-9]+\.[0-9]+\)' packages/mcp-server/README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" "$VERSION"
+check "mcp-server README ## Tools" "$(grep -m1 -oE '^## Tools \(v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*\)' packages/mcp-server/README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*')" "$VERSION"
 for dir in packages/core packages/channel-bridge cockpit/frontend; do
   check "$dir (internal)" "$(node -p "require('./$dir/package.json').version")" "0.0.0"
 done

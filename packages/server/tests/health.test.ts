@@ -90,7 +90,7 @@ describe('/health endpoint', () => {
     expect(status).toBe(200)
     const health = body as HealthResponse
     expect(health.status).toBe('ok')
-    expect(health.version).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(health.version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
     expect(typeof health.uptime_sec).toBe('number')
     expect(health.uptime_sec).toBeGreaterThanOrEqual(0)
   })

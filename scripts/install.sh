@@ -96,7 +96,7 @@ main() {
     fi
     [[ "$tag" == v* ]] || tag="v$tag"
     local v="${tag#v}"
-    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "could not find the newest release (got '$tag'). Check your internet connection."
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || fail "could not find the newest release (got '$tag'). Check your internet connection."
 
     say "Installing EML Cockpit v$v into $home_dir …"
     mkdir -p "$app/versions"

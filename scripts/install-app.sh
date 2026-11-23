@@ -51,7 +51,7 @@ shasum -a 256 -c SHA256SUMS
 COCKPIT_TGZ="$(ls eml-cockpit-*.tgz)"
 MCP_TGZ="$(ls engramprotocol-mcp-server-*.tgz)"
 V="${COCKPIT_TGZ#eml-cockpit-}"; V="${V%.tgz}"
-[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unexpected tarball name $COCKPIT_TGZ" >&2; exit 1; }
+[[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || { echo "unexpected tarball name $COCKPIT_TGZ" >&2; exit 1; }
 
 cd "$STAGING"
 echo '{ "name": "eml-cockpit-app", "private": true }' > package.json

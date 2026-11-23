@@ -132,7 +132,7 @@ function Install-EmlCockpit {
     }
     if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
     $v = $tag.Substring(1)
-    if ($v -notmatch '^\d+\.\d+\.\d+$') { Fail "could not find the newest release (got '$tag'). Check your internet connection." }
+    if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$') { Fail "could not find the newest release (got '$tag'). Check your internet connection." }
 
     Say "Installing EML Cockpit v$v into $homeDir ..."
     New-Item -ItemType Directory -Force -Path (Join-Path $app 'versions') | Out-Null

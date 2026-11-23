@@ -260,7 +260,7 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       const r = await request('GET', `${baseUrl}/health`)
       expect(r.status).toBe(200)
       expect(r.body.status).toBe('ok')
-      expect(r.body.version).toMatch(/^\d+\.\d+\.\d+$/)
+      expect(r.body.version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
       expect(typeof r.body.uptime_sec).toBe('number')
     })
   })
