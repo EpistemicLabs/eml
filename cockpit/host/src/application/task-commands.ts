@@ -24,6 +24,8 @@ import { stepPrompt } from './task-runner.js'
 
 export const UNDO_WINDOW_MS = 8000
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
+/** Work on it now whose session never opened (the page failed): the agent is released after this. */
+export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
 export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'split' | 'sort'
@@ -46,6 +48,8 @@ export interface TaskCommand extends CommandInput {
   carriedQuestion?: string
   brief?: string
   effects?: { jobId?: string }
+  /** Work on it now ended (its sessions were put away): the delegate was released, and the board offers to hand it over. */
+  released?: { at: string; agent: string }
   /** A split off a session: what it made, for Undo. */
   split?: {
     sessionId: string
@@ -106,7 +110,9 @@ export class TaskCommandStore {
   }
 
   put(command: TaskCommand, now: number): void {
-    this.data.commands = [...this.data.commands.filter((c) => c.opId !== command.opId && (c.state === 'pending' || now - Date.parse(c.createdAt) < KEEP_MS)), command]
+    // Work on it now that has not ended stays however long it runs: it keeps the runner off its task.
+    const keep = (c: TaskCommand) => c.state === 'pending' || isOpenTogether(c) || now - Date.parse(c.createdAt) < KEEP_MS
+    this.data.commands = [...this.data.commands.filter((c) => c.opId !== command.opId && keep(c)), command]
     this.persist()
   }
 
@@ -127,6 +133,8 @@ export class TaskCommandStore {
   }
 }
 
+const isOpenTogether = (c: TaskCommand) => c.kind === 'hand_over' && c.handOver?.mode === 'together' && c.state === 'applied' && !c.released
+
 interface BrainTask {
   id: string
   title: string | null
@@ -142,6 +150,11 @@ export interface TaskCommandsDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   agentsOf(space: BrainSpace): Promise<string[]>
   createJob(space: BrainSpace, task: BrainTask, spec: ScheduleSpec, prompt: string): Promise<{ jobId: string } | { error: string }>
+  /**
+   * The sessions on the task that started at or after `since`, and how many of them are not put away.
+   * Without it Work on it now never ends on its own.
+   */
+  sessionsSince?(taskId: string, since: string): { total: number; open: number }
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -170,6 +183,46 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     deps.store.put(command, deps.now())
     deps.changed(command.spaceId)
     return command
+  }
+
+  /** The task's latest hand-over that was not undone or failed: the one that says what the owner wants now. */
+  const latestHandOver = (taskId: string) =>
+    // By when it was chosen: saving a command again moves it to the end of the store.
+    deps.store.commands().filter((c) => c.kind === 'hand_over' && c.taskId === taskId && (c.state === 'pending' || c.state === 'applied'))
+      .reduce<TaskCommand | undefined>((latest, c) => (!latest || Date.parse(c.createdAt) >= Date.parse(latest.createdAt) ? c : latest), undefined)
+
+  /**
+   * Work on it now ended once every session opened on the task since is put away (or none opened
+   * within TOGETHER_GRACE_MS). The agent was there to work with the owner, not alone: its delegation
+   * is released with a journal line, so the runner never starts it on its own (B2), and the board
+   * offers "Hand to <agent>". A later hand-over replaced it: nothing to release.
+   */
+  const releaseTogether = async (now: number) => {
+    if (!deps.sessionsSince) return
+    for (const command of deps.store.commands().filter(isOpenTogether)) {
+      if (latestHandOver(command.taskId!) !== command) {
+        save({ ...command, released: { at: new Date(now).toISOString(), agent: command.handOver!.delegate } })
+        continue
+      }
+      const sessions = deps.sessionsSince(command.taskId!, command.createdAt)
+      const ended = sessions.total > 0 ? sessions.open === 0 : now - Date.parse(command.createdAt) > TOGETHER_GRACE_MS
+      if (!ended) continue
+      const space = deps.space(command.spaceId)
+      const brain = space ? deps.brain(space) : null
+      if (!brain) continue
+      const agent = command.handOver!.delegate
+      try {
+        const task = await taskOf(brain, command.taskId!)
+        if (task && (task.status === 'planned' || task.status === 'active') && task.properties?.delegate === agent) {
+          await track(brain, task.id, { delegate: null, checkpoint: null },
+            `Worked on it together with ${agent}; the session was put away, so ${agent} is released and does not go on alone. Hand it to ${agent} to let it go on.`)
+        }
+        save({ ...command, released: { at: new Date(now).toISOString(), agent } })
+        deps.log(`[commands] ${command.opId.slice(0, 8)} together ended: ${agent} released from task ${command.taskId!.slice(0, 8)}`)
+      } catch (err) {
+        deps.log(`[commands] ${command.opId.slice(0, 8)} together release failed: ${(err as Error).message}`)
+      }
+    }
   }
 
   /** Check a hand-over against the task as it is now and plan it. */
@@ -304,6 +357,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         const now = deps.now()
         // A session's split or sort pending here is one that failed part-way: its retry resumes it, not the tick.
         for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) await apply(command)
+        await releaseTogether(now)
       }
       const current = run().finally(() => { if (ticking === current) ticking = null })
       ticking = current
@@ -319,6 +373,24 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     /** A hand-over of the task can still be undone: nothing may start it yet. */
     held(taskId: string): boolean {
       return deps.store.commands().some((c) => c.kind === 'hand_over' && c.state === 'pending' && c.taskId === taskId)
+    },
+
+    /** The owner works on the task with its delegate (Work on it now): the runner must not start the delegate alone. */
+    together(taskId: string): boolean {
+      const latest = latestHandOver(taskId)
+      return latest !== undefined && isOpenTogether(latest)
+    },
+
+    /** When the task's latest hand-over, a Delegate now, was chosen; null when the latest is another kind or there is none. */
+    delegatedAt(taskId: string): string | null {
+      const latest = latestHandOver(taskId)
+      return latest?.handOver?.mode === 'now' ? latest.createdAt : null
+    },
+
+    /** The agent released when Work on it now ended, while that is still the task's latest hand-over: the board offers "Hand to <agent>". */
+    releasedAgent(taskId: string): string | null {
+      const latest = latestHandOver(taskId)
+      return latest?.handOver?.mode === 'together' && latest.released ? latest.released.agent : null
     },
 
     /** What the delegate of a task handed over with an open question reads first. */

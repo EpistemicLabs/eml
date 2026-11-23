@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskCommands, TaskCommandStore, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
+import { createTaskCommands, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'cockpit-task-commands-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -189,5 +189,98 @@ describe('looks good, snooze, close', () => {
 
     const bound = world([owned('t3', {}, 'active')], { bound: ['n1'] })
     expect(await bound.commands.submit({ opId: 'op-4', kind: 'close', spaceId: 'main', taskId: 't3' })).toMatchObject({ ok: false, refusal: 'bound_items' })
+  })
+})
+
+describe('work on it now ends (B2)', () => {
+  /** A world whose sessions on the task are listed by `sessions` (createdAt, archived). */
+  const together = (props: Record<string, unknown> = {}, status = 'planned') => {
+    const w = world([owned('t1', props, status)])
+    const sessions: Array<{ createdAt: string; archived: boolean }> = []
+    const commands = createTaskCommands({
+      ...w.deps,
+      sessionsSince: (_taskId, since) => {
+        const on = sessions.filter((s) => Date.parse(s.createdAt) >= Date.parse(since))
+        return { total: on.length, open: on.filter((s) => !s.archived).length }
+      },
+    })
+    const open = () => { sessions.push({ createdAt: new Date(w.clock.now + 1000).toISOString(), archived: false }); return sessions.at(-1)! }
+    return { ...w, commands, sessions, open }
+  }
+  const workOnItNow = { mode: 'together' as const, delegate: 'atlas', checkpoint: 'after', desk: 'Main' }
+
+  it('holds the runner off while the session is open, then releases the agent with a journal line once it is put away', async () => {
+    const w = together()
+    await w.commands.submit({ opId: 'op-tg', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
+    expect(w.commands.together('t1')).toBe(true)
+    // Before the page opened the pane, and while it is open: nothing is released.
+    await w.commands.tick()
+    const pane = w.open()
+    w.later(60_000)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(1)
+    expect(w.commands.together('t1')).toBe(true)
+
+    pane.archived = true
+    await w.commands.tick()
+    expect(w.posts.at(-1)).toEqual({ path: '/task/t1/track', body: { delegate: null, checkpoint: null, text: 'Worked on it together with atlas; the session was put away, so atlas is released and does not go on alone. Hand it to atlas to let it go on.' } })
+    expect(w.byId.get('t1')!.properties.delegate).toBeUndefined()
+    expect(w.commands.together('t1')).toBe(false)
+    expect(w.commands.releasedAgent('t1')).toBe('atlas')
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(2)
+  })
+
+  it('releases it when no session ever opened, after the grace time', async () => {
+    const w = together()
+    await w.commands.submit({ opId: 'op-tg2', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    w.later(TOGETHER_GRACE_MS - 1000)
+    await w.commands.tick()
+    expect(w.commands.together('t1')).toBe(true)
+    w.later(2000)
+    await w.commands.tick()
+    expect(w.commands.together('t1')).toBe(false)
+    expect(w.byId.get('t1')!.properties.delegate).toBeUndefined()
+  })
+
+  it('a later Delegate now replaces it: the agent is not released and the runner may start it', async () => {
+    const w = together()
+    await w.commands.submit({ opId: 'op-tg3', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    const pane = w.open()
+    w.later(60_000)
+    await w.commands.submit({ opId: 'op-now', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(w.commands.together('t1')).toBe(false)
+    w.later(UNDO_WINDOW_MS + 1)
+    pane.archived = true
+    await w.commands.tick()
+    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
+    expect(w.posts.some((p) => p.body.delegate === null)).toBe(false)
+    expect(w.commands.delegatedAt('t1')).toBe(new Date(Date.parse('2026-11-19T10:00:00Z') + 60_000).toISOString())
+    expect(w.commands.releasedAgent('t1')).toBeNull()
+  })
+
+  it('leaves a task whose delegate changed meanwhile, or that was undone, as it is', async () => {
+    const w = together()
+    await w.commands.submit({ opId: 'op-tg4', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    w.byId.get('t1')!.properties.delegate = 'motti'
+    w.open().archived = true
+    await w.commands.tick()
+    expect(w.byId.get('t1')!.properties.delegate).toBe('motti')
+    expect(w.commands.together('t1')).toBe(false)
+
+    const u = together()
+    await u.commands.submit({ opId: 'op-tg5', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    expect(await u.commands.undo('op-tg5')).toEqual({ ok: true })
+    expect(u.commands.together('t1')).toBe(false)
+  })
+
+  it('keeps an open Work on it now past the week other commands are kept', async () => {
+    const w = together()
+    await w.commands.submit({ opId: 'op-tg6', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    w.open()
+    w.later(8 * 24 * 60 * 60 * 1000)
+    await w.commands.submit({ opId: 'op-snooze', kind: 'snooze', spaceId: 'main', snooze: { key: 'x', until: new Date(w.clock.now + 60_000).toISOString() } })
+    expect(w.commands.together('t1')).toBe(true)
   })
 })

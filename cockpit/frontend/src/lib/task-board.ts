@@ -48,6 +48,8 @@ export interface BoardTask {
   sessionIds: string[];
   working: boolean;
   nextRunAt: string | null;
+  /** Work on it now ended and released this agent: offer "Hand to <agent>". */
+  handTo?: string;
   pending?: { opId: string; kind: string; undoUntil: string };
 }
 
@@ -272,6 +274,7 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.group === 'at_time') return `${agent} starts ${when(task.nextRunAt, now)}.`;
   if (task.group === 'runner') return `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
+  if (task.handTo) return `You worked on it with ${agentName(task.handTo)}. Hand it to ${agentName(task.handTo)} to let it go on alone.`;
   return task.status === 'active' ? 'Your task, in progress.' : 'Your task.';
 }
 
