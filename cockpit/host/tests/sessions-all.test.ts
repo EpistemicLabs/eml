@@ -48,7 +48,7 @@ describe('sessions across spaces', () => {
     spaces.add(fakeSpace(PLAIN, 'Plain', { projectPath: '/plain' }) as never)
     const provider = {
       id: 'claude',
-      summary: () => ({ messageCount: 1, lastMessageAt: null, lastActivity: null, summary: 'A session', aiTitle: null, model: null, contextTokens: null }),
+      summary: () => ({ messageCount: 1, lastMessageAt: null, lastActivity: null, summary: 'A session', aiTitle: null, lastReply: null, model: null, contextTokens: null }),
       deleteTranscript,
     }
     const deps = {

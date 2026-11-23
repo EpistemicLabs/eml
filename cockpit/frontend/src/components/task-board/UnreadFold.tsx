@@ -3,19 +3,12 @@
 import { agentLetter, type AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { type Board, readable, taskName, when } from '@/lib/task-board';
-import { answerLine, answerTime } from '@/lib/unread-answers';
+import { answerLine, answerTime, deskOf } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
 import { Fold } from './parts';
-
-/** Where the session sits: its space and its project. */
-function deskOf(session: AllSession, board: Pick<Board, 'projects'>, space: SpaceInfo | undefined): string {
-  const projectId = (session.projectId ?? session.__projectId ?? '').replace(/^bp-/, '');
-  const project = projectId ? board.projects.find((p) => p.spaceId === session.spaceId && p.id === projectId)?.name ?? readable(projectId) : '';
-  return [space?.name, project].filter(Boolean).join(' · ');
-}
 
 export function UnreadFold({ sessions, board, spaces, now, open, compact, onToggle, onOpen, onMarkAllRead }: {
   sessions: AllSession[];

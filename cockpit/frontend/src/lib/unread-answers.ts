@@ -1,9 +1,10 @@
 // The Inbox page's Unread fold: sessions that answered and that nobody has opened since.
 // Nothing to do, so it never counts in the Inbox badge; it clears when the session is opened.
 import { sessionMark, type AllSession } from '@/components/sidebar/allSessions';
+import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
 
-import type { Board } from './task-board';
+import { type Board, readable } from './task-board';
 
 /** The read state a session had before Mark all read, for Undo. */
 export interface ReadBefore { id: string; readAt: string | null; resultAt: string | null }
@@ -36,8 +37,10 @@ export function unreadAnswers(
     .sort((a, b) => answeredAt(b).localeCompare(answeredAt(a)) || a.id.localeCompare(b.id));
 }
 
-/** What a row says about the answer: the sentence the agent reported its status with. */
+/** What a row says about the answer: its own first line, else the sentence the agent reported its status with. */
 export function answerLine(session: AllSession): string {
+  const reply = session.lastReply?.trim();
+  if (reply) return reply;
   const reason = session.attention?.reason?.trim();
   return reason ? reason.split('\n')[0]! : 'Answered';
 }
@@ -51,3 +54,10 @@ export const readBefore = (sessions: readonly AllSession[]): ReadBefore[] =>
 
 /** Whether the fold shows its rows: what the user picked on this visit, else open only when nothing needs them. */
 export const unreadFoldOpen = (picked: boolean | null, inboxCount: number): boolean => picked ?? inboxCount === 0;
+
+/** Where the session sits: its space and its project. */
+export function deskOf(session: AllSession, board: Pick<Board, 'projects'>, space: Pick<SpaceInfo, 'name'> | undefined): string {
+  const projectId = (session.projectId ?? session.__projectId ?? '').replace(/^bp-/, '');
+  const project = projectId ? board.projects.find((p) => p.spaceId === session.spaceId && p.id === projectId)?.name ?? readable(projectId) : '';
+  return [space?.name, project].filter(Boolean).join(' · ');
+}

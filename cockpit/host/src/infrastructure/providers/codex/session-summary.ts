@@ -1,4 +1,5 @@
 import * as fs from 'node:fs'
+import { replyLine } from '../../../domain/reply-line.js'
 import type { SessionSummary } from '../../../domain/agent-provider.js'
 import { firstPromptIsGreeting } from '../../../session-greeting.js'
 
@@ -20,7 +21,7 @@ import { firstPromptIsGreeting } from '../../../session-greeting.js'
 
 const SUMMARY_MAX = 120
 const EMPTY: SessionSummary = {
-  summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, model: null, contextTokens: null,
+  summary: null, aiTitle: null, lastActivity: null, messageCount: 0, lastMessageAt: null, lastReply: null, model: null, contextTokens: null,
 }
 
 const cache = new Map<string, { mtimeMs: number; greeted: boolean | null; value: SessionSummary }>()
@@ -49,6 +50,7 @@ export function readRolloutSummary(file: string | null, greeted: boolean | null)
   let firstPromptRead = false
   let messageCount = 0
   let lastMessageAt: string | null = null
+  let lastReply: string | null = null
   let model: string | null = null
   let contextTokens: number | null = null
   try {
@@ -69,6 +71,7 @@ export function readRolloutSummary(file: string | null, greeted: boolean | null)
         if (!text || (payload.role === 'user' && text.trimStart().startsWith('<'))) continue
         messageCount++
         if (typeof record.timestamp === 'string') lastMessageAt = record.timestamp
+        if (payload.role === 'assistant') lastReply = replyLine(text) ?? lastReply
         if (payload.role === 'user' && !firstPromptRead) {
           firstPromptRead = true
           if (firstPromptIsGreeting(greeted, text)) continue
@@ -83,7 +86,7 @@ export function readRolloutSummary(file: string | null, greeted: boolean | null)
     return EMPTY
   }
   const value: SessionSummary = {
-    summary, aiTitle: null, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, model, contextTokens,
+    summary, aiTitle: null, lastActivity: stats.mtime.toISOString(), messageCount, lastMessageAt, lastReply, model, contextTokens,
   }
   cache.set(file, { mtimeMs: stats.mtimeMs, greeted, value })
   return value
