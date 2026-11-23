@@ -51,6 +51,55 @@ export interface BoardTask {
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
   pending?: { opId: string; kind: string; undoUntil: string };
+  /** Reopened on the board: decisions and notes that closed with it and come back only through the chat. */
+  reopenedWith?: ReopenItem[];
+  /** Only on a closed task (from Board.closed): when it closed, how it ended, and why Reopen would be refused. */
+  closedAt?: string | null;
+  outcome?: string;
+  stage?: string;
+  blocked?: 'superseded' | 'parent_closed';
+}
+
+/** A decision or note that closed with a task (host task-commands ReopenItem). */
+export interface ReopenItem { id: string; type: string; title: string | null }
+
+/** A closed task (resolved, dropped or replaced) the panel can reopen and ⌘K finds (host Board.closed). */
+export interface ClosedTask {
+  id: string;
+  spaceId: string;
+  spaceName: string;
+  project: string | null;
+  title: string;
+  displayTitle?: string;
+  status: string;
+  closedAt: string | null;
+  outcome?: string;
+  owner?: string;
+  delegate?: string;
+  checkpoint?: string;
+  stage?: string;
+  parentId: string | null;
+  originId: string | null;
+  sessionIds: string[];
+  blocked?: 'superseded' | 'parent_closed';
+  pending?: { opId: string; kind: string; undoUntil: string };
+}
+
+export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['resolved', 'invalidated', 'superseded']);
+
+/** A closed task in the shape the panel takes: no turn, nothing covering it. */
+export function closedAsTask(c: ClosedTask): BoardTask {
+  return {
+    ...c,
+    rel: c.parentId ? 'sub' : c.originId ? 'spun' : null,
+    updatedAt: c.closedAt,
+    turn: null,
+    coverage: { ok: false, group: 'idle' },
+    urgency: 0,
+    important: false,
+    working: false,
+    nextRunAt: null,
+  };
 }
 
 export interface InboxItem {
@@ -88,6 +137,8 @@ export interface Board {
   spaces: Array<{ id: string; name: string; agents: string[] }>;
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>;
   tasks: BoardTask[];
+  /** Closed tasks for Reopen and ⌘K; missing from an older host. */
+  closed?: ClosedTask[];
   /** Missing from an older host. */
   lineage?: LineageTask[];
   inbox: InboxItem[];
@@ -158,6 +209,9 @@ export const snooze = (item: InboxItem, until: string, opId = newOpId()) =>
 /** Drops a task that is not needed (invalidated), after the undo window. */
 export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/close`, { opId, spaceId: task.spaceId });
+/** Reopens a closed task (active, starts nothing), after the undo window; owner only. */
+export const reopenTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, reason?: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, ...(reason?.trim() ? { reason: reason.trim() } : {}) });
 export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponent(opId)}/undo`, {});
 
 // ---- names and colours ----

@@ -50,6 +50,7 @@ import { Dot } from '@/shared/view/ui';
 import { openTask, TASK_SEARCH_EVENT } from './openTask';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { setTopView } from '@/stores/useTopViewStore';
+import { requestTaskPanel } from '@/stores/useTaskViewStore';
 import { keysHint, MOD, orderedDesks, setShortcutSheet, SHORTCUTS } from '@/components/top-bar/shortcuts';
 import { openTaskView } from '@/components/top-bar/useCockpitShortcuts';
 import type { LLMProvider, Project } from '@/types/app';
@@ -150,6 +151,26 @@ function TaskRow({ task, where, projectName, onSelect }: { task: BoardTask; wher
       </span>
       <span className="flex shrink-0 items-center gap-1.5 self-center text-caption text-muted-foreground">
         {words.act}
+        <kbd className="rounded border border-border px-1 font-code text-caption">↵</kbd>
+      </span>
+    </CommandItem>
+  );
+}
+
+const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
+const closedDay = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+
+/** A closed task: how and when it ended; Enter opens its panel on the task board, where Reopen is. */
+function ClosedTaskRow({ task, projectName, onSelect }: { task: BoardTask; projectName: string; onSelect: () => void }) {
+  return (
+    <CommandItem value={`task ${task.spaceId} ${task.id}`} onSelect={onSelect} className="items-start py-1.5">
+      <span className="flex h-(--target-min) shrink-0 items-center"><Dot hue="done" hollow /></span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-medium text-muted-foreground">{taskName(task)}</span>
+        <span className="truncate text-caption text-muted-foreground">{[projectName, `${ENDED[task.status] ?? 'Closed'} ${closedDay(task.closedAt)}`.trim(), task.outcome].filter(Boolean).join(' · ')}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5 self-center text-caption text-muted-foreground">
+        Open task
         <kbd className="rounded border border-border px-1 font-code text-caption">↵</kbd>
       </span>
     </CommandItem>
@@ -366,12 +387,17 @@ export default function CommandPalette({
   const taskLimit = page === 'tasks' ? Infinity : searchMode ? ROOT_SEARCH_LIMIT : ROOT_LIMIT;
   const shownTaskGroups = taskGroups.map((g) => ({ ...g, tasks: g.tasks.slice(0, taskLimit) }));
   const taskCount = taskGroups.reduce((n, g) => n + g.tasks.length, 0);
-  const taskBrowseLabel = page === null && taskCount > shownTaskGroups.reduce((n, g) => n + g.tasks.length, 0) ? `All ${taskCount} open tasks…` : null;
+  const taskBrowseLabel = page === null && taskCount > shownTaskGroups.reduce((n, g) => n + g.tasks.length, 0) ? `All ${taskCount} tasks…` : null;
   const pickTask = (task: BoardTask) => {
     const newDesk = newDeskRef.current;
     newDeskRef.current = false;
     const where = locate(task);
     run(() => { void openTask(task, where, { newDesk }); });
+  };
+  // A closed task opens in the task board's panel, where it can be reopened; nothing starts.
+  const pickClosedTask = (task: BoardTask) => {
+    newDeskRef.current = false;
+    run(() => { requestTaskPanel(task.id); setTopView('tasks'); });
   };
   const activeDeskName = desks.find((d) => d.id === activeDeskId)?.name ?? 'this desk';
 
@@ -467,12 +493,13 @@ export default function CommandPalette({
             placeholder={page ? PAGE_PLACEHOLDER[page] : ROOT_PLACEHOLDER}
           />
           <CommandList>
-            {!brainLoading && <CommandEmpty>{page === 'tasks' ? 'No open task matches. New tasks come from a chat or the New task bar.' : 'No results found.'}</CommandEmpty>}
+            {!brainLoading && <CommandEmpty>{page === 'tasks' ? 'No task matches. New tasks come from a chat or the New task bar.' : 'No results found.'}</CommandEmpty>}
 
             {shownTaskGroups.map((group) => (
               <CommandGroup key={group.name} heading={page === 'tasks' && taskProject ? `${group.name} · ${board?.projects.find((p) => p.id === taskProject)?.name ?? readable(taskProject)}` : group.name}>
-                {group.tasks.map((task) => (
-                  <TaskRow key={`${task.spaceId}:${task.id}`} task={task} where={locate(task)} projectName={board ? projectNameOf(board, task) : ''} onSelect={() => pickTask(task)} />
+                {group.tasks.map((task) => (group.closed
+                  ? <ClosedTaskRow key={`${task.spaceId}:${task.id}`} task={task} projectName={board ? projectNameOf(board, task) : ''} onSelect={() => pickClosedTask(task)} />
+                  : <TaskRow key={`${task.spaceId}:${task.id}`} task={task} where={locate(task)} projectName={board ? projectNameOf(board, task) : ''} onSelect={() => pickTask(task)} />
                 ))}
               </CommandGroup>
             ))}
