@@ -17,6 +17,7 @@ vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: undefined }) }));
 
 import { setTaskView } from '@/stores/useTaskViewStore';
+import { DEFAULT_TASK_FILTER, setTaskFilter } from '@/stores/useTaskFilterStore';
 import { TaskNav } from '@/components/sidebar/nav/SidebarNav';
 import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
 
@@ -30,12 +31,14 @@ const task = (patch: Partial<BoardTask>): BoardTask => ({
 });
 const board = (): Board => ({
   at: NOW.toISOString(), viewer: 'lasse',
-  spaces: [{ id: 'main', name: 'Main', agents: ['atlas'] }],
+  spaces: [{ id: 'main', name: 'Main', agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }],
   projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
   tasks: [
     task({ id: 'asked', title: 'acme-cancellation-rescue', group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),
     task({ id: 'mine', title: 'demo-meeting-prep' }),
     task({ id: 'running', title: 'kit-v4-rollout', turn: 'agent_working', group: undefined, delegate: 'atlas', working: true }),
+    task({ id: 'theirs', title: 'dominik-release-notes', owner: 'dominik' }),
+    task({ id: 'ebisu', title: 'ebisu-onboarding', spaceId: 'ebisu', spaceName: 'Ebisu', project: null }),
   ],
   inbox: [{ key: 'task:asked@x', kind: 'question', space: 'main', title: 'acme-cancellation-rescue', text: 'One last check on Thursday?', since: iso(5), taskId: 'asked' }],
   snoozed: [], events: [], counts: { needsYou: 2, inbox: 1 },
@@ -47,6 +50,7 @@ beforeEach(() => {
   live.sessions = [];
   live.seen = [];
   setTaskView('now');
+  setTaskFilter(DEFAULT_TASK_FILTER);
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
     if (init?.method === 'POST') {
@@ -86,6 +90,42 @@ describe('the task board', () => {
     fireEvent.keyDown(document, { key: 'g' });
     fireEvent.keyDown(document, { key: 'i' });
     expect(await screen.findByText(/One last check on Thursday\?/)).toBeTruthy();
+  });
+
+  it('narrows every Now column and its count by Owner and Space, and keeps the pick across views', async () => {
+    mount();
+    const needsYou = () => screen.getByRole('region', { name: 'Needs you' });
+    await screen.findByRole('region', { name: 'Needs you' });
+    expect(within(needsYou()).queryByText('Dominik release notes')).toBeNull();
+    expect(within(needsYou()).getByText('3')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Owner' })).getByRole('button', { name: 'Everyone' }));
+    expect(within(needsYou()).getByText('Dominik release notes')).toBeTruthy();
+    expect(within(needsYou()).getByText('4')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Space' })).getByRole('button', { name: 'Ebisu' }));
+    expect(within(needsYou()).getByText('1')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Agent working' })).queryByText('Kit v4 rollout')).toBeNull();
+    // Away to the Inbox and Plan and back: the picks are still set, on Plan too.
+    fireEvent.click(screen.getByRole('button', { name: /^Inbox/ }));
+    await screen.findByText(/One last check on Thursday\?/);
+    fireEvent.click(screen.getByRole('button', { name: /^Plan/ }));
+    await screen.findByText(/Stuck until you act/);
+    expect(within(screen.getByRole('group', { name: 'Space' })).getByRole('button', { name: 'Ebisu' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(screen.getByRole('group', { name: 'Owner' })).getByRole('button', { name: 'Everyone' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /^Now/ }));
+    expect(within(await screen.findByRole('region', { name: 'Needs you' })).getByText('Ebisu onboarding')).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'Space' })).getByRole('button', { name: 'Ebisu' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('shows All when the remembered space is gone, on Now and Plan', async () => {
+    setTaskFilter({ spaceId: 'gone' });
+    mount();
+    const space = () => within(screen.getByRole('group', { name: 'Space' }));
+    expect(within(await screen.findByRole('region', { name: 'Needs you' })).getByText('Acme cancellation rescue')).toBeTruthy();
+    expect(space().getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /^Plan/ }));
+    await screen.findByText(/Stuck until you act/);
+    expect(screen.getAllByText('Acme').length).toBeGreaterThan(0);
+    expect(space().getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('opens a card as a slide-over with focus on its title, answering first; Escape closes it', async () => {
