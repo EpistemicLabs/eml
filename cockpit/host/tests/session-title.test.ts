@@ -58,7 +58,7 @@ describe('session title', () => {
     it('drops the title Claude Code made from the greeting and summarises the user\'s first prompt', () => {
       write('greeted', greeting.GREETING_PROMPT)
       expect(readSessionSummary(project, 'greeted', true)).toMatchObject({
-        aiTitle: null, summary: 'seit der Umstellung sind die Session-Titel falsch', messageCount: 3,
+        aiTitle: null, summary: 'seit der Umstellung sind die Session-Titel falsch', messageCount: 3, lastReply: 'Hi',
       })
       expect(readSessionSummary(project, 'greeted', null).aiTitle).toBeNull()
     })

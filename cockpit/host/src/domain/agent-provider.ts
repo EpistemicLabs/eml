@@ -158,6 +158,8 @@ export interface SessionSummary {
   messageCount: number
   /** Timestamp of the last user/assistant message (null before the first turn). */
   lastMessageAt: string | null
+  /** What the last assistant reply is about, one line (domain/reply-line.ts); null before the first reply. */
+  lastReply: string | null
   /** Model id of the last assistant message. */
   model: string | null
   /** What the model had in context at the last assistant turn, in tokens. */

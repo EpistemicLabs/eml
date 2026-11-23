@@ -345,6 +345,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     lastActivity,
     messageCount: summary.messageCount,
     lastMessageAt: summary.lastMessageAt,
+    lastReply: summary.lastReply,
     model: summary.model,
     contextTokens: summary.contextTokens,
     isPinned: entry.pinned,
