@@ -12,7 +12,7 @@ import { runFirstRunSetup } from './setup.js'
 import { startOnboarding } from './onboarding.js'
 import { BrainHygiene } from './brain-hygiene.js'
 import { launchBrainServer } from './server-launch.js'
-import { ProviderRegistry } from './infrastructure/providers/registry.js'
+import { ProviderRegistry, defaultProviders } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
@@ -76,7 +76,6 @@ import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
-import { createCodexProvider } from './infrastructure/providers/codex/index.js'
 import type { Notifier } from './notifications.js'
 import { PushStore } from './push-store.js'
 import { PushNotifier, notifySessions } from './application/push-notifier.js'
@@ -145,7 +144,7 @@ async function main() {
   const providers = new ProviderRegistry({
     providerOf: (sessionId) => ledger.get(sessionId)?.provider,
     preferred: readDefaultProvider,
-    providers: [withChannelTools(createClaudeProvider(), { channelJobOf, bridgeServer: bridgeServerFor }), createCodexProvider()],
+    providers: defaultProviders(platform.os, withChannelTools(createClaudeProvider(), { channelJobOf, bridgeServer: bridgeServerFor })),
   })
   for (const provider of providers.all()) {
     const name = provider.label.toLowerCase()
