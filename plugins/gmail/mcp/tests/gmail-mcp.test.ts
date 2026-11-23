@@ -6,6 +6,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { serveShared } from '../src/http'
 import { GoogleApi } from '../src/google-api'
 import { createGmailServer } from '../src/server'
 import { Calendar, Mailbox, addressesOf } from '../src/tools'
@@ -173,5 +175,45 @@ describe('the MCP server', () => {
 
   it('refuses to start without its mailbox and sign-in', () => {
     expect(() => createGmailServer({})).toThrow('GMAIL_ADDRESS')
+  })
+})
+
+describe('the shared server', () => {
+  const connect = async (url: string, key: string) => {
+    const client = new Client({ name: 'test', version: '1' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${key}` } } }))
+    return client
+  }
+
+  it('serves several sessions from one process on one sign-in', async () => {
+    const google = api()
+    const shared = await serveShared({ key: 'k'.repeat(32), newServer: () => createGmailServer({ GMAIL_ADDRESS: 'me@work.example', GMAIL_ATTACHMENTS_DIR: dir }, google) })
+    const url = `http://127.0.0.1:${shared.port}/mcp`
+    try {
+      const [a, b] = await Promise.all([connect(url, 'k'.repeat(32)), connect(url, 'k'.repeat(32))])
+      expect(shared.sessions()).toBe(2)
+      expect((await a.listTools()).tools).toHaveLength(9)
+      const result = await b.callTool({ name: 'search_emails', arguments: { query: 'from:anna' } })
+      expect((result.content as Array<{ text: string }>)[0].text).toMatch(/^Found 1 emails/)
+      await a.close()
+      await b.close()
+    } finally {
+      await shared.close()
+    }
+  })
+
+  it('refuses a wrong key and an unknown session', async () => {
+    const shared = await serveShared({ key: 'k'.repeat(32), newServer: () => createGmailServer({ GMAIL_ADDRESS: 'me@work.example' }, api()) })
+    const url = `http://127.0.0.1:${shared.port}/mcp`
+    try {
+      await expect(connect(url, 'wrong')).rejects.toThrow()
+      const post = (headers: Record<string, string>) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })
+      expect((await post({ authorization: 'Bearer wrong' })).status).toBe(401)
+      expect((await post({ authorization: `Bearer ${'k'.repeat(32)}`, 'mcp-session-id': 'gone' })).status).toBe(404)
+      expect((await post({ authorization: `Bearer ${'k'.repeat(32)}` })).status).toBe(400)
+      expect(shared.sessions()).toBe(0)
+    } finally {
+      await shared.close()
+    }
   })
 })
