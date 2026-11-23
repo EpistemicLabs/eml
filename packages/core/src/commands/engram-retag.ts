@@ -1,6 +1,7 @@
 import { bumpRev } from '../entries'
 import { slugifyTag } from '../tags'
 import { insertEngramTagRow, normalizeAndValidateTags, tagsOf } from '../write/tags-subjects'
+import { CALL_KEYS, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 
 /** engram.retag — the /retag body: the engrams, one or many, and the tags to add and to remove. */
@@ -21,8 +22,8 @@ export const engramRetag: CommandModule<EngramRetagInput, EngramRetagResult> = {
   name: 'engram.retag',
   validate(input) {
     const o = inputObject('engram.retag', input)
-    const unknown = Object.keys(o).filter(k => !['ids', 'add', 'remove'].includes(k) && o[k] !== undefined)
-    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} — engram.retag takes ids, add and remove.`)
+    const unknown = unknownKeys(o, CALL_KEYS['engram.retag'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — engram.retag takes ids, add and remove.`)
     const ids = o.ids
     if (!Array.isArray(ids) || ids.length === 0 || ids.some(id => typeof id !== 'string' || id.length === 0)) {
       throw new CommandError('INVALID', 'Invalid command: engram.retag needs ids, a list of at least one engram id.')

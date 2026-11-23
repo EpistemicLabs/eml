@@ -12,6 +12,7 @@
     "dist",
     "ui",
     "migrations",
+    "contracts",
     "skills",
     "README.md",
     "LICENSE",

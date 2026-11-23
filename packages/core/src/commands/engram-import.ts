@@ -13,6 +13,7 @@ import { activeCoreProfileIn, activeStatusIn } from '../write/supersede'
 import { insertEngramTagRow, insertEngramSubjectRow } from '../write/tags-subjects'
 import { MOVED_COLUMNS, setHash, type MovedRow, type MovedRows, type MovedTable } from '../log/move'
 import { teamBrainOf } from '../log/log'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, type CommandModule } from './types'
 
 /** What an import carries: the rows of the set (log/move.ts exportSet), their hash and the brain they come from. */
@@ -30,7 +31,7 @@ export interface EngramImportResult {
 
 const OBJECT_TABLES = ['projects', 'entities', 'users', 'agents', 'tags', 'subjects'] as const
 type ObjectTable = typeof OBJECT_TABLES[number]
-const IMPORT_KEYS = ['source', 'set_hash', 'rows']
+const IMPORT_KEYS = Object.keys(CALL_KEYS['engram.import'])
 
 /** What the import's checks read in the target: the connection and the registries' stores. */
 export type ImportStores = Pick<WriteContext, 'db' | ObjectTable>
@@ -47,12 +48,14 @@ export const engramImport: CommandModule<EngramImportInput, EngramImportResult> 
   name: 'engram.import',
   validate(input) {
     const o = inputObject('engram.import', input)
-    const extra = Object.keys(o).filter(k => !IMPORT_KEYS.includes(k))
-    if (extra.length > 0) invalid(`unknown field${extra.length > 1 ? 's' : ''} ${extra.join(', ')} — it takes ${IMPORT_KEYS.join(', ')}`)
+    const extra = unknownKeys(o, CALL_KEYS['engram.import'])
+    if (extra.length > 0) invalid(`${unknownFieldsText(extra)} — it takes ${IMPORT_KEYS.join(', ')}`)
     const source = o.source as Record<string, unknown> | undefined
     if (!source || typeof source.brain !== 'string' || !Number.isSafeInteger(source.head_seq) || (source.head_seq as number) < 1) {
       invalid('source is { brain: the source\'s genesis op_id, head_seq: its head seq }')
     }
+    const extraSource = unknownKeys(source!, CALL_KEYS['engram.import'].source)
+    if (extraSource.length > 0) invalid(`${unknownFieldsText(extraSource)} in source — it takes ${keyList(CALL_KEYS['engram.import'].source)}`)
     const rows = checkImportRows(o.rows)
     if (o.set_hash !== setHash(rows)) invalid('set_hash does not match the rows')
     return { source: { brain: source!.brain as string, head_seq: source!.head_seq as number }, set_hash: o.set_hash as string, rows }
@@ -118,8 +121,8 @@ export function checkImportRows(value: unknown): MovedRows {
 const JSON_COLUMNS = new Set(['properties', 'metadata', 'domains'])
 const TIME_COLUMNS = new Set(['created_at', 'updated_at', 'at'])
 const DATE_COLUMNS = new Set(['started_at', 'ended_at'])
-const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/
+export const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+export const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/
 
 /** Each carried column's declared type and NOT NULL, from the current schema (read once). */
 let schemaColumns: Map<string, { type: string, notnull: boolean }> | undefined

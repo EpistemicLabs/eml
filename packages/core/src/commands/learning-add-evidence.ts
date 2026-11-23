@@ -2,7 +2,9 @@ import type { Engram } from '../types'
 import { learningState, LEARNING_SHARPENED, type LearningState } from '../learning'
 import { appendEntry, bumpRev } from '../entries'
 import { reindexEngram } from '../write/insert'
-import type { LearnInput } from '../engrams'
+import { LEARN_KEYS, type LearnInput } from '../engrams'
+import { unknownFieldsError } from '../fields'
+import { CALL_KEYS, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 import { evidenceOf } from './learning'
 
@@ -34,11 +36,15 @@ export const learningAddEvidence: CommandModule<LearningAddEvidenceInput, { engr
 /** v0.20: learning.add_evidence — an incident added to an existing learning (journal-style, like task.track). */
 function addEvidence(ctx: CommandContext, input: LearnInput & { id: string }): { engram: Engram, learning: LearningState } {
   const { db, stamp } = ctx
+  // a key of eml_learning that only a new learning takes is named as such below; any other unknown key is refused here
+  const unknown = unknownKeys(input, CALL_KEYS['learning.add_evidence'])
+  const foreign = unknown.filter(k => !LEARN_KEYS.has(k))
+  if (foreign.length > 0) throw unknownFieldsError('learning', foreign, [...LEARN_KEYS])
   const evidence = evidenceOf(ctx, input)
   const existing = db.prepare('SELECT * FROM engrams WHERE id = ?').get(input.id) as any
   if (existing.type !== 'learning') throw new Error(`Invalid engram: ${input.id} is a ${existing.type}, not a learning.`)
   if (existing.status !== 'active') throw new Error(`Invalid engram: learning ${input.id} is ${existing.status} — evidence goes to an active learning.`)
-  const extra = ['scope', 'title', 'new_topic', 'tags', 'subjects'].filter(k => (input as unknown as Record<string, unknown>)[k] !== undefined)
+  const extra = ['scope', 'title', 'new_topic', 'tags', 'subjects'].filter(k => unknown.includes(k))
   if (extra.length > 0) throw new Error(`Invalid engram: ${extra.join(', ')} only on create — adding evidence takes source, happened, quote, stance, rule_id (and content to sharpen the lesson).`)
   appendEntry(db, input.id!, evidence, stamp)
   if (input.content !== undefined && input.content !== existing.content) {

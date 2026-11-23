@@ -1,0 +1,23 @@
+-- ============================================================
+-- EML v0.21 → v0.22 Migration
+--
+-- Schema 22 goes with the contract of a shared brain: what an entry must look
+-- like is stated once per schema (contracts/v22.json, generated from core's
+-- tables), and the commands refuse every key their call does not take. That
+-- is a change of what a logged op does, so the log continues at a new schema:
+-- right after this file, in the same transaction, the runner writes the
+-- checkpoint a rebuild at schema 22 starts from (database.ts applyMigration;
+-- a shared brain's comes through its relay).
+--
+-- No row of the brain's state changes, so there is no hygiene check. The one
+-- table change is local to the replica: op_log.verdicts, the chain over this
+-- replica's applied / rejected verdicts in a shared brain — one sha256 value
+-- (64 lowercase hex digits) per entry, the value after that entry. It stays
+-- NULL for every entry taken before a build fills it. Like rejected it is
+-- outside the entry's hash and outside the state (op_log is not a state table).
+--
+-- No BEGIN/COMMIT: the runner runs a migrate file, its ledger row and the
+-- checkpoint in one transaction.
+-- ============================================================
+
+ALTER TABLE op_log ADD COLUMN verdicts TEXT;

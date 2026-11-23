@@ -2,9 +2,9 @@ import type { EntryInput, EvidenceSource, EvidenceStance } from '../entries'
 import { appendEntry, EVIDENCE_SOURCES, EVIDENCE_STANCES } from '../entries'
 import { learningState } from '../learning'
 import { validateNoTemplateLeak } from '../validate'
-import { unknownFieldsError, isBlank } from '../fields'
+import { isBlank } from '../fields'
 import {
-  CONFLICT_CANDIDATE_LIMIT, CONFLICT_COVERAGE_THRESHOLD, CONFLICT_MAX, LEARN_KEYS, LEARNING_CONTENT_MAX_CHARS,
+  CONFLICT_CANDIDATE_LIMIT, CONFLICT_COVERAGE_THRESHOLD, CONFLICT_MAX, LEARNING_CONTENT_MAX_CHARS,
   extractSalientTerms, termCoverage, type LearnInput, type LearnResult,
 } from '../engrams'
 import { validateScope } from '../write/scope'
@@ -21,11 +21,9 @@ import { insertEngram } from '../write/insert'
 // (learning.add_evidence). Both check the evidence with one set of rules and
 // messages.
 
-/** The evidence rules both halves share: the input's keys, then the incident. Returns its entry. */
+/** The evidence rules both halves share: the incident (each half checks its own keys first). Returns its entry. */
 export function evidenceOf(ctx: CommandContext, input: LearnInput): EntryInput {
   const { db } = ctx
-  const unknown = Object.keys(input).filter(k => !LEARN_KEYS.has(k) && (input as unknown as Record<string, unknown>)[k] !== undefined)
-  if (unknown.length > 0) throw unknownFieldsError('learning', unknown, [...LEARN_KEYS])
   if (!(EVIDENCE_SOURCES as readonly string[]).includes(input.source as string)) {
     throw new Error(`Invalid engram: source must be one of ${EVIDENCE_SOURCES.join(', ')} — where this evidence comes from.`)
   }
@@ -64,7 +62,6 @@ export function evidenceOf(ctx: CommandContext, input: LearnInput): EntryInput {
  */
 export function createLearning(ctx: CommandContext, input: Omit<LearnInput, 'id'>): LearnResult {
   const { db, stamp } = ctx
-  if ((input as LearnInput).id !== undefined) throw new Error('Invalid engram: a new learning has no id — evidence for an existing one is learning.add_evidence.')
   const actor = stamp.actor
   const evidence = evidenceOf(ctx, input)
   if (evidence.stance !== 'supports') throw new Error('Invalid engram: a new learning starts from supporting evidence.')

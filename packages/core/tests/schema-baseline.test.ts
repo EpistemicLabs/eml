@@ -34,7 +34,8 @@ function normalize(sql: string): string {
 
 /**
  * Seed rows, without timestamps (the migration ledger differs by design). v0.20: the labels seed is gone with its table.
- * v0.21: both paths start the op log with one genesis entry (its hash covers the brain's state and time, so it differs).
+ * v0.21: both paths start the op log with a genesis entry (its hash covers the brain's state and time, so it differs).
+ * A migrated brain's log goes on with the checkpoint of each schema step after 21 (log/log.ts writeCheckpoint).
  */
 function seedOf(file: string) {
   const db = new Database(file, { readonly: true })
@@ -74,8 +75,11 @@ describe('brain schema baseline', () => {
     new EML({ namespace: 'test', dbPath: migrated }).close()
 
     expect(schemaOf(migrated)).toEqual(schemaOf(fresh))
-    expect(seedOf(migrated)).toEqual(seedOf(fresh))
     expect(seedOf(fresh).version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+    expect(seedOf(migrated).version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+    const steps = Array.from({ length: CURRENT_BRAIN_SCHEMA_VERSION - 21 }, (_, i) => 22 + i)
+    expect(seedOf(migrated).log).toEqual([{ seq: 1, call: 'brain.genesis' }, ...steps.map((_, i) => ({ seq: 2 + i, call: 'brain.checkpoint' }))])
+    expect(seedOf(migrated).snapshots).toEqual([21, ...steps].map((schema, i) => ({ seq: 1 + i, schema })))
     expect(seedOf(fresh).log).toEqual([{ seq: 1, call: 'brain.genesis' }])
     expect(seedOf(fresh).snapshots).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION }])
   })

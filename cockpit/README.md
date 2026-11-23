@@ -150,10 +150,13 @@ dist/server.cjs   brain server + core       esbuild, CJS, better-sqlite3 externa
 dist/core.cjs     core (provisioning)       esbuild, CJS, better-sqlite3 external
 ui/               frontend build            copied from cockpit/frontend/dist
 migrations/       brain + control SQL       copied from packages/core/migrations
+contracts/        contract + frozen log     copied from packages/core/contracts
 ```
 
 The SQL files sit next to `dist/` because core resolves them as `__dirname/../migrations` — the
 same relative location from a workspace checkout (`packages/core/migrations`) and from the bundle.
+`contracts/` sits there for the same reason: the contract document of the brain schema and the
+frozen log the brain server replays when it starts (its self-test, reported on `/health`).
 Real dependencies are only `better-sqlite3`, `node-pty` (both prebuilt) and
 `@engramprotocol/mcp-server`, whose `dist/cli.js` the host injects into each session's MCP config.
 Verify a build end-to-end with `pnpm -F eml-cockpit pack`, `npm install <tgz>` in a scratch
