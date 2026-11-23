@@ -386,7 +386,7 @@ async function main() {
   }
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
-    spaces, brain: taskBrain, log,
+    spaces, brain: taskBrain, me: owner, log,
     busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: (taskId) => taskCommands?.held(taskId) ?? false,
@@ -428,7 +428,7 @@ async function main() {
   })
   setInterval(() => { void nextStep.tick() }, RUNNER_TICK_MS).unref?.()
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
-  const cycles = createCycles({ spaces, log, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
+  const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => {
     void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())

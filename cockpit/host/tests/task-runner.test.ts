@@ -9,13 +9,13 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string>; parent?: string }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
 function brainOf(list: T[]) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
-    id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null,
+    id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
     properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
@@ -49,7 +49,7 @@ describe('task runner', () => {
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
     const runner = mod.createTaskRunner({
-      spaces: { list: () => [space as never] }, brain: () => brain, log: (l) => logs.push(l), busy, ...more,
+      spaces: { list: () => [space as never] }, brain: () => brain, me: 'lasse', log: (l) => logs.push(l), busy, ...more,
       start: (_space, step) => { const problem = start(step); if (!problem) started.push(step); return problem },
     })
     await runner.tick()
@@ -116,6 +116,22 @@ describe('task runner', () => {
       { id: 's2', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
     ])
     expect(started).toHaveLength(1)
+  })
+
+  it('in a shared or unconfirmed space starts only the steps this member owns: first assignee, else author', async () => {
+    const list = (): T[] => [
+      { id: 'plan', status: 'active', author: 'dominik' },
+      { id: 'assigned', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas', assignee_ids: ['lasse'], author: 'dominik' },
+      { id: 'authored', status: 'planned', checkpoint: 'after', delegate: 'atlas', author: 'lasse' },
+      { id: 'theirs', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas', assignee_ids: ['dominik'], author: 'lasse' },
+      { id: 'their-own', status: 'planned', checkpoint: 'after', delegate: 'atlas', author: 'dominik' },
+    ]
+    for (const shared of [true, null]) {
+      const { started, brain } = await run(list(), { shared, name: 'Team' })
+      expect(started.map((s) => s.id).sort()).toEqual(['assigned', 'authored'])
+      expect(brain.posts.map((p) => p.path).sort()).toEqual(['/task/assigned/track', '/task/authored/track'])
+    }
+    expect((await run(list(), { shared: false, name: 'Main' })).started.map((s) => s.id).sort()).toEqual(['assigned', 'authored', 'their-own', 'theirs'])
   })
 
   it('keeps a step planned when it cannot start', async () => {
