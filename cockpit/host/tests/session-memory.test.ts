@@ -3,7 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cgroupSessionMemory } from '../src/infrastructure/platform/linux-cgroups.js'
-import { ceilingNotice } from '../src/domain/session-memory.js'
+import { ceilingNotice, heapCapEnv } from '../src/domain/session-memory.js'
 
 // A cgroup v2 tree is files: a plain folder stands in for it.
 const UNIT = '/user.slice/user-1000.slice/user@1000.service/app.slice/eml-cockpit-4317.service'
@@ -23,7 +23,27 @@ describe('cgroup session memory', () => {
   afterEach(() => { fs.rmSync(mount, { recursive: true, force: true }) })
 
   const open = (delegated = true, selfCgroup = `0::${UNIT}\n`) =>
-    cgroupSessionMemory({ mount, selfCgroup: () => selfCgroup, delegated: () => delegated, pid: 100 })
+    cgroupSessionMemory({ mount, selfCgroup: () => selfCgroup, delegated: () => delegated, pid: 100, proc: path.join(mount, 'proc') })
+
+  it('keeps the host and the brain out of swap', () => {
+    open()
+    expect(fs.readFileSync(path.join(root, 'host', 'memory.swap.max'), 'utf8')).toBe('0')
+  })
+
+  it('slows a session at a share of its ceiling and ranks it first for the OOM killer', () => {
+    const memory = open()
+    fs.mkdirSync(path.join(mount, 'proc', '4242'), { recursive: true })
+    memory.place('s', 4242, { memoryBytes: 4 * 1024 ** 3, swapBytes: 0 })
+    expect(fs.readFileSync(path.join(root, 'session-s', 'memory.high'), 'utf8')).toBe(String(3 * 1024 ** 3))
+    expect(fs.readFileSync(path.join(mount, 'proc', '4242', 'oom_score_adj'), 'utf8')).toBe('500')
+  })
+
+  it('a session is placed even when its OOM rank cannot be set', () => {
+    const lines: string[] = []
+    const memory = cgroupSessionMemory({ mount, selfCgroup: () => `0::${UNIT}\n`, delegated: () => true, pid: 100, proc: path.join(mount, 'no-proc'), log: (l) => lines.push(l) })
+    expect(memory.place('s', 7, { memoryBytes: 1024, swapBytes: 0 })).toBe(true)
+    expect(lines.join('\n')).toContain('OOM rank')
+  })
 
   it('moves the host into host/ and turns the controllers on for the sessions', () => {
     const memory = open()
@@ -87,6 +107,20 @@ describe('cgroup session memory', () => {
   it('a missing controller is named', () => {
     fs.writeFileSync(path.join(root, 'cgroup.controllers'), 'cpu pids\n')
     expect(open().unavailable).toContain('memory')
+  })
+})
+
+describe('heapCapEnv', () => {
+  it('caps the Node heap at half the ceiling', () => {
+    expect(heapCapEnv({ memoryBytes: 4 * 1024 ** 3, swapBytes: 0 }, undefined)).toEqual({ NODE_OPTIONS: '--max-old-space-size=2048' })
+  })
+  it('keeps other NODE_OPTIONS and an explicit cap', () => {
+    expect(heapCapEnv({ memoryBytes: 4 * 1024 ** 3, swapBytes: 0 }, '--enable-source-maps')).toEqual({ NODE_OPTIONS: '--enable-source-maps --max-old-space-size=2048' })
+    expect(heapCapEnv({ memoryBytes: 4 * 1024 ** 3, swapBytes: 0 }, '--max-old-space-size=6000')).toEqual({})
+  })
+  it('no ceiling, no cap; a tiny ceiling still leaves 512 MB', () => {
+    expect(heapCapEnv({ memoryBytes: null, swapBytes: 0 }, undefined)).toEqual({})
+    expect(heapCapEnv({ memoryBytes: 256 * 1024 ** 2, swapBytes: 0 }, undefined)).toEqual({ NODE_OPTIONS: '--max-old-space-size=512' })
   })
 })
 
