@@ -169,6 +169,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
     setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
+    restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
     takeOver: useCallback(() => sendInitRef.current?.(false), []),

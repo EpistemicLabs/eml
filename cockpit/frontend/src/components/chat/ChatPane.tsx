@@ -22,6 +22,7 @@ import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, ke
 import { useChatSession } from './chat-store';
 import { Composer, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
+import { RestartButton } from './RestartButton';
 import { ToolServersPanel } from './ToolServersPanel';
 import { SplitDialog } from './SplitDialog';
 import { CreatedMarker, MessageActions, OfferCard, SortCard, SplitMarker, type SplitMark } from './SplitParts';
@@ -500,7 +501,7 @@ export function ChatPane({
   spaceId?: string | null;
 }) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
-  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
+  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -602,10 +603,11 @@ export function ChatPane({
   const onSend = useCallback((text: string, images: string[]) => {
     if (text.trim() === '/mcp' && images.length === 0) { setServersOpen(true); return true; }
     if (isPaneCommand(text, 'split') && images.length === 0) { setSplitFrom({}); return true; }
+    if (text.trim() === '/restart' && images.length === 0) { restart(); return true; }
     const sent = send(text, images);
     if (sent) pinWhenSentArrives.current = true;
     return sent;
-  }, [send, paneId]);
+  }, [send, restart, paneId]);
 
   // Pinned on arrival, not on send: the message comes back from the host, and an input
   // shrinking in between scrolls the view up, which the library takes for the reader's doing.
@@ -713,6 +715,7 @@ export function ChatPane({
             error={toolServersError}
             onAsk={askToolServers}
             onChange={changeToolServer}
+            onRestart={restart}
             onClose={() => setServersOpen(false)}
           />
         )}
@@ -744,6 +747,7 @@ export function ChatPane({
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
           modelSlot={<div><ModelPicker chat={chat} onSetModel={setModel} /></div>}
+          endSlot={<RestartButton running={running} onRestart={restart} />}
           className="mt-0 border-t-0 px-1 pt-0.5 text-muted-foreground"
         />}
       </div>

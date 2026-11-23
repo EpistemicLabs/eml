@@ -32,6 +32,7 @@ import { greetingFor } from './session-greeting.js'
  *   client → { type:'send', text, id? }              (`id`: the one the view already shows it under)
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
+ *   client → { type:'restart' }                      (a new process for the same conversation)
  *   client → { type:'tool_servers' }
  *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
  *   client → { type:'set_mode', mode }
@@ -77,6 +78,7 @@ const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what change
 const SUMMARY_REMINDER = `Your turn ends without a visible reply. Write your closing summary now, as text, not in thinking. ${SUMMARY_SHAPE}`
 const QUESTIONS_REMINDER = `You said you have a question, but your reply does not ask it. Write the questions as visible text, as a numbered list, each one answerable on its own. ${SUMMARY_SHAPE}`
 
+export const RESTART_NOTICE = 'Restarted. MCP servers, settings and skills were loaded fresh.'
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
 interface ChatEntry {
@@ -403,7 +405,8 @@ export class ChatBridge {
           })
         } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
           this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
-        } else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
+        } else if (data.type === 'restart') void this.restart(entry).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
+        else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
         else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -562,6 +565,34 @@ export class ChatBridge {
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
+  }
+
+  /**
+   * A new process for the same conversation, the views staying on it: a running turn is
+   * stopped first, then it resumes under the same id and reads its MCP servers, settings and
+   * skills fresh. What it may use stays as it started (the ledger's tool profile).
+   */
+  private async restart(entry: ChatEntry): Promise<void> {
+    if (entry.closing) return
+    const runtime = entry.runtime
+    if (runtime) {
+      // Closing for the moment: a message now is refused rather than lost with the old process.
+      entry.closing = true
+      try {
+        if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
+        await runtime.close()
+      } finally {
+        entry.runtime = null
+        entry.closing = false
+      }
+      this.ctx.memory?.release(entry.sessionId)
+      this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
+    }
+    // Ended or deleted meanwhile: nothing to bring back.
+    if (entry.closed || this.entries.get(entry.sessionId) !== entry) return
+    this.emit(entry, { kind: 'notice', text: RESTART_NOTICE })
+    this.ensureStarted(entry)
+    this.log(`restarted chat session ${entry.sessionId}`)
   }
 
   /** A read-only view is being used, or a crash left the entry without a process: the conversation goes on. */

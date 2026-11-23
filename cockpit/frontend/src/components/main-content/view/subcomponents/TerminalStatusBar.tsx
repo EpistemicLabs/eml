@@ -15,6 +15,8 @@ type TerminalStatusBarProps = {
   live?: { model: string | null; contextTokens: number | null; contextWindow: number | null };
   /** Takes the model's place: a picker instead of a label. */
   modelSlot?: ReactNode;
+  /** After the context, at the right end: a control of the pane's own. */
+  endSlot?: ReactNode;
   className?: string;
 };
 
@@ -79,7 +81,7 @@ export function formatAge(iso: string, now: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function TerminalStatusBar({ session, live, modelSlot, className }: TerminalStatusBarProps) {
+export default function TerminalStatusBar({ session, live, modelSlot, endSlot, className }: TerminalStatusBarProps) {
   // Minute clock so the relative age stays honest without re-fetching.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -102,7 +104,7 @@ export default function TerminalStatusBar({ session, live, modelSlot, className 
   // clips); the right column keeps at least its content width.
   return (
     <div className={cn('@container flex-shrink-0 border-t border-border px-2 pt-1.5 text-caption text-foreground tabular-nums', className)}>
-      <div className="grid grid-cols-(--grid-status-bar) items-center gap-2 whitespace-nowrap">
+      <div className={cn('grid items-center gap-2 whitespace-nowrap', endSlot ? 'grid-cols-[var(--grid-status-bar)_auto]' : 'grid-cols-(--grid-status-bar)')}>
         {/* left: when · middle: model · right: context */}
         <span className="flex min-w-0 items-center gap-1.5 justify-self-start" title="Last message">
           <Clock aria-hidden className="size-3 flex-shrink-0" strokeWidth={1.8} />
@@ -134,6 +136,7 @@ export default function TerminalStatusBar({ session, live, modelSlot, className 
             <span>—</span>
           )}
         </span>
+        {endSlot}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 // The session's MCP servers: what is there, on/off, reconnect. Signing in stays
 // in the terminal's /mcp: the SDK has no call for it.
 import { useEffect, useRef, type ReactNode } from 'react';
-import { AlertTriangle, Check, CircleOff, Loader2, Power, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Check, CircleOff, Loader2, Power, RefreshCw, RotateCcw, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS } from '@/shared/view/ui';
@@ -53,11 +53,13 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
+export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, onClose }: {
   servers: ToolServer[] | null;
   error: string | null;
   onAsk: () => boolean;
   onChange: (name: string, action: ToolServerAction) => boolean;
+  /** A new process for the session: it reads its servers from the configuration again. */
+  onRestart: () => void;
   onClose: () => void;
 }) {
   const ask = useRef(onAsk);
@@ -75,7 +77,10 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
     <div className="max-h-72 overflow-auto rounded-xl border border-border bg-card p-2 text-ui">
       <div className="flex items-center justify-between pb-1">
         <span className="font-semibold">MCP servers</span>
-        <IconButton label="Close MCP servers" onClick={onClose}><X aria-hidden className="size-3.5" /></IconButton>
+        <span className="flex items-center gap-0.5">
+          <IconButton label="Restart session: loads new or changed servers" onClick={onRestart}><RotateCcw aria-hidden className="size-3.5" /></IconButton>
+          <IconButton label="Close MCP servers" onClick={onClose}><X aria-hidden className="size-3.5" /></IconButton>
+        </span>
       </div>
       {error && <div role="alert" className="pb-1 text-stopped-ink break-words">{error}</div>}
       {servers === null && <div className="text-muted-foreground">Loading…</div>}
