@@ -13,10 +13,11 @@ import { durationMs } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { copyTextToClipboard } from '@/utils/clipboard';
-import { useAppUpdate } from '@/hooks/useAppUpdate';
+import { useAppUpdate, type UpdateChannel } from '@/hooks/useAppUpdate';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import SettingsSegmented from '../SettingsSegmented';
 import { SETTINGS_BUTTON_CLASS, SETTINGS_INPUT_CLASS } from '../../constants/constants';
 
 export default function AboutTab() {
@@ -111,17 +112,28 @@ const TOKEN_SOURCE: Record<'file' | 'gh' | 'none', string> = {
   none: 'No token',
 };
 
+const CHANNELS: ReadonlyArray<{ value: UpdateChannel; label: string }> = [
+  { value: 'stable', label: 'Stable' },
+  { value: 'alpha', label: 'Alpha (experimental)' },
+];
+
+const CHANNEL_DESCRIPTION: Record<UpdateChannel, string> = {
+  stable: 'Releases only.',
+  alpha: 'Early builds for testing. Things may break; your brain stays compatible only while everyone in a shared space runs the same alpha.',
+};
+
 function formatTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : 'never';
 }
 
 /**
- * Settings › About › Updates: the release the host last saw on GitHub, check
+ * Settings › About › Updates: the channel (stable, or alpha with the
+ * experimental pre-releases), the release the host last saw on GitHub, check
  * now, install, go back, and the GitHub token (write-only: the browser can set
  * or remove it, never read it). A dev cockpit runs from source and has no updater.
  */
 function UpdatesCard() {
-  const { status, phase, error, check, apply, rollback, setToken } = useAppUpdate();
+  const { status, phase, error, check, apply, rollback, setToken, setChannel } = useAppUpdate();
   const [token, setTokenInput] = useState('');
 
   if (!status) {
@@ -146,6 +158,15 @@ function UpdatesCard() {
 
   return (
     <SettingsCard divided>
+      <SettingsRow label="Channel" description={CHANNEL_DESCRIPTION[status.channel]}>
+        <SettingsSegmented
+          value={status.channel}
+          options={CHANNELS}
+          onChange={(channel) => void setChannel(channel)}
+          ariaLabel="Update channel"
+          disabled={busy}
+        />
+      </SettingsRow>
       <SettingsRow
         label="Release"
         description={

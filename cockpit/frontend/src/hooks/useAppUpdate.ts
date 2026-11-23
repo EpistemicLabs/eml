@@ -3,8 +3,11 @@
 // then waits for /api/about to report the new version and reloads the page.
 import { useCallback, useEffect, useState } from 'react';
 
+export type UpdateChannel = 'stable' | 'alpha';
+
 export type AppUpdateStatus = {
   managed: boolean;
+  channel: UpdateChannel;
   current: string;
   previous: string | null;
   latest: { version: string; url: string; publishedAt: string | null } | null;
@@ -133,5 +136,18 @@ export function useAppUpdate() {
     return res.ok;
   }, []);
 
-  return { status, phase, error, refresh, check, apply, rollback, setToken };
+  // The host checks the new channel right away and answers with the status.
+  const setChannel = useCallback(async (channel: UpdateChannel) => {
+    setPhase('checking');
+    setError(null);
+    try {
+      const res = await post('/api/app-update/channel', { channel });
+      if (res.ok) setStatus((await res.json()) as AppUpdateStatus);
+      else setError(await errorMessage(res));
+    } finally {
+      setPhase('idle');
+    }
+  }, []);
+
+  return { status, phase, error, refresh, check, apply, rollback, setToken, setChannel };
 }
