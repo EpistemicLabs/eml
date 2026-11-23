@@ -15,7 +15,7 @@ import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
 import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
-import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
+import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
 import { greetingFor } from './session-greeting.js'
@@ -780,10 +780,14 @@ export class ChatBridge {
     // The same environment a terminal session gets. The SDK replaces the
     // environment rather than merging, and it never carries a login token.
     const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...launchEnv } = launch.env
-    const env = {
+    const merged: Record<string, string> = {
       ...baseAgentEnv(),
       ...launchEnv,
       ...this.ctx.sessionEnv,
+    }
+    const env = {
+      ...merged,
+      ...(this.ctx.limits && this.ctx.memory?.unavailable === null ? heapCapEnv(this.ctx.limits().session, merged.NODE_OPTIONS) : {}),
       COCKPIT_SESSION_ID: sessionId,
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
