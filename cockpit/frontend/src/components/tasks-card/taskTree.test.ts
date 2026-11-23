@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AllSession } from '@/components/sidebar/allSessions';
 import type { Board, BoardTask } from '@/lib/task-board';
 
-import { buildTaskTree, taskState, type TreeInput, type TreeNode } from './taskTree';
+import { buildTaskTree, moreOpenTasks, taskState, type TreeInput, type TreeNode } from './taskTree';
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null,
@@ -132,5 +132,14 @@ describe('a task\'s dot', () => {
     expect(taskState(task('t', { turn: 'waiting_on_others' }))).toMatchObject({ hollow: true });
     expect(taskState(task('t', { turn: null, status: 'planned' }))).toEqual({ hue: 'waiting', hollow: true, label: 'Parked' });
     expect(taskState(task('t', { status: 'invalidated', turn: null }))).toEqual({ hue: 'done', hollow: false, label: 'Dropped' });
+  });
+});
+
+describe('more open tasks of a section\'s project', () => {
+  it('counts the open tasks of the project its trees leave out', () => {
+    const tasks = [task('root', { sessionIds: ['s1'] }), task('other'), task('closed', { status: 'resolved' }), task('elsewhere', { project: 'code' })];
+    const [ui] = buildTaskTree(input({ board: board(tasks), sessions: [session('s1', { taskId: 'root' })], desk: desk('s1') }));
+    expect(ui.project).toEqual({ spaceId: 'main', id: 'ui' });
+    expect(moreOpenTasks(ui, tasks)).toBe(1);
   });
 });

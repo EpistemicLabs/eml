@@ -410,18 +410,28 @@ export function snoozeTimes(now: number): { tomorrow: string; monday: string } {
   return { tomorrow: at9(1), monday: at9(((8 - weekday) % 7) || 7) };
 }
 
+/** The statuses of a task that is still open. */
+export const OPEN_STATUSES: ReadonlySet<string> = new Set(['planned', 'active']);
+
 /**
  * Start a session of the user's own on a task (POST /api/v1/tasks/<id>/start): the host binds the task and
  * queues the session; this page claims it and opens the pane (in chat when that is the user's view).
- * False when the host could not (an older host has no such route): the caller falls back to a terminal pane.
+ * Only an older host without the route answers no_route, and only then may the caller start the task in a
+ * terminal pane instead. A refusal starts nothing; unknown (no answer, a server error, an unreadable answer) means
+ * the host may have started the session, so the caller must not start another one.
  */
-export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<boolean> {
+export type StartOutcome = { kind: 'started'; sessionId: string | null } | { kind: 'refused'; message: string } | { kind: 'no_route' } | { kind: 'unknown' };
+export async function startTaskSession(task: { id: string; spaceId: string }, opts: { projectId?: string; prompt?: string; title?: string; deskId?: string } = {}): Promise<StartOutcome> {
   try {
     const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/start`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: task.spaceId, ...opts }),
     });
-    return res.ok;
+    const body = await res.json().catch(() => null) as { sessionId?: string; error?: { code?: string; message?: string } } | null;
+    if (res.ok) return { kind: 'started', sessionId: body?.sessionId ?? null };
+    if ((res.status === 404 || res.status === 405) && !body?.error?.code) return { kind: 'no_route' };
+    if (res.status < 500 && body?.error?.code) return { kind: 'refused', message: body.error.message ?? 'The cockpit host refused to start it.' };
+    return { kind: 'unknown' };
   } catch {
-    return false;
+    return { kind: 'unknown' };
   }
 }

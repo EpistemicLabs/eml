@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR } from '@/hooks/useVisibleViewportHeight';
 import { cn } from '@/lib/utils';
-import { NavFooter, NavHeader, NavRail, SpacesNav, TaskNav } from '../nav/SidebarNav';
+import { NavFooter, NavHeader, NavRail, SearchTasks, SpacesNav, TaskNav } from '../nav/SidebarNav';
 import type { SidebarDrawer, SidebarProps } from '../types';
 import { useSidebarState } from '../useSidebarState';
 import { SidebarErrorLine } from './subcomponents/SidebarChrome';
@@ -52,6 +52,7 @@ export default function Sidebar({ drawer, onShowSettings }: SidebarProps & { dra
         onOpenAbout={() => showSettings('about')}
       />
       <SidebarNewSession onError={controller.reportError} />
+      <SearchTasks onNavigate={drawer?.onClose} />
       <SidebarErrorLine error={controller.error} onDismiss={controller.dismissError} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
         <TaskNav onNavigate={drawer?.onClose} />

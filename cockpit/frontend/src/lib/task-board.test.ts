@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, snoozeTimes, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -107,5 +107,32 @@ describe('Plan', () => {
     ];
     expect(quietProjects(rows, projects, { everyone: false, spaceId: null }).map((p) => p.name)).toEqual(['AktivDog', 'flairmax', 'Portfolio']);
     expect(quietProjects(rows, projects, { everyone: false, spaceId: 'ebisu' }).map((p) => p.name)).toEqual(['Portfolio']);
+  });
+});
+
+describe('starting a session on a task', () => {
+  const answer = (status: number, body: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('answers the started session', async () => {
+    answer(202, { sessionId: 's1' });
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'started', sessionId: 's1' });
+  });
+
+  it('passes the host\'s refusal on, so nothing starts on a closed task', async () => {
+    answer(409, { error: { code: 'task_closed', message: 'The task is closed.', retry: false } });
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'refused', message: 'The task is closed.' });
+  });
+
+  it('says the route is missing only when an older host has none', async () => {
+    answer(404, 'Not found');
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'no_route' });
+  });
+
+  it('does not know when the host did not answer, since it may have started the session already', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
+    answer(502, {});
+    expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
   });
 });

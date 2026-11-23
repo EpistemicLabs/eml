@@ -9,12 +9,15 @@ import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState'
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { readable, startTaskSession, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { Dot, Empty, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Dot, Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Search } from 'lucide-react';
+import { openTaskSearch, tellStartProblem } from '@/components/command-palette/openTask';
+import { MOD } from '@/components/top-bar/shortcuts';
 import { addWorkerPane, getSessionView, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
-import { buildTaskTree, type DeskSession, type NodeState, type ProjectName, type SessionLeaf, type TreeNode } from './taskTree';
+import { moreOpenTasks, buildTaskTree, type DeskSession, type NodeState, type ProjectName, type SessionLeaf, type TreeNode } from './taskTree';
 
 const FOLDS_KEY = 'cockpit-tasks-card-folds';
 
@@ -95,8 +98,9 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     // A task without a session: the host starts one on it with the task bound, and it opens in chat when that is
     // the user's view; an older host can't, so then a terminal pane starts it (the task-run path).
     const prompt = `Work on task ${task.id} ("${readable(task.title)}") together with the user. Start by saying where it stands and what you would do next.`;
-    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((started) => {
-      if (started) return;
+    void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: readable(task.title), deskId: desk.id }).then((outcome) => {
+      tellStartProblem(outcome, readable(task.title));
+      if (outcome.kind !== 'no_route') return;
       addWorkerPane({
         fromSessionId: null, projectId: projectIdOfBrain(task.project!), title: readable(task.title), deskId: desk.id, taskId: task.id, prompt,
         ...(spaceKeyOf(task.spaceId) !== null ? { spaceId: spaceKeyOf(task.spaceId) } : {}),
@@ -159,8 +163,23 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
           <section key={section.key} aria-label={section.title} className="flex flex-col gap-1">
             <h3 className={cn(LABEL, 'px-2 text-foreground')}>{section.title}</h3>
             <Tree label={section.title}>{section.nodes.map(renderNode)}</Tree>
+            {(() => {
+              const more = moreOpenTasks(section, board?.tasks ?? []);
+              return more > 0 && section.project ? (
+                <button type="button" onClick={() => openTaskSearch(section.project!.id)} className={cn('min-h-(--target-min) self-start rounded-md px-2 text-caption text-muted-foreground hover:text-foreground', FOCUS)}>
+                  {more} more open task{more === 1 ? '' : 's'} in {section.title}
+                </button>
+              ) : null;
+            })()}
           </section>
         ))}
+        {!isPending && (
+          <button type="button" onClick={() => openTaskSearch()} className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg border border-dashed border-border px-2 text-ui text-muted-foreground hover:text-foreground', FOCUS)}>
+            <Search aria-hidden className="size-3.5" />
+            <span className="flex-1 text-left">Open task…</span>
+            <kbd className="font-code text-caption">{MOD}K</kbd>
+          </button>
+        )}
       </div>
       <div className="flex flex-col gap-1 border-t border-border px-3 py-2">
         <label className="flex min-h-(--target-min) items-center justify-between gap-2 text-ui text-foreground">

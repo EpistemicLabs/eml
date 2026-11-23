@@ -178,6 +178,8 @@ html.dark {
   --duration-tooltip: 300ms;
   /* How long a passing confirmation shows: a toast, and a short one in place ("Copied"). */
   --duration-toast: 3200ms;
+  /* A toast that offers Undo stays long enough to reach for it. */
+  --duration-toast-undo: 8000ms;
   --duration-feedback: 1500ms;
   --pulse-iterations: 3;
   /* Layers sit around the app's own: chrome bars at 40, dialogs and drawers at 50. */
