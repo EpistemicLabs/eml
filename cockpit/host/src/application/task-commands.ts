@@ -194,7 +194,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   /**
    * Work on it now ended once every session opened on the task since is put away (or none opened
    * within TOGETHER_GRACE_MS). The agent was there to work with the owner, not alone: its delegation
-   * is released with a journal line, so the runner never starts it on its own (B2), and the board
+   * is released with a journal line, so the runner never starts it on its own, and the board
    * offers "Hand to <agent>". A later hand-over replaced it: nothing to release.
    */
   const releaseTogether = async (now: number) => {

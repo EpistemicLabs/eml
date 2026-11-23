@@ -228,6 +228,36 @@ describe('task router', () => {
     expect(brain.task.properties).not.toHaveProperty('waiting_on')
   })
 
+  it('a held question survives a host restart and still comes up when the first wait is answered', async () => {
+    const SECOND = HANDOFF.replace('Ship the shorter headline?', 'Use the blue variant?')
+    const file = join(home, 'held-waits-restart.json')
+    const ledger = new SessionLedger()
+    const brain = fakeBrain({ id: 't33', status: 'active', properties: {} })
+    const make = () => router.createTaskRouter({
+      ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, owner: 'lasse',
+      held: new router.HeldWaitStore(file), log: () => {}, now: () => new Date('2026-11-17T09:00:00Z'),
+    })
+    ledger.recordSpawn('s37', null, 'bp-eml', 'claude', false, 't33')
+    ledger.recordSpawn('s38', null, 'bp-eml', 'claude', false, 't33')
+    const before = make()
+    await before.turnEnded('s37', HANDOFF)
+    await before.turnEnded('s38', SECOND)
+    // The host restarts: a new router reads the held waits back from the file.
+    const after = make()
+    await after.answered('s37')
+    expect(brain.task.properties).toMatchObject({ waiting_on: { session_id: 's38', why: 'Use the blue variant?' } })
+    await after.answered('s38')
+    expect(brain.task.properties).not.toHaveProperty('waiting_on')
+    expect(new router.HeldWaitStore(file).get('t33')).toEqual([])
+  })
+
+  it('reads a missing or broken held-waits file as empty', () => {
+    const broken = join(home, 'held-waits-broken.json')
+    writeFileSync(broken, '{ not json')
+    expect(new router.HeldWaitStore(broken).get('t1')).toEqual([])
+    expect(new router.HeldWaitStore(join(home, 'none.json')).get('t1')).toEqual([])
+  })
+
   it('takes over the wait of a session that was put away (B4)', async () => {
     const { ledger, brain, r } = setup({ id: 't32', status: 'active', properties: { waiting_on: { who: 'lasse', kind: 'question', why: 'old', since: 'x', session_id: 's35' } } })
     ledger.recordSpawn('s35', null, 'bp-eml', 'claude', false, 't32')

@@ -165,6 +165,27 @@ describe('the task board', () => {
     await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
   });
 
+  it('offers to hand a task to the agent Work on it now released, with that agent chosen', async () => {
+    const released = (): Board => ({
+      ...board(),
+      spaces: [{ id: 'main', name: 'Main', agents: ['motti', 'atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }],
+      tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, handTo: 'atlas' } : t)),
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(released()), { status: 200 });
+      if (init?.method === 'POST') posts.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ opId: 'op-1', state: 'pending', undoUntil: new Date(Date.now() + 8000).toISOString() }), { status: 202 });
+    }));
+    mount();
+    fireEvent.click(await screen.findByText('Demo meeting prep'));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByRole('button', { name: 'Delegate now' })).toBeNull();
+    fireEvent.click(within(sheet).getAllByRole('button', { name: 'Hand to Atlas' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delegate to Atlas' }));
+    await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/hand-over'));
+    expect(posts[0].body).toMatchObject({ mode: 'now', delegate: 'atlas' });
+  });
+
   it('snoozes an Inbox item to tomorrow 09:00', async () => {
     setTaskView('inbox');
     mount();
