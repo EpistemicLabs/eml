@@ -86,6 +86,7 @@ import { createSplitSession } from './application/split-session.js'
 import { createSplitBrief } from './application/split-brief.js'
 import { createSortSession } from './application/sort-session.js'
 import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
+import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { projectIdForBrain } from './project-registry.js'
 
@@ -699,6 +700,12 @@ async function main() {
     pendingCommands: () => taskCommands?.pending() ?? [],
     now: () => Date.now(),
     log,
+    // The space's log head, straight from its brain (brain GET /head): what the board watches to refresh live.
+    head: async (space, after, waitMs) => {
+      const brain = new HttpClient({ url: space.url, token: space.token, timeoutMs: waitMs + 10_000 })
+      const answer = await brain.get('/head', { ...(after !== null ? { after } : {}), wait: waitMs }) as { seq: number }
+      return answer.seq
+    },
   })
   const taskCommandStore = new TaskCommandStore()
   taskCommands = createTaskCommands({
@@ -809,6 +816,7 @@ async function main() {
   })
   taskCommands.every(TASK_COMMAND_TICK_MS)
   taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
+  taskBoard.watch({ viewedMs: TASK_BOARD_VIEWED_MS })
 
   // Split off a topic from a session (application/split-session.ts); its commands share the task commands' file.
   const splitSession = createSplitSession({
@@ -927,8 +935,11 @@ async function main() {
 const RUNNER_TICK_MS = 60_000
 /** Pending task board commands are applied once their undo window is over. */
 const TASK_COMMAND_TICK_MS = 1000
-/** The task board refreshes this often while a page looks at it, and not at all while none does. */
-const TASK_BOARD_REFRESH_MS = 20_000
+/**
+ * The task board refreshes this often while a page looks at it, and not at all while none does: a safety net, as
+ * changes arrive within a second through its watch on the brains' log heads.
+ */
+const TASK_BOARD_REFRESH_MS = 60_000
 const TASK_BOARD_VIEWED_MS = 120_000
 const RECOVERY_GAP_MS = 10_000
 // Waiting longer than this for room, the worker goes anyway: a full machine must not hold it forever.

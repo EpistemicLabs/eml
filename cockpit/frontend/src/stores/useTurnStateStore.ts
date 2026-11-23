@@ -138,6 +138,8 @@ export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void)
   });
 
   source.addEventListener('snapshot', (message) => {
+    // A (re)connect: a change may have gone by while the stream was down, so the task board reloads too.
+    window.dispatchEvent(new CustomEvent('cockpit:tasks', { detail: { changes: [] } }));
     const events = JSON.parse((message as MessageEvent<string>).data) as TurnEvent[];
     const turns: Record<string, TurnInfo> = {};
     for (const { sessionId, state, since } of events) turns[sessionId] = { state, since };

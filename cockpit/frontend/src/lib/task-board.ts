@@ -97,8 +97,11 @@ export interface Board {
 // ---- data ----
 
 export const BOARD_KEY = ['task-board'] as const;
-/** How often the page asks again when no change arrived over the event stream. */
-const BOARD_POLL_MS = 20_000;
+/**
+ * How often the page asks again when no change arrived over the event stream: only a safety net, since the host
+ * sends the `tasks` event within about a second of any change (it watches the brains' log heads).
+ */
+const BOARD_POLL_MS = 60_000;
 
 export async function fetchBoard(): Promise<Board> {
   const res = await fetch('/api/v1/tasks/board', { headers: { Accept: 'application/json' } });
@@ -106,7 +109,7 @@ export async function fetchBoard(): Promise<Board> {
   return res.json() as Promise<Board>;
 }
 
-/** The board, refreshed when the host reports a change (the `tasks` event) and every 20 s. */
+/** The board, refreshed when the host reports a change (the `tasks` event), on reconnect, and every 60 s. */
 export function useTaskBoard() {
   const client = useQueryClient();
   useEffect(() => {
