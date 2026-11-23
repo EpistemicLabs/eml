@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { inboxItems, itemKey, type InboxTask } from '../src/domain/inbox.js'
 
 const NOW = Date.parse('2026-11-19T10:00:00Z')
-const t = (id: string, waitingOn?: InboxTask['waitingOn']): InboxTask => ({ id, space: 'main', title: id, waitingOn })
+type W = Omit<InboxTask['waits'][number], 'id'>
+const t = (id: string, ...waits: W[]): InboxTask => ({ id, space: 'main', title: id, waits: waits.map((w, i) => ({ id: w.session_id ?? `w${i}`, ...w })) })
 
 describe('the Inbox', () => {
   const tasks = [
@@ -34,6 +35,11 @@ describe('the Inbox', () => {
 
     const newer = [t('asked', { who: 'lasse', kind: 'question', why: 'And the other list?', since: '2026-11-19T09:45:00Z' })]
     expect(inboxItems(newer, 'lasse', snoozes, NOW).live.map((i) => i.text)).toEqual(['And the other list?'])
+  })
+
+  it('lists every wait of a task on the viewer as an item of its own, each opening its session', () => {
+    const two = [t('both', { who: 'lasse', kind: 'question', why: 'First?', since: '2026-11-19T08:00:00Z', session_id: 'a' }, { who: 'lasse', kind: 'review', why: 'Review: done', since: '2026-11-19T09:00:00Z', session_id: 'b' }, { who: 'kim', kind: 'outside', since: '2026-11-19T09:30:00Z' })]
+    expect(inboxItems(two, 'lasse', [], NOW).live.map((i) => [i.kind, i.sessionId])).toEqual([['review', 'b'], ['question', 'a']])
   })
 
   it('keys an item by its task and the moment its wait began', () => {

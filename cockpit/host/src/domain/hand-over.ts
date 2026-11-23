@@ -1,4 +1,5 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
+import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 
 /**
  * Hand over: give a task to an agent while its owner stays (decision task-assignee-owner-and-agent-delegate).
@@ -52,6 +53,8 @@ export interface HandOverTask {
   checkpoint?: string
   /** Schema 23: the hand-over as one value; absent on a task without a delegate. */
   delegation?: Delegation
+  /** The task's waits (brain schema 23); without them, the one waitingOn stands for. */
+  waits?: Wait[]
   waitingOn?: WaitingOn
 }
 
@@ -72,7 +75,7 @@ export interface TaskPatch {
   delegation?: Delegation | null
   delegate?: string | null
   checkpoint?: string | null
-  waiting_on?: WaitingOn | null
+  waits?: Wait[] | null
 }
 
 /**
@@ -121,10 +124,13 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (req.mode === 'together') lines.push(`Working on it with ${req.delegate} in desk ${req.desk}; the owner stays.`)
 
   const plan: HandOverPlan = { patch, journal: '' }
-  const w = task.waitingOn
-  if (w && w.who === task.owner && waitKind(w) === 'question') {
-    const question = w.why ?? 'an open question (see the session)'
-    patch.waiting_on = null
+  // The owner's open questions leave the task's waits; every other wait stays.
+  const waits = waitsOfTask(task)
+  const asked = waits.filter((w) => w.who === task.owner && waitKind(w) === 'question')
+  if (asked.length > 0) {
+    const question = asked.map((w) => w.why ?? 'an open question (see the session)').join(' · ')
+    const left = waits.filter((w) => !asked.includes(w))
+    patch.waits = waitsBody(left).waits
     plan.carriedQuestion = question
     plan.brief = `The owner had an open question when this task was handed to you. Answer or settle it first: "${question}"`
     lines.push(`Handed over with the open question: "${question}" It goes into ${req.delegate}'s brief.`)
@@ -135,17 +141,19 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   return { ok: true, plan }
 }
 
+const waitsOfTask = (task: HandOverTask): Wait[] => task.waits ?? waitsOf({ waiting_on: task.waitingOn })
+
 /**
  * The change that puts a task back as it was before a hand-over: its delegation as it was (mode and
  * all), or, for a task that had none, the flat fields (a checkpoint without a delegate from before
- * schema 23 stays as it was).
+ * schema 23 stays as it was); its waits as they were.
  */
 export function planUndo(before: HandOverTask): { patch: TaskPatch; journal: string } {
   const handOver: TaskPatch = before.delegation
     ? { delegation: before.delegation }
     : { delegate: before.delegate ?? null, checkpoint: before.checkpoint ?? null }
   return {
-    patch: { ...handOver, waiting_on: before.waitingOn ?? null, status: before.status },
+    patch: { ...handOver, waits: waitsBody(waitsOfTask(before)).waits, status: before.status },
     journal: 'Hand-over undone; the task is back as it was.',
   }
 }

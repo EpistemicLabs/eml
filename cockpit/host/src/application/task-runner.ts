@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { worksAlone } from '../domain/hand-over.js'
 import { runsHere } from '../domain/task-owner.js'
+import { delegatedNextRun, liveRunsByTask, runsOf, type RunFacts } from '../domain/run-liveness.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -19,8 +20,10 @@ import { projectIdForBrain } from '../project-registry.js'
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
  *   - nobody is waited on (waiting_on), its hand-over can no longer be undone,
- *     and no job of its own will start it at a set time;
- *   - no session works on it already (a worker someone started on it);
+ *     and no job of its own will start it at a set time (here, or mirrored into
+ *     its delegation.next_run_at by another member's cockpit);
+ *   - no session works on it already (a worker someone started on it): one of
+ *     this cockpit's, or a synced run with a live lease (domain/run-liveness.ts);
  *   - in a shared space, this cockpit's member owns it (domain/task-owner.ts):
  *     each member's cockpit starts its own member's steps;
  *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
@@ -40,8 +43,11 @@ export interface TaskRunnerDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** This cockpit's member (the config handle): in a shared space it starts only their steps. */
   me: string
-  /** A session works on this task already (a worker started on it by hand or by a session). */
-  busy?(taskId: string): boolean
+  /**
+   * A session works on this task already (a worker started on it by hand or by a session). `runs`: the
+   * task's synced runs with a live lease, this cockpit's and other members' alike.
+   */
+  busy?(taskId: string, runs: RunFacts[]): boolean
   /** Its hand-over can still be undone: nothing starts until the undo window is over. */
   held?(taskId: string): boolean
   /** A job of the task will start it at a set time. */
@@ -60,7 +66,7 @@ interface Task {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: { mode?: string }; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string>; delegation?: { mode?: string; next_run_at?: string } }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -102,13 +108,18 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     }
     const listed = await brain.get('/list', { type: 'task', status: 'planned', limit: 200 }) as { engrams?: Task[] }
     const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && worksAlone(t))
+    // A brain from before schema 23 has no runs: then only this cockpit's sessions count.
+    const runs = candidates.length === 0 ? new Map<string, RunFacts[]>() : liveRunsByTask(runsOf(
+      ((await brain.get('/object/run').catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [],
+    ), Date.now())
     const started = new Map<string, number>()
     for (const candidate of candidates) {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
       if (!step.properties?.delegate || !worksAlone(step) || step.properties.waiting_on?.who) continue
       if (!runsHere(space.shared, step, deps.me)) continue
-      if (deps.busy?.(step.id) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
+      if (deps.busy?.(step.id, runs.get(step.id) ?? []) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
+      if (delegatedNextRun(step.properties.delegation, Date.now())) continue
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
       const group = parentId ?? STANDALONE

@@ -6,6 +6,7 @@ import { planHandOver, planUndo, type Delegation, type HandOverRefusal, type Han
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import { runsHere } from '../domain/task-owner.js'
+import { waitsOf } from '../domain/task-waits.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
@@ -143,7 +144,7 @@ interface BrainTask {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: Delegation; waiting_on?: WaitingOn }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: Delegation; waits?: unknown; waiting_on?: WaitingOn }
 }
 
 export interface TaskCommandsDeps {
@@ -176,7 +177,7 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
-  waitingOn: t.properties?.waiting_on,
+  waits: waitsOf(t.properties),
 })
 
 /**
@@ -368,7 +369,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       } else if (command.kind === 'review') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null }, 'Looks good: the owner reviewed the result and closed the task.')
+          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null }, 'Looks good: the owner reviewed the result and closed the task.')
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'close') {

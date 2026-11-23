@@ -25,6 +25,8 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
+import { runsBlockRunner, RUN_RENEW_MS } from './domain/run-liveness.js'
+import { createRunRecords } from './application/run-records.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -44,7 +46,7 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
-import { createTaskRouter, HeldWaitStore } from './application/task-router.js'
+import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createCycles } from './application/cycles.js'
@@ -368,7 +370,7 @@ async function main() {
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
-    ledger, spaces, brain: taskBrain, owner, log, held: new HeldWaitStore(),
+    ledger, spaces, brain: taskBrain, owner, log,
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -389,11 +391,15 @@ async function main() {
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
-    // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
-    busy: (taskId) => sessionsBlockRunner(
-      ledger.list().filter((e) => e.taskId === taskId).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
-      taskCommands?.delegatedAt(taskId) ?? null,
-    ),
+    // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts);
+    // a live run of a session this cockpit does not have does: someone works on it elsewhere (domain/run-liveness.ts).
+    busy: (taskId, runs) => {
+      const own = ledger.list().filter((e) => e.taskId === taskId)
+      return sessionsBlockRunner(
+        own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
+        taskCommands?.delegatedAt(taskId) ?? null,
+      ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)))
+    },
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.
     held: (taskId) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false,
@@ -691,6 +697,30 @@ async function main() {
   }, async () => (await pluginStates()).time)
   turns.on('turn', (event: TurnEvent) => { void time.turn(event) })
 
+  // Synced run records (application/run-records.ts): each session on a task as a run in its brain,
+  // with a lease while its process runs, and the jobs' next runs in their tasks' delegation.
+  const runRecords = createRunRecords({
+    spaces: () => spaces.list(),
+    brain: taskBrain,
+    me: owner,
+    sessions: () => ledger.list().map((e) => ({
+      sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId).id, createdAt: e.createdAt,
+      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId,
+    })),
+    turnOf: (sessionId) => turns.get(sessionId)?.state,
+    processRuns: (sessionId) => bridge.isRunning(sessionId) || chat.isRunning(sessionId),
+    agentOf: (space) => space.agent,
+    jobs: () => jobStore.list().map((job) => ({
+      spaceId: spaces.resolve(job.spaceId).id, taskId: job.taskId, runs: !job.endedAt && !isHeld(job), nextRunAt: job.nextRunAt,
+    })),
+    now: () => Date.now(),
+    log,
+  })
+  turns.on('turn', () => runRecords.poke())
+  // Every minute: a session put away or gone ends its run, a job's next run moves; the lease renews every RUN_RENEW_MS.
+  runRecords.every(Math.min(60_000, RUN_RENEW_MS))
+  void runRecords.sync()
+
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
@@ -926,6 +956,8 @@ async function main() {
   })
   workers.start()
   jobRunner.start()
+  // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
+  void taskRouter.adoptHeldWaits()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {

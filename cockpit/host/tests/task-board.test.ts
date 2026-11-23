@@ -35,10 +35,15 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; runs?: Array<Record<string, unknown>> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
+  if (opts.runs) {
+    const brain = brains.get('main')!
+    const get = brain.get.bind(brain)
+    brain.get = async (path, query) => path === '/object/run' ? { objects: opts.runs } : get(path, query)
+  }
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   const deps: TaskBoardDeps = {
@@ -61,6 +66,40 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('reads other members\' runs with a live lease and a next run mirrored into the delegation (step 3)', async () => {
+    const run = (id: string, task_id: string, state: string, lease_until: string | null) => ({ id, task_id, member: 'dominik', agent: 'motti', state, lease_until })
+    const delegated = { delegate: 'atlas', checkpoint: 'after' }
+    const { board } = setup({
+      main: [
+        mine('elsewhere', delegated),
+        mine('between-turns', delegated),
+        mine('lease-over', delegated),
+        mine('ended', delegated),
+        mine('local', delegated),
+        mine('their-job', { ...delegated, delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone', next_run_at: '2026-11-20T08:00:00.000Z' } }, 'planned'),
+        mine('past-job', { ...delegated, delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone', next_run_at: '2026-11-19T08:00:00.000Z' } }, 'planned'),
+      ],
+      working: ['local'],
+      runs: [
+        run('r1', 'elsewhere', 'running', '2026-11-19T10:10:00.000Z'),
+        run('r2', 'between-turns', 'idle', '2026-11-19T10:10:00.000Z'),
+        run('r3', 'lease-over', 'running', '2026-11-19T09:59:00.000Z'),
+        run('r4', 'ended', 'ended', '2026-11-19T10:10:00.000Z'),
+        // this host's own session on it: counted once, from the ledger
+        { ...run('s0', 'local', 'idle', '2026-11-19T10:10:00.000Z'), member: 'lasse' },
+      ],
+    })
+    const model = await board.refresh()
+    const byId = new Map(model.tasks.map((t) => [t.id, t]))
+    expect(byId.get('elsewhere')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: [] })
+    expect(byId.get('between-turns')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('lease-over')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
+    expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
+    expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
+    expect(byId.get('their-job')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-20T08:00:00.000Z' })
+    expect(byId.get('past-job')).toMatchObject({ turn: 'agent_scheduled', group: 'runner', nextRunAt: null })
+  })
+
   it('offers to hand a task to the agent Work on it now released, only while nobody is delegated (B2)', async () => {
     const { board } = setup({
       main: [mine('released'), mine('handed-again', { delegate: 'atlas', checkpoint: 'after' }, 'planned'), mine('plain')],
@@ -98,6 +137,28 @@ describe('the task board', () => {
     expect(model.inbox.map((i) => [i.kind, i.taskId])).toEqual([['question', 'asked'], ['review', 'review']])
     expect(model.spaces).toEqual([{ id: 'main', name: 'Main', agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }])
     expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
+  })
+
+  it('reads the turn from the most urgent of a task\'s waits, and lists each wait on the viewer in the Inbox', async () => {
+    const waits = [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:00:00.000Z', session_id: 's1' },
+      { id: 's2', who: 'lasse', kind: 'review', why: 'Review: draft', since: '2026-11-19T09:00:00.000Z', session_id: 's2' },
+    ]
+    const { board } = setup({
+      main: [
+        // waiting_on as an older core left it: the list wins.
+        mine('two', { delegate: 'atlas', waits, waiting_on: { who: 'lasse', kind: 'question', why: 'stale' } }),
+        mine('asked-and-handed', { waits: [waits[0], { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }] }),
+      ],
+      pending: () => [
+        { opId: 'op-h', kind: 'hand_over', spaceId: 'main', taskId: 'asked-and-handed', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } },
+      ],
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'two')).toMatchObject({ turn: 'review', waitingOn: { kind: 'review', session_id: 's2' } })
+    expect(model.inbox.map((i) => [i.kind, i.sessionId])).toEqual([['review', 's2'], ['question', 's1']])
+    // The pending hand-over takes the owner's question off; the customer's wait stays.
+    expect(model.tasks.find((t) => t.id === 'asked-and-handed')).toMatchObject({ turn: 'waiting_on_others', waitingOn: { who: 'kim' } })
   })
 
   it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {

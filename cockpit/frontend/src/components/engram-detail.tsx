@@ -274,7 +274,7 @@ function EngramTail({ engram, relationHref }: { engram: Engram; relationHref: (o
   // software's own state (the notes pane's hash), not shown.
   const props = engram.properties ?? {};
   const named = (TYPE_FIELD_ORDER[engram.type] ?? []).filter(
-    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome" || k === "waiting_on")),
+    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome" || k === "waiting_on" || k === "waits")),
   );
   const other = Object.keys(props).filter((k) => !(TYPE_FIELD_ORDER[engram.type] ?? []).includes(k) && k !== "app");
   const otherEntries = (engram.entries ?? []).filter((e) => e.kind === "evidence" || e.kind === "review" || (!isTask && (e.kind === "note" || e.kind === "change")));

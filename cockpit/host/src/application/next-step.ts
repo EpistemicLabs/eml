@@ -2,7 +2,9 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { worksAlone } from '../domain/hand-over.js'
 import { needsAnswer } from '../domain/session-attention.js'
+import { sameWaits, waitsBody, waitsOf, withSessionWait } from '../domain/task-waits.js'
 import type { SessionLedger } from '../session-ledger.js'
+import { trackWaits } from './task-waits.js'
 
 /**
  * The next-step check (decision agent-schedules-own-follow-ups-cockpit-guarantees):
@@ -62,7 +64,7 @@ export interface StepFacts {
 interface Task {
   id: string
   status: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: { mode?: string }; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: { mode?: string }; waits?: unknown; waiting_on?: unknown }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -78,8 +80,7 @@ export function nextTriggers(facts: {
   steps: StepFacts[]
 }): Trigger[] {
   const found: Trigger[] = []
-  const waiting = facts.task.properties?.waiting_on
-  if (waiting?.who === facts.owner && (waiting.since ?? '') >= facts.runStartedAt) found.push('question')
+  if (waitsOf(facts.task.properties).some((w) => w.who === facts.owner && (w.since ?? '') >= facts.runStartedAt)) found.push('question')
   if (facts.jobs.some((j) => !j.ended && !j.held && (j.nextRunAt !== null || j.channel || j.runWaiting))) found.push('job')
   if (facts.otherSession) found.push('session')
   const runnable = (s: StepFacts) => s.status === 'active'
@@ -182,7 +183,13 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       if (arrived) return
     }
     nudged.delete(sessionId)
-    await brain.post(`/task/${task.id}/track`, { waiting_on: { who: deps.owner, kind: 'stopped', why: NO_NEXT_STEP, since: now().toISOString(), session_id: sessionId } })
+    // The session's wait in the task's waits: the waits of other sessions stay.
+    const stopped = { who: deps.owner, kind: 'stopped', why: NO_NEXT_STEP, since: now().toISOString(), session_id: sessionId }
+    await trackWaits(brain, task.id, (t) => {
+      const waits = waitsOf(t.properties)
+      const after = withSessionWait(waits, stopped)
+      return sameWaits(after, waits) ? null : waitsBody(after)
+    })
     deps.ledger.setAttention(sessionId, { kind: 'question', reason: NO_NEXT_STEP })
     deps.waiting(sessionId)
     deps.log(`[next-step] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} waits on ${deps.owner}: ${NO_NEXT_STEP}`)

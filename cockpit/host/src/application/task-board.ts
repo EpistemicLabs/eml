@@ -1,8 +1,10 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { mirroredHandOver, planHandOver } from '../domain/hand-over.js'
+import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
+import { delegatedNextRun, liveFactsOf, liveRunsByTask, runsOf } from '../domain/run-liveness.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -155,7 +157,9 @@ interface Row {
     priority?: string
     due_date?: string
     depends_on?: string[]
+    waits?: unknown
     waiting_on?: WaitingOn
+    delegation?: { agent?: string; next_run_at?: string }
   }
 }
 
@@ -231,11 +235,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     if (command.kind === 'close') return { ...row, status: 'invalidated' }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props) }, command.handOver, { agents })
       if (!planned.ok) return row
-      const { status, waiting_on, ...fields } = planned.plan.patch
-      const next: Row['properties'] = { ...props, ...mirroredHandOver(fields) } as Row['properties']
-      if (waiting_on === null) delete next!.waiting_on
+      const { status, waits, ...fields } = planned.plan.patch
+      const next = { ...props, ...mirroredHandOver(fields) } as NonNullable<Row['properties']>
+      if (waits !== undefined) {
+        next.waits = waits ?? undefined
+        next.waiting_on = urgentWaitOf({ waits: waits ?? [] })
+      }
       return { ...row, ...(status ? { status } : {}), properties: next }
     }
     return row
@@ -261,6 +268,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
       ])
       const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents))
+      // Synced runs with a live lease: sessions on other members' cockpits (domain/run-liveness.ts).
+      const runs = liveRunsByTask(runsOf(await objects(brain, 'run')), now)
       const statusOf = new Map(rows.map((r) => [r.id, r.status]))
 
       const spaceTasks: BoardTask[] = []
@@ -272,14 +281,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           owner: props.assignee_ids?.[0],
           delegate: props.delegate,
           checkpoint: props.checkpoint,
-          waitingOn: props.waiting_on,
+          waitingOn: urgentWaitOf(props),
           priority: props.priority,
           due: props.due_date,
           closedAt: row.status === 'resolved' ? row.updated_at : undefined,
           parentActive: row.parent_id ? (statusOf.has(row.parent_id) ? statusOf.get(row.parent_id) === 'active' : null) : null,
           depsResolved: (props.depends_on ?? []).every((id) => !statusOf.has(id) || statusOf.get(id) === 'resolved'),
         }
-        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
+        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? delegatedNextRun(props.delegation, now))
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
@@ -320,7 +329,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
         })
-        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
       }
       board.tasks.push(...spaceTasks)
       board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))
