@@ -9,6 +9,7 @@ import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { reset as resetBrainSurface } from '@/lib/brain-nav';
 import { usePendingReviews } from '@/lib/queries';
 import { useTaskBoard } from '@/lib/task-board';
+import { useUnreadAnswers } from '@/lib/use-unread-answers';
 import { cn } from '@/lib/utils';
 import { Count, FOCUS, LABEL, Menu, Monogram, monograms, NAV_ROW, NavItem } from '@/shared/view/ui';
 import * as paneStore from '@/stores/usePaneStore';
@@ -91,11 +92,12 @@ export function SearchTasks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-/** Inbox (with what waits for you, amber), Now and Plan. `onNavigate` runs after a pick (the phone's drawer closes). */
+/** Inbox (with what waits for you, amber; a grey dot for unread answers), Now and Plan. `onNavigate` runs after a pick (the phone's drawer closes). */
 export function TaskNav({ onNavigate }: { onNavigate?: () => void }) {
   const { view } = useTaskView();
   const topView = useTopView();
   const inbox = useTaskBoard().data?.counts?.inbox ?? 0;
+  const unread = useUnreadAnswers().length;
   return (
     <nav aria-label="Tasks" className="flex flex-col gap-0.5 px-3">
       {TASK_VIEWS.map((t) => (
@@ -106,7 +108,7 @@ export function TaskNav({ onNavigate }: { onNavigate?: () => void }) {
           title={`${t.label} (G then ${t.key})`}
           current={topView === 'tasks' && view === t.view}
           onClick={() => { openTaskView(t.view); onNavigate?.(); }}
-          count={t.view === 'inbox' && inbox > 0 ? <Count tone="you" label={`${inbox} waiting for you`}>{inbox}</Count> : undefined}
+          count={t.view === 'inbox' && (inbox > 0 || unread > 0) ? <InboxMarks inbox={inbox} unread={unread} /> : undefined}
         />
       ))}
     </nav>
@@ -262,6 +264,7 @@ export function NavRail({ onOpen, onShowSettings }: { onOpen: () => void; onShow
   const { view } = useTaskView();
   const nav = useDeskNav();
   const inbox = useTaskBoard().data?.counts?.inbox ?? 0;
+  const unread = useUnreadAnswers().length;
   const letters = monograms(nav.sections.map((s) => s.space?.name ?? 'Brain'));
   const RAIL = cn('relative grid size-(--target-comfortable) place-items-center rounded-lg text-muted-foreground hover:bg-foreground/8 hover:text-foreground aria-[current=page]:bg-card aria-[current=page]:text-foreground aria-[current=page]:shadow-card', FOCUS);
   return (
@@ -276,7 +279,9 @@ export function NavRail({ onOpen, onShowSettings }: { onOpen: () => void; onShow
       {TASK_VIEWS.map((t) => (
         <button key={t.view} type="button" onClick={() => openTaskView(t.view)} aria-label={t.label} title={t.label} aria-current={nav.topView === 'tasks' && view === t.view ? 'page' : undefined} className={RAIL}>
           <t.icon aria-hidden className="size-4" />
-          {t.view === 'inbox' && inbox > 0 && <RailDot tone="you" label={`${inbox} waiting for you`} />}
+          {t.view === 'inbox' && (inbox > 0
+            ? <RailDot tone="you" label={`${inbox} waiting for you`} />
+            : unread > 0 && <RailDot tone="plain" label={unreadLabel(unread)} />)}
         </button>
       ))}
       <span aria-hidden className="my-1 h-px w-6 bg-border" />
@@ -299,6 +304,18 @@ export function NavRail({ onOpen, onShowSettings }: { onOpen: () => void; onShow
 }
 
 /** On the rail a count is a dot in its colour; the number is in its label. */
+const unreadLabel = (n: number) => `${n} unread answer${n === 1 ? '' : 's'}, nothing to do`;
+
+/** The Inbox's marks: the number counts only what waits for you; unread answers add a small grey dot. */
+export function InboxMarks({ inbox, unread }: { inbox: number; unread: number }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {inbox > 0 && <Count tone="you" label={`${inbox} waiting for you`}>{inbox}</Count>}
+      {unread > 0 && <span role="img" aria-label={unreadLabel(unread)} title={unreadLabel(unread)} className="size-1.5 rounded-full bg-muted-foreground" />}
+    </span>
+  );
+}
+
 function RailDot({ tone, label }: { tone: 'plain' | 'you' | 'stopped'; label: string }) {
   return (
     <span

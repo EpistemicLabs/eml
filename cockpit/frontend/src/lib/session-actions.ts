@@ -39,3 +39,5 @@ export async function archiveSession(sessionId: string): Promise<string | null> 
   if (pane) closePane(pane.id);
   return null;
 }
+/** Undo of a mark read: the session gets back the read state it had (the Inbox's Mark all read). */
+export const restoreSessionRead = (sessionId: string, before: { readAt: string | null; resultAt: string | null }) => post(sessionId, 'unread', before);
