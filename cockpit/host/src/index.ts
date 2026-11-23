@@ -494,6 +494,15 @@ async function main() {
       return { session: sessionLimits(settings), idleMs: idleMs(settings) }
     },
     overCap: (): boolean => cap() > 0 && running() > cap(),
+    jobOf: (sessionId) => {
+      const jobId = ledger.get(sessionId)?.jobId
+      const job = jobId ? jobStore.get(jobId) : undefined
+      return job ? { id: job.id, name: job.name, limited: job.limited === true } : null
+    },
+    clearJobProfile: (jobId) => {
+      const job = jobStore.get(jobId)
+      if (job?.toolProfile) jobStore.put({ ...job, toolProfile: null, updatedAt: new Date().toISOString() })
+    },
     // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
     jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
       const caller = jobCaller(sessionId)

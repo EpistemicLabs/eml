@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import Tooltip from '@/shared/view/ui/Tooltip';
 
 const CONFIRM_MS = 4_000;
@@ -36,7 +37,7 @@ export function RestartButton({ running, onRestart }: { running: boolean; onRest
       <button
         type="button"
         onClick={click}
-        className="justify-self-end rounded border border-border px-1.5 text-caption hover:bg-foreground/5"
+        className={cn('justify-self-end rounded border border-border px-1.5 text-caption hover:bg-foreground/5', FOCUS)}
       >
         Stop turn and restart
       </button>
@@ -48,9 +49,9 @@ export function RestartButton({ running, onRestart }: { running: boolean; onRest
         type="button"
         aria-label="Restart session"
         onClick={click}
-        className={cn('flex items-center justify-center justify-self-end rounded text-foreground/70 hover:bg-foreground/5 hover:text-foreground', 'h-5 w-5')}
+        className={cn('flex size-5 items-center justify-center justify-self-end rounded text-foreground/70 hover:bg-foreground/5 hover:text-foreground', FOCUS)}
       >
-        <RotateCcw className="h-3 w-3" strokeWidth={1.8} />
+        <RotateCcw aria-hidden className="size-3" strokeWidth={1.8} />
       </button>
     </Tooltip>
   );

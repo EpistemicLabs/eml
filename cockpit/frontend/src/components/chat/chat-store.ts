@@ -18,6 +18,16 @@ export interface ChatSnapshot {
   /** The session's tool servers as last asked for; null until then. */
   toolServers: ToolServer[] | null;
   toolServersError: string | null;
+  /** What the session may not use, as the host last said; null until it did. */
+  limits: SessionLimits | null;
+}
+
+/** A session's limits: tools it may not use, MCP servers it is held to, and whether the user can lift them here. */
+export interface SessionLimits {
+  deniedTools: string[];
+  mcpServers: string[] | null;
+  job: { id: string; name: string } | null;
+  liftable: boolean;
 }
 
 interface SessionStore {
@@ -30,7 +40,7 @@ interface SessionStore {
   listeners: Set<() => void>;
 }
 
-const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, terminalBusy: null, toolServers: null, toolServersError: null };
+const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, terminalBusy: null, toolServers: null, toolServersError: null, limits: null };
 // requestAnimationFrame stops in a hidden tab; the events must still arrive.
 const HIDDEN_FLUSH_MS = 250;
 
@@ -103,6 +113,10 @@ export function setTerminalBusy(sessionId: string, terminalBusy: 'working' | 'wa
 
 export function setSwitching(sessionId: string, switching: string | null): void {
   publish(storeOf(sessionId), { switching });
+}
+
+export function setLimits(sessionId: string, limits: SessionLimits): void {
+  publish(storeOf(sessionId), { limits });
 }
 
 export function setToolServers(sessionId: string, toolServers: ToolServer[], toolServersError: string | null): void {
